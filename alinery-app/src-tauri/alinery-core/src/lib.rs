@@ -1,12 +1,18 @@
 // alinery-core: shared pure logic for tasks, sessions, config, harnesses, paths.
 // Used by alinery-app, alineryd, and mcp.
 
+pub mod artifact_comments;
 pub mod artifact_tree;
+pub mod attachments;
 pub mod backup;
+pub mod board;
+pub mod chat;
+pub mod credential_sync;
 pub mod daemon_client;
 pub mod execution;
 pub mod fs_atomic;
 pub mod git;
+pub mod git_actions;
 pub mod history;
 pub mod hosted_inference;
 pub mod http;
@@ -19,18 +25,23 @@ pub mod paths;
 pub mod playbook;
 pub mod playbook_library;
 pub mod playbook_scheduler;
+pub mod playbook_tree;
 pub mod prompts;
 pub mod protocol;
 pub mod provision_ffi;
 pub mod repo_ownership;
+pub mod repo_service;
 pub mod rpc_chunk;
+pub mod session_actions;
 pub mod session_name;
 pub mod settings;
 pub mod shared;
 pub mod storage;
 pub mod subtask;
 pub mod task;
+pub mod task_activity;
 pub mod task_creation;
+pub mod task_drafts;
 pub mod telemetry;
 pub mod types;
 
@@ -43,10 +54,10 @@ pub use fs_atomic::{create_dir_owner_only, write_bytes_atomic, write_owner_only_
 pub use git::*;
 pub use history::*;
 pub use hosted_inference::{
-    ensure_hosted_inference_for_spawn, ensure_hosted_inference_for_spawn_at, hosted_models_yml_unavailable, inference_path, inference_spawn_cache_fresh, is_hosted_model,
-    minted_catalog_if_unexpired, models_yml_path, pairing_config_dir, parse_hosted_catalog_body, parse_hosted_error, parse_inference_session_body, render_models_yml,
-    revoke_hosted_inference, sync_hosted_inference, wipe_hosted_files, write_hosted_models_yml, write_inference_file, HostedApiError, HostedCatalog, HostedModel,
-    HOSTED_MODEL_UNAVAILABLE,
+    ensure_hosted_inference_for_spawn, ensure_hosted_inference_for_spawn_at, hosted_models_yml_unavailable, inference_expires_at, inference_path, inference_spawn_cache_fresh,
+    is_hosted_model, minted_catalog_if_unexpired, models_yml_path, pairing_config_dir, parse_hosted_catalog_body, parse_hosted_error, parse_inference_session_body,
+    render_models_yml, revoke_hosted_inference, sync_hosted_inference, wipe_hosted_files, write_hosted_models_yml, write_inference_file, HostedApiError, HostedCatalog,
+    HostedModel, HOSTED_MODEL_UNAVAILABLE,
 };
 pub use lockfile::*;
 pub use log::*;

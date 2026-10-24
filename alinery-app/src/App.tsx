@@ -35,6 +35,9 @@ import * as ipc from "./ipc";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
 import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
+import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
+import { isRemoteRepo, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
+import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
@@ -66,6 +69,7 @@ import { useDaemonStatus } from "./useDaemonStatus";
 import { useDockBadgeCount } from "./useDockBadgeCount";
 import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
+import { useRemoteHosts } from "./useRemoteHosts";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
@@ -309,6 +313,11 @@ export default function App() {
   }, []);
 
   const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
+  const [remoteDialog, setRemoteDialog] = useState<RemoteModalEntry | null>(null);
+  const activeRepoKey = appConfig?.active_repo ?? "";
+  useEffect(() => setRevealRepo(activeRepoKey), [activeRepoKey]);
+  const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
+  const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();
   const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
@@ -594,10 +603,17 @@ export default function App() {
     return current;
   };
 
-  const setRepo = async (path: string): Promise<boolean> => {
+  // `connected` is the remote modal vouching for its host: the polled state lags a fresh connect.
+  const setRepo = async (path: string, connected = false): Promise<boolean> => {
     const p = path.trim();
     if (!p) return false;
     setRepoErr("");
+    // A remote repo whose host is not connected reconnects first, then opens.
+    const remote = parseRemoteRepo(p);
+    if (remote && !connected && remoteStates[remote.hostId] !== "connected") {
+      setRemoteDialog({ kind: "reconnect", hostId: remote.hostId, repoKey: p });
+      return false;
+    }
     try {
       const cfg = await switchActiveRepo(p);
       setAppConfig(cfg);
@@ -825,6 +841,30 @@ export default function App() {
   const removeRepo = async (path: string) => {
     setRepoErr("");
     const wasActive = path === appConfig?.active_repo;
+    if (isRemoteRepo(path)) {
+      const choice = await askConfirm({
+        title: `Remove ${repoName(path)}?`,
+        body: "It is removed from this list. Its daemon and every session keep running on the host, and you can add it again later to pick them back up. Files are untouched.",
+        choices: [
+          { key: "remove", label: "Remove, leave sessions running" },
+          { key: "cancel", label: "Cancel", tone: "ghost" },
+        ],
+      });
+      if (choice !== "remove") return;
+      try {
+        const cfg = await ipc.removeRemoteRepoKeepRunning(path);
+        setAppConfig({ ...cfg, appearance: applyAppearance(cfg.appearance) });
+        if (wasActive) {
+          setScope("active");
+          setView({ kind: "list" });
+          if (cfg.known_repos.length > 0) await setRepo(cfg.known_repos[0]);
+        }
+        toast(`Removed ${repoName(path)}`, "success");
+      } catch (e) {
+        setRepoErr(String(e));
+      }
+      return;
+    }
     const live = await liveSessions(path);
     const ok = await confirmDanger(
       `Remove ${repoName(path)}?`,
@@ -874,24 +914,24 @@ export default function App() {
       const repos = appConfigRef.current?.known_repos ?? [];
       if (repos.length > 0) {
         const counts = await Promise.all(repos.map(liveSessions));
-        const total = counts.reduce((a, b) => a + b, 0);
+        const total = quitLossCount(repos, counts);
+        const rows = quitRows(repos, counts);
         const choice = await askConfirm({
           title: "Quit Alinery",
           body: (
             <>
               <p>Session daemons keep running after Alinery quits, so harnesses stay alive and reattach on the next launch.</p>
               <ul className="confirm-list">
-                {repos.map((repo, i) => (
+                {rows.map(({ repo, text }) => (
                   <li key={repo}>
                     <span className="confirm-repo">{repoName(repo)}</span>
-                    <span className="dim">
-                      {counts[i]} live session{counts[i] === 1 ? "" : "s"}
-                    </span>
+                    <span className="dim">{text}</span>
                   </li>
                 ))}
               </ul>
               <p className="dim">
                 Closing every repo stops each daemon and releases its locks — nothing is left running in the background.
+                {repos.some(isRemoteRepo) && " Remote repositories are only disconnected: their sessions keep running on the host."}
                 {total > 0 && (
                   <span className="confirm-loss">
                     {" "}
@@ -1358,6 +1398,20 @@ export default function App() {
             }}
           />
         )}
+        {remoteDialog && (
+          <RemoteModal
+            entry={remoteDialog}
+            hosts={remoteHosts.hosts}
+            knownRepos={appConfig?.known_repos ?? []}
+            onClose={() => {
+              setRemoteDialog(null);
+              void remoteHosts.refresh();
+            }}
+            onOpened={async (key) => {
+              await setRepo(key, true);
+            }}
+          />
+        )}
         <ResizeHandles />
         <div className="app-shell">
           <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
@@ -1470,6 +1524,7 @@ export default function App() {
           initialStep="workspace"
           onSelectRepo={setRepo}
           onAddRepo={addRepo}
+          onAddRemoteRepo={() => setRemoteDialog({ kind: "hosts" })}
           onRemoveRepo={removeRepo}
           onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
           onCompleteToWorkspace={completeOnboarding}
@@ -1500,6 +1555,8 @@ export default function App() {
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
       onSelectRepo={selectRepoValue}
       onAddRepo={addRepo}
+      onAddRemote={() => setRemoteDialog({ kind: "hosts" })}
+      remoteStates={remoteStates}
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}
       onSearch={() => setSearchOpen(true)}

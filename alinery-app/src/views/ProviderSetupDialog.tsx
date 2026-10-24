@@ -7,6 +7,7 @@ import type { ProvidersDialogTab } from "../chat/slash";
 import { type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { cancelExtensionUi, extensionUiConfirm, extensionUiValue } from "../ompRpc";
+import { SignInTarget } from "../SignInTarget";
 import type { HostedCatalogView } from "../types";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
@@ -292,6 +293,7 @@ export function ProviderSetupDialog({
       }}
       footer={<CustomEndpointForm access={access} />}
     >
+      <SignInTarget />
       <ProviderAccessPanel access={access} />
       {chat.entries
         .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))

@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useState } from "react";
 import * as ipc from "../ipc";
+import { repoDisplayPath, sameMachine } from "../remoteRepo";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
 import type { BoardTask, NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
 import { readTaskExecution } from "../useExecutionObservation";
@@ -39,7 +40,13 @@ export function ReviewHandoffPage({
       .then((loaded) => {
         if (!alive) return;
         const candidates = loaded.filter(
-          (task) => !task.archived && !task.draft && Boolean(task.worktree) && !(task.slug === source.source_slug && task.repo_path === source.source_repo_path),
+          (task) =>
+            !task.archived &&
+            !task.draft &&
+            Boolean(task.worktree) &&
+            // The artifact is copied between the two repos' files, so the target must be on the source's machine.
+            sameMachine(task.repo_path, source.source_repo_path) &&
+            !(task.slug === source.source_slug && task.repo_path === source.source_repo_path),
         );
         setTasks(candidates);
         setTaskId((current) => (candidates.some((task) => taskKey(task) === current) ? current : ""));
@@ -111,7 +118,7 @@ export function ReviewHandoffPage({
         <h2 className="create-title">Send review findings to task</h2>
         <div className="handoff-summary">
           <span className="pill">Source task: {source.source_slug}</span>
-          <span className="pill">Source repository: {source.source_repo_path}</span>
+          <span className="pill">Source repository: {repoDisplayPath(source.source_repo_path)}</span>
           <span className="pill">Session: {source.source_session}</span>
           <span className="pill">Artifact: {source.source_artifact}</span>
         </div>
@@ -122,7 +129,7 @@ export function ReviewHandoffPage({
             {tasks.map((task) => (
               <option key={taskKey(task)} value={taskKey(task)}>
                 {task.name}
-                {` — ${repoName(task.repo_path)} (${task.repo_path})`} · {task.branch || "no branch"}
+                {` — ${repoName(task.repo_path)} (${repoDisplayPath(task.repo_path)})`} · {task.branch || "no branch"}
                 {task.pr_url ? ` · ${task.pr_url}` : ""}
               </option>
             ))}
@@ -183,7 +190,7 @@ export function ReviewHandoffPage({
         )}
         {created && (
           <InlineStatus tone="error" detail={created.errors.map((error) => `${error.stage}: ${error.message}`).join("\n")}>
-            Session {created.target_session.id} was created in {created.target_repo_path}; start status: {created.start}.
+            Session {created.target_session.id} was created in {repoDisplayPath(created.target_repo_path)}; start status: {created.start}.
           </InlineStatus>
         )}
         <div className="create-actions">

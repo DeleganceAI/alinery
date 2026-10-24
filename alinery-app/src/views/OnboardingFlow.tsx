@@ -1,10 +1,11 @@
 import "../onboarding.css";
-import { ArrowRight, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
+import { ArrowRight, FolderOpen, FolderPlus, Layers, Play, RotateCcw, Server, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
+import { repoDisplayPath } from "../remoteRepo";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import type { AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
 
@@ -21,6 +22,7 @@ export function OnboardingFlow({
   initialStep,
   onSelectRepo,
   onAddRepo,
+  onAddRemoteRepo,
   onRemoveRepo,
   onOpenProviderSetup,
   onCompleteToWorkspace,
@@ -32,6 +34,8 @@ export function OnboardingFlow({
   initialStep?: OnboardingStepId;
   onSelectRepo: (path: string) => Promise<boolean>;
   onAddRepo: () => Promise<boolean>;
+  /** Opens the SSH dialog; the button is hidden without it. */
+  onAddRemoteRepo?: () => void;
   onRemoveRepo: (path: string) => void;
   onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void) => void;
   onCompleteToWorkspace: () => void;
@@ -397,10 +401,10 @@ export function OnboardingFlow({
                     const isCurrent = repo === appConfig.active_repo;
                     return (
                       <li key={repo} className="onboarding-repo-row">
-                        <button type="button" className={`onboarding-repo${isCurrent ? " active" : ""}`} title={repo} onClick={() => void handleSelectRepo(repo)}>
+                        <button type="button" className={`onboarding-repo${isCurrent ? " active" : ""}`} title={repoDisplayPath(repo)} onClick={() => void handleSelectRepo(repo)}>
                           <strong>{repoName(repo)}</strong>
                           {isCurrent && <span className="onboarding-repo-connected">Connected</span>}
-                          <span className="onboarding-repo-path">{repo}</span>
+                          <span className="onboarding-repo-path">{repoDisplayPath(repo)}</span>
                           {!isCurrent && <ArrowRight size={16} strokeWidth={1.6} aria-hidden="true" />}
                         </button>
                         <button
@@ -440,6 +444,12 @@ export function OnboardingFlow({
                   <button type="button" className="btn onboarding-add-repo" data-autofocus onClick={() => void handleAddRepo()}>
                     <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
                     Add a repository
+                  </button>
+                )}
+                {onAddRemoteRepo && (
+                  <button type="button" className="btn ghost onboarding-add-repo" onClick={onAddRemoteRepo}>
+                    <Server size={16} strokeWidth={1.6} aria-hidden="true" />
+                    Add a repository over SSH
                   </button>
                 )}
               </div>

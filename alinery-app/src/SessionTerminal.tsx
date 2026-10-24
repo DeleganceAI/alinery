@@ -165,6 +165,8 @@ export function SessionTerminal({
     let lastClose = 0;
     let unlisten: (() => void) | null = null;
     let opened = false;
+    // The live view stopped because the daemon could not be reached (a remote host that dropped).
+    let paused = false;
     let resizeFrame = 0;
     let lastResize = "";
     let viewportIdleTimer = 0;
@@ -282,6 +284,7 @@ export function SessionTerminal({
         if (!disposed && currentStreamToken === streamToken) {
           const message = reattach ? "\r\n[live view paused — stream recovery failed; reopen to resume] " : "\r\n[spawn failed] ";
           term.writeln(message + String(e));
+          paused = reattach;
         }
         onConnectionStateChange?.("failed");
         return false;
@@ -316,6 +319,7 @@ export function SessionTerminal({
           } catch (e) {
             if (!disposed && streamToken === currentStreamToken) {
               term.writeln(`\r\n[live view paused — status unavailable; reopen to resume] ${String(e)}`);
+              paused = true;
               onConnectionStateChange?.("failed");
             }
             return;
@@ -355,6 +359,15 @@ export function SessionTerminal({
     };
     void startMonitoredStream();
 
+    // A remote host that dropped is back: rejoin the live pty the lost stream left paused.
+    const stopHostWatch = ipc.onRemoteHostConnected(() => {
+      if (disposed || !paused) return;
+      paused = false;
+      reattachCount = 0;
+      term.clear();
+      void doAttach(true);
+    });
+
     // Keystrokes -> pty. write_session no-ops in Rust until the session registers.
     const dataSub = term.onData((d) => sessionIo.write(d).catch(() => {}));
 
@@ -374,6 +387,7 @@ export function SessionTerminal({
       disposed = true; // gates every term.write, so in-flight bytes are dropped, not thrown at a torn-down xterm
       window.removeEventListener(APPEARANCE_EVENT, onAppearance);
       if (unlisten) unlisten();
+      stopHostWatch();
       window.clearTimeout(viewportIdleTimer);
       window.clearTimeout(viewportHardTimer);
       window.clearTimeout(replayRestoreTimer);

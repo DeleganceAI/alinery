@@ -22,7 +22,9 @@ fn scoped_session_items_ignore_corrupt_known_repo_and_global_active_repo() {
     set_active_repo_global(Some(repo_b.clone())).unwrap();
 
     let list = |all_repos, requested: Option<&str>| {
-        crate::list_session_items_with_repo_resolver(all_repos, false, known_repos.clone(), requested, |path| validate_known_target_repo(&known_repos, path))
+        crate::list_session_items_with_repo_resolver(&AppState::default(), all_repos, false, known_repos.clone(), requested, |path| {
+            validate_known_target_repo(&known_repos, path).map(crate::RepoRef::Local)
+        })
     };
     let rows = list(false, Some(&known_repos[0])).unwrap();
     assert_eq!(rows.iter().map(|row| row.session.id.as_str()).collect::<Vec<_>>(), ["saved-a"]);
@@ -1355,7 +1357,7 @@ fn overlapping_resumes_of_one_thread_mint_and_launch_one_successor() {
         }
         ops
     });
-    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let client = alinery_core::DaemonClient::connect_path(socket.clone()).unwrap();
     let (first, second) = std::thread::scope(|scope| {
         let first = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
         let second = scope.spawn(|| resume_chat_thread_in(&repo, "s-pred", Some(&client)));
@@ -1466,7 +1468,7 @@ fn resume_chat_with_predecessor_name(source: alinery_core::SessionNameSource) ->
             writeln!(stream, "{reply}").unwrap();
         }
     });
-    let client = alinery_core::DaemonClient { socket_path: socket.clone() };
+    let client = alinery_core::DaemonClient::connect_path(socket.clone()).unwrap();
     let successor = resume_chat_thread_in(&repo, "s-pred", Some(&client)).unwrap();
     daemon.join().unwrap();
     let name = alinery_core::read_session_name(&repo, "", &successor.id).unwrap().expect("successor keeps the thread name");

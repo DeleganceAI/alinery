@@ -38,6 +38,10 @@ case "$(uname -s)" in
 esac
 mkdir -p "$DIR/resources/ownership"
 copy_if_changed "$BUILT/$LIB" "$DIR/resources/ownership/$LIB"
+# tauri-build fails on a missing bundle resource, so dev builds get an empty remote-runtime
+# set; scripts/build-remote-runtimes.sh fills it for release.
+mkdir -p "$DIR/resources/remote"
+[ -f "$DIR/resources/remote/manifest.json" ] || printf '{"version":1,"glibc_floor":"","targets":{}}\n' > "$DIR/resources/remote/manifest.json"
 chmod +x "$SIDE" "$MCP_SIDE"
 echo "sidecar ready: $SIDE"
 echo "mcp sidecar ready: $MCP_SIDE"

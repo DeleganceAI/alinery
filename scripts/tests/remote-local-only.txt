@@ -1,0 +1,8 @@
+# Commands that resolve their repository with a local-only helper and do not route a remote one.
+# Each fails closed on an alinery+ssh:// key ("not yet available for remote repositories"); this list
+# makes that a recorded decision. See scripts/tests/check-remote-routing.sh.
+#
+# command                         why it stays local for now
+pick_backup_destination_dialog    a Finder folder picker cannot browse a host; a remote repo's destination is typed and checked on the host (check_backup_destination)
+start_mcp_server                  the MCP server is bound to the active repo on this machine
+stop_mcp_server                   the MCP server is bound to the active repo on this machine

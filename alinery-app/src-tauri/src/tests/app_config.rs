@@ -56,6 +56,22 @@ fn unparseable_prior_is_not_overwritten() {
 }
 
 #[test]
+fn remote_hosts_round_trip_and_are_absent_for_local_only_configs() {
+    let local_only: AppConfig = toml::from_str("known_repos=['/a']\n").unwrap();
+    assert!(local_only.remote_hosts.is_empty());
+    assert!(!toml::to_string(&local_only).unwrap().contains("remote_hosts"));
+
+    let source = "known_repos=['alinery+ssh://devbox-a1b2c3/home/me/repo']\n[remote_hosts.devbox-a1b2c3]\nlabel='devbox'\nssh_args=['-p','2222','me@box']\nhome='/home/me'\n";
+    let cfg: AppConfig = toml::from_str(source).unwrap();
+    let host = &cfg.remote_hosts["devbox-a1b2c3"];
+    assert_eq!(host.ssh_args, ["-p", "2222", "me@box"]);
+    assert_eq!(host.home.as_deref(), Some("/home/me"));
+    assert_eq!(host.platform, None);
+    let reloaded: AppConfig = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+    assert_eq!(reloaded.remote_hosts, cfg.remote_hosts);
+}
+
+#[test]
 fn legacy_playbook_default_keeps_repositories_and_appearance_on_save() {
     let (dir, path) = temp_app("legacy-default-integrity");
     let original = "active_repo='/keep'\nknown_repos=['/keep','/another']\n[appearance]\nui_scale=1.25\n[global.defaults]\nplaybook='superdevelop'\n";

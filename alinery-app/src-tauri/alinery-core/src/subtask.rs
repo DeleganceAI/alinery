@@ -226,6 +226,101 @@ fn worktree_clean(path: &Path) -> Result<bool, String> {
     }
     Ok(output.stdout.is_empty())
 }
+fn manager_sessions(repo: &Path, owner_slug: &str) -> Vec<SessionMeta> {
+    let mut sessions = fs::read_dir(sessions_dir(repo, owner_slug))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| read_session_meta_full(&entry.path()))
+        .filter(|meta| meta.subtask_manager && !meta.archived)
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| left.created.cmp(&right.created).then_with(|| left.id.cmp(&right.id)));
+    sessions
+}
+
+fn manager_is_usable(meta: &SessionMeta) -> bool {
+    !meta.archived && (meta.ended_at.is_none() || !meta.harness_resume_token.is_empty())
+}
+
+/// What the sub-task controls on a task page need: relationships, manager sessions, and why
+/// starting one is or is not allowed.
+pub fn subtask_manager_state(repo: &Path, task_slug: &str) -> Result<crate::types::SubtaskManagerState, String> {
+    let task = read_task(repo, task_slug).ok_or_else(|| format!("no such task: {task_slug}"))?;
+    let relationships = read_task_relationships(repo, task_slug)?;
+    let own_managers = manager_sessions(repo, task_slug);
+    let manager_session = if let Some(child) = &relationships.active_subtask {
+        own_managers.iter().rev().find(|meta| meta.subtask_slug == child.slug).cloned()
+    } else {
+        own_managers.iter().rev().find(|meta| meta.subtask_slug.is_empty()).cloned()
+    };
+    let (parent_manager_session, parent_manager_owner_task_slug) = if let Some(parent) = &relationships.parent_task {
+        (
+            manager_sessions(repo, &parent.slug).into_iter().rev().find(|meta| meta.subtask_slug == task.slug),
+            parent.slug.clone(),
+        )
+    } else {
+        (None, String::new())
+    };
+
+    let historical = task.engine_version < 2;
+    let disabled_reason = if historical {
+        "Pre-v2 task data is read-only".into()
+    } else if task.draft {
+        "Draft tasks cannot start sub-tasks".into()
+    } else if task.archived {
+        "Archived tasks cannot start sub-tasks".into()
+    } else if !task.has_worktree || task.worktree.is_empty() || !Path::new(&task.worktree).is_dir() {
+        "A dedicated task worktree is required".into()
+    } else if relationships.active_subtask.is_some() {
+        "Finish the active sub-task before starting another".into()
+    } else if own_managers.iter().any(|meta| meta.subtask_slug.is_empty()) {
+        "A sub-task setup manager already exists".into()
+    } else {
+        String::new()
+    };
+    let can_recover = relationships.active_subtask.is_some() && manager_session.as_ref().map(manager_is_usable) != Some(true);
+
+    Ok(crate::types::SubtaskManagerState {
+        task: TaskSummary::from(&task),
+        parent_task: relationships.parent_task,
+        active_subtask: relationships.active_subtask,
+        manager_session,
+        manager_owner_task_slug: task.slug.clone(),
+        parent_manager_session,
+        parent_manager_owner_task_slug,
+        can_start: disabled_reason.is_empty(),
+        can_recover,
+        disabled_reason,
+    })
+}
+
+/// The request that starts (or recovers) the sub-task manager session for a task.
+pub fn subtask_manager_request(repo: &Path, task_slug: String, recover: bool) -> Result<crate::task_creation::CreateExecutionSessionRequest, String> {
+    let subtask_slug = if recover {
+        Some(
+            read_task_relationships(repo, &task_slug)?
+                .active_subtask
+                .ok_or("task has no active sub-task to recover")?
+                .slug,
+        )
+    } else {
+        None
+    };
+    Ok(crate::task_creation::CreateExecutionSessionRequest {
+        task_slug,
+        target: crate::task_creation::ExecutionSessionTarget::SubtaskManager {
+            subtask_slug,
+            recover,
+            harness: "omp".into(),
+            model: None,
+        },
+        launch_override: None,
+        prompt_extra: None,
+        handoff_artifact: None,
+        start: true,
+    })
+}
+
 pub fn subtask_manager_owner_slug(repo: &Path, manager_session_id: &str) -> Result<String, String> {
     resolve_subtask_manager(repo, manager_session_id).map(|manager| manager.owner_slug)
 }

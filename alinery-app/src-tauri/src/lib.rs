@@ -94,6 +94,7 @@ mod omp_update;
 mod paths;
 mod pi_durable;
 mod playbook;
+mod remote;
 mod session;
 mod settings;
 mod state;
@@ -120,6 +121,7 @@ use omp_update::*;
 use paths::*;
 use pi_durable::*;
 use playbook::*;
+use remote::*;
 use session::*;
 use settings::*;
 use state::*;
@@ -145,6 +147,7 @@ pub fn run() {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
             spawn_pi_supervisor(app.handle().clone());
+            spawn_remote_supervisor(app.handle().clone());
             spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
         })
@@ -154,6 +157,20 @@ pub fn run() {
             write_appearance,
             set_active_repo,
             remove_repo,
+            remote_hosts,
+            remote_add_host,
+            remote_ssh_aliases,
+            remote_describe_destination,
+            remote_discard_host,
+            remote_sharing,
+            remote_set_sharing,
+            remote_connect,
+            remote_disconnect,
+            remote_list_dir,
+            remote_classify,
+            remote_init,
+            remote_add_repo,
+            remove_remote_repo_keep_running,
             pick_repo_dialog,
             classify_picked_folder,
             init_picked_folder,
@@ -331,6 +348,7 @@ pub fn run() {
             start_mcp_server,
             stop_mcp_server,
             pick_backup_destination_dialog,
+            check_backup_destination,
             backup_now,
             backup_busy,
             list_backups,

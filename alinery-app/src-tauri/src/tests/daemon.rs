@@ -210,7 +210,7 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let (production_requests, production) = recording_lane(production_path.clone(), 7);
     let (current_requests, current) = recording_lane(current_path.clone(), 2);
 
-    let live_sessions = crate::repo_live_sessions(repo.display().to_string());
+    let live_sessions = crate::live_sessions_in(&AppState::default(), &repo.display().to_string());
     let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
     assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
     let state = AppState::default();
@@ -1541,9 +1541,7 @@ impl TakeoverPeer {
             .unwrap();
         let mut peer = Self { child, root, lane: lane.into() };
         let until = Instant::now() + Duration::from_secs(5);
-        let client = DaemonClient {
-            socket_path: alinery_core::alineryd_socket_path(repo, Some(lane)),
-        };
+        let client = DaemonClient::connect_path(alinery_core::alineryd_socket_path(repo, Some(lane))).unwrap();
         while client.version_checked().is_err() {
             assert!(peer.child.try_wait().unwrap().is_none());
             assert!(Instant::now() < until, "legacy peer did not become queryable");
@@ -1724,11 +1722,10 @@ fn refused_shutdown_consumes_consent_without_attaching_replacement() {
     assert_eq!(peer.shutdowns(), 1);
     assert!(state.daemon_for(&repo.0).is_none());
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
-    assert!(DaemonClient {
-        socket_path: alinery_core::alineryd_socket_path(&repo.0, Some("old"))
-    }
-    .version_checked()
-    .is_ok());
+    assert!(DaemonClient::connect_path(alinery_core::alineryd_socket_path(&repo.0, Some("old")))
+        .unwrap()
+        .version_checked()
+        .is_ok());
 }
 
 #[test]

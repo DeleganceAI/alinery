@@ -2354,6 +2354,15 @@ fn set_related_tasks_writes_tags_and_task_dir_symlinks() {
     fs::create_dir_all(crate::artifacts_dir(&other, "there")).unwrap();
     fs::write(crate::artifacts_dir(&other, "there").join("01.md"), "from-there").unwrap();
     write_task(
+        &other,
+        &Task {
+            name: "There".into(),
+            slug: "there".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    write_task(
         &repo,
         &Task {
             name: "Here".into(),
@@ -2451,7 +2460,7 @@ fn targeted_restore_changes_only_selected_repository() {
     let _ = fs::remove_dir_all(repo_b);
 }
 
-fn retained_duplicate_fixture(repo: &Path) -> Task {
+pub(super) fn retained_duplicate_fixture(repo: &Path) -> Task {
     let source = include_str!("../../playbooks/one-shot/playbook.md");
     let reference = alinery_core::playbook::PlaybookRef {
         scope: alinery_core::playbook::PlaybookScope::Repo,

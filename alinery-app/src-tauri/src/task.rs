@@ -1,34 +1,13 @@
 //! task: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-use alinery_core::task_creation::{
-    unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, TaskPlaybookPackage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES,
-};
-pub(crate) use alinery_core::{write_task_unlocked, Task};
+use alinery_core::task_creation::{unique_attachment_name, CreateTaskReply, CreateTaskRequest, TaskAttachment, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};
+pub(crate) use alinery_core::Task;
 use std::io::Read;
 
-#[derive(Serialize, Clone)]
-pub(crate) struct BoardPlaybookStep {
-    pub(crate) key: String,
-    pub(crate) title: String,
-}
-
-#[derive(Serialize, Clone)]
-pub(crate) struct BoardTask {
-    #[serde(flatten)]
-    pub(crate) task: Task,
-    pub(crate) repo_path: String,
-    pub(crate) session_count: usize,
-    pub(crate) playbook_title: String,
-    pub(crate) playbook_steps: Vec<BoardPlaybookStep>,
-    pub(crate) updated: u64,
-    pub(crate) current_phase: String,
-    pub(crate) current_step_title: String,
-    pub(crate) latest_session_title: String,
-    pub(crate) latest_session_column_key: String,
-    pub(crate) current_column_key: String,
-    pub(crate) current_column_title: String,
-}
+// The board projection lives in alinery-core so a remote host computes the same rows.
+pub(crate) use alinery_core::board::list_tasks_checked as list_tasks_for_repo;
+pub(crate) use alinery_core::board::{board_tasks_from_loaded, BoardTask};
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -37,89 +16,31 @@ pub(crate) struct TaskActivityRef {
     pub(crate) task_slug: String,
 }
 
-#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskActivitySession {
-    pub(crate) id: String,
-    pub(crate) worktree: String,
-    pub(crate) phase: String,
-    pub(crate) harness: String,
-    pub(crate) model: String,
-    pub(crate) playbook: String,
-    pub(crate) generic: bool,
-    pub(crate) step_title: String,
-}
+#[cfg(test)]
+pub(crate) use alinery_core::task_activity::TaskActivityStatus;
+pub(crate) use alinery_core::task_activity::{task_activity_key, TaskActivitySummary};
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TaskActivityStatus {
-    Running,
-    WaitingForInput,
-    WaitingForApproval,
-    Failed,
-    Completed,
-}
+pub(crate) use alinery_core::board::read_task_checked as read_task;
+#[cfg(test)]
+pub(crate) use alinery_core::task_drafts::{branch_ref_conflicts, slugify, DraftImage};
+pub(crate) use alinery_core::task_drafts::{delete_draft_in, read_draft_attachments_in, write_draft_in_with_slug, DraftAttachments};
 
-#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskActivitySummary {
-    pub(crate) status: Option<TaskActivityStatus>,
-    pub(crate) active_session: Option<TaskActivitySession>,
-}
-
-pub(crate) fn task_activity_key(repo_path: &str, slug: &str) -> String {
-    format!("{repo_path}:{slug}")
-}
-
-pub(crate) fn branch_ref_conflicts(repo: &Path, candidate: &str) -> bool {
-    let Ok(out) = git_cmd(repo).args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads"]).output() else {
-        return false;
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .any(|existing| alinery_core::branch_names_conflict(existing, candidate))
-}
-
-// Dedupe so dir, branch, and worktree path are all unique (-2, -3, …). `git
-// worktree add -b` fails if the branch OR path already exists — check all three.
-pub(crate) fn unique_slug(repo: &Path, base: &str) -> String {
-    unique_slug_except(repo, base, "")
-}
-
-pub(crate) fn unique_slug_except(repo: &Path, base: &str, except: &str) -> String {
-    let mut slug = base.to_string();
-    let mut n = 2;
-    while (task_dir(repo, &slug).exists() && slug != except) || worktrees_dir(repo).join(&slug).exists() || branch_ref_conflicts(repo, &slug) {
-        slug = format!("{base}-{n}");
-        n += 1;
-    }
-    slug
-}
-
-pub(crate) fn read_task(repo: &Path, slug: &str) -> Result<Task, String> {
-    let p = task_dir(repo, slug).join("task.md");
-    let s = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    toml::from_str(&s).map_err(|e| format!("parse {}: {e}", p.display()))
-}
-
-// Ok(None): task.md missing (deleted, or never existed) — a drop-in for today's `?? null`.
-// Err: task.md exists but will not parse — a real fault, not "no task." Neither existing
-// read_task has this split (task.rs:133 errors on both; alinery-core/src/task.rs:25 returns
-// None for both), so this needs its own thin body rather than reuse of either.
-pub(crate) fn read_task_opt(repo: &Path, slug: &str) -> Result<Option<Task>, String> {
-    let p = task_dir(repo, slug).join("task.md");
-    match fs::read_to_string(&p) {
-        Ok(s) => toml::from_str(&s).map(Some).map_err(|e| format!("parse {}: {e}", p.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("read {}: {e}", p.display())),
-    }
-}
+#[cfg(test)]
+pub(crate) use alinery_core::attachments::MAX_CHAT_IMAGE_BYTES;
+pub(crate) use alinery_core::attachments::{
+    attachment_dir_bytes, read_attachment_image as read_attachment_image_in, read_chat_image as read_chat_image_in, write_chat_attachment_bytes as write_chat_attachment_bytes_in,
+    ChatImage,
+};
+pub(crate) use alinery_core::board::read_task_opt;
+pub(crate) use alinery_core::task::{set_auto_approve_all_in, set_related_tasks_in};
+pub(crate) use alinery_core::task_creation::duplicate_task_package;
 
 #[tauri::command]
-pub(crate) async fn get_task(app: AppHandle, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
-    read_task_opt(&repo, &slug)
+pub(crate) async fn get_task(app: AppHandle, state: State<'_, AppState>, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::GetTask { repo: path.into(), slug }),
+        RepoRef::Local(repo) => read_task_opt(&repo, &slug),
+    }
 }
 
 // M0: prove one JS -> Rust -> JS command round-trip.
@@ -130,8 +51,7 @@ pub(crate) fn ping(name: &str) -> String {
 
 #[tauri::command]
 pub(crate) async fn create_task(state: State<'_, AppState>, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
-    let repo = require_owned_active_repo(&state)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    let daemon = repo_client(&state, &active_repo_ref()?)?;
     tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
         .await
         .map_err(|error| format!("create task: {error}"))?
@@ -139,9 +59,7 @@ pub(crate) async fn create_task(state: State<'_, AppState>, request: CreateTaskR
 
 #[tauri::command]
 pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, request: CreateTaskRequest) -> Result<CreateTaskReply, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    let daemon = repo_client(&state, &target_repo_ref_for_app(&app, &repo_path)?)?;
     tauri::async_runtime::spawn_blocking(move || daemon.create_task(&request))
         .await
         .map_err(|error| format!("create task: {error}"))?
@@ -149,110 +67,37 @@ pub(crate) async fn create_task_for_repo(app: AppHandle, state: State<'_, AppSta
 
 #[tauri::command]
 pub(crate) fn rename_task<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, repo_path: String, task_slug: String, name: String) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::rename_task(&repo, &task_slug, &name)
+    match target_repo_ref_for_app(&app, &repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::RenameTask {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+            },
+        ),
+        RepoRef::Local(repo) => {
+            require_repo_owned(&state, &repo)?;
+            alinery_core::rename_task(&repo, &task_slug, &name)
+        }
+    }
 }
 
 #[tauri::command]
 pub(crate) async fn duplicate_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, source_slug: String) -> Result<CreateTaskReply, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
-    tauri::async_runtime::spawn_blocking(move || daemon.create_task(&duplicate_task_package(&repo, &source_slug)?))
-        .await
-        .map_err(|error| format!("duplicate task: {error}"))?
-}
-
-pub(crate) fn duplicate_task_package(repo: &Path, source_slug: &str) -> Result<CreateTaskRequest, String> {
-    let source_slug = alinery_core::safe_component(source_slug).ok_or("invalid source slug")?;
-    let source = read_task(repo, source_slug)?;
-    if source.draft {
-        return Err("draft tasks cannot be duplicated".into());
-    }
-    if source.engine_version < 2 {
-        return Err("pre-v2 task data cannot be duplicated into executable work".into());
-    }
-    let state = alinery_core::execution::read_execution_state(repo, source_slug)?;
-    let source_definition = fs::read_to_string(alinery_core::execution::task_playbook_path(repo, source_slug)?).map_err(|error| error.to_string())?;
-    if alinery_core::execution::definition_identity(source_definition.as_bytes()) != state.definition_identity {
-        return Err("retained task definition integrity mismatch".into());
-    }
-    let dir = alinery_core::attachments_dir(repo, source_slug);
-    let original_ticket = fs::read_to_string(artifact_file_path(repo, source_slug, "00-ticket.md")?).map_err(|error| error.to_string())?;
-    let mut attachments = Vec::new();
-    match fs::symlink_metadata(&dir) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err("source attachments are not a directory".into());
-            }
-            for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
-                let entry = entry.map_err(|error| error.to_string())?;
-                let name = entry.file_name().into_string().map_err(|_| "invalid attachment name")?;
-                let name = alinery_core::safe_component(&name).ok_or("invalid attachment name")?.to_string();
-                let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err(format!("attachment '{name}' is not a regular file"));
-                }
-                attachments.push(TaskAttachment {
-                    name,
-                    bytes: fs::read(entry.path()).map_err(|error| error.to_string())?,
-                });
-            }
-        }
-    }
-    attachments.sort_by(|left, right| left.name.cmp(&right.name));
-    let generation = source
-        .name
-        .trim_end()
-        .rsplit_once(" D+")
-        .and_then(|(base, number)| number.parse::<u64>().ok().filter(|number| *number > 0).map(|number| (base, number)));
-    let name = match generation.and_then(|(base, number)| number.checked_add(1).map(|next| (base, next))) {
-        Some((base, next)) => format!("{base} D+{next}"),
-        None => format!("{} D+1", source.name.trim_end()),
-    };
-    let identity_base = |value: &str| -> String {
-        if generation.is_some() {
-            if let Some((base, number)) = value.rsplit_once('-') {
-                if number.parse::<u64>().is_ok() {
-                    return base.to_string();
-                }
-            }
-        }
-        value.to_string()
-    };
-    let requested_slug = identity_base(&source.slug);
-    let branch_name = identity_base(&source.branch);
-    let worktree_name = Path::new(&source.worktree).file_name().and_then(|name| name.to_str()).map(identity_base);
-    Ok(CreateTaskRequest {
-        name,
-        draft_slug: None,
-        requested_slug: Some(requested_slug),
-        description: String::new(),
-        evidence: String::new(),
-        original_ticket: Some(original_ticket),
-        attachments,
-        attachment_urls: Vec::new(),
-        attachment_errors: Vec::new(),
-        linear_id: source.linear_id,
-        github_issue: source.github_issue,
-        related_tasks: source.related_tasks,
-        parent_task: String::new(),
-        playbook: TaskPlaybookPackage {
-            reference: state.reference,
-            source: source_definition,
-        },
-        branch_name: Some(branch_name),
-        worktree_name,
-        base_ref: None,
-        launch_defaults: source.launch_defaults,
-        auto_advance_steps: Some(source.auto_advance),
-        max_live_sessions: Some(source.max_live_sessions),
-        step_models: source.step_models,
-        start: true,
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = repo_client(&state, &target)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // A remote task's files are read on its host; the copy itself is created by the host's daemon.
+        let package = match target {
+            RepoRef::Local(repo) => duplicate_task_package(&repo, &source_slug)?,
+            RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::DuplicateTaskPackage { repo: path.into(), source_slug })?,
+        };
+        daemon.create_task(&package)
     })
+    .await
+    .map_err(|error| format!("duplicate task: {error}"))?
 }
 
 #[derive(Serialize, Default)]
@@ -332,20 +177,6 @@ pub(crate) async fn prepare_task_attachments(entries: Vec<String>) -> PreparedTa
         })
 }
 
-pub(crate) const MAX_CHAT_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-
-fn attachment_dir_bytes(dir: &Path) -> u64 {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| entry.metadata().ok())
-        .filter(|meta| meta.is_file())
-        .map(|meta| meta.len())
-        .sum()
-}
-
 // Infallible by construction: a bad attachment is data, never control flow. Runs strictly after
 // the git block so it can never reach a rollback_task_dir call site.
 pub(crate) fn copy_task_attachments(repo: &Path, slug: &str, entries: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
@@ -422,23 +253,6 @@ pub(crate) struct CopyChatAttachmentsResult {
     pub(crate) failures: Vec<String>,
 }
 
-#[derive(Serialize)]
-pub(crate) struct ChatImage {
-    pub(crate) mime_type: String,
-    pub(crate) data: String,
-}
-
-fn chat_image_mime(name: &str) -> Result<String, String> {
-    let ext = Path::new(name).extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase());
-    match ext.as_deref() {
-        Some("png") => Ok("image/png".into()),
-        Some("jpg") | Some("jpeg") => Ok("image/jpeg".into()),
-        Some("gif") => Ok("image/gif".into()),
-        Some("webp") => Ok("image/webp".into()),
-        _ => Err(format!("{name} — not a chat image")),
-    }
-}
-
 #[tauri::command]
 pub(crate) fn chat_file_stat(path: String) -> Result<ChatFileStat, String> {
     let path = Path::new(&path);
@@ -461,237 +275,146 @@ pub(crate) fn copy_chat_attachments_in(repo: &Path, task_slug: &str, paths: &[St
 }
 
 #[tauri::command]
-pub(crate) fn copy_chat_attachments(task_slug: String, paths: Vec<String>) -> Result<CopyChatAttachmentsResult, String> {
-    copy_chat_attachments_in(&active_repo()?, &task_slug, &paths)
+pub(crate) fn copy_chat_attachments(state: State<'_, AppState>, task_slug: String, paths: Vec<String>) -> Result<CopyChatAttachmentsResult, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => copy_chat_attachments_in(&repo, &task_slug, &paths),
+        RepoRef::Remote { host_id, path } => copy_files_to_remote_attachments(&state, &host_id, &path, &task_slug, &paths),
+    }
 }
 
-pub(crate) fn write_chat_attachment_bytes_in(repo: &Path, task_slug: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let slug = alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
-    write_attachment_bytes_into(&alinery_core::attachments_dir(repo, slug), file_name, bytes)
+/// Send files from this machine to a remote task's attachments, one at a time. The same per-file
+/// checks as a local copy run here; the host enforces the set limit and picks unique names.
+pub(crate) fn copy_files_to_remote_attachments(state: &AppState, host_id: &str, repo: &str, task_slug: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {
+    alinery_core::safe_component(task_slug).ok_or("invalid task slug")?;
+    Ok(send_files_to_host(paths, |file_name, data| {
+        remote_call::<String>(
+            state,
+            host_id,
+            RepoOp::WriteAttachment {
+                repo: repo.into(),
+                slug: task_slug.to_string(),
+                file_name,
+                data,
+            },
+        )
+    }))
 }
 
-pub(crate) fn write_attachment_bytes_into(dir: &Path, file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let base = alinery_core::safe_component(file_name).ok_or_else(|| format!("invalid attachment name: {file_name}"))?;
-    let len = bytes.len() as u64;
-    if len > MAX_ATTACHMENT_BYTES {
-        return Err(format!("{file_name} — larger than 25 MB"));
+/// The per-file half of a copy to a host: read and check each local file, hand its bytes to `send`
+/// (which returns the name the host stored it under), and collect what was copied and what failed.
+pub(crate) fn send_files_to_host(paths: &[String], mut send: impl FnMut(String, Vec<u8>) -> Result<String, String>) -> CopyChatAttachmentsResult {
+    let (mut copied, mut failures) = (vec![], vec![]);
+    for entry in paths
+        .iter()
+        .map(|entry| entry.trim())
+        .filter(|entry| !entry.is_empty() && !entry.starts_with("http://") && !entry.starts_with("https://"))
+    {
+        let src = Path::new(entry);
+        let loaded = (|| -> Result<(String, Vec<u8>), String> {
+            let meta = fs::metadata(src).map_err(|e| e.to_string())?;
+            if !meta.is_file() {
+                return Err("not a regular file".into());
+            }
+            if meta.len() > MAX_ATTACHMENT_BYTES {
+                return Err("larger than 25 MB".into());
+            }
+            let base = src
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(alinery_core::safe_component)
+                .ok_or("unusable file name")?;
+            Ok((base.to_string(), fs::read(src).map_err(|e| e.to_string())?))
+        })();
+        match loaded.and_then(|(file_name, data)| send(file_name, data)) {
+            Ok(name) => copied.push(name),
+            Err(error) => failures.push(format!("{entry} — {error}")),
+        }
     }
-    let batch_bytes = attachment_dir_bytes(dir);
-    if batch_bytes + len > MAX_ATTACHMENT_SET_BYTES {
-        return Err(format!("{file_name} — attachment set would exceed 100 MB"));
-    }
-    fs::create_dir_all(dir).map_err(|e| format!("{file_name} — {e}"))?;
-    let Some(target) = unique_attachment_name(dir, base) else {
-        return Err(format!("{file_name} — too many name collisions"));
-    };
-    fs::write(dir.join(&target), bytes).map_err(|e| format!("{file_name} — {e}"))?;
-    Ok(target)
+    CopyChatAttachmentsResult { copied, failures }
 }
 
 #[tauri::command]
-pub(crate) fn write_chat_attachment_bytes(app: AppHandle, task_slug: String, file_name: String, bytes: Vec<u8>, repo_path: Option<String>) -> Result<String, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
-    write_chat_attachment_bytes_in(&repo, &task_slug, &file_name, &bytes)
+pub(crate) fn write_chat_attachment_bytes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+    file_name: String,
+    bytes: Vec<u8>,
+    repo_path: Option<String>,
+) -> Result<String, String> {
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Local(repo) => write_chat_attachment_bytes_in(&repo, &task_slug, &file_name, &bytes),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::WriteAttachment {
+                repo: path.into(),
+                slug: task_slug,
+                file_name,
+                data: bytes,
+            },
+        ),
+    }
 }
 
-pub(crate) fn read_chat_image_file(path: &Path, name: &str) -> Result<ChatImage, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("{name} — {e}"))?;
-    if meta.len() > MAX_CHAT_IMAGE_BYTES {
-        return Err(format!("{name} — larger than 5 MB"));
+#[tauri::command]
+pub(crate) fn read_chat_image(state: State<'_, AppState>, task_slug: String, name: String) -> Result<ChatImage, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => read_chat_image_in(&repo, &task_slug, &name),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &state,
+            &host_id,
+            RepoOp::ReadChatImage {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+            },
+        ),
     }
-    let mime_type = chat_image_mime(name)?;
-    let bytes = fs::read(path).map_err(|e| format!("{name} — {e}"))?;
-    Ok(ChatImage {
-        mime_type,
-        data: alinery_core::rpc_chunk::encode_base64(&bytes),
+}
+
+#[tauri::command]
+pub(crate) async fn read_attachment_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+    name: String,
+    node_id: Option<String>,
+) -> Result<tauri::ipc::Response, String> {
+    let target = require_active_target(&state)?;
+    tauri::async_runtime::spawn_blocking(move || match target {
+        ActiveRepo::Local(repo) => read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()),
+        ActiveRepo::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireBytes>(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::ReadAttachmentImage {
+                repo: path.into(),
+                slug: task_slug,
+                name,
+                node_id,
+            },
+        )
+        .map(|wire| wire.data),
     })
-}
-
-pub(crate) fn read_chat_image_in(repo: &Path, task_slug: &str, name: &str) -> Result<ChatImage, String> {
-    let path = attachment_path_in(repo, task_slug, name)?;
-    read_chat_image_file(Path::new(&path), name)
-}
-
-#[tauri::command]
-pub(crate) fn read_chat_image(task_slug: String, name: String) -> Result<ChatImage, String> {
-    read_chat_image_in(&active_repo()?, &task_slug, &name)
-}
-
-pub(crate) fn read_attachment_image_in(repo: &Path, task_slug: &str, name: &str, node_id: Option<&str>) -> Result<Vec<u8>, String> {
-    let path = match node_id {
-        Some(id) => artifact_node_path_for(repo, task_slug, id)?,
-        None => attachment_path_in(repo, task_slug, name)?,
-    };
-    let path = Path::new(&path);
-    let name = path.file_name().and_then(|name| name.to_str()).ok_or("invalid image name")?;
-    chat_image_mime(name)?;
-    let file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
-        return Err("Image must be a regular file no larger than 25 MB".into());
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_ATTACHMENT_BYTES + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-        return Err("Image is larger than 25 MB".into());
-    }
-    Ok(bytes)
-}
-
-#[tauri::command]
-pub(crate) async fn read_attachment_image(state: State<'_, AppState>, task_slug: String, name: String, node_id: Option<String>) -> Result<tauri::ipc::Response, String> {
-    let repo = require_owned_active_repo(&state)?;
-    tauri::async_runtime::spawn_blocking(move || read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()).map(tauri::ipc::Response::new))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-// Archived drafts require explicit restore. Autosave and create must treat their slugs as occupied.
-fn is_reusable_draft(task: &Task) -> bool {
-    task.draft && !task.archived
-}
-
-pub(crate) fn latest_draft_slug_with_name(repo: &Path, name: &str) -> Option<String> {
-    let mut best: Option<(u64, String)> = None;
-    let entries = fs::read_dir(tasks_dir(repo)).ok()?;
-    for entry in entries.flatten() {
-        if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let slug = entry.file_name().to_string_lossy().to_string();
-        let Ok(task) = read_task(repo, &slug) else {
-            continue;
-        };
-        if !is_reusable_draft(&task) || task.name != name {
-            continue;
-        }
-        if best
-            .as_ref()
-            .map(|(created, best_slug)| task.created > *created || (task.created == *created && slug > *best_slug))
-            .unwrap_or(true)
-        {
-            best = Some((task.created, slug));
-        }
-    }
-    best.map(|(_, slug)| slug)
-}
-
-pub(crate) fn draft_slug_for_name(repo: &Path, base: &str, name: &str) -> String {
-    match read_task(repo, base) {
-        Ok(t) if is_reusable_draft(&t) => base.to_string(),
-        Ok(_) => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| unique_slug(repo, base)),
-        Err(_) if task_dir(repo, base).exists() => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| unique_slug(repo, base)),
-        Err(_) => latest_draft_slug_with_name(repo, name).unwrap_or_else(|| base.to_string()),
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DraftAttachments {
-    pub(crate) entries: Vec<String>,
-    pub(crate) images: Vec<DraftImage>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct DraftImage {
-    pub(crate) name: String,
-    #[serde(with = "alinery_core::rpc_chunk::base64_bytes")]
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) mime_type: String,
-}
-
-fn validate_draft_attachments(attachments: &DraftAttachments) -> Result<(), String> {
-    let mut total = 0;
-    for image in &attachments.images {
-        alinery_core::safe_component(&image.name).ok_or_else(|| format!("invalid attachment name: {}", image.name))?;
-        let len = image.bytes.len() as u64;
-        if len > MAX_ATTACHMENT_BYTES {
-            return Err(format!("{} — larger than 25 MB", image.name));
-        }
-        if len > MAX_ATTACHMENT_SET_BYTES - total {
-            return Err("attachment set would exceed 100 MB".into());
-        }
-        total += len;
-    }
-    Ok(())
-}
-
-pub(crate) fn read_draft_attachments_in(repo: &Path, slug: &str) -> Result<DraftAttachments, String> {
-    let slug = alinery_core::safe_component(slug).ok_or("invalid draft slug")?;
-    read_task(repo, slug)?;
-    let path = task_dir(repo, slug).join("draft-attachments.json");
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(DraftAttachments::default()),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-    let attachments = serde_json::from_slice(&bytes).map_err(|error| format!("read {}: {error}", path.display()))?;
-    validate_draft_attachments(&attachments)?;
-    Ok(attachments)
+    .await
+    .map_err(|error| error.to_string())?
+    .map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]
 pub(crate) async fn read_draft_attachments_for_repo(app: AppHandle, repo_path: String, slug: String) -> Result<DraftAttachments, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || read_draft_attachments_in(&repo, &slug))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-pub(crate) fn write_draft_in_with_slug(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
-    name: String,
-    description: String,
-    evidence: String,
-    linear_id: String,
-    github_issue: String,
-    playbook: alinery_core::playbook::PlaybookRef,
-    harness: String,
-    model: String,
-    auto_advance: Option<Vec<String>>,
-    step_models: Option<std::collections::BTreeMap<String, String>>,
-    max_live_sessions: u32,
-    branch_name: String,
-    worktree_name: String,
-    draft_base_ref: Option<String>,
-    draft_attachments: Option<DraftAttachments>,
-) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock_waiting(repo, "write draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        write_draft_in_with_slug_unlocked(
-            repo,
-            app_config,
-            draft_slug,
-            task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read draft attachments", move || match target {
+        RepoRef::Local(repo) => read_draft_attachments_in(&repo, &slug),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::ReadDraftAttachments { repo: path.into(), slug }),
     })
+    .await
 }
 
-fn write_draft_in_with_slug_unlocked(
-    repo: &Path,
-    app_config: Option<&Path>,
-    draft_slug: &str,
-    task_slug: &str,
+/// Everything a draft save carries, so the active-repo and explicit-repo commands share one body.
+struct DraftArgs {
     name: String,
+    task_slug: String,
     description: String,
     evidence: String,
     linear_id: String,
@@ -704,122 +427,63 @@ fn write_draft_in_with_slug_unlocked(
     max_live_sessions: u32,
     branch_name: String,
     worktree_name: String,
+    draft_slug: String,
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
-) -> Result<Task, String> {
-    if max_live_sessions == 0 {
-        return Err("maximum live sessions must be positive".into());
-    }
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("task name is empty".into());
-    }
-    let base = slugify(&name);
-    if base.is_empty() {
-        return Err("task name is empty".into());
-    }
-    let requested_draft = draft_slug.trim();
-    let slug = if requested_draft.is_empty() {
-        draft_slug_for_name(repo, &base, &name)
-    } else {
-        let requested_draft = alinery_core::safe_component(requested_draft).ok_or_else(|| "invalid draft slug".to_string())?;
-        match read_task(repo, requested_draft) {
-            Ok(t) if is_reusable_draft(&t) => requested_draft.to_string(),
-            Ok(_) => return Err("draft is archived or has already been promoted".into()),
-            Err(error) => return Err(error),
-        }
-    };
+}
 
-    if let Some(attachments) = &draft_attachments {
-        validate_draft_attachments(attachments)?;
-    }
-    fs::create_dir_all(tasks_dir(repo)).map_err(|e| e.to_string())?;
-    fs::create_dir_all(task_dir(repo, &slug)).map_err(|e| e.to_string())?;
-
-    let previous = read_task(repo, &slug).ok();
-    let requested_slug = if task_slug.trim().is_empty() {
-        previous
-            .as_ref()
-            .map(|task| task.requested_slug.clone())
-            .filter(|slug| !slug.is_empty())
-            .unwrap_or_else(|| slugify(&name))
-    } else {
-        let normalized = slugify(task_slug.trim());
-        if normalized != task_slug.trim() {
-            return Err("task slug must use lowercase letters, numbers, and single dashes".into());
-        }
-        normalized
-    };
-    let created = previous.as_ref().map(|t| t.created).unwrap_or_else(now_secs);
-    let branch = branch_name.trim().to_string();
-    let worktree = worktree_name.trim().to_string();
-    let task = Task {
-        name: name.clone(),
-        slug: slug.clone(),
-        requested_slug,
-        branch,
-        worktree,
-        has_worktree: true,
-        created,
-        archived: false,
-        pr_url: String::new(),
-        linear_id: linear_id.trim().to_string(),
-        github_issue: github_issue.trim().to_string(),
-        playbook: String::new(),
-        playbook_ref: Some(playbook.clone()),
-        engine_version: 0,
-        max_live_sessions,
-        launch_defaults: alinery_core::execution::LaunchChoices { harness, model },
-        auto_advance: auto_advance.unwrap_or_default(),
-        auto_approve_all: false,
-        step_models: step_models
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|(key, value)| {
-                let trimmed = value.trim();
-                (!trimmed.is_empty()).then(|| (key, trimmed.to_string()))
-            })
-            .collect(),
-        draft: true,
-        draft_base_ref,
-        parent_task: String::new(),
-        active_subtask: String::new(),
-        subtask_outcome: String::new(),
-        related_tasks: Vec::new(),
-        telemetry_id: previous
-            .as_ref()
-            .map(|task| task.telemetry_id.clone())
-            .filter(|id| !id.is_empty())
-            .unwrap_or_else(alinery_core::new_telemetry_id),
-    };
-    write_task_unlocked(repo, &task)?;
-    if previous.is_none() {
-        if let Some(path) = app_config {
-            emit_at(
-                path,
-                alinery_core::TelemetryEvent::TaskDraftCreate {
-                    source: alinery_core::TelemetrySource::App,
-                    has_worktree: true,
-                    playbook: playbook.key,
-                    task_id: task.telemetry_id.clone(),
-                },
-            );
-        }
-    }
-
-    let ticket = alinery_core::compose_ticket(&name, &description, &evidence, &[], &[], &[]);
-    if !ticket.is_empty() {
-        fs::create_dir_all(artifacts_dir(repo, &slug)).map_err(|e| e.to_string())?;
-        let path = artifacts_dir(repo, &slug).join("00-ticket.md");
-        if fs::read_to_string(&path).ok().as_deref() != Some(ticket.as_str()) {
-            write_bytes_atomic(&path, ticket.as_bytes())?;
-        }
-    }
-    if let Some(attachments) = draft_attachments {
-        let bytes = serde_json::to_vec(&attachments).map_err(|error| error.to_string())?;
-        write_bytes_atomic(&task_dir(repo, &slug).join("draft-attachments.json"), &bytes)?;
-    }
-    Ok(task)
+/// Save a draft where its repo lives: in place for a local repo, in the host's files for a remote one
+/// (telemetry about the draft stays on this machine's side, so a remote save records none).
+async fn save_draft(app: AppHandle, target: RepoRef, args: DraftArgs) -> Result<Task, String> {
+    let app_config = app_config_path(&app)?;
+    off_main_thread("write draft", move || match target {
+        RepoRef::Local(repo) => write_draft_in_with_slug(
+            &repo,
+            Some(&app_config),
+            &args.draft_slug,
+            &args.task_slug,
+            args.name,
+            args.description,
+            args.evidence,
+            args.linear_id,
+            args.github_issue,
+            args.playbook,
+            args.harness,
+            args.model,
+            args.auto_advance,
+            args.step_models,
+            args.max_live_sessions,
+            args.branch_name,
+            args.worktree_name,
+            args.draft_base_ref,
+            args.draft_attachments,
+        ),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::WriteDraft {
+                repo: path.into(),
+                draft_slug: args.draft_slug,
+                task_slug: args.task_slug,
+                name: args.name,
+                description: args.description,
+                evidence: args.evidence,
+                linear_id: args.linear_id,
+                github_issue: args.github_issue,
+                playbook: args.playbook,
+                harness: args.harness,
+                model: args.model,
+                auto_advance: args.auto_advance,
+                step_models: args.step_models,
+                max_live_sessions: args.max_live_sessions,
+                branch_name: args.branch_name,
+                worktree_name: args.worktree_name,
+                draft_base_ref: args.draft_base_ref,
+                draft_attachments: args.draft_attachments,
+            },
+        ),
+    })
+    .await
 }
 
 #[tauri::command]
@@ -844,33 +508,27 @@ pub(crate) async fn write_draft(
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
-    let repo = require_owned_active_repo(&state)?;
-    let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        write_draft_in_with_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    let target = owned_active_target(&state)?;
+    let args = DraftArgs {
+        name,
+        task_slug,
+        description,
+        evidence,
+        linear_id,
+        github_issue,
+        playbook,
+        harness,
+        model,
+        auto_advance,
+        step_models,
+        max_live_sessions,
+        branch_name,
+        worktree_name,
+        draft_slug,
+        draft_base_ref,
+        draft_attachments,
+    };
+    save_draft(app, target, args).await
 }
 
 #[tauri::command]
@@ -896,210 +554,56 @@ pub(crate) async fn write_draft_for_repo(
     draft_base_ref: Option<String>,
     draft_attachments: Option<DraftAttachments>,
 ) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let target = owned_target(&app, &state, &repo_path)?;
+    let args = DraftArgs {
+        name,
+        task_slug,
+        description,
+        evidence,
+        linear_id,
+        github_issue,
+        playbook,
+        harness,
+        model,
+        auto_advance,
+        step_models,
+        max_live_sessions,
+        branch_name,
+        worktree_name,
+        draft_slug,
+        draft_base_ref,
+        draft_attachments,
+    };
+    save_draft(app, target, args).await
+}
+
+async fn delete_draft_at(app: AppHandle, target: RepoRef, slug: String) -> Result<(), String> {
     let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        write_draft_in_with_slug(
-            &repo,
-            Some(&app_config),
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )
+    off_main_thread("delete draft", move || match target {
+        RepoRef::Local(repo) => delete_draft_in(&repo, Some(&app_config), &slug),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::DeleteDraft { repo: path.into(), slug }),
     })
     .await
-    .map_err(|error| error.to_string())?
-}
-
-// M6: remove a draft task directory entirely (archive is insufficient — leaves task.md).
-pub(crate) fn delete_draft_in(repo: &Path, app_config: Option<&Path>, slug: &str) -> Result<(), String> {
-    // Eager on purpose: the read must happen before the directory is removed below, so this one
-    // cannot be deferred into the emit closure the way the other id lookups are.
-    let telemetry_id = alinery_core::telemetry_id_for_task(repo, slug);
-    alinery_core::with_task_mutation_lock_waiting(repo, "delete draft", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let task = read_task(repo, slug)?;
-        if !task.draft {
-            return Err("not a draft".into());
-        }
-        let dir = task_dir(repo, slug);
-        fs::remove_dir_all(&dir).map_err(|e| format!("remove draft {}: {e}", dir.display()))
-    })?;
-    if let Some(path) = app_config {
-        emit_at(
-            path,
-            alinery_core::TelemetryEvent::TaskDraftDelete {
-                source: alinery_core::TelemetrySource::App,
-                task_id: telemetry_id,
-            },
-        );
-    }
-    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn delete_draft(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    delete_draft_in(&repo, Some(&app_config_path(&app)?), &slug)
+pub(crate) async fn delete_draft(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
+    let target = owned_active_target(&state)?;
+    delete_draft_at(app, target, slug).await
 }
 
 #[tauri::command]
-pub(crate) fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    delete_draft_in(&repo, Some(&app_config_path(&app)?), &slug)
+pub(crate) async fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    delete_draft_at(app, target, slug).await
 }
-pub(crate) fn list_tasks_for_repo(repo: &Path) -> Result<Vec<Task>, String> {
-    let dir = tasks_dir(repo);
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut tasks = vec![];
-    for entry in fs::read_dir(&dir).map_err(|error| format!("read {}: {error}", dir.display()))? {
-        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
-        if !entry.path().join("task.md").exists() {
-            continue;
-        }
-        if let Some(slug) = entry.file_name().to_str() {
-            tasks.push(read_task(repo, slug).map_err(|error| format!("task {}: {error}", entry.path().display()))?);
-        }
-    }
-    tasks.sort_by_key(|t| t.created);
-    Ok(tasks)
-}
-
 // Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
 #[tauri::command]
-pub(crate) async fn list_tasks(app: AppHandle, repo_path: Option<String>) -> Result<Vec<Task>, String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => active_repo()?,
-    };
-    list_tasks_for_repo(&repo)
-}
-
-pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Option<alinery_core::playbook::NormalizedPlaybook>, String> {
-    if task.draft || task.engine_version < 2 {
-        return Ok(None);
+pub(crate) async fn list_tasks(app: AppHandle, state: State<'_, AppState>, repo_path: Option<String>) -> Result<Vec<Task>, String> {
+    match target_or_active_ref(&app, repo_path)? {
+        RepoRef::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::ListTasks { repo: path.into() }),
+        RepoRef::Local(repo) => list_tasks_for_repo(&repo),
     }
-    // Display uses the task-owned snapshot, never a live owner or the mutable library.
-    // The shared reader checks both the stored state and the retained source's integrity.
-    saved_task_execution_for(repo, &task.slug)
-        .map(|execution| Some(execution.definition))
-        .map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
-}
-
-pub(crate) fn is_primary_playbook_session(_repo: &Path, task: &Task, session: &SessionMeta) -> bool {
-    !session.generic
-        && if task.engine_version >= 2 {
-            !session.execution_id.is_empty()
-        } else {
-            session.playbook == task.playbook
-        }
-}
-
-pub(crate) fn task_updated_at(repo: &Path, task: &Task, sessions: &[SessionMeta]) -> Result<u64, String> {
-    let mut updated = task.created;
-    if let Some(ts) = file_mtime_secs(task_dir(repo, &task.slug).join("task.md")) {
-        updated = updated.max(ts);
-    }
-    for name in list_artifacts_for(repo, &task.slug)? {
-        if name.ends_with(".review-pending.json") {
-            continue;
-        }
-        if let Some(ts) = file_mtime_secs(artifacts_dir(repo, &task.slug).join(name)) {
-            updated = updated.max(ts);
-        }
-    }
-    // Session files are projections: polling, replay, and acknowledgments can rewrite
-    // them without work happening. Only durable semantic timestamps count as activity.
-    for session in sessions {
-        updated = updated.max(session.created);
-        for ts in [
-            session.started_at,
-            session.ended_at,
-            session.status_changed_at,
-            session.semantic.phase_completed_at,
-            session.activity_at,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            updated = updated.max(ts);
-        }
-    }
-    Ok(updated)
-}
-
-pub(crate) fn board_task(repo: &Path, repo_path: &str, task: Task) -> Result<BoardTask, String> {
-    let definition = retained_task_definition(repo, &task)?;
-    let sessions = list_sessions_for_repo(repo, &task.slug)?;
-    let live: Vec<&SessionMeta> = sessions.iter().filter(|session| !session.archived).collect();
-    let current_phase = live
-        .iter()
-        .rev()
-        .find(|session| is_primary_playbook_session(repo, &task, session))
-        .map(|session| session.phase.clone())
-        .unwrap_or_default();
-    let title = |phase: &str| {
-        definition
-            .as_ref()
-            .and_then(|definition| definition.step.iter().find(|step| step.key == phase))
-            .map(|step| step.title.clone())
-            .unwrap_or_else(|| phase.to_string())
-    };
-    let current_step_title = title(&current_phase);
-    let latest_session_title = if task.draft {
-        "Draft".into()
-    } else {
-        live.last()
-            .map(|session| if session.generic { "Generic".into() } else { title(&session.phase) })
-            .unwrap_or_else(|| "No sessions".into())
-    };
-    let updated = task_updated_at(repo, &task, &sessions)?;
-    let playbook_title = definition.as_ref().map(|definition| definition.title.clone()).unwrap_or_else(|| task.playbook.clone());
-    let playbook_steps = definition
-        .into_iter()
-        .flat_map(|definition| definition.step)
-        .map(|step| BoardPlaybookStep { key: step.key, title: step.title })
-        .collect();
-    Ok(BoardTask {
-        task,
-        repo_path: repo_path.into(),
-        session_count: live.len(),
-        playbook_title,
-        playbook_steps,
-        updated,
-        current_phase,
-        current_step_title,
-        latest_session_title,
-        latest_session_column_key: String::new(),
-        current_column_key: String::new(),
-        current_column_title: String::new(),
-    })
-}
-
-fn board_tasks_from_loaded(repo: &Path, repo_path: &str, tasks: Vec<Task>) -> Result<Vec<BoardTask>, String> {
-    alinery_core::validate_task_relationship_fields(
-        tasks
-            .iter()
-            .map(|task| (task.slug.as_str(), task.parent_task.as_str(), task.active_subtask.as_str(), task.archived)),
-    )?;
-    tasks.into_iter().map(|task| board_task(repo, repo_path, task)).collect()
 }
 
 #[cfg(test)]
@@ -1108,16 +612,23 @@ pub(crate) fn board_tasks_for_repo(repo: &Path, repo_path: &str) -> Result<Vec<B
 }
 
 #[tauri::command]
-pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<Vec<BoardTask>, String> {
-    let repos = if all_repos {
-        load_app_config(&app).known_repos
-    } else {
-        vec![active_repo()?.to_string_lossy().to_string()]
-    };
+pub(crate) async fn list_board_tasks(app: AppHandle, state: State<'_, AppState>, all_repos: bool) -> Result<Vec<BoardTask>, String> {
+    let repos = if all_repos { load_app_config(&app).known_repos } else { vec![active_repo_ref()?.uri()] };
     let mut out = vec![];
     for repo_path in dedupe_known_repos(repos) {
-        let repo = PathBuf::from(&repo_path);
-        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
+        match RepoRef::parse(&repo_path)? {
+            RepoRef::Local(repo) => out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?),
+            RepoRef::Remote { host_id, path } => match remote_call::<Vec<BoardTask>>(&state, &host_id, RepoOp::ListBoardTasks { repo: path.into() }) {
+                // The host answered with its own paths; the board addresses the repo by its key.
+                Ok(rows) => out.extend(rows.into_iter().map(|row| BoardTask {
+                    repo_path: repo_path.clone(),
+                    ..row
+                })),
+                // One unreachable host must not blank the other repos' boards.
+                Err(_) if all_repos => {}
+                Err(error) => return Err(error),
+            },
+        }
     }
     out.sort_by_key(|task| task.task.created);
     Ok(out)
@@ -1127,7 +638,10 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
 pub(crate) async fn list_task_activity(app: AppHandle, refs: Vec<TaskActivityRef>) -> HashMap<String, TaskActivitySummary> {
     let app_config = app_config_path(&app).ok();
     let app_config_identity = app_config.as_ref().map(|path| alinery_core::app_config_identity(path));
-    list_task_activity_for_refs(&refs, app_config_identity.as_deref())
+    // File reads plus a daemon query per repo (and ssh round trips for remote ones).
+    tauri::async_runtime::spawn_blocking(move || list_task_activity_for_all(&app.state::<AppState>(), refs, app_config_identity.as_deref()))
+        .await
+        .unwrap_or_default()
 }
 
 pub(crate) fn archive_task_in(repo: &Path, slug: &str) -> Result<(), String> {
@@ -1138,7 +652,21 @@ pub(crate) fn restore_task_in(repo: &Path, slug: &str) -> Result<(), String> {
     alinery_core::restore_task(repo, slug)
 }
 
-async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -> Result<(), String> {
+async fn archive_task_off_thread(app: &AppHandle, repo: RepoRef, slug: String) -> Result<(), String> {
+    let repo = match repo {
+        RepoRef::Local(repo) => repo,
+        // The host checks eligibility and flips the flag itself; its pre-archive backup is the
+        // host's, and the telemetry is about this machine's copy of a repo, which a remote one is not.
+        RepoRef::Remote { host_id, path } => {
+            let app = app.clone();
+            return tauri::async_runtime::spawn_blocking(move || {
+                publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PreArchive);
+                remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::ArchiveTask { repo: path.into(), slug })
+            })
+            .await
+            .map_err(|e| format!("archive task: {e}"))?;
+        }
+    };
     let result = tauri::async_runtime::spawn_blocking(move || {
         alinery_core::ensure_task_can_archive(&repo, &slug)?;
         Ok::<_, String>((repo, slug))
@@ -1164,108 +692,59 @@ async fn archive_task_off_thread(app: &AppHandle, repo: PathBuf, slug: String) -
 // Archive flips a flag; the worktree and branch are untouched (removal is M5).
 #[tauri::command]
 pub(crate) async fn archive_task(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
+    let repo = match active_repo_ref()? {
+        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
+        remote => remote,
+    };
     archive_task_off_thread(&app, repo, slug).await
 }
 
 #[tauri::command]
 pub(crate) async fn archive_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let repo = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(local) = &repo {
+        require_repo_owned(&state, local)?;
+    }
     archive_task_off_thread(&app, repo, slug).await
 }
 
 #[tauri::command]
 pub(crate) async fn restore_task_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let result = tauri::async_runtime::spawn_blocking(move || restore_task_in(&repo, &slug)).await;
+    let target = owned_target(&app, &state, &repo_path)?;
+    // The pre-archive backup has no restore counterpart, so a remote repo is just the file flip on the host.
+    let result = tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => restore_task_in(&repo, &slug),
+        RepoRef::Remote { host_id, path } => remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::RestoreTask { repo: path.into(), slug }),
+    })
+    .await;
     result.map_err(|e| format!("restore task: {e}"))?
 }
 
-pub(crate) fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<alinery_core::RelatedTaskRef>) -> Result<Task, String> {
-    let task = read_task(repo, &slug)?;
-    if task.archived {
-        return Err("task is archived — read-only".into());
-    }
-    let self_path = repo.to_string_lossy();
-    let mut cleaned: Vec<alinery_core::RelatedTaskRef> = Vec::new();
-    for mut tag in related {
-        tag.repo_path = tag.repo_path.trim().to_string();
-        tag.slug = tag.slug.trim().to_string();
-        tag.name = tag.name.trim().to_string();
-        if tag.repo_path.is_empty() || tag.slug.is_empty() {
-            return Err("related task is missing repo or slug".into());
-        }
-        if alinery_core::safe_component(&tag.slug) != Some(tag.slug.as_str()) {
-            return Err(format!("invalid related-task slug '{}'", tag.slug));
-        }
-        if tag.repo_path == self_path && tag.slug == slug {
-            return Err("cannot tag a task as related to itself".into());
-        }
-        if cleaned.iter().any(|existing| existing.repo_path == tag.repo_path && existing.slug == tag.slug) {
-            continue;
-        }
-        if tag.name.is_empty() {
-            if let Ok(other) = read_task(Path::new(&tag.repo_path), &tag.slug) {
-                tag.name = other.name;
-            }
-        }
-        cleaned.push(tag);
-    }
-    alinery_core::with_task_mutation_lock_waiting(repo, "set related tasks", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let mut task = read_task(repo, &slug)?;
-        if task.archived {
-            return Err("task is archived — read-only".into());
-        }
-        task.related_tasks = cleaned;
-        write_task_unlocked(repo, &task)?;
-        alinery_core::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
-        Ok(task)
-    })
-}
-
-pub(crate) fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
-    alinery_core::with_task_mutation_lock_waiting(repo, "set auto approve all", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
-        let mut task = read_task(repo, &slug)?;
-        if task.archived {
-            return Err("task is archived — read-only".into());
-        }
-        if task.draft {
-            return Err("draft tasks have no execution to override".into());
-        }
-        if task.engine_version < 2 {
-            return Err("pre-v2 tasks have no automatic completion to override".into());
-        }
-        // Completion reads execution.json, not task.md. Write the task first so a failed
-        // execution write leaves the engine off rather than approving while the file says off.
-        let mut state = alinery_core::execution::read_execution_state(repo, &slug)?;
-        task.auto_approve_all = enabled;
-        write_task_unlocked(repo, &task)?;
-        if state.auto_approve_all != enabled {
-            state.auto_approve_all = enabled;
-            alinery_core::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
-        }
-        Ok(task)
-    })
-}
-
 #[tauri::command]
-pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    set_auto_approve_all_in(&repo, slug, enabled)
+pub(crate) async fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, enabled: bool) -> Result<Task, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("set auto approve", move || match target {
+        RepoRef::Local(repo) => set_auto_approve_all_in(&repo, slug, enabled),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetAutoApproveAll { repo: path.into(), slug, enabled }),
+    })
+    .await
 }
 
+/// A task's related tasks are other tasks on the same machine: its files are linked, not copied. A
+/// remote task's tags are therefore paths on its host, and a tag that names a task this machine cannot
+/// read is refused where the files are.
 #[tauri::command]
-pub(crate) fn set_related_tasks_for_repo(
+pub(crate) async fn set_related_tasks_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
     slug: String,
     related: Vec<alinery_core::RelatedTaskRef>,
 ) -> Result<Task, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    set_related_tasks_in(&repo, slug, related)
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("set related tasks", move || match target {
+        RepoRef::Local(repo) => set_related_tasks_in(&repo, slug, related),
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetRelatedTasks { repo: path.into(), slug, related }),
+    })
+    .await
 }

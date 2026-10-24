@@ -65,6 +65,8 @@ pub(crate) struct AppState {
     // Never evict a mutex while a lifecycle waiter can retain its Arc.
     pub(crate) repo_lifecycles: Mutex<HashMap<PathBuf, std::sync::Arc<Mutex<()>>>>,
     pub(crate) prepared_takeovers: Mutex<HashMap<String, PreparedTakeover>>,
+    // Remote (SSH) hosts: connection phase, the ssh master and the repo-service channel.
+    pub(crate) remotes: RemoteManager,
 }
 
 /// Scope guard for `AppState::closing_repos` — teardown has several fallible steps and an
@@ -119,7 +121,8 @@ impl AppState {
     }
     /// The active repo's client — what every session command still routes through.
     pub(crate) fn daemon(&self) -> Option<DaemonClient> {
-        self.daemon_for(&active_repo().ok()?)
+        // Keyed by the stored repo key, so a remote active repo finds its forwarded client.
+        self.daemon_for(Path::new(&active_repo_ref().ok()?.uri()))
     }
     pub(crate) fn set_daemon(&self, repo: &Path, client: DaemonClient, compat: DaemonCompat, app_config_identity: String, host_guard_warning: bool) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(
@@ -195,6 +198,10 @@ impl AppState {
             return Ok(Some(RepoReservation::AlreadyOwned));
         }
 
+        // A remote repo's lock lives on its host (taken through the repo service), never here.
+        if is_remote_repo_key(&repo.to_string_lossy()) {
+            return Err(format!("remote repository {} cannot be locked from this machine yet", repo.display()));
+        }
         fs::create_dir_all(alinery_dir(repo)).map_err(|e| format!("prepare repository lock for {}: {e}", repo.display()))?;
         try_lock_exclusive(&alinery_app_lock_path(repo))
             .map(|lock| lock.map(|lock| RepoReservation::Candidate { repo: repo.to_path_buf(), lock }))

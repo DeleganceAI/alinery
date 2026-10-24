@@ -28,6 +28,7 @@ import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
@@ -55,6 +56,7 @@ import type {
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
@@ -279,6 +281,8 @@ export function Settings({
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
   // Local while dragging so the slider does not write config.toml on every step.
   const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
+  // A remote repo's destination is a folder on its host, typed here (the Finder picker cannot browse it).
+  const [destinationDraft, setDestinationDraft] = useState<string | null>(null);
   const [scaleDraft, setScaleDraft] = useState<number | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [localUpdate, setLocalUpdate] = useState<UpdateStatus | null>(null);
@@ -478,6 +482,7 @@ export function Settings({
   // rather than on every settings mount.
   useEffect(() => {
     if (activeSection !== "backup" || scope.kind !== "repo") return;
+    setDestinationDraft(null);
     refreshBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global", cfg?.backup.destination]);
@@ -595,6 +600,18 @@ export function Settings({
       .catch((e) => reportError(e));
   };
 
+  // The host checks the folder (outside `.alinery`, writable) and answers with the path it will use.
+  const setHostBackupFolder = () => {
+    if (scope.kind !== "repo" || !destinationDraft?.trim()) return;
+    ipc
+      .checkBackupDestination(scope.repoPath, destinationDraft.trim())
+      .then((checked) => {
+        setBackupOverride({ destination: checked }, "Backup destination set");
+        setDestinationDraft(null);
+      })
+      .catch((e) => reportError(e, "That folder can't hold backups"));
+  };
+
   const clearBackupFolder = () => {
     // No destination means no feature: turn it off rather than leaving a dead toggle on.
     setBackupOverride({ destination: "", enabled: false }, "Backup destination cleared");
@@ -620,7 +637,11 @@ export function Settings({
     const ok = await confirmDanger(
       "Restore this backup?",
       <ul className="confirm-list">
-        <li>Background processes for this repo will be stopped (daemon shut down).</li>
+        <li>
+          {isRemoteRepo(scope.repoPath)
+            ? "Every running session of this repo on its host will be ended (its daemon is restarted)."
+            : "Background processes for this repo will be stopped (daemon shut down)."}
+        </li>
         <li className="confirm-loss">Current Alinery data (tasks, settings, artifacts, sessions) will be CLEARED and replaced.</li>
         <li>This does not merge. Worktrees, locks, and sockets are left alone.</li>
         <li>Make a backup of the current state first if you want to keep it.</li>
@@ -952,20 +973,23 @@ export function Settings({
 
   const updatesCheck = (label: string) => <Checkbox checked={global.updates.check_enabled} disabled={!isGlobal} onChange={(v) => setGlobalUpdatesEnabled(v)} label={label} />;
 
+  // A remote repo's paths are on its host, so there is nothing to reveal here; they can still be copied.
   const storageRow = (label: string, value: string) => (
     <div key={label} className="storage-path-row">
       <div className="storage-path-head">
         <h4>{label}</h4>
         <div className="storage-actions">
-          <button
-            className="btn ghost small icon"
-            type="button"
-            title={`Reveal ${label} in Finder`}
-            aria-label={`Reveal ${label} in Finder`}
-            onClick={() => revealStoragePath(value)}
-          >
-            <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
-          </button>
+          {!isRemoteRepo(selectedRepo) && (
+            <button
+              className="btn ghost small icon"
+              type="button"
+              title={`Reveal ${label} in Finder`}
+              aria-label={`Reveal ${label} in Finder`}
+              onClick={() => revealStoragePath(value)}
+            >
+              <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          )}
           <button className="btn ghost small icon" type="button" title={`Copy ${label} path`} aria-label={`Copy ${label} path`} onClick={() => copyStoragePath(value)}>
             <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
           </button>
@@ -1067,6 +1091,7 @@ export function Settings({
           ))}
         </ul>
       )}
+      <RemoteHostsSettings />
       <p className="dim connections-note">
         Connections are shared across all repositories. GitHub uses the <span className="mono">gh</span> CLI store; only Linear OAuth tokens go in the macOS Keychain.
       </p>
@@ -1902,6 +1927,7 @@ export function Settings({
     if (scope.kind !== "repo") return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
     const backup = effective.backup;
     const hasDest = backup.destination.trim() !== "";
+    const remote = isRemoteRepo(scope.repoPath);
     const retention = retentionDraft ?? backup.retention;
     const commitRetention = () => {
       if (retentionDraft === null || retentionDraft === backup.retention) {
@@ -1919,11 +1945,28 @@ export function Settings({
       <>
         <div className="field">
           <label>Destination folder</label>
-          <input className="field-input mono" type="text" value={backup.destination} placeholder="Choose a folder outside this repository" readOnly />
+          {remote ? (
+            <input
+              className="field-input mono"
+              type="text"
+              value={destinationDraft ?? backup.destination}
+              placeholder="/absolute/folder/on/the/host"
+              onChange={(e) => setDestinationDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && setHostBackupFolder()}
+            />
+          ) : (
+            <input className="field-input mono" type="text" value={backup.destination} placeholder="Choose a folder outside this repository" readOnly />
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button className="btn ghost small" type="button" onClick={chooseBackupFolder}>
-              Choose folder…
-            </button>
+            {remote ? (
+              <button className="btn ghost small" type="button" disabled={!destinationDraft?.trim()} onClick={setHostBackupFolder}>
+                Set folder
+              </button>
+            ) : (
+              <button className="btn ghost small" type="button" onClick={chooseBackupFolder}>
+                Choose folder…
+              </button>
+            )}
             {hasDest && (
               <button className="btn ghost small" type="button" onClick={clearBackupFolder}>
                 Clear
@@ -1931,6 +1974,7 @@ export function Settings({
             )}
           </div>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginTop: 6 }}>
+            {remote ? "A folder on the host, not on this Mac: the host writes its own backups. " : ""}
             Must be outside this repository's <span className="mono">.alinery/</span> folder. Backup stays off until a destination is set.
           </div>
         </div>

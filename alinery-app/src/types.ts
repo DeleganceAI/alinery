@@ -368,9 +368,53 @@ export type Harness = {
 };
 export type EffectiveHarness = Harness & { source: SettingSource };
 export type HarnessFile = { harness: Harness[] };
+/** An SSH host that remote repos (`alinery+ssh://<host-id>/<path>`) live on. */
+export type RemoteHost = {
+  label: string;
+  ssh_args: string[];
+  home?: string | null;
+  platform?: string | null;
+  glibc?: string | null;
+};
+export type RemoteHostView = {
+  host_id: string;
+  label: string;
+  destination: string;
+  /** `reconnecting`: the connection dropped and the app is retrying on its own. */
+  state: "idle" | "connecting" | "reconnecting" | "connected" | "failed";
+  /** What the connect dialog shows while `connecting`. */
+  phase: string;
+  error: string | null;
+  home: string | null;
+  platform: string | null;
+  /** False for a host that has not been told what it may receive yet. */
+  sharing_reviewed: boolean;
+  /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
+  erased_sign_ins: string[];
+};
+/** Where a destination resolves to, as `ssh -G` reports it. */
+export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
+/** What this Mac could give a host, and what the host is set to receive. */
+export type RemoteSharingView = {
+  reviewed: boolean;
+  /** Items to show ticked: `hosted-models`, `custom-providers`, `grok`, `key:<provider>`. */
+  shared: string[];
+  keys: string[];
+  /** Browser sign-ins on this Mac. Never copied. */
+  sign_ins: string[];
+  custom_providers: boolean;
+  grok: boolean;
+  hosted: boolean;
+  /** Unix seconds. */
+  hosted_expires_at: number | null;
+  erased_sign_ins: string[];
+};
+export type RemoteDirEntry = { name: string; git: boolean; symlink: boolean };
+export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; truncated: boolean };
 export type AppConfig = {
   active_repo: string;
   known_repos: string[];
+  remote_hosts?: Record<string, RemoteHost>;
   mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;

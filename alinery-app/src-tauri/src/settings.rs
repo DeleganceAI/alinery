@@ -61,11 +61,20 @@ pub(crate) fn grok_key_ready(app: AppHandle) -> bool {
         .is_some_and(|path| !alinery_core::load_global_settings(&path).experiments.grok_api_key.trim().is_empty())
 }
 
+/// Models come from the harness binary on this machine. A remote repo has no overlay `harnesses.toml`
+/// here, so it resolves against an empty directory and gets the bundled harness rows.
+fn models_repo(target: &RepoRef) -> PathBuf {
+    match target {
+        RepoRef::Local(repo) => repo.clone(),
+        RepoRef::Remote { .. } => PathBuf::from("/var/empty"),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<String> {
     // `models_cmd` is a login shell plus `omp models`. Never run that on the webview thread.
-    tauri::async_runtime::spawn_blocking(move || match (active_repo(), app_config_path(&app)) {
-        (Ok(repo), Ok(app_config)) => list_harness_models_in(&app_config, &repo, &harness),
+    tauri::async_runtime::spawn_blocking(move || match (active_repo_ref(), app_config_path(&app)) {
+        (Ok(target), Ok(app_config)) => list_harness_models_in(&app_config, &models_repo(&target), &harness),
         _ => vec![],
     })
     .await
@@ -74,9 +83,15 @@ pub(crate) async fn list_harness_models(app: AppHandle, harness: String) -> Vec<
 
 #[tauri::command]
 pub(crate) async fn list_harness_models_for_repo(app: AppHandle, repo_path: String, harness: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(list_harness_models_in(&app_config_path(&app)?, &target_repo_for_app(&app, &repo_path)?, &harness)))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(list_harness_models_in(
+            &app_config_path(&app)?,
+            &models_repo(&target_repo_ref_for_app(&app, &repo_path)?),
+            &harness,
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // ---- Scoped settings ----------------------------------------------------------
@@ -106,21 +121,57 @@ pub(crate) fn load_config_with_app_path(app_config: &Path, repo: &Path) -> Confi
     alinery_core::resolve_effective_config(&global, &overrides)
 }
 
-pub(crate) fn scoped_settings_for(app: &AppHandle, repo: &Path) -> Result<alinery_core::ScopedSettings, String> {
-    ensure_config_toml(repo)?;
-    alinery_core::read_scoped_settings_strict(&app_config_path(app)?, repo)
+/// A repository's `config.toml` override layer: read in place for a local repo, from its host for a remote one.
+pub(crate) fn read_overrides(state: &AppState, target: &RepoRef) -> Result<alinery_core::RepoOverrides, String> {
+    match target {
+        RepoRef::Local(repo) => alinery_core::load_repo_overrides_strict(repo),
+        RepoRef::Remote { host_id, path } => remote_call(state, host_id, RepoOp::ReadRepoOverrides { repo: path.into() }),
+    }
+}
+
+pub(crate) fn write_overrides(app_config: &Path, state: &AppState, target: &RepoRef, overrides: &alinery_core::RepoOverrides) -> Result<(), String> {
+    match target {
+        RepoRef::Local(repo) => alinery_core::write_repo_overrides(Some(app_config), repo, overrides),
+        RepoRef::Remote { host_id, path } => remote_call(
+            state,
+            host_id,
+            RepoOp::WriteRepoOverrides {
+                repo: path.into(),
+                app_config: host_app_config(state, host_id)?,
+                overrides: overrides.clone(),
+            },
+        ),
+    }
+}
+
+/// Global settings from this machine's `app.toml` merged with the repository's overrides, wherever those live.
+pub(crate) fn scoped_for(app_config: &Path, state: &AppState, target: &RepoRef) -> Result<alinery_core::ScopedSettings, String> {
+    match target {
+        RepoRef::Local(repo) => {
+            ensure_config_toml(repo)?;
+            alinery_core::read_scoped_settings_strict(app_config, repo)
+        }
+        remote => alinery_core::scoped_settings_with(app_config, read_overrides(state, remote)?),
+    }
+}
+
+pub(crate) fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
+    Ok(match require_active_target(state)? {
+        ActiveRepo::Local(repo) => RepoRef::Local(repo),
+        ActiveRepo::Remote { host_id, path } => RepoRef::Remote { host_id, path },
+    })
 }
 
 #[tauri::command]
-pub(crate) fn read_config(app: AppHandle) -> Result<Config, String> {
-    let repo = active_repo()?;
-    Ok(scoped_settings_for(&app, &repo)?.effective)
+pub(crate) async fn read_config(app: AppHandle) -> Result<Config, String> {
+    let target = active_repo_ref()?;
+    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
 }
 
 #[tauri::command]
-pub(crate) fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    Ok(scoped_settings_for(&app, &repo)?.effective)
+pub(crate) async fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
 }
 
 #[tauri::command]
@@ -207,132 +258,121 @@ pub(crate) fn write_global_settings(app: AppHandle, global: alinery_core::Global
 }
 
 #[tauri::command]
-pub(crate) fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    scoped_settings_for(&app, &repo)
+pub(crate) async fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::ScopedSettings, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read settings", move || scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)).await
 }
 
 #[tauri::command]
-pub(crate) fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
-    alinery_core::load_repo_overrides_strict(&target_repo_for_app(&app, &repo_path)?)
+pub(crate) async fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("read repo overrides", move || read_overrides(&app.state::<AppState>(), &target)).await
+}
+
+fn emit_repo_settings_change(app: &AppHandle) {
+    emit(
+        app,
+        alinery_core::TelemetryEvent::SettingsChange {
+            source: alinery_core::TelemetrySource::App,
+            scope: alinery_core::SettingsChangeScope::Repo,
+        },
+    );
 }
 
 #[tauri::command]
-pub(crate) fn write_repo_overrides_for_repo(
+pub(crate) async fn write_repo_overrides_for_repo(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_path: String,
     overrides: alinery_core::RepoOverrides,
 ) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    scoped_settings_for(&app, &repo)
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("write repo overrides", move || {
+        let state = app.state::<AppState>();
+        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
+        emit_repo_settings_change(&app);
+        scoped_for(&app_config_path(&app)?, &state, &target)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let mut overrides = alinery_core::load_repo_overrides_strict(&repo)?;
-    alinery_core::clear_repo_override(&mut overrides, &field)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &overrides)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    scoped_settings_for(&app, &repo)
+pub(crate) async fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("clear repo override", move || {
+        let state = app.state::<AppState>();
+        let mut overrides = read_overrides(&state, &target)?;
+        alinery_core::clear_repo_override(&mut overrides, &field)?;
+        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
+        emit_repo_settings_change(&app);
+        scoped_for(&app_config_path(&app)?, &state, &target)
+    })
+    .await
 }
 
 // Compatibility command: active-repo writes now replace only that repository's override layer.
 #[tauri::command]
-pub(crate) fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
-    let repo = require_owned_active_repo(&state)?;
-    alinery_core::write_repo_overrides(Some(&app_config_path(&app)?), &repo, &config)?;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-    Ok(())
-}
-
-#[derive(Serialize)]
-pub(crate) struct StorageInfo {
-    pub(crate) app_config_path: String,
-    pub(crate) repo_path: String,
-    pub(crate) alinery_dir: String,
-    pub(crate) repo_config_path: String,
-    pub(crate) harnesses_path: String,
-    pub(crate) tasks_dir: String,
-    pub(crate) worktrees_dir: String,
-    pub(crate) alineryd_socket_path: String,
-    pub(crate) alineryd_lock_path: String,
-    pub(crate) mcp_socket_path: String,
-    pub(crate) mcp_status_path: String,
-    // Disk accounting (issue #91). `archived_bytes` is exactly what delete_all_archived_storage
-    // frees; `active_bytes` is the read-only remainder. Both come from one alinery-core walk.
-    pub(crate) archived_task_count: u32,
-    pub(crate) archived_session_count: u32,
-    pub(crate) archived_bytes: u64,
-    pub(crate) active_bytes: u64,
+pub(crate) async fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
+    let target = owned_active_target(&state)?;
+    off_main_thread("write config", move || {
+        write_overrides(&app_config_path(&app)?, &app.state::<AppState>(), &target, &config)?;
+        emit_repo_settings_change(&app);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn storage_info(app: AppHandle, repo_path: String) -> Result<StorageInfo, String> {
+pub(crate) async fn storage_info(app: AppHandle, repo_path: String) -> Result<alinery_core::StorageInfo, String> {
     // `storage_stats` walks the whole `.alinery` tree. Settings loads this when Storage
     // opens; a sync command runs that walk on the main thread.
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
     let app_config = app_config_path(&app)?;
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let stats = alinery_core::storage_stats(&repo);
-        let alinery = alinery_dir(&repo);
-        let path = |p: PathBuf| p.to_string_lossy().to_string();
-
-        Ok(StorageInfo {
-            app_config_path: path(app_config),
-            repo_path: repo.to_string_lossy().to_string(),
-            alinery_dir: path(alinery.clone()),
-            repo_config_path: path(config_toml_path(&repo)),
-            harnesses_path: path(alinery.join("harnesses.toml")),
-            tasks_dir: path(tasks_dir(&repo)),
-            worktrees_dir: path(worktrees_dir(&repo)),
-            alineryd_socket_path: path(current_alineryd_socket_path(&repo)),
-            alineryd_lock_path: path(current_alineryd_lock_path(&repo)),
-            mcp_socket_path: path(alinery_core::mcp_socket_path(&repo, alineryd_socket_namespace().as_deref())),
-            mcp_status_path: path(alinery_core::mcp_status_path(&repo, alineryd_socket_namespace().as_deref())),
-            archived_task_count: stats.archived_task_count,
-            archived_session_count: stats.archived_session_count,
-            archived_bytes: stats.archived_bytes,
-            active_bytes: stats.active_bytes,
-        })
+    tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => Ok(alinery_core::storage_info_in(&repo, &app_config, alineryd_socket_namespace().as_deref())),
+        // The numbers and paths are the host's: the host walks its own disk.
+        RepoRef::Remote { host_id, path } => {
+            let state = app.state::<AppState>();
+            remote_call(
+                &state,
+                &host_id,
+                RepoOp::StorageInfo {
+                    repo: path.into(),
+                    app_config: host_app_config(&state, &host_id)?,
+                },
+            )
+        }
     })
     .await
     .map_err(|error| format!("storage info task: {error}"))?
 }
 
-// Irreversible, local-only: drops every archived task dir, every archived session's files, and
-// the worktrees of archived tasks. Live data is never a target (alinery-core owns the walk).
+// Irreversible: drops every archived task dir, every archived session's files, and the worktrees
+// of archived tasks. Live data is never a target (alinery-core owns the walk). A remote repo is
+// purged by its host, which kills any session still running under an archived task first.
 #[tauri::command]
 pub(crate) async fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<alinery_core::PurgeArchivedResult, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(&state, repo)?;
+    }
     // Keep the shared route cache/fallback behavior without borrowing command State in the worker.
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
+        let repo = match target {
+            RepoRef::Local(repo) => repo,
+            RepoRef::Remote { host_id, path } => {
+                return remote_call(
+                    &state,
+                    &host_id,
+                    RepoOp::PurgeArchived {
+                        repo: path.into(),
+                        app_config: host_app_config(&state, &host_id)?,
+                    },
+                )
+            }
+        };
         let kill = |task_slug: &str, id: &str| {
             let owned = with_session_client(&state, &repo, task_slug, id, |d| d.session_status_observed(id))
                 .map(|s| s.is_some())

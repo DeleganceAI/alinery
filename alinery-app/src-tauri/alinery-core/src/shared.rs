@@ -848,8 +848,12 @@ pub fn read_scoped_settings(app_config: &Path, repo: &Path) -> ScopedSettings {
 }
 
 pub fn read_scoped_settings_strict(app_config: &Path, repo: &Path) -> Result<ScopedSettings, String> {
+    scoped_settings_with(app_config, crate::settings::load_repo_overrides_strict(repo)?)
+}
+
+/// The scoped view for overrides read elsewhere, such as a remote host's `config.toml`.
+pub fn scoped_settings_with(app_config: &Path, overrides: RepoOverrides) -> Result<ScopedSettings, String> {
     let global = crate::settings::load_global_settings_strict(app_config)?;
-    let overrides = crate::settings::load_repo_overrides_strict(repo)?;
     let effective = resolve_effective_config(&global, &overrides);
     Ok(ScopedSettings { global, overrides, effective })
 }
@@ -1223,7 +1227,7 @@ pub fn strip_terminal_queries(input: &[u8]) -> Vec<u8> {
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchFields {
     pub id: String,
     pub task_slug: String,

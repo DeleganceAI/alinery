@@ -1,21 +1,15 @@
 //! Taskless OMP chat threads. Session bytes stay in `<repo>/.alinery/sessions/`.
 //! The rail scans known repos. Every daemon call uses `daemon_for(repo)` only.
+//! The file and git half lives in `alinery_core::chat`, so a remote host runs the same code.
 use crate::*;
 
-#[derive(Serialize, Clone)]
-pub(crate) struct ChatThread {
-    pub repo_path: String,
-    pub session: SessionMeta,
-    pub name: Option<String>,
-    pub branch_label: String,
-    pub checkout: bool,
-}
+pub(crate) use alinery_core::chat::{
+    archive_chat_thread_in, chat_branch_of, chat_thread_attachment_dir, create_chat_thread_in, list_chat_threads_in, load_root_omp, read_chat_thread_image_in,
+    remove_chat_worktree_in, resume_chat_thread_in, set_chat_pinned_in, sort_chat_threads, write_chat_thread_attachment_bytes_in, ChatBranch, ChatThread,
+};
 
-#[derive(Serialize, Clone)]
-pub(crate) struct ChatBranch {
-    pub label: String,
-    pub checkout: bool,
-}
+#[cfg(test)]
+pub(crate) use alinery_core::chat::resolve_resume_cwd;
 
 /// Explicit-repo client. A miss does not consult the active daemon.
 pub(crate) fn require_explicit_daemon<T>(explicit: Option<T>, active: impl FnOnce() -> Option<T>) -> Result<T, String> {
@@ -26,330 +20,22 @@ pub(crate) fn require_explicit_daemon<T>(explicit: Option<T>, active: impl FnOnc
     Err("daemon not connected".into())
 }
 
-fn load_root_omp(repo: &Path, id: &str) -> Result<SessionMeta, String> {
-    if alinery_core::safe_component(id) != Some(id) {
-        return Err("invalid session id".into());
-    }
-    let meta = load_session_meta_for(repo, "", id)?;
-    if meta.id != id || !alinery_core::is_vinculum_session(&meta.harness) || !meta.generic {
-        return Err("not a chat thread".into());
-    }
-    Ok(meta)
-}
-
-fn root_omp_metas(repo: &Path) -> Vec<SessionMeta> {
-    let Ok(entries) = fs::read_dir(alinery_core::root_sessions_dir(repo)) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let name = name.to_str()?;
-            if !name.ends_with(".meta.json") {
-                return None;
-            }
-            let raw = fs::read_to_string(entry.path()).ok()?;
-            serde_json::from_str::<SessionMeta>(&raw).ok()
-        })
-        .filter(|meta| alinery_core::is_vinculum_session(&meta.harness))
-        .collect()
-}
-
-/// The generation whose id names `meta`'s live chat worktree. A resumed thread inherits its
-/// predecessor's directory, which keeps the name of the generation that ran `git worktree add`, so
-/// ownership is any id on the thread's own `resume_of` chain, never an arbitrary path.
-pub(crate) fn chat_worktree_owner(repo: &Path, meta: &SessionMeta) -> Option<String> {
-    let path = Path::new(&meta.worktree);
-    if path.parent() != Some(alinery_core::chat_worktrees_dir(repo).as_path()) || !path.is_dir() {
-        return None;
-    }
-    let dir = path.file_name()?.to_str()?;
-    let mut seen = std::collections::HashSet::new();
-    let mut next = Some(meta.id.clone());
-    while let Some(id) = next {
-        if id == dir {
-            return Some(id);
-        }
-        if !seen.insert(id.clone()) {
-            return None;
-        }
-        next = load_root_omp(repo, &id).ok().and_then(|ancestor| ancestor.resume_of);
-    }
-    None
-}
-
-pub(crate) fn chat_branch_of(repo: &Path, meta: &SessionMeta) -> ChatBranch {
-    chat_branch_with(repo, meta, || alinery_core::abbrev_ref(repo).unwrap_or_default())
-}
-
-fn chat_branch_with(repo: &Path, meta: &SessionMeta, checkout_label: impl FnOnce() -> String) -> ChatBranch {
-    if chat_worktree_owner(repo, meta).is_some() {
-        ChatBranch {
-            label: alinery_core::abbrev_ref(Path::new(&meta.worktree)).unwrap_or_default(),
-            checkout: false,
-        }
-    } else {
-        ChatBranch {
-            label: checkout_label(),
-            checkout: true,
-        }
-    }
-}
-
-pub(crate) fn list_chat_threads_in(repos: &[PathBuf], include_archived: bool) -> Result<Vec<ChatThread>, String> {
-    let mut threads = Vec::new();
-    for repo in repos.iter().filter(|repo| repo.is_dir()) {
-        let metas = root_omp_metas(repo);
-        let superseded: std::collections::HashSet<String> = metas.iter().filter_map(|meta| meta.resume_of.clone()).collect();
-        // Every checkout thread in a repo shares its branch: one git call per repo, not per thread.
-        let repo_branch = std::cell::OnceCell::new();
-        for meta in metas {
-            if superseded.contains(&meta.id) {
-                continue;
-            }
-            if meta.archived && !include_archived {
-                continue;
-            }
-            let branch = chat_branch_with(repo, &meta, || repo_branch.get_or_init(|| alinery_core::abbrev_ref(repo).unwrap_or_default()).clone());
-            let name = alinery_core::read_session_name(repo, "", &meta.id).ok().flatten().map(|value| value.name);
-            threads.push(ChatThread {
-                repo_path: repo.to_string_lossy().into_owned(),
-                session: meta,
-                name,
-                branch_label: branch.label,
-                checkout: branch.checkout,
-            });
-        }
-    }
-    threads.sort_by(|left, right| {
-        right
-            .session
-            .pinned
-            .cmp(&left.session.pinned)
-            .then_with(|| right.session.created.cmp(&left.session.created))
-            .then_with(|| left.session.id.cmp(&right.session.id))
-    });
-    Ok(threads)
-}
-
-fn stamp_chat(repo: &Path, id: &str, mutate: impl FnOnce(&mut Value)) -> Result<(), String> {
-    alinery_core::stamp_meta(&session_meta_path(repo, "", id), mutate)
-}
-
-pub(crate) fn set_chat_pinned_in(repo: &Path, session_id: &str, pinned: bool) -> Result<(), String> {
-    let _ = load_root_omp(repo, session_id)?;
-    stamp_chat(repo, session_id, |value| value["pinned"] = json!(pinned))
-}
-
-fn delete_chat_row(repo: &Path, id: &str) -> Result<(), String> {
-    let meta = session_meta_path(repo, "", id);
-    if meta.exists() {
-        fs::remove_file(&meta).map_err(|error| error.to_string())?;
-    }
-    let name = alinery_core::session_name_path(repo, "", id);
-    if name.exists() {
-        fs::remove_file(name).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-pub(crate) fn create_chat_thread_in(
-    repo: &Path,
-    daemon: &DaemonClient,
-    model: &str,
-    create_worktree: bool,
-) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
-    let reply = daemon.create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
-        task_slug: String::new(),
-        target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
-            harness: alinery_core::DEFAULT_HARNESS_KEY.into(),
-            model: (!model.is_empty()).then(|| model.to_string()),
-            prompt: None,
-        },
-        launch_override: None,
-        prompt_extra: None,
-        handoff_artifact: None,
-        start: false,
-    })?;
-    let id = reply.session.id.clone();
-    if create_worktree {
-        match alinery_core::add_chat_worktree(repo, &id) {
-            Ok(path) => stamp_chat(repo, &id, |value| value["worktree"] = json!(path.to_string_lossy()))?,
-            Err(error) => {
-                let path = alinery_core::chat_worktrees_dir(repo).join(&id);
-                let remove_error = if path.exists() {
-                    alinery_core::remove_chat_worktree_path(repo, &id, &path).err()
-                } else {
-                    None
-                };
-                let _ = delete_chat_row(repo, &id);
-                return match remove_error {
-                    Some(remove_error) => Err(format!("{error}; {remove_error}")),
-                    None => Err(error),
-                };
-            }
-        }
-    }
-    match daemon.start_session(&alinery_core::task_creation::StartSessionRequest {
-        task_slug: String::new(),
-        session_id: id,
-    }) {
-        Ok(started) => Ok(started),
-        Err(error) => Ok(alinery_core::task_creation::CreateExecutionSessionReply {
-            session: load_root_omp(repo, &reply.session.id).unwrap_or(reply.session),
-            execution: None,
-            start: "failed".into(),
-            errors: vec![alinery_core::task_creation::CreationError {
-                stage: "launch".into(),
-                code: "spawn_failed".into(),
-                message: error,
-            }],
-        }),
-    }
-}
-
-/// Whether the thread's OMP is running. Without its repo's daemon a started, unended thread may
-/// still be, so that is an error rather than "no".
-fn chat_running(meta: &SessionMeta, daemon: Option<&DaemonClient>) -> Result<bool, String> {
-    match daemon {
-        Some(daemon) => Ok(daemon
-            .session_status_observed(&meta.id)?
-            .is_some_and(|status| !matches!(status.state.process, alinery_core::ProcessState::Exited { .. }))),
-        None if meta.started_at.is_some() && meta.ended_at.is_none() => Err("daemon not connected".into()),
-        None => Ok(false),
-    }
-}
-
-pub(crate) fn archive_chat_thread_in(repo: &Path, session_id: &str, remove_worktree: bool, daemon: Option<&DaemonClient>) -> Result<(), String> {
-    let meta = load_root_omp(repo, session_id)?;
-    if chat_running(&meta, daemon)? {
-        daemon.ok_or("daemon not connected")?.kill_session(session_id)?;
-    }
-    stamp_chat(repo, session_id, |value| value["archived"] = json!(true))?;
-    if !remove_worktree {
-        return Ok(());
-    }
-    remove_owned_worktree(repo, &meta)
-}
-
-/// Standalone removal never stops the thread: a running OMP would be left inside a deleted directory.
-pub(crate) fn remove_chat_worktree_in(repo: &Path, session_id: &str, daemon: Option<&DaemonClient>) -> Result<(), String> {
-    let meta = load_root_omp(repo, session_id)?;
-    if chat_running(&meta, daemon)? {
-        return Err("This thread is still running. Archive it with Archive and remove worktree, or stop it first.".into());
-    }
-    remove_owned_worktree(repo, &meta)
-}
-
-fn remove_owned_worktree(repo: &Path, meta: &SessionMeta) -> Result<(), String> {
-    let path = PathBuf::from(&meta.worktree);
-    let owner = chat_worktree_owner(repo, meta).unwrap_or_else(|| meta.id.clone());
-    alinery_core::remove_chat_worktree_path(repo, &owner, &path)?;
-    stamp_chat(repo, &meta.id, |value| value["worktree"] = json!(repo.to_string_lossy()))
-}
-
-fn find_successor(repo: &Path, predecessor_id: &str) -> Option<SessionMeta> {
-    root_omp_metas(repo).into_iter().find(|meta| meta.resume_of.as_deref() == Some(predecessor_id))
-}
-
-pub(crate) fn resolve_resume_cwd(repo: &Path, predecessor: &SessionMeta) -> Result<PathBuf, String> {
-    if chat_worktree_owner(repo, predecessor).is_some() {
-        return Ok(PathBuf::from(&predecessor.worktree));
-    }
-    let checkout = repo.to_path_buf();
-    if predecessor.worktree != checkout.to_string_lossy() {
-        stamp_chat(repo, &predecessor.id, |value| value["worktree"] = json!(checkout.to_string_lossy()))?;
-    }
-    Ok(checkout)
-}
-
-// ponytail: one process-wide lock, so resumes of any two threads queue behind each other; per-thread
-// locks if that wait ever shows.
-static RESUMING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-pub(crate) fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: Option<&DaemonClient>) -> Result<SessionMeta, String> {
-    // Held from the successor lookup through the launch, so overlapping resumes of one thread
-    // (two clicks, a send racing the Resume button) mint and launch exactly one successor.
-    let _resuming = RESUMING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let predecessor = load_root_omp(repo, predecessor_id)?;
-    if let Some(successor) = find_successor(repo, predecessor_id) {
-        return Ok(successor);
-    }
-    // Kill and boot_sweep stamp ended_at, not the journal path. OMP --resume takes that jsonl.
-    let token = if predecessor.harness_resume_token.is_empty() {
-        alinery_core::newest_omp_jsonl(&alinery_core::session_omp_dir(repo, "", predecessor_id))
-            .map(|path| path.to_string_lossy().into_owned())
-            .ok_or_else(|| "cannot continue".to_string())?
-    } else {
-        predecessor.harness_resume_token.clone()
-    };
-    let daemon = daemon.ok_or("daemon not connected")?;
-    let cwd = resolve_resume_cwd(repo, &predecessor)?;
-    let minted = daemon.create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
-        task_slug: String::new(),
-        target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
-            harness: alinery_core::DEFAULT_HARNESS_KEY.into(),
-            model: (!predecessor.model.is_empty()).then(|| predecessor.model.clone()),
-            prompt: None,
-        },
-        launch_override: None,
-        prompt_extra: None,
-        handoff_artifact: None,
-        start: false,
-    })?;
-    let successor_id = minted.session.id.clone();
-    let link = stamp_chat(repo, &successor_id, |value| {
-        value["resume_of"] = json!(predecessor_id);
-        value["pinned"] = json!(predecessor.pinned);
-        value["worktree"] = json!(cwd.to_string_lossy());
-    });
-    if let Err(error) = link {
-        let _ = delete_chat_row(repo, &successor_id);
-        return Err(error);
-    }
-    if let Ok(Some(name)) = alinery_core::read_session_name(repo, "", predecessor_id) {
-        if let Err(error) = alinery_core::set_session_name(repo, "", &successor_id, &name.name, name.source) {
-            let _ = delete_chat_row(repo, &successor_id);
-            return Err(error);
-        }
-    }
-    let cwd_text = cwd.to_string_lossy().into_owned();
-    let launched = daemon.resume_session(&daemon_client::OpenRequest {
-        intent: daemon_client::ops::RESUME,
-        id: &successor_id,
-        cwd: &cwd_text,
-        task_slug: Some(""),
-        phase: None,
-        model: None,
-        attach_id: 0,
-        resume_token: Some(&token),
-        cols: None,
-        rows: None,
-    });
-    if let Err(error) = launched {
-        let live = daemon.session_status_observed(&successor_id).map(|status| status.is_some()).unwrap_or(true);
-        if live {
-            if let Err(kill_error) = daemon.kill_session(&successor_id) {
-                return Err(format!("{error}; {kill_error}"));
-            }
-        }
-        let _ = delete_chat_row(repo, &successor_id);
-        return Err(error);
-    }
-    stamp_chat(repo, predecessor_id, |value| value["archived"] = json!(true))?;
-    load_root_omp(repo, &successor_id)
-}
-
 /// Chat shows only repos that are open in this window: this window holds the repo's GUI
 /// flock, a daemon is connected for it, and no close is in flight. A repo another Alinery
 /// holds, one whose daemon is stopped or conflicted, or one being closed drops out of the
-/// rail with its threads, rather than listing threads every action on would refuse.
+/// rail with its threads, rather than listing threads every action on would refuse. A remote
+/// repo is open while its host is connected and its daemon is attached.
 pub(crate) fn open_chat_repos_in(known: &[String], state: &AppState) -> Vec<PathBuf> {
     known
         .iter()
         .map(PathBuf::from)
-        .filter(|repo| repo.is_dir() && state.owns_repo(repo) && !state.is_closing(repo) && state.daemon_for(repo).is_some())
+        .filter(|repo| {
+            let ready = match RepoRef::parse(&repo.to_string_lossy()) {
+                Ok(RepoRef::Remote { host_id, .. }) => connected_session(state, &host_id).is_ok(),
+                _ => is_local_repo_dir(repo) && state.owns_repo(repo),
+            };
+            ready && !state.is_closing(repo) && state.daemon_for(repo).is_some()
+        })
         .collect()
 }
 
@@ -361,31 +47,105 @@ pub(crate) fn list_chat_repos(app: AppHandle, state: State<'_, AppState>) -> Vec
         .collect()
 }
 
-fn owned_chat_repo(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<PathBuf, String> {
-    let repo = target_repo_for_app(app, repo_path)?;
-    require_repo_owned(state, &repo)?;
-    Ok(repo)
+fn local_daemon(state: &AppState, repo: &Path) -> Result<DaemonClient, String> {
+    require_explicit_daemon(state.daemon_for(repo), || state.daemon())
 }
 
-fn chat_daemon(state: &AppState, repo: &Path) -> Result<DaemonClient, String> {
-    require_explicit_daemon(state.daemon_for(repo), || state.daemon())
+/// The daemon client of a thread's repo: its own socket, or the forward to its host.
+fn chat_daemon(state: &AppState, target: &RepoRef) -> Result<DaemonClient, String> {
+    match target {
+        RepoRef::Local(repo) => local_daemon(state, repo),
+        remote => repo_client(state, remote),
+    }
+}
+
+/// The thread's meta, refusing an id that is not a chat thread.
+fn chat_meta(state: &AppState, target: &RepoRef, id: &str) -> Result<SessionMeta, String> {
+    match target {
+        RepoRef::Local(repo) => load_root_omp(repo, id),
+        RepoRef::Remote { host_id, path } => remote_call(
+            state,
+            host_id,
+            RepoOp::ChatThreadMeta {
+                repo: path.into(),
+                session_id: id.into(),
+            },
+        ),
+    }
+}
+
+fn require_chat_thread(app: &AppHandle, target: &RepoRef, id: &str) -> Result<(), String> {
+    chat_meta(&app.state::<AppState>(), target, id).map(|_| ())
+}
+
+/// Run one chat action where the thread's repo lives, off the main thread: `local` against a repo
+/// on this machine, or the op `remote` builds (from the host path and the host's `app.toml`) on its host.
+async fn on_repo<T: Send + serde::de::DeserializeOwned + 'static>(
+    app: &AppHandle,
+    target: RepoRef,
+    what: &'static str,
+    local: impl FnOnce(&AppState, &Path) -> Result<T, String> + Send + 'static,
+    remote: impl FnOnce(PathBuf, PathBuf) -> RepoOp + Send + 'static,
+) -> Result<T, String> {
+    let app = app.clone();
+    off_main_thread(what, move || {
+        let state = app.state::<AppState>();
+        match target {
+            RepoRef::Local(repo) => local(&state, &repo),
+            RepoRef::Remote { host_id, path } => {
+                let op = remote(path.into(), host_app_config(&state, &host_id)?);
+                remote_call(&state, &host_id, op)
+            }
+        }
+    })
+    .await
+}
+
+/// Threads of every open repo. A host that does not answer drops out of the list rather than
+/// failing the rest.
+pub(crate) fn chat_threads_across(state: &AppState, repos: &[PathBuf], include_archived: bool) -> Result<Vec<ChatThread>, String> {
+    let (remote, local): (Vec<_>, Vec<_>) = repos.iter().cloned().partition(|repo| is_remote_repo_key(&repo.to_string_lossy()));
+    let mut threads = list_chat_threads_in(&local, include_archived)?;
+    for key in remote.iter().map(|repo| repo.to_string_lossy().into_owned()) {
+        let Ok(RepoRef::Remote { host_id, path }) = RepoRef::parse(&key) else {
+            continue;
+        };
+        let op = RepoOp::ListChatThreads {
+            repo: path.into(),
+            include_archived,
+        };
+        if let Ok(rows) = remote_call::<Vec<ChatThread>>(state, &host_id, op) {
+            // The host answers with its own paths; the rail addresses the repo by its key.
+            threads.extend(rows.into_iter().map(|thread| ChatThread { repo_path: key.clone(), ..thread }));
+        }
+    }
+    sort_chat_threads(&mut threads);
+    Ok(threads)
 }
 
 #[tauri::command]
 pub(crate) async fn list_chat_threads(app: AppHandle, state: State<'_, AppState>, include_archived: bool) -> Result<Vec<ChatThread>, String> {
     let repos = open_chat_repos_in(&load_app_config(&app).known_repos, &state);
     // A directory scan plus a git call per worktree thread: never on the main thread.
-    tauri::async_runtime::spawn_blocking(move || list_chat_threads_in(&repos, include_archived))
-        .await
-        .map_err(|error| format!("list chat threads: {error}"))?
+    off_main_thread("list chat threads", move || chat_threads_across(&app.state::<AppState>(), &repos, include_archived)).await
 }
 
 /// One thread's name, so a title refresh reads one file instead of relisting every thread.
 #[tauri::command]
-pub(crate) fn chat_thread_name(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<Option<String>, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    load_root_omp(&repo, &session_id)?;
-    Ok(alinery_core::read_session_name(&repo, "", &session_id)?.map(|name| name.name))
+pub(crate) async fn chat_thread_name(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<Option<String>, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "chat thread name",
+        move |_, repo| {
+            load_root_omp(repo, &session_id)?;
+            Ok(alinery_core::read_session_name(repo, "", &session_id)?.map(|name| name.name))
+        },
+        move |repo, _| RepoOp::ChatThreadName { repo, session_id: remote_id },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -396,13 +156,24 @@ pub(crate) async fn create_chat_thread(
     model: Option<String>,
     create_worktree: bool,
 ) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = chat_daemon(&state, &repo)?;
+    let target = owned_target(&app, &state, &repo_path)?;
+    chat_daemon(&state, &target)?;
     let model = model.unwrap_or_default();
-    refresh_hosted_inference_before_open(app, daemon_client::ops::SPAWN, alinery_core::DEFAULT_HARNESS_KEY, &model).await?;
-    tauri::async_runtime::spawn_blocking(move || create_chat_thread_in(&repo, &daemon, &model, create_worktree))
-        .await
-        .map_err(|error| format!("create chat thread: {error}"))?
+    refresh_hosted_inference_before_open(app.clone(), daemon_client::ops::SPAWN, alinery_core::DEFAULT_HARNESS_KEY, &model).await?;
+    let remote_model = model.clone();
+    on_repo(
+        &app,
+        target,
+        "create chat thread",
+        move |state, repo| create_chat_thread_in(repo, &local_daemon(state, repo)?, &model, create_worktree),
+        move |repo, app_config| RepoOp::CreateChatThread {
+            repo,
+            app_config,
+            model: remote_model,
+            create_worktree,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -412,82 +183,144 @@ pub(crate) async fn start_chat_thread(
     repo_path: String,
     session_id: String,
 ) -> Result<alinery_core::task_creation::CreateExecutionSessionReply, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    let meta = load_root_omp(&repo, &session_id)?;
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    let meta = {
+        let (app, id) = (app.clone(), session_id.clone());
+        off_main_thread("start chat thread", move || chat_meta(&app.state::<AppState>(), &target, &id)).await?
+    };
     refresh_hosted_inference_before_open(app, daemon_client::ops::SPAWN, alinery_core::DEFAULT_HARNESS_KEY, &meta.model).await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    off_main_thread("start chat thread", move || {
         daemon.start_session(&alinery_core::task_creation::StartSessionRequest {
             task_slug: String::new(),
             session_id,
         })
     })
     .await
-    .map_err(|error| format!("start chat thread: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) fn set_chat_pinned(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String, pinned: bool) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    set_chat_pinned_in(&repo, &session_id, pinned)
+pub(crate) async fn set_chat_pinned(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String, pinned: bool) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "set chat pinned",
+        move |_, repo| set_chat_pinned_in(repo, &session_id, pinned),
+        move |repo, _| RepoOp::SetChatPinned {
+            repo,
+            session_id: remote_id,
+            pinned,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn archive_chat_thread(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String, remove_worktree: bool) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = state.daemon_for(&repo);
-    tauri::async_runtime::spawn_blocking(move || archive_chat_thread_in(&repo, &session_id, remove_worktree, daemon.as_ref()))
-        .await
-        .map_err(|error| format!("archive chat thread: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "archive chat thread",
+        move |state, repo| archive_chat_thread_in(repo, &session_id, remove_worktree, state.daemon_for(repo).as_ref()),
+        move |repo, app_config| RepoOp::ArchiveChatThread {
+            repo,
+            app_config,
+            session_id: remote_id,
+            remove_worktree,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn remove_chat_worktree(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = state.daemon_for(&repo);
-    tauri::async_runtime::spawn_blocking(move || remove_chat_worktree_in(&repo, &session_id, daemon.as_ref()))
-        .await
-        .map_err(|error| format!("remove chat worktree: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "remove chat worktree",
+        move |state, repo| remove_chat_worktree_in(repo, &session_id, state.daemon_for(repo).as_ref()),
+        move |repo, app_config| RepoOp::RemoveChatWorktree {
+            repo,
+            app_config,
+            session_id: remote_id,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn resume_chat_thread(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<SessionMeta, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = state.daemon_for(&repo);
-    tauri::async_runtime::spawn_blocking(move || resume_chat_thread_in(&repo, &session_id, daemon.as_ref()))
-        .await
-        .map_err(|error| format!("resume chat thread: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "resume chat thread",
+        move |state, repo| resume_chat_thread_in(repo, &session_id, state.daemon_for(repo).as_ref()),
+        move |repo, app_config| RepoOp::ResumeChatThread {
+            repo,
+            app_config,
+            session_id: remote_id,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<ChatBranch, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let meta = load_root_omp(&repo, &session_id)?;
-    Ok(chat_branch_of(&repo, &meta))
+pub(crate) async fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo_path: String, session_id: String) -> Result<ChatBranch, String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = session_id.clone();
+    on_repo(
+        &app,
+        target,
+        "chat branch label",
+        move |_, repo| Ok(chat_branch_of(repo, &load_root_omp(repo, &session_id)?)),
+        move |repo, _| RepoOp::ChatBranchLabel { repo, session_id: remote_id },
+    )
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn chat_transcript(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat transcript", move || daemon.transcript(&id)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat transcript", move || {
+        // The polling read: a host round trip for the thread check would double its cost, and the
+        // daemon addresses a session by id alone.
+        if let RepoRef::Local(repo) = &target {
+            load_root_omp(repo, &id)?;
+        }
+        daemon.transcript(&id)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn chat_prompt(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, text: String) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat prompt", move || daemon.prompt(&id, &text)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat prompt", move || {
+        require_chat_thread(&app, &target, &id)?;
+        daemon.prompt(&id, &text)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn chat_abort(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat abort", move || daemon.abort(&id)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat abort", move || {
+        require_chat_thread(&app, &target, &id)?;
+        daemon.abort(&id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -498,10 +331,13 @@ pub(crate) async fn chat_set_model(
     id: String,
     model: String,
 ) -> Result<alinery_core::daemon_client::SessionControls, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat set model", move || daemon.set_model(&id, &model)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat set model", move || {
+        require_chat_thread(&app, &target, &id)?;
+        daemon.set_model(&id, &model)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -512,10 +348,13 @@ pub(crate) async fn chat_set_thinking_level(
     id: String,
     level: String,
 ) -> Result<alinery_core::daemon_client::SessionControls, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat set thinking level", move || daemon.set_thinking_level(&id, &level)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat set thinking level", move || {
+        require_chat_thread(&app, &target, &id)?;
+        daemon.set_thinking_level(&id, &level)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -540,22 +379,25 @@ pub(crate) async fn chat_rpc_attach(
 
 #[tauri::command]
 pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat detach", move || daemon.detach_session(&id, attach_id)).await
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat detach", move || {
+        require_chat_thread(&app, &target, &id)?;
+        daemon.detach_session(&id, attach_id)
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<SessionObservation, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = state.daemon_for(&repo);
+    let target = owned_target(&app, &state, &repo_path)?;
     // Chat polls this every 1.5s; a sync command would run the daemon round trip on the main thread.
-    tauri::async_runtime::spawn_blocking(move || {
-        let meta = load_root_omp(&repo, &id)?;
+    off_main_thread("chat session status", move || {
+        let state = app.state::<AppState>();
+        let meta = chat_meta(&state, &target, &id)?;
         // A slow or failed read is an error, not "no process": collapsing it to None read as
         // Orphaned, flickered the title, and made stream recovery skip a live thread.
-        let live = match daemon.as_ref() {
+        let live = match chat_daemon(&state, &target).ok() {
             Some(daemon) => daemon.session_status_observed(&id)?,
             None => None,
         };
@@ -567,7 +409,6 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
         })
     })
     .await
-    .map_err(|error| format!("chat session status: {error}"))?
 }
 
 /// The chat's terminal hatch: respawn the thread's OMP on the same journal over the other transport
@@ -593,10 +434,10 @@ pub(crate) async fn chat_pty_attach(
     rows: Option<u16>,
     on_bytes: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    let meta = load_root_omp(&repo, &id)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let target = owned_target(&app, &state, &repo_path)?;
+    let daemon = chat_daemon(&state, &target)?;
+    off_main_thread("chat terminal attach", move || {
+        let meta = chat_meta(&app.state::<AppState>(), &target, &id)?;
         open_daemon_session(
             &daemon,
             &id,
@@ -615,21 +456,25 @@ pub(crate) async fn chat_pty_attach(
         )
     })
     .await
-    .map_err(|error| format!("chat terminal attach: {error}"))?
 }
 
 #[tauri::command]
 pub(crate) fn chat_pty_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, data: String) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    chat_daemon(&state, &repo)?.write_session(&id, &data)
+    let target = owned_target(&app, &state, &repo_path)?;
+    // Keystrokes: no host round trip for the thread check on a remote repo.
+    if let RepoRef::Local(repo) = &target {
+        load_root_omp(repo, &id)?;
+    }
+    chat_daemon(&state, &target)?.write_session(&id, &data)
 }
 
 #[tauri::command]
 pub(crate) fn chat_pty_resize(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    chat_daemon(&state, &repo)?.resize_session(&id, cols, rows)
+    let target = owned_target(&app, &state, &repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        load_root_omp(repo, &id)?;
+    }
+    chat_daemon(&state, &target)?.resize_session(&id, cols, rows)
 }
 
 #[tauri::command]
@@ -641,11 +486,27 @@ pub(crate) async fn read_chat_omp(
     end: Option<u64>,
     want: Option<u64>,
 ) -> Result<tauri::ipc::Response, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let window = tauri::async_runtime::spawn_blocking(move || alinery_core::read_omp_window(&repo, "", &id, end, want))
-        .await
-        .map_err(|error| error.to_string())??;
+    let target = owned_target(&app, &state, &repo_path)?;
+    let window = off_main_thread("read chat omp", move || {
+        let state = app.state::<AppState>();
+        chat_meta(&state, &target, &id)?;
+        match target {
+            RepoRef::Local(repo) => alinery_core::read_omp_window(&repo, "", &id, end, want),
+            RepoRef::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireOmpWindow>(
+                &state,
+                &host_id,
+                RepoOp::ReadOmpWindow {
+                    repo: path.into(),
+                    slug: String::new(),
+                    session_id: id,
+                    end,
+                    want,
+                },
+            )
+            .map(Into::into),
+        }
+    })
+    .await?;
     let mut body = serde_json::to_vec(&json!({
         "start": window.start,
         "end": window.end,
@@ -657,31 +518,10 @@ pub(crate) async fn read_chat_omp(
     Ok(tauri::ipc::Response::new(body))
 }
 
-fn chat_thread_attachment_dir(repo: &Path, id: &str) -> Result<PathBuf, String> {
-    let _ = load_root_omp(repo, id)?;
-    Ok(alinery_core::chat_attachments_dir(repo, id))
-}
-
 pub(crate) fn copy_chat_thread_attachments_in(repo: &Path, id: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {
     let dir = chat_thread_attachment_dir(repo, id)?;
     let (_urls, copied, failures) = copy_attachments_into(&dir, paths);
     Ok(CopyChatAttachmentsResult { copied, failures })
-}
-
-pub(crate) fn write_chat_thread_attachment_bytes_in(repo: &Path, id: &str, file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let dir = chat_thread_attachment_dir(repo, id)?;
-    write_attachment_bytes_into(&dir, file_name, bytes)
-}
-
-pub(crate) fn read_chat_thread_image_in(repo: &Path, id: &str, name: &str) -> Result<ChatImage, String> {
-    load_root_omp(repo, id)?;
-    let name = alinery_core::safe_component(name).ok_or_else(|| format!("invalid attachment name: {name}"))?;
-    let dir = alinery_core::chat_attachments_dir(repo, id);
-    let path = alinery_core::resolve_artifact_path(&dir, name)?;
-    if !path.is_file() {
-        return Err(format!("attachment not found: {name}"));
-    }
-    read_chat_image_file(&path, name)
 }
 
 #[tauri::command]
@@ -692,10 +532,34 @@ pub(crate) async fn copy_chat_thread_attachments(
     id: String,
     paths: Vec<String>,
 ) -> Result<CopyChatAttachmentsResult, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || copy_chat_thread_attachments_in(&repo, &id, &paths))
-        .await
-        .map_err(|error| format!("copy chat attachments: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("copy chat attachments", move || match target {
+        RepoRef::Local(repo) => copy_chat_thread_attachments_in(&repo, &id, &paths),
+        RepoRef::Remote { host_id, path } => {
+            let state = app.state::<AppState>();
+            chat_meta(
+                &state,
+                &RepoRef::Remote {
+                    host_id: host_id.clone(),
+                    path: path.clone(),
+                },
+                &id,
+            )?;
+            Ok(send_files_to_host(&paths, |file_name, data| {
+                remote_call::<String>(
+                    &state,
+                    &host_id,
+                    RepoOp::WriteChatThreadAttachment {
+                        repo: path.clone().into(),
+                        session_id: id.clone(),
+                        file_name,
+                        data,
+                    },
+                )
+            }))
+        }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -707,16 +571,38 @@ pub(crate) async fn write_chat_thread_attachment_bytes(
     file_name: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || write_chat_thread_attachment_bytes_in(&repo, &id, &file_name, &bytes))
-        .await
-        .map_err(|error| format!("write chat attachment: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("write chat attachment", move || match target {
+        RepoRef::Local(repo) => write_chat_thread_attachment_bytes_in(&repo, &id, &file_name, &bytes),
+        RepoRef::Remote { host_id, path } => remote_call(
+            &app.state::<AppState>(),
+            &host_id,
+            RepoOp::WriteChatThreadAttachment {
+                repo: path.into(),
+                session_id: id,
+                file_name,
+                data: bytes,
+            },
+        ),
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn read_chat_thread_image(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, name: String) -> Result<ChatImage, String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || read_chat_thread_image_in(&repo, &id, &name))
-        .await
-        .map_err(|error| format!("read chat image: {error}"))?
+    let target = owned_target(&app, &state, &repo_path)?;
+    let remote_id = id.clone();
+    let remote_name = name.clone();
+    on_repo(
+        &app,
+        target,
+        "read chat image",
+        move |_, repo| read_chat_thread_image_in(repo, &id, &name),
+        move |repo, _| RepoOp::ReadChatThreadImage {
+            repo,
+            session_id: remote_id,
+            name: remote_name,
+        },
+    )
+    .await
 }
