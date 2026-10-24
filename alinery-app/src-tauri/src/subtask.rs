@@ -122,7 +122,10 @@ pub(crate) fn discard_subtask(app: AppHandle, state: State<'_, AppState>, task_s
             publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
             discard_subtask_in(&state, &repo, &task_slug, &manager_session_id)
         }
-        ActiveRepo::Remote { host_id, path } => discard_remote_subtask(&state, &host_id, path, task_slug, manager_session_id),
+        ActiveRepo::Remote { host_id, path } => {
+            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PreArchive);
+            discard_remote_subtask(&state, &host_id, path, task_slug, manager_session_id)
+        }
     }
 }
 

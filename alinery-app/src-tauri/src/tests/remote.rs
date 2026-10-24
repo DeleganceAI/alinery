@@ -2002,7 +2002,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     assert_eq!(daemons(), old, "attaching never replaces the daemon");
 
     // The confirmed stop ends it, waits for its socket to go, and starts this app's daemon.
-    crate::stop_remote_daemon(&handle, &id, &repo).unwrap();
+    crate::stop_remote_daemon(&handle, &id, &repo, |_, _| Ok(())).unwrap();
     assert!(state.daemon_conflict(Path::new(&key)).is_none());
     let client = state.daemon_for(Path::new(&key)).expect("the new daemon is attached");
     let after = daemons();
@@ -2019,6 +2019,142 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     if let Ok(dir) = handle.path().app_config_dir() {
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// Backups on the host: the host applies its own settings and writes the archive to its own disk, and a
+/// confirmed restore replaces its data while its daemon is down, then starts the daemon again. A bad
+/// archive is refused before the daemon is touched.
+#[test]
+fn live_backups_are_written_and_restored_on_the_host() {
+    use std::time::Duration;
+    use tauri::Manager;
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("backup-{}", std::process::id());
+
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+    connect_and_attach(&handle, &id, true).unwrap();
+    let home = host_views(&handle, &state)[0].home.clone().unwrap();
+    let (repo, dest) = (format!("{home}/work/backup-{}", std::process::id()), format!("{home}/backups-{}", std::process::id()));
+    let session = state.remotes.session(&id).unwrap();
+    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, Duration::from_secs(30)).unwrap();
+    sh(&format!("rm -rf '{repo}' '{dest}' && mkdir -p '{repo}' '{dest}' && git init -q '{repo}'"));
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    let write = |relative: &str, contents: &str| {
+        session
+            .channel
+            .call(
+                RepoOp::WriteFile {
+                    path: format!("{repo}/{relative}").into(),
+                    contents: contents.into(),
+                },
+                Duration::from_secs(30),
+            )
+            .unwrap();
+    };
+    // A task directory the daemon can own: it refuses to start over one without a readable task.md.
+    let task = |slug: &str| {
+        let task = alinery_core::Task {
+            name: slug.into(),
+            slug: slug.into(),
+            branch: slug.into(),
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        write(&format!(".alinery/tasks/{slug}/task.md"), &toml::to_string(&task).unwrap());
+    };
+    task("keep");
+    write(".alinery/tasks/keep/notes.txt", "before");
+    write(
+        ".alinery/config.toml",
+        &format!("[backup]\ndestination = {dest:?}\nenabled = true\ntrigger_pre_archive = true\n"),
+    );
+    // This repo's daemons only: the host runs the other live tests' daemons too.
+    let daemons = || sh(&format!("pgrep -f '[a]linery-vinculum-daemon --repo {repo}' | sort"));
+
+    // The host checks the folder: one inside the repo's own `.alinery` can never hold backups.
+    let checked: String = crate::remote_call(
+        &state,
+        &id,
+        RepoOp::BackupCheckDestination {
+            repo: repo.clone().into(),
+            destination: dest.clone().into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(checked, dest);
+    let inside: Result<String, String> = crate::remote_call(
+        &state,
+        &id,
+        RepoOp::BackupCheckDestination {
+            repo: repo.clone().into(),
+            destination: format!("{repo}/.alinery").into(),
+        },
+    );
+    assert!(inside.is_err());
+
+    // A manual backup runs the host's settings; the automatic ones follow its trigger flags.
+    let manual: alinery_core::BackupMeta = crate::host_backup(&state, &id, &repo, |repo, app_config| RepoOp::BackupCreate {
+        repo,
+        app_config,
+        trigger: alinery_core::BackupTrigger::Manual,
+    })
+    .unwrap();
+    assert_eq!(manual.repo_path, repo, "the meta names the host's path");
+    assert!(sh(&format!("ls '{dest}'")).contains(".zip"), "the archive is on the host's disk");
+    assert!(crate::create_queued_remote_backup(&handle, &key, alinery_core::BackupTrigger::PreArchive)
+        .unwrap()
+        .is_some());
+    assert!(
+        crate::create_queued_remote_backup(&handle, &key, alinery_core::BackupTrigger::PostPushCommit)
+            .unwrap()
+            .is_none(),
+        "that trigger's flag is off on the host"
+    );
+    let listed: Vec<alinery_core::BackupListItem> = crate::host_backup(&state, &id, &repo, |repo, app_config| RepoOp::BackupList { repo, app_config }).unwrap();
+    assert_eq!(listed.len(), 2);
+
+    // Work after the backup, which a restore must take away.
+    write(".alinery/tasks/keep/notes.txt", "after");
+    task("late");
+    let running = daemons();
+    assert!(!running.trim().is_empty(), "the repo's daemon is up");
+
+    // An archive that is not there is refused with the daemon untouched.
+    assert!(crate::restore_remote_backup(&handle, &id, &repo, &format!("{dest}/missing.zip")).is_err());
+    assert_eq!(daemons(), running, "the daemon was not stopped for an archive that cannot be restored");
+    assert_eq!(sh(&format!("cat '{repo}/.alinery/tasks/keep/notes.txt'")), "after");
+
+    crate::restore_remote_backup(&handle, &id, &repo, &listed[0].path).unwrap();
+    assert_eq!(sh(&format!("cat '{repo}/.alinery/tasks/keep/notes.txt'")), "before");
+    assert_eq!(sh(&format!("ls '{repo}/.alinery/tasks'")).trim(), "keep", "what came after the backup is gone");
+    assert!(state.daemon_for(Path::new(&key)).is_some(), "the daemon is attached again");
+    let restarted = daemons();
+    assert!(
+        !restarted.trim().is_empty() && restarted != running,
+        "a new daemon replaced the old one: {running} -> {restarted}"
+    );
+    session.conn.exit_master();
+    let _ = std::fs::remove_dir_all(&session.secrets_dir);
 }
 
 /// Storage on the host: the numbers and the paths are the host's, and the purge removes only what is

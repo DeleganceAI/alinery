@@ -240,6 +240,7 @@ export const backupBusy = (repoPath: string | null) => invoke<boolean>("backup_b
 export const backupNow = (repoPath: string | null) => invoke<BackupMeta>("backup_now", { repoPath });
 export const listBackups = (repoPath: string | null) => invoke<BackupListItem[]>("list_backups", { repoPath });
 export const pickBackupDestinationDialog = (repoPath: string) => invoke<string | null>("pick_backup_destination_dialog", { repoPath });
+export const checkBackupDestination = (repoPath: string | null, destination: string) => invoke<string>("check_backup_destination", { repoPath, destination });
 export const restoreBackup = (repoPath: string | null, backupPath: string) => invoke<void>("restore_backup", { repoPath, backupPath });
 
 // ── daemon.rs ─────────────────────────────────────────────────────────

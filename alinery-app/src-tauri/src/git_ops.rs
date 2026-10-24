@@ -114,12 +114,16 @@ pub(crate) async fn push_and_compare_url(app: AppHandle, state: State<'_, AppSta
     push_off_thread(app, repo, slug).await
 }
 
-// A remote push runs on the host with the host's git credentials; the local backup and telemetry
-// are about this machine's copy of a repo, which a remote one is not.
+// A remote push runs on the host with the host's git credentials; the telemetry is about this
+// machine's copy of a repo, which a remote one is not. Its backup is the host's.
 async fn push_off_thread(app: AppHandle, repo: RepoRef, slug: String) -> Result<String, String> {
     let result = tauri::async_runtime::spawn_blocking(move || match repo {
         RepoRef::Local(repo) => push_and_compare_url_in(&app, &repo, slug),
-        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::PushAndCompareUrl { repo: path.into(), slug }),
+        RepoRef::Remote { host_id, path } => {
+            let url = remote_call(&app.state::<AppState>(), &host_id, RepoOp::PushAndCompareUrl { repo: path.clone().into(), slug })?;
+            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PostPushCommit);
+            Ok(url)
+        }
     })
     .await;
     result.map_err(|e| format!("push task: {e}"))?
@@ -423,27 +427,31 @@ pub(crate) async fn commit_worktree(app: AppHandle, state: State<'_, AppState>, 
 }
 
 /// Commit in the task's worktree. Returns whether it was a local repo, which is the only kind
-/// that has a backup to publish and telemetry to send.
+/// that has telemetry to send (a remote one's backup is published all the same).
 async fn commit_off_thread(app: &AppHandle, repo: RepoRef, slug: String, message: String) -> Result<bool, String> {
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || match repo {
         RepoRef::Local(repo) => {
             commit_worktree_in(&repo, slug, message)?;
-            Ok::<_, String>(Some(repo))
+            Ok::<_, String>(RepoRef::Local(repo))
         }
         RepoRef::Remote { host_id, path } => {
-            remote_call::<()>(&worker_app.state::<AppState>(), &host_id, RepoOp::CommitWorktree { repo: path.into(), slug, message })?;
-            Ok(None)
+            remote_call::<()>(
+                &worker_app.state::<AppState>(),
+                &host_id,
+                RepoOp::CommitWorktree {
+                    repo: path.clone().into(),
+                    slug,
+                    message,
+                },
+            )?;
+            Ok(RepoRef::Remote { host_id, path })
         }
     })
     .await;
-    match result.map_err(|e| format!("commit task: {e}"))?? {
-        Some(repo) => {
-            publish_auto_backup(app, &repo, alinery_core::BackupTrigger::PostPushCommit);
-            Ok(true)
-        }
-        None => Ok(false),
-    }
+    let committed = result.map_err(|e| format!("commit task: {e}"))??;
+    publish_auto_backup(app, Path::new(&committed.uri()), alinery_core::BackupTrigger::PostPushCommit);
+    Ok(matches!(committed, RepoRef::Local(_)))
 }
 
 #[tauri::command]

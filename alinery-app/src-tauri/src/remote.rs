@@ -1247,7 +1247,14 @@ pub(crate) fn host_app_config(state: &AppState, host_id: &str) -> Result<PathBuf
 /// Run a typed repo operation on a connected host and decode its answer. The remote half of
 /// an in-process core call: both run the same function in alinery-core.
 pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp) -> Result<T, String> {
-    let value = connected_session(state, host_id)?.channel.call(op, SERVICE_TIMEOUT)?;
+    remote_call_within(state, host_id, op, SERVICE_TIMEOUT)
+}
+
+/// Zipping or unzipping a large `.alinery` outlasts an ordinary call.
+pub(crate) const BACKUP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp, timeout: Duration) -> Result<T, String> {
+    let value = connected_session(state, host_id)?.channel.call(op, timeout)?;
     serde_json::from_value(value).map_err(|error| format!("unexpected reply from the host: {error}"))
 }
 
@@ -1333,10 +1340,17 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path
 const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 // DELIBERATE TEARDOWN ORIGIN (fifth, the remote counterpart of `stop_daemon`). Ends EVERY live
-// session of one remote repo, waits until the host's daemon has let go of its socket and lock, then
-// starts the daemon from the runtime this app installed there. Reached only from the confirmed
-// Settings stop and the conflict banner's Restart daemon; nothing here runs on its own.
-pub(crate) fn stop_remote_daemon<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str) -> Result<(), String> {
+// session of one remote repo, waits until the host's daemon has let go of its socket and lock, runs
+// `while_down` (a restore's extraction; a plain stop passes nothing), then starts the daemon from
+// the runtime this app installed there, even when `while_down` failed. Reached only from the
+// confirmed Settings stop, the conflict banner's Restart daemon, and a confirmed `restore_backup`;
+// nothing here runs on its own.
+pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
+    app: &AppHandle<R>,
+    host_id: &str,
+    path: &str,
+    while_down: impl FnOnce(&AppState, &RemoteSession) -> Result<T, String>,
+) -> Result<T, String> {
     let state = app.state::<AppState>();
     let key = RepoRef::Remote {
         host_id: host_id.to_string(),
@@ -1359,7 +1373,10 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime>(app: &AppHandle<R>, host_id:
         session.channel.call(RepoOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
         state.clear_daemon(Path::new(&key));
     }
-    attach_remote_repo(&state, &session, &key, path)
+    let done = while_down(&state, &session);
+    let attached = attach_remote_repo(&state, &session, &key, path);
+    // The caller's own failure is the one worth reading; a failed attach still shows on the banner.
+    done.and_then(|value| attached.map(|()| value))
 }
 
 /// The hosts that `known_repos` lists remote repositories on.

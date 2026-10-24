@@ -348,6 +348,7 @@ pub fn run() {
             start_mcp_server,
             stop_mcp_server,
             pick_backup_destination_dialog,
+            check_backup_destination,
             backup_now,
             backup_busy,
             list_backups,

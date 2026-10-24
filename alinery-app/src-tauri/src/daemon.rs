@@ -1202,7 +1202,7 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
         };
         let repo = match RepoRef::parse(&target)? {
             RepoRef::Remote { host_id, path } => {
-                crate::stop_remote_daemon(&app, &host_id, &path)?;
+                crate::stop_remote_daemon(&app, &host_id, &path, |_, _| Ok(()))?;
                 emit(
                     &app,
                     alinery_core::TelemetryEvent::DaemonStop {

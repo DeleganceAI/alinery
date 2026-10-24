@@ -655,13 +655,16 @@ pub(crate) fn restore_task_in(repo: &Path, slug: &str) -> Result<(), String> {
 async fn archive_task_off_thread(app: &AppHandle, repo: RepoRef, slug: String) -> Result<(), String> {
     let repo = match repo {
         RepoRef::Local(repo) => repo,
-        // The host checks eligibility and flips the flag itself; the pre-archive backup and
-        // telemetry are about this machine's copy of a repo, which a remote one is not.
+        // The host checks eligibility and flips the flag itself; its pre-archive backup is the
+        // host's, and the telemetry is about this machine's copy of a repo, which a remote one is not.
         RepoRef::Remote { host_id, path } => {
             let app = app.clone();
-            return tauri::async_runtime::spawn_blocking(move || remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::ArchiveTask { repo: path.into(), slug }))
-                .await
-                .map_err(|e| format!("archive task: {e}"))?;
+            return tauri::async_runtime::spawn_blocking(move || {
+                publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PreArchive);
+                remote_call::<()>(&app.state::<AppState>(), &host_id, RepoOp::ArchiveTask { repo: path.into(), slug })
+            })
+            .await
+            .map_err(|e| format!("archive task: {e}"))?;
         }
     };
     let result = tauri::async_runtime::spawn_blocking(move || {

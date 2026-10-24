@@ -511,6 +511,32 @@ pub enum RepoOp {
         repo: PathBuf,
         app_config: PathBuf,
     },
+    /// Back the repo up on this machine, with the backup settings in force here. An automatic trigger
+    /// that its settings do not allow is skipped (the reply is null); a manual one reports why it cannot run.
+    BackupCreate {
+        repo: PathBuf,
+        app_config: PathBuf,
+        trigger: crate::BackupTrigger,
+    },
+    BackupList {
+        repo: PathBuf,
+        app_config: PathBuf,
+    },
+    /// Check that `destination` is a usable backup folder for the repo; the reply is its canonical path.
+    BackupCheckDestination {
+        repo: PathBuf,
+        destination: PathBuf,
+    },
+    /// Check that an archive belongs to the repo, before anything is stopped to restore it.
+    BackupVerify {
+        repo: PathBuf,
+        backup_path: PathBuf,
+    },
+    /// Replace the repo's curated Alinery data with an archive. The caller has stopped the daemon.
+    BackupRestore {
+        repo: PathBuf,
+        backup_path: PathBuf,
+    },
     /// Return once the repo's daemon has released its socket and process lock. Sent after a
     /// confirmed shutdown, so a replacement can start; it stops nothing itself.
     WaitDaemonGone {
@@ -911,6 +937,18 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             };
             to_value(crate::purge_archived_storage(&repo, &kill)?)
         }
+        RepoOp::BackupCreate { repo, app_config, trigger } => {
+            let settings = crate::backup_settings_in(&app_config, &repo);
+            let manual = matches!(trigger, crate::BackupTrigger::Manual | crate::BackupTrigger::Mcp);
+            if !manual && !crate::should_publish(&settings, &repo, trigger) {
+                return Ok(Value::Null);
+            }
+            to_value(crate::create_backup(&repo, &settings, trigger, env!("CARGO_PKG_VERSION"))?)
+        }
+        RepoOp::BackupList { repo, app_config } => to_value(crate::list_backups(&repo, &crate::backup_settings_in(&app_config, &repo))?),
+        RepoOp::BackupCheckDestination { repo, destination } => to_value(crate::validate_backup_destination(&repo, &destination)?.to_string_lossy()),
+        RepoOp::BackupVerify { repo, backup_path } => crate::require_backup_matches_repo(&repo, &backup_path).map(|()| Value::Null),
+        RepoOp::BackupRestore { repo, backup_path } => crate::restore_backup_into(&repo, &backup_path).map(|()| Value::Null),
         RepoOp::WaitDaemonGone { repo } => crate::daemon_client::wait_for_daemon_gone(&repo, "").map(|()| Value::Null),
         RepoOp::SpawnDaemon {
             repo,
@@ -1499,6 +1537,27 @@ mod tests {
                 path: "/srv/c/inference.json".into(),
             },
             RepoOp::WaitDaemonGone { repo: "/srv/a".into() },
+            RepoOp::BackupCreate {
+                repo: "/srv/a".into(),
+                app_config: "/srv/c/app.toml".into(),
+                trigger: crate::BackupTrigger::PostPushCommit,
+            },
+            RepoOp::BackupList {
+                repo: "/srv/a".into(),
+                app_config: "/srv/c/app.toml".into(),
+            },
+            RepoOp::BackupCheckDestination {
+                repo: "/srv/a".into(),
+                destination: "/srv/backups".into(),
+            },
+            RepoOp::BackupVerify {
+                repo: "/srv/a".into(),
+                backup_path: "/srv/backups/a.zip".into(),
+            },
+            RepoOp::BackupRestore {
+                repo: "/srv/a".into(),
+                backup_path: "/srv/backups/a.zip".into(),
+            },
             RepoOp::StorageInfo {
                 repo: "/srv/a".into(),
                 app_config: "/srv/c/app.toml".into(),
@@ -1715,6 +1774,79 @@ mod tests {
         assert!(repo.join(".alinery/tasks/keep/notes.txt").exists(), "live data is never a target");
         assert_eq!(run(ops().0).unwrap()["archived_task_count"], 0);
         fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn backups_use_the_settings_in_force_where_the_repo_lives() {
+        let root = temp_dir("backup");
+        let repo = root.join("repo");
+        let dest = root.join("dest");
+        let task_dir = repo.join(".alinery/tasks/t");
+        fs::create_dir_all(&task_dir).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(task_dir.join("notes.txt"), "before").unwrap();
+        let app_config = root.join("app.toml");
+        let op = |trigger| RepoOp::BackupCreate {
+            repo: repo.clone(),
+            app_config: app_config.clone(),
+            trigger,
+        };
+
+        // Nothing is configured: a manual backup says why it cannot run, an automatic one is skipped.
+        assert!(run(op(crate::BackupTrigger::Manual)).unwrap_err().contains("disabled"));
+        assert_eq!(run(op(crate::BackupTrigger::PreArchive)).unwrap(), Value::Null);
+
+        let destination = run(RepoOp::BackupCheckDestination {
+            repo: repo.clone(),
+            destination: dest.clone(),
+        })
+        .unwrap();
+        assert_eq!(destination, fs::canonicalize(&dest).unwrap().to_string_lossy().as_ref());
+        assert!(run(RepoOp::BackupCheckDestination {
+            repo: repo.clone(),
+            destination: repo.join(".alinery")
+        })
+        .is_err());
+
+        fs::write(
+            repo.join(".alinery/config.toml"),
+            format!("[backup]\ndestination = {:?}\nenabled = true\ntrigger_pre_archive = true\n", dest.to_string_lossy()),
+        )
+        .unwrap();
+        let manual = run(op(crate::BackupTrigger::Manual)).unwrap();
+        assert_eq!(manual["trigger"], "manual");
+        assert_eq!(run(op(crate::BackupTrigger::PostPushCommit)).unwrap(), Value::Null, "that trigger's flag is off");
+        assert_eq!(run(op(crate::BackupTrigger::PreArchive)).unwrap()["trigger"], "pre_archive");
+        let listed = run(RepoOp::BackupList {
+            repo: repo.clone(),
+            app_config: app_config.clone(),
+        })
+        .unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 2);
+        let archive = PathBuf::from(listed[0]["path"].as_str().unwrap());
+
+        // Restore replaces the curated data with the archive, and refuses an archive from another repo.
+        fs::write(task_dir.join("notes.txt"), "after").unwrap();
+        run(RepoOp::BackupVerify {
+            repo: repo.clone(),
+            backup_path: archive.clone(),
+        })
+        .unwrap();
+        run(RepoOp::BackupRestore {
+            repo: repo.clone(),
+            backup_path: archive.clone(),
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(task_dir.join("notes.txt")).unwrap(), "before");
+        let other = root.join("other");
+        fs::create_dir_all(other.join(".alinery")).unwrap();
+        assert!(run(RepoOp::BackupVerify {
+            repo: other,
+            backup_path: archive
+        })
+        .unwrap_err()
+        .contains("belongs to"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

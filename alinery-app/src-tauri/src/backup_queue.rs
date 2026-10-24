@@ -9,31 +9,17 @@
 // `Instant::now()` call inside, so the debounce is testable without sleeping.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-use alinery_core::{backup_feature_ready, BackupDefaults, BackupTrigger};
+use alinery_core::BackupTrigger;
 
 /// A burst schedules its work from the burst's *end*: every publish pushes the deadline out.
 pub const BACKUP_DEBOUNCE: Duration = Duration::from_secs(2);
 
-/// Should this trigger enqueue a backup?
-///
-/// Only the three automatic triggers are gated here. `Manual` (BACKUP NOW) and `Mcp` never
-/// consult this gate: they are explicit user/agent requests that call `create_backup` directly
-/// and report their real result, rather than disappearing into a debounce window. Manual runs
-/// still claim the in-flight slot via `begin`, so "is this repo busy" covers them too.
-pub fn should_publish(settings: &BackupDefaults, repo: &Path, trigger: BackupTrigger) -> bool {
-    if !backup_feature_ready(settings, repo) {
-        return false;
-    }
-    match trigger {
-        BackupTrigger::PreArchive => settings.trigger_pre_archive,
-        BackupTrigger::PostArtifactChange => settings.trigger_post_artifact_change,
-        BackupTrigger::PostPushCommit => settings.trigger_post_push_commit,
-        BackupTrigger::Manual | BackupTrigger::Mcp => false,
-    }
-}
+// The gate (feature ready and the trigger's flag on) is in alinery-core: a remote host applies it
+// to its own settings. Manual runs still claim the in-flight slot via `begin`, so "is this repo
+// busy" covers them too.
+pub use alinery_core::should_publish;
 
 #[derive(Debug, Default)]
 struct Slot {
@@ -122,8 +108,9 @@ impl BackupQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alinery_core::BackupDefaults;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_repo(name: &str) -> PathBuf {

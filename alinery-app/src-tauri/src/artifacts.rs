@@ -440,16 +440,19 @@ pub(crate) fn prepare_artifact_comments_prompt(
             publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PostArtifactChange);
             Ok(prepared)
         }
-        // The local backup is about this machine's copy of a repo, which a remote one is not.
-        ActiveRepo::Remote { host_id, path } => remote_call(
-            &state,
-            &host_id,
-            RepoOp::PrepareArtifactCommentsPrompt {
-                repo: path.into(),
-                slug: task_slug,
-                artifacts,
-            },
-        ),
+        ActiveRepo::Remote { host_id, path } => {
+            let prepared = remote_call(
+                &state,
+                &host_id,
+                RepoOp::PrepareArtifactCommentsPrompt {
+                    repo: path.clone().into(),
+                    slug: task_slug,
+                    artifacts,
+                },
+            )?;
+            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PostArtifactChange);
+            Ok(prepared)
+        }
     }
 }
 
@@ -467,15 +470,19 @@ pub(crate) fn archive_artifact_comments(app: AppHandle, state: State<'_, AppStat
             );
             Ok(review.display().to_string())
         }
-        ActiveRepo::Remote { host_id, path } => remote_call(
-            &state,
-            &host_id,
-            RepoOp::ArchiveArtifactComments {
-                repo: path.into(),
-                slug: task_slug,
-                artifact,
-            },
-        ),
+        ActiveRepo::Remote { host_id, path } => {
+            let review = remote_call(
+                &state,
+                &host_id,
+                RepoOp::ArchiveArtifactComments {
+                    repo: path.clone().into(),
+                    slug: task_slug,
+                    artifact,
+                },
+            )?;
+            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PostArtifactChange);
+            Ok(review)
+        }
     }
 }
 
@@ -487,15 +494,19 @@ pub(crate) fn archive_artifact_comments_for_repo(app: AppHandle, state: State<'_
             publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PostArtifactChange);
             Ok(review.display().to_string())
         }
-        RepoRef::Remote { host_id, path } => remote_call(
-            &state,
-            &host_id,
-            RepoOp::ArchiveArtifactComments {
-                repo: path.into(),
-                slug: task_slug,
-                artifact,
-            },
-        ),
+        RepoRef::Remote { host_id, path } => {
+            let review = remote_call(
+                &state,
+                &host_id,
+                RepoOp::ArchiveArtifactComments {
+                    repo: path.clone().into(),
+                    slug: task_slug,
+                    artifact,
+                },
+            )?;
+            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PostArtifactChange);
+            Ok(review)
+        }
     }
 }
 
@@ -535,17 +546,31 @@ pub(crate) fn add_artifact_comment(
             );
             Ok(comments)
         }
-        ActiveRepo::Remote { host_id, path } => remote_call(
-            &state,
-            &host_id,
-            RepoOp::AddArtifactComment {
-                repo: path.into(),
-                slug: task_slug,
-                artifact,
-                comment,
-            },
-        ),
+        ActiveRepo::Remote { host_id, path } => add_comment_remote(&app, &state, &host_id, path, task_slug, artifact, comment),
     }
+}
+
+fn add_comment_remote(
+    app: &AppHandle,
+    state: &AppState,
+    host_id: &str,
+    path: String,
+    slug: String,
+    artifact: String,
+    comment: CommentInput,
+) -> Result<Vec<ArtifactComment>, String> {
+    let comments = remote_call(
+        state,
+        host_id,
+        RepoOp::AddArtifactComment {
+            repo: path.clone().into(),
+            slug,
+            artifact,
+            comment,
+        },
+    )?;
+    publish_remote_backup(app, host_id, &path, alinery_core::BackupTrigger::PostArtifactChange);
+    Ok(comments)
 }
 
 fn add_comment_local(repo: &Path, slug: &str, artifact: &str, comment: CommentInput) -> Result<Vec<ArtifactComment>, String> {
@@ -653,15 +678,6 @@ pub(crate) fn add_artifact_comment_for_repo(
             publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PostArtifactChange);
             Ok(comments)
         }
-        RepoRef::Remote { host_id, path } => remote_call(
-            &state,
-            &host_id,
-            RepoOp::AddArtifactComment {
-                repo: path.into(),
-                slug: task_slug,
-                artifact,
-                comment,
-            },
-        ),
+        RepoRef::Remote { host_id, path } => add_comment_remote(&app, &state, &host_id, path, task_slug, artifact, comment),
     }
 }
