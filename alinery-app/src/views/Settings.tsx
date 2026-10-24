@@ -55,6 +55,7 @@ import type {
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
@@ -1067,6 +1068,7 @@ export function Settings({
           ))}
         </ul>
       )}
+      <RemoteHostsSettings />
       <p className="dim connections-note">
         Connections are shared across all repositories. GitHub uses the <span className="mono">gh</span> CLI store; only Linear OAuth tokens go in the macOS Keychain.
       </p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isRemoteRepo, joinPath, parentPath, parseRemoteRepo, relatedRepoKey, relatedStoredPath, repoDisplayPath, sameMachine } from "./remoteRepo";
+import { isRemoteRepo, joinPath, parentPath, parseRemoteRepo, providerLabel, relatedRepoKey, relatedStoredPath, repoDisplayPath, sameMachine, tokenLifetime } from "./remoteRepo";
 
 describe("remote repo keys", () => {
   it("parses a host id and an absolute path, and nothing else", () => {
@@ -50,5 +50,25 @@ describe("repos on one machine", () => {
     expect(relatedRepoKey(a, "/srv/b")).toBe(b);
     expect(relatedRepoKey("/Users/me/a", "/Users/me/b")).toBe("/Users/me/b");
     expect(relatedRepoKey(a, relatedStoredPath(a, b) ?? "")).toBe(b);
+  });
+});
+
+describe("providerLabel", () => {
+  it("uses the brand for a known provider and capitalizes the words of any other", () => {
+    expect(providerLabel("openai-codex")).toBe("OpenAI Codex");
+    expect(providerLabel("anthropic")).toBe("Anthropic");
+    expect(providerLabel("my_custom-endpoint")).toBe("My Custom Endpoint");
+  });
+});
+
+describe("tokenLifetime", () => {
+  const day = 86_400;
+  const now = Date.UTC(2026, 9, 23);
+  it("counts the days a token has left", () => {
+    expect(tokenLifetime(now / 1000 + 90 * day, now)).toMatch(/^for about 90 days \(until /);
+    expect(tokenLifetime(now / 1000 + day, now)).toMatch(/^for about 1 day \(until /);
+  });
+  it("does not claim days it does not have", () => {
+    expect(tokenLifetime(now / 1000 + 3600, now)).toMatch(/^for less than a day \(until /);
   });
 });

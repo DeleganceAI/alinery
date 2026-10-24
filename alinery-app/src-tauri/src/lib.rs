@@ -158,6 +158,8 @@ pub fn run() {
             remove_repo,
             remote_hosts,
             remote_add_host,
+            remote_sharing,
+            remote_set_sharing,
             remote_connect,
             remote_disconnect,
             remote_list_dir,

@@ -1,15 +1,13 @@
-//! Keeping the Pi provider credentials of this Mac and a remote host in step.
+//! Putting the provider credentials the user chose onto a remote host.
 //!
 //! The store is `provider-credentials.json`: one opaque credential per provider, written by the
-//! daemon under an `O_EXCL` `<file>.lock` (see `vinculum-daemon/src/credentials.ts`). OAuth
-//! credentials rotate their refresh tokens, so a one-way copy would let the two sides
-//! invalidate each other; instead the side with the later `expires` wins per provider.
-//!
-//! Direction rules: a provider the Mac has is pushed to the remote when the remote lacks it or
-//! is not newer. A provider only the remote has is never pulled back, so logging out on the Mac
-//! cannot be undone by a stale remote copy.
+//! daemon under an `O_EXCL` `<file>.lock` (see `vinculum-daemon/src/credentials.ts`). Only API
+//! keys travel from the Mac, and only the ones the user picked. A browser sign-in (`oauth`) is
+//! never copied: its refresh token rotates, so two copies of one sign-in would log each other out.
+//! The host signs in for itself, and a sign-in made there is left alone here.
 
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -69,59 +67,57 @@ fn write_store(path: &Path, store: &Map<String, Value>) -> Result<(), String> {
     crate::write_owner_only_bytes(path, &bytes)
 }
 
-fn expires(credential: &Value) -> Option<f64> {
-    credential.get("expires").and_then(Value::as_f64)
+fn is_oauth(credential: &Value) -> bool {
+    credential.get("type").and_then(Value::as_str) == Some("oauth")
 }
 
-/// True when `incoming` should replace `existing`: no `expires` to compare means the pushing
-/// side (the Mac) is the source of truth.
-fn incoming_wins(incoming: &Value, existing: &Value) -> bool {
-    match (expires(incoming), expires(existing)) {
-        (Some(incoming), Some(existing)) => incoming >= existing,
-        _ => true,
-    }
+/// The Mac's providers and what each holds: `api_key` or `oauth`.
+pub fn kinds(path: &Path) -> Result<BTreeMap<String, String>, String> {
+    Ok(read_store(path)?
+        .into_iter()
+        .filter_map(|(provider, credential)| {
+            let kind = credential.get("type").and_then(Value::as_str)?;
+            matches!(kind, "api_key" | "oauth").then(|| (provider, kind.to_string()))
+        })
+        .collect())
 }
 
-/// Merge `incoming` (the Mac's credentials) into the store at `path`. Returns the providers
-/// where the store holds a strictly newer credential, which the caller applies back locally.
-pub fn apply_incoming(path: &Path, incoming: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+/// The API keys among `providers`. A provider the Mac no longer holds as a key (logged out, or
+/// now a browser sign-in) is left out, which is how a stale choice stops being copied.
+pub fn api_keys(path: &Path, providers: &[String]) -> Result<Map<String, Value>, String> {
+    let store = read_store(path)?;
+    Ok(providers
+        .iter()
+        .filter_map(|provider| {
+            let credential = store.get(provider)?;
+            (credential.get("type").and_then(Value::as_str) == Some("api_key")).then(|| (provider.clone(), credential.clone()))
+        })
+        .collect())
+}
+
+/// Change the host's store. `set` replaces those providers; `remove` drops API keys this app
+/// copied earlier (a sign-in the host made since is kept); `erase_oauth` drops every browser
+/// sign-in, once, for a host set up before sign-ins stopped being copied. Returns the sign-ins
+/// erased.
+pub fn apply(path: &Path, set: &Map<String, Value>, remove: &[String], erase_oauth: bool) -> Result<Vec<String>, String> {
     with_store_lock(path, || {
         let mut store = read_store(path)?;
-        let mut newer = Map::new();
-        for (provider, credential) in incoming {
-            match store.get(provider) {
-                Some(existing) if !incoming_wins(credential, existing) => {
-                    newer.insert(provider.clone(), existing.clone());
-                }
-                _ => {
-                    store.insert(provider.clone(), credential.clone());
-                }
+        let mut erased = Vec::new();
+        if erase_oauth {
+            erased = store.iter().filter(|(_, credential)| is_oauth(credential)).map(|(provider, _)| provider.clone()).collect();
+            store.retain(|_, credential| !is_oauth(credential));
+        }
+        for provider in remove {
+            if store.get(provider).is_some_and(|credential| !is_oauth(credential)) {
+                store.remove(provider);
             }
+        }
+        for (provider, credential) in set {
+            store.insert(provider.clone(), credential.clone());
         }
         write_store(path, &store)?;
-        Ok(newer)
+        Ok(erased)
     })
-}
-
-/// Replace the given providers in the store, leaving every other provider alone.
-pub fn overwrite_providers(path: &Path, replacements: &Map<String, Value>) -> Result<(), String> {
-    if replacements.is_empty() {
-        return Ok(());
-    }
-    with_store_lock(path, || {
-        let mut store = read_store(path)?;
-        for (provider, credential) in replacements {
-            if store.contains_key(provider) {
-                store.insert(provider.clone(), credential.clone());
-            }
-        }
-        write_store(path, &store)
-    })
-}
-
-/// The Mac's whole store, or empty when it has none.
-pub fn read_all(path: &Path) -> Result<Map<String, Value>, String> {
-    read_store(path)
 }
 
 #[cfg(test)]
@@ -140,46 +136,61 @@ mod tests {
     }
 
     #[test]
-    fn pushes_missing_providers_and_keeps_remote_only_ones_remote() {
-        let path = temp_store("push");
-        write_store(&path, &map(json!({"remote-only": {"type": "api_key", "key": "r"}}))).unwrap();
-        let newer = apply_incoming(&path, &map(json!({"anthropic": {"type": "api_key", "key": "a"}}))).unwrap();
-        assert!(newer.is_empty());
+    fn only_the_chosen_api_keys_are_offered_and_sign_ins_never_are() {
+        let path = temp_store("offer");
+        write_store(
+            &path,
+            &map(json!({
+                "anthropic": {"type": "api_key", "key": "a"},
+                "openai": {"type": "api_key", "key": "o"},
+                "codex": {"type": "oauth", "refresh": "r", "expires": 5}
+            })),
+        )
+        .unwrap();
+        let kinds = kinds(&path).unwrap();
+        assert_eq!(kinds["anthropic"], "api_key");
+        assert_eq!(kinds["codex"], "oauth");
+        let chosen = api_keys(&path, &["anthropic".into(), "codex".into(), "gone".into()]).unwrap();
+        assert_eq!(chosen.keys().collect::<Vec<_>>(), ["anthropic"], "a sign-in or a missing provider is not a key to copy");
+    }
+
+    #[test]
+    fn set_replaces_and_keeps_every_other_provider() {
+        let path = temp_store("set");
+        write_store(&path, &map(json!({"host-only": {"type": "oauth", "refresh": "h"}, "k": {"type": "api_key", "key": "old"}}))).unwrap();
+        apply(&path, &map(json!({"k": {"type": "api_key", "key": "new"}})), &[], false).unwrap();
         let store = read_store(&path).unwrap();
-        assert_eq!(store["anthropic"]["key"], "a");
-        assert_eq!(store["remote-only"]["key"], "r");
+        assert_eq!(store["k"]["key"], "new");
+        assert_eq!(store["host-only"]["refresh"], "h", "a sign-in made on the host is not touched");
     }
 
     #[test]
-    fn the_later_expiry_wins_and_a_newer_remote_comes_back() {
-        let path = temp_store("expiry");
-        write_store(&path, &map(json!({"oauth": {"type": "oauth", "refresh": "remote", "expires": 200}}))).unwrap();
-
-        let newer = apply_incoming(&path, &map(json!({"oauth": {"type": "oauth", "refresh": "mac", "expires": 100}}))).unwrap();
-        assert_eq!(newer["oauth"]["refresh"], "remote", "the remote refreshed after the Mac did");
-        assert_eq!(read_store(&path).unwrap()["oauth"]["refresh"], "remote");
-
-        let newer = apply_incoming(&path, &map(json!({"oauth": {"type": "oauth", "refresh": "mac", "expires": 300}}))).unwrap();
-        assert!(newer.is_empty());
-        assert_eq!(read_store(&path).unwrap()["oauth"]["refresh"], "mac");
-    }
-
-    #[test]
-    fn without_expiry_the_pushing_side_wins() {
-        let path = temp_store("noexp");
-        write_store(&path, &map(json!({"k": {"type": "api_key", "key": "old"}}))).unwrap();
-        apply_incoming(&path, &map(json!({"k": {"type": "api_key", "key": "new"}}))).unwrap();
-        assert_eq!(read_store(&path).unwrap()["k"]["key"], "new");
-    }
-
-    #[test]
-    fn overwrite_only_touches_providers_already_present() {
-        let path = temp_store("overwrite");
-        write_store(&path, &map(json!({"have": {"v": 1}}))).unwrap();
-        overwrite_providers(&path, &map(json!({"have": {"v": 2}, "logged-out": {"v": 3}}))).unwrap();
+    fn remove_drops_a_copied_key_but_not_a_sign_in_that_took_its_place() {
+        let path = temp_store("remove");
+        write_store(
+            &path,
+            &map(json!({"copied": {"type": "api_key", "key": "k"}, "signed-in": {"type": "oauth", "refresh": "r"}})),
+        )
+        .unwrap();
+        apply(&path, &Map::new(), &["copied".into(), "signed-in".into(), "absent".into()], false).unwrap();
         let store = read_store(&path).unwrap();
-        assert_eq!(store["have"]["v"], 2);
-        assert!(!store.contains_key("logged-out"), "a provider the Mac logged out of must not come back");
+        assert!(!store.contains_key("copied"));
+        assert!(store.contains_key("signed-in"), "the host's own sign-in stays even if the Mac once copied a key there");
+    }
+
+    #[test]
+    fn erase_oauth_removes_sign_ins_only_and_names_them() {
+        let path = temp_store("erase");
+        write_store(
+            &path,
+            &map(json!({"a": {"type": "oauth", "refresh": "r"}, "b": {"type": "api_key", "key": "k"}, "c": {"type": "oauth", "refresh": "s"}})),
+        )
+        .unwrap();
+        let mut erased = apply(&path, &Map::new(), &[], true).unwrap();
+        erased.sort();
+        assert_eq!(erased, ["a", "c"]);
+        assert_eq!(read_store(&path).unwrap().keys().collect::<Vec<_>>(), ["b"]);
+        assert!(apply(&path, &Map::new(), &[], false).unwrap().is_empty(), "without the flag nothing is erased");
     }
 
     #[test]
@@ -188,10 +199,10 @@ mod tests {
         fs::write(lock_path(&path), "").unwrap();
         let old = SystemTime::now() - Duration::from_secs(60);
         fs::File::options().write(true).open(lock_path(&path)).unwrap().set_modified(old).unwrap();
-        apply_incoming(&path, &map(json!({"a": {"v": 1}}))).unwrap();
+        apply(&path, &map(json!({"a": {"v": 1}})), &[], false).unwrap();
         assert!(!lock_path(&path).exists(), "the lock is released");
 
         fs::write(&path, "not json").unwrap();
-        assert!(apply_incoming(&path, &map(json!({"a": {"v": 1}}))).unwrap_err().contains("unreadable"));
+        assert!(apply(&path, &map(json!({"a": {"v": 1}})), &[], false).unwrap_err().contains("unreadable"));
     }
 }

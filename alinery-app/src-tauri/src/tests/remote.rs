@@ -159,7 +159,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     };
     call(alinery_core::repo_service::RepoOp::WriteFile {
         path: format!("{}/app.toml", session.config_dir).into(),
-        contents: render_remote_app_toml(&local, &[repo.clone()]).unwrap(),
+        contents: render_remote_app_toml(&local, &[repo.clone()], false).unwrap(),
     });
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
     let (client, compat, _) = ensure_remote_daemon(&session, &repo, &identity).unwrap();
@@ -2082,7 +2082,7 @@ fn remote_app_toml_drops_hosts_and_other_machines_repos() {
         ..Default::default()
     };
     local.remote_hosts.insert("box-a1b2c3".into(), crate::RemoteHost::default());
-    let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()]).unwrap();
+    let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()], false).unwrap();
     let parsed: crate::AppConfig = toml::from_str(&rendered).unwrap();
     assert!(parsed.remote_hosts.is_empty());
     assert_eq!(parsed.known_repos, ["/srv/r"]);
@@ -2116,7 +2116,11 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
     local.global.power.keep_awake = true;
     local.global.model_favorites.insert("omp".into(), vec!["alinery/favorite".into()]);
 
-    let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()]).unwrap();
+    let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()], true).unwrap();
+    assert!(
+        !render_remote_app_toml(&local, &["/srv/r".to_string()], false).unwrap().contains("xai-shared-key"),
+        "the Grok key goes only when the user chose to share it"
+    );
     for private in [
         "ghp_mac_only_token",
         "install-id-mac",
@@ -2137,7 +2141,7 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
     let host = alinery_core::load_global_settings(&path);
     assert_eq!(host.defaults.model, "alinery/some-model");
     assert_eq!(host.defaults.thinking, "high");
-    assert_eq!(host.experiments.grok_api_key, "xai-shared-key", "provider credentials ride with the others");
+    assert_eq!(host.experiments.grok_api_key, "xai-shared-key");
     assert!(host.github.token.is_empty());
     assert!(
         !host.telemetry.enabled && host.telemetry.install_id.is_empty(),
@@ -2147,4 +2151,183 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
     assert!(!host.harnesses.harness.iter().any(|row| row.key == "custom"), "harness rows name this Mac's paths");
     assert_eq!(toml::from_str::<crate::AppConfig>(&rendered).unwrap().settings_version, 7);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A Mac config directory with API keys, a browser sign-in, custom providers and a hosted token.
+fn credential_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("alinery-share-{name}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("provider-credentials.json"),
+        serde_json::json!({
+            "anthropic": {"type": "api_key", "key": "sk-ant-mac"},
+            "openai": {"type": "api_key", "key": "sk-oai-mac"},
+            "codex": {"type": "oauth", "refresh": "mac-refresh", "expires": 5}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(dir.join("custom-providers.json"), r#"{"endpoints":[]}"#).unwrap();
+    let catalog = alinery_core::HostedCatalog {
+        provider: "alinery".into(),
+        default_model: "alinery/m".into(),
+        base_url: "https://inference.example/v1".into(),
+        plans_url: "https://plans.example".into(),
+        models: vec![alinery_core::HostedModel {
+            id: "m".into(),
+            name: "M".into(),
+            context_window: 1000,
+            max_tokens: 100,
+            price: Some(1),
+            thinking: None,
+        }],
+    };
+    alinery_core::write_inference_file(&dir.join("inference.json"), "inf_mac", 4_000_000_000, "session", 1, &catalog).unwrap();
+    let app_config = dir.join("app.toml");
+    (dir, app_config)
+}
+
+fn host_with(sharing: Option<crate::RemoteSharing>) -> crate::AppConfig {
+    let mut config = crate::AppConfig::default();
+    config.global.experiments.grok_api_key = "xai-mac".into();
+    config.remote_hosts.insert("box-a1b2c3".into(), crate::RemoteHost { sharing, ..Default::default() });
+    config
+}
+
+#[test]
+fn a_new_host_proposes_hosted_models_only_and_lists_what_the_mac_could_give() {
+    let (dir, app_config) = credential_fixture("view");
+    let view = sharing_view(&host_with(Some(crate::RemoteSharing::default())), "box-a1b2c3", &app_config).unwrap();
+    assert!(!view.reviewed);
+    assert_eq!(view.shared, ["hosted-models"], "no API key is ticked for the user");
+    assert_eq!(view.keys, ["anthropic", "openai"]);
+    assert_eq!(view.sign_ins, ["codex"], "sign-ins are listed so the step can say they are not copied");
+    assert!(view.custom_providers && view.grok && view.hosted);
+    assert_eq!(view.hosted_expires_at, Some(4_000_000_000));
+
+    std::fs::remove_file(dir.join("inference.json")).unwrap();
+    let view = sharing_view(&host_with(Some(crate::RemoteSharing::default())), "box-a1b2c3", &app_config).unwrap();
+    assert!(!view.hosted && view.shared.is_empty(), "without a token there is nothing to propose");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_host_from_before_the_choice_keeps_its_keys_and_loses_only_sign_ins() {
+    let (dir, app_config) = credential_fixture("inherit");
+    let inherited = inherited_sharing(&dir.join("provider-credentials.json")).unwrap();
+    assert!(inherited.reviewed);
+    for item in ["hosted-models", "custom-providers", "grok", "key:anthropic", "key:openai"] {
+        assert!(inherited.shared.iter().any(|shared| shared == item), "{item} was already on such a host");
+    }
+    assert!(!inherited.shared.iter().any(|shared| shared.contains("codex")), "a sign-in is never inherited");
+    let view = sharing_view(&host_with(None), "box-a1b2c3", &app_config).unwrap();
+    assert!(view.reviewed, "an existing host is not asked to start over");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn only_known_items_can_be_shared() {
+    for ok in ["hosted-models", "custom-providers", "grok", "key:anthropic"] {
+        assert!(valid_share_item(ok), "{ok}");
+    }
+    for bad in ["", "key:", "key:a\nb", "oauth:codex", "everything"] {
+        assert!(!valid_share_item(bad), "{bad:?}");
+    }
+}
+
+/// The real thing on the Docker sshd: a host set up under the old scheme loses its copied
+/// sign-in once, a sign-in the host makes afterwards is never touched, and taking an item off the
+/// list removes exactly what this app put there.
+#[test]
+fn live_credentials_follow_the_choice_and_a_host_sign_in_survives() {
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let id = format!("cred-{}", std::process::id());
+    let session = live_session(&args, &id);
+    let (dir, app_config) = credential_fixture("live");
+    let store = format!("{}/provider-credentials.json", session.config_dir);
+    let host_file = |name: &str| {
+        session
+            .conn
+            .exec_ok(
+                &format!("cat '{}/{name}' 2>/dev/null || echo MISSING", session.config_dir),
+                RemoteStdin::None,
+                std::time::Duration::from_secs(20),
+            )
+            .unwrap()
+    };
+    let host_store = || serde_json::from_str::<serde_json::Value>(&host_file("provider-credentials.json")).unwrap();
+    let write_host_store = |value: serde_json::Value| {
+        session
+            .channel
+            .call(
+                RepoOp::WriteFile {
+                    path: store.clone().into(),
+                    contents: value.to_string(),
+                },
+                std::time::Duration::from_secs(30),
+            )
+            .unwrap();
+    };
+    let sync = |config: &crate::AppConfig| sync_config(&session.channel, config, "box-a1b2c3", &session.config_dir, &app_config).unwrap();
+
+    // An older connect copied the Mac's sign-in; a key this app never placed is the host's own.
+    write_host_store(serde_json::json!({
+        "codex": {"type": "oauth", "refresh": "copied"},
+        "host-key": {"type": "api_key", "key": "host"}
+    }));
+    let sharing = sync(&host_with(None));
+    assert_eq!(sharing.erased_sign_ins, ["codex"]);
+    let on_host = host_store();
+    assert!(on_host.get("codex").is_none(), "the copied sign-in is gone: {on_host}");
+    assert_eq!(on_host["anthropic"]["key"], "sk-ant-mac");
+    assert_eq!(on_host["openai"]["key"], "sk-oai-mac");
+    assert_eq!(on_host["host-key"]["key"], "host", "something the host made for itself stays");
+    assert!(host_file("inference.json").contains("inf_mac") && host_file("custom-providers.json").contains("endpoints"));
+    assert!(host_file("app.toml").contains("xai-mac"));
+
+    // The host signs in for itself. Then the user takes Anthropic, hosted models, custom providers
+    // and the Grok key off the list, keeping OpenAI.
+    let mut on_host = host_store();
+    on_host["host-signin"] = serde_json::json!({"type": "oauth", "refresh": "host-refresh"});
+    write_host_store(on_host);
+    let mut chosen = sharing.clone();
+    chosen.erased_sign_ins.clear();
+    chosen.shared = vec!["key:openai".into()];
+    let sharing = sync(&host_with(Some(chosen)));
+    let on_host = host_store();
+    assert!(on_host.get("anthropic").is_none(), "an unticked key is removed: {on_host}");
+    assert_eq!(on_host["openai"]["key"], "sk-oai-mac");
+    assert_eq!(on_host["host-signin"]["refresh"], "host-refresh", "the host's own sign-in is never touched");
+    assert_eq!(on_host["host-key"]["key"], "host");
+    assert_eq!(host_file("inference.json").trim(), "MISSING");
+    assert_eq!(host_file("custom-providers.json").trim(), "MISSING");
+    assert!(!host_file("app.toml").contains("xai-mac"), "the Grok key left with the choice");
+
+    // A key the Mac rotates is copied again; a provider the Mac logs out of leaves the host too.
+    std::fs::write(
+        dir.join("provider-credentials.json"),
+        r#"{"openai":{"type":"api_key","key":"sk-oai-rotated"},"codex":{"type":"oauth","refresh":"mac-refresh"}}"#,
+    )
+    .unwrap();
+    let sharing = sync(&host_with(Some(sharing)));
+    assert_eq!(host_store()["openai"]["key"], "sk-oai-rotated");
+    std::fs::write(dir.join("provider-credentials.json"), "{}").unwrap();
+    sync(&host_with(Some(sharing)));
+    let on_host = host_store();
+    assert!(on_host.get("openai").is_none(), "{on_host}");
+    assert_eq!(on_host["host-signin"]["refresh"], "host-refresh");
+
+    // A host nobody has reviewed yet gets settings but no credentials at all.
+    write_host_store(serde_json::json!({}));
+    let fresh = sync(&host_with(Some(crate::RemoteSharing::default())));
+    assert!(!fresh.reviewed);
+    assert_eq!(host_store(), serde_json::json!({}));
+
+    session.conn.exit_master();
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(&session.secrets_dir);
 }

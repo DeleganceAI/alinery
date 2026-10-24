@@ -55,3 +55,35 @@ export function parentPath(path: string): string {
 export function joinPath(dir: string, name: string): string {
   return dir === "/" ? `/${name}` : `${dir.replace(/\/+$/, "")}/${name}`;
 }
+
+const PROVIDER_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  "openai-codex": "OpenAI Codex",
+  "github-copilot": "GitHub Copilot",
+  google: "Google",
+  xai: "xAI",
+  openrouter: "OpenRouter",
+  groq: "Groq",
+  mistral: "Mistral",
+};
+
+/** A provider id as a readable name: a known one by its brand, any other with its words capitalized. */
+export function providerLabel(id: string): string {
+  return (
+    PROVIDER_NAMES[id] ??
+    id
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((word) => word[0].toUpperCase() + word.slice(1))
+      .join(" ")
+  );
+}
+
+/** How long a token that stops working at `expiresAt` (unix seconds) has left, as "for about 90 days (until Jan 21, 2027)". */
+export function tokenLifetime(expiresAt: number, now = Date.now()): string {
+  const until = new Date(expiresAt * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const days = Math.round((expiresAt * 1000 - now) / 86_400_000);
+  if (days < 1) return `for less than a day (until ${until})`;
+  return `for about ${days} ${days === 1 ? "day" : "days"} (until ${until})`;
+}

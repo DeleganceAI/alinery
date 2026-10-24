@@ -2,11 +2,12 @@ import { ArrowUp, Folder, GitBranch, X } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { askConfirm } from "./confirm";
 import * as ipc from "./ipc";
+import { RemoteCredentialsForm } from "./RemoteCredentials";
 import { HOST_KEY_UNKNOWN, joinPath, parentPath } from "./remoteRepo";
 import { Dialog, InlineStatus, LoadingState } from "./shared";
 import type { RemoteDirEntry, RemoteHostView } from "./types";
 
-type Step = "destination" | "connecting" | "browse";
+type Step = "destination" | "connecting" | "credentials" | "browse";
 
 /**
  * Add a repository that lives on another machine over SSH: choose the destination, connect
@@ -29,6 +30,7 @@ export function RemoteRepoDialog({
   const [step, setStep] = useState<Step>(initialHostId ? "connecting" : "destination");
   const [destination, setDestination] = useState("");
   const [hostId, setHostId] = useState(initialHostId ?? "");
+  const [hostLabel, setHostLabel] = useState("");
   const [phase, setPhase] = useState("Connecting");
   const [error, setError] = useState("");
   const [dir, setDir] = useState("");
@@ -63,6 +65,7 @@ export function RemoteRepoDialog({
 
   const connect = useCallback(
     async (id: string, trust: boolean) => {
+      setHostId(id);
       setStep("connecting");
       setError("");
       setPhase("Connecting");
@@ -74,10 +77,16 @@ export function RemoteRepoDialog({
       }, 500);
       try {
         await ipc.remoteConnect(id, trust);
-        const home = (await ipc.remoteHosts()).find((host) => host.host_id === id)?.home ?? "/";
+        const connected = (await ipc.remoteHosts()).find((host) => host.host_id === id);
         if (!alive.current) return;
+        setHostLabel(connected?.label || id);
+        // A host that has not been told what it may use, or that lost sign-ins, asks first.
+        if (connected && (!connected.sharing_reviewed || connected.erased_sign_ins.length > 0)) {
+          setStep("credentials");
+          return;
+        }
         setStep("browse");
-        await load(id, home, false);
+        await load(id, connected?.home ?? "/", false);
       } catch (e) {
         const message = String(e);
         if (message.includes(HOST_KEY_UNKNOWN)) {
@@ -187,7 +196,8 @@ export function RemoteRepoDialog({
               />
             </label>
             <p className="dsc">
-              Alinery connects without prompts, so your key must be in ssh-agent or passed with -i. Your provider sign-ins are copied to the host so its agents can run.
+              Alinery connects without prompts, so your key must be in ssh-agent or passed with -i. After it connects you choose which API keys and hosted models the host may use.
+              Browser sign-ins are never copied.
             </p>
             {saved.length > 0 ? (
               <ul className="remote-saved" aria-label="Saved hosts">
@@ -223,6 +233,21 @@ export function RemoteRepoDialog({
           <LoadingState label={`${phase}…`} />
           <p className="dsc">Closing this dialog does not stop anything on the host.</p>
         </div>
+      ) : null}
+
+      {step === "credentials" ? (
+        <RemoteCredentialsForm
+          hostId={hostId}
+          hostLabel={hostLabel || hostId}
+          confirmLabel="Continue"
+          onCancel={onClose}
+          onDone={async () => {
+            const home = (await ipc.remoteHosts()).find((host) => host.host_id === hostId)?.home ?? "/";
+            if (!alive.current) return;
+            setStep("browse");
+            await load(hostId, home, false);
+          }}
+        />
       ) : null}
 
       {step === "browse" ? (

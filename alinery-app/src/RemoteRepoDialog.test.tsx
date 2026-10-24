@@ -4,7 +4,7 @@ import { ConfirmHost } from "./confirm";
 import * as ipc from "./ipc";
 import { RemoteRepoDialog } from "./RemoteRepoDialog";
 import type * as IpcFixtures from "./test/mockIpc";
-import type { RemoteHostView } from "./types";
+import type { RemoteHostView, RemoteSharingView } from "./types";
 
 vi.mock("./ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("./test/mockIpc");
@@ -16,6 +16,8 @@ vi.mock("./ipc", async () => {
     remoteClassify: vi.fn(),
     remoteInit: vi.fn(),
     remoteAddRepo: vi.fn(),
+    remoteSharing: vi.fn(),
+    remoteSetSharing: vi.fn(),
   });
 });
 
@@ -28,7 +30,21 @@ const host: RemoteHostView = {
   error: null,
   home: "/home/me",
   platform: "Linux x86_64",
+  sharing_reviewed: true,
+  erased_sign_ins: [],
 };
+const sharing = (over: Partial<RemoteSharingView> = {}): RemoteSharingView => ({
+  reviewed: false,
+  shared: ["hosted-models"],
+  keys: ["anthropic"],
+  sign_ins: [],
+  custom_providers: false,
+  grok: false,
+  hosted: true,
+  hosted_expires_at: Math.floor(Date.now() / 1000) + 30 * 86_400,
+  erased_sign_ins: [],
+  ...over,
+});
 const listing = (path: string, names: Array<[string, boolean]>) => ({
   path,
   entries: names.map(([name, git]) => ({ name, git, symlink: false })),
@@ -107,6 +123,37 @@ describe("RemoteRepoDialog", () => {
       ["box-a1b2c3", false],
       ["box-a1b2c3", true],
     ]);
+  });
+
+  it("asks what a new host may use before it shows any folder, and copies nothing first", async () => {
+    vi.mocked(ipc.remoteHosts).mockResolvedValue([{ ...host, sharing_reviewed: false }]);
+    vi.mocked(ipc.remoteSharing).mockResolvedValue(sharing());
+    vi.mocked(ipc.remoteSetSharing).mockResolvedValue(sharing({ reviewed: true }));
+    mount();
+    fireEvent.change(screen.getByLabelText("SSH destination"), { target: { value: "ssh -p 2222 me@box" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+    await screen.findByText("API keys");
+    expect(screen.queryByRole("list", { name: "Folders" })).toBeNull();
+    expect(ipc.remoteSetSharing).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText("Anthropic"));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("list", { name: "Folders" });
+    expect(ipc.remoteSetSharing).toHaveBeenCalledWith("box-a1b2c3", ["hosted-models", "key:anthropic"]);
+    expect(ipc.remoteListDir).toHaveBeenCalledWith("box-a1b2c3", "/home/me", false);
+  });
+
+  it("tells a returning user which sign-ins were removed from the host before the folders", async () => {
+    vi.mocked(ipc.remoteHosts).mockResolvedValue([{ ...host, erased_sign_ins: ["openai-codex"] }]);
+    vi.mocked(ipc.remoteSharing).mockResolvedValue(sharing({ reviewed: true, erased_sign_ins: ["openai-codex"], shared: [] }));
+    vi.mocked(ipc.remoteSetSharing).mockResolvedValue(sharing({ reviewed: true }));
+    mount({ hostId: "box-a1b2c3" });
+
+    expect((await screen.findByText(/were removed from this host/)).textContent).toContain("OpenAI Codex");
+    expect(screen.queryByRole("list", { name: "Folders" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("list", { name: "Folders" });
   });
 
   it("returns to the destination with the reason when the host refuses", async () => {

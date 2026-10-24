@@ -72,6 +72,7 @@ import type {
   RelatedTaskRef,
   RemoteDirListing,
   RemoteHostView,
+  RemoteSharingView,
   RepoOverrides,
   ReviewHandoffResult,
   SavePlaybookRequest,
@@ -138,6 +139,8 @@ export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
 export const remoteAddHost = (destination: string) => invoke<RemoteHostView>("remote_add_host", { destination });
 export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
 export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
+export const remoteSharing = (hostId: string) => invoke<RemoteSharingView>("remote_sharing", { hostId });
+export const remoteSetSharing = (hostId: string, shared: string[]) => invoke<RemoteSharingView>("remote_set_sharing", { hostId, shared });
 export const remoteListDir = (hostId: string, path: string, showHidden: boolean) => invoke<RemoteDirListing>("remote_list_dir", { hostId, path, showHidden });
 export const remoteClassify = (hostId: string, path: string) => invoke<PickedFolder>("remote_classify", { hostId, path });
 export const remoteInit = (hostId: string, path: string) => invoke<InitializedFolder>("remote_init", { hostId, path });

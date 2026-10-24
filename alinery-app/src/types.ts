@@ -386,6 +386,25 @@ export type RemoteHostView = {
   error: string | null;
   home: string | null;
   platform: string | null;
+  /** False for a host that has not been told what it may receive yet. */
+  sharing_reviewed: boolean;
+  /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
+  erased_sign_ins: string[];
+};
+/** What this Mac could give a host, and what the host is set to receive. */
+export type RemoteSharingView = {
+  reviewed: boolean;
+  /** Items to show ticked: `hosted-models`, `custom-providers`, `grok`, `key:<provider>`. */
+  shared: string[];
+  keys: string[];
+  /** Browser sign-ins on this Mac. Never copied. */
+  sign_ins: string[];
+  custom_providers: boolean;
+  grok: boolean;
+  hosted: boolean;
+  /** Unix seconds. */
+  hosted_expires_at: number | null;
+  erased_sign_ins: string[];
 };
 export type RemoteDirEntry = { name: string; git: boolean; symlink: boolean };
 export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; truncated: boolean };

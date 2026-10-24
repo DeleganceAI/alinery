@@ -162,6 +162,29 @@ pub(crate) struct RemoteHost {
     pub(crate) platform: Option<String>,
     #[serde(default)]
     pub(crate) glibc: Option<String>,
+    /// What this host may receive. `None` is a host from before this was a choice; its first
+    /// connect keeps what it had, minus browser sign-ins, and records it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sharing: Option<RemoteSharing>,
+}
+
+/// What the user chose to put on a host, and what this app has put there. Nothing that is a
+/// credential is copied until `reviewed`. Items are `hosted-models`, `custom-providers`, `grok`
+/// and `key:<provider>` (an API key).
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub(crate) struct RemoteSharing {
+    #[serde(default)]
+    pub(crate) reviewed: bool,
+    #[serde(default)]
+    pub(crate) shared: Vec<String>,
+    /// Items this app has written to the host, so that taking one off `shared` removes exactly
+    /// what it put there and never something the host made for itself.
+    #[serde(default)]
+    pub(crate) placed: Vec<String>,
+    /// Sign-ins removed from the host when it moved to this scheme. Shown until the user has
+    /// seen them and confirmed the choices again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) erased_sign_ins: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

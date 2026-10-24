@@ -370,26 +370,26 @@ pub(crate) fn remote_config_dir(root: &str, local_identity: &str) -> String {
     format!("{root}/config/{local_identity}")
 }
 
-/// The `app.toml` the remote daemon and repo service read: the local settings, minus the
-/// remote host list, with only this host's repositories (the remote alinery-mcp allowlists
-/// repos from it).
 /// The `app.toml` the host's daemon and repo service read: an allowlist, not a copy of this Mac's.
 ///
 /// What a host-side process actually consults is small. The default model and thinking level for a
 /// new session come from `defaults`, and the Grok key is handed to the daemon as `XAI_API_KEY` when
-/// it starts (a provider credential, so it rides with the others). Everything else in the Mac's
-/// settings is either a UI preference or something that must not leave it: the GitHub token (imports
-/// and PR discovery run here, and the host pushes with its own git credentials), the telemetry
-/// install id and endpoint (the host records no events under this install), harness rows that name
-/// Mac paths and may carry keys in `env`, and the backup destination. Those stay at their defaults.
-pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[String]) -> Result<String, String> {
+/// it starts (a provider credential, so only when the user chose to share it). Everything else in
+/// the Mac's settings is either a UI preference or something that must not leave it: the GitHub
+/// token (imports and PR discovery run here, and the host pushes with its own git credentials), the
+/// telemetry install id and endpoint (the host records no events under this install), harness rows
+/// that name Mac paths and may carry keys in `env`, and the backup destination. Those stay at their
+/// defaults.
+pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[String], share_grok: bool) -> Result<String, String> {
     let mut config = AppConfig {
         settings_version: local.settings_version,
         known_repos: remote_repo_paths.to_vec(),
         ..AppConfig::default()
     };
     config.global.defaults = local.global.defaults.clone();
-    config.global.experiments.grok_api_key = local.global.experiments.grok_api_key.clone();
+    if share_grok {
+        config.global.experiments.grok_api_key = local.global.experiments.grok_api_key.clone();
+    }
     config.global.telemetry = alinery_core::TelemetryPrefs {
         enabled: false,
         prompted: true,
@@ -793,8 +793,36 @@ fn write_remote_file(channel: &RepoChannel, path: String, contents: String) -> R
     channel.call(RepoOp::WriteFile { path: path.into(), contents }, SERVICE_TIMEOUT).map(|_| ())
 }
 
-/// Push this Mac's settings and credentials into the host's private config directory.
-fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &str, config_dir: &str, app_config: &Path) -> Result<(), String> {
+const SHARE_HOSTED: &str = "hosted-models";
+const SHARE_CUSTOM: &str = "custom-providers";
+const SHARE_GROK: &str = "grok";
+const SHARE_KEY: &str = "key:";
+
+fn key_providers(items: &[String]) -> Vec<String> {
+    items.iter().filter_map(|item| item.strip_prefix(SHARE_KEY)).map(str::to_string).collect()
+}
+
+/// A host from before sharing was a choice keeps what it was given (hosted models, custom
+/// providers, the Grok key, the API keys this Mac held), and nothing new is added silently later.
+pub(crate) fn inherited_sharing(credentials: &Path) -> Result<RemoteSharing, String> {
+    let mut shared: Vec<String> = [SHARE_HOSTED, SHARE_CUSTOM, SHARE_GROK].map(str::to_string).into();
+    for (provider, kind) in alinery_core::credential_sync::kinds(credentials)? {
+        if kind == "api_key" {
+            shared.push(format!("{SHARE_KEY}{provider}"));
+        }
+    }
+    Ok(RemoteSharing {
+        reviewed: true,
+        placed: shared.clone(),
+        shared,
+        erased_sign_ins: Vec::new(),
+    })
+}
+
+/// Push this Mac's settings to the host's private config directory, and the credentials the user
+/// chose for it. Browser sign-ins are never copied. Returns the host's sharing record to keep.
+pub(crate) fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &str, config_dir: &str, app_config: &Path) -> Result<RemoteSharing, String> {
+    let host = local.remote_hosts.get(host_id).ok_or("unknown remote host")?;
     let repos: Vec<String> = local
         .known_repos
         .iter()
@@ -803,34 +831,65 @@ fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &str, config_d
             _ => None,
         })
         .collect();
-    write_remote_file(channel, format!("{config_dir}/app.toml"), render_remote_app_toml(local, &repos)?)?;
-
     let local_dir = app_config.parent().ok_or("app config has no parent directory")?;
     let credentials = local_dir.join("provider-credentials.json");
-    let entries = alinery_core::credential_sync::read_all(&credentials)?;
-    if !entries.is_empty() {
-        let newer = channel.call(
-            RepoOp::SyncCredentials {
-                path: format!("{config_dir}/provider-credentials.json").into(),
-                entries,
-            },
-            SERVICE_TIMEOUT,
-        )?;
-        if let Value::Object(newer) = newer {
-            alinery_core::credential_sync::overwrite_providers(&credentials, &newer)?;
-        }
+    let legacy = host.sharing.is_none();
+    let mut sharing = match &host.sharing {
+        Some(sharing) => sharing.clone(),
+        None => inherited_sharing(&credentials)?,
+    };
+    let wants = |item: &str| sharing.reviewed && sharing.shared.iter().any(|shared| shared == item);
+    write_remote_file(channel, format!("{config_dir}/app.toml"), render_remote_app_toml(local, &repos, wants(SHARE_GROK))?)?;
+    if !sharing.reviewed {
+        return Ok(sharing);
     }
-    // One-way copies: only this Mac writes them. inference.json is refreshed by the app, so it
-    // must be re-pushed on each connect.
-    for (source, name) in [
-        (local_dir.join("custom-providers.json"), "custom-providers.json"),
-        (alinery_core::inference_path(&alinery_core::pairing_config_dir(app_config)), "inference.json"),
+
+    let set = alinery_core::credential_sync::api_keys(&credentials, &key_providers(&sharing.shared))?;
+    let remove: Vec<String> = key_providers(&sharing.placed).into_iter().filter(|provider| !set.contains_key(provider)).collect();
+    let mut placed: Vec<String> = set.keys().map(|provider| format!("{SHARE_KEY}{provider}")).collect();
+    let erased = channel.call(
+        RepoOp::SyncCredentials {
+            path: format!("{config_dir}/provider-credentials.json").into(),
+            set,
+            remove,
+            erase_oauth: legacy,
+        },
+        SERVICE_TIMEOUT,
+    )?;
+    if legacy {
+        sharing.erased_sign_ins = serde_json::from_value(erased).map_err(|error| format!("read the erased sign-ins: {error}"))?;
+    }
+    // inference.json is refreshed by the app, so a shared copy is re-pushed on every connect.
+    for (item, source, name) in [
+        (SHARE_CUSTOM, local_dir.join("custom-providers.json"), "custom-providers.json"),
+        (SHARE_HOSTED, alinery_core::inference_path(&alinery_core::pairing_config_dir(app_config)), "inference.json"),
     ] {
-        if let Ok(contents) = std::fs::read_to_string(&source) {
-            write_remote_file(channel, format!("{config_dir}/{name}"), contents)?;
+        let path = format!("{config_dir}/{name}");
+        match std::fs::read_to_string(&source) {
+            Ok(contents) if wants(item) => {
+                write_remote_file(channel, path, contents)?;
+                placed.push(item.to_string());
+            }
+            _ if sharing.placed.iter().any(|placed| placed == item) => {
+                channel.call(RepoOp::RemoveFile { path: path.into() }, SERVICE_TIMEOUT)?;
+            }
+            _ => {}
         }
     }
-    Ok(())
+    sharing.placed = placed;
+    Ok(sharing)
+}
+
+/// Keep the sharing record a sync produced, if it changed.
+fn record_sharing<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, sharing: RemoteSharing) -> Result<(), String> {
+    let mut config = load_app_config(app);
+    match config.remote_hosts.get_mut(host_id) {
+        Some(host) if host.sharing.as_ref() != Some(&sharing) => {
+            host.sharing = Some(sharing);
+            write_app_config(app, &config)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Connect to a configured host: ssh master, probe, runtime install, repo service, settings.
@@ -874,7 +933,7 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
     let config_dir = remote_config_dir(&root, &alinery_core::app_config_identity(&app_config));
     let channel = RepoChannel::open(&conn, &format!("{runtime}/alinery-mcp"), &format!("{config_dir}/app.toml"))?;
     phase("Syncing settings");
-    sync_config(&channel, &config, host_id, &config_dir, &app_config)?;
+    record_sharing(app, host_id, sync_config(&channel, &config, host_id, &config_dir, &app_config)?)?;
 
     // Remember what the host looked like, so the list can show it while offline.
     let mut latest = load_app_config(app);
@@ -1168,6 +1227,10 @@ pub(crate) struct RemoteHostView {
     pub(crate) error: Option<String>,
     pub(crate) home: Option<String>,
     pub(crate) platform: Option<String>,
+    /// False for a host that has not been told what it may receive yet.
+    pub(crate) sharing_reviewed: bool,
+    /// Sign-ins removed from this host that the user has not acknowledged.
+    pub(crate) erased_sign_ins: Vec<String>,
 }
 
 fn host_view(state: &AppState, host_id: &str, host: &RemoteHost) -> RemoteHostView {
@@ -1181,6 +1244,8 @@ fn host_view(state: &AppState, host_id: &str, host: &RemoteHost) -> RemoteHostVi
         error: status.error,
         home: host.home.clone(),
         platform: host.platform.clone(),
+        sharing_reviewed: host.sharing.as_ref().is_none_or(|sharing| sharing.reviewed),
+        erased_sign_ins: host.sharing.as_ref().map(|sharing| sharing.erased_sign_ins.clone()).unwrap_or_default(),
     }
 }
 
@@ -1202,11 +1267,107 @@ pub(crate) fn remote_add_host(app: AppHandle, state: State<'_, AppState>, destin
     let host = config.remote_hosts.entry(host_id.clone()).or_insert_with(|| RemoteHost {
         label: ssh_args.last().cloned().unwrap_or_default(),
         ssh_args: ssh_args.clone(),
+        // A new host receives no credentials until the user has chosen which.
+        sharing: Some(RemoteSharing::default()),
         ..Default::default()
     });
     let view = host_view(&state, &host_id, host);
     write_app_config(&app, &config)?;
     Ok(view)
+}
+
+/// What the setup step and the host's credentials dialog show: what this Mac could give a host,
+/// and what the host is set to receive.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SharingView {
+    pub(crate) reviewed: bool,
+    /// Ticked items: the host's choice, or the proposed one for a host that has not been reviewed.
+    pub(crate) shared: Vec<String>,
+    /// Providers this Mac holds an API key for.
+    pub(crate) keys: Vec<String>,
+    /// Providers this Mac is signed in to with a browser. These are never copied.
+    pub(crate) sign_ins: Vec<String>,
+    pub(crate) custom_providers: bool,
+    pub(crate) grok: bool,
+    /// Whether this Mac has a hosted-model token to give, and when it stops working.
+    pub(crate) hosted: bool,
+    pub(crate) hosted_expires_at: Option<u64>,
+    pub(crate) erased_sign_ins: Vec<String>,
+}
+
+pub(crate) fn sharing_view(config: &AppConfig, host_id: &str, app_config: &Path) -> Result<SharingView, String> {
+    let host = config.remote_hosts.get(host_id).ok_or("unknown remote host")?;
+    let local_dir = app_config.parent().ok_or("app config has no parent directory")?;
+    let credentials = local_dir.join("provider-credentials.json");
+    let kinds = alinery_core::credential_sync::kinds(&credentials)?;
+    let holding = |wanted: &str| kinds.iter().filter(|(_, kind)| *kind == wanted).map(|(provider, _)| provider.clone()).collect::<Vec<_>>();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
+    let hosted_expires_at = alinery_core::inference_expires_at(&alinery_core::pairing_config_dir(app_config)).filter(|expires| *expires > now);
+    let sharing = match &host.sharing {
+        Some(sharing) => sharing.clone(),
+        None => inherited_sharing(&credentials)?,
+    };
+    let shared = if sharing.reviewed {
+        sharing.shared
+    } else if hosted_expires_at.is_some() {
+        vec![SHARE_HOSTED.to_string()]
+    } else {
+        Vec::new()
+    };
+    Ok(SharingView {
+        reviewed: sharing.reviewed,
+        shared,
+        keys: holding("api_key"),
+        sign_ins: holding("oauth"),
+        custom_providers: local_dir.join("custom-providers.json").is_file(),
+        grok: !config.global.experiments.grok_api_key.trim().is_empty(),
+        hosted: hosted_expires_at.is_some(),
+        hosted_expires_at,
+        erased_sign_ins: sharing.erased_sign_ins,
+    })
+}
+
+pub(crate) fn valid_share_item(item: &str) -> bool {
+    matches!(item, SHARE_HOSTED | SHARE_CUSTOM | SHARE_GROK)
+        || item
+            .strip_prefix(SHARE_KEY)
+            .is_some_and(|provider| !provider.is_empty() && !provider.chars().any(char::is_control))
+}
+
+/// Record what a connected host may receive and apply it now: copy what was added, remove what
+/// this app copied before and was taken off. Saving also acknowledges any removed sign-ins.
+pub(crate) fn set_sharing<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, mut shared: Vec<String>) -> Result<SharingView, String> {
+    if let Some(unknown) = shared.iter().find(|item| !valid_share_item(item)) {
+        return Err(format!("unknown item to share: {unknown}"));
+    }
+    shared.sort();
+    shared.dedup();
+    let state = app.state::<AppState>();
+    let session = connected_session(&state, host_id)?;
+    let app_config = app_config_path(app)?;
+    let mut config = load_app_config(app);
+    let host = config.remote_hosts.get_mut(host_id).ok_or("unknown remote host")?;
+    let sharing = host.sharing.get_or_insert_with(RemoteSharing::default);
+    sharing.reviewed = true;
+    sharing.shared = shared;
+    sharing.erased_sign_ins.clear();
+    write_app_config(app, &config)?;
+    record_sharing(app, host_id, sync_config(&session.channel, &config, host_id, &session.config_dir, &app_config)?)?;
+    sharing_view(&load_app_config(app), host_id, &app_config)
+}
+
+#[tauri::command]
+pub(crate) async fn remote_sharing(app: AppHandle, host_id: String) -> Result<SharingView, String> {
+    tauri::async_runtime::spawn_blocking(move || sharing_view(&load_app_config(&app), &host_id, &app_config_path(&app)?))
+        .await
+        .map_err(|error| format!("remote sharing task: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn remote_set_sharing(app: AppHandle, host_id: String, shared: Vec<String>) -> Result<SharingView, String> {
+    tauri::async_runtime::spawn_blocking(move || set_sharing(&app, &host_id, shared))
+        .await
+        .map_err(|error| format!("remote sharing task: {error}"))?
 }
 
 /// Connect (or reconnect) a host, then bring back every known repo on it.
@@ -1303,7 +1464,7 @@ pub(crate) fn add_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &s
     }
     write_app_config(app, &config)?;
     // The host's copy of app.toml allowlists its repos for the remote alinery-mcp.
-    sync_config(&session.channel, &config, host_id, &session.config_dir, &app_config_path(app)?)?;
+    record_sharing(app, host_id, sync_config(&session.channel, &config, host_id, &session.config_dir, &app_config_path(app)?)?)?;
     Ok(key)
 }
 

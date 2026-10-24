@@ -487,11 +487,18 @@ pub enum RepoOp {
         path: PathBuf,
         contents: String,
     },
-    /// Merge the Mac's provider credentials into the store at `path`; the reply holds the
-    /// providers where this side is strictly newer. See `credential_sync`.
+    /// Change the provider credentials at `path`: write the API keys in `set`, drop the ones in
+    /// `remove`, and with `erase_oauth` drop every browser sign-in. The reply names the sign-ins
+    /// erased. See `credential_sync`.
     SyncCredentials {
         path: PathBuf,
-        entries: serde_json::Map<String, Value>,
+        set: serde_json::Map<String, Value>,
+        remove: Vec<String>,
+        erase_oauth: bool,
+    },
+    /// Delete a file this app wrote earlier. A missing file is not an error.
+    RemoveFile {
+        path: PathBuf,
     },
     /// Start the daemon detached so it outlives the ssh session that asked.
     SpawnDaemon {
@@ -870,7 +877,11 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             to_value(crate::send_review_handoff_for_repos(&daemon, &source_repo, &target_repo, request)?)
         }
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
-        RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
+        RepoOp::SyncCredentials { path, set, remove, erase_oauth } => to_value(crate::credential_sync::apply(&path, &set, &remove, erase_oauth)?),
+        RepoOp::RemoveFile { path } => match std::fs::remove_file(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("remove {}: {error}", path.display())),
+            _ => Ok(Value::Null),
+        },
         RepoOp::SpawnDaemon {
             repo,
             app_config,
@@ -1450,7 +1461,12 @@ mod tests {
             },
             RepoOp::SyncCredentials {
                 path: "/srv/c.json".into(),
-                entries: serde_json::Map::from_iter([("p".to_string(), serde_json::json!({"expires": 1}))]),
+                set: serde_json::Map::from_iter([("p".to_string(), serde_json::json!({"type": "api_key"}))]),
+                remove: vec!["q".into()],
+                erase_oauth: true,
+            },
+            RepoOp::RemoveFile {
+                path: "/srv/c/inference.json".into(),
             },
             RepoOp::SpawnDaemon {
                 repo: "/srv/a".into(),
@@ -1584,17 +1600,32 @@ mod tests {
     }
 
     #[test]
-    fn sync_credentials_reports_what_the_host_holds_newer() {
+    fn sync_credentials_writes_keys_and_names_the_sign_ins_it_erased() {
         let root = temp_dir("sync");
         let path = root.join("provider-credentials.json");
-        fs::write(&path, r#"{"oauth":{"expires":900}}"#).unwrap();
-        let entries = serde_json::Map::from_iter([
-            ("oauth".to_string(), serde_json::json!({"expires": 100})),
-            ("key".to_string(), serde_json::json!({"type": "api_key"})),
-        ]);
-        let newer = run(RepoOp::SyncCredentials { path: path.clone(), entries }).unwrap();
-        assert_eq!(newer, serde_json::json!({"oauth": {"expires": 900}}));
-        assert!(fs::read_to_string(&path).unwrap().contains("api_key"));
+        fs::write(&path, r#"{"codex":{"type":"oauth","refresh":"r"},"old":{"type":"api_key","key":"o"}}"#).unwrap();
+        let set = serde_json::Map::from_iter([("key".to_string(), serde_json::json!({"type": "api_key"}))]);
+        let erased = run(RepoOp::SyncCredentials {
+            path: path.clone(),
+            set,
+            remove: vec!["old".into()],
+            erase_oauth: true,
+        })
+        .unwrap();
+        assert_eq!(erased, serde_json::json!(["codex"]));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"key\"") && !text.contains("codex") && !text.contains("\"old\""), "{text}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remove_file_deletes_and_tolerates_a_missing_file() {
+        let root = temp_dir("remove-file");
+        let path = root.join("inference.json");
+        fs::write(&path, "{}").unwrap();
+        run(RepoOp::RemoveFile { path: path.clone() }).unwrap();
+        assert!(!path.exists());
+        run(RepoOp::RemoveFile { path }).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
