@@ -715,6 +715,81 @@ fn capacity_and_coding_ownership_survive_review_and_finishing() {
 }
 
 #[test]
+fn step_continuation_persists_current_and_future_policy_without_revoking_handoffs() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 10);
+    f.add_consumer("result.md");
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    assert_eq!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Ready { ready_revision: 0 }
+    );
+    set_step_continuation(&mut f.state, &f.definition, "work", true).unwrap();
+    let queued = f.reserve(true);
+    persist_owner_fixture(&mut f);
+    f.state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(f.state.executions[&queued].continuation_mode, ContinuationMode::Automatic);
+    let requested = f.state.executions[&id].clone();
+    set_step_continuation(&mut f.state, &f.definition, "work", false).unwrap();
+    assert_eq!(f.state.executions[&id], requested);
+    assert_eq!(f.state.executions[&queued].continuation_mode, ContinuationMode::Manual);
+    let future = f.reserve(true);
+    assert_eq!(f.state.executions[&future].continuation_mode, ContinuationMode::Manual);
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    let accepted = f.state.executions[&id].clone();
+    set_step_continuation(&mut f.state, &f.definition, "work", true).unwrap();
+    set_step_continuation(&mut f.state, &f.definition, "work", false).unwrap();
+    assert_eq!(f.state.executions[&id], accepted);
+    assert!(!f.state.enabled_steps.contains("work"));
+}
+
+#[test]
+fn step_continuation_requires_fresh_readiness_and_revalidates_outputs() {
+    let mut f = Fixture::new("{path=\"result.md\", required=true}", false, false, 10);
+    f.add_consumer("result.md");
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap();
+    invalidate_execution_readiness(&mut f.state, &id, &owner, 1).unwrap();
+    set_step_continuation(&mut f.state, &f.definition, "work", true).unwrap();
+    assert_eq!(f.state.executions[&id].continuation_requested_revision, None);
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap(),
+        CompletionOutcome::Stale { .. }
+    ));
+    set_step_continuation(&mut f.state, &f.definition, "work", false).unwrap();
+    assert_eq!(
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 1).unwrap(),
+        CompletionOutcome::Ready { ready_revision: 1 }
+    );
+    fs::remove_file(crate::artifacts_dir(&f.repo, "task").join(&f.state.executions[&id].outputs[0].relative_path)).unwrap();
+    set_step_continuation(&mut f.state, &f.definition, "work", true).unwrap();
+    assert!(matches!(
+        finalize_execution_continuation(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 1).unwrap(),
+        CompletionOutcome::InvalidOutputs { .. }
+    ));
+    assert!(f.state.occurrences.is_empty());
+    assert!(f.state.executions[&id].receipt_id.is_none());
+}
+
+#[test]
+fn step_continuation_rejects_unknown_steps_and_manual_override_without_mutation() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 10);
+    let before = f.state.clone();
+    assert!(set_step_continuation(&mut f.state, &f.definition, "missing", true).unwrap_err().contains("unknown step"));
+    assert_eq!(f.state, before);
+    set_execution_auto_approve_all(&mut f.state, true);
+    let before = f.state.clone();
+    assert!(set_step_continuation(&mut f.state, &f.definition, "work", false).unwrap_err().contains("Auto Approval All"));
+    assert_eq!(f.state, before);
+}
+
+#[test]
 fn auto_approve_all_advances_ready_work_without_another_report_and_off_restores_manual_gate() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, false, 10);
     f.add_consumer("result.md");

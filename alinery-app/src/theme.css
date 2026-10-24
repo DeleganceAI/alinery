@@ -9705,6 +9705,31 @@ dialog.modal::backdrop {
   border-top: 1px solid var(--border);
   color: var(--text-muted);
 }
+.session-continuation .btn.small {
+  height: var(--control-h);
+}
+.continuation-modes {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: var(--control-h);
+  box-sizing: border-box;
+  margin: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+.continuation-modes .btn {
+  height: 100%;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+.continuation-modes .btn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
 .session-continuation > span {
   min-width: 0;
   overflow-wrap: anywhere;

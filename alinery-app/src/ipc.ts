@@ -421,6 +421,8 @@ export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<strin
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
 export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
+export const setStepContinuationForRepo = (repoPath: string, taskSlug: string, stepKey: string, automatic: boolean) =>
+  invoke<Task>("set_step_continuation_for_repo", { repoPath, taskSlug, stepKey, automatic });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
 export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
 export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });

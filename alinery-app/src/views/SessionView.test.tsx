@@ -58,6 +58,7 @@ const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fi
 const readChatImage = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
 const continueExecution = vi.hoisted(() => vi.fn());
+const setStepContinuationForRepo = vi.hoisted(() => vi.fn());
 const listSessions = vi.hoisted(() => vi.fn(async (): Promise<SessionDisplayMeta[]> => []));
 const getSessionDisplay = vi.hoisted(() => vi.fn(async () => null));
 const renameSession = vi.hoisted(() => vi.fn());
@@ -120,6 +121,7 @@ vi.mock("../ipc", () =>
     renameSession,
     getTaskExecution,
     continueExecution,
+    setStepContinuationForRepo,
     listSessions,
     prepareEndExecution,
     stopExecution,
@@ -2437,6 +2439,7 @@ describe("review continuation", () => {
     rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
     getTaskExecution.mockReset().mockResolvedValue(readyReply());
     continueExecution.mockReset().mockResolvedValue({ status: "requested", ready_revision: 7 });
+    setStepContinuationForRepo.mockReset().mockResolvedValue({ ...task, auto_advance: ["worker"] });
     listSessions.mockReset().mockResolvedValue([]);
   });
   afterEach(() => {
@@ -2446,58 +2449,312 @@ describe("review continuation", () => {
     vi.useRealTimers();
   });
 
-  it("opens only the new successor after accepted shutdown and actual start", async () => {
+  const nudgeText =
+    "Wrap up the current step, including my latest message requests. Preserve completed work; do not repeat completed actions unnecessarily. Verify the assigned artifacts. If the work is ready and no substantive approval or question remains, call `alinery_phase_complete` to report readiness again. Otherwise explain the blocker.";
+
+  function nudgeSends() {
+    return rpcWriteSession.mock.calls
+      .map(([, payload]) => payload as { type?: string; message?: string; id?: string })
+      .filter((payload) => payload.type === "prompt" || payload.type === "follow_up" || payload.type === "abort_and_prompt");
+  }
+
+  it("changes the owning step mode and reflects both selections", async () => {
+    const reply = readyReply();
+    getTaskExecution.mockImplementation(async () => structuredClone(reply));
+    setStepContinuationForRepo.mockImplementation(async (_repo, _task, _step, automatic: boolean) => {
+      reply.state.executions["execution-a"].continuation_mode = automatic ? "automatic" : "manual";
+      return { ...task, auto_advance: automatic ? ["worker"] : [] };
+    });
+    renderSession();
+    const manual = await screen.findByRole("button", { name: "Wait for me" });
+    const automatic = screen.getByRole("button", { name: "Continue automatically" });
+    expect(manual.getAttribute("aria-pressed")).toBe("true");
+    expect(automatic.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(automatic);
+    await waitFor(() => expect(automatic.getAttribute("aria-pressed")).toBe("true"));
+    expect(manual.getAttribute("aria-pressed")).toBe("false");
+    expect(setStepContinuationForRepo).toHaveBeenLastCalledWith("/repo", "task", "worker", true);
+    fireEvent.click(manual);
+    await waitFor(() => expect(manual.getAttribute("aria-pressed")).toBe("true"));
+    expect(automatic.getAttribute("aria-pressed")).toBe("false");
+    expect(setStepContinuationForRepo).toHaveBeenLastCalledWith("/repo", "task", "worker", false);
+  });
+
+  it("keeps the previous mode and allows retry when changing mode fails", async () => {
+    setStepContinuationForRepo.mockRejectedValueOnce(new Error("Mode update unavailable"));
+    renderSession();
+    const automatic = await screen.findByRole("button", { name: "Continue automatically" });
+    fireEvent.click(automatic);
+    await waitFor(() => expect(automatic).toHaveProperty("disabled", false));
+    expect(screen.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("true");
+    expect(automatic.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(automatic);
+    await waitFor(() => expect(setStepContinuationForRepo).toHaveBeenCalledTimes(2));
+  });
+
+  it("nudges visibly without consuming the existing draft or attachment", async () => {
+    const onDraftChange = vi.fn();
+    const draft: SessionMessageDraft = {
+      body: "My unfinished request",
+      pendingActions: [],
+      attachments: [{ id: "nudge-file", kind: "file", name: "notes.pdf", mimeType: "application/pdf", bytes: 100, sourcePath: "/tmp/notes.pdf" }],
+    };
+    renderSession({ messageDraft: draft, onMessageDraftChange: onDraftChange });
+    const nudge = await screen.findByRole("button", { name: "Nudge to wrap up" });
+    await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
+    fireEvent.click(nudge);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+    expect(nudgeSends()[0]).toMatchObject({ type: "prompt", message: nudgeText });
+    expect(await within(screen.getByTestId("chat-pane")).findByText(nudgeText)).toBeDefined();
+    expect(screen.getByRole("textbox")).toHaveProperty("value", draft.body);
+    expect(screen.getByRole("button", { name: "Remove notes.pdf" })).toBeDefined();
+    expect(onDraftChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps automatic selected and prevents manual mode under Auto Approval All", async () => {
+    const reply = readyReply();
+    reply.state.auto_approve_all = true;
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession();
+    const manual = await screen.findByRole("button", { name: "Wait for me" });
+    expect(manual).toHaveProperty("disabled", true);
+    expect(manual.getAttribute("aria-pressed")).toBe("false");
+    expect(manual.getAttribute("title")).toMatch(/Auto Approval All/i);
+    expect(screen.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(manual);
+    expect(setStepContinuationForRepo).not.toHaveBeenCalled();
+  });
+
+  it("sends a busy nudge now without consuming drafts or other queued work and inhibits duplicate clicks", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const write = deferred<DispatchOutcome>();
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt") return write.promise;
+      return { status: "written" };
+    });
+    const onDraftChange = vi.fn();
+    const onQueueChange = vi.fn();
+    renderSession({
+      messageDraft: {
+        body: "Keep my draft",
+        pendingActions: [],
+        attachments: [{ id: "nudge-file", kind: "file", name: "notes.pdf", mimeType: "application/pdf", bytes: 100, sourcePath: "/tmp/notes.pdf" }],
+      },
+      onMessageDraftChange: onDraftChange,
+      queuedFollowUps: [{ text: "Other queued work", attachments: [], dispatchId: "other-work" }],
+      onQueuedFollowUpsChange: onQueueChange,
+    });
+    const nudge = await screen.findByRole("button", { name: "Nudge to wrap up" });
+    await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
+    fireEvent.click(nudge);
+    fireEvent.click(nudge);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+    expect(nudgeSends()[0]).toMatchObject({ type: "abort_and_prompt", message: nudgeText });
+    expect(nudgeSends()[0]).not.toHaveProperty("transfer_dispatch_id");
+    expect(nudge).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox")).toHaveProperty("value", "Keep my draft");
+    expect(screen.getByRole("button", { name: "Remove notes.pdf" })).toBeDefined();
+    expect(within(screen.getByTestId("chat-pane")).getByText(nudgeText)).toBeDefined();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(onQueueChange).toHaveBeenLastCalledWith([expect.objectContaining({ text: "Other queued work", dispatchId: "other-work" })]);
+    await act(async () => write.resolve({ status: "written" }));
+  });
+
+  it.each(["not_sent", "rejected"] as const)("clears nudge pending state after %s so it can be retried", async (outcome) => {
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    captureRpcOnLine(onLine);
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt") {
+        if (outcome === "not_sent") return { status: "not_sent", reason: "Not admitted" };
+      }
+      return { status: "written" };
+    });
+    const onDraftChange = vi.fn();
+    renderSession({ messageDraft: { body: "Keep my draft", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    const nudge = await screen.findByRole("button", { name: "Nudge to wrap up" });
+    await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
+    fireEvent.click(nudge);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+    if (outcome === "rejected") {
+      await act(async () => {
+        onLine.current?.(JSON.stringify({ type: "alinery_dispatch", dispatch_id: nudgeSends()[0].id, status: "rejected", reason: "Not admitted" }));
+      });
+    }
+    await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
+    expect(within(screen.getByTestId("chat-pane")).queryByText(nudgeText)).toBeNull();
+    expect(onDraftChange).not.toHaveBeenCalled();
+    fireEvent.click(nudge);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(2));
+  });
+
+  it("shows uncertain delivery and prevents a duplicate nudge after a lost acknowledgement", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    rpcWriteSession.mockImplementation(async (_id, payload) => {
+      if (payload && typeof payload === "object" && "type" in payload && payload.type === "abort_and_prompt") throw new Error("Acknowledgement lost");
+      return { status: "written" };
+    });
+    const onDraftChange = vi.fn();
+    renderSession({ messageDraft: { body: "Keep my draft", pendingActions: [], attachments: [] }, onMessageDraftChange: onDraftChange });
+    const nudge = await screen.findByRole("button", { name: "Nudge to wrap up" });
+    await waitFor(() => expect(nudge).toHaveProperty("disabled", false));
+    fireEvent.click(nudge);
+    await screen.findByText(/Delivery unknown:/);
+    expect(nudge).toHaveProperty("disabled", true);
+    fireEvent.click(nudge);
+    expect(nudgeSends()).toHaveLength(1);
+    expect(onDraftChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["taskless", "terminal"] as const)("does not offer playbook mode or nudge controls for %s sessions", async (kind) => {
+    renderSession(kind === "taskless" ? { taskSlug: "", playbook: "" } : { harness: "no-harness" });
+    await flushPromises();
+    expect(screen.queryByRole("button", { name: "Wait for me" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue automatically" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Nudge to wrap up" })).toBeNull();
+  });
+
+  it.each(["approval", "disconnected", "ended", "handoff"] as const)("blocks nudge while %s", async (condition) => {
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    if (condition === "ended") sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    if (condition === "handoff") {
+      const reply = readyReply();
+      reply.state.executions["execution-a"].continuation_requested_revision = 7;
+      getTaskExecution.mockResolvedValue(reply);
+    }
+    renderSession();
+    await flushPromises();
+    if (condition === "approval") {
+      await act(async () => {
+        onLine.current?.(JSON.stringify({ type: "extension_ui_request", id: "nudge-approval", method: "confirm", title: "Approve deployment", message: "A substantive decision" }));
+      });
+      expect(screen.getByRole("button", { name: "Allow" })).toBeDefined();
+    }
+    if (condition === "disconnected") {
+      await act(async () => {
+        onStreamClosed.mock.calls[onStreamClosed.mock.calls.length - 1]?.[3]();
+      });
+    }
+    const nudge = screen.queryByRole("button", { name: "Nudge to wrap up" });
+    if (nudge) {
+      expect(nudge).toHaveProperty("disabled", true);
+      fireEvent.click(nudge);
+    }
+    expect(nudgeSends()).toHaveLength(0);
+  });
+
+  it.each(["manual", "automatic", "task override", "enabled while viewing"] as const)(
+    "opens only the new successor after accepted shutdown and actual start in %s mode",
+    async (mode) => {
+      vi.useFakeTimers();
+      const onOpenSession = vi.fn();
+      const reply = readyReply();
+      if (mode === "automatic") reply.state.executions["execution-a"].continuation_mode = "automatic";
+      if (mode === "task override") reply.state.auto_approve_all = true;
+      getTaskExecution.mockImplementation(async () => structuredClone(reply));
+      const view = renderSession({ onOpenSession });
+      await flushPromises();
+      if (mode === "enabled while viewing") {
+        setStepContinuationForRepo.mockImplementationOnce(async () => {
+          reply.state.executions["execution-a"].continuation_mode = "automatic";
+          return { ...task, auto_advance: ["worker"] };
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Continue automatically" }));
+        await flushPromises();
+      }
+      if (mode === "manual") fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
+      await flushPromises();
+      const source = reply.state.executions["execution-a"];
+      if (mode !== "manual") source.work_revision += 1;
+      source.receipt_id = "receipt";
+      source.lifecycle = "finishing";
+      const successor = executionRecord({ id: "next", owner_session_id: "next-session", parent_execution_ids: [source.id], lifecycle: "queued" });
+      successor.candidate.step_key = "review";
+      reply.state.executions.next = successor;
+      const session: SessionDisplayMeta = {
+        id: "next-session",
+        execution_id: "next",
+        worktree: "/worktrees/task",
+        created: 2,
+        archived: false,
+        phase: "review",
+        harness: "omp",
+        model: "",
+        playbook: "retained",
+        generic: false,
+        harness_resume_token: "",
+        started_at: 3,
+      };
+      listSessions.mockResolvedValue([session]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(onOpenSession).not.toHaveBeenCalled();
+      source.lifecycle = "completed";
+      source.shutdown_confirmed = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(onOpenSession).not.toHaveBeenCalled();
+      successor.lifecycle = "running";
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(session);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      expect(onOpenSession).toHaveBeenCalledTimes(1);
+      view.rerender(sessionView({ id: session.id, onOpenSession }));
+      await flushPromises();
+      expect(screen.queryByText("Continuation requested; waiting for the handoff.")).toBeNull();
+    },
+  );
+
+  it.each(["disabled", "historical", "fanout", "left session"] as const)("does not automatically redirect when %s", async (condition) => {
     vi.useFakeTimers();
     const onOpenSession = vi.fn();
     const reply = readyReply();
+    const source = reply.state.executions["execution-a"];
+    source.continuation_mode = "automatic";
+    if (condition === "historical") {
+      source.receipt_id = "receipt";
+      source.lifecycle = "completed";
+      source.shutdown_confirmed = true;
+    }
     getTaskExecution.mockImplementation(async () => structuredClone(reply));
     const view = renderSession({ onOpenSession });
     await flushPromises();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
-    await flushPromises();
-    const source = reply.state.executions["execution-a"];
+    if (condition === "disabled") source.continuation_mode = "manual";
+    if (condition === "left session") view.rerender(sessionView({ id: "another-session", onOpenSession }));
     source.receipt_id = "receipt";
-    source.lifecycle = "finishing";
-    const successor = executionRecord({ id: "next", owner_session_id: "next-session", parent_execution_ids: [source.id], lifecycle: "queued" });
-    successor.candidate.step_key = "review";
-    reply.state.executions.next = successor;
-    const session: SessionDisplayMeta = {
-      id: "next-session",
-      execution_id: "next",
-      worktree: "/worktrees/task",
-      created: 2,
-      archived: false,
-      phase: "review",
-      harness: "omp",
-      model: "",
-      playbook: "retained",
-      generic: false,
-      harness_resume_token: "",
-      started_at: 3,
-    };
-    listSessions.mockResolvedValue([session]);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(onOpenSession).not.toHaveBeenCalled();
     source.lifecycle = "completed";
     source.shutdown_confirmed = true;
+    const successor = executionRecord({ id: "next", owner_session_id: "next-session", parent_execution_ids: [source.id] });
+    successor.candidate.step_key = "review";
+    reply.state.executions.next = successor;
+    if (condition === "fanout") reply.state.executions.second = { ...successor, id: "second", owner_session_id: "second-session" };
+    listSessions.mockResolvedValue([
+      {
+        id: "next-session",
+        execution_id: "next",
+        worktree: "/worktrees/task",
+        created: 2,
+        archived: false,
+        phase: "review",
+        harness: "omp",
+        model: "",
+        playbook: "retained",
+        generic: false,
+        harness_resume_token: "",
+        started_at: 3,
+      },
+    ]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     expect(onOpenSession).not.toHaveBeenCalled();
-    successor.lifecycle = "running";
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(session);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(onOpenSession).toHaveBeenCalledTimes(1);
-    view.rerender(sessionView({ id: session.id, onOpenSession }));
-    await flushPromises();
-    expect(screen.queryByText("Continuation requested; waiting for the handoff.")).toBeNull();
   });
 
   it.each(["unrelated", "fanout", "new review", "refused", "left session"] as const)("does not redirect after continuation when %s", async (condition) => {
@@ -2959,6 +3216,9 @@ describe("review continuation", () => {
     const second = renderSession();
     await flushPromises();
     expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Nudge to wrap up" })).toBeDefined();
     second.unmount();
     const terminal = readyReply();
     terminal.executions["execution-a"] = { destinations: [], terminality: "terminal", reasons: [] };

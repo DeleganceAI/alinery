@@ -1262,6 +1262,48 @@ pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, App
     set_auto_approve_all_in(&repo, slug, enabled)
 }
 
+pub(crate) fn set_step_continuation_in(repo: &Path, task_slug: String, step_key: String, automatic: bool) -> Result<Task, String> {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set step continuation", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = read_task(repo, &task_slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        if task.draft {
+            return Err("draft tasks have no execution to configure".into());
+        }
+        if task.engine_version < 2 {
+            return Err("pre-v2 tasks have no step continuation to configure".into());
+        }
+        if task.auto_approve_all && !automatic {
+            return Err("Turn off Auto Approval All before selecting Wait for me".into());
+        }
+        let mut state = alinery_core::execution::read_execution_state(repo, &task_slug)?;
+        let definition = alinery_core::execution::read_task_playbook(repo, &task_slug, &state)?;
+        alinery_core::execution::set_step_continuation(&mut state, &definition, &step_key, automatic)?;
+        task.auto_advance = state.enabled_steps.iter().cloned().collect();
+        // Persist the displayed policy before authorizing the engine, as for Auto Approval All.
+        write_task_unlocked(repo, &task)?;
+        alinery_core::execution::write_execution_state_unlocked(repo, &task_slug, &mut state)?;
+        Ok(task)
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn set_step_continuation_for_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    task_slug: String,
+    step_key: String,
+    automatic: bool,
+) -> Result<Task, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    tauri::async_runtime::spawn_blocking(move || set_step_continuation_in(&repo, task_slug, step_key, automatic))
+        .await
+        .map_err(|error| format!("set step continuation: {error}"))?
+}
+
 #[tauri::command]
 pub(crate) fn set_related_tasks_for_repo(
     app: AppHandle,

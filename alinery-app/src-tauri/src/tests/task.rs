@@ -2306,6 +2306,49 @@ fn task_activity_status_matches_by_id_and_uses_session_list_precedence() {
 }
 
 #[test]
+fn set_step_continuation_persists_policy_and_rejects_inactive_tasks() {
+    let repo = activity_repo("step-continuation");
+    let task = write_retained_discovery_task(&repo, "here", "lane", false);
+    let state = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    let definition = alinery_core::execution::read_task_playbook(&repo, &task.slug, &state).unwrap();
+    let step = definition.step[0].key.clone();
+    let updated = crate::set_step_continuation_in(&repo, task.slug.clone(), step.clone(), true).unwrap();
+    assert!(updated.auto_advance.contains(&step));
+    assert_eq!(read_task(&repo, &task.slug).unwrap().auto_advance, updated.auto_advance);
+    assert!(alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap().enabled_steps.contains(&step));
+    crate::set_auto_approve_all_in(&repo, task.slug.clone(), true).unwrap();
+    assert!(crate::set_step_continuation_in(&repo, task.slug.clone(), step.clone(), false)
+        .unwrap_err()
+        .contains("Auto Approval All"));
+    crate::set_auto_approve_all_in(&repo, task.slug.clone(), false).unwrap();
+    crate::set_step_continuation_in(&repo, task.slug.clone(), step.clone(), false).unwrap();
+    assert!(!read_task(&repo, &task.slug).unwrap().auto_advance.contains(&step));
+    assert!(!alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap().enabled_steps.contains(&step));
+    let before = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
+    assert!(crate::set_step_continuation_in(&repo, task.slug.clone(), "missing".into(), true)
+        .unwrap_err()
+        .contains("unknown step"));
+    assert_eq!(alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap(), before);
+    let archived = write_retained_discovery_task(&repo, "archived", "lane", true);
+    assert!(crate::set_step_continuation_in(&repo, archived.slug, step.clone(), true).unwrap_err().contains("archived"));
+    write_task(
+        &repo,
+        &Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            draft: true,
+            engine_version: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(crate::set_step_continuation_in(&repo, "draft".into(), step.clone(), true).unwrap_err().contains("draft"));
+    let legacy = create_task_for_test(&repo, "Legacy", false, "", "");
+    assert!(crate::set_step_continuation_in(&repo, legacy.slug, step, true).unwrap_err().contains("pre-v2"));
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
 fn set_auto_approve_all_writes_both_files_without_changing_enabled_steps() {
     let repo = activity_repo("auto-approve-all");
     let task = write_retained_discovery_task(&repo, "here", "lane", false);

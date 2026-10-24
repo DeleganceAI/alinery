@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ChevronRight, Ellipsis, FileUp, MessageSquare, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Ellipsis, FastForward, FileUp, Hand, MessageSquare, Pencil, RotateCcw, Square, X } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -120,6 +120,9 @@ type ArtifactReviewPendingStatus = {
   review: string;
 };
 
+const WRAP_UP_MESSAGE =
+  "Wrap up the current step, including my latest message requests. Preserve completed work; do not repeat completed actions unnecessarily. Verify the assigned artifacts. If the work is ready and no substantive approval or question remains, call `alinery_phase_complete` to report readiness again. Otherwise explain the blocker.";
+
 export type SessionSendRecovery = {
   commandId: string;
   draft: string;
@@ -130,6 +133,7 @@ export type SessionSendRecovery = {
   attachments: DraftAttachment[];
   queued?: boolean;
   transferDispatchId?: string;
+  origin?: "nudge";
   status: "pending" | "refused" | "acknowledged" | "consumed" | "settled" | "unknown";
   reason?: string;
 };
@@ -340,7 +344,7 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const executionEpoch = useRef(0);
-  const followContinuation = useRef<{ executionId: string; revision: number; stepKey: string; existingIds: Set<string> } | null>(null);
+  const followContinuation = useRef<{ executionId: string; revision: number; stepKey?: string; automatic?: boolean; existingIds: Set<string> } | null>(null);
   const [executionError, setExecutionError] = useState("");
   const [lineageSessions, setLineageSessions] = useState<SessionDisplayMeta[]>([]);
   const [lineageObservations, setLineageObservations] = useState<Record<string, SessionObservation>>({});
@@ -352,6 +356,8 @@ export function SessionView({
   const [completionBusy, setCompletionBusy] = useState(false);
   const continuationInFlight = useRef(false);
   const [continuationMessage, setContinuationMessage] = useState("");
+  const [modeChanging, setModeChanging] = useState(false);
+  const modeChangingRef = useRef(false);
   const [endMessage, setEndMessage] = useState("");
   const [sessionActionsOpen, setSessionActionsOpen] = useState(false);
   const [continuationInfoOpen, setContinuationInfoOpen] = useState(false);
@@ -359,6 +365,7 @@ export function SessionView({
   const [requestedContinuation, setRequestedContinuation] = useState<{ id: string; revision: number } | null>(null);
   const [invalidatedReady, setInvalidatedReady] = useState<{ id: string; revision: number } | null>(null);
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
+  const automaticContinuation = executionView?.state.auto_approve_all === true || execution?.continuation_mode === "automatic";
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
   const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
@@ -435,11 +442,11 @@ export function SessionView({
     const blank = draft.body === "" && draft.attachments.length === 0 && draft.pendingActions.length === 0;
     const transfer = pending.transferDispatchId !== undefined;
     const restore = blank || draft === pending.sourceDraft;
-    const next = settleRefusedSend(chatRef.current, pending.entryId, pending.caption, transfer || restore);
+    const next = settleRefusedSend(chatRef.current, pending.entryId, pending.caption, pending.origin === "nudge" || transfer || restore);
     chatRef.current = next;
     setChat(next);
-    if (transfer || restore) {
-      if (!transfer) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
+    if (pending.origin === "nudge" || transfer || restore) {
+      if (!transfer && pending.origin !== "nudge") updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
       pendingSendsRef.current.delete(pending.commandId);
     }
     const remaining = queuedFollowUpsRef.current.filter((item) => item.dispatchId !== pending.commandId);
@@ -674,6 +681,8 @@ export function SessionView({
     executionEpoch.current += 1;
     followContinuation.current = null;
     continuationInFlight.current = false;
+    modeChangingRef.current = false;
+    setModeChanging(false);
     setCompletionBusy(false);
     setArtifactEntryOpen(false);
     setArtifactEntryError("");
@@ -743,16 +752,28 @@ export function SessionView({
   }, [taskSlug, repoPath, id]);
 
   useEffect(() => {
+    if (!executionAvailable || !executionView || lineageError || !onOpenSession) return;
+    if (followContinuation.current?.automatic && !automaticContinuation) followContinuation.current = null;
+    if (automaticContinuation && execution?.owner_session_id === id && execution.lifecycle === "running" && !execution.receipt_id && !followContinuation.current) {
+      followContinuation.current = {
+        executionId: execution.id,
+        revision: execution.work_revision,
+        automatic: true,
+        existingIds: new Set(Object.keys(executionView.state.executions)),
+      };
+    }
     const follow = followContinuation.current;
-    if (!follow || !executionAvailable || !executionView || lineageError || !onOpenSession) return;
+    if (!follow) return;
     const source = executionView.state.executions[follow.executionId];
-    if (!source || source.owner_session_id !== id || source.work_revision !== follow.revision) {
+    if (!source || source.owner_session_id !== id || (!follow.automatic && source.work_revision !== follow.revision)) {
       followContinuation.current = null;
       return;
     }
     if (!source.receipt_id || !source.shutdown_confirmed || source.lifecycle !== "completed") return;
+    if (follow.automatic && executionView.executions[source.id]?.destinations.length !== 1) return;
     const successors = Object.values(executionView.state.executions).filter(
-      (record) => !follow.existingIds.has(record.id) && record.parent_execution_ids.includes(source.id) && record.candidate.step_key === follow.stepKey,
+      (record) =>
+        !follow.existingIds.has(record.id) && record.parent_execution_ids.includes(source.id) && (follow.stepKey === undefined || record.candidate.step_key === follow.stepKey),
     );
     // A fan-out has no single destination session. Leave selection to the navigator.
     if (successors.length !== 1) return;
@@ -762,7 +783,7 @@ export function SessionView({
     if (!session) return;
     followContinuation.current = null;
     onOpenSession(session);
-  }, [executionView, executionAvailable, lineageSessions, lineageError, id, onOpenSession]);
+  }, [executionView, executionAvailable, execution, automaticContinuation, lineageSessions, lineageError, id, onOpenSession]);
 
   const handleArchive = async () => {
     if (archivePending.current) return;
@@ -1224,12 +1245,14 @@ export function SessionView({
     }
   };
 
-  const sendCurrentMessage = async (text?: string) => {
+  const sendCurrentMessage = async (text?: string, origin?: "nudge") => {
     const sourceDraft = messageDraftRef.current;
     const original = text === undefined || text === sourceDraft.body.trim() ? sourceDraft.body : text;
     const caption = original.trim();
-    const attachments = messageDraftRef.current.attachments ?? [];
+    const attachments = origin === "nudge" ? [] : (messageDraftRef.current.attachments ?? []);
     if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
+    if (origin === "nudge" && [...pendingSendsRef.current.values()].some((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled"))
+      return;
     if (caption.startsWith("/") && attachments.length > 0) {
       toast.error("Remove attachments or clear the slash command");
       return;
@@ -1239,12 +1262,13 @@ export function SessionView({
       setMessageError("The session is still connecting.");
       return;
     }
-    const actions = [...messageDraftRef.current.pendingActions];
+    const actions = origin === "nudge" ? [] : [...messageDraftRef.current.pendingActions];
     const busy = isTurnActive({
       pendingTurn: chatRef.current.pendingTurn,
       turnOpen: chatRef.current.turnOpen,
       agentState: observation?.state?.agent?.state,
     });
+    if (origin === "nudge" && busy) return sendNow(true);
     setMessageSending(true);
     setMessageError("");
     try {
@@ -1269,6 +1293,7 @@ export function SessionView({
             setChat(next);
             recovery = {
               commandId,
+              origin,
               draft: original,
               caption,
               sourceDraft,
@@ -1301,7 +1326,7 @@ export function SessionView({
           queuedFollowUpsRef.current = nextQueue;
           onQueuedFollowUpsChange?.(nextQueue);
         }
-        if (messageDraftRef.current === sourceDraft) updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
+        if (origin !== "nudge" && messageDraftRef.current === sourceDraft) updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       }
     } catch (error) {
       toast.error(String(error));
@@ -1311,14 +1336,14 @@ export function SessionView({
     }
   };
 
-  const sendNow = async () => {
+  const sendNow = async (nudge = false) => {
     const sourceDraft = messageDraftRef.current;
     const draftBody = sourceDraft.body.trim();
     const draftAttachments = messageDraftRef.current.attachments ?? [];
-    const usingDraft = draftBody.length > 0 || draftAttachments.length > 0;
-    const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
-    const caption = usingDraft ? draftBody : (queued?.text ?? "");
-    const attachments = usingDraft ? draftAttachments : (queued?.attachments ?? []);
+    const usingDraft = !nudge && (draftBody.length > 0 || draftAttachments.length > 0);
+    const queued = nudge ? undefined : latestQueuedFollowUp(queuedFollowUpsRef.current);
+    const caption = nudge ? WRAP_UP_MESSAGE : usingDraft ? draftBody : (queued?.text ?? "");
+    const attachments = nudge ? [] : usingDraft ? draftAttachments : (queued?.attachments ?? []);
     if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
     const transport = observation?.transport;
     if (transport !== "rpc") {
@@ -1338,11 +1363,11 @@ export function SessionView({
         pendingAttachments = prepared.copied;
         refreshAttachmentArtifacts();
       }
-      if (!usingDraft && !queued?.dispatchId) {
+      if (!nudge && !usingDraft && !queued?.dispatchId) {
         setMessageError("This queued input has no dispatch identity. It remains queued; Send now cannot safely transfer it.");
         return;
       }
-      const command = { ...abortAndPromptCommand(message, undefined, images), ...(!usingDraft ? { transfer_dispatch_id: queued?.dispatchId } : {}) };
+      const command = { ...abortAndPromptCommand(message, undefined, images), ...(!nudge && !usingDraft ? { transfer_dispatch_id: queued?.dispatchId } : {}) };
       invalidateReview();
       const rowAttachments = draftToRowAttachments(attachments);
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
@@ -1353,6 +1378,7 @@ export function SessionView({
       setChat(next);
       const recovery: SessionSendRecovery = {
         commandId: command.id,
+        origin: nudge ? "nudge" : undefined,
         draft: usingDraft ? sourceDraft.body : caption,
         caption,
         sourceDraft,
@@ -1982,12 +2008,14 @@ export function SessionView({
     ) : (
       "Continue playbook"
     );
-  const continuationShown = execution?.continuation_mode === "manual" && execution.lifecycle !== "queued" && executionAssessment?.terminality !== "terminal";
+  const playbookComplete = !executionError && executionView?.assessment.status === "complete";
+  const continuationShown =
+    Boolean(execution) && !playbookComplete && !automaticContinuation && execution?.lifecycle !== "queued" && executionAssessment?.terminality !== "terminal";
   const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
   const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
   const continuationPending = requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
   const continuationReason =
-    executionError ||
+    (executionError ? "Execution state is unavailable; see the warning above." : "") ||
     (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
     (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
     (endAccepted || execution?.receipt_id ? "Handoff accepted; waiting for the session to exit." : "") ||
@@ -2000,6 +2028,48 @@ export function SessionView({
     (completionBusy ? "A session action is in progress." : "") ||
     (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "") ||
     (executionAssessment?.terminality !== "nonterminal" ? "Waiting for an authoritative continuation assessment." : "");
+  const controlsShown = Boolean(execution) && hasTask && harness === "omp";
+  const controlBlocker =
+    (playbookComplete ? "The playbook is complete." : "") ||
+    (!executionAvailable ? "Execution state is unavailable." : "") ||
+    (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
+    (navHistory || execution?.lifecycle !== "running" ? "This session is not running." : "") ||
+    (continuationPending ? "A handoff has already been requested." : "") ||
+    (completionBusy ? "A session action is in progress." : "");
+  const modeBlocker = controlBlocker || (modeChanging ? "Updating continuation mode." : "");
+  const pendingNudge = [...pendingSends.values()].find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
+  const nudgeBlocker =
+    controlBlocker ||
+    (!liveRpc || terminalConnection !== "open" ? "Reconnect to the live chat session to nudge." : "") ||
+    (pendingUiReply || observedState?.agent?.state === "waiting_for_approval" || observedState?.agent?.state === "waiting_for_input"
+      ? "Resolve the pending approval or question first."
+      : "") ||
+    (pendingNudge ? (pendingNudge.status === "unknown" ? "Nudge delivery is unknown; check the session before resending." : "Waiting for the previous nudge to finish.") : "") ||
+    (messageSending ? "A message is being sent." : "");
+  const setContinuationMode = async (automatic: boolean) => {
+    if (!execution || modeBlocker || modeChangingRef.current || automatic === automaticContinuation) return;
+    if (!automatic && executionView?.state.auto_approve_all) return;
+    const epoch = executionEpoch.current;
+    modeChangingRef.current = true;
+    setModeChanging(true);
+    setContinuationMessage("");
+    try {
+      await ipc.setStepContinuationForRepo(repoPath, taskSlug, execution.candidate.step_key, automatic);
+      if (epoch !== executionEpoch.current) return;
+      const next = await readTaskExecution(repoPath, taskSlug);
+      if (epoch === executionEpoch.current) {
+        setExecutionView(next);
+        setExecutionError("");
+      }
+    } catch (error) {
+      if (epoch === executionEpoch.current) setContinuationMessage(`Could not update continuation mode: ${String(error)}`);
+    } finally {
+      if (epoch === executionEpoch.current) {
+        modeChangingRef.current = false;
+        setModeChanging(false);
+      }
+    }
+  };
   const continueReadyExecution = async () => {
     if (continuationInFlight.current || continuationReason || !execution || !capability || execution.ready_revision == null) return;
     const epoch = executionEpoch.current;
@@ -2280,47 +2350,93 @@ export function SessionView({
       }
     }
   };
-  const continuationArea =
-    !executionError && executionView?.assessment.status === "complete" ? (
-      <div className="session-continuation" role="status" aria-label="Playbook status">
-        Playbook complete
-      </div>
-    ) : continuationShown ? (
-      <section className="session-continuation" aria-label="Playbook continuation">
-        {continuationShown && (
-          <span
-            className="continuation-control"
-            role="group"
-            aria-label={continuationReason ? "Unavailable continuation" : undefined}
-            aria-describedby={continuationReason ? "continuation-reason" : undefined}
-            tabIndex={continuationReason ? 0 : undefined}
-            onFocus={() => setContinuationInfoOpen(Boolean(continuationReason))}
-            onBlur={() => setContinuationInfoOpen(false)}
-            onMouseEnter={() => setContinuationInfoOpen(Boolean(continuationReason))}
-            onMouseLeave={() => setContinuationInfoOpen(false)}
-            onClick={() => setContinuationInfoOpen(Boolean(continuationReason))}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setContinuationInfoOpen(false);
-            }}
+  const continuationArea = controlsShown ? (
+    <section className="session-continuation" aria-label="Playbook continuation">
+      {playbookComplete && (
+        <span role="status" aria-label="Playbook status">
+          Playbook complete
+        </span>
+      )}
+      <span title={nudgeBlocker || "Ask the agent to wrap up and report readiness. Sends now, interrupting the current turn if it is working."}>
+        <button
+          className="btn small"
+          type="button"
+          disabled={Boolean(nudgeBlocker)}
+          onClick={() => {
+            if (!nudgeBlocker) void sendCurrentMessage(WRAP_UP_MESSAGE, "nudge");
+          }}
+        >
+          Nudge to wrap up
+        </button>
+      </span>
+      {continuationShown && (
+        <span
+          className="continuation-control"
+          role="group"
+          aria-label={continuationReason ? "Unavailable continuation" : undefined}
+          aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
+          tabIndex={continuationReason ? 0 : undefined}
+          onFocus={() => setContinuationInfoOpen(Boolean(continuationReason))}
+          onBlur={() => setContinuationInfoOpen(false)}
+          onMouseEnter={() => setContinuationInfoOpen(Boolean(continuationReason))}
+          onMouseLeave={() => setContinuationInfoOpen(false)}
+          onClick={() => setContinuationInfoOpen(Boolean(continuationReason))}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setContinuationInfoOpen(false);
+          }}
+        >
+          <button
+            className="btn primary"
+            type="button"
+            disabled={Boolean(continuationReason)}
+            aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
+            onClick={() => void continueReadyExecution()}
           >
-            <button
-              className="btn primary"
-              type="button"
-              disabled={Boolean(continuationReason)}
-              aria-describedby={continuationReason ? "continuation-reason" : undefined}
-              onClick={() => void continueReadyExecution()}
-            >
-              {continuationPending ? "Continuing…" : continuationLabel}
-            </button>
-            {(continuationMessage || continuationReason) && (
-              <span id="continuation-reason" role="tooltip" hidden={!continuationReason || !continuationInfoOpen}>
-                {continuationMessage || continuationReason}
-              </span>
-            )}
-          </span>
-        )}
-      </section>
-    ) : null;
+            {continuationPending ? "Continuing…" : continuationLabel}
+          </button>
+          {continuationReason && continuationReason !== continuationMessage && (
+            <span id="continuation-reason" role="tooltip" hidden={!continuationInfoOpen}>
+              {continuationReason}
+            </span>
+          )}
+        </span>
+      )}
+      <fieldset className="continuation-modes" aria-label="Continuation mode for this step">
+        <button
+          type="button"
+          className="btn icon"
+          aria-label="Wait for me"
+          aria-pressed={!automaticContinuation}
+          disabled={Boolean(modeBlocker) || executionView?.state.auto_approve_all === true}
+          title={
+            modeBlocker ||
+            (executionView?.state.auto_approve_all
+              ? "Auto Approval All is enabled for this task. Turn it off in Task Detail to wait for this step."
+              : "Wait for me — this step in this task, including future iterations.")
+          }
+          onClick={() => void setContinuationMode(false)}
+        >
+          <Hand size={16} />
+        </button>
+        <button
+          type="button"
+          className="btn icon"
+          aria-label="Continue automatically"
+          aria-pressed={automaticContinuation}
+          disabled={Boolean(modeBlocker)}
+          title={modeBlocker || "Continue automatically — this step in this task, including future iterations. Advances after validation; a final step finishes the playbook."}
+          onClick={() => void setContinuationMode(true)}
+        >
+          <FastForward size={16} />
+        </button>
+      </fieldset>
+      {continuationMessage && (
+        <span id="continuation-message" role="status">
+          {continuationMessage}
+        </span>
+      )}
+    </section>
+  ) : null;
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,

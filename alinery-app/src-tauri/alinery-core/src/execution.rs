@@ -1082,6 +1082,31 @@ pub fn set_execution_auto_approve_all(state: &mut TaskExecutionState, enabled: b
     }
 }
 
+/// Change the step policy without revoking an already requested or accepted handoff.
+pub fn set_step_continuation(state: &mut TaskExecutionState, definition: &NormalizedPlaybook, step_key: &str, automatic: bool) -> Result<(), String> {
+    if !definition.step.iter().any(|step| step.key == step_key) {
+        return Err(format!("unknown step '{step_key}'"));
+    }
+    if state.auto_approve_all && !automatic {
+        return Err("Turn off Auto Approval All before selecting Wait for me".into());
+    }
+    if automatic {
+        state.enabled_steps.insert(step_key.into());
+    } else {
+        state.enabled_steps.remove(step_key);
+    }
+    for record in state.executions.values_mut() {
+        if record.candidate.step_key != step_key || record.receipt_id.is_some() || record.continuation_requested_revision.is_some() || record.human_end.is_some() {
+            continue;
+        }
+        record.continuation_mode = if automatic { ContinuationMode::Automatic } else { ContinuationMode::Manual };
+        if automatic && record.lifecycle == ExecutionLifecycle::Running && record.ready_revision == Some(record.work_revision) {
+            record.continuation_requested_revision = record.ready_revision;
+        }
+    }
+    Ok(())
+}
+
 pub fn finalize_execution_continuation(
     repo: &Path,
     slug: &str,
