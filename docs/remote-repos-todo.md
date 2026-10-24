@@ -25,7 +25,20 @@ Test procedure: `scripts/tests/remote-sshd/run.sh start`, export the line it pri
   - Restore is `restore_backup` → `restore_remote_backup`: the host verifies the archive belongs to the repo (daemon still up), then `stop_remote_daemon` ends the daemon, runs `BackupRestore` while it is down, and starts the daemon again even if the restore failed. `stop_remote_daemon` now takes a `while_down` closure; it stays the one remote shutdown sender. The slot in the backup queue is the repo's URI.
   - A live test makes a manual and an automatic backup on the sshd host, checks the trigger flags, restores over later work, and checks that a missing archive leaves the daemon untouched and a good restore brings a new daemon.
   - Not covered: automatic backups only happen while the app is connected (a daemon-owned schedule would cover agent-written artifacts with the app closed; see C), and the app's own settings backup defaults do not apply on the host, so a remote repo needs its destination set in its own repo settings.
-- [ ] **A6. Performance plan.** A written plan, not code: measure first (round trips per board load, bytes per transcript poll, time to first paint of a remote board over a slow link), then list changes with expected gains. Starting points: a poll-rate floor while busy, the transcript ETag (`if_none_match`), batching the board's per-task reads into one repo-service op, and compression. Lands as `docs/remote-repos-performance.md`. Implementation is separate items added to this file.
+- [x] **A6. Performance plan.** A written plan, not code: measure first (round trips per board load, bytes per transcript poll, time to first paint of a remote board over a slow link), then list changes with expected gains. Lands as `docs/remote-repos-performance.md`; its steps are section P below.
+  - The main finding is a defect, not a tuning question: about 30 synchronous commands and 8 async ones make a remote call on the main thread or a runtime worker, so a slow or dead link freezes the window (P1).
+  - All numbers in the plan are estimates from reading the code. M1 measures them before anything else changes.
+
+## P. Performance (from `docs/remote-repos-performance.md`, in this order)
+
+- [ ] **M1. Measure.** Per-call counters (name, count, p50/p95, bytes) on the repo-service channel and remote daemon reads; `run.sh start --latency-ms N` for the sshd helper; a scripted scenario (open, board, session, idle 60 s, chat stream 30 s); commit the baseline into the plan.
+- [ ] **P1. Never block the UI or a runtime worker on a remote call.** Make the remote-routed commands async with `spawn_blocking`, and add a gate that fails on a remote-reaching command that is not. Do this first even without M1: it is a freeze bug.
+- [ ] **P2. Pollers that cannot pile up.** In-flight guard on each `setInterval` poller, backoff while offline, pause when hidden, 750 ms transcript floor for a remote repo.
+- [ ] **P3. Host-side board snapshot.** `RepoOp::BoardSnapshot` returns tasks and activity in one call, with the host reading its own daemon; fan out across repos.
+- [ ] **P4. Read the daemon from the host.** `RepoOp::DaemonRead` for session statuses and transcripts (1 RTT instead of 2), one shared status query, and `session_status` stops fetching every session of the task.
+- [ ] **P5. Transcript deltas.** `if_none_match` on `transcript`. A protocol bump (24 to 25), so batch it with the next unavoidable daemon change.
+- [ ] **P6. Push instead of poll.** Only if M1 still shows idle load or latency over budget after P1 to P4.
+- [ ] **P7. Connection tuning** (compression, QoS, keep-alive), only on measured differences.
 
 ## B. UX slices
 
