@@ -2021,6 +2021,69 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     }
 }
 
+/// Storage on the host: the numbers and the paths are the host's, and the purge removes only what is
+/// archived, on the host's disk.
+#[test]
+fn live_storage_is_measured_and_purged_on_the_host() {
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let id = format!("storage-{}", std::process::id());
+    let session = live_session(&args, &id);
+    let home = session.root.trim_end_matches("/.local/share/alinery-remote").to_string();
+    let repo = format!("{home}/work/storage-{}", std::process::id());
+    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(60)).unwrap();
+    sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
+    let call = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(60)).unwrap();
+    for (slug, archived) in [("keep", false), ("old", true)] {
+        let task = alinery_core::Task {
+            name: slug.into(),
+            slug: slug.into(),
+            branch: slug.into(),
+            archived,
+            created: 1_700_000_000,
+            ..Default::default()
+        };
+        call(RepoOp::WriteFile {
+            path: format!("{repo}/.alinery/tasks/{slug}/task.md").into(),
+            contents: toml::to_string(&task).unwrap(),
+        });
+        call(RepoOp::WriteFile {
+            path: format!("{repo}/.alinery/tasks/{slug}/notes.txt").into(),
+            contents: "x".repeat(4096),
+        });
+    }
+    let app_config = format!("{}/app.toml", session.config_dir);
+    let ops = || {
+        (
+            RepoOp::StorageInfo {
+                repo: repo.clone().into(),
+                app_config: app_config.clone().into(),
+            },
+            RepoOp::PurgeArchived {
+                repo: repo.clone().into(),
+                app_config: app_config.clone().into(),
+            },
+        )
+    };
+    let info: alinery_core::StorageInfo = serde_json::from_value(call(ops().0)).unwrap();
+    assert_eq!(info.repo_path, repo, "paths are the host's");
+    assert_eq!(info.app_config_path, app_config);
+    assert_eq!(info.tasks_dir, format!("{repo}/.alinery/tasks"));
+    assert_eq!((info.archived_task_count, info.archived_session_count), (1, 0));
+    assert!(info.archived_bytes >= 4096 && info.active_bytes >= 4096, "{info:?}");
+
+    let purged: alinery_core::PurgeArchivedResult = serde_json::from_value(call(ops().1)).unwrap();
+    assert_eq!((purged.deleted_tasks, purged.errors.len()), (1, 0), "{purged:?}");
+    assert_eq!(sh(&format!("ls '{repo}/.alinery/tasks'")).trim(), "keep", "only the live task is left on the host");
+    let after: alinery_core::StorageInfo = serde_json::from_value(call(ops().0)).unwrap();
+    assert_eq!(after.archived_task_count, 0);
+    session.conn.exit_master();
+    let _ = std::fs::remove_dir_all(&session.secrets_dir);
+}
+
 /// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
 /// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
 #[test]

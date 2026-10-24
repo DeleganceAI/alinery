@@ -500,6 +500,17 @@ pub enum RepoOp {
     RemoveFile {
         path: PathBuf,
     },
+    /// Where the repo keeps its data on this machine and what that data weighs.
+    StorageInfo {
+        repo: PathBuf,
+        app_config: PathBuf,
+    },
+    /// Delete the archived tasks, sessions and worktrees. Sessions that are still running under
+    /// them are killed through this machine's own daemon first (best effort).
+    PurgeArchived {
+        repo: PathBuf,
+        app_config: PathBuf,
+    },
     /// Return once the repo's daemon has released its socket and process lock. Sent after a
     /// confirmed shutdown, so a replacement can start; it stops nothing itself.
     WaitDaemonGone {
@@ -888,6 +899,18 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             _ => Ok(Value::Null),
         },
         // Remote daemons run in the default lane (`namespace: None` at spawn).
+        RepoOp::StorageInfo { repo, app_config } => to_value(crate::storage_info_in(&repo, &app_config, None)),
+        RepoOp::PurgeArchived { repo, app_config } => {
+            let daemon = host_daemon(&repo, &app_config);
+            let kill = |_task: &str, id: &str| {
+                if let Some(daemon) = &daemon {
+                    if daemon.session_status_observed(id).ok().flatten().is_some() {
+                        let _ = daemon.kill_session(id);
+                    }
+                }
+            };
+            to_value(crate::purge_archived_storage(&repo, &kill)?)
+        }
         RepoOp::WaitDaemonGone { repo } => crate::daemon_client::wait_for_daemon_gone(&repo, "").map(|()| Value::Null),
         RepoOp::SpawnDaemon {
             repo,
@@ -1476,6 +1499,14 @@ mod tests {
                 path: "/srv/c/inference.json".into(),
             },
             RepoOp::WaitDaemonGone { repo: "/srv/a".into() },
+            RepoOp::StorageInfo {
+                repo: "/srv/a".into(),
+                app_config: "/srv/c/app.toml".into(),
+            },
+            RepoOp::PurgeArchived {
+                repo: "/srv/a".into(),
+                app_config: "/srv/c/app.toml".into(),
+            },
             RepoOp::SpawnDaemon {
                 repo: "/srv/a".into(),
                 app_config: "/srv/c/app.toml".into(),
@@ -1635,6 +1666,55 @@ mod tests {
         assert!(!path.exists());
         run(RepoOp::RemoveFile { path }).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn storage_is_measured_and_purged_where_the_repo_lives() {
+        let repo = temp_dir("storage");
+        for (slug, archived) in [("keep", false), ("old", true)] {
+            let task = Task {
+                name: slug.into(),
+                slug: slug.into(),
+                branch: slug.into(),
+                archived,
+                created: 1_700_000_000,
+                ..Default::default()
+            };
+            let dir = repo.join(".alinery/tasks").join(slug);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+            fs::write(dir.join("notes.txt"), "x".repeat(2048)).unwrap();
+        }
+        let app_config = repo.join("app.toml");
+        let ops = || {
+            (
+                RepoOp::StorageInfo {
+                    repo: repo.clone(),
+                    app_config: app_config.clone(),
+                },
+                RepoOp::PurgeArchived {
+                    repo: repo.clone(),
+                    app_config: app_config.clone(),
+                },
+            )
+        };
+        let info = run(ops().0).unwrap();
+        assert_eq!(info["archived_task_count"], 1);
+        assert!(info["archived_bytes"].as_u64().unwrap() >= 2048);
+        assert!(info["active_bytes"].as_u64().unwrap() >= 2048);
+        assert_eq!(info["repo_path"], repo.to_string_lossy().as_ref());
+        assert_eq!(info["app_config_path"], app_config.to_string_lossy().as_ref());
+        assert_eq!(info["alineryd_socket_path"], repo.join(".alinery/alineryd.sock").to_string_lossy().as_ref());
+        // The wire carries what the in-process call computes.
+        assert_eq!(info, serde_json::to_value(crate::storage_info_in(&repo, &app_config, None)).unwrap());
+
+        let purged = run(ops().1).unwrap();
+        assert_eq!(purged["deleted_tasks"], 1);
+        assert!(purged["errors"].as_array().unwrap().is_empty());
+        assert!(!repo.join(".alinery/tasks/old").exists());
+        assert!(repo.join(".alinery/tasks/keep/notes.txt").exists(), "live data is never a target");
+        assert_eq!(run(ops().0).unwrap()["archived_task_count"], 0);
+        fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]

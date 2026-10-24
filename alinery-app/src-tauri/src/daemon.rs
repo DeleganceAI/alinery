@@ -1068,6 +1068,7 @@ pub(crate) fn connect_current_daemon(repo: &Path) -> Result<DaemonClient, String
     DaemonClient::connect_path_checked(current_alineryd_socket_path(repo))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn current_alineryd_lock_path(repo: &Path) -> PathBuf {
     alineryd_lock_path(repo, alineryd_socket_namespace().as_deref())
 }

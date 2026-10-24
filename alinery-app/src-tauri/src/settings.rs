@@ -322,70 +322,57 @@ pub(crate) async fn write_config(app: AppHandle, state: State<'_, AppState>, con
     .await
 }
 
-#[derive(Serialize)]
-pub(crate) struct StorageInfo {
-    pub(crate) app_config_path: String,
-    pub(crate) repo_path: String,
-    pub(crate) alinery_dir: String,
-    pub(crate) repo_config_path: String,
-    pub(crate) harnesses_path: String,
-    pub(crate) tasks_dir: String,
-    pub(crate) worktrees_dir: String,
-    pub(crate) alineryd_socket_path: String,
-    pub(crate) alineryd_lock_path: String,
-    pub(crate) mcp_socket_path: String,
-    pub(crate) mcp_status_path: String,
-    // Disk accounting (issue #91). `archived_bytes` is exactly what delete_all_archived_storage
-    // frees; `active_bytes` is the read-only remainder. Both come from one alinery-core walk.
-    pub(crate) archived_task_count: u32,
-    pub(crate) archived_session_count: u32,
-    pub(crate) archived_bytes: u64,
-    pub(crate) active_bytes: u64,
-}
-
 #[tauri::command]
-pub(crate) async fn storage_info(app: AppHandle, repo_path: String) -> Result<StorageInfo, String> {
+pub(crate) async fn storage_info(app: AppHandle, repo_path: String) -> Result<alinery_core::StorageInfo, String> {
     // `storage_stats` walks the whole `.alinery` tree. Settings loads this when Storage
     // opens; a sync command runs that walk on the main thread.
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
     let app_config = app_config_path(&app)?;
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let stats = alinery_core::storage_stats(&repo);
-        let alinery = alinery_dir(&repo);
-        let path = |p: PathBuf| p.to_string_lossy().to_string();
-
-        Ok(StorageInfo {
-            app_config_path: path(app_config),
-            repo_path: repo.to_string_lossy().to_string(),
-            alinery_dir: path(alinery.clone()),
-            repo_config_path: path(config_toml_path(&repo)),
-            harnesses_path: path(alinery.join("harnesses.toml")),
-            tasks_dir: path(tasks_dir(&repo)),
-            worktrees_dir: path(worktrees_dir(&repo)),
-            alineryd_socket_path: path(current_alineryd_socket_path(&repo)),
-            alineryd_lock_path: path(current_alineryd_lock_path(&repo)),
-            mcp_socket_path: path(alinery_core::mcp_socket_path(&repo, alineryd_socket_namespace().as_deref())),
-            mcp_status_path: path(alinery_core::mcp_status_path(&repo, alineryd_socket_namespace().as_deref())),
-            archived_task_count: stats.archived_task_count,
-            archived_session_count: stats.archived_session_count,
-            archived_bytes: stats.archived_bytes,
-            active_bytes: stats.active_bytes,
-        })
+    tauri::async_runtime::spawn_blocking(move || match target {
+        RepoRef::Local(repo) => Ok(alinery_core::storage_info_in(&repo, &app_config, alineryd_socket_namespace().as_deref())),
+        // The numbers and paths are the host's: the host walks its own disk.
+        RepoRef::Remote { host_id, path } => {
+            let state = app.state::<AppState>();
+            remote_call(
+                &state,
+                &host_id,
+                RepoOp::StorageInfo {
+                    repo: path.into(),
+                    app_config: host_app_config(&state, &host_id)?,
+                },
+            )
+        }
     })
     .await
     .map_err(|error| format!("storage info task: {error}"))?
 }
 
-// Irreversible, local-only: drops every archived task dir, every archived session's files, and
-// the worktrees of archived tasks. Live data is never a target (alinery-core owns the walk).
+// Irreversible: drops every archived task dir, every archived session's files, and the worktrees
+// of archived tasks. Live data is never a target (alinery-core owns the walk). A remote repo is
+// purged by its host, which kills any session still running under an archived task first.
 #[tauri::command]
 pub(crate) async fn delete_all_archived_storage(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<alinery_core::PurgeArchivedResult, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(&state, repo)?;
+    }
     // Keep the shared route cache/fallback behavior without borrowing command State in the worker.
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
+        let repo = match target {
+            RepoRef::Local(repo) => repo,
+            RepoRef::Remote { host_id, path } => {
+                return remote_call(
+                    &state,
+                    &host_id,
+                    RepoOp::PurgeArchived {
+                        repo: path.into(),
+                        app_config: host_app_config(&state, &host_id)?,
+                    },
+                )
+            }
+        };
         let kill = |task_slug: &str, id: &str| {
             let owned = with_session_client(&state, &repo, task_slug, id, |d| d.session_status_observed(id))
                 .map(|s| s.is_some())

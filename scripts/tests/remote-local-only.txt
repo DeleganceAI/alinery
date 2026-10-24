@@ -7,5 +7,3 @@ pick_backup_destination_dialog    backups are of this machine's copy of a repo; 
 restore_backup                    restore stops the daemon and replaces the repo's files, a teardown the remote path must not do on its own (deferred)
 start_mcp_server                  the MCP server is bound to the active repo on this machine
 stop_mcp_server                   the MCP server is bound to the active repo on this machine
-storage_info                      storage accounting for a remote repo is the storage slice (next)
-delete_all_archived_storage       irreversible purge; the remote version is the storage slice (next)

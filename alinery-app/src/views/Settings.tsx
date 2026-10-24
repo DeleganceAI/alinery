@@ -28,6 +28,7 @@ import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
@@ -953,20 +954,23 @@ export function Settings({
 
   const updatesCheck = (label: string) => <Checkbox checked={global.updates.check_enabled} disabled={!isGlobal} onChange={(v) => setGlobalUpdatesEnabled(v)} label={label} />;
 
+  // A remote repo's paths are on its host, so there is nothing to reveal here; they can still be copied.
   const storageRow = (label: string, value: string) => (
     <div key={label} className="storage-path-row">
       <div className="storage-path-head">
         <h4>{label}</h4>
         <div className="storage-actions">
-          <button
-            className="btn ghost small icon"
-            type="button"
-            title={`Reveal ${label} in Finder`}
-            aria-label={`Reveal ${label} in Finder`}
-            onClick={() => revealStoragePath(value)}
-          >
-            <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
-          </button>
+          {!isRemoteRepo(selectedRepo) && (
+            <button
+              className="btn ghost small icon"
+              type="button"
+              title={`Reveal ${label} in Finder`}
+              aria-label={`Reveal ${label} in Finder`}
+              onClick={() => revealStoragePath(value)}
+            >
+              <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          )}
           <button className="btn ghost small icon" type="button" title={`Copy ${label} path`} aria-label={`Copy ${label} path`} onClick={() => copyStoragePath(value)}>
             <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
           </button>

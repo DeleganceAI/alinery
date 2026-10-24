@@ -184,6 +184,7 @@ pub(crate) fn sessions_dir(repo: &Path, slug: &str) -> PathBuf {
 pub(crate) fn root_sessions_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("sessions")
 }
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn worktrees_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("worktrees")
 }
