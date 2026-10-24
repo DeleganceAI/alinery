@@ -436,6 +436,15 @@ pub enum RepoOp {
     GitOriginUrl {
         repo: PathBuf,
     },
+    /// The repo's playbook files (library, committed playbooks, picker and import registry).
+    ReadPlaybookTree {
+        repo: PathBuf,
+    },
+    /// Changes to those files, applied only if each still holds what the sender started from.
+    ApplyPlaybookTree {
+        repo: PathBuf,
+        changes: Vec<crate::playbook_tree::TreeChange>,
+    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -801,6 +810,8 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ReadDraftAttachments { repo, slug } => to_value(crate::task_drafts::read_draft_attachments_in(&repo, &slug)?),
         RepoOp::DeleteDraft { repo, slug } => crate::task_drafts::delete_draft_in(&repo, None, &slug).map(|()| Value::Null),
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
+        RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
+        RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, entries } => to_value(crate::credential_sync::apply_incoming(&path, &entries)?),
         RepoOp::SpawnDaemon {
@@ -1271,6 +1282,22 @@ mod tests {
                 slug: "d".into(),
             },
             RepoOp::GitOriginUrl { repo: "/srv/a".into() },
+            RepoOp::ReadPlaybookTree { repo: "/srv/a".into() },
+            RepoOp::ApplyPlaybookTree {
+                repo: "/srv/a".into(),
+                changes: vec![
+                    crate::playbook_tree::TreeChange {
+                        path: ".alinery/playbooks/a/playbook.md".into(),
+                        expected: Some(vec![0, 255]),
+                        new: None,
+                    },
+                    crate::playbook_tree::TreeChange {
+                        path: ".alinery/playbooks/b/playbook.md".into(),
+                        expected: None,
+                        new: Some(vec![1]),
+                    },
+                ],
+            },
             RepoOp::RenameSession {
                 repo: "/srv/a".into(),
                 slug: "t".into(),

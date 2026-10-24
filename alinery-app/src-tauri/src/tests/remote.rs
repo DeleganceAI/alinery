@@ -1389,6 +1389,115 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert!(gone.is_none());
 
+    // Repo-scope playbooks: the library code runs on a scratch copy of the host's files and only
+    // what changed goes back, with host paths in what the UI sees.
+    {
+        use alinery_core::playbook::{PlaybookRef, PlaybookScope};
+        use alinery_core::playbook_library as library;
+        let remote = Some(crate::RepoRef::parse(&key).unwrap());
+        let reference = PlaybookRef {
+            scope: PlaybookScope::Repo,
+            key: "one-shot".into(),
+        };
+        let source = include_str!("../../playbooks/one-shot/playbook.md");
+        let tree = || remote_call::<Vec<alinery_core::playbook_tree::TreeFile>>(&state, &id, RepoOp::ReadPlaybookTree { repo: repo.clone().into() }).unwrap();
+        let catalog =
+            |library_at: Option<crate::RepoRef>| crate::with_library_at(&app_config, &state, library_at, |lib| lib.rehome(library::load_playbook_catalog(&lib.roots))).unwrap();
+        let save = |overwrite: bool, text: &str| {
+            crate::with_library_at(&app_config, &state, remote.clone(), |lib| {
+                lib.require_owned(&state).unwrap();
+                library::save_playbook(
+                    &lib.roots,
+                    library::SavePlaybookRequest {
+                        target: reference.clone(),
+                        source: text.into(),
+                        overwrite,
+                    },
+                )
+                .map(|saved| lib.rehome(saved))
+            })
+        };
+
+        assert!(tree().is_empty());
+        let empty = catalog(remote.clone());
+        assert!(empty.candidates.iter().any(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
+        assert!(!empty.candidates.iter().any(|candidate| candidate.source.reference.scope == PlaybookScope::Repo));
+
+        let saved = save(false, source).unwrap().unwrap();
+        let host_file = format!("{repo}/.alinery/playbooks/one-shot/playbook.md");
+        assert_eq!(saved.source.path.as_deref(), Some(Path::new(&host_file)), "the scratch path is not shown");
+        assert_eq!(
+            tree().iter().map(|file| file.path.as_str()).collect::<Vec<_>>(),
+            [".alinery/playbooks/one-shot/playbook.md"]
+        );
+        assert!(
+            matches!(save(false, source).unwrap(), Err(library::PlaybookSaveError::Conflict { .. })),
+            "an existing playbook is not replaced silently"
+        );
+
+        let listed = catalog(remote.clone());
+        let candidate = listed
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source.reference == reference)
+            .expect("the repo playbook is listed");
+        assert_eq!(candidate.source.path.as_deref(), Some(Path::new(&host_file)));
+        assert!(candidate.title.is_some() && candidate.modified_at_ms.is_some());
+        let read = crate::with_library_at(&app_config, &state, remote.clone(), |lib| lib.rehome(library::resolve_playbook(&lib.roots, &reference)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(read.definition.key, "one-shot");
+
+        // Picker preferences live beside the playbooks.
+        let preferences = library::PickerPreferences {
+            order: vec![reference.clone()],
+            entries: Vec::new(),
+        };
+        crate::with_library_at(&app_config, &state, remote.clone(), |lib| library::save_picker_preferences(&lib.roots, &preferences))
+            .unwrap()
+            .unwrap();
+        assert!(tree().iter().any(|file| file.path == ".alinery/playbooks/picker.toml"));
+        assert_eq!(catalog(remote.clone()).picker_preferences, preferences);
+
+        // A host file that moved while the copy was being edited is not overwritten.
+        let edited = source.replacen("title = \"One-shot\"", "title = \"One-shot edited\"", 1);
+        assert_ne!(edited, source);
+        let stale = crate::with_library_at(&app_config, &state, remote.clone(), |lib| {
+            session
+                .channel
+                .call(
+                    RepoOp::WriteFile {
+                        path: host_file.clone().into(),
+                        contents: "edited on the host meanwhile".into(),
+                    },
+                    std::time::Duration::from_secs(30),
+                )
+                .unwrap();
+            library::save_playbook(
+                &lib.roots,
+                library::SavePlaybookRequest {
+                    target: reference.clone(),
+                    source: edited.clone(),
+                    overwrite: true,
+                },
+            )
+        });
+        let refused = stale.unwrap_err();
+        assert!(refused.contains("changed on the host"), "{refused}");
+        assert_eq!(
+            String::from_utf8_lossy(&tree().iter().find(|file| file.path.ends_with("one-shot/playbook.md")).unwrap().data),
+            "edited on the host meanwhile"
+        );
+
+        // Delete removes the file and the directory it leaves empty; the preferences stay.
+        save(true, source).unwrap().unwrap();
+        crate::with_library_at(&app_config, &state, remote.clone(), |lib| library::delete_playbook(&lib.roots, &reference))
+            .unwrap()
+            .unwrap();
+        assert_eq!(tree().iter().map(|file| file.path.as_str()).collect::<Vec<_>>(), [".alinery/playbooks/picker.toml"]);
+        assert!(!catalog(remote.clone()).candidates.iter().any(|candidate| candidate.source.reference == reference));
+    }
+
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
     assert!(state.daemon_for(Path::new(&key)).is_none());

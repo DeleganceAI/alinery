@@ -25,6 +25,7 @@ pub mod paths;
 pub mod playbook;
 pub mod playbook_library;
 pub mod playbook_scheduler;
+pub mod playbook_tree;
 pub mod prompts;
 pub mod protocol;
 pub mod provision_ffi;
