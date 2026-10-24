@@ -1195,9 +1195,22 @@ pub(crate) fn spawn_daemon_detached(repo: &Path, app_config: &Path) -> Result<()
 pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let repo = match path.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => PathBuf::from(p),
-            _ => active_repo()?,
+        let target = match path.as_deref().map(str::trim) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => active_repo_ref()?.uri(),
+        };
+        let repo = match RepoRef::parse(&target)? {
+            RepoRef::Remote { host_id, path } => {
+                crate::stop_remote_daemon(&app, &host_id, &path)?;
+                emit(
+                    &app,
+                    alinery_core::TelemetryEvent::DaemonStop {
+                        source: alinery_core::TelemetrySource::App,
+                    },
+                );
+                return Ok(());
+            }
+            RepoRef::Local(repo) => repo,
         };
         takeover_allowed(&state, &repo)?;
         let lifecycle = state.repo_lifecycle(&repo);
@@ -1241,15 +1254,26 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
 }
 
 /// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof. A remote
-/// repo is counted through its forwarded daemon, and reads 0 while its host is not connected.
+/// repo is counted through its forwarded daemon (or, when that daemon is a conflict, from what the
+/// conflict saw), and reads 0 while its host is not connected.
 pub(crate) fn live_sessions_in(state: &AppState, path: &str) -> u32 {
     let path = path.trim();
-    let client = if is_remote_repo_key(path) {
-        state.daemon_for(Path::new(path))
-    } else {
-        connect_current_daemon(Path::new(path)).ok()
-    };
-    client.map_or(0, |client| client.live_session_count())
+    if is_remote_repo_key(path) {
+        let key = Path::new(path);
+        return match (state.daemon_for(key), state.daemon_conflict(key)) {
+            (Some(client), _) => client.live_session_count(),
+            (None, Some(conflict)) => conflict
+                .owners
+                .iter()
+                .map(|owner| match &owner.impact {
+                    TakeoverImpact::Known { sessions } => sessions.len() as u32,
+                    TakeoverImpact::Unknown { .. } => 0,
+                })
+                .sum(),
+            (None, None) => 0,
+        };
+    }
+    connect_current_daemon(Path::new(path)).map_or(0, |client| client.live_session_count())
 }
 
 #[tauri::command]

@@ -1881,6 +1881,146 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
     }
 }
 
+/// A conflict's sessions are what the close and stop dialogs count when the daemon itself cannot be asked.
+#[test]
+fn a_conflicted_remote_daemon_is_counted_from_what_the_conflict_saw() {
+    let state = crate::AppState::default();
+    let key = "alinery+ssh://box-1/srv/app";
+    assert_eq!(crate::live_sessions_in(&state, key), 0);
+    let owner = |impact| crate::DaemonOwnerConflict {
+        lane: String::new(),
+        pid: None,
+        protocol: Some(22),
+        build_id: None,
+        app_config_identity: None,
+        impact,
+        takeover_unavailable: None,
+    };
+    let session = |id: &str| crate::TakeoverSession { id: id.into(), name: None };
+    state.set_daemon_conflict(
+        Path::new(key),
+        crate::DaemonConflict {
+            repo: key.into(),
+            app_protocol: 24,
+            app_config_identity: "current".into(),
+            owners: vec![owner(crate::TakeoverImpact::Known {
+                sessions: vec![session("a"), session("b")],
+            })],
+            issues: Vec::new(),
+        },
+    );
+    assert_eq!(crate::live_sessions_in(&state, key), 2);
+}
+
+/// A daemon this app cannot use (here: started with other settings, so another identity) is reported as
+/// a conflict that leaves the repo usable for reads, and a confirmed stop replaces it with a daemon this
+/// app's runtime serves. The old daemon is really gone, and nothing replaced it before the stop.
+#[test]
+fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
+    use std::time::Duration;
+    use tauri::Manager;
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("stop-{}", std::process::id());
+
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+    connect_and_attach(&handle, &id, true).unwrap();
+    let home = host_views(&handle, &state)[0].home.clone().unwrap();
+    let repo = format!("{home}/work/stop-{}", std::process::id());
+    let session = state.remotes.session(&id).unwrap();
+    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, Duration::from_secs(30)).unwrap();
+    sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    // This repo's daemons only: the host runs the other live tests' daemons too.
+    let daemons = || sh(&format!("pgrep -f '[a]linery-vinculum-daemon --repo {repo}' | sort"));
+
+    // Replace the good daemon with one started under another settings file, which gives it another identity.
+    let good = state.daemon_for(Path::new(&key)).expect("the app's own daemon is attached");
+    good.call(&alinery_core::daemon_client::shutdown_request()).unwrap();
+    session.channel.call(RepoOp::WaitDaemonGone { repo: repo.clone().into() }, Duration::from_secs(30)).unwrap();
+    state.clear_daemon(Path::new(&key));
+    assert!(daemons().trim().is_empty(), "no daemon is left to confuse the count");
+    let (config_dir, runtime) = (session.config_dir.clone(), runtime_dir(&session.root, &session.runtime_hash));
+    sh(&format!("cp '{config_dir}/app.toml' '{config_dir}/other.toml'"));
+    session
+        .channel
+        .call(
+            RepoOp::SpawnDaemon {
+                repo: repo.clone().into(),
+                app_config: format!("{config_dir}/other.toml").into(),
+                binary: format!("{runtime}/alinery-vinculum-daemon").into(),
+                build_id: session.runtime_hash.clone(),
+                namespace: None,
+                ownership_lib: Some(format!("{runtime}/libalinery_core.so").into()),
+                log: format!("{config_dir}/logs/old-daemon.log").into(),
+                // The test host has no systemd user manager; the daemon still detaches.
+                launch: alinery_core::repo_service::Launch::Direct,
+                unit: None,
+                ui_secret_file: None,
+            },
+            Duration::from_secs(30),
+        )
+        .unwrap();
+    let mut old = String::new();
+    for _ in 0..50 {
+        old = daemons();
+        if !old.trim().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(!old.trim().is_empty(), "the old daemon started");
+
+    // Opening the repo reports the conflict instead of failing, and replaces nothing.
+    crate::activate_remote_repo(&handle, &state, &key).unwrap();
+    assert!(state.daemon_for(Path::new(&key)).is_none());
+    let conflict = state.daemon_conflict(Path::new(&key)).expect("the unusable daemon is recorded as a conflict");
+    assert_eq!(conflict.repo, key);
+    assert_eq!(conflict.owners.len(), 1);
+    assert!(matches!(&conflict.owners[0].impact, crate::TakeoverImpact::Known { sessions } if sessions.is_empty()));
+    assert!(conflict.issues[0].contains("other settings"), "{:?}", conflict.issues);
+    assert!(repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap_err().contains("restart it"));
+    assert_eq!(daemons(), old, "attaching never replaces the daemon");
+
+    // The confirmed stop ends it, waits for its socket to go, and starts this app's daemon.
+    crate::stop_remote_daemon(&handle, &id, &repo).unwrap();
+    assert!(state.daemon_conflict(Path::new(&key)).is_none());
+    let client = state.daemon_for(Path::new(&key)).expect("the new daemon is attached");
+    let after = daemons();
+    assert_eq!(after.lines().count(), 1, "one daemon serves the repo: {after}");
+    assert_ne!(after, old, "the old daemon is gone and a new one runs");
+    let version = client.version();
+    let identity = alinery_core::app_config_identity(Path::new(&format!("{config_dir}/app.toml")));
+    assert_eq!(version.app_config_identity.as_deref(), Some(identity.as_str()));
+    assert!(client.session_statuses_observed().unwrap().is_empty());
+
+    let _ = remove_remote_repo(&handle, &key);
+    disconnect_host(&handle, &id);
+    let _ = crate::set_active_repo_global(None);
+    if let Ok(dir) = handle.path().app_config_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
 /// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
 #[test]

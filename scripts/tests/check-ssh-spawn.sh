@@ -6,7 +6,7 @@
 #    site would bypass all of them.
 # 2. Nothing on the remote path may kill a process by name or signal. Connecting and
 #    disconnecting never end a remote session (see check-no-auto-session-kill.sh for the
-#    four deliberate teardowns); killing the ssh child of a channel with `Child::kill` is
+#    five deliberate teardowns); killing the ssh child of a channel with `Child::kill` is
 #    fine because it ends only that channel.
 set -euo pipefail
 

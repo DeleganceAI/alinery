@@ -500,6 +500,11 @@ pub enum RepoOp {
     RemoveFile {
         path: PathBuf,
     },
+    /// Return once the repo's daemon has released its socket and process lock. Sent after a
+    /// confirmed shutdown, so a replacement can start; it stops nothing itself.
+    WaitDaemonGone {
+        repo: PathBuf,
+    },
     /// Start the daemon detached so it outlives the ssh session that asked.
     SpawnDaemon {
         repo: PathBuf,
@@ -882,6 +887,8 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("remove {}: {error}", path.display())),
             _ => Ok(Value::Null),
         },
+        // Remote daemons run in the default lane (`namespace: None` at spawn).
+        RepoOp::WaitDaemonGone { repo } => crate::daemon_client::wait_for_daemon_gone(&repo, "").map(|()| Value::Null),
         RepoOp::SpawnDaemon {
             repo,
             app_config,
@@ -1468,6 +1475,7 @@ mod tests {
             RepoOp::RemoveFile {
                 path: "/srv/c/inference.json".into(),
             },
+            RepoOp::WaitDaemonGone { repo: "/srv/a".into() },
             RepoOp::SpawnDaemon {
                 repo: "/srv/a".into(),
                 app_config: "/srv/c/app.toml".into(),
@@ -1626,6 +1634,15 @@ mod tests {
         run(RepoOp::RemoveFile { path: path.clone() }).unwrap();
         assert!(!path.exists());
         run(RepoOp::RemoveFile { path }).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn wait_daemon_gone_returns_when_nothing_holds_the_socket() {
+        let root = temp_dir("gone");
+        fs::create_dir_all(root.join(".alinery")).unwrap();
+        run(RepoOp::WaitDaemonGone { repo: root.clone() }).unwrap();
+        assert!(run(RepoOp::WaitDaemonGone { repo: root.join("missing") }).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1165,11 +1165,57 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         }
     }
     let version = version.ok_or("the daemon did not start on the host; see its log under the remote config directory")?;
+    // An unusable daemon is returned, not refused: the caller records it as a conflict and the
+    // user decides whether to replace it (`stop_remote_daemon`).
     let compat = daemon_client::classify_version_reply(&version, &session.runtime_hash, app_config_identity);
-    if !compat.usable() {
-        return Err("another Alinery build or settings directory owns this repository on the host".to_string());
-    }
     Ok((client, compat, version.host_guard_warning()))
+}
+
+/// What the banner shows for a daemon this app cannot use: one owner that cannot be taken over
+/// (a remote daemon is replaced by restarting it) and the sessions that restart would end.
+fn remote_conflict(key: &str, client: &DaemonClient, compat: DaemonCompat, app_config_identity: &str) -> DaemonConflict {
+    let version = client.version();
+    let impact = match client.session_statuses_observed() {
+        Ok(sessions) => TakeoverImpact::Known {
+            sessions: sessions
+                .into_iter()
+                .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
+                .map(|session| TakeoverSession { id: session.id, name: None })
+                .collect(),
+        },
+        Err(detail) => TakeoverImpact::Unknown { detail },
+    };
+    let issue = match compat {
+        DaemonCompat::AppConfigMismatch => "The daemon on the host was started with other settings than this app's.".to_string(),
+        _ => format!(
+            "The daemon on the host speaks protocol {}; this app speaks {PROTOCOL_VERSION}.",
+            version.protocol.map_or("none".to_string(), |protocol| protocol.to_string())
+        ),
+    };
+    DaemonConflict {
+        repo: key.to_string(),
+        app_protocol: PROTOCOL_VERSION,
+        app_config_identity: app_config_identity.to_string(),
+        owners: vec![DaemonOwnerConflict {
+            lane: String::new(),
+            pid: None,
+            protocol: version.protocol,
+            build_id: version.build_id,
+            app_config_identity: version.app_config_identity,
+            impact,
+            takeover_unavailable: Some("Restart the daemon on the host to replace it.".to_string()),
+        }],
+        issues: vec![issue],
+    }
+}
+
+/// The client of a remote repo's daemon, or why there is none.
+fn remote_daemon(state: &AppState, repo: &RepoRef) -> Result<DaemonClient, String> {
+    let key = PathBuf::from(repo.uri());
+    state.daemon_for(&key).ok_or_else(|| match state.daemon_conflict(&key) {
+        Some(_) => "the daemon on this host was started by another Alinery version; restart it from the banner above the board".to_string(),
+        None => "this remote repository's daemon is not connected".to_string(),
+    })
 }
 
 /// A forwarded socket costs a channel open plus the request.
@@ -1217,14 +1263,13 @@ pub(crate) fn require_active_target(state: &AppState) -> Result<ActiveRepo, Stri
         RepoRef::Local(_) => require_owned_active_repo(state).map(ActiveRepo::Local),
         RepoRef::Remote { host_id, path } => {
             connected_session(state, &host_id)?;
-            let key = RepoRef::Remote {
-                host_id: host_id.clone(),
-                path: path.clone(),
-            }
-            .uri();
-            state
-                .daemon_for(Path::new(&key))
-                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())?;
+            remote_daemon(
+                state,
+                &RepoRef::Remote {
+                    host_id: host_id.clone(),
+                    path: path.clone(),
+                },
+            )?;
             Ok(ActiveRepo::Remote { host_id, path })
         }
     }
@@ -1240,9 +1285,7 @@ pub(crate) fn task_client(state: &AppState, app_config: &Path, repo: &RepoRef, t
         }
         RepoRef::Remote { host_id, .. } => {
             connected_session(state, host_id)?;
-            state
-                .daemon_for(Path::new(&repo.uri()))
-                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())
+            remote_daemon(state, repo)
         }
     }
 }
@@ -1256,9 +1299,7 @@ pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClie
         }
         RepoRef::Remote { host_id, .. } => {
             connected_session(state, host_id)?;
-            state
-                .daemon_for(Path::new(&repo.uri()))
-                .ok_or_else(|| "this remote repository's daemon is not connected".to_string())
+            remote_daemon(state, repo)
         }
     }
 }
@@ -1270,7 +1311,9 @@ pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> 
 }
 
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the
-/// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry.
+/// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry. A daemon this
+/// app cannot use is recorded as a conflict and is not an error: the board still reads through the
+/// repo service, and the banner offers to restart the daemon.
 fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path: &str) -> Result<(), String> {
     let claim = session.channel.call(RepoOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
     if claim["claimed"] != true {
@@ -1278,8 +1321,45 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path
     }
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
     let (client, compat, warning) = ensure_remote_daemon(session, path, &identity)?;
-    state.set_daemon(Path::new(key), client, compat, identity, warning);
+    if compat.usable() {
+        state.set_daemon(Path::new(key), client, compat, identity, warning);
+    } else {
+        state.set_daemon_conflict(Path::new(key), remote_conflict(key, &client, compat, &identity));
+    }
     Ok(())
+}
+
+/// Longest the host may take to let go of a stopped daemon's socket and lock.
+const STOP_TIMEOUT: Duration = Duration::from_secs(60);
+
+// DELIBERATE TEARDOWN ORIGIN (fifth, the remote counterpart of `stop_daemon`). Ends EVERY live
+// session of one remote repo, waits until the host's daemon has let go of its socket and lock, then
+// starts the daemon from the runtime this app installed there. Reached only from the confirmed
+// Settings stop and the conflict banner's Restart daemon; nothing here runs on its own.
+pub(crate) fn stop_remote_daemon<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let key = RepoRef::Remote {
+        host_id: host_id.to_string(),
+        path: path.to_string(),
+    }
+    .uri();
+    if !load_app_config(app).known_repos.contains(&key) {
+        return Err(format!("unknown repository: {key}"));
+    }
+    let session = connected_session(&state, host_id)?;
+    let lifecycle = state.repo_lifecycle(Path::new(&key));
+    let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    // A conflicted daemon has no stored client, so talk to the forward directly.
+    let (local, remote_socket) = repo_forward(host_id, path)?;
+    let client = DaemonClient::connect_path(local.clone())?.with_observe_timeout(REMOTE_OBSERVE_TIMEOUT);
+    let _ = session.conn.forward(&local, &remote_socket);
+    // A daemon that does not answer has nothing to end; the attach below starts a new one.
+    if client.version_checked().is_ok() {
+        client.call(&daemon_client::shutdown_request()).map(|_| ())?;
+        session.channel.call(RepoOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
+        state.clear_daemon(Path::new(&key));
+    }
+    attach_remote_repo(&state, &session, &key, path)
 }
 
 /// The hosts that `known_repos` lists remote repositories on.
