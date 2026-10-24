@@ -251,9 +251,28 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             ..Default::default()
         },
     );
+    config.global.github.token = "ghp_live_mac_only".into();
+    config.global.telemetry.install_id = "live-install-id".into();
+    config.global.experiments.grok_api_key = "xai-live-shared".into();
     crate::write_app_config(&handle, &config).unwrap();
 
     connect_and_attach(&handle, &id, true).unwrap();
+
+    // The host's settings file carries what its processes read and none of this Mac's private settings.
+    {
+        let session = state.remotes.session(&id).expect("connected");
+        let host_toml = session
+            .conn
+            .exec_ok(
+                &format!("cat '{dir}/app.toml'; stat -c %a '{dir}/app.toml'", dir = session.config_dir),
+                RemoteStdin::None,
+                std::time::Duration::from_secs(20),
+            )
+            .unwrap();
+        assert!(!host_toml.contains("ghp_live_mac_only") && !host_toml.contains("live-install-id"), "{host_toml}");
+        assert!(host_toml.contains("xai-live-shared"), "the shared provider key reaches the daemon");
+        assert_eq!(host_toml.trim().lines().last(), Some("600"), "owner-only");
+    }
     let hosts = host_views(&handle, &state);
     assert_eq!(hosts[0].state, "connected", "{hosts:?}");
     assert!(hosts[0].home.as_deref().is_some_and(|home| home.starts_with('/')));
@@ -2063,12 +2082,69 @@ fn remote_app_toml_drops_hosts_and_other_machines_repos() {
         ..Default::default()
     };
     local.remote_hosts.insert("box-a1b2c3".into(), crate::RemoteHost::default());
-    local.mcp_enabled = false;
     let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()]).unwrap();
     let parsed: crate::AppConfig = toml::from_str(&rendered).unwrap();
     assert!(parsed.remote_hosts.is_empty());
     assert_eq!(parsed.known_repos, ["/srv/r"]);
     assert_eq!(parsed.active_repo, "");
-    assert!(!parsed.mcp_enabled, "global settings carry over");
     assert!(!rendered.contains("alinery+ssh"));
+}
+
+/// The host's settings file is an allowlist: what its processes read, and nothing this Mac keeps
+/// private. Everything below is set on the Mac and must not reach the host.
+#[test]
+fn remote_app_toml_carries_only_what_the_host_reads() {
+    let mut local = crate::AppConfig::default();
+    local.settings_version = 7;
+    local.global.defaults.model = "alinery/some-model".into();
+    local.global.defaults.thinking = "high".into();
+    local.global.experiments.grok_api_key = "xai-shared-key".into();
+    local.global.github.token = "ghp_mac_only_token".into();
+    local.global.telemetry = alinery_core::TelemetryPrefs {
+        enabled: true,
+        prompted: true,
+        install_id: "install-id-mac".into(),
+        endpoint: "https://telemetry.example/ingest".into(),
+    };
+    local.global.backup.destination = "/Users/me/Backups".into();
+    local.global.harnesses.harness = vec![alinery_core::Harness {
+        key: "custom".into(),
+        binary: "/Users/me/bin/custom".into(),
+        env: [("CUSTOM_API_KEY".to_string(), "harness-secret".to_string())].into(),
+        ..Default::default()
+    }];
+    local.global.power.keep_awake = true;
+    local.global.model_favorites.insert("omp".into(), vec!["alinery/favorite".into()]);
+
+    let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()]).unwrap();
+    for private in [
+        "ghp_mac_only_token",
+        "install-id-mac",
+        "telemetry.example",
+        "/Users/me",
+        "harness-secret",
+        "CUSTOM_API_KEY",
+        "alinery/favorite",
+    ] {
+        assert!(!rendered.contains(private), "{private} reached the host's app.toml:\n{rendered}");
+    }
+
+    // What the host does read is there, as the host's own loader sees it.
+    let dir = std::env::temp_dir().join(format!("alinery-remote-toml-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("app.toml");
+    std::fs::write(&path, &rendered).unwrap();
+    let host = alinery_core::load_global_settings(&path);
+    assert_eq!(host.defaults.model, "alinery/some-model");
+    assert_eq!(host.defaults.thinking, "high");
+    assert_eq!(host.experiments.grok_api_key, "xai-shared-key", "provider credentials ride with the others");
+    assert!(host.github.token.is_empty());
+    assert!(
+        !host.telemetry.enabled && host.telemetry.install_id.is_empty(),
+        "the host records nothing under this install"
+    );
+    assert!(!host.power.keep_awake);
+    assert!(!host.harnesses.harness.iter().any(|row| row.key == "custom"), "harness rows name this Mac's paths");
+    assert_eq!(toml::from_str::<crate::AppConfig>(&rendered).unwrap().settings_version, 7);
+    let _ = std::fs::remove_dir_all(dir);
 }

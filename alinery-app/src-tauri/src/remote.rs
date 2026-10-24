@@ -373,11 +373,29 @@ pub(crate) fn remote_config_dir(root: &str, local_identity: &str) -> String {
 /// The `app.toml` the remote daemon and repo service read: the local settings, minus the
 /// remote host list, with only this host's repositories (the remote alinery-mcp allowlists
 /// repos from it).
+/// The `app.toml` the host's daemon and repo service read: an allowlist, not a copy of this Mac's.
+///
+/// What a host-side process actually consults is small. The default model and thinking level for a
+/// new session come from `defaults`, and the Grok key is handed to the daemon as `XAI_API_KEY` when
+/// it starts (a provider credential, so it rides with the others). Everything else in the Mac's
+/// settings is either a UI preference or something that must not leave it: the GitHub token (imports
+/// and PR discovery run here, and the host pushes with its own git credentials), the telemetry
+/// install id and endpoint (the host records no events under this install), harness rows that name
+/// Mac paths and may carry keys in `env`, and the backup destination. Those stay at their defaults.
 pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[String]) -> Result<String, String> {
-    let mut config = local.clone();
-    config.remote_hosts.clear();
-    config.active_repo = String::new();
-    config.known_repos = remote_repo_paths.to_vec();
+    let mut config = AppConfig {
+        settings_version: local.settings_version,
+        known_repos: remote_repo_paths.to_vec(),
+        ..AppConfig::default()
+    };
+    config.global.defaults = local.global.defaults.clone();
+    config.global.experiments.grok_api_key = local.global.experiments.grok_api_key.clone();
+    config.global.telemetry = alinery_core::TelemetryPrefs {
+        enabled: false,
+        prompted: true,
+        install_id: String::new(),
+        ..config.global.telemetry
+    };
     toml::to_string(&config).map_err(|error| format!("render remote app.toml: {error}"))
 }
 
