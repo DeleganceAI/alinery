@@ -27,7 +27,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
-import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
+import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner, showRepoOpenFailure } from "./DaemonConflictBanner";
 import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
@@ -82,6 +82,7 @@ import { Playbooks } from "./views/Playbooks";
 import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
+import type { SessionSendRecovery } from "./views/SessionView";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
 import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
@@ -127,6 +128,48 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 // Live (running + idle) sessions on a repo's daemon — the number every loss-of-work
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
 const liveSessions = (repo: string) => ipc.repoLiveSessions(repo).catch(() => 0);
+
+function RemoveRepoConfirmation({ path, onConfirm }: { path: string; onConfirm: () => void }) {
+  const [live, setLive] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    ipc.repoLiveSessions(path).then(
+      (count) => {
+        if (!cancelled) setLive(count);
+      },
+      (error) => {
+        if (!cancelled) setError(String(error));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  return (
+    <>
+      <p>Its session daemon is stopped and the repo is removed from the list. Files on disk are untouched.</p>
+      {error !== null ? (
+        <p className="confirm-loss" role="alert">
+          Live session count is unavailable: {error}. Removing this repository still stops its daemon and may kill running sessions. In-flight harness work may be lost and cannot
+          be recovered.
+        </p>
+      ) : live === null ? (
+        <p role="status">Checking live sessions… You can cancel while this is loading.</p>
+      ) : live > 0 ? (
+        <p className="confirm-loss">
+          {live} live session{live === 1 ? "" : "s"} {live === 1 ? "is" : "are"} killed. In-flight harness work is lost and cannot be recovered.
+        </p>
+      ) : (
+        <p>No live sessions.</p>
+      )}
+      <button type="button" className="btn small danger" disabled={live === null && error === null} onClick={onConfirm}>
+        Remove repository
+      </button>
+    </>
+  );
+}
 
 type SearchData = { tasks: BoardTask[]; sessions: SessionListItem[] };
 const EMPTY_SEARCH_DATA: SearchData = { tasks: [], sessions: [] };
@@ -210,6 +253,7 @@ export default function App() {
     if (!dismissed) setSetupOffer(true);
   }, [appConfig?.active_repo, onboardingOpen, consentPending]);
   const [repoErr, setRepoErr] = useState("");
+  const removingRepo = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -226,6 +270,7 @@ export default function App() {
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
   const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
+  const sessionSendRecovery = useRef(new Map<string, Map<string, SessionSendRecovery>>());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
@@ -581,6 +626,9 @@ export default function App() {
       const cfg = await ipc.setActiveRepo(path, drawerSessionIds);
       if (cfg.active_repo !== previousRepo) clearDrawerUi();
       return { ...cfg, appearance: applyAppearance(cfg.appearance) };
+    } catch (cause) {
+      const message = showRepoOpenFailure(path, cause);
+      throw cause instanceof Error ? cause : new Error(message);
     } finally {
       endRepoSwitch();
     }
@@ -822,26 +870,21 @@ export default function App() {
 
   // B4 / #132: closing a repo releases ownership — its daemon is stopped, its alineryd lock
   // and its GUI lock are dropped, so a closed repo can never keep serving with no UI left
-  // to reach it. That ends live sessions, so it is confirmed here with the count first;
-  // cancel changes nothing at all (no config write, no daemon call).
+  // to reach it. Confirm the session count or an explicit warning that the count is unknown;
+  // cancel changes nothing at all (no config write, no shutdown call).
   const removeRepo = async (path: string) => {
+    if (removingRepo.current) return;
+    removingRepo.current = true;
     setRepoErr("");
-    const wasActive = path === appConfig?.active_repo;
-    const live = await liveSessions(path);
-    const ok = await confirmDanger(
-      `Remove ${repoName(path)}?`,
-      <>
-        <p>Its session daemon is stopped and the repo is removed from the list. Files on disk are untouched.</p>
-        {live > 0 && (
-          <p className="confirm-loss">
-            {live} live session{live === 1 ? "" : "s"} {live === 1 ? "is" : "are"} killed. In-flight harness work is lost and cannot be recovered.
-          </p>
-        )}
-      </>,
-      "Remove repository",
-    );
-    if (!ok) return;
     try {
+      const choice = await askConfirm({
+        title: `Remove ${repoName(path)}?`,
+        body: (answer) => <RemoveRepoConfirmation key={path} path={path} onConfirm={() => answer("remove")} />,
+        choices: [{ key: "cancel", label: "Cancel", tone: "ghost" }],
+        defaultKey: "cancel",
+      });
+      if (choice !== "remove") return;
+      const wasActive = path === appConfigRef.current?.active_repo;
       if (wasActive) await killDrawer();
       const cfg = await ipc.removeRepo(path);
       setAppConfig({ ...cfg, appearance: applyAppearance(cfg.appearance) });
@@ -853,6 +896,9 @@ export default function App() {
       toast(`Closed ${repoName(path)}`, "success");
     } catch (e) {
       setRepoErr(String(e));
+      toast(String(e), "error");
+    } finally {
+      removingRepo.current = false;
     }
   };
 
@@ -1752,6 +1798,15 @@ export default function App() {
                   playbook={view.playbook}
                   intent={view.intent}
                   resumeToken={view.resumeToken}
+                  sendRecovery={(() => {
+                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
+                    let recovery = sessionSendRecovery.current.get(key);
+                    if (!recovery) {
+                      recovery = new Map();
+                      sessionSendRecovery.current.set(key, recovery);
+                    }
+                    return recovery;
+                  })()}
                   messageDraft={sessionMessageDrafts.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? EMPTY_SESSION_MESSAGE_DRAFT}
                   onMessageDraftChange={(draft) => {
                     const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
@@ -1778,6 +1833,12 @@ export default function App() {
                   onDiagramZoomOpenChange={setDiagramZoomOpen}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
+                  onOpenSession={(session) => {
+                    void openTaskSession({ repoPath: appConfig.active_repo, taskSlug: view.taskSlug, session, from: view });
+                  }}
+                  onOpenReplacement={(session) => {
+                    void openTaskSession({ repoPath: appConfig.active_repo, taskSlug: view.taskSlug, session, from: view, intent: "attach" });
+                  }}
                   onStartFresh={() => {
                     setView({ kind: "createSession", from: view, initialTask: { repo_path: appConfig.active_repo, slug: view.taskSlug } });
                   }}

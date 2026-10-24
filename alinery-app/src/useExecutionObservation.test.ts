@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readTaskExecution, readTaskExecutions } from "./useExecutionObservation";
+import { executionReply } from "./views/executionTestFixture";
 
 const observeTaskExecutions = vi.hoisted(() => vi.fn());
 vi.mock("./ipc", () => ({ observeTaskExecutions }));
@@ -43,6 +44,26 @@ describe("execution observation admission", () => {
     expect(observeTaskExecutions.mock.calls[1][0]).toEqual([{ repoPath: "/repo-a", taskSlug: "two" }]);
     second.resolve([{ repo_path: "/repo-a", task_slug: "two", execution: { live: { status: "offline" } } }]);
     await expect(later).resolves.toEqual({ live: { status: "offline" } });
+  });
+
+  it("replaces live continuation authority with saved history after disconnect", async () => {
+    const live = executionReply();
+    live.state.executions["execution-a"].last_ready_revision = 7;
+    live.state.executions["execution-a"].ready_revision = 7;
+    live.continuation["execution-a"] = { process_incarnation: "owner-process", available: true, reason: null };
+    const saved = structuredClone(live);
+    saved.live = { status: "offline", detail: "owner disconnected" };
+    saved.continuation = {};
+    observeTaskExecutions
+      .mockReset()
+      .mockResolvedValueOnce([{ repo_path: "/repo", task_slug: "task", execution: live }])
+      .mockResolvedValueOnce([{ repo_path: "/repo", task_slug: "task", execution: saved }]);
+
+    expect((await readTaskExecution("/repo", "task")).continuation["execution-a"].available).toBe(true);
+    const disconnected = await readTaskExecution("/repo", "task");
+    expect(disconnected.continuation).toEqual({});
+    expect(disconnected.live.status).toBe("offline");
+    expect(disconnected.state.executions["execution-a"].last_ready_revision).toBe(7);
   });
 
   it("returns an empty batch without a native call", async () => {

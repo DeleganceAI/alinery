@@ -1448,6 +1448,38 @@ describe("repository switch keeps the current page", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "All repos"));
   }
 
+  it("keeps the selected repository and shows owner details when connection is refused", async () => {
+    await renderApp();
+    ipcMocks.setActiveRepo.mockRejectedValueOnce({
+      repo: "/other",
+      app_protocol: 19,
+      app_config_identity: "current-config",
+      owners: [
+        {
+          lane: "old",
+          pid: 66765,
+          protocol: 17,
+          build_id: "old-build",
+          app_config_identity: "other-config",
+          impact: { status: "known", sessions: [{ id: "live-session", name: null }] },
+          takeover_unavailable: "Shutdown compatibility is not established for this daemon.",
+        },
+      ],
+      issues: [],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByTitle("/other"));
+    const dialog = await screen.findByRole("alertdialog", { name: "Couldn't open other" });
+    expect(dialog.textContent).toContain("protocol 17");
+    expect(dialog.textContent).toContain("live-session");
+    expect(dialog.textContent).toContain("Shutdown compatibility is not established");
+    expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
+    expect(within(dialog).queryByRole("button", { name: /take over/i })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
+  });
+
   it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
@@ -1507,6 +1539,112 @@ describe("repository switch keeps the current page", () => {
   });
 });
 
+describe("removeRepo", () => {
+  const repos = { ...appConfig, known_repos: ["/repo", "/other"] };
+
+  beforeEach(() => {
+    ipcMocks.readAppConfig.mockResolvedValue(repos);
+    vi.mocked(ipc.removeRepo).mockResolvedValue(appConfig);
+  });
+
+  function closeOther() {
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close other" }));
+  }
+
+  it("shows a cancellable confirmation immediately and waits for an informed explicit choice", async () => {
+    const count = deferred<number>();
+    const removal = deferred<AppConfig>();
+    vi.mocked(ipc.repoLiveSessions).mockReturnValue(count.promise);
+    vi.mocked(ipc.removeRepo).mockReturnValue(removal.promise);
+    await renderApp();
+    closeOther();
+    const dialog = screen.getByRole("alertdialog", { name: "Remove other?" });
+    const accept = within(dialog).getByRole("button", { name: "Remove repository" });
+    expect(within(dialog).getByRole("status").textContent).toContain("Checking live sessions");
+    expect(accept).toHaveProperty("disabled", true);
+    expect(dialog.querySelector("[data-autofocus]")?.textContent).toBe("Cancel");
+    fireEvent.click(accept);
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    closeOther();
+    expect(ipc.repoLiveSessions).toHaveBeenCalledTimes(1);
+    await act(async () => count.resolve(2));
+    expect(dialog.textContent).toContain("2 live sessions are killed");
+    expect(accept).toHaveProperty("disabled", false);
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    fireEvent.click(accept);
+    await waitFor(() => expect(ipc.removeRepo).toHaveBeenCalledWith("/other"));
+    closeOther();
+    expect(screen.queryByRole("alertdialog", { name: "Remove other?" })).toBeNull();
+    expect(ipc.removeRepo).toHaveBeenCalledTimes(1);
+    await act(async () => removal.resolve(appConfig));
+    fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    expect(screen.queryByRole("button", { name: "Close other" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Close repo" })).toBeTruthy();
+  });
+
+  it("cancels while counting and ignores the old result after another confirmation opens", async () => {
+    const oldCount = deferred<number>();
+    const newCount = deferred<number>();
+    vi.mocked(ipc.repoLiveSessions).mockReturnValueOnce(oldCount.promise).mockReturnValueOnce(newCount.promise);
+    await renderApp();
+    closeOther();
+    let dialog = screen.getByRole("alertdialog", { name: "Remove other?" });
+    fireEvent.click(dialog.querySelector("[data-autofocus]") as HTMLElement);
+    await act(async () => {});
+    expect(screen.queryByRole("alertdialog", { name: "Remove other?" })).toBeNull();
+    closeOther();
+    dialog = screen.getByRole("alertdialog", { name: "Remove other?" });
+    await act(async () => oldCount.resolve(0));
+    expect(within(dialog).getByRole("button", { name: "Remove repository" })).toHaveProperty("disabled", true);
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    fireEvent.click(dialog.querySelector("[data-autofocus]") as HTMLElement);
+    await act(async () => newCount.resolve(3));
+    expect(screen.queryByRole("alertdialog", { name: "Remove other?" })).toBeNull();
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+  });
+
+  it("warns when the count is unknown and requires explicit confirmation even after a count failure", async () => {
+    const count = deferred<number>();
+    vi.mocked(ipc.repoLiveSessions).mockReturnValue(count.promise);
+    await renderApp();
+    closeOther();
+    await act(async () => count.reject(new Error("daemon unavailable")));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove other?" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("daemon unavailable");
+    expect(within(dialog).getByRole("alert").textContent).toContain("may kill running sessions");
+    expect(within(dialog).queryByText("No live sessions.")).toBeNull();
+    expect(dialog.querySelector("[data-autofocus]")?.textContent).toBe("Cancel");
+    expect(within(dialog).getByRole("button", { name: "Remove repository" })).toHaveProperty("disabled", false);
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    fireEvent.click(dialog.querySelector("[data-autofocus]") as HTMLElement);
+    await act(async () => {});
+    expect(screen.queryByRole("alertdialog", { name: "Remove other?" })).toBeNull();
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    closeOther();
+    const accept = screen.getByRole("button", { name: "Remove repository" });
+    await waitFor(() => expect(accept).toHaveProperty("disabled", false));
+    expect(ipc.removeRepo).not.toHaveBeenCalled();
+    fireEvent.click(accept);
+    await waitFor(() => expect(ipc.removeRepo).toHaveBeenCalledWith("/other"));
+    expect(ipc.removeRepo).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps removal failures visible and releases the duplicate-operation guard", async () => {
+    vi.mocked(ipc.repoLiveSessions).mockResolvedValue(0);
+    vi.mocked(ipc.removeRepo).mockRejectedValue(new Error("shutdown refused"));
+    await renderApp();
+    closeOther();
+    const accept = screen.getByRole("button", { name: "Remove repository" });
+    await waitFor(() => expect(accept).toHaveProperty("disabled", false));
+    fireEvent.click(accept);
+    await waitFor(() => expect(screen.getAllByText(/shutdown refused/).length).toBeGreaterThan(0));
+    closeOther();
+    expect(screen.getByRole("alertdialog", { name: "Remove other?" })).toBeTruthy();
+    expect(ipc.removeRepo).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("addRepo", () => {
   async function openPicker() {
     ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
@@ -1542,6 +1680,19 @@ describe("addRepo", () => {
     await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", []));
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
+  });
+
+  it("keeps the workspace unopened when its first daemon connection fails", async () => {
+    const add = await openPicker();
+    ipcMocks.pickRepoDialog.mockResolvedValue("/unavailable");
+    ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/unavailable" });
+    ipcMocks.setActiveRepo.mockRejectedValueOnce("daemon did not start");
+    fireEvent.click(add);
+    const dialog = await screen.findByRole("alertdialog", { name: "Couldn't open unavailable" });
+    expect(within(dialog).getByText("daemon did not start")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("button", { name: "Add a repository" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Repository" })).toBeNull();
   });
 
   it("leaves an absent folder unchanged when initialize is cancelled", async () => {

@@ -324,7 +324,10 @@ fn auxiliary_spawn_requires_eligible_metadata_and_acknowledges_durable_start() {
     assert_eq!(daemon.rpc(json!({"op": "status", "id": "valid"})).unwrap()["process"]["state"], "alive");
     let unchanged = fs::read(sessions.join("valid.meta.json")).unwrap();
     assert_eq!(daemon.rpc(json!({"op": "list"})).unwrap()["sessions"].as_array().unwrap().len(), 1);
-    assert_eq!(daemon.rpc(json!({"op": "write", "id": "valid", "data": "\n"})).unwrap(), json!({"ok": true}));
+    assert_eq!(
+        alinery_core::daemon_client::parse_dispatch_reply(daemon.rpc(json!({"op": "write", "id": "valid", "data": "\n", "dispatch_id": "valid-first-write"})).unwrap()),
+        alinery_core::DispatchOutcome::Written
+    );
     assert_eq!(daemon.rpc(json!({"op": "resize", "id": "valid", "cols": 100, "rows": 30})).unwrap(), json!({"ok": true}));
     assert_eq!(daemon.rpc(json!({"op": "detach", "id": "valid", "attach_id": 99})).unwrap(), json!({"ok": true}));
     alinery_core::read_session_history(&repo.root, task_slug, "valid", None, None).unwrap();
@@ -376,7 +379,14 @@ fn leftover_live_session_refuses_attach_spawn_resume_and_keeps_kill() {
         daemon.rpc(json!({"op": "spawn", "id": "legacy-live", "task_slug": task_slug})).unwrap(),
         json!({"ok": true})
     );
-    assert_eq!(daemon.rpc(json!({"op": "write", "id": "legacy-live", "data": "hello\n"})).unwrap(), json!({"ok": true}));
+    assert_eq!(
+        alinery_core::daemon_client::parse_dispatch_reply(
+            daemon
+                .rpc(json!({"op": "write", "id": "legacy-live", "data": "hello\n", "dispatch_id": "legacy-live-first-write"}))
+                .unwrap()
+        ),
+        alinery_core::DispatchOutcome::Written
+    );
     let scrollback = sessions.join("legacy-live.scrollback");
     let started = Instant::now();
     while !scrollback.exists() && started.elapsed() < Duration::from_secs(2) {

@@ -70,6 +70,20 @@ describe("prepareChatAttachments", () => {
     expect(copy).not.toHaveBeenCalled();
   });
 
+  it("retries a copied attachment after its original source disappears", async () => {
+    const prepared = await prepareChatAttachments(store("/copied"), "see", [notes]);
+    const unavailableSource = store("/copied", {
+      stat: async () => {
+        throw new Error("source disappeared");
+      },
+      copy: async () => {
+        throw new Error("source disappeared");
+      },
+    });
+    const retried = await prepareChatAttachments(unavailableSource, "retry", prepared.copied);
+    expect(retried.message).toBe("retry\n\nAttached file: /copied/notes.pdf");
+  });
+
   it("surfaces a copy failure", async () => {
     await expect(prepareChatAttachments(store("/tmp", { copy: async () => ({ copied: [], failures: ["notes.pdf — disk full"] }) }), "", [notes])).rejects.toThrow("disk full");
   });

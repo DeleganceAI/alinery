@@ -55,7 +55,7 @@ export function SessionActionPanel({
   artifactReady?: boolean;
   repoPath: string;
   taskSlug: string;
-  onStartFresh: () => void;
+  onStartFresh?: () => void;
   onArchive: () => void;
   archiveBusy: boolean;
   onViewHistory: () => void;
@@ -74,7 +74,7 @@ export function SessionActionPanel({
       </div>
       {hint ? <p className="sap-hint dim">{hint}</p> : null}
       <div className="sap-actions">
-        {!unsupported && (
+        {!unsupported && onStartFresh && (
           <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>
             Start fresh
           </button>

@@ -23,7 +23,7 @@ fn executable(pid: i32) -> Result<PathBuf, String> {
         Err("UI peer executable unsupported".into())
     }
 }
-pub(super) fn serve(stream: &mut UnixStream, repo: &Path, lane: &str, host: &ProtectedHost) {
+pub(super) fn serve(stream: &mut UnixStream, repo: &Path, reg: &Registry, host: &ProtectedHost, lane: &str, config: &Path) {
     let authorize = || {
         let host = host.as_ref().as_ref().ok_or("protected UI host unavailable")?;
         let pid = peer_process_id(stream)?;
@@ -49,18 +49,50 @@ pub(super) fn serve(stream: &mut UnixStream, repo: &Path, lane: &str, host: &Pro
             }
             let value: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
             match value.get("op").and_then(Value::as_str) {
-                Some("allow_execution_completion") => {
-                    let request: alinery_core::task_creation::AllowExecutionCompletionRequest =
+                Some("continue_execution") => {
+                    let request: alinery_core::task_creation::ContinueExecutionRequest =
                         serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
-                    alinery_core::execution::mutate_execution_state(repo, &request.task_slug, lane, execution_config_identity(), "human completion authorization", |_, state| {
-                        alinery_core::execution::grant_execution_completion(state, &request.execution_id, &request.session_id)
-                    })
+                    execution::continue_execution(repo, reg, &request).map(|completion| json!({"ok":true,"completion":completion}))
+                }
+                Some("prepare_end_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    execution::prepare_end_execution(repo, reg, &request).map(|preparation| json!({"ok":true,"preparation":preparation}))
+                }
+                Some("end_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    let completion = execution::end_execution(repo, reg, &request)?;
+                    if matches!(completion, alinery_core::CompletionOutcome::Accepted { .. }) {
+                        start_auto_advance_once(repo.to_path_buf(), reg.clone(), lane.into(), config.to_path_buf(), host.clone());
+                    }
+                    Ok(json!({"ok":true,"completion":completion}))
+                }
+                Some("stop_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    execution::stop_execution(repo, reg, &request).map(|result| json!({"ok":true,"result":result}))
+                }
+                Some("restart_execution") => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    execution::restart_execution(repo, reg, lane, config, host, &request).map(|result| json!({"ok":true,"result":result}))
+                }
+                Some(op @ ("preview_execution_artifacts" | "submit_execution_artifacts")) => {
+                    let request = serde_json::from_value(value.get("request").cloned().ok_or("missing request")?).map_err(|e| e.to_string())?;
+                    let artifacts: Vec<alinery_core::SuppliedExecutionArtifact> =
+                        serde_json::from_value(value.get("artifacts").cloned().ok_or("missing artifacts")?).map_err(|e| e.to_string())?;
+                    if op == "preview_execution_artifacts" {
+                        execution::preview_execution_artifacts(repo, &request, &artifacts).map(|result| json!({"ok":true,"result":result}))
+                    } else {
+                        let result = execution::submit_execution_artifacts(repo, reg, &request, &artifacts)?;
+                        if matches!(result, alinery_core::CompletionOutcome::Accepted { .. }) {
+                            start_auto_advance_once(repo.to_path_buf(), reg.clone(), lane.into(), config.to_path_buf(), host.clone());
+                        }
+                        Ok(json!({"ok":true,"result":result}))
+                    }
                 }
                 _ => Err("operation unavailable on UI control channel".into()),
             }
         })();
         match result {
-            Ok(()) => reply(stream, json!({"ok":true})),
+            Ok(value) => reply(stream, value),
             Err(error) => reply(stream, json!({"error":error})),
         }
     }

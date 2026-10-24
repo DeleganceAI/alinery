@@ -94,7 +94,12 @@ vi.mock("./TerminalDrawer", () => ({
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
-vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, RepoBusyBanner: () => null, HostGuardWarning: () => null }));
+vi.mock("./DaemonConflictBanner", () => ({
+  DaemonConflictBanner: () => null,
+  RepoBusyBanner: () => null,
+  HostGuardWarning: () => null,
+  showRepoOpenFailure: (_repo: string, cause: unknown) => String(cause),
+}));
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
@@ -583,16 +588,18 @@ describe("App terminal drawer tabs", () => {
     mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
-    mocks.confirmDanger.mockResolvedValueOnce(false);
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByRole("button", { name: "Close repo" }));
-    await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
+    const cancel = await screen.findByText("Cancel", { selector: "button" });
+    await act(async () => fireEvent.click(cancel));
     expect(mocks.killSession).not.toHaveBeenCalled();
     expect(mocks.removeRepo).not.toHaveBeenCalled();
 
-    mocks.confirmDanger.mockResolvedValueOnce(true);
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByRole("button", { name: "Close repo" }));
+    const remove = await screen.findByRole("button", { name: "Remove repository" });
+    await waitFor(() => expect((remove as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(remove);
     await waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith("s-1", ""));
     expect(mocks.killSession).toHaveBeenCalledWith("s-2", "");
     expect(mocks.removeRepo).toHaveBeenCalledWith("/repo");

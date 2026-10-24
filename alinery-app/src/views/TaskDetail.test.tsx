@@ -7,6 +7,7 @@ import { navReady, requireNav } from "../test/nav";
 import type {
   BoardNav,
   BoardTask,
+  DispatchOutcome,
   ExecutionAvailability,
   SessionDisplayMeta,
   SessionMeta,
@@ -15,6 +16,7 @@ import type {
   Task,
   TaskActivityRef,
   TaskActivitySummary,
+  TaskExecutionReply,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
@@ -52,7 +54,6 @@ const mocks = vi.hoisted(() => ({
   listTaskActivity: vi.fn(),
   listBoardTasks: vi.fn(),
   getTaskExecution: vi.fn(),
-  allowExecutionCompletion: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   listTaskArtifactTree: vi.fn(),
@@ -82,7 +83,6 @@ vi.mock("../ipc", () =>
     listTaskActivity: mocks.listTaskActivity,
     listBoardTasks: mocks.listBoardTasks,
     getTaskExecution: mocks.getTaskExecution,
-    allowExecutionCompletion: mocks.allowExecutionCompletion,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskArtifactTree: mocks.listTaskArtifactTree,
@@ -270,7 +270,7 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
-  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
@@ -315,7 +315,6 @@ beforeEach(() => {
     .mockImplementation(async (refs: TaskActivityRef[]) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, scenario.childActivity])));
   mocks.listBoardTasks.mockReset().mockImplementation(async () => [scenario.childBoardTask]);
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
-  mocks.allowExecutionCompletion.mockReset().mockResolvedValue(undefined);
   mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
@@ -827,10 +826,10 @@ describe("task session archive pending feedback", () => {
 });
 
 describe("task session row Stop", () => {
-  it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
+  it.each(["not_sent", "unknown"] as const)("reports %s abort delivery without opening or archiving, guards repeats, and allows retry", async (status) => {
     scenario.sessions = [session({ id: "stop-me", harness: "omp" })];
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
-    const pending = deferred<void>();
+    const pending = deferred<DispatchOutcome>();
     ipcSpies.rpcWriteSession.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
     const stop = await screen.findByRole("button", { name: "Stop" });
@@ -844,7 +843,7 @@ describe("task session row Stop", () => {
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => pending.reject(new Error("abort delivery failed")));
+    await act(async () => pending.resolve({ status, reason: "abort delivery failed" }));
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
     mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -888,7 +887,7 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   const modes = within(screen.getByRole("group", { name: "Task playbook view" }));
   expect(modes.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
   expect(await screen.findByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
-  expect(screen.getByText("Automatic")).toBeTruthy();
+  expect(screen.getByText("Continue automatically")).toBeTruthy();
 
   fireEvent.click(modes.getByRole("button", { name: "Graph" }));
   fireEvent.click(screen.getByRole("button", { name: "Highlight Retained worker" }));
@@ -905,7 +904,7 @@ it("switches the saved task playbook between its list and graph-only canvas whil
 
   fireEvent.click(screen.getByRole("button", { name: "List" }));
   expect(screen.getByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
-  expect(screen.getByText("Automatic")).toBeTruthy();
+  expect(screen.getByText("Continue automatically")).toBeTruthy();
 });
 
 describe("removed distill surfaces", () => {
@@ -1575,20 +1574,42 @@ describe("authoritative task execution", () => {
     expect(screen.getByText("Auxiliary")).toBeDefined();
   });
 
-  it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
+  it.each(["waiting", "complete"] as const)("uses the aggregate %s assessment rather than a completed sink", async (status) => {
     const fixture = task();
+    const retained = executionReply([executionRecord({ lifecycle: "completed", receipt_id: "accepted", shutdown_confirmed: true })]);
+    retained.assessment = {
+      status,
+      reasons:
+        status === "waiting"
+          ? [
+              {
+                code: "open_obligation",
+                message: "Another branch remains unresolved",
+                execution_id: null,
+                context_id: null,
+                collection_id: null,
+                selector: null,
+              },
+            ]
+          : [],
+    };
     mocks.getTask.mockResolvedValue(fixture);
-    mocks.getTaskExecution.mockResolvedValue(executionReply());
-    mocks.allowExecutionCompletion.mockRejectedValue(new Error("owner changed"));
+    mocks.getTaskExecution.mockResolvedValue(retained);
     renderSeededDetail({ initialTask: fixture });
+    const assessment = await screen.findByRole("status", { name: "Playbook status" });
+    if (status === "complete") {
+      expect(assessment.textContent).toContain("Playbook complete");
+      expect(within(assessment).queryByRole("button")).toBeNull();
+    } else {
+      expect(assessment.textContent).toContain("Another branch remains unresolved");
+      expect(screen.queryByText("Playbook complete")).toBeNull();
+    }
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
-    await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
-    await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
-    expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByRole("article", { name: "Execution execution-a" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Allow this session|Continue (to|playbook)/ })).toBeNull();
   });
 
-  it("retains saved execution details while live authority changes and only grants completion after recovery", async () => {
+  it("retains saved execution details across authority changes without a second continuation action", async () => {
     vi.useFakeTimers();
     const fixture = task();
     const retained = executionReply();
@@ -1606,22 +1627,18 @@ describe("authoritative task execution", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("group", { name: "Task playbook view" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    const completion = () => screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement;
+    const completion = () => screen.queryByRole("button", { name: /Allow this session|Continue (to|playbook)/ });
     const assignments = within(screen.getByRole("article", { name: "Execution execution-a" }));
     fireEvent.click(assignments.getByText("Inputs and outputs"));
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
-    expect(completion().disabled).toBe(true);
-    fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(completion()).toBeNull();
     expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
 
     live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(completion().disabled).toBe(true);
-    fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(completion()).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
@@ -1630,29 +1647,23 @@ describe("authoritative task execution", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    expect(completion().disabled).toBe(false);
+    expect(completion()).toBeNull();
     expect(screen.queryByText("Different app configuration owns this lane")).toBeNull();
-    await act(async () => {
-      fireEvent.click(completion());
-    });
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("a-task", "execution-a", "owner-a", "/r");
 
     corrupt = true;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
     expect(within(screen.getByRole("alert")).getByText("Error: Invalid execution.json")).toBeDefined();
-    expect(completion().disabled).toBe(true);
+    expect(completion()).toBeNull();
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
-    fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledTimes(1);
 
     corrupt = false;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(completion().disabled).toBe(false);
+    expect(completion()).toBeNull();
   });
 
   it("shows queued interrupted and accepted-but-live state with exact assignments and creation failure", async () => {
@@ -1684,7 +1695,7 @@ describe("authoritative task execution", () => {
 });
 
 describe("Task Detail auto approval", () => {
-  it("turns every locked step automatic while on and restores the devised steps when off", async () => {
+  it("toggles task-wide automatic continuation on and off", async () => {
     scenario.task = { ...parentTask, engine_version: 2 };
     const retained = executionReply();
     retained.state.enabled_steps = [];
@@ -1692,23 +1703,16 @@ describe("Task Detail auto approval", () => {
     await renderDetail();
     const toggle = screen.getByRole("button", { name: "Auto Approval All" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(toggle.classList.contains("ghost")).toBe(true);
-    expect(toggle.classList.contains("auto-approve")).toBe(true);
-    expect(toggle.classList.contains("on")).toBe(false);
-    expect(screen.queryByText("Automatic")).toBeNull();
 
     ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: true });
     fireEvent.click(toggle);
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", true));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("true"));
-    expect(screen.getByRole("button", { name: "Auto Approval All" }).classList.contains("on")).toBe(true);
-    expect(screen.getByText("Automatic")).toBeTruthy();
 
     ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: false });
     fireEvent.click(screen.getByRole("button", { name: "Auto Approval All" }));
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", false));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("false"));
-    expect(screen.queryByText("Automatic")).toBeNull();
   });
 
   it("keeps Auto Approval All off for an archived task", async () => {
@@ -2070,6 +2074,28 @@ describe("session time columns and sorting", () => {
 });
 
 describe("the empty-sessions state", () => {
+  it("shows fetched sessions while execution observation is slow and accepts its eventual result", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<TaskExecutionReply>();
+    mocks.getTaskExecution.mockReturnValue(pending.promise);
+    scenario.sessions = [{ ...session({ id: "already-started" }), name: "Already running", name_source: "user", name_error: null }];
+    renderSeededDetail({ initialTask: scenario.task });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7000);
+      });
+      expect(screen.getByText("Already running")).toBeDefined();
+      expect(screen.queryByText("No sessions yet.")).toBeNull();
+      await act(async () => {
+        pending.resolve(executionReply([]));
+      });
+      expect(screen.getByText("Retained worker")).toBeDefined();
+    } finally {
+      await act(async () => pending.resolve(executionReply([])));
+    }
+  });
+
   it("never renders before load() settles, and appears once it does", async () => {
     const fixture = task();
     const getTaskDeferred = deferred<Task | null>();
@@ -2080,8 +2106,10 @@ describe("the empty-sessions state", () => {
     mocks.sessionStatuses.mockResolvedValue({});
 
     renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    expect(screen.getByText("Loading sessions…")).toBeDefined();
 
-    // Do not show an empty graph before the first successful session read.
+    // Do not show an empty list before the first successful session read.
     expect(screen.queryByText("No sessions yet.")).toBeNull();
 
     getTaskDeferred.resolve(fixture);

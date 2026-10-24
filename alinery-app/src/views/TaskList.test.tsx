@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_STATE_ART } from "../emptyStateArt";
-import { mockIpc } from "../test/mockIpc";
+import * as ipc from "../ipc";
 import { navReady, requireNav } from "../test/nav";
 import type { BoardNav, BoardTask, TaskActivityMap, TaskActivitySummary } from "../types";
 import { flattenTaskRows, TaskList } from "./TaskList";
@@ -12,15 +12,17 @@ const scenario = vi.hoisted(() => ({
 }));
 let activity: TaskActivityMap = {};
 
-vi.mock("../ipc", () =>
-  mockIpc({
-    listBoardTasks: async () => {
+vi.mock("../ipc", async () => {
+  // Vitest invokes this factory before the static IPC import; its helper must load here.
+  const { mockIpc } = await import("../test/mockIpc");
+  return mockIpc({
+    listBoardTasks: vi.fn(async () => {
       if (scenario.error) throw new Error(scenario.error);
       return structuredClone(scenario.tasks);
-    },
+    }),
     listTaskActivity: async () => activity,
-  }),
-);
+  });
+});
 
 function task(slugOrOverrides: string | Partial<BoardTask> = "a-task", taskOverrides: Partial<BoardTask> = {}): BoardTask {
   const slug = typeof slugOrOverrides === "string" ? slugOrOverrides : "a-task";
@@ -81,10 +83,64 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   window.localStorage.clear();
   scenario.tasks = [];
   activity = {};
   vi.clearAllMocks();
+});
+
+describe("Task List polling", () => {
+  const props = { onOpen: () => {}, onDuplicate: () => {}, onOpenActiveSession: () => {}, onCreate: () => {}, registerNav: () => {} };
+
+  it("accepts a slow response without piling up polls and stops on unmount", async () => {
+    vi.useFakeTimers();
+    let resolveLoad!: (tasks: BoardTask[]) => void;
+    vi.mocked(ipc.listBoardTasks).mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const view = render(<TaskList {...props} allRepos={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipc.listBoardTasks).toHaveBeenCalledTimes(1);
+    await act(async () => resolveLoad([task()]));
+    expect(screen.getByText("A task")).toBeDefined();
+    expect(view.container.querySelector(".loading-state")).toBeNull();
+    vi.mocked(ipc.listBoardTasks).mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(ipc.listBoardTasks).toHaveBeenCalledTimes(2);
+    view.unmount();
+    await act(async () => {
+      resolveLoad([task()]);
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipc.listBoardTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a previous scope response after the new scope loads", async () => {
+    let resolveOld!: (tasks: BoardTask[]) => void;
+    vi.mocked(ipc.listBoardTasks).mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveOld = resolve;
+      }),
+    );
+    const view = render(<TaskList {...props} allRepos={false} />);
+    scenario.tasks = [task({ name: "Current scope" })];
+    view.rerender(<TaskList {...props} allRepos />);
+    await screen.findByText("Current scope");
+    await act(async () => resolveOld([task({ name: "Old scope" })]));
+    expect(screen.getByText("Current scope")).toBeDefined();
+    expect(screen.queryByText("Old scope")).toBeNull();
+  });
 });
 
 describe("Task List duplicate selection", () => {
@@ -219,6 +275,7 @@ describe("Task List relationship projection", () => {
     render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await waitFor(() => expect(screen.getByText(/relationship corruption/)).toBeDefined());
     expect(document.querySelectorAll(".task-name-text")).toHaveLength(0);
+    expect(document.querySelector(".loading-state")).toBeNull();
   });
 });
 

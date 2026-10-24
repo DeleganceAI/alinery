@@ -43,7 +43,7 @@ Execution/session separation does not authorize automatic takeover, retries or m
 | --- | --- |
 | App/UI | Forms, library editor/import/save workflow, dialogs, human permission actions, picker preferences and presentation. |
 | `alinery-core` | Shared parser/validator/renderer, graph rules, storage helpers, data types, daemon request builders and reply parsing. |
-| `alineryd` | Authoritative task/execution creation, assignments, completion permissions, scheduling, failure state and processes. |
+| `alineryd` | Authoritative task/execution creation, assignments, readiness and continuation, scheduling, failure state and processes. |
 | MCP | Client of the same execution operations, including create/start; not a second task database or self-approval path. |
 
 Calling a core helper from the app still executes in the app process. Shared code alone does not establish daemon ownership.
@@ -208,7 +208,7 @@ For example, a continuation step may declare a fresh trigger role and `loop-stop
 
 Resolve a human choice about further passes before the responsible execution completes, or represent later discussion as a declared downstream step with its own continuation output. Accepted receipts cannot acquire a ticket written afterward, accepted executions are not recoverable as unfinished work, and auxiliary/manual publications do not feed ordinary graph routing. Keeping an unresolved discussion interactive is different from reopening a concluded execution.
 
-Prompts state when to seek human review and what evidence to include. Loops need no predetermined number of passes: use existing automatic completion for stretches intended to advance without per-pass permission, and preserve human locks where selected. Exercise multiple fresh continuations followed by a stopping report, with exactly one activation per fresh accepted trigger after exit and no activation from stopping. Keep changing design, analysis, plan and check roles inside the repeated dependency structure so old internal siblings cannot satisfy a new pass; carry reusable prior evidence through explicit inputs. No hard iteration cap or history scan is implied.
+Prompts state when to seek human review and what evidence to include. Loops need no predetermined number of passes: use automatic continuation for stretches intended to advance without a per-pass gesture, and retain manual review where selected. Exercise multiple fresh continuations followed by a stopping report, with exactly one activation per fresh accepted trigger after exit and no activation from stopping. Keep changing design, analysis, plan and check roles inside the repeated dependency structure so old internal siblings cannot satisfy a new pass; carry reusable prior evidence through explicit inputs. No hard iteration cap or history scan is implied.
 
 ## Artifacts: ordinary files, explicit assignments
 
@@ -253,7 +253,7 @@ The execution allocator reserves each exact path or wildcard family in `executio
 
 Harnesses write files whenever they choose. The shared engine assignment explicitly requires filesystem writes to the selected assigned paths, verification that the files were saved, a brief user-facing handoff, and an actual `alinery_phase_complete` call in the handoff turn. Printing an artifact in chat does not save it or complete the execution. These delivery instructions belong to the engine assignment, not repeated playbook boilerplate. The daemon controls whether completion is accepted and when dependent work starts.
 
-For OMP, that assignment supplies the actual invocation route: use `write` with `path: "xd://alinery_phase_complete"` and `content: "{}"`. This dispatches the extension tool; it does not write an artifact or require a separately listed completion tool. The user-facing handoff precedes acceptance because the accepted call requests session shutdown.
+For OMP, that assignment supplies the actual invocation route: use `write` with `path: "xd://alinery_phase_complete"` and `content: "{}"`. This dispatches the extension tool; it does not write an artifact or require a separately listed completion tool. Finish the user-facing handoff before calling it. Ready or Waiting leaves the session interactive; only Accepted requests ordinary session shutdown.
 
 On accepted completion, record only the actual valid assigned publications in one immutable receipt. Later files cannot expand the accepted set through replay. Reservations and ownership remain attributed to the execution, including omitted assignments. Confirm source shutdown before dependent launch or capacity release. A file can exist and be readable before then without becoming scheduler-ready; acceptance does not promise every potential successor will run.
 
@@ -287,38 +287,73 @@ Assign and persist numbers before launch. Never have the harness count files to 
 
 The ancestry value 0 is not permission to rename existing physical `00-ticket.md` files. Bind logical initial inputs to their installed paths explicitly.
 
-## Human completion gate
+## Review and continuation
 
-`auto_advance_default` initializes a task-level choice. It is not a hard designer lock and does not require another playbook schema flag.
+`auto_advance_default` initializes the task's existing per-step choice. It is not a hard designer lock or an approval of the work.
 
-- **Enabled:** the harness can request completion without human unlock.
-- **Disabled:** completion is locked and the session stays interactive. A premature call returns a nonfatal authorization-required result, not a failed execution or accepted checkpoint.
-- The chat completion prompt names the following step with **Move to <step>**, or offers **Finish step** when there is no automatic successor. **Continue working in this session** leaves the session open for another message. These actions grant or decline permission; they do not complete the execution immediately.
-  - Destinations come from the retained artifact-dependency graph, not definition order. Branches list their following steps; successor sessions still wait for required inputs, confirmed source shutdown and launch capacity.
-  - After permission is granted but reply delivery fails, **Retry handoff** resends the reply without granting again. The stay-in-session choice is disabled because it can no longer revoke that grant.
-- Permission applies only to that execution. It does not enable future auto-advance, authorize a replacement execution, or expose agent/MCP self-approval.
-- The human tells the harness to wrap up. The harness finishes its writes, verification and user-facing handoff, then calls completion.
-- The daemon checks ownership, permission and current outputs before accepting. Invalid outputs leave the session open for correction.
+- **Continue automatically:** completion validates and accepts eligible work without a redundant Finish permission.
+- **Wait for me:** a nonterminal execution reports validated readiness without publishing occurrences, creating a receipt or shutting down. The same session retains its capacity/coding claim and remains available for review.
+- Task playbook chat sessions keep Continue, **Nudge to wrap up**, and the hand/fast-forward/eye group visible on the right of the composer footer, below the full-width input. Keyboard hints sit on the left and the character count stays centered. The controls use the shortcuts' compact 20px height, muted text, transparent background and outline; selected modes retain accent outlines/icons. The three groups have equal widths up to 140px. At narrow widths the controls occupy a right-aligned row below the hints. They occupy layout space, never overlay the transcript. Continue displays **Cont. to <step>** with overflow ellipsis, or **Continue playbook** for several destinations; its accessible name retains the full destination. Hover or keyboard focus reveals the full destination and any unavailable reason; Escape dismisses the tooltip. Continue stays disabled for automatic or terminal work, completed playbooks, or missing current readiness/authority. Pending continuation displays **Continuing…**. Session activity still floats low on the transcript's left, with measured end clearance.
+- Session Navigator shows the shared activity animation with **Working…** only when a live session observation reports an actively busy agent. Otherwise it shows no activity label or animation—not even Idle. The current card shares the header's observation; other cards use repository-scoped batched session observations. Missing, failed or stale observations do not imply work. Playbook execution lifecycle is not an activity signal.
+- Task playbook OMP sessions keep a compact hand/fast-forward selector in the composer footer controls. Both icons stay visible; the selected mode uses the accent color. The choice applies to this step's current unaccepted work and future iterations in this task. Enabling automatic continuation authorizes already-ready current work through normal revalidation; changing policy does not revoke an already-requested or accepted handoff. Auto Approval All remains a task-wide override and must be disabled before choosing Wait for me.
+- **Nudge to wrap up** remains beside the selector in either mode. It sends the wrap-up/readiness instruction as an ordinary prompt when idle or through **Send now** when working, interrupting the current turn rather than queuing behind it. It preserves the user's draft, attachments, pending message actions and other queued messages. A pending nudge prevents duplicates until its native dispatch settles or is definitely refused; unknown delivery stays recoverable rather than being resent. Pending approvals/questions, disconnection, ended sessions and handoffs disable nudging with an explanation. Nudge never grants continuation itself: manual mode still waits for Continue, while automatic mode advances only after validated readiness.
+- Normally progressing sends (messages, queued follow-ups, slash commands and nudges) do not create recovery UI or reserve layout space. Pending, acknowledged and consumed sends retain internal delivery tracking. Refused/uncertain delivery and message errors appear inside the scrollable chat transcript, with original-input copy/restore actions where applicable, including read-only history. They never create a separate panel between the composer and Session Navigator.
+- New dispatched review work invalidates readiness before transport effects. Continue identifies the current owner, process incarnation and ready revision. If input wins, the old click is stale; if Continue wins, later input is refused visibly and retained.
+- Continue records intent, not acceptance or successor launch. Finalization revalidates current assigned publications and destinations. Invalid output or changed destinations requires renewed readiness and fresh manual intent.
+- Terminal work accepts automatically. **Playbook complete** is plain status only after the whole graph settles successfully, not after one sink, a receipt, or an empty candidate list.
+- Substantive design/review/save approvals remain required. Reporting Ready, clicking Continue or accepting files does not certify semantic approval. Agents and MCP cannot manufacture a desktop continuation gesture.
+- **Follow next session** is a separate eye toggle beside the hand/fast-forward controls. The accent-colored eye means on; the grey slashed eye means off. Hover text explains the current value and behavior. It starts on for an active session view and remains selected across followed successors, independent of manual/automatic continuation permissions. Turning it off stays on the current session even after a manual Continue click.
+- Following opens the single actual successor after the source has an accepted receipt, confirmed shutdown and completed lifecycle, and the successor has started. It uses execution parent IDs and matching session metadata, never prospective destinations (which may be empty after completion), filename recency or unrelated sessions. Queued/failed starts and ambiguous fan-out do not redirect. Manually choosing a session in the Navigator pauses following; opening completed history also starts paused. Explicitly enabling the eye can catch up to that session's single started successor. This is a view preference, not a stored completion grant or a change to step permissions.
 
-The grant means “this execution may finish”, not approval of immutable artifact bytes. Human review precedes accepted completion, so review edits do not require rewriting a previously accepted checkpoint. Do not add content-hash approval/revocation machinery.
+Persistent choices and one-execution intent remain separate. Reconnect must not invent intent or upgrade a stale click to a newer revision. Supported legacy conversion preserves receipts/provenance and stored choices, but never turns an old completion grant into fresh intent or hot-switches a live owner.
 
-Persistent auto-advance settings and one-execution permission are separate controls. Reconnect must not invent authorization; an unrelated settings update must not accidentally unlock a running execution.
+Task Detail displays saved sessions without waiting for live execution assessment. Execution observation has one request in flight per task view, so slow results are not discarded by polling. Both session list and graph views distinguish loading from a confirmed empty list.
+
+Execution observation resolves one shared graph for already accepted, exit-confirmed history, preserving each producer's own destinations and blockers. Unsettled executions still receive separate prospective assessments; acceptance without confirmed exit is not settled history.
+
+The external OMP integration orders Alinery-controlled dispatch and selected native entry/tool/queue lifetimes. Missing capability or unknown selected work blocks continuation with a reason. Ordinary review keeps exact dispatch recovery. Native slash-generated queued work can remain unattributed: retain its input, never guess per-command consumption or remove it on transport ACK, and wait for actual selected native settlement. Idle, elapsed time and cancellation are not settlement evidence.
+
+Selected background-job delivery remains owned until its consuming native run settles, whether it resolves or rejects. Failure releases that run's retained work without suppressing the original native error.
+
+With an empty composer, **Send now** transfers the selected queued dispatch rather than submitting a second copy. A definite refusal removes only the replacement's optimistic row and recovery record; the original queue item and current composer remain unchanged. Unknown delivery retains recovery without automatic resend or a claim that the original is still queued. Transfer validation and notification failures use the native operation's normal cleanup path. Failure after queue removal but before confirmed consumption is uncertain and blocks continuation rather than being reported as a definite refusal.
+
+After the agent requests readiness, later selected native work or maintenance invalidates the ready snapshot but retains the request to revalidate after actual settlement. This restores normal Continue without another agent completion call. A new review message or explicit cancellation supersedes that request; an old delayed readiness reply cannot restore it. Revalidation does not reuse a human Continue click, publish artifacts, or treat Idle as settlement.
+
+Cancelling an in-flight completion tool stops its readiness transport retries and clears the deferred request, so later native settlement cannot restart it. It does not cancel an already-requested continuation's finalization recovery; ambiguous acceptance still requires receipt recovery.
+
+The current stock OMP boundary cannot acknowledge that arbitrary submitted terminal bytes, including deferred input, have drained. Such input remains unresolved and blocks ordinary Continue for that owner; switching views, observing idle or reporting readiness again does not clear it. Chat/RPC provides the correlated review path. This limitation must not be described as successful raw-terminal settlement coverage.
+
+**End & continue…** is a separately confirmed handoff in **Session actions**, available in Chat and Terminal without agent-reported readiness. Preparation shows actual valid saved artifact paths. If no usable handoff exists, the action opens the artifact-entry page without stopping the session. Confirmation identifies the execution owner, process incarnation and work revision; Cancel is first and initially focused. The daemon fences further input, stops that exact process, waits for confirmed exit and output drain, then validates publications and applies the same occurrence and graph rules as normal completion. Intentional human acceptance is not evidence of a successful agent exit. Recovery operations are desktop-only, unavailable to agents and MCP.
+
+Normal Continue remains the primary continuation action in the composer footer. The header's **Session actions** and the Navigator's **Current step actions** expose **Restart this step…**, **Continue with an artifact…**, and **End session…** for the current unaccepted owner. Restart confirms stopping before starting a fresh agent in the same execution, preserving assigned input occurrences, output slots, extra instructions, review-handoff context, session history and worktree changes. It is not a code rollback and does not publish unfinished work. End session confirms stopping without publication or advancement. Interrupted or failed replacement attempts remain recoverable; no replacement starts before shutdown is proven.
+
+Session actions uses full-width icon/title/description rows, followed by a compact step/attempt and logical input/output summary. Readable files open through their logical-name links; physical paths are available on hover. State, owner/execution IDs and occurrence provenance stay in collapsed **Technical details**. Actual busy activity is shown beside the step name; idle is omitted. End session has restrained danger styling. The Navigator's horizontal ellipsis inside the current-step card opens the same Session actions dialog as the header ellipsis, not a separate menu.
+
+**Continue with an artifact…** opens a step-specific page for uploading or pasting output content. Literal slots can retain their existing file; wildcard families accept finite concrete members. Preview validates the combined supplied and existing outputs without writing or stopping, and displays graph-derived next destinations (including terminal or waiting outcomes). Edits invalidate the preview. Confirmation precedes mutation; submission revalidates, stops the exact owner, writes only permitted assigned paths, and applies normal handoff acceptance. Stale identities, blank/invalid drafts, unsafe paths, symlinks and overwriting published occurrences are refused. Cancellation or errors retain the draft. A multi-file write failure may leave some supplied files saved, but never fabricates acceptance; the stopped execution remains recoverable.
+
+The Navigator groups retries within the same step, with the current attempt and collapsible previous attempts. Inspecting a previous attempt does not attribute the current owner's outputs to it or count the replacement as a downstream step. Existing successor and artifact navigation remain available.
+
+If stopping cannot be proven, no handoff or restart is permitted. Invalid artifacts after stopping leave the execution unfinished with diagnostics and explicit repair/retry options. A lost response requires observation before another explicit attempt, never automatic resend. Accepted handoffs cannot be restarted or republished through artifact entry.
+
+This is not an atomic freeze of every autonomous OMP effect. Accepted occurrences reference paths, not immutable byte snapshots. Confirmed exit and output drain control when successors can consume publications; they do not prove that no autonomous writer changed bytes between acceptance and exit.
 
 ## Completion and process shutdown are separate transitions
 
 The intended sequence is:
 
 ```text
-Authorized completion request
-    -> validate outputs and durably accept
-    -> deliver result and arrange controlled session finish
-    -> confirm process shutdown
+Completion request -> validated readiness
+    -> manual nonterminal: review/revise, then exact Continue intent
+    -> automatic or terminal: no human continuation gesture
+    -> selected native work settles; revalidate and durably accept
+    -> deliver accepted result and request ordinary shutdown
+    -> confirm successful process exit AND output drain
     -> release coding ownership and launch eligible successors
 ```
 
-A successful completion response acknowledges durable acceptance, not that successors are already running. Socket acknowledgement alone does not prove tool-result/history flush. Exercise the runner handshake rather than killing the process immediately after writing a reply.
+Only an Accepted response acknowledges durable acceptance. Ready, Requested and Waiting are distinct, and none promises that successors are running. Socket acknowledgement alone does not prove tool-result/history flush. Exercise the runner handshake rather than killing the process immediately after writing a reply.
 
-Return the accepted tool result and request OMP's ordinary shutdown. The prompt asks the agent to finish without starting more work; this is not a host-enforced ban on queued turns. Retain coding ownership and live capacity until process exit and output drain are proven, even if shutdown stalls. An intentional completion-triggered signal exit is not automatically an execution failure; retain the actual lifecycle information.
+Return the accepted tool result and request OMP's ordinary shutdown. After acceptance the agent must start no further work. Retain coding ownership and live capacity until successful process exit and output drain are proven, even if shutdown stalls. Failed or unknown exit retains the receipt but does not make its publications deliverable. The selected external boundary is not a universal autonomous-work fence.
 
 History, metadata and artifacts remain readable. Completing one session does not archive/delete it, stop unrelated sessions or shut down the daemon.
 
@@ -329,14 +364,14 @@ History, metadata and artifacts remain readable. Completing one session does not
 - Coding steps use exact `single` inputs only: no wildcard inputs, `each` or `complete`.
 - Merge wildcard-generated work in a non-coding step before feeding an exact artifact into coding.
 - Coding steps may produce wildcard outputs for non-coding fan-out.
-- Keep the coding claim through human review, permission grant, wrap-up and confirmed shutdown.
+- Keep the coding claim through review, continuation intent, wrap-up and confirmed shutdown.
 - Do not engine-start a second coding execution in the same task worktree while the claim remains live.
 
 Deliberate manual extra coding is distinct from engine-managed concurrency. Do not silently prohibit it or use its existence as permission to overlap engine-owned coding work.
 
-Failure alerts a human. No automatic retry, attempts or `on_failure` policy is added. Distinguish human lock, correctable completion rejection, failed launch, execution failure and uncertain interrupted lifecycle instead of turning all of them into a retry loop.
+Failure alerts a human. No automatic retry, attempts or `on_failure` policy is added. Distinguish waiting for review, correctable completion rejection, failed launch, execution failure and uncertain interrupted lifecycle instead of turning all of them into a retry loop.
 
-Human recovery uses existing session creation and MCP access, including an external agent working through MCP. Do not add a dedicated retry/replacement UI or recovery workflow merely to cover this case. A newly created session must still respect existing permissions, output assignments and execution ownership; its existence is not proof that earlier failed work completed.
+Human recovery reuses existing execution session creation, including MCP access for an external agent. The desktop also offers explicit same-execution replacement for proven-stopped unfinished work; it does not silently retry or create unrelated work. A replacement must respect existing permissions, output assignments and execution ownership; its existence is not proof that earlier failed work completed.
 
 A creation/launch claim is not proof that a process started. Persist enough state for safe recovery; do not blindly relaunch uncertain work. Preserve inspectable task/worktree state and IDs after partial creation/start failure. Lost replies require checking durable state, not repeating creation blindly.
 
@@ -347,7 +382,7 @@ A creation/launch claim is not proof that a process started. Persist enough stat
 - Use distinct logical roles for different kinds of evidence. Alternative publishers may share an exact role when they request the same kind of continuation; preserve occurrence-specific companion pairing and do not hardcode engine-generated numbering.
 - Tell fan-out workers to process only assigned inputs and merges to consume the complete supplied set.
 - Mark mutating/exclusive work correctly; do not call it non-coding to gain parallelism.
-- Put real human review behind the completion gate, not prompt-only “ask first” wording.
+- Require actual substantive human decisions in the step's work and approval interaction; a continuation gesture is not semantic approval.
 - Require reporting missing/invalid inputs, not fabricating them or silently skipping work.
 - Finish the artifact and handoff before the final completion call.
 - Do not ask the harness to create downstream sessions, repair engine records, select loop versions or bypass approval.
@@ -356,7 +391,7 @@ A creation/launch claim is not proof that a process started. Persist enough stat
 - Tell loop-producing harnesses when to report progress and seek human direction. Do not require them to keep manufacturing another pass solely to avoid a paused task.
 - Give every legitimate successful outcome a truthful assigned artifact; do not confuse individually possible outputs with zero-publication success or with permission to skip substantive work.
 - Check actual no-result selector routing: a summary outside a wildcard starts no workers, an intentionally matching disposition member starts one worker, and an exact disposition starts its handler.
-- Exercise repeated fresh loop passes and a report-only stop; keep changing internal evidence fresh and completion permission separate from substantive decisions.
+- Exercise repeated fresh loop passes and a report-only stop; keep changing internal evidence fresh and continuation intent separate from substantive decisions.
 
 Do not invent fields or tokens to express a desired behavior. If a valid graph/prompt cannot express the requirement, resolve the design issue explicitly.
 

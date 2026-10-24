@@ -89,6 +89,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
+  vi.useRealTimers();
   taskActivity = {};
   boardTasks = tasks;
   // mockIpc caches one spy per command for the whole module, so call history would
@@ -102,6 +103,67 @@ function cardsUnder(title: string): string[] {
   const column = screen.getByText(title).closest(".col");
   return [...(column?.querySelectorAll(".card .t") ?? [])].map((n) => n.textContent ?? "");
 }
+
+describe("Kanban polling", () => {
+  const props = { onOpen: () => {}, onDuplicate: () => {}, onOpenActiveSession: () => {}, onCreate: () => {}, registerNav: () => {} };
+
+  it("accepts a slow response without piling up polls and stops on unmount", async () => {
+    vi.useFakeTimers();
+    let resolveLoad!: (tasks: BoardTask[]) => void;
+    ipcMocks.listBoardTasks.mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const view = render(<Kanban {...props} allRepos={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipcMocks.listBoardTasks).toHaveBeenCalledTimes(1);
+    expect(ipcMocks.listKanbanColumns).toHaveBeenCalledTimes(1);
+    await act(async () => resolveLoad([task({ name: "Slow task" })]));
+    expect(screen.getByText("Slow task")).toBeDefined();
+    expect(view.container.querySelector(".loading-state")).toBeNull();
+    ipcMocks.listBoardTasks.mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(ipcMocks.listBoardTasks).toHaveBeenCalledTimes(2);
+    view.unmount();
+    await act(async () => {
+      resolveLoad([]);
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipcMocks.listBoardTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a previous scope response after the new scope loads", async () => {
+    let resolveOld!: (tasks: BoardTask[]) => void;
+    ipcMocks.listBoardTasks.mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveOld = resolve;
+      }),
+    );
+    const view = render(<Kanban {...props} allRepos={false} />);
+    boardTasks = [task({ name: "Current scope" })];
+    view.rerender(<Kanban {...props} allRepos />);
+    await screen.findByText("Current scope");
+    await act(async () => resolveOld([task({ name: "Old scope" })]));
+    expect(screen.getByText("Current scope")).toBeDefined();
+    expect(screen.queryByText("Old scope")).toBeNull();
+  });
+
+  it("exits initial loading when a board request fails", async () => {
+    ipcMocks.listBoardTasks.mockRejectedValueOnce(new Error("board unavailable"));
+    const view = render(<Kanban {...props} allRepos={false} />);
+    await screen.findByText("Error: board unavailable");
+    expect(view.container.querySelector(".loading-state")).toBeNull();
+  });
+});
 
 describe("Kanban board placement", () => {
   it("files each task under the column its backend column key names", async () => {

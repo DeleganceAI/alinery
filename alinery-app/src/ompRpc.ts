@@ -2,11 +2,7 @@
 
 export type ImageContent = { type: "image"; data: string; mimeType: string };
 
-let seq = 0;
-const nextId = (): string => {
-  seq += 1;
-  return `c${seq}`;
-};
+const nextId = (): string => crypto.randomUUID();
 
 export const promptCommand = (message: string, id = nextId(), images?: ImageContent[]) =>
   images && images.length > 0 ? { id, type: "prompt" as const, message, images } : { id, type: "prompt" as const, message };

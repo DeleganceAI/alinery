@@ -186,21 +186,44 @@ export function TaskList({
   };
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
 
-  const load = () =>
-    ipc
-      .listBoardTasks(allRepos)
-      .then((ts) => {
+  const load = useRef<() => void>(() => {});
+  useEffect(() => {
+    let alive = true;
+    let inFlight = false;
+    let refreshPending = false;
+    const fetchTasks = async (refresh = false) => {
+      if (inFlight) {
+        refreshPending ||= refresh;
+        return;
+      }
+      inFlight = true;
+      try {
+        const ts = await ipc.listBoardTasks(allRepos);
+        if (!alive) return;
         const visible = ts.filter((task) => showArchived || !task.archived);
         setTasks((current) => (sameBoardTasks(current, visible) ? current : visible));
         setErr(null);
-      })
-      .catch((e) => setErr({ msg: "Couldn't load tasks.", detail: String(e) }))
-      .finally(() => setLoaded(true));
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 3000);
-    return () => window.clearInterval(timer);
+      } catch (e) {
+        if (alive) setErr({ msg: "Couldn't load tasks.", detail: String(e) });
+      } finally {
+        inFlight = false;
+        if (alive) {
+          setLoaded(true);
+          if (refreshPending) {
+            refreshPending = false;
+            void fetchTasks();
+          }
+        }
+      }
+    };
+    load.current = () => void fetchTasks(true);
+    void fetchTasks();
+    const timer = window.setInterval(() => void fetchTasks(), 3000);
+    return () => {
+      alive = false;
+      load.current = () => {};
+      window.clearInterval(timer);
+    };
   }, [allRepos, showArchived]);
 
   useEffect(() => {
@@ -255,7 +278,7 @@ export function TaskList({
       setErr(failure);
       return;
     }
-    void load();
+    load.current();
   };
 
   const heading = (

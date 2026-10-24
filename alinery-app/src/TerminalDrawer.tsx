@@ -2,6 +2,7 @@ import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
+import { toast } from "./toast";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
@@ -96,8 +97,14 @@ function CdHereButton({ sessionId, target }: { sessionId: string | null; target:
       onClick={() => {
         if (!sessionId || !dest) return;
         setBusy(true);
-        void Promise.resolve(ipc.writeSession(sessionId, shellCdCommand(dest)))
-          .catch(() => {})
+        void ipc
+          .writeSession(sessionId, shellCdCommand(dest), crypto.randomUUID())
+          .then((outcome) => {
+            if (outcome.status !== "written") {
+              toast(`${outcome.status === "not_sent" ? "Not sent" : "Delivery unknown — check the terminal before retrying"}: ${outcome.reason}`, "error");
+            }
+          })
+          .catch((error: unknown) => toast(`Delivery unknown — check the terminal before retrying: ${String(error)}`, "error"))
           .finally(() => setBusy(false));
       }}
     >

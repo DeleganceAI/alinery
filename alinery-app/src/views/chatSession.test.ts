@@ -34,11 +34,12 @@ describe("chatSession", () => {
     expect(applyChatValue(ready, parseChatLine("not-json"))).toBe(ready);
   });
 
-  it("drops follow-up rows OMP has delivered once get_state reports the queue", () => {
+  it("keeps dispatch-tracked follow-ups when a count snapshot cannot identify consumption", () => {
     let state = emptyTranscript();
     for (const text of ["a", "b", "c"]) state = appendOptimisticUser(state, text, "follow_up");
-    const trimmed = applyChatValue(state, { type: "response", command: "get_state", success: true, data: { queuedMessageCount: 1 } });
-    expect(trimmed.entries.filter((entry) => entry.type === "follow_up").map((entry) => (entry.type === "follow_up" ? entry.text : ""))).toEqual(["c"]);
+    state = { ...state, entries: state.entries.map((entry) => ({ ...entry, id: `dispatch:${entry.id}` })) };
+    const refreshed = applyChatValue(state, { type: "response", command: "get_state", success: true, data: { queuedMessageCount: 1 } });
+    expect(refreshed.entries.filter((entry) => entry.type === "follow_up").map((entry) => (entry.type === "follow_up" ? entry.text : ""))).toEqual(["a", "b", "c"]);
   });
 
   it("re-reads the queue only after a follow-up lands or a turn ends", () => {

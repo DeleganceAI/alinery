@@ -240,6 +240,27 @@ env = {{ ALINERY_RUNNER_TOKENS = "{}" }}
             .unwrap()
     }
 
+    fn bind_primary(&self, session_id: &str) {
+        // This shell fixture records transport only; real native capability
+        // installation is exercised by alineryd's stock continuation tests.
+        let token = self.token_for(session_id);
+        let event = |event: Value| {
+            self.daemon_rpc(json!({
+                "op":"event", "version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+                "session_id":session_id, "token":token, "event":event,
+            }))
+        };
+        let observed = event(json!({"type":"continuation_poll"}));
+        assert_eq!(observed["ok"], true, "{observed}");
+        let bound = event(json!({
+            "type":"continuation_bind", "omp_session_id":session_id,
+            "operation_id":format!("bind-{session_id}"),
+            "expected_capability_revision":observed["control"]["capability_revision"],
+            "groups":["primary_control","native_tools","admitted_queue","public_entries"],
+        }));
+        assert_eq!(bound["control"]["available"], true, "{bound}");
+    }
+
     fn prompt_file(&self, session_id: &str) -> PathBuf {
         PathBuf::from(format!("{}.{}", self.omp_prompt.display(), session_id))
     }
@@ -338,6 +359,7 @@ fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     .unwrap();
     assert_eq!(playbook.start, "started", "{playbook:?}");
     let playbook_id = &playbook.session.id;
+    fixture.bind_primary(playbook_id);
     let generic: CreateExecutionSessionReply = serde_json::from_str(&fixture.call("alinery_create_session", json!({"task_slug":"task","generic":true}))).unwrap();
     let generic_meta = generic.session;
     assert!(generic_meta.generic);
@@ -619,6 +641,7 @@ fn review_handoff_addresses_same_slug_in_explicit_target_repository() {
     let started_response = target.call("alinery_start_session", json!({"task_slug":"task","session_id":result.target_session.id}));
     let started: CreateExecutionSessionReply = serde_json::from_str(&started_response).unwrap_or_else(|error| panic!("start failed: {started_response}\n{error}"));
     assert_eq!(started.start, "started", "{started:?}");
+    target.bind_primary(&result.target_session.id);
     wait_until(Duration::from_secs(5), || target.prompt_file(&result.target_session.id).exists());
     let seed: Value = serde_json::from_str(&fs::read_to_string(target.prompt_file(&result.target_session.id)).unwrap()).unwrap();
     assert!(seed["message"].as_str().unwrap().contains(&handoff_instruction), "{seed}");

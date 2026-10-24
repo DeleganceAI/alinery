@@ -5,12 +5,18 @@ use std::io::ErrorKind;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 
-use crate::execution::{interrupt_unproven_owners, read_execution_state, read_task_playbook, write_execution_state_unlocked, TaskExecutionState};
+use crate::execution::{decode_execution_state, interrupt_unproven_owners, read_task_playbook, write_execution_state_unlocked, TaskExecutionState};
 use crate::lockfile::{try_lock_exclusive, LockFile};
 
 /// Permanent inode leases, retained until the daemon exits. Never unlink these files.
 pub struct RepoOwnership {
     _leases: Vec<LockFile>,
+}
+
+struct DiscoveredTask {
+    slug: String,
+    state: TaskExecutionState,
+    needs_conversion: bool,
 }
 
 #[derive(Debug)]
@@ -77,7 +83,7 @@ fn entries(path: &Path, issues: &mut Vec<String>) -> Vec<fs::DirEntry> {
 #[derive(Default)]
 struct Evidence {
     lanes: BTreeSet<String>,
-    states: Vec<(String, TaskExecutionState)>,
+    states: Vec<DiscoveredTask>,
     issues: Vec<String>,
 }
 
@@ -154,7 +160,10 @@ fn enumerate(repo: &Path) -> Evidence {
         if legacy && matches!(fs::symlink_metadata(&state_path), Err(error) if error.kind() == ErrorKind::NotFound) {
             continue;
         }
-        let state = regular_file(&state_path).and_then(|()| read_execution_state(repo, &slug));
+        let state = regular_file(&state_path).and_then(|()| {
+            let bytes = fs::read(&state_path).map_err(|e| format!("read {}: {e}", state_path.display()))?;
+            decode_execution_state(&bytes)
+        });
         let state = match state {
             Ok(state) => state,
             Err(error) => {
@@ -162,6 +171,7 @@ fn enumerate(repo: &Path) -> Evidence {
                 continue;
             }
         };
+        let (state, needs_conversion) = state;
         match validate_lane(&state.owning_lane) {
             Ok(()) => {
                 evidence.lanes.insert(state.owning_lane.clone());
@@ -174,7 +184,7 @@ fn enumerate(repo: &Path) -> Evidence {
         if state.revision.checked_add(1).is_none() {
             evidence.issues.push("execution revision overflow".into());
         }
-        evidence.states.push((slug, state));
+        evidence.states.push(DiscoveredTask { slug, state, needs_conversion });
     }
     evidence
 }
@@ -221,7 +231,7 @@ pub fn inspect_owners(repo: &Path) -> Result<RepoOwnerReport, String> {
     Ok(report)
 }
 
-fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<(String, TaskExecutionState)>), String> {
+fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<DiscoveredTask>), String> {
     let root = crate::alinery_dir(repo);
     fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
     let mut leases = vec![lease(&root.join(".repo-owner.lock"))?];
@@ -272,12 +282,17 @@ pub(crate) fn with_adoption_write_failure<T>(after: usize, run: impl FnOnce() ->
 pub fn acquire(repo: &Path, lane: &str, app_config_identity: &str) -> Result<RepoOwnership, String> {
     crate::with_task_mutation_lock_waiting(repo, "acquire project ownership", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         let (guard, states) = discover(repo, Some(lane))?;
-        for (slug, mut state) in states {
+        for DiscoveredTask {
+            slug,
+            mut state,
+            needs_conversion,
+        } in states
+        {
             // Always interrupt uncertain work, including retries after a partial durable
             // batch. Ownership adoption is not proof that any child process stopped.
             let interrupted = state.executions.values().any(|record| record.lifecycle.holds_capacity());
             interrupt_unproven_owners(&mut state, &BTreeSet::new());
-            if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity || interrupted {
+            if needs_conversion || state.owning_lane != lane || state.owning_app_config_identity != app_config_identity || interrupted {
                 state.owning_lane = lane.into();
                 state.owning_app_config_identity = app_config_identity.into();
                 #[cfg(test)]

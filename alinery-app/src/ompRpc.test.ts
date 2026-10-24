@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   abortAndPromptCommand,
   compactCommand,
@@ -21,6 +21,17 @@ import {
 } from "./ompRpc";
 
 describe("ompRpc", () => {
+  it("does not reuse a dispatch identity when the client reconnects with a fresh runtime", async () => {
+    // Dynamic imports deliberately model two frontend lifetimes against one live daemon.
+    vi.resetModules();
+    const firstRuntime = await import("./ompRpc");
+    const first = firstRuntime.promptCommand("first review");
+    vi.resetModules();
+    const reconnectedRuntime = await import("./ompRpc");
+    const second = reconnectedRuntime.promptCommand("different review");
+    expect(second.id).not.toBe(first.id);
+  });
+
   it("sends official { type, message } commands, never JSON-RPC method/params", () => {
     expect(promptCommand("hi", "c1")).toEqual({ id: "c1", type: "prompt", message: "hi" });
     expect(getStateCommand("c6")).toEqual({ id: "c6", type: "get_state" });

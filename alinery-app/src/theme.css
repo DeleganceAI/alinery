@@ -1925,6 +1925,46 @@ main {
   width: min(880px, 100%);
   gap: 16px;
 }
+.create-continuation-label {
+  overflow-wrap: anywhere;
+}
+.create-continuation-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.create-continuation-choices button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--control-h);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.create-continuation-choices button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.create-continuation-choices button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.create-continuation-choices button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.create-continuation-check {
+  width: 1em;
+}
+.create-continuation-complete {
+  color: var(--text-muted);
+}
 .create-repository-source {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
@@ -2169,9 +2209,9 @@ main {
   font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
 }
-/* Step models are a right-hand column: one title over the fields, checkbox copy
-   stays on the left. Source text hangs off the field as a subscript badge. */
+/* Keep each step's continuation and model together; wrap within the form panel. */
 .step-model-list {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2179,27 +2219,52 @@ main {
 .step-model-head,
 .step-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem) 7.5rem;
-  column-gap: 8px;
+  grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr) minmax(9rem, 1.5fr);
+  gap: 8px 12px;
   align-items: center;
 }
-.step-model-title {
-  grid-column: 2;
-  justify-self: end;
+.step-model-head {
   color: var(--text-faint);
   font-size: calc(10px * var(--ui-scale));
   font-weight: 600;
-  line-height: 1;
+  padding-bottom: 6px;
 }
-.step-model-row .opt {
+.step-model-row {
+  padding: 6px 0;
+}
+.step-model-control {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
-  gap: 8px;
-  padding: 2px 0;
 }
-.step-model-row .opt-copy {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.step-continuation-control::before,
+.step-model-control::before {
+  display: none;
+  content: attr(data-label);
+  color: var(--text-faint);
+  font-size: calc(10px * var(--ui-scale));
+}
+@container (max-width: 580px) {
+  .step-model-head {
+    display: none;
+  }
+  .step-model-row {
+    grid-template-columns: minmax(0, 1fr) minmax(9rem, 1fr);
+  }
+  .create-continuation-label {
+    grid-column: 1 / -1;
+  }
+  .step-continuation-control::before,
+  .step-model-control::before {
+    display: block;
+    margin-bottom: 4px;
+  }
+}
+@container (max-width: 340px) {
+  .step-model-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .step-model-row .model-select {
   min-width: 0;
@@ -4570,6 +4635,81 @@ dialog.modal::backdrop {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.session-actions-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.session-actions-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  height: auto;
+  padding: 18px 20px;
+}
+.session-actions-heading h3 {
+  margin: 0;
+}
+.session-handoff-actions {
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
+}
+.session-handoff-actions > span {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+.session-actions-dialog .session-execution-bar {
+  display: block;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  padding: 16px 20px;
+}
+.session-actions-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.session-actions-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.session-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.session-action-row > svg { flex-shrink: 0; color: var(--text-muted); }
+.session-action-row > span { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.session-action-row strong { font-size: 13px; font-weight: 600; }
+.session-action-row > span > span { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.session-action-row:hover:not(:disabled) { background: var(--surface-subtle); }
+.session-action-row:disabled { opacity: 0.5; cursor: default; }
+.session-action-row:focus-visible, .session-action-file:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.session-action-stop > svg:first-child, .session-action-stop strong { color: var(--danger); }
+.session-action-context { display: grid; gap: 12px; margin: 0 0 20px; font-size: 12px; }
+.session-action-context > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; }
+.session-action-context dt { color: var(--text-muted); }
+.session-action-context dd { margin: 0; overflow-wrap: anywhere; }
+.session-action-file { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.session-action-file:disabled { color: var(--text); cursor: default; }
+.session-action-file:hover:not(:disabled) { text-decoration: underline; }
+.session-actions-dialog .session-execution { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .session-view-hatch {
   flex: 0 0 auto;
 }
@@ -5863,6 +6003,99 @@ dialog.modal::backdrop {
   padding: 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  container-type: inline-size;
+}
+.chat-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-composer-footer.has-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.chat-composer-footer.has-actions > .chat-composer-context {
+  margin-left: 0;
+  justify-self: center;
+}
+.chat-composer-actions {
+  min-width: 0;
+  width: 428px;
+  max-width: 100%;
+  justify-self: end;
+}
+.chat-composer-actions .session-continuation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 140px));
+  align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+.chat-composer-actions .session-continuation > [role="status"] {
+  grid-column: 1 / -1;
+}
+.chat-composer-actions .session-continuation > span > button,
+.chat-composer-actions .continuation-modes {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  min-height: 20px;
+}
+.chat-composer-actions .continuation-modes .btn {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 0;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn {
+  height: 20px;
+  min-height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn:disabled {
+  opacity: 0.5;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn:not(:disabled):hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.chat-composer-actions .continuation-modes {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  gap: 4px;
+}
+.chat-composer-footer .chat-composer-actions .continuation-modes .btn[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+.continuation-label {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@container (max-width: 700px) {
+  .chat-composer-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    max-width: 100%;
+  }
 }
 .chat-composer-box {
   position: relative;
@@ -5963,7 +6196,6 @@ dialog.modal::backdrop {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  margin-top: 8px;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -6346,6 +6578,18 @@ dialog.modal::backdrop {
 }
 .sessionbody.no-artifacts {
   grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 600px) {
+  .sessionbody:not(.no-artifacts) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(120px, 28%);
+  }
+  .sessionbody > .artifact-resizer {
+    display: none;
+  }
+  .sessionbody > .artifactpane {
+    border-top: 1px solid var(--border);
+  }
 }
 .termhost {
   flex: 1 1 auto;
@@ -9510,4 +9754,149 @@ dialog.modal::backdrop {
   .grid-view-row-actions {
     grid-column: 2;
   }
+}
+
+.session-continuation-anchor {
+  position: relative;
+  flex: 0 0 0;
+  height: 0;
+  z-index: 2;
+}
+.session-continuation-anchor > .session-continuation {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+}
+.session-continuation-anchor > .session-continuation {
+  max-width: calc(100% - 28px);
+  padding: 0;
+  border: 0;
+  font-size: calc(12px * var(--ui-scale));
+}
+.chat-floating-footer {
+  position: absolute;
+  inset-inline: 12px 14px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  pointer-events: none;
+}
+.chat-floating-footer > * {
+  pointer-events: auto;
+}
+.chat-floating-footer > .chat-activity {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-end;
+  padding: 0 0 4px;
+  border: 0;
+  background: transparent;
+  overflow-wrap: anywhere;
+}
+.chat-pane:has(> .session-continuation-anchor) .chat-list {
+  padding-bottom: calc(var(--chat-footer-height, 76px) + 20px);
+}
+.continuation-control [role="tooltip"] > span {
+  display: block;
+}
+.session-continuation {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.session-continuation .btn.small {
+  height: var(--control-h);
+}
+.continuation-modes {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: var(--control-h);
+  box-sizing: border-box;
+  margin: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+.continuation-modes .btn {
+  height: 100%;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+.continuation-modes .btn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.session-continuation > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.continuation-control {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+.continuation-control > button:disabled {
+  pointer-events: none;
+}
+.continuation-control:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.continuation-control [role="tooltip"] {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  width: max-content;
+  max-width: min(320px, 100%);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text);
+}
+.continuation-control > .primary:disabled {
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  opacity: 1;
+}
+.session-continuation > button,
+.continuation-control > button {
+  flex: 0 0 auto;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-h);
+  padding-block: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.session-input-recovery {
+  padding: 8px 14px;
+  overflow-wrap: anywhere;
+}
+.session-input-recovery > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 4px;
+}
+.session-input-recovery > div > span {
+  flex: 1 1 200px;
+  min-width: 0;
 }

@@ -122,7 +122,13 @@ function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLi
         is_coding_step: false,
         start_requested: true,
         lifecycle,
-        permission: { kind: "automatic" },
+        continuation_mode: "automatic",
+        work_revision: 0,
+        last_admission_sequence: 0,
+        last_ready_revision: null,
+        ready_revision: null,
+        continuation_requested_revision: null,
+        ready_assessment: null,
         receipt_id: null,
         exit_code: null,
         shutdown_confirmed: false,
@@ -133,6 +139,9 @@ function retainedExecution(steps: NormalizedStep[], states: [string, ExecutionLi
   );
   return {
     live: { status: "available" },
+    assessment: { status: "active", reasons: [] },
+    executions: {},
+    continuation: {},
     definition: {
       version: 2,
       key: "superdevelop",
@@ -1284,6 +1293,7 @@ describe("configurable task grid", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     await act(async () => rejectLoad(new Error("repository B unavailable")));
     expect(screen.getByRole("alert").textContent).toContain("repository B unavailable");
+    expect(screen.queryByText("Loading grid…")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
     expect(JSON.parse(window.localStorage.getItem("alinery:grid:repo-b") ?? "{}")).toMatchObject({ manualOrder, selectedTaskKey });
     second.unmount();
@@ -1333,28 +1343,86 @@ describe("configurable task grid", () => {
     expect(screen.getByRole("button", { name: /^Review queue, repo-b/ })).toBeDefined();
   });
 
-  it("keeps the latest overlapping board response in the view and shared cache", async () => {
+  it("accepts slow board responses without overlapping polls and caches the result", async () => {
     vi.useFakeTimers();
     const props = { allRepos: false, repoPaths: ["/repo-a"], onOpen: () => {}, registerNav: () => {} };
-    let resolveOld!: (tasks: BoardTask[]) => void;
+    let resolveLoad!: (tasks: BoardTask[]) => void;
     ipcMock.listBoardTasks.mockReturnValueOnce(
       new Promise<BoardTask[]>((resolve) => {
-        resolveOld = resolve;
+        resolveLoad = resolve;
       }),
     );
     const view = render(<Grid {...props} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+    expect(ipcMock.listBoardTasks).toHaveBeenCalledTimes(1);
+    expect(ipcMock.listKanbanColumns).toHaveBeenCalledTimes(1);
+    await act(async () => resolveLoad([tasks[0]]));
+    expect(screen.getByRole("button", { name: /^Build API, repo-a/ })).toBeDefined();
     const newerTask = { ...tasks[0], name: "Newer API" };
     ipcMock.listBoardTasks.mockResolvedValue([newerTask]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
     expect(screen.getByRole("button", { name: /^Newer API, repo-a/ })).toBeDefined();
-    await act(async () => resolveOld([tasks[0]]));
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
     view.unmount();
     ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
     render(<Grid {...props} storageKey="new-preset" />);
     expect(screen.getByRole("button", { name: /^Newer API, repo-a/ })).toBeDefined();
+  });
+
+  it("queues an archive refresh behind an active poll", async () => {
+    vi.useFakeTimers();
+    let nav: BoardNav | null = null;
+    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    render(
+      <Grid
+        allRepos={false}
+        repoPaths={["/repo-a"]}
+        onOpen={() => {}}
+        registerNav={(next) => {
+          nav = next;
+        }}
+      />,
+    );
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: /^Build API, repo-a/ })).toBeDefined();
+    let resolvePoll!: (tasks: BoardTask[]) => void;
+    ipcMock.listBoardTasks.mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolvePoll = resolve;
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    act(() => requireNav(nav).archiveSelected());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Archive task" }));
+    });
+    expect(ipcMock.archiveTaskForRepo).toHaveBeenCalledWith("/repo-a", "build-api");
+    expect(ipcMock.listBoardTasks).toHaveBeenCalledTimes(2);
+    ipcMock.listBoardTasks.mockResolvedValue([]);
+    await act(async () => resolvePoll([tasks[0]]));
+    expect(ipcMock.listBoardTasks).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
+  });
+
+  it("does not cache a response completed after unmount", async () => {
+    const props = { allRepos: false, repoPaths: ["/repo-a"], onOpen: () => {}, registerNav: () => {} };
+    let resolveLoad!: (tasks: BoardTask[]) => void;
+    ipcMock.listBoardTasks.mockReturnValueOnce(
+      new Promise<BoardTask[]>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const view = render(<Grid {...props} />);
+    view.unmount();
+    await act(async () => resolveLoad([tasks[0]]));
+    ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
+    render(<Grid {...props} />);
+    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
   });
 
   it.each(["all", "attention"])("keeps cached waiting tasks usable with unknown activity in the %s filter", async (filter) => {

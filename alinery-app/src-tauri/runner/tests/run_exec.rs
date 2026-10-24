@@ -129,7 +129,7 @@ while :; do sleep 1; done
 }
 
 fn run_result_emit(socket: &Path) -> Output {
-    run_event_result_emit(socket, br#"{"type":"phase_completed","omp_session_id":"omp-session"}"#)
+    run_event_result_emit(socket, br#"{"type":"readiness_reported","process_incarnation":"incarnation","expected_work_revision":7}"#)
 }
 
 fn run_event_result_emit(socket: &Path, event: &[u8]) -> Output {
@@ -158,8 +158,28 @@ fn emit_result_preserves_typed_completion_outcomes_and_protocol_errors() {
             0,
         ),
         (
-            json!({"ok": true, "completion": {"status": "human_authorization_required"}}),
-            json!({"status": "human_authorization_required"}),
+            json!({"ok": true, "completion": {"status": "ready", "ready_revision": 7}}),
+            json!({"status": "ready", "ready_revision": 7}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "requested", "ready_revision": 7}}),
+            json!({"status": "requested", "ready_revision": 7}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "waiting", "reason": "native work pending"}}),
+            json!({"status": "waiting", "reason": "native work pending"}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "stale", "reason": "work generation changed"}}),
+            json!({"status": "stale", "reason": "work generation changed"}),
+            0,
+        ),
+        (
+            json!({"ok": true, "completion": {"status": "unavailable", "reason": "primary receiver not bound"}}),
+            json!({"status": "unavailable", "reason": "primary receiver not bound"}),
             0,
         ),
         (
@@ -182,7 +202,7 @@ fn emit_result_preserves_typed_completion_outcomes_and_protocol_errors() {
             BufReader::new(&connection).read_line(&mut request).unwrap();
             let request: serde_json::Value = serde_json::from_str(&request).unwrap();
             assert_eq!(request["op"], "event");
-            assert_eq!(request["event"]["type"], "phase_completed");
+            assert_eq!(request["event"]["type"], "readiness_reported");
             // A durable completion may legitimately outlast the passive ACK budget.
             thread::sleep(Duration::from_millis(750));
             writeln!(connection, "{reply}").unwrap();
@@ -203,6 +223,10 @@ fn emit_result_rejects_missing_truncated_malformed_and_oversized_completion_ack(
         b"{\"ok\":true,\"completion\":{\"status\":\"accepted\",\"receipt_id\":\"receipt\"}}".to_vec(),
         b"{\"ok\":true,\"completion\":{\"status\":\"accepted\"}}\n".to_vec(),
         b"{\"ok\":true,\"completion\":{\"status\":\"invalid_outputs\",\"diagnostics\":[7]}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"ready\",\"ready_revision\":9007199254740992}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"requested\",\"ready_revision\":-1}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"waiting\",\"reason\":\"\"}}\n".to_vec(),
+        b"{\"ok\":true,\"completion\":{\"status\":\"accepted\",\"receipt_id\":\"receipt\",\"ready_revision\":7}}\n".to_vec(),
         b"{\"ok\":true,\"completion\":\n".to_vec(),
         format!("{{\"ok\":true,\"completion\":{{\"status\":\"accepted\",\"receipt_id\":\"{}\"}}}}\n", "r".repeat(64 * 1024)).into_bytes(),
     ] {
@@ -223,6 +247,53 @@ fn emit_result_rejects_missing_truncated_malformed_and_oversized_completion_ack(
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
             serde_json::json!({"status": "delivery_failed"})
+        );
+    }
+}
+
+#[test]
+fn continuation_control_requires_its_own_authenticated_framed_ack() {
+    use serde_json::json;
+    let control = json!({
+        "process_incarnation":"captured-process", "capability_revision":1, "work_revision":7,
+        "continuation_requested_revision":null, "available":true, "reason":null
+    });
+    for (reply, valid) in [
+        (json!({"ok":true,"control":control}), true),
+        (json!({"ok":true}), false),
+        (json!({"ok":true,"completion":{"status":"accepted","receipt_id":"wrong-kind"}}), false),
+        (json!({"ok":true,"control":control,"completion":{"status":"ready","ready_revision":7}}), false),
+        (
+            json!({"ok":true,"control":{"process_incarnation":"captured-process","capability_revision":1,"work_revision":9007199254740992_u64,"continuation_requested_revision":null,"available":true,"reason":null}}),
+            false,
+        ),
+        (
+            json!({"ok":true,"control":{"process_incarnation":"captured-process","capability_revision":9007199254740992_u64,"work_revision":7,"continuation_requested_revision":null,"available":true,"reason":null}}),
+            false,
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(&connection).read_line(&mut request).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(request["token"], "runner-result-token");
+            assert_eq!(request["event"]["type"], "continuation_bind");
+            writeln!(connection, "{reply}").unwrap();
+        });
+        let output = run_event_result_emit(
+            &socket,
+            br#"{"type":"continuation_bind","omp_session_id":"native","groups":["primary_control","native_tools","admitted_queue","public_entries"],"operation_id":"bind-operation","expected_capability_revision":0}"#,
+        );
+        server.join().unwrap();
+        assert!(output.stderr.is_empty());
+        assert_eq!(output.status.code(), Some(if valid { 0 } else { 3 }));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+            if valid { control.clone() } else { json!({"status":"delivery_failed"}) }
         );
     }
 }
@@ -281,12 +352,12 @@ fn session_name_result_requires_matching_durable_acknowledgement() {
         (json!({"error":"stale owner"}), json!({"status":"rejected","reason":"stale owner"}), 2),
         (json!({"ok":true}), json!({"status":"delivery_failed"}), 3),
         (
-            json!({"ok":true,"completion":{"status":"human_authorization_required"}}),
+            json!({"ok":true,"completion":{"status":"ready","ready_revision":7}}),
             json!({"status":"delivery_failed"}),
             3,
         ),
         (
-            json!({"ok":true,"session_name":saved,"completion":{"status":"human_authorization_required"}}),
+            json!({"ok":true,"session_name":saved,"completion":{"status":"ready","ready_revision":7}}),
             json!({"status":"delivery_failed"}),
             3,
         ),
@@ -373,6 +444,61 @@ fn session_name_delivery_failure_never_claims_a_saved_name() {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
             serde_json::json!({"status":"delivery_failed"})
+        );
+    }
+}
+
+#[test]
+fn continuation_poll_and_revoke_replay_only_immutable_accepted_receipts() {
+    use serde_json::json;
+    for (event, outcome, accepted) in [
+        (
+            json!({"type":"continuation_poll","process_incarnation":"captured-process"}),
+            json!({"status":"accepted","receipt_id":"immutable"}),
+            true,
+        ),
+        (
+            json!({"type":"continuation_poll","process_incarnation":"captured-process"}),
+            json!({"status":"ready","ready_revision":7}),
+            false,
+        ),
+        (
+            json!({"type":"continuation_poll","process_incarnation":"captured-process"}),
+            json!({"status":"accepted","receipt_id":""}),
+            false,
+        ),
+        (
+            json!({"type":"continuation_poll"}),
+            json!({"status":"accepted","receipt_id":"not-bootstrap-authority"}),
+            false,
+        ),
+        (
+            json!({"type":"continuation_revoke","process_incarnation":"captured-process","operation_id":"revoke","expected_capability_revision":1,"reason":"native boundary changed"}),
+            json!({"status":"accepted","receipt_id":"immutable"}),
+            true,
+        ),
+        (
+            json!({"type":"continuation_revoke","process_incarnation":"captured-process","operation_id":"revoke","expected_capability_revision":1,"reason":"native boundary changed"}),
+            json!({"status":"requested","ready_revision":7}),
+            false,
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("daemon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let reply = json!({"ok":true,"completion":outcome});
+        let server = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(&connection).read_line(&mut request).unwrap();
+            writeln!(connection, "{reply}").unwrap();
+        });
+        let output = run_event_result_emit(&socket, &serde_json::to_vec(&event).unwrap());
+        server.join().unwrap();
+        assert_eq!(output.status.code(), Some(if accepted { 0 } else { 3 }));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+            if accepted { outcome } else { json!({"status":"delivery_failed"}) }
         );
     }
 }

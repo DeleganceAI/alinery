@@ -115,6 +115,9 @@ if [ "$rpc" = 1 ]; then
       activity-rejected) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":false,\"error\":\"refused\"}" ;;
       activity-accepted|activity-observer) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":true}" ;;
     esac
+    if [ "$typ" = "compact" ] || [ "$typ" = "set_model" ] || [ "$typ" = "set_thinking_level" ] || [ "$typ" = "set_auto_compaction" ]; then
+      printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":true,\"data\":{}}"
+    fi
     if [ "$typ" = "get_messages" ] || [ "$method" = "get_messages" ]; then
       printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"get_messages\",\"success\":true,\"data\":{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"hydrated thought\"},{\"type\":\"text\",\"text\":\"hydrated text\"}]}]}}"
       printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0},"message":{"role":"assistant","content":[{"type":"thinking","thinking":""}]}}'
@@ -144,6 +147,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_playbook(PLAYBOOK)
+    }
+
+    fn with_playbook(playbook: &str) -> Self {
         let root = unique_root();
         fs::create_dir_all(root.join(".alinery")).unwrap();
         for args in [
@@ -162,11 +169,7 @@ impl Fixture {
         ] {
             assert!(alinery_core::git_cmd(&root).args(args).status().unwrap().success());
         }
-        fs::write(root.join("host-executable"), b"host fixture").unwrap();
-        let mut host_permissions = fs::metadata(root.join("host-executable")).unwrap().permissions();
-        host_permissions.set_mode(0o755);
-        fs::set_permissions(root.join("host-executable"), host_permissions).unwrap();
-        let host = fs::canonicalize(root.join("host-executable")).unwrap();
+        let host = fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
 
         let fixture_bin = root.join("omp-fixture");
         fs::write(&fixture_bin, FIXTURE_SCRIPT).unwrap();
@@ -234,7 +237,7 @@ resume_args = ["--resume={{resume_token}}"]
         };
         let created = fixture.rpc(json!({"op": "create_task", "request": {
             "name": "task", "requested_slug": "task",
-            "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": PLAYBOOK},
+            "playbook": {"reference": {"scope": "repo", "key": "transport"}, "source": playbook},
             "start": false
         }}));
         assert_eq!(created["creation"], "ready", "{created}");
@@ -264,7 +267,75 @@ resume_args = ["--resume={{resume_token}}"]
         }}));
         assert_eq!(reply["start"], "started", "start response: {reply}");
         assert_eq!(reply["errors"], json!([]), "{reply}");
+        self.bind_primary(&self.session_id);
         &self.session_id
+    }
+
+    fn bind_primary(&self, id: &str) {
+        wait_until(Duration::from_secs(5), || {
+            let Ok(token) = fs::read_to_string(self.root.join(format!("token.{id}"))) else {
+                return false;
+            };
+            let probe = self.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+                "session_id":id,"token":token,"event":{"type":"continuation_poll"}}));
+            if probe["control"]["available"] == true {
+                return true;
+            }
+            if probe.get("control").is_none() {
+                return false;
+            }
+            let reply = self.rpc(json!({
+                "op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+                "session_id":id,"token":token,"event":{
+                    "type":"continuation_bind","omp_session_id":"fixture",
+                    "groups":["primary_control","native_tools","admitted_queue","public_entries"],
+                    "operation_id":uuid::Uuid::new_v4().to_string(),
+                    "expected_capability_revision":probe["control"]["capability_revision"],
+                },
+            }));
+            reply["control"]["available"] == true
+        });
+    }
+
+    fn native_event(&self, event: Value) -> Value {
+        let token = fs::read_to_string(self.root.join(format!("token.{}", self.session_id))).unwrap();
+        self.rpc(json!({"op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+            "session_id":self.session_id,"token":token,"event":event}))
+    }
+
+    fn settle_captured_seed(&self) -> Value {
+        let bound = self.native_event(json!({"type":"continuation_poll"}));
+        let incarnation = bound["control"]["process_incarnation"].clone();
+        let capture = self.root.join(format!("stdin.{}", self.session_id));
+        let captured = || {
+            fs::read_to_string(&capture).ok().and_then(|text| {
+                text.lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|frame| frame["id"] == "internal-seed")
+            })
+        };
+        wait_until(Duration::from_secs(5), || captured().is_some());
+        let seed = captured().unwrap();
+        let header = seed["message"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("\u{001e}ALINERY:")
+            .unwrap()
+            .split_once('\u{001f}')
+            .unwrap()
+            .0;
+        let header: Value = serde_json::from_str(header).unwrap();
+        let mut reply = bound;
+        for event in [
+            json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"captured-seed",
+                "dispatch_id":seed["id"],"dispatch_proof":header["proof"]}),
+            json!({"type":"native_dispatch_consumed","process_incarnation":incarnation,"dispatch_id":seed["id"]}),
+            json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"captured-seed"}),
+        ] {
+            reply = self.native_event(event);
+            assert_eq!(reply["ok"], true, "{reply}");
+        }
+        reply["control"].clone()
     }
 
     fn execution(&self) -> Value {
@@ -294,9 +365,17 @@ resume_args = ["--resume={{resume_token}}"]
         loop {
             reader.read_line(&mut line).unwrap();
             if line.ends_with('\n') {
-                let actual: Value = serde_json::from_str(&line).expect("fixture received invalid JSON");
+                let mut actual: Value = serde_json::from_str(&line).expect("fixture received invalid JSON");
                 if actual["id"] == expected["id"] {
-                    // Avoid printing tens of megabytes of image data on failure.
+                    if let Some(message) = actual["message"].as_str().and_then(|text| text.strip_prefix("\u{001e}ALINERY:")) {
+                        let (header, original) = message.split_once('\u{001f}').expect("complete authenticated envelope");
+                        let header: Value = serde_json::from_str(header).unwrap();
+                        assert_eq!(header["id"], expected["id"]);
+                        assert!(header.get("token").is_none(), "reusable runner credential must never enter a user message");
+                        assert!(header["proof"].as_str().is_some_and(|proof| !proof.is_empty()));
+                        actual["message"] = json!(original);
+                    }
+                    // The shell records the envelope; stock tests separately prove native stripping.
                     assert!(actual == *expected, "fixture received a changed RPC payload");
                     return;
                 }
@@ -308,7 +387,11 @@ resume_args = ["--resume={{resume_token}}"]
     }
 
     fn restate(&self, id: &str, transport: &str) -> Value {
-        self.rpc(json!({"op": "restate", "id": id, "transport": transport}))
+        let reply = self.rpc(json!({"op": "restate", "id": id, "transport": transport}));
+        if reply["ok"] == true {
+            self.bind_primary(id);
+        }
+        reply
     }
 
     fn rpc_attach(&self, id: &str) -> BufReader<UnixStream> {
@@ -377,6 +460,515 @@ resume_args = ["--resume={{resume_token}}"]
     fn argv(&self, id: &str) -> String {
         wait_until(Duration::from_secs(5), || self.root.join(format!("argv.{id}")).is_file());
         fs::read_to_string(self.root.join(format!("argv.{id}"))).unwrap()
+    }
+}
+
+#[test]
+fn capability_revocation_and_continue_have_one_winner() {
+    for revoke_wins in [true, false] {
+        let fixture = Fixture::with_playbook(&manual_review_playbook());
+        let id = fixture.spawn_omp();
+        let control = fixture.settle_captured_seed();
+        let incarnation = control["process_incarnation"].as_str().unwrap();
+        let execution = fixture.execution();
+        fs::write(
+            fixture
+                .root
+                .join(".alinery/tasks/task/artifacts")
+                .join(execution["outputs"][0]["relative_path"].as_str().unwrap()),
+            "reviewable",
+        )
+        .unwrap();
+        let ready = fixture.native_event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+            "expected_work_revision":execution["work_revision"]}));
+        assert_eq!(ready["completion"]["status"], "ready", "{ready}");
+        let request = alinery_core::ContinueExecutionRequest {
+            task_slug: "task".into(),
+            execution_id: fixture.meta(id).execution_id,
+            session_id: id.into(),
+            process_incarnation: incarnation.into(),
+            ready_revision: ready["completion"]["ready_revision"].as_u64().unwrap(),
+        };
+        let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+        let mut ui = alinery_core::UiControlConnection::connect(&client).unwrap();
+        let revoke = || {
+            fixture.native_event(json!({"type":"continuation_revoke","process_incarnation":incarnation,
+            "operation_id":"lost-boundary","expected_capability_revision":control["capability_revision"],"reason":"fixture native boundary lost"}))
+        };
+        if revoke_wins {
+            let revoked = revoke();
+            assert_eq!(revoked["control"]["available"], false, "{revoked}");
+            assert!(fixture.execution()["ready_revision"].is_null());
+            assert_eq!(fixture.execution()["last_ready_revision"], json!(request.ready_revision));
+            assert!(!matches!(
+                ui.continue_execution(&request).unwrap(),
+                alinery_core::CompletionOutcome::Requested { .. } | alinery_core::CompletionOutcome::Accepted { .. }
+            ));
+            let payload = json!({"id":"unprotected-review","type":"prompt","message":"Continue reviewing without a protected handoff."});
+            assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
+            fixture.assert_payload_delivered(id, &payload);
+            let revision = fixture.execution()["work_revision"].clone();
+            assert_eq!(revoke()["control"]["available"], false);
+            assert_eq!(fixture.execution()["work_revision"], revision, "retry must not invalidate newer review again");
+        } else {
+            assert!(matches!(ui.continue_execution(&request).unwrap(), alinery_core::CompletionOutcome::Requested { .. }));
+            assert!(revoke()["error"].is_string(), "revocation must not erase winning intent");
+            assert_eq!(fixture.execution()["continuation_requested_revision"], json!(request.ready_revision));
+            assert_eq!(fixture.execution()["work_revision"], json!(request.ready_revision));
+        }
+        assert!(fixture.execution()["receipt_id"].is_null());
+    }
+}
+
+#[test]
+fn in_flight_native_scope_settles_while_revoked_and_old_revoke_cannot_break_rebinding() {
+    let fixture = Fixture::new();
+    fixture.spawn_omp();
+    let control = fixture.settle_captured_seed();
+    let incarnation = control["process_incarnation"].as_str().unwrap();
+    let original_bind = json!({"type":"continuation_bind","omp_session_id":"fixture",
+        "groups":["primary_control","native_tools","admitted_queue","public_entries"],
+        "operation_id":"install-before-revoke","expected_capability_revision":control["capability_revision"]});
+    let installed = fixture.native_event(original_bind.clone());
+    assert_eq!(installed["control"]["available"], true, "{installed}");
+    let late_unseen_bind = json!({"type":"continuation_bind","omp_session_id":"fixture",
+        "groups":["primary_control","native_tools","admitted_queue","public_entries"],
+        "operation_id":"delayed-first-delivery","expected_capability_revision":installed["control"]["capability_revision"]});
+    let entered = fixture.native_event(json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"held-native"}));
+    assert_eq!(entered["ok"], true, "{entered}");
+    let revoke = || {
+        fixture.native_event(json!({"type":"continuation_revoke","process_incarnation":incarnation,
+        "operation_id":"revoke-1","expected_capability_revision":installed["control"]["capability_revision"],"reason":"fixture required boundary lost"}))
+    };
+    assert_eq!(revoke()["control"]["available"], false);
+    assert_eq!(
+        fixture.native_event(original_bind)["control"]["available"],
+        false,
+        "replayed old install cannot re-enable revoked capability"
+    );
+    let revision_after_revoke = fixture.execution()["work_revision"].clone();
+    assert!(
+        fixture.native_event(late_unseen_bind.clone())["error"].is_string(),
+        "an obsolete install first arriving late must fail its capability revision"
+    );
+    assert_eq!(fixture.execution()["work_revision"], revision_after_revoke);
+    let new_root = fixture.native_event(json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"new-root-while-unavailable"}));
+    assert!(new_root["error"].is_string(), "unavailable capability cannot admit an unrelated protected root");
+    assert_eq!(fixture.execution()["work_revision"], revision_after_revoke);
+    let child = fixture.native_event(json!({"type":"native_work_entered","process_incarnation":incarnation,
+        "operation_id":"retained-child","parent_operation_id":"held-native"}));
+    assert_eq!(child["ok"], true, "active old scope may retain its actual descendant while unavailable: {child}");
+    let settled = fixture.native_event(json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"held-native"}));
+    assert_eq!(settled["ok"], true, "existing scope cleanup must retain its authenticated incarnation: {settled}");
+    let stale_parent_revision = fixture.execution()["work_revision"].clone();
+    let stale_parent = fixture.native_event(json!({"type":"native_work_entered","process_incarnation":incarnation,
+        "operation_id":"stale-ancestry","parent_operation_id":"held-native"}));
+    assert!(stale_parent["error"].is_string(), "settled ancestry cannot create fresh protected work");
+    assert_eq!(fixture.execution()["work_revision"], stale_parent_revision);
+    fixture.bind_primary(&fixture.session_id);
+    let before_replay = fixture.execution()["work_revision"].clone();
+    assert_eq!(
+        revoke()["control"]["available"],
+        true,
+        "old revocation retry must report current binding without revoking it"
+    );
+    assert_eq!(fixture.execution()["work_revision"], before_replay);
+    assert!(fixture.native_event(late_unseen_bind)["error"].is_string());
+    assert_eq!(fixture.execution()["work_revision"], before_replay);
+    let execution = fixture.execution();
+    fs::write(
+        fixture
+            .root
+            .join(".alinery/tasks/task/artifacts")
+            .join(execution["outputs"][0]["relative_path"].as_str().unwrap()),
+        "complete",
+    )
+    .unwrap();
+    let waiting = fixture.native_event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+        "expected_work_revision":execution["work_revision"]}));
+    assert_eq!(waiting["completion"]["status"], "waiting", "rebinding does not erase a retained descendant");
+    let child_settled = fixture.native_event(json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"retained-child"}));
+    assert_eq!(child_settled["ok"], true, "{child_settled}");
+    let accepted = fixture.native_event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+        "expected_work_revision":execution["work_revision"]}));
+    assert_eq!(
+        accepted["completion"]["status"], "accepted",
+        "settled old native scope must not strand new binding: {accepted}"
+    );
+    let raced_revoke = revoke();
+    assert_eq!(
+        raced_revoke["completion"], accepted["completion"],
+        "automatic acceptance wins over even an old revocation replay; no unavailable ACK may reopen review"
+    );
+    assert_eq!(fixture.execution()["receipt_id"], accepted["completion"]["receipt_id"]);
+}
+
+fn manual_review_playbook() -> String {
+    PLAYBOOK.replace(
+        "+++\n<!-- alinery:step run -->",
+        r#"[[step]]
+key = "review"
+title = "Review"
+short = ""
+is_coding_step = false
+auto_advance_default = false
+model = ""
+inputs = [{path = "result.md", mode = "single"}]
+outputs = [{path = "review.md"}]
+harness = "omp"
++++
+<!-- alinery:step review -->
+Review the result.
+<!-- alinery:step run -->"#,
+    )
+}
+
+#[test]
+fn controlled_dispatch_and_continue_have_one_winner() {
+    let playbook = manual_review_playbook();
+    for input_wins in [true, false] {
+        let fixture = Fixture::with_playbook(&playbook);
+        let id = fixture.spawn_omp();
+        let token_path = fixture.root.join(format!("token.{id}"));
+        let stdin_path = fixture.root.join(format!("stdin.{id}"));
+        wait_until(Duration::from_secs(5), || {
+            token_path.exists()
+                && fs::read_to_string(&stdin_path).is_ok_and(|text| {
+                    text.lines()
+                        .any(|line| serde_json::from_str::<Value>(line).is_ok_and(|value| value["id"] == "internal-seed"))
+                })
+        });
+        let token = fs::read_to_string(token_path).unwrap();
+        let event = |event: Value| {
+            fixture.rpc(json!({
+                "op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+                "session_id":id,"token":token,"event":event,
+            }))
+        };
+        let bound = event(json!({"type":"continuation_poll"}));
+        let incarnation = bound["control"]["process_incarnation"].as_str().expect("captured incarnation");
+        let seed = fs::read_to_string(&stdin_path)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|frame| frame["id"] == "internal-seed")
+            .unwrap();
+        let header = seed["message"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("\u{001e}ALINERY:")
+            .unwrap()
+            .split_once('\u{001f}')
+            .unwrap()
+            .0;
+        let header: Value = serde_json::from_str(header).unwrap();
+        let proof = header["proof"].as_str().expect("captured opaque seed proof");
+        let revision_before_forgery = fixture.execution()["work_revision"].clone();
+        let forged = event(json!({"type":"native_work_entered","process_incarnation":incarnation,
+            "operation_id":"forged-seed","dispatch_id":"internal-seed","dispatch_proof":"untrusted"}));
+        assert!(forged["error"].is_string(), "untrusted envelope must not claim an admitted dispatch: {forged}");
+        assert_eq!(fixture.execution()["work_revision"], revision_before_forgery);
+        // The shell has actually read the launch frame. These authenticated fixture
+        // events exercise daemon authority, not stock native callback behavior.
+        for value in [
+            json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"seed","dispatch_id":"internal-seed","dispatch_proof":proof}),
+            json!({"type":"native_dispatch_consumed","process_incarnation":incarnation,"dispatch_id":"internal-seed"}),
+            json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"seed"}),
+        ] {
+            let reply = event(value);
+            assert_eq!(reply["ok"], true, "{reply}");
+        }
+        let replayed = event(json!({"type":"native_work_entered","process_incarnation":incarnation,
+            "operation_id":"replayed-seed","dispatch_id":"internal-seed","dispatch_proof":proof}));
+        assert!(replayed["error"].is_string(), "a consumed dispatch proof cannot authorize new work");
+        let execution = fixture.execution();
+        let output = fixture
+            .root
+            .join(".alinery/tasks/task/artifacts")
+            .join(execution["outputs"][0]["relative_path"].as_str().unwrap());
+        fs::write(output, "ready output").unwrap();
+        let ready = event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+            "expected_work_revision":execution["work_revision"]}));
+        assert_eq!(ready["completion"]["status"], "ready", "{ready}");
+        let request = alinery_core::ContinueExecutionRequest {
+            task_slug: "task".into(),
+            execution_id: fixture.meta(id).execution_id,
+            session_id: id.into(),
+            process_incarnation: incarnation.into(),
+            ready_revision: ready["completion"]["ready_revision"].as_u64().unwrap(),
+        };
+        let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+        let mut ui = alinery_core::UiControlConnection::connect(&client).unwrap();
+        let payload = json!({"id":"review-race","type":"prompt","message":"Please revise this."});
+        if input_wins {
+            assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
+            fixture.assert_payload_delivered(id, &payload);
+            assert!(fixture.execution()["ready_revision"].is_null());
+            assert!(matches!(
+                ui.continue_execution(&request).unwrap(),
+                alinery_core::CompletionOutcome::Stale { .. } | alinery_core::CompletionOutcome::Waiting { .. }
+            ));
+        } else {
+            assert!(matches!(ui.continue_execution(&request).unwrap(), alinery_core::CompletionOutcome::Requested { .. }));
+            let before = fs::read(&stdin_path).unwrap();
+            assert!(matches!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::NotSent { .. }));
+            assert_eq!(fs::read(&stdin_path).unwrap(), before, "losing review must never reach child stdin");
+            assert_eq!(fixture.execution()["continuation_requested_revision"], json!(request.ready_revision));
+        }
+        assert!(fixture.execution()["receipt_id"].is_null(), "requested is not accepted");
+    }
+}
+
+#[test]
+fn viewer_observation_subset_preserves_ready_generation_without_pending_work() {
+    let fixture = Fixture::with_playbook(&manual_review_playbook());
+    let id = fixture.spawn_omp();
+    let control = fixture.settle_captured_seed();
+    let incarnation = control["process_incarnation"].as_str().unwrap();
+    let execution = fixture.execution();
+    fs::write(
+        fixture
+            .root
+            .join(".alinery/tasks/task/artifacts")
+            .join(execution["outputs"][0]["relative_path"].as_str().unwrap()),
+        "ready for review",
+    )
+    .unwrap();
+    let ready = fixture.native_event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+        "expected_work_revision":execution["work_revision"]}));
+    assert_eq!(ready["completion"]["status"], "ready", "{ready}");
+    let revision = ready["completion"]["ready_revision"].clone();
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    for payload in [
+        json!({"id":"viewer-protocol","type":"negotiate_protocol","protocolVersion":2}),
+        json!({"id":"viewer-state","type":"get_state"}),
+        json!({"id":"viewer-commands","type":"get_available_commands"}),
+        json!({"id":"viewer-subscription","type":"set_subagent_subscription","level":"events"}),
+        json!({"id":"viewer-subagents","type":"get_subagents"}),
+        json!({"id":"viewer-models","type":"get_available_models"}),
+        json!({"id":"viewer-history","type":"get_messages_page","limit":50}),
+        json!({"id":"viewer-stats","type":"get_session_stats"}),
+        json!({"id":"viewer-branch","type":"get_branch_messages"}),
+        json!({"id":"viewer-last-text","type":"get_last_assistant_text"}),
+    ] {
+        assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
+        fixture.assert_payload_delivered(id, &payload);
+        let current = fixture.execution();
+        assert_eq!(current["work_revision"], revision, "observing through {} must not admit work", payload["type"]);
+        assert_eq!(current["ready_revision"], revision, "opening the viewer must not invalidate ready");
+        assert!(current["receipt_id"].is_null());
+    }
+    let mut ui = alinery_core::UiControlConnection::connect(&client).unwrap();
+    let requested = ui
+        .continue_execution(&alinery_core::ContinueExecutionRequest {
+            task_slug: "task".into(),
+            execution_id: fixture.meta(id).execution_id,
+            session_id: id.into(),
+            process_incarnation: incarnation.into(),
+            ready_revision: revision.as_u64().unwrap(),
+        })
+        .unwrap();
+    assert!(
+        matches!(requested, alinery_core::CompletionOutcome::Requested { .. }),
+        "read-only viewer bootstrap must not leave unresolved native work: {requested:?}"
+    );
+    assert!(fixture.execution()["receipt_id"].is_null());
+}
+
+#[test]
+fn viewer_preference_change_acknowledgement_allows_only_fresh_readiness() {
+    let fixture = Fixture::with_playbook(&manual_review_playbook());
+    let id = fixture.spawn_omp();
+    let control = fixture.settle_captured_seed();
+    let incarnation = control["process_incarnation"].as_str().unwrap();
+    let execution = fixture.execution();
+    fs::write(
+        fixture
+            .root
+            .join(".alinery/tasks/task/artifacts")
+            .join(execution["outputs"][0]["relative_path"].as_str().unwrap()),
+        "ready for review",
+    )
+    .unwrap();
+    let report = || {
+        fixture.native_event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+        "expected_work_revision":fixture.execution()["work_revision"]}))
+    };
+    let ready = report();
+    assert_eq!(ready["completion"]["status"], "ready", "{ready}");
+    let old_revision = ready["completion"]["ready_revision"].clone();
+    let mut stream = fixture.rpc_attach(id);
+    Fixture::read_lines(&mut stream, 1);
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    let payload = json!({"id":"explicit-compaction-preference","type":"set_auto_compaction","enabled":false});
+    assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if Fixture::read_lines(&mut stream, 1)
+            .into_iter()
+            .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+            .any(|reply| reply["type"] == "response" && reply["id"] == payload["id"] && reply["success"] == true)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "native preference ACK not observed");
+    }
+    let changed = fixture.execution();
+    assert!(changed["ready_revision"].is_null(), "the setter is work, not an observation or renewed readiness");
+    assert_eq!(changed["last_ready_revision"], old_revision);
+    assert!(changed["receipt_id"].is_null());
+    let fresh = report();
+    assert_eq!(fresh["completion"]["status"], "ready", "exact successful setter ACK must retire intake: {fresh}");
+    assert_ne!(fresh["completion"]["ready_revision"], old_revision);
+    assert!(fixture.execution()["receipt_id"].is_null());
+}
+
+#[test]
+fn model_and_thinking_acknowledgements_retire_intake_but_not_selected_work() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let token = fs::read_to_string(fixture.root.join(format!("token.{id}"))).unwrap();
+    let event = |event: Value| {
+        fixture.rpc(json!({
+            "op":"event","version":alinery_core::RUNNER_EVENT_PROTOCOL_VERSION,
+            "session_id":id,"token":token,"event":event,
+        }))
+    };
+    let bound = event(json!({"type":"continuation_poll"}));
+    let incarnation = bound["control"]["process_incarnation"].as_str().unwrap();
+    let capture = fixture.root.join(format!("stdin.{id}"));
+    let captured_seed = || {
+        fs::read_to_string(&capture).ok().and_then(|text| {
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find(|frame| frame["id"] == "internal-seed")
+        })
+    };
+    wait_until(Duration::from_secs(5), || captured_seed().is_some());
+    let seed = captured_seed().unwrap();
+    let header = seed["message"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("\u{001e}ALINERY:")
+        .unwrap()
+        .split_once('\u{001f}')
+        .unwrap()
+        .0;
+    let proof: Value = serde_json::from_str(header).unwrap();
+    for message in [
+        json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"seed","dispatch_id":"internal-seed","dispatch_proof":proof["proof"]}),
+        json!({"type":"native_dispatch_consumed","process_incarnation":incarnation,"dispatch_id":"internal-seed"}),
+        json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"seed"}),
+        json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"native-held"}),
+    ] {
+        let reply = event(message);
+        assert_eq!(reply["ok"], true, "{reply}");
+    }
+    let mut stream = fixture.rpc_attach(id);
+    Fixture::read_lines(&mut stream, 1);
+    for payload in [
+        json!({"type":"set_model","id":"change-model","provider":"fixture","modelId":"fixture"}),
+        json!({"type":"set_thinking_level","id":"change-thinking","level":"high"}),
+    ] {
+        let written = fixture.rpc(json!({"op":"rpc_write","id":id,"payload":payload}));
+        assert_eq!(written["dispatch"]["status"], "written", "{written}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if Fixture::read_lines(&mut stream, 1)
+                .into_iter()
+                .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+                .any(|reply| reply["type"] == "response" && reply["id"] == payload["id"] && reply["success"] == true)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "native setting response not observed");
+        }
+    }
+    let execution = fixture.execution();
+    fs::write(
+        fixture
+            .root
+            .join(".alinery/tasks/task/artifacts")
+            .join(execution["outputs"][0]["relative_path"].as_str().unwrap()),
+        "complete",
+    )
+    .unwrap();
+    let ready = || {
+        event(json!({"type":"readiness_reported","process_incarnation":incarnation,
+        "expected_work_revision":fixture.execution()["work_revision"]}))
+    };
+    assert_eq!(ready()["completion"]["status"], "waiting", "setting ACK cannot settle unrelated selected work");
+    let settled = event(json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"native-held"}));
+    assert_eq!(settled["ok"], true, "{settled}");
+    let accepted = ready();
+    assert_eq!(accepted["completion"]["status"], "accepted", "completed known settings must not strand intake: {accepted}");
+}
+
+#[test]
+fn missing_rpc_id_is_assigned_before_dispatch_for_correlated_native_reply() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let mut stream = fixture.rpc_attach(id);
+    Fixture::read_lines(&mut stream, 1);
+    for supplied_id in [None, Some("")] {
+        let mut payload = json!({"type":"compact","customInstructions":"compact dispatch identity"});
+        if let Some(value) = supplied_id {
+            payload["id"] = json!(value);
+        }
+        let written = fixture.rpc(json!({"op":"rpc_write","id":id,"payload":payload}));
+        assert_eq!(written["dispatch"]["status"], "written", "{written}");
+        let assigned_id = written["dispatch_id"].as_str().filter(|id| !id.is_empty()).expect("assigned dispatch identity");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let response = loop {
+            if let Some(response) = Fixture::read_lines(&mut stream, 1)
+                .into_iter()
+                .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+                .find(|reply| reply["type"] == "response" && reply["command"] == "compact")
+            {
+                break response;
+            }
+            assert!(Instant::now() < deadline, "native compact reply not observed");
+        };
+        assert_eq!(response["id"], assigned_id, "native reply must correlate to the identity returned for dispatch");
+    }
+}
+
+#[test]
+fn inline_skill_intake_never_contains_runner_credential() {
+    let fixture = Fixture::new();
+    let id = fixture.spawn_omp();
+    let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
+    let capture = fixture.root.join(format!("stdin.{id}"));
+    let token = fs::read_to_string(fixture.root.join(format!("token.{id}"))).unwrap();
+    for (case, message, native_skill) in [
+        ("inline", "Please use /skill:foo now", true),
+        ("multiline", "Please use\n/skill:foo\nnow", true),
+        ("js-whitespace", "Please use\u{feff}/skill:foo\u{a0}now", true),
+        ("embedded", "Please use prefix/skill:foo now", false),
+        ("path", "Please use /skill:foo/bar now", false),
+        ("not-js-whitespace", "Please use\u{85}/skill:foo now", false),
+    ] {
+        let payload = json!({"id":case,"type":"prompt","message":message});
+        assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
+        wait_until(Duration::from_secs(5), || {
+            fs::read_to_string(&capture).is_ok_and(|text| text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).any(|frame| frame["id"] == case))
+        });
+        let received = fs::read_to_string(&capture)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|frame| frame["id"] == case)
+            .unwrap();
+        assert!(!received.to_string().contains(&token), "native routing must never receive the runner credential: {case}");
+        if native_skill {
+            assert_eq!(received, payload, "native inline skill routing must receive the exact original message: {case}");
+        } else {
+            assert!(
+                received["message"].as_str().unwrap().starts_with("\u{001e}ALINERY:"),
+                "ordinary input retains exact protected correlation: {case}"
+            );
+            fixture.assert_payload_delivered(id, &payload);
+        }
     }
 }
 
@@ -741,7 +1333,7 @@ fn rpc_write_delivers_800_kib_base64_image_through_core_client() {
         "images": [{"type": "image", "mimeType": "image/png", "data": data}],
     });
 
-    client.rpc_write_session(id, &payload).unwrap();
+    assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
     fixture.assert_payload_delivered(id, &payload);
 }
 
@@ -769,7 +1361,7 @@ fn rpc_write_delivers_four_maximum_images_and_text_through_core_client() {
         "images": images,
     });
 
-    client.rpc_write_session(id, &payload).unwrap();
+    assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
     fixture.assert_payload_delivered(id, &payload);
 }
 
@@ -816,7 +1408,7 @@ fn raw_control_request_one_byte_over_limit_preserves_live_session() {
     assert_eq!(status["process"]["state"], "alive", "{status}");
     let client = DaemonClient::connect_path(fixture.socket.clone()).unwrap();
     let payload = json!({"id": "after-rejection", "type": "prompt", "message": "Still usable."});
-    client.rpc_write_session(id, &payload).unwrap();
+    assert_eq!(client.rpc_write_session(id, &payload).unwrap(), alinery_core::DispatchOutcome::Written);
     fixture.assert_payload_delivered(id, &payload);
     assert_eq!(fs::read_to_string(&pid_path).unwrap(), original_pid);
     let meta = fixture.meta(id);
@@ -830,7 +1422,7 @@ fn pty_ops_on_rpc_are_wrong_transport() {
     let id = fixture.spawn_omp();
     for request in [
         json!({"op": "attach", "id": id, "attach_id": 1}),
-        json!({"op": "write", "id": id, "data": "x"}),
+        json!({"op": "write", "id": id, "data": "x", "dispatch_id":"wrong-transport-chunk"}),
         json!({"op": "resize", "id": id, "cols": 80, "rows": 24}),
     ] {
         let reply = fixture.rpc(request.clone());

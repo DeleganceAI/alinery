@@ -190,7 +190,7 @@ exec "$@"
 key = "omp"
 name = "OMP fixture"
 binary = "sh"
-args = ["-c", "while [ ! -f \"$ALINERY_REPO/release.$ALINERY_SESSION_ID\" ]; do sleep 0.02; done; printf 'producer drained\\n'"]
+args = ["-c", '''while [ ! -f "$ALINERY_REPO/native-ready.$ALINERY_SESSION_ID" ]; do if [ -f "$ALINERY_REPO/release.$ALINERY_SESSION_ID" ]; then printf 'producer drained\n'; exit 0; fi; sleep 0.02; done; printf '%s\n' '{"type":"ready"}'; for message in 1 2; do IFS= read -r line; printf '%s\n' "$line" >> "$ALINERY_REPO/seed.$ALINERY_SESSION_ID"; done; while [ ! -f "$ALINERY_REPO/release.$ALINERY_SESSION_ID" ]; do sleep 0.02; done; printf 'producer drained\n' ''']
 model_arg = []
 prompt_injection = "arg"
 adapter = "omp"
@@ -376,13 +376,98 @@ Read the assigned input and write the assigned target output.
         self.root.join(".alinery/tasks/task/artifacts").join(&assignment.relative_path)
     }
 
-    fn event(&self, session: &SessionMeta, token: &str, event: Value) -> Value {
+    fn event(&self, session: &SessionMeta, token: &str, mut event: Value) -> Value {
+        if event["type"] == "continuation_bind" && event.get("operation_id").is_none() {
+            let probe = self.event(session, token, json!({"type":"continuation_poll"}));
+            if probe.get("control").is_none() {
+                return probe;
+            }
+            event["operation_id"] = json!(uuid::Uuid::new_v4().to_string());
+            event["expected_capability_revision"] = probe["control"]["capability_revision"].clone();
+        }
         self.rpc(json!({"op": "event", "version": RUNNER_EVENT_PROTOCOL_VERSION,
             "session_id": session.id, "token": token, "event": event}))
     }
 
+    fn bind(&self, session: &SessionMeta, token: &str) -> Value {
+        // Completion fixtures release a real native-ready frame deliberately.
+        // Passive semantic tests keep initial Unknown until their explicit event.
+        fs::write(self.root.join(format!("native-ready.{}", session.id)), b"ready").unwrap();
+        let probe = self.event(session, token, json!({"type":"continuation_poll"}));
+        if probe.get("control").is_none() || probe["control"]["available"] == true {
+            return probe;
+        }
+        self.event(
+            session,
+            token,
+            json!({
+                "type":"continuation_bind",
+                "omp_session_id":"omp-session",
+                "groups":["primary_control","native_tools","admitted_queue","public_entries"],
+            }),
+        )
+    }
+
+    fn settle_seed(&self, session: &SessionMeta, token: &str, mut bound: Value) -> Value {
+        if bound.get("error").is_some() || bound.get("completion").is_some() {
+            return bound;
+        }
+        let settled = self
+            .root
+            .join(format!("seed-settled.{}.{}", session.id, bound["control"]["process_incarnation"].as_str().unwrap()));
+        if settled.exists() {
+            return bound;
+        }
+        let capture = self.root.join(format!("seed.{}", session.id));
+        let seed = || {
+            fs::read_to_string(&capture).ok().and_then(|text| {
+                text.lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|message| message["type"] == "prompt")
+            })
+        };
+        wait_until(Duration::from_secs(5), || seed().is_some());
+        let message = seed().unwrap();
+        let incarnation = bound["control"]["process_incarnation"].clone();
+        let dispatch_id = message["id"].clone();
+        let header = message["message"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("\u{001e}ALINERY:")
+            .unwrap()
+            .split_once('\u{001f}')
+            .unwrap()
+            .0;
+        let header: Value = serde_json::from_str(header).unwrap();
+        let proof = header["proof"].as_str().expect("captured opaque seed proof");
+        for event in [
+            json!({"type":"native_work_entered","process_incarnation":incarnation,"operation_id":"captured-seed","dispatch_id":dispatch_id,"dispatch_proof":proof}),
+            json!({"type":"native_dispatch_consumed","process_incarnation":incarnation,"dispatch_id":dispatch_id}),
+            json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"captured-seed"}),
+        ] {
+            bound = self.event(session, token, event);
+            if bound.get("error").is_some() {
+                return bound;
+            }
+        }
+        fs::write(settled, b"acknowledged exact seed settlement").unwrap();
+        bound
+    }
+
     fn complete(&self, session: &SessionMeta, token: &str) -> Value {
-        self.event(session, token, json!({"type": "phase_completed", "omp_session_id": "omp-session", "omp_turn_id": 7}))
+        let bound = self.settle_seed(session, token, self.bind(session, token));
+        if bound.get("error").is_some() || bound.get("completion").is_some() {
+            return bound;
+        }
+        self.event(
+            session,
+            token,
+            json!({
+                "type":"readiness_reported",
+                "process_incarnation":bound["control"]["process_incarnation"],
+                "expected_work_revision":bound["control"]["work_revision"],
+            }),
+        )
     }
 
     fn release(&self, session: &SessionMeta) {
@@ -619,6 +704,9 @@ adapter = "omp"
 "#,
     );
     fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    let bound = fixture.bind(&source, &token);
+    assert_eq!(bound["control"]["available"], true, "{bound}");
     let capture = fixture.root.join(format!("seed.{}", source.id));
     wait_until(Duration::from_secs(5), || {
         fs::read_to_string(&capture).is_ok_and(|text| {
@@ -642,7 +730,6 @@ adapter = "omp"
     // --nocapture supplies the actual RPC message for bounded semantic readback,
     // without turning the current English contract into a permanent snapshot.
     eprintln!("FRESH_GRAPH_RPC_PROMPT={message}");
-    let token = fixture.token_for(&source.id);
     assert_subset_handoff(&fixture, &source, &token, "papers/*.md", false);
     assert_eq!(fs::read(retained_path).unwrap(), retained);
     assert_eq!(retained, definition.as_bytes());
@@ -937,6 +1024,8 @@ fn completion_receipt_requires_authoritative_persistence_not_projection() {
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
     fs::write(fixture.output_path(&source), "complete").unwrap();
+    let settled = fixture.settle_seed(&source, &token, fixture.bind(&source, &token));
+    assert_eq!(settled["ok"], true, "{settled}");
     let state_path = fixture.root.join(".alinery/tasks/task/execution.json");
     let before = fs::read(&state_path).unwrap();
     let permissions = PermissionGuard::readonly(state_path.parent().unwrap());
@@ -1009,7 +1098,6 @@ fn structured_events_require_the_live_token_and_advance_exactly_once() {
     assert_eq!(fixture.state().state.executions.len(), 1);
     let checkpoint: Value = serde_json::from_slice(&fs::read(fixture.meta_path("task", &source)).unwrap()).unwrap();
     assert_eq!(checkpoint["semantic"]["omp_session_id"], "omp-session");
-    assert_eq!(checkpoint["semantic"]["omp_turn_id"], 7);
     for transient in ["event_token", "process_state", "agent_state", "playbook_state"] {
         assert!(checkpoint.get(transient).is_none());
     }
@@ -1032,8 +1120,18 @@ fn completion_ack_precedes_slow_auto_advance() {
     fixture.start("task", &source);
     let token = fixture.token_for(&source.id);
     fs::write(fixture.output_path(&source), "complete").unwrap();
+    let bound = fixture.settle_seed(&source, &token, fixture.bind(&source, &token));
+    assert_eq!(bound["ok"], true, "{bound}");
     let started = Instant::now();
-    accepted_receipt(&fixture.complete(&source, &token));
+    accepted_receipt(&fixture.event(
+        &source,
+        &token,
+        json!({
+            "type":"readiness_reported",
+            "process_incarnation":bound["control"]["process_incarnation"],
+            "expected_work_revision":bound["control"]["work_revision"],
+        }),
+    ));
     let elapsed = started.elapsed();
     assert!(elapsed < Duration::from_millis(250), "receipt acknowledgement exceeded runner deadline: {elapsed:?}");
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Finishing);
@@ -1053,13 +1151,16 @@ fn accepted_live_owner_is_not_handed_off_after_restart_without_exit_proof() {
     fixture.restart();
     let execution = fixture.execution(&source);
     assert_eq!(execution.receipt_id.as_deref(), Some(receipt.as_str()));
-    // Shutdown may prove the reap; otherwise restart must retain uncertain ownership.
+    // The fixture never releases the worker: explicit shutdown terminates it.
+    // A proven non-successful reap retains acceptance but cannot release a handoff.
+    // Otherwise restart must retain uncertain ownership.
     if execution.shutdown_confirmed {
-        assert_eq!(execution.lifecycle, ExecutionLifecycle::Completed);
+        assert_ne!(execution.exit_code, Some(0));
+        assert_eq!(execution.lifecycle, ExecutionLifecycle::Failed);
     } else {
         assert_eq!(execution.lifecycle, ExecutionLifecycle::Interrupted);
-        assert_eq!(fixture.state().state.executions.len(), 1);
     }
+    assert_eq!(fixture.state().state.executions.len(), 1, "terminated or uncertain producers cannot launch a successor");
 }
 
 #[test]
@@ -1224,7 +1325,61 @@ fn invalid_artifact_is_nonfatal_and_can_be_fixed_before_completion() {
 }
 
 #[test]
-fn human_locked_completion_is_nonfatal_and_cannot_be_granted_by_runner_socket() {
+fn continuation_requires_authenticated_current_capability() {
+    let fixture = Fixture::new();
+    let source = fixture.create_task(false);
+    fixture.start("task", &source);
+    let token = fixture.token_for(&source.id);
+    fs::write(fixture.output_path(&source), "reviewable").unwrap();
+    let capability = fixture.state().continuation[&source.execution_id].clone();
+    assert!(!capability.available);
+    let ready = |incarnation: &str| {
+        fixture.event(
+            &source,
+            &token,
+            json!({
+                "type":"readiness_reported",
+                "process_incarnation":incarnation,
+                "expected_work_revision":fixture.execution(&source).work_revision,
+            }),
+        )
+    };
+    assert_eq!(ready(&capability.process_incarnation)["completion"]["status"], "unavailable");
+    assert!(fixture.bind(&source, "foreign-token")["error"].is_string());
+    let partial = fixture.event(
+        &source,
+        &token,
+        json!({
+            "type":"continuation_bind","omp_session_id":"omp-session",
+            "groups":["primary_control","native_tools","public_entries"],
+        }),
+    );
+    assert_eq!(partial["control"]["available"], false);
+    assert_eq!(ready(&capability.process_incarnation)["completion"]["status"], "unavailable");
+    let bound = fixture.bind(&source, &token);
+    assert_eq!(bound["control"]["available"], true, "{bound}");
+    let settled = fixture.settle_seed(&source, &token, bound);
+    assert_eq!(settled["ok"], true, "{settled}");
+    assert!(ready("replaced-incarnation")["error"].is_string());
+    fixture.event(&source, &token, json!({"type":"waiting_for_approval","correlation_id":"real-approval"}));
+    assert_eq!(ready(&capability.process_incarnation)["completion"]["status"], "waiting");
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    fixture.event(&source, &token, json!({"type":"busy","correlation_id":"real-approval"}));
+    assert_eq!(ready(&capability.process_incarnation)["completion"]["status"], "ready");
+    assert!(fixture.execution(&source).receipt_id.is_none());
+    let revoked = fixture.event(
+        &source,
+        &token,
+        json!({
+            "type":"continuation_bind","omp_session_id":"omp-session","groups":[],
+        }),
+    );
+    assert_eq!(revoked["control"]["available"], false);
+    assert_eq!(ready(&capability.process_incarnation)["completion"]["status"], "unavailable");
+}
+
+#[test]
+fn manual_readiness_is_nonfatal_and_continuation_cannot_be_granted_by_runner_socket() {
     let fixture = Fixture::new();
     let source = fixture.create_task(false);
     fixture.start("task", &source);
@@ -1234,14 +1389,17 @@ fn human_locked_completion_is_nonfatal_and_cannot_be_granted_by_runner_socket() 
     assert_eq!(response["ok"], true, "{response}");
     assert!(matches!(
         serde_json::from_value::<CompletionOutcome>(response["completion"].clone()).unwrap(),
-        CompletionOutcome::HumanAuthorizationRequired
+        CompletionOutcome::Ready { .. }
     ));
-    let denied = fixture
-        .rpc(json!({"op":"allow_execution_completion", "request":{"task_slug":"task", "execution_id":source.execution_id, "session_id":source.id}, "token":token, "caller":"ui"}));
+    let denied = fixture.rpc(
+        json!({"op":"continue_execution", "request":{"task_slug":"task", "execution_id":source.execution_id, "session_id":source.id,
+            "process_incarnation":fixture.bind(&source, &token)["control"]["process_incarnation"],
+            "ready_revision":response["completion"]["ready_revision"]}, "token":token, "caller":"ui"}),
+    );
     assert!(denied["error"].is_string());
     assert!(fixture.execution(&source).receipt_id.is_none());
     assert_eq!(fixture.execution(&source).lifecycle, ExecutionLifecycle::Running);
-    assert_eq!(fixture.complete(&source, &token)["completion"]["status"], "human_authorization_required");
+    assert_eq!(fixture.complete(&source, &token)["completion"]["status"], "ready");
 }
 
 #[test]
@@ -1433,19 +1591,21 @@ fn chat_root_terminal_resume_stays_task_attached() {
 }
 
 #[test]
-fn chat_root_phase_completed_does_not_write_execution() {
+fn chat_root_readiness_cannot_write_execution() {
     let fixture = Fixture::new();
     let session = chat_root_create(&fixture, "omp").expect("empty-slug omp create");
     fixture.start("", &session);
     let token = fixture.token_for(&session.id);
     let reply = fixture.complete(&session, &token);
-    assert_eq!(reply["ok"], true, "root phase_completed must be passive, got {reply}");
-    assert!(reply.get("completion").is_none(), "root phase_completed must not be a completion: {reply}");
+    assert!(
+        reply["error"].is_string() || reply["completion"]["status"] == "unavailable",
+        "taskless continuation must not accept: {reply}"
+    );
     let tasks = fixture.root.join(".alinery/tasks");
     let wrote_execution = tasks.is_dir()
         && fs::read_dir(&tasks)
             .unwrap()
             .flatten()
             .any(|entry| entry.path().join("execution.json").is_file() || entry.file_name() == "execution.json");
-    assert!(!wrote_execution, "empty-slug phase_completed must not write an execution file");
+    assert!(!wrote_execution, "taskless readiness must not write an execution file");
 }

@@ -764,22 +764,12 @@ pub(crate) fn detach_session(state: State<'_, AppState>, id: String, attach_id: 
     }
 }
 
-// Frontend keystrokes -> pty. No-op if the session isn't registered yet.
+// Frontend keystrokes -> pty. Dispatch acknowledgments do not imply native consumption.
 #[tauri::command]
-pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
+pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String, dispatch_id: String) -> Result<alinery_core::DispatchOutcome, String> {
     let _repo = require_owned_active_repo(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    match daemon.write_session(&id, &data) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            state.clear_session_route(&id);
-            let own = state.daemon().ok_or_else(|| e.clone())?;
-            if own.socket_path == daemon.socket_path {
-                return Err(e);
-            }
-            own.write_session(&id, &data)
-        }
-    }
+    daemon.write_session(&id, &data, &dispatch_id)
 }
 
 #[tauri::command]
@@ -1049,7 +1039,7 @@ pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, St
 }
 
 #[tauri::command]
-pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<(), String> {
+pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<alinery_core::DispatchOutcome, String> {
     let _repo = require_owned_active_repo(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     off_main_thread("rpc write", move || daemon.rpc_write_session(&id, &payload)).await

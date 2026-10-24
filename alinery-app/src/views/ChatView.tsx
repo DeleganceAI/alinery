@@ -19,6 +19,7 @@ import {
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
+import { requireWritten } from "../chat/send";
 import type { ChatPrefs } from "../chat/visibility";
 import { emptyTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
@@ -348,7 +349,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     try {
       if (activity.turnActive) {
         if (!(await confirmStopAndSwitch(target))) return;
-        await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA) : ipc.chatRpcWrite(repo, id, abortTurnCommand())).catch(() => {});
+        requireWritten(await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA, crypto.randomUUID()) : ipc.chatRpcWrite(repo, id, abortTurnCommand())));
       }
       setHatchBusy(true);
       await ipc.chatRestate(repo, id, target);
@@ -458,7 +459,10 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
 
   function pickThinking(level: string) {
     if (!selected) return;
-    ipc.chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level)).catch((cause: unknown) => setError(String(cause)));
+    ipc
+      .chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level))
+      .then(requireWritten)
+      .catch((cause: unknown) => setError(String(cause)));
   }
 
   function startThreadIn(path: string) {

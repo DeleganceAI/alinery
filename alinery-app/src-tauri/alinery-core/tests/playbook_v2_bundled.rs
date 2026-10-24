@@ -1,17 +1,17 @@
 //! Boundary workers write real assigned files; all readiness, ownership, collection,
-//! permission and exit transitions below use the production execution engine.
+//! continuation and exit transitions below use the production execution engine.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
 use alinery_core::execution::{
-    accept_execution_completion, claim_execution_launch, confirm_execution_exit, grant_execution_completion, install_seed, new_execution_state, read_execution_state,
-    read_task_playbook, record_execution_spawn, reserve_execution, task_playbook_path, CompletionOutcome, CompletionPermission, ExecutionLifecycle, LaunchChoices,
-    TaskExecutionState,
+    claim_execution_launch, confirm_execution_exit, finalize_execution_continuation, install_seed, new_execution_state, read_execution_state, read_task_playbook,
+    record_execution_spawn, report_execution_ready, request_execution_continuation, reserve_execution, task_playbook_path, CompletionOutcome, ContinuationMode, ExecutionLifecycle,
+    LaunchChoices, TaskExecutionState,
 };
 use alinery_core::playbook::{ArtifactSelector, NormalizedPlaybook, PlaybookRef, PlaybookScope};
 use alinery_core::playbook_library::{load_playbook_catalog, resolve_playbook, PlaybookRoots};
-use alinery_core::playbook_scheduler::reconcile_graph;
+use alinery_core::playbook_scheduler::{assess_task, reconcile_graph, AssessmentStatus};
 
 const SLUG: &str = "trace";
 
@@ -120,21 +120,21 @@ impl Trace {
 
     fn accept(&mut self, id: &str) -> CompletionOutcome {
         let owner = self.state.executions[id].owner_session_id.clone();
-        accept_execution_completion(&self.repo, SLUG, &mut self.state, id, &owner).unwrap()
-    }
-
-    fn authorize(&mut self, id: &str) {
-        if self.state.executions[id].permission == CompletionPermission::Locked {
-            assert_eq!(self.accept(id), CompletionOutcome::HumanAuthorizationRequired);
-            assert_eq!(self.state.executions[id].lifecycle, ExecutionLifecycle::Running);
-            let owner = self.state.executions[id].owner_session_id.clone();
-            grant_execution_completion(&mut self.state, id, &owner).unwrap();
-        }
+        let revision = self.state.executions[id].work_revision;
+        report_execution_ready(&self.repo, SLUG, &self.definition, &mut self.state, id, &owner, revision).unwrap()
     }
 
     fn accepted(&mut self, id: &str) {
-        self.authorize(id);
-        let outcome = self.accept(id);
+        let outcome = match self.accept(id) {
+            CompletionOutcome::Ready { ready_revision } => {
+                assert_eq!(self.state.executions[id].lifecycle, ExecutionLifecycle::Running);
+                assert!(self.state.executions[id].receipt_id.is_none());
+                let owner = self.state.executions[id].owner_session_id.clone();
+                request_execution_continuation(&mut self.state, id, &owner, ready_revision).unwrap();
+                finalize_execution_continuation(&self.repo, SLUG, &self.definition, &mut self.state, id, &owner, ready_revision).unwrap()
+            }
+            outcome => outcome,
+        };
         assert!(
             matches!(outcome, CompletionOutcome::Accepted { .. }),
             "{} must accept its selected assigned publications: {outcome:?}",
@@ -288,10 +288,9 @@ impl Trace {
 
     fn pause_continuation(&mut self, step: &str, entry: &str) -> String {
         let id = self.one(step);
-        assert_eq!(self.state.executions[&id].permission, CompletionPermission::Locked);
+        assert_eq!(self.state.executions[&id].continuation_mode, ContinuationMode::Manual);
         self.start(&id);
         self.blocked(entry);
-        self.authorize(&id);
         assert!(matches!(self.accept(&id), CompletionOutcome::InvalidOutputs { .. }));
         self.blocked(entry);
         self.write(&id, "ticket.md", "Human requests another pass; carry the assigned prior evidence and changed direction.");
@@ -373,8 +372,8 @@ impl Trace {
         counts
     }
 
-    fn stop(&mut self, id: &str, outputs: &[(&str, &str)], permission: CompletionPermission) {
-        assert_eq!(self.state.executions[id].permission, permission);
+    fn stop(&mut self, id: &str, outputs: &[(&str, &str)], mode: ContinuationMode) {
+        assert_eq!(self.state.executions[id].continuation_mode, mode);
         let before = self.counts();
         self.start(id);
         for (path, text) in outputs {
@@ -383,6 +382,7 @@ impl Trace {
         self.accepted(id);
         self.tick();
         assert_eq!(self.counts(), before, "acceptance must not release work while the stopping owner lives");
+        assert_ne!(assess_task(&self.definition, &self.state).unwrap().status, AssessmentStatus::Complete);
         let published = self.outputs(id);
         assert_eq!(
             published.iter().map(|oid| self.state.occurrences[oid].logical_path.as_str()).collect::<BTreeSet<_>>(),
@@ -395,6 +395,8 @@ impl Trace {
             .iter()
             .all(|oid| alinery_core::execution::occurrence_deliverable(&self.state, &self.state.occurrences[oid])));
         assert!(self.state.executions.values().all(|execution| execution.lifecycle == ExecutionLifecycle::Completed));
+        let assessment = assess_task(&self.definition, &self.state).unwrap();
+        assert_eq!(assessment.status, AssessmentStatus::Complete, "{:?}", assessment.reasons);
     }
 }
 
@@ -410,7 +412,7 @@ fn linear_trace(key: &str, stages: &[(&str, &[&str], &[&str])], human: &[&str]) 
         for path in *inputs {
             trace.bound(&id, path, BTreeSet::from([occurrences[*path].clone()]));
         }
-        assert_eq!(trace.state.executions[&id].permission == CompletionPermission::Locked, human.contains(step));
+        assert_eq!(trace.state.executions[&id].continuation_mode == ContinuationMode::Manual, human.contains(step));
         trace.start(&id);
         trace.write_handoff(&id, 1);
         trace.accepted(&id);
@@ -553,7 +555,7 @@ fn bundled_solution_exploration_loops_and_compares() {
                 trace.start(&synthesis);
                 trace.write(&synthesis, "solution-comparison.md", "Compare the explored alternatives and tradeoffs.");
                 trace.write(&synthesis, "design-request.md", "Human feedback requests another alternative.");
-                assert_eq!(trace.accept(&synthesis), CompletionOutcome::HumanAuthorizationRequired);
+                assert!(matches!(trace.accept(&synthesis), CompletionOutcome::Ready { .. }));
                 trace.accepted(&synthesis);
                 trace.blocked("design");
                 trace.exit(&synthesis);
@@ -563,7 +565,7 @@ fn bundled_solution_exploration_loops_and_compares() {
                 trace.stop(
                     &synthesis,
                     &[("solution-comparison.md", "Compare alternatives without requiring a winner or further exploration.")],
-                    CompletionPermission::Locked,
+                    ContinuationMode::Manual,
                 );
             }
         }
@@ -620,7 +622,6 @@ fn bundled_bug_hunting_trace() {
     trace.bound(&solutions, "root-cause-analysis.md", trace.outputs(&rca));
     trace.start(&solutions);
     trace.write(&solutions, "resolution-options.md", "Two evidenced repair options; awaiting selection");
-    assert_eq!(trace.accept(&solutions), CompletionOutcome::HumanAuthorizationRequired);
     trace.blocked("design");
     trace.write(&solutions, "selected-fix.md", "Human selects the bounded correction");
     trace.accepted(&solutions);
@@ -652,7 +653,6 @@ fn single_result_trace(key: &str, step: &str, output: &str) {
     // An unrelated auxiliary report has no accepted occurrence and is not this assignment.
     trace.put("terminal-result.md", "Auxiliary terminal result");
     trace.start(&id);
-    trace.authorize(&id);
     assert!(matches!(trace.accept(&id), CompletionOutcome::InvalidOutputs { .. }));
     trace.write(&id, output, "Completed the assigned request with evidence");
     trace.accepted(&id);
@@ -805,7 +805,7 @@ fn brainstorm_pass(trace: &mut Trace, frame: &str, count: usize) -> BTreeSet<Str
     trace.bound(&shape, "cumulative-idea-wall.md", trace.outputs(&harvest));
     trace.finish_handoff(&shape, 1);
     let next = trace.one("define-next-actions");
-    assert_eq!(trace.state.executions[&next].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&next].continuation_mode, ContinuationMode::Manual);
     trace.bound(&next, "organized-options.md", trace.outputs(&shape));
     trace.start(&next);
     trace.write_handoff(&next, 1);
@@ -877,7 +877,7 @@ fn naming_pass(trace: &mut Trace, frame: &str) -> BTreeSet<String> {
     trace.bound(&summary, "candidate-universe.md", BTreeSet::from([trace.output(&universe, "candidate-universe.md")]));
     trace.finish_handoff(&summary, 1);
     let shortlist = trace.one("review-finalists-with-human");
-    assert_eq!(trace.state.executions[&shortlist].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&shortlist].continuation_mode, ContinuationMode::Manual);
     trace.bound(&shortlist, "ranking-wave-summary.md", trace.outputs(&summary));
     trace.start(&shortlist);
     trace.write(&shortlist, "approved-shortlist.md", "Human approved two actual finalists for diligence.");
@@ -888,14 +888,14 @@ fn naming_pass(trace: &mut Trace, frame: &str) -> BTreeSet<String> {
             "Research this approved finalist and report evidence and residual risks.",
         );
     }
-    assert_eq!(trace.accept(&shortlist), CompletionOutcome::HumanAuthorizationRequired);
+    assert!(matches!(trace.accept(&shortlist), CompletionOutcome::Ready { .. }));
     trace.blocked("research-one-finalist");
     trace.accepted(&shortlist);
     trace.blocked("research-one-finalist");
     trace.exit(&shortlist);
     let (diligence, decision) = trace.batch("research-one-finalist", 2, "decide-name-with-human", "diligence-results/*.md");
     trace.bound(&decision, "approved-shortlist.md", BTreeSet::from([trace.output(&shortlist, "approved-shortlist.md")]));
-    assert_eq!(trace.state.executions[&decision].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&decision].continuation_mode, ContinuationMode::Manual);
     trace.finish_handoff(&decision, 1);
     generators
         .iter()
@@ -963,7 +963,7 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     trace.finish_handoff(method, 1);
     trace.step("develop-protocol", 1);
     let validation = trace.one("validate-and-approve-search");
-    assert_eq!(trace.state.executions[&validation].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&validation].continuation_mode, ContinuationMode::Manual);
     trace.start(&validation);
     trace.write_handoff(&validation, 2);
     trace.accepted(&validation);
@@ -980,7 +980,7 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
         ["title-a-complete.md", "title-b-complete.md"],
         "resolve-title-abstract-wave",
     );
-    assert_eq!(trace.state.executions[&title].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&title].continuation_mode, ContinuationMode::Manual);
     trace.finish_handoff(&title, 1);
     trace.step("retrieve-full-text", 2);
     let (full_text, full_raw) = independent_lanes(
@@ -994,7 +994,7 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     trace.bound(&full_text, "candidate-ledger.md", BTreeSet::from([trace.output(&screening, "candidate-ledger.md")]));
     trace.finish_handoff(&full_text, 1);
     let audit = trace.one("audit-and-freeze-corpus");
-    assert_eq!(trace.state.executions[&audit].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&audit].continuation_mode, ContinuationMode::Manual);
     trace.bound(&audit, "eligibility-ledger.md", BTreeSet::from([trace.output(&full_text, "eligibility-ledger.md")]));
     trace.finish_handoff(&audit, 1);
     let extraction = trace.one("prepare-and-pilot-extraction");
@@ -1027,7 +1027,7 @@ fn evidence_pass(trace: &mut Trace, method: &str) -> BTreeSet<String> {
     trace.blocked("publication-audit");
     trace.exit(&draft);
     let publication = trace.one("publication-audit");
-    assert_eq!(trace.state.executions[&publication].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&publication].continuation_mode, ContinuationMode::Manual);
     for output in &trace.state.executions[&draft].outputs {
         trace.bound(&publication, &output.selector, BTreeSet::from([trace.output(&draft, &output.selector)]));
     }
@@ -1056,26 +1056,25 @@ fn bundled_systematic_evidence_review_trace() {
 fn bundled_spec_loop_stays_inside_slices() {
     let mut trace = Trace::new("spec");
     let research = trace.one("research");
-    assert_eq!(trace.state.executions[&research].permission, CompletionPermission::Automatic);
+    assert_eq!(trace.state.executions[&research].continuation_mode, ContinuationMode::Automatic);
     for step in ["specify", "design", "plan-slices", "next-slice", "implement", "review", "validate"] {
         trace.blocked(step);
     }
     trace.finish_handoff(&research, 1);
 
     let specify = trace.one("specify");
-    assert_eq!(trace.state.executions[&specify].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&specify].continuation_mode, ContinuationMode::Manual);
     trace.finish_handoff(&specify, 1);
     let design = trace.one("design");
-    assert_eq!(trace.state.executions[&design].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&design].continuation_mode, ContinuationMode::Manual);
     trace.finish_handoff(&design, 1);
     let plan = trace.one("plan-slices");
-    assert_eq!(trace.state.executions[&plan].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&plan].continuation_mode, ContinuationMode::Manual);
     // tasks.md order is ledger, then telephony-bind. The ledger names ledger.
     // The slice family is not an input: collection order is not slice order.
     trace.start(&plan);
     trace.write(&plan, "tasks.md", "slice id: ledger\nslice id: telephony-bind\n");
     trace.write(&plan, "slice-telephony-bind.md", "id: telephony-bind\n");
-    trace.authorize(&plan);
     assert!(
         matches!(trace.accept(&plan), CompletionOutcome::InvalidOutputs { .. }),
         "plan-slices must not complete without the required first ledger"
@@ -1091,7 +1090,7 @@ fn bundled_spec_loop_stays_inside_slices() {
     trace.exit(&plan);
 
     let next = trace.one("next-slice");
-    assert_eq!(trace.state.executions[&next].permission, CompletionPermission::Automatic);
+    assert_eq!(trace.state.executions[&next].continuation_mode, ContinuationMode::Automatic);
     trace.bound(&next, "next-slice.md", BTreeSet::from([trace.output(&plan, "next-slice.md")]));
     trace.bound(&next, "tasks.md", BTreeSet::from([trace.output(&plan, "tasks.md")]));
     assert!(!trace.state.executions[&next].candidate.inputs.values().flatten().any(|id| id == &trace.seed));
@@ -1111,7 +1110,7 @@ fn bundled_spec_loop_stays_inside_slices() {
     trace.exit(&review);
 
     let validate = trace.one("validate");
-    assert_eq!(trace.state.executions[&validate].permission, CompletionPermission::Automatic);
+    assert_eq!(trace.state.executions[&validate].continuation_mode, ContinuationMode::Automatic);
     trace.start(&validate);
     // Binding only. The prompt, not the engine, prefers a replacement body over the tasks.md entry.
     trace.write(
@@ -1175,7 +1174,7 @@ fn bundled_academic_survey_stops_without_next_ticket() {
             "review-stopping-report.md",
             "Human concludes the survey after reviewing the draft and evidence; coverage and access limitations remain documented.",
         )],
-        CompletionPermission::Automatic,
+        ContinuationMode::Automatic,
     );
 }
 
@@ -1184,7 +1183,7 @@ fn bundled_academic_survey_continuation_uses_fresh_ticket() {
     let mut trace = Trace::new("academic-survey");
     let continuation = trace.reach("continue-review");
     let before = trace.counts();
-    assert_eq!(trace.state.executions[&continuation].permission, CompletionPermission::Automatic);
+    assert_eq!(trace.state.executions[&continuation].continuation_mode, ContinuationMode::Automatic);
     trace.start(&continuation);
     trace.write(
         &continuation,
@@ -1224,7 +1223,7 @@ fn bundled_natural_planning_brainstorm_stops_without_next_ticket() {
             "brainstorm-stopping-report.md",
             "Human closes the brainstorm with the agreed next actions, remaining uncertainties and evidence from the organized options.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
     assert_eq!(trace.counts()["frame-the-challenge"], 1);
 }
@@ -1240,7 +1239,7 @@ fn bundled_systematic_naming_stops_without_next_ticket() {
             "naming-stopping-report.md",
             "Human concludes the naming campaign after the naming decision; selected name and residual diligence risks are recorded.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
     assert_eq!(trace.counts()["frame-naming-brief"], 1);
 }
@@ -1256,7 +1255,7 @@ fn bundled_systematic_evidence_review_stops_without_next_ticket() {
             "evidence-review-stopping-report.md",
             "Human concludes the review after publication audit with the documented scientific and reporting limitations; no new search wave is requested.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
     assert_eq!(trace.counts()["select-review-method"], 1);
 }
@@ -1266,7 +1265,7 @@ fn bundled_spec_validation_stops_without_next_ticket() {
     let mut trace = Trace::new("spec");
     trace.terminal_declaration("validate", "validation-report.md");
     let stop = trace.reach("validate");
-    trace.stop(&stop, &[("validation-report.md", "GO: human-approved terminal requirements/design comparison records covered requirements, tested boundaries and unrun checks; no pending manual check is claimed complete.")], CompletionPermission::Automatic);
+    trace.stop(&stop, &[("validation-report.md", "GO: human-approved terminal requirements/design comparison records covered requirements, tested boundaries and unrun checks; no pending manual check is claimed complete.")], ContinuationMode::Automatic);
     for step in ["research", "specify", "design", "plan-slices", "next-slice"] {
         assert_eq!(trace.counts()[step], 1);
     }
@@ -1283,7 +1282,7 @@ fn bundled_systematic_naming_declined_shortlist_stops_without_diligence() {
             "shortlist-disposition.md",
             "Human reviewed the generated, analyzed and ranked candidates and explicitly closes without approving a shortlist; no diligence or final name is requested.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
 }
 
@@ -1297,7 +1296,7 @@ fn bundled_bug_hunting_no_fix_stops_without_design() {
             "resolution-options.md",
             "Root-cause evidence supports the agreed no-code-change disposition; the human explicitly concludes without selecting a fix.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
 }
 
@@ -1305,7 +1304,7 @@ fn bundled_bug_hunting_no_fix_stops_without_design() {
 fn bundled_systematic_naming_zero_survivors_stops_before_ranking() {
     let mut trace = Trace::new("systematic-naming");
     let stop = trace.reach("assemble-candidate-universe");
-    trace.stop(&stop, &[("candidate-universe.md", "All requested generation batches and analyses are accounted for; every candidate is rejected under the agreed criteria. The zero-survivor outcome is concluded, not an unfinished search.")], CompletionPermission::Automatic);
+    trace.stop(&stop, &[("candidate-universe.md", "All requested generation batches and analyses are accounted for; every candidate is rejected under the agreed criteria. The zero-survivor outcome is concluded, not an unfinished search.")], ContinuationMode::Automatic);
 }
 
 #[test]
@@ -1324,7 +1323,7 @@ fn bundled_systematic_evidence_review_zero_candidates_stops_before_screening() {
                 "Concluded screening roster: zero candidates. No missing search report is treated as an empty result.",
             ),
         ],
-        CompletionPermission::Automatic,
+        ContinuationMode::Automatic,
     );
 }
 
@@ -1338,13 +1337,13 @@ fn bundled_systematic_evidence_review_no_title_advances_stops_before_retrieval()
             "title-abstract-screening-summary.md",
             "Both independent title-screen lanes are complete; disagreements and required human review are resolved. No candidate advances to full text.",
         )],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
 }
 
 fn all_excluded_corpus_audit(trace: &mut Trace) -> String {
     let resolver = trace.reach("resolve-full-text-wave");
-    assert_eq!(trace.state.executions[&resolver].permission, CompletionPermission::Locked);
+    assert_eq!(trace.state.executions[&resolver].continuation_mode, ContinuationMode::Manual);
     let before = trace.counts();
     trace.start(&resolver);
     for path in ["eligibility-decisions.md", "eligibility-ledger.md", "corpus-audit-request.md"] {
@@ -1397,7 +1396,7 @@ fn bundled_systematic_evidence_review_zero_studies_closes_at_corpus_audit() {
                 "All candidates, reports, exclusions and human decisions are reconciled; included studies: zero.",
             ),
         ],
-        CompletionPermission::Locked,
+        ContinuationMode::Manual,
     );
 }
 
@@ -1411,7 +1410,7 @@ fn bundled_academic_survey_zero_requests_stops_after_search_plan() {
             "search-plan.md",
             "The agreed question and search boundary admit no useful requests; human direction concludes this no-request outcome without claiming a completed survey.",
         )],
-        CompletionPermission::Automatic,
+        ContinuationMode::Automatic,
     );
 }
 
@@ -1425,6 +1424,6 @@ fn bundled_academic_survey_zero_sources_stops_before_reading() {
             "reading-wave.md",
             "All real searches and their complete reports are reconciled; no new sources need evaluation. This concluded zero-source outcome is not a completed survey draft.",
         )],
-        CompletionPermission::Automatic,
+        ContinuationMode::Automatic,
     );
 }

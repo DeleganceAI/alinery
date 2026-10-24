@@ -58,6 +58,9 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
       vi.fn(
         async (): Promise<TaskExecutionReply> => ({
           live: { status: "available" },
+          assessment: { status: "active", reasons: [] },
+          executions: {},
+          continuation: {},
           state: {
             version: 2,
             revision: 0,

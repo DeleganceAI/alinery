@@ -1,9 +1,305 @@
 //! Pure occurrence-driven graph reconciliation. The caller reserves the entire returned
 //! batch and reconciles again in the same transaction before launching any owner.
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Deref;
 
 use crate::execution::{occurrence_deliverable, ArtifactCollection, ContextCause, ExecutionCandidate, ExecutionContext, ExecutionLifecycle, TaskExecutionState};
 use crate::playbook::{ArtifactSelector, InputMode, NormalizedPlaybook, NormalizedStep};
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ValidatedPublication {
+    pub selector: String,
+    pub logical_path: String,
+    pub relative_path: String,
+    pub discriminator: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Terminality {
+    Terminal,
+    Nonterminal,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ReadyAssessmentKey {
+    pub destinations: Vec<String>,
+    pub terminality: Terminality,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ExecutionDestination {
+    pub step_key: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AssessmentReason {
+    pub code: String,
+    pub message: String,
+    pub execution_id: Option<String>,
+    pub context_id: Option<String>,
+    pub collection_id: Option<String>,
+    pub selector: Option<String>,
+}
+
+impl AssessmentReason {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            execution_id: None,
+            context_id: None,
+            collection_id: None,
+            selector: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ExecutionAssessment {
+    pub destinations: Vec<ExecutionDestination>,
+    pub terminality: Terminality,
+    pub reasons: Vec<AssessmentReason>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssessmentStatus {
+    Active,
+    Waiting,
+    Blocked,
+    Complete,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct TaskAssessment {
+    pub status: AssessmentStatus,
+    pub reasons: Vec<AssessmentReason>,
+}
+
+#[derive(Default)]
+struct ResolutionTrace {
+    held: Vec<HeldBinding>,
+}
+
+struct HeldBinding {
+    step_key: String,
+    inputs: BTreeSet<String>,
+    reason: AssessmentReason,
+    incompatible: bool,
+}
+
+fn settled(record: &crate::execution::ExecutionRecord) -> bool {
+    record.lifecycle == ExecutionLifecycle::Completed && record.shutdown_confirmed && record.receipt_id.is_some()
+}
+
+// Reconciliation writes in place; observation borrows the prepared graph and
+// copies only when a not-yet-reconciled exit requires derived routing changes.
+enum WorkingState<'a> {
+    Reconcile(&'a mut TaskExecutionState),
+    Observe {
+        source: &'a TaskExecutionState,
+        derived: Option<Box<TaskExecutionState>>,
+    },
+}
+
+impl Deref for WorkingState<'_> {
+    type Target = TaskExecutionState;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Reconcile(state) => state,
+            Self::Observe { source, derived } => derived.as_deref().unwrap_or(source),
+        }
+    }
+}
+
+impl WorkingState<'_> {
+    fn to_mut(&mut self) -> &mut TaskExecutionState {
+        match self {
+            Self::Reconcile(state) => state,
+            Self::Observe { source, derived } => derived.get_or_insert_with(|| Box::new((**source).clone())).as_mut(),
+        }
+    }
+}
+
+// Only an actual, successfully settled local producer can prove omission.
+// A declaration, an older pass, or an unrepresented collection member cannot.
+fn omitted(state: &TaskExecutionState, context: &str, path: &str) -> bool {
+    let mut next = Some(context);
+    while let Some(id) = next {
+        let producers: Vec<_> = state
+            .executions
+            .values()
+            .filter(|e| !e.candidate.manual && e.candidate.context_id == id && e.outputs.iter().any(|o| ArtifactSelector::parse(&o.selector).is_ok_and(|s| s.matches(path))))
+            .collect();
+        if !producers.is_empty() {
+            return producers.iter().all(|e| {
+                settled(e)
+                    && !state
+                        .occurrences
+                        .values()
+                        .any(|o| o.producer_execution_id.as_deref() == Some(&e.id) && o.logical_path == path)
+            });
+        }
+        let Some(current) = state.contexts.get(id) else { return false };
+        if matches!(current.cause, ContextCause::Loop { .. }) {
+            return false;
+        }
+        next = current.parent_id.as_deref();
+    }
+    false
+}
+
+struct Exhaustion<'a> {
+    definition: &'a NormalizedPlaybook,
+    state: &'a TaskExecutionState,
+    graph: &'a Graph,
+    provenance: &'a Provenance,
+    proven: BTreeMap<String, BTreeSet<(String, u8)>>,
+}
+
+impl Exhaustion<'_> {
+    // Solve a monotone least fixed point once per context. Cycles start unknown
+    // and become exhausted only when grounded omission reaches them.
+    fn input(&mut self, context: &str, path: &str, mode: InputMode) -> Result<bool, String> {
+        if !self.proven.contains_key(context) {
+            let inputs: BTreeMap<_, _> = self
+                .definition
+                .step
+                .iter()
+                .flat_map(|step| &step.inputs)
+                .map(|input| ((input.path.clone(), input.mode as u8), input.mode))
+                .collect();
+            let mut proven = BTreeSet::new();
+            let mut rules = Vec::new();
+            for ((path, mode_key), mode) in inputs {
+                match self.grounded(context, &path, mode)? {
+                    Some(true) => {
+                        proven.insert((path, mode_key));
+                    }
+                    Some(false) => {}
+                    None => {
+                        let selector = ArtifactSelector::parse(&path)?;
+                        let producers: Vec<Vec<_>> = self
+                            .definition
+                            .step
+                            .iter()
+                            .filter(|step| {
+                                step.outputs
+                                    .iter()
+                                    .any(|output| ArtifactSelector::parse(&output.path).is_ok_and(|output| selector.overlaps(&output)))
+                            })
+                            .map(|step| step.inputs.iter().map(|input| (input.path.clone(), input.mode as u8)).collect())
+                            .collect();
+                        if !producers.is_empty() {
+                            rules.push(((path, mode_key), producers));
+                        }
+                    }
+                }
+            }
+            loop {
+                let before = proven.len();
+                for (key, producers) in &rules {
+                    if !proven.contains(key) && producers.iter().all(|inputs| inputs.iter().any(|input| proven.contains(input))) {
+                        proven.insert(key.clone());
+                    }
+                }
+                if before == proven.len() {
+                    break;
+                }
+            }
+            self.proven.insert(context.into(), proven);
+        }
+        Ok(self.proven[context].contains(&(path.into(), mode as u8)))
+    }
+
+    fn grounded(&self, context: &str, path: &str, mode: InputMode) -> Result<Option<bool>, String> {
+        let selector = ArtifactSelector::parse(path)?;
+        if mode == InputMode::Single {
+            if !visible_singles(self.state, self.graph, self.provenance, context, path)?.ids.is_empty() {
+                return Ok(Some(false));
+            }
+            if omitted(self.state, context, path) {
+                return Ok(Some(true));
+            }
+            let mut next = Some(context);
+            while let Some(id) = next {
+                if local_output(self.state, id, path) {
+                    return Ok(Some(false));
+                }
+                let current = self.state.contexts.get(id).ok_or("missing context")?;
+                if matches!(current.cause, ContextCause::Loop { .. }) {
+                    break;
+                }
+                next = current.parent_id.as_deref();
+            }
+        } else {
+            let mut contexts = BTreeSet::new();
+            let mut next = Some(context);
+            while let Some(id) = next {
+                if !contexts.insert(id) {
+                    return Err(format!("cycle in context ancestry at {id}"));
+                }
+                let current = self.state.contexts.get(id).ok_or("missing collection context")?;
+                if matches!(current.cause, ContextCause::Loop { .. }) {
+                    break;
+                }
+                next = current.parent_id.as_deref();
+            }
+            let mut empty = false;
+            for collection in self.state.collections.values().filter(|c| contexts.contains(c.context_id.as_str())) {
+                if mode == InputMode::Each && collection.source_collection_id.is_some() {
+                    continue;
+                }
+                if !selector.overlaps(&ArtifactSelector::parse(&collection.selector)?) {
+                    continue;
+                }
+                if !collection.membership_closed || collection.member_occurrence_ids.iter().any(|id| selector.matches(&self.state.occurrences[id].logical_path)) {
+                    return Ok(Some(false));
+                }
+                empty = true;
+            }
+            if empty {
+                return Ok(Some(true));
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn trace_binding(
+    trace: &mut Option<&mut ResolutionTrace>,
+    step: &str,
+    context: &str,
+    state: &TaskExecutionState,
+    pools: &RoleOccurrences,
+    fixed: &[String],
+    bindings: &[BTreeMap<String, Vec<String>>],
+) {
+    let Some(trace) = trace.as_deref_mut() else { return };
+    if !bindings.is_empty() || pools.iter().any(|(path, ids)| ids.is_empty() && omitted(state, context, path)) {
+        return;
+    }
+    let inputs: BTreeSet<_> = pools.values().flatten().chain(fixed).cloned().collect();
+    if inputs.is_empty() || !inputs.iter().any(|id| state.occurrences[id].context_id == context) && fixed.is_empty() {
+        return;
+    }
+    let missing = pools.iter().find(|(_, ids)| ids.is_empty());
+    let mut reason = AssessmentReason::new(
+        if missing.is_some() { "missing_companion" } else { "incompatible_inputs" },
+        format!("{step} has contributing inputs but no complete compatible binding"),
+    );
+    reason.context_id = Some(context.into());
+    reason.selector = missing.map(|(path, _)| path.clone());
+    trace.held.push(HeldBinding {
+        step_key: step.into(),
+        inputs,
+        reason,
+        incompatible: missing.is_none(),
+    });
+}
 
 struct Graph {
     producers: Vec<(ArtifactSelector, String)>,
@@ -432,7 +728,13 @@ fn entry_roles(state: &TaskExecutionState, graph: &Graph, component: &BTreeSet<S
     roles
 }
 
-fn route_occurrences(state: &mut TaskExecutionState, graph: &Graph, provenance: &Provenance) -> Result<(), String> {
+fn route_occurrences(
+    definition: &NormalizedPlaybook,
+    state: &mut WorkingState<'_>,
+    graph: &Graph,
+    provenance: &Provenance,
+    trace: &mut Option<&mut ResolutionTrace>,
+) -> Result<(), String> {
     let mut triggers: BTreeMap<(usize, String), RoleOccurrences> = BTreeMap::new();
     let delivered: Vec<_> = state.occurrences.values().filter(|o| occurrence_deliverable(state, o)).cloned().collect();
     for occurrence in delivered {
@@ -448,9 +750,10 @@ fn route_occurrences(state: &mut TaskExecutionState, graph: &Graph, provenance: 
                 .or_default()
                 .insert(occurrence.id.clone());
         } else {
-            let context = state.contexts.get_mut(&occurrence.context_id).ok_or("occurrence has unknown context")?;
-            let ids = context.bindings.entry(occurrence.logical_path).or_default();
-            if !ids.contains(&occurrence.id) {
+            let context = state.contexts.get(&occurrence.context_id).ok_or("occurrence has unknown context")?;
+            if !context.bindings.get(&occurrence.logical_path).is_some_and(|ids| ids.contains(&occurrence.id)) {
+                let context = state.to_mut().contexts.get_mut(&occurrence.context_id).ok_or("occurrence has unknown context")?;
+                let ids = context.bindings.entry(occurrence.logical_path).or_default();
                 ids.push(occurrence.id);
                 ids.sort();
             }
@@ -461,18 +764,38 @@ fn route_occurrences(state: &mut TaskExecutionState, graph: &Graph, provenance: 
             pools.entry(role.clone()).or_default();
         }
         let consumer = graph.components[index].iter().cloned().collect::<Vec<_>>().join(", ");
-        for bindings in enumerate_singles(&consumer, state, provenance, &pools, &[], &BTreeMap::new())? {
+        let bindings = match enumerate_singles(&consumer, state, provenance, &pools, &[], &BTreeMap::new()) {
+            Ok(bindings) => bindings,
+            // Ambiguity blocks routing, not publication of the source evidence.
+            // Assessment records the incompatible pools below; reconciliation
+            // retains its full producer/occurrence diagnostic.
+            Err(error) if trace.is_none() => return Err(error),
+            Err(_) => Vec::new(),
+        };
+        for step in definition
+            .step
+            .iter()
+            .filter(|step| graph.components[index].contains(&step.key) && step.inputs.iter().any(|input| provenance.entries[index].contains(&input.path)))
+        {
+            trace_binding(trace, &step.key, &parent, state, &pools, &[], &bindings);
+        }
+        for bindings in bindings {
             let trigger_occurrences = bindings.values().flatten().cloned().collect::<BTreeSet<_>>();
             let id = identity("loop", &(&graph.components[index], &trigger_occurrences))?;
-            state.contexts.entry(id.clone()).or_insert(ExecutionContext {
-                id,
-                parent_id: Some(parent.clone()),
-                cause: ContextCause::Loop {
-                    component_steps: graph.components[index].clone(),
-                    trigger_occurrences,
-                },
-                bindings,
-            });
+            if !state.contexts.contains_key(&id) {
+                state.to_mut().contexts.insert(
+                    id.clone(),
+                    ExecutionContext {
+                        id,
+                        parent_id: Some(parent.clone()),
+                        cause: ContextCause::Loop {
+                            component_steps: graph.components[index].clone(),
+                            trigger_occurrences,
+                        },
+                        bindings,
+                    },
+                );
+            }
         }
     }
     Ok(())
@@ -513,7 +836,7 @@ fn initiating_each_selectors(
     paths.into_iter().map(|path| ArtifactSelector::parse(path)).collect()
 }
 
-fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecutionState) -> Result<(), String> {
+fn configure_collections(definition: &NormalizedPlaybook, state: &mut WorkingState<'_>) -> Result<(), String> {
     // Local collections retain unknown cardinality. Derived families aggregate
     // one source collection only; they never flatten child collections.
     let mut additions = Vec::new();
@@ -556,7 +879,15 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
         }
     }
     for addition in additions {
+        if state
+            .collections
+            .get(&addition.id)
+            .is_some_and(|c| addition.expected_execution_ids.is_subset(&c.expected_execution_ids))
+        {
+            continue;
+        }
         state
+            .to_mut()
             .collections
             .entry(addition.id.clone())
             .and_modify(|collection| {
@@ -581,9 +912,19 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
         .collect();
     for (id, members) in memberships {
         for member in &members {
-            state.occurrences.get_mut(member).ok_or("missing collection occurrence")?.collection_ids.insert(id.clone());
+            if !state.occurrences.get(member).ok_or("missing collection occurrence")?.collection_ids.contains(&id) {
+                state
+                    .to_mut()
+                    .occurrences
+                    .get_mut(member)
+                    .ok_or("missing collection occurrence")?
+                    .collection_ids
+                    .insert(id.clone());
+            }
         }
-        state.collections.get_mut(&id).ok_or("missing collection")?.member_occurrence_ids = members;
+        if state.collections.get(&id).ok_or("missing collection")?.member_occurrence_ids != members {
+            state.to_mut().collections.get_mut(&id).ok_or("missing collection")?.member_occurrence_ids = members;
+        }
     }
     // A family can depend on a family recorded earlier in this same transaction.
     // Closure is monotone, so a fixed point handles arbitrary nesting/order.
@@ -634,13 +975,20 @@ fn configure_collections(definition: &NormalizedPlaybook, state: &mut TaskExecut
             break;
         }
         for id in closable {
-            state.collections.get_mut(&id).ok_or("missing closing collection")?.membership_closed = true;
+            state.to_mut().collections.get_mut(&id).ok_or("missing closing collection")?.membership_closed = true;
         }
     }
     Ok(())
 }
 
-fn bind_singles(step: &NormalizedStep, state: &TaskExecutionState, graph: &Graph, provenance: &Provenance, base: ExecutionCandidate) -> Result<Vec<ExecutionCandidate>, String> {
+fn bind_singles(
+    step: &NormalizedStep,
+    state: &TaskExecutionState,
+    graph: &Graph,
+    provenance: &Provenance,
+    base: ExecutionCandidate,
+    trace: &mut Option<&mut ResolutionTrace>,
+) -> Result<Vec<ExecutionCandidate>, String> {
     let fixed: Vec<_> = base.inputs.values().flatten().cloned().collect();
     let mut pools = BTreeMap::new();
     let mut governing_members = BTreeMap::new();
@@ -662,7 +1010,13 @@ fn bind_singles(step: &NormalizedStep, state: &TaskExecutionState, graph: &Graph
         }
         pools.insert(input.path.clone(), resolved.ids);
     }
-    enumerate_singles(&step.key, state, provenance, &pools, &fixed, &governing_members).map(|maps| {
+    let maps = match enumerate_singles(&step.key, state, provenance, &pools, &fixed, &governing_members) {
+        Ok(maps) => maps,
+        Err(error) if trace.is_none() => return Err(error),
+        Err(_) => Vec::new(),
+    };
+    trace_binding(trace, &step.key, &base.context_id, state, &pools, &fixed, &maps);
+    Ok({
         maps.into_iter()
             .map(|inputs| {
                 let mut binding = base.clone();
@@ -690,12 +1044,16 @@ fn candidate(step: &NormalizedStep, context: &str) -> ExecutionCandidate {
 /// Reserve every candidate, then call again before committing or launching: this
 /// records the entire expected worker set even when capacity allows only one owner.
 pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutionState) -> Result<Vec<ExecutionCandidate>, String> {
+    resolve_graph(definition, &mut WorkingState::Reconcile(state), None)
+}
+
+fn resolve_graph(definition: &NormalizedPlaybook, state: &mut WorkingState<'_>, mut trace: Option<&mut ResolutionTrace>) -> Result<Vec<ExecutionCandidate>, String> {
     if state.creation != "ready" {
         return Ok(Vec::new());
     }
     let graph = Graph::new(definition)?;
     let provenance = Provenance::new(state, &graph)?;
-    route_occurrences(state, &graph, &provenance)?;
+    route_occurrences(definition, state, &graph, &provenance, &mut trace)?;
     configure_collections(definition, state)?;
     let mut candidates = BTreeMap::new();
     for step in &definition.step {
@@ -704,13 +1062,13 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
             let collections: Vec<_> = state
                 .collections
                 .values()
-                .filter(|collection| collection.membership_closed && ArtifactSelector::parse(&collection.selector).is_ok_and(|s| selector.overlaps(&s)))
+                .filter(|collection| (collection.membership_closed || trace.is_some()) && ArtifactSelector::parse(&collection.selector).is_ok_and(|s| selector.overlaps(&s)))
                 .cloned()
                 .collect();
             for collection in collections {
                 if input.mode == InputMode::Each {
                     // Local producer batches preserve nested member ancestry.
-                    if collection.source_collection_id.is_some() {
+                    if collection.source_collection_id.is_some() || !collection.membership_closed {
                         continue;
                     }
                     for member in &collection.member_occurrence_ids {
@@ -719,20 +1077,23 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
                             continue;
                         }
                         let id = identity("member", &(&collection.id, member))?;
-                        state.contexts.entry(id.clone()).or_insert(ExecutionContext {
-                            id: id.clone(),
-                            parent_id: Some(collection.context_id.clone()),
-                            cause: ContextCause::Member {
-                                collection_id: collection.id.clone(),
-                                occurrence_id: member.clone(),
-                            },
-                            bindings: BTreeMap::from([(occurrence.logical_path.clone(), vec![member.clone()])]),
-                        });
+                        if !state.contexts.contains_key(&id) {
+                            let context = ExecutionContext {
+                                id: id.clone(),
+                                parent_id: Some(collection.context_id.clone()),
+                                cause: ContextCause::Member {
+                                    collection_id: collection.id.clone(),
+                                    occurrence_id: member.clone(),
+                                },
+                                bindings: BTreeMap::from([(occurrence.logical_path.clone(), vec![member.clone()])]),
+                            };
+                            state.to_mut().contexts.insert(id.clone(), context);
+                        }
                         let mut binding = candidate(step, &id);
                         binding.each_collection_id = Some(collection.id.clone());
                         binding.each_member_id = Some(member.clone());
                         binding.inputs.insert(input.path.clone(), vec![member.clone()]);
-                        for binding in bind_singles(step, state, &graph, &provenance, binding)? {
+                        for binding in bind_singles(step, state, &graph, &provenance, binding, &mut trace)? {
                             candidates.insert(binding.binding_key()?, binding);
                         }
                     }
@@ -758,8 +1119,21 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
                     let mut binding = candidate(step, &collection.context_id);
                     binding.complete_collection_id = Some(collection.id.clone());
                     binding.inputs.insert(input.path.clone(), members);
-                    for binding in bind_singles(step, state, &graph, &provenance, binding)? {
-                        candidates.insert(binding.binding_key()?, binding);
+                    for binding in bind_singles(step, state, &graph, &provenance, binding, &mut trace)? {
+                        if collection.membership_closed {
+                            candidates.insert(binding.binding_key()?, binding);
+                        } else if let Some(trace) = trace.as_deref_mut() {
+                            let mut reason = AssessmentReason::new("open_collection", "Destination awaits the remaining collection obligations");
+                            reason.context_id = Some(collection.context_id.clone());
+                            reason.collection_id = Some(collection.id.clone());
+                            reason.selector = Some(input.path.clone());
+                            trace.held.push(HeldBinding {
+                                step_key: step.key.clone(),
+                                inputs: binding.inputs.values().flatten().cloned().collect(),
+                                reason,
+                                incompatible: false,
+                            });
+                        }
                     }
                 }
             }
@@ -768,7 +1142,7 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
                 if step.inputs.is_empty() && !matches!(context.cause, ContextCause::Root) {
                     continue;
                 }
-                for binding in bind_singles(step, state, &graph, &provenance, candidate(step, &context.id))? {
+                for binding in bind_singles(step, state, &graph, &provenance, candidate(step, &context.id), &mut trace)? {
                     // Inheritance supplies governing context, not new ordinary
                     // activations with unchanged inputs in every Member context.
                     if !step.inputs.is_empty()
@@ -784,18 +1158,229 @@ pub fn reconcile_graph(definition: &NormalizedPlaybook, state: &mut TaskExecutio
             }
         }
     }
+    if let Some(trace) = trace {
+        let mut exhaustion = Exhaustion {
+            definition,
+            state,
+            graph: &graph,
+            provenance: &provenance,
+            proven: BTreeMap::new(),
+        };
+        let mut retained = Vec::new();
+        for held in std::mem::take(&mut trace.held) {
+            let mut exhausted = false;
+            if held.reason.code == "missing_companion" {
+                let context = held.reason.context_id.as_deref().ok_or("missing held binding context")?;
+                let step = definition.step.iter().find(|step| step.key == held.step_key).ok_or("missing held binding step")?;
+                for input in &step.inputs {
+                    if exhaustion.input(context, &input.path, input.mode)? {
+                        exhausted = true;
+                        break;
+                    }
+                }
+            }
+            if !exhausted {
+                retained.push(held);
+            }
+        }
+        trace.held = retained;
+    }
     for execution in state.executions.values().filter(|e| !e.candidate.manual) {
         candidates.remove(&execution.binding_key);
     }
     Ok(candidates.into_values().collect())
 }
 
+/// Observe the same closure and binding decisions as reconciliation, without
+/// reserving work or changing the caller's durable state.
+pub fn assess_task(definition: &NormalizedPlaybook, state: &TaskExecutionState) -> Result<TaskAssessment, String> {
+    let mut reasons = Vec::new();
+    let mut active = false;
+    let mut blocked = false;
+    if state.creation != "ready" {
+        reasons.push(AssessmentReason::new("creation_unavailable", "Task creation has not successfully settled"));
+        blocked = true;
+    }
+    for execution in state.executions.values().filter(|e| !settled(e)) {
+        let failed = matches!(
+            execution.lifecycle,
+            ExecutionLifecycle::Failed | ExecutionLifecycle::LaunchFailed | ExecutionLifecycle::Interrupted | ExecutionLifecycle::Completed
+        );
+        blocked |= failed;
+        active |= matches!(execution.lifecycle, ExecutionLifecycle::Queued | ExecutionLifecycle::Starting | ExecutionLifecycle::Running);
+        let mut reason = AssessmentReason::new(
+            if failed { "execution_unsettled" } else { "execution_pending" },
+            format!("{} has not successfully accepted and exited", execution.candidate.step_key),
+        );
+        reason.execution_id = Some(execution.id.clone());
+        reason.context_id = Some(execution.candidate.context_id.clone());
+        reasons.push(reason);
+    }
+    // Preparation must route newly delivered occurrences and close collections
+    // even if the daemon has not reconciled since the last exit.
+    let mut view = WorkingState::Observe { source: state, derived: None };
+    let mut trace = ResolutionTrace::default();
+    let candidates = resolve_graph(definition, &mut view, Some(&mut trace))?;
+    if !candidates.is_empty() {
+        active = true;
+        reasons.push(AssessmentReason::new("eligible_binding", "Unreserved graph work remains eligible"));
+    }
+    for collection in view.collections.values().filter(|c| !c.membership_closed) {
+        let mut reason = AssessmentReason::new("open_collection", "Collection source or member obligations remain unresolved");
+        reason.collection_id = Some(collection.id.clone());
+        reason.context_id = Some(collection.context_id.clone());
+        reason.selector = Some(collection.selector.clone());
+        reasons.push(reason);
+    }
+    for held in trace.held {
+        blocked |= held.incompatible;
+        if !reasons.contains(&held.reason) {
+            reasons.push(held.reason);
+        }
+    }
+    if !state.executions.values().any(settled) {
+        reasons.push(AssessmentReason::new("no_successful_execution", "No execution has successfully accepted and exited"));
+    }
+    let status = if blocked {
+        AssessmentStatus::Blocked
+    } else if active {
+        AssessmentStatus::Active
+    } else if reasons.is_empty() {
+        AssessmentStatus::Complete
+    } else {
+        AssessmentStatus::Waiting
+    };
+    Ok(TaskAssessment { status, reasons })
+}
+
+/// Settled producers share the same graph view: projecting their accepted exit
+/// changes nothing. Resolve once instead of cloning and resolving per history row.
+pub(crate) fn assess_settled_executions(definition: &NormalizedPlaybook, state: &TaskExecutionState) -> Result<BTreeMap<String, ExecutionAssessment>, String> {
+    let mut contributed: BTreeMap<_, BTreeSet<String>> = state
+        .executions
+        .iter()
+        .filter(|(_, record)| settled(record))
+        .map(|(id, _)| (id.as_str(), BTreeSet::new()))
+        .collect();
+    if contributed.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    for occurrence in state.occurrences.values() {
+        if let Some(ids) = occurrence.producer_execution_id.as_deref().and_then(|id| contributed.get_mut(id)) {
+            ids.insert(occurrence.id.clone());
+        }
+    }
+    let mut view = WorkingState::Observe { source: state, derived: None };
+    let mut trace = ResolutionTrace::default();
+    let candidates = resolve_graph(definition, &mut view, Some(&mut trace))?;
+    contributed
+        .into_iter()
+        .map(|(id, inputs)| Ok((id.to_owned(), assessment_from_resolution(definition, &candidates, &trace, &inputs)?)))
+        .collect()
+}
+
+/// Project only this producer's validated publications. Prospective occurrence
+/// IDs and successful delivery exist solely in this private resolver view.
+pub fn assess_execution(
+    definition: &NormalizedPlaybook,
+    state: &TaskExecutionState,
+    execution_id: &str,
+    publications: &[ValidatedPublication],
+) -> Result<ExecutionAssessment, String> {
+    let source = state.executions.get(execution_id).ok_or("unknown assessment execution")?;
+    let mut view = WorkingState::Observe { source: state, derived: None };
+    let mut contributed = BTreeSet::new();
+    if source.receipt_id.is_some() {
+        contributed.extend(
+            state
+                .occurrences
+                .values()
+                .filter(|o| o.producer_execution_id.as_deref() == Some(execution_id))
+                .map(|o| o.id.clone()),
+        );
+    } else {
+        for (index, publication) in publications.iter().enumerate() {
+            let id = identity("draft", &(execution_id, index, &publication.logical_path))?;
+            if view.occurrences.contains_key(&id) {
+                return Err("prospective occurrence identity conflicts with recorded state".into());
+            }
+            contributed.insert(id.clone());
+            view.to_mut().occurrences.insert(
+                id.clone(),
+                crate::execution::ArtifactOccurrence {
+                    id,
+                    producer_execution_id: Some(execution_id.into()),
+                    selector: publication.selector.clone(),
+                    logical_path: publication.logical_path.clone(),
+                    relative_path: publication.relative_path.clone(),
+                    depth: source.depth,
+                    discriminator: publication.discriminator,
+                    context_id: source.candidate.context_id.clone(),
+                    collection_ids: BTreeSet::new(),
+                },
+            );
+        }
+    }
+    let projected = view.to_mut().executions.get_mut(execution_id).ok_or("missing assessment execution")?;
+    projected.lifecycle = ExecutionLifecycle::Completed;
+    projected.shutdown_confirmed = true;
+    projected.receipt_id.get_or_insert_with(|| "prospective-only".into());
+    let mut trace = ResolutionTrace::default();
+    let candidates = resolve_graph(definition, &mut view, Some(&mut trace))?;
+    assessment_from_resolution(definition, &candidates, &trace, &contributed)
+}
+
+fn assessment_from_resolution(
+    definition: &NormalizedPlaybook,
+    candidates: &[ExecutionCandidate],
+    trace: &ResolutionTrace,
+    contributed: &BTreeSet<String>,
+) -> Result<ExecutionAssessment, String> {
+    let mut keys: BTreeSet<_> = candidates
+        .iter()
+        .filter(|c| c.inputs.values().flatten().any(|id| contributed.contains(id)))
+        .map(|c| c.step_key.clone())
+        .collect();
+    let mut reasons = Vec::new();
+    let mut unresolved = false;
+    for held in trace.held.iter().filter(|held| !held.inputs.is_disjoint(contributed)) {
+        unresolved |= held.incompatible;
+        if !held.incompatible {
+            keys.insert(held.step_key.clone());
+        }
+        reasons.push(held.reason.clone());
+    }
+    let destinations = keys
+        .into_iter()
+        .map(|key| {
+            let step = definition.step.iter().find(|s| s.key == key).ok_or("unknown destination step")?;
+            Ok(ExecutionDestination {
+                step_key: key,
+                title: step.title.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let terminality = if unresolved {
+        Terminality::Unresolved
+    } else if destinations.is_empty() {
+        Terminality::Terminal
+    } else {
+        Terminality::Nonterminal
+    };
+    Ok(ExecutionAssessment {
+        destinations,
+        terminality,
+        reasons,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::execution::{
-        accept_execution_completion, claim_execution_launch, confirm_execution_exit, grant_execution_completion, install_seed, new_execution_state, record_execution_spawn,
-        recover_execution_owner, request_execution_start, reserve_execution, CompletionOutcome, LaunchChoices,
+        claim_execution_launch, confirm_execution_exit, decode_execution_state, finalize_execution_continuation, inspect_execution_publications, install_seed, new_execution_state,
+        record_execution_spawn, recover_execution_owner, report_execution_ready, request_execution_continuation, request_execution_start, reserve_execution, CompletionOutcome,
+        LaunchChoices,
     };
     use crate::playbook::{parse_playbook_md, render_playbook_md, InputSelector, OutputSelector, PlaybookRef, PlaybookScope};
     use std::path::PathBuf;
@@ -928,7 +1513,14 @@ mod tests {
 
         fn accept(&mut self, id: &str) -> CompletionOutcome {
             let owner = self.state.executions[id].owner_session_id.clone();
-            accept_execution_completion(&self.repo, "task", &mut self.state, id, &owner).unwrap()
+            let revision = self.state.executions[id].work_revision;
+            let outcome = report_execution_ready(&self.repo, "task", &self.definition, &mut self.state, id, &owner, revision).unwrap();
+            if let CompletionOutcome::Ready { ready_revision } = outcome {
+                request_execution_continuation(&mut self.state, id, &owner, ready_revision).unwrap();
+                finalize_execution_continuation(&self.repo, "task", &self.definition, &mut self.state, id, &owner, ready_revision).unwrap()
+            } else {
+                outcome
+            }
         }
 
         fn exit(&mut self, id: &str) {
@@ -1989,7 +2581,7 @@ mod tests {
             let mut f = Fixture {
                 repo: std::env::temp_dir().join(format!("alinery-compat-{}", uuid::Uuid::new_v4())),
                 definition: parse_playbook_md(snapshot["source"].as_str().unwrap()).unwrap(),
-                state: serde_json::from_value(snapshot["state"].clone()).unwrap(),
+                state: decode_execution_state(&serde_json::to_vec(&snapshot["state"]).unwrap()).unwrap().0,
             };
             for (relative, contents) in snapshot["artifacts"].as_object().unwrap() {
                 let path = crate::artifacts_dir(&f.repo, "task").join(relative);
@@ -2116,10 +2708,9 @@ mod tests {
         assert!(f.ready().is_empty(), "reviewing B remains expected");
         f.exit(&b);
         assert!(f.ready().is_empty(), "failed B remains expected");
-        let owner = recover_execution_owner(&mut f.state, &b).unwrap();
+        recover_execution_owner(&mut f.state, &b).unwrap();
         request_execution_start(&mut f.state, &b).unwrap();
         f.start(&b);
-        grant_execution_completion(&mut f.state, &b, &owner).unwrap();
         let value = f.numbers(&b, "request-*.md")[0].pow(2);
         f.write(&b, &[("result-square.md", &value.to_string())]);
         assert!(matches!(f.accept(&b), CompletionOutcome::Accepted { .. }));
@@ -2521,6 +3112,7 @@ mod tests {
         let accepted = f.output_ids(&source);
         assert!(f.ready().is_empty());
         assert!(!f.state.collections[&collection_id].membership_closed);
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Waiting);
         f.exit(&source);
         assert!(f.tick().is_empty());
         let collection = &f.state.collections[&collection_id];
@@ -2529,6 +3121,7 @@ mod tests {
         assert_eq!(collection.expected_execution_ids, BTreeSet::from([source.clone()]));
         assert_eq!(f.state.executions.len(), 1);
         assert_eq!(f.state.collections.len(), 1, "no worker exists to own a result family");
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
         f.write(&source, &[("papers/late.md", "Not part of the accepted handoff.")]);
         f.restart();
         assert_eq!(f.accept(&source), receipt);
@@ -2611,6 +3204,10 @@ mod tests {
             f.restart();
             assert!(f.tick().is_empty());
             assert_eq!(f.state.collections, collections);
+            assert_eq!(
+                assess_task(&f.definition, &f.state).unwrap().status,
+                if mixed { AssessmentStatus::Active } else { AssessmentStatus::Complete }
+            );
         }
     }
 
@@ -2633,6 +3230,7 @@ mod tests {
         assert_eq!(collection.member_occurrence_ids, f.output_ids(&source));
         f.restart();
         assert!(f.tick().is_empty());
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
     }
 
     #[test]
@@ -2662,6 +3260,9 @@ mod tests {
         assert_eq!(f.state.executions[last].lifecycle, ExecutionLifecycle::Interrupted);
         f.restart();
         assert!(f.ready().is_empty());
+        let assessment = assess_task(&f.definition, &f.state).unwrap();
+        assert_eq!(assessment.status, AssessmentStatus::Blocked);
+        assert!(assessment.reasons.iter().any(|r| r.execution_id.as_ref() == Some(last)));
         assert!(f
             .state
             .collections
@@ -2672,10 +3273,9 @@ mod tests {
         f.exit(last);
         assert_eq!(f.state.executions[last].lifecycle, ExecutionLifecycle::Failed);
         assert!(f.ready().is_empty());
-        let owner = recover_execution_owner(&mut f.state, last).unwrap();
+        recover_execution_owner(&mut f.state, last).unwrap();
         request_execution_start(&mut f.state, last).unwrap();
         f.start(last);
-        grant_execution_completion(&mut f.state, last, &owner).unwrap();
         assert!(matches!(f.accept(last), CompletionOutcome::Accepted { .. }));
         assert!(f.ready().is_empty());
         f.exit(last);
@@ -2728,6 +3328,12 @@ mod tests {
         assert_eq!(f.state.collections, collections);
         assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "publish").count(), 1);
         assert!(!f.state.executions.values().any(|e| e.candidate.step_key == "collect"));
+        let assessment = assess_task(&f.definition, &f.state).unwrap();
+        assert_eq!(assessment.status, AssessmentStatus::Waiting);
+        assert!(assessment
+            .reasons
+            .iter()
+            .any(|r| r.code == "open_collection" && r.selector.as_deref() == Some("result-*.md")));
     }
 
     #[test]
@@ -2809,6 +3415,12 @@ mod tests {
         f.restart();
         assert!(f.tick().is_empty());
         assert_eq!(f.state.collections, collections);
+        let assessment = assess_task(&f.definition, &f.state).unwrap();
+        assert_eq!(assessment.status, AssessmentStatus::Waiting);
+        assert!(assessment
+            .reasons
+            .iter()
+            .any(|r| r.code == "open_collection" && r.selector.as_deref() == Some("local-*.md")));
     }
 
     #[test]
@@ -2841,6 +3453,7 @@ mod tests {
         assert_eq!(f.state.executions[&entry].candidate.inputs["request.md"], [initial_request]);
         assert_eq!(f.state.contexts.values().filter(|c| matches!(c.cause, ContextCause::Loop { .. })).count(), 0);
         assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "entry").count(), 1);
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
     }
 
     #[test]
@@ -2914,6 +3527,7 @@ mod tests {
                     assert_eq!(ready.len(), 1);
                     assert_eq!(ready[0].step_key, "design");
                     assert_eq!(ready[0].inputs["ticket.md"], [trigger.clone()]);
+                    assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Active);
                 } else {
                     assert!(f.tick().is_empty());
                     assert_eq!(f.state.executions.values().filter(|e| e.candidate.step_key == "design").count(), 3);
@@ -2921,6 +3535,7 @@ mod tests {
                 }
             }
             assert_eq!(f.state.contexts.values().filter(|c| matches!(c.cause, ContextCause::Loop { .. })).count(), 2);
+            assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
         }
     }
 
@@ -3013,6 +3628,214 @@ mod tests {
             }
             f.restart();
             assert!(f.tick().is_empty());
+        }
+    }
+
+    #[test]
+    fn shared_history_assessment_preserves_producer_routes_and_exit_boundary() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("a", &[("ticket.md", Single)], &["a.md"]),
+            step("b", &[("ticket.md", Single)], &["b.md"]),
+            step("leaf", &[("ticket.md", Single)], &["done.md"]),
+            step("join", &[("a.md", Single), ("b.md", Single)], &["answer.md"]),
+        ]);
+        let roots = f.tick();
+        let a = f.named(&roots, "a");
+        let b = f.named(&roots, "b");
+        let leaf = f.named(&roots, "leaf");
+        f.finish(&a, &[("a.md", "a")]);
+        f.finish(&leaf, &[("done.md", "done")]);
+        f.start(&b);
+        f.write(&b, &[("b.md", "b")]);
+        assert!(matches!(f.accept(&b), CompletionOutcome::Accepted { .. }));
+        let before = f.state.clone();
+        let history = assess_settled_executions(&f.definition, &f.state).unwrap();
+        assert!(!history.contains_key(&b), "acceptance without confirmed exit still needs its own projection");
+        assert_eq!(history[&a].destinations[0].step_key, "join");
+        assert_eq!(history[&leaf].terminality, Terminality::Terminal);
+        assert_eq!(f.state, before);
+        for (id, assessment) in history {
+            assert_eq!(assessment, assess_execution(&f.definition, &f.state, &id, &[]).unwrap());
+        }
+        f.exit(&b);
+        let history = assess_settled_executions(&f.definition, &f.state).unwrap();
+        assert_eq!(history[&b].destinations[0].step_key, "join");
+        for (id, assessment) in history {
+            assert_eq!(assessment, assess_execution(&f.definition, &f.state, &id, &[]).unwrap());
+        }
+    }
+
+    #[test]
+    fn draft_destinations_include_held_join_without_mutation() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("a", &[("ticket.md", Single)], &["a.md"]),
+            step("b", &[("ticket.md", Single)], &["b.md"]),
+            step("join", &[("a.md", Single), ("b.md", Single)], &["answer.md"]),
+        ]);
+        let roots = f.tick();
+        let a = f.named(&roots, "a");
+        let b = f.named(&roots, "b");
+        f.start(&a);
+        f.write(&a, &[("a.md", "ready for review")]);
+        let publications = inspect_execution_publications(&f.repo, "task", &f.state.executions[&a]).unwrap();
+        let before = serde_json::to_vec(&f.state).unwrap();
+        for _ in 0..2 {
+            let assessment = assess_execution(&f.definition, &f.state, &a, &publications).unwrap();
+            assert_eq!(assessment.terminality, Terminality::Nonterminal);
+            assert_eq!(
+                assessment.destinations,
+                vec![ExecutionDestination {
+                    step_key: "join".into(),
+                    title: "join".into()
+                }]
+            );
+            assert!(assessment.reasons.iter().any(|r| r.code == "missing_companion"));
+            assert_ne!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
+            assert_eq!(serde_json::to_vec(&f.state).unwrap(), before);
+        }
+        assert!(matches!(f.accept(&a), CompletionOutcome::Accepted { .. }));
+        f.exit(&a);
+        assert!(f.tick().is_empty());
+        assert_eq!(f.state.executions[&b].lifecycle, ExecutionLifecycle::Queued);
+        f.finish(&b, &[("b.md", "independent handoff")]);
+        let join = f.tick();
+        assert_eq!(join.len(), 1);
+        assert_eq!(
+            f.state.executions[&join[0]].candidate.inputs.values().flatten().cloned().collect::<BTreeSet<_>>(),
+            f.output_ids(&a).union(&f.output_ids(&b)).cloned().collect()
+        );
+    }
+
+    #[test]
+    fn destinations_deduplicate_step_types_and_preserve_fanout_provenance() {
+        use InputMode::{Each, Single};
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["items/*.md", "review.md"]),
+            step("worker", &[("items/*.md", Each)], &["result.md"]),
+            step("review", &[("review.md", Single)], &["reviewed.md"]),
+        ]);
+        let roots = f.tick();
+        let source = &roots[0];
+        f.start(source);
+        f.write(source, &[("items/a.md", "a"), ("items/b.md", "b"), ("review.md", "review")]);
+        let publications = inspect_execution_publications(&f.repo, "task", &f.state.executions[source]).unwrap();
+        let before = f.state.clone();
+        let assessment = assess_execution(&f.definition, &f.state, source, &publications).unwrap();
+        assert_eq!(assessment.destinations.iter().map(|d| d.step_key.as_str()).collect::<Vec<_>>(), ["review", "worker"]);
+        assert_eq!(f.state, before);
+        assert!(matches!(f.accept(source), CompletionOutcome::Accepted { .. }));
+        f.exit(source);
+        let next = f.tick();
+        assert_eq!(next.len(), 3);
+        for id in next {
+            let binding = &f.state.executions[&id].candidate;
+            for input in binding.inputs.values().flatten() {
+                let occurrence = &f.state.occurrences[input];
+                assert_eq!(occurrence.producer_execution_id.as_ref(), Some(source));
+                assert_eq!(occurrence.context_id, before.executions[source].candidate.context_id);
+                if binding.step_key == "worker" {
+                    assert_eq!(binding.each_member_id.as_ref(), Some(input));
+                    let ContextCause::Member { occurrence_id, collection_id } = &f.state.contexts[&binding.context_id].cause else {
+                        panic!("member context required")
+                    };
+                    assert_eq!(occurrence_id, input);
+                    assert_eq!(binding.each_collection_id.as_ref(), Some(collection_id));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn aggregate_requires_every_reserved_owner_and_residual_obligation() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("sink", &[("ticket.md", Single)], &["done.md"]),
+            step("sibling", &[("ticket.md", Single)], &["other.md"]),
+        ]);
+        assert_ne!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
+        let roots = f.tick();
+        let sink = f.named(&roots, "sink");
+        let sibling = f.named(&roots, "sibling");
+        f.finish(&sink, &[("done.md", "done")]);
+        for lifecycle in [
+            ExecutionLifecycle::Queued,
+            ExecutionLifecycle::Running,
+            ExecutionLifecycle::Finishing,
+            ExecutionLifecycle::Failed,
+            ExecutionLifecycle::Interrupted,
+        ] {
+            let mut state = f.state.clone();
+            state.executions.get_mut(&sibling).unwrap().lifecycle = lifecycle;
+            let assessment = assess_task(&f.definition, &state).unwrap();
+            assert_ne!(assessment.status, AssessmentStatus::Complete);
+            assert!(assessment.reasons.iter().any(|r| r.execution_id.as_ref() == Some(&sibling)));
+        }
+        f.finish(&sibling, &[("other.md", "done")]);
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
+    }
+
+    #[test]
+    fn optional_exhaustion_and_incompatible_join_are_not_interchangeable() {
+        use InputMode::Single;
+        let mut f = Fixture::new(vec![
+            step("source", &[("ticket.md", Single)], &["a.md", "b.md", "summary.md"]),
+            step("join", &[("a.md", Single), ("b.md", Single)], &["answer.md"]),
+        ]);
+        let roots = f.tick();
+        f.finish(&roots[0], &[("a.md", "a")]);
+        assert_eq!(assess_task(&f.definition, &f.state).unwrap().status, AssessmentStatus::Complete);
+        assert_eq!(assess_execution(&f.definition, &f.state, &roots[0], &[]).unwrap().terminality, Terminality::Terminal);
+        let id = f.output(&roots[0], "a.md");
+        f.state.occurrences.get_mut(&id).unwrap().producer_execution_id = Some("missing-producer".into());
+        assert!(assess_task(&f.definition, &f.state).unwrap_err().contains("missing-producer"));
+
+        let mut incompatible = Fixture::new(vec![
+            step("left", &[("ticket.md", Single)], &["a.md", "branch.md"]),
+            step("right", &[("ticket.md", Single)], &["b.md", "branch.md"]),
+            step("join", &[("a.md", Single), ("b.md", Single)], &["answer.md"]),
+        ]);
+        let roots = incompatible.tick();
+        let left = incompatible.named(&roots, "left");
+        let right = incompatible.named(&roots, "right");
+        incompatible.finish(&left, &[("a.md", "left"), ("branch.md", "left branch")]);
+        incompatible.finish(&right, &[("b.md", "right"), ("branch.md", "right branch")]);
+        assert!(incompatible.tick().is_empty());
+        let assessment = assess_task(&incompatible.definition, &incompatible.state).unwrap();
+        assert_eq!(assessment.status, AssessmentStatus::Blocked);
+        assert!(assessment.reasons.iter().any(|r| r.code == "incompatible_inputs"));
+        assert_eq!(
+            assess_execution(&incompatible.definition, &incompatible.state, &left, &[]).unwrap().terminality,
+            Terminality::Unresolved
+        );
+    }
+
+    #[test]
+    fn transitive_omission_exhausts_only_proven_absent_routes() {
+        use InputMode::Single;
+        for prerequisite in ["optional.md", "external.md"] {
+            let mut f = Fixture::new(vec![
+                step("source", &[("ticket.md", Single)], &["optional.md", "summary.md"]),
+                step("middle", &[(prerequisite, Single)], &["middle.md"]),
+                step("join", &[("ticket.md", Single), ("middle.md", Single)], &["answer.md"]),
+            ]);
+            let roots = f.tick();
+            f.finish(&roots[0], &[("summary.md", "Concluded without optional work.")]);
+            assert!(f.tick().is_empty());
+            f.restart();
+            let assessment = assess_task(&f.definition, &f.state).unwrap();
+            assert_eq!(
+                assessment.status,
+                if prerequisite == "optional.md" {
+                    AssessmentStatus::Complete
+                } else {
+                    AssessmentStatus::Waiting
+                },
+                "{prerequisite}: {:?}",
+                assessment.reasons
+            );
+            assert_eq!(f.state.executions.len(), 1);
         }
     }
 }

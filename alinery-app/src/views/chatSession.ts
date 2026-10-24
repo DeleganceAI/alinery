@@ -58,7 +58,7 @@ export function parseChatLine(line: string): unknown {
   }
 }
 
-/** One RPC line into the transcript. A `get_state` reply also drops follow-up rows OMP no longer holds. */
+/** One RPC line into the transcript; generic untracked chat retains its queue-count projection. */
 export function applyChatValue(state: ChatTranscriptState, value: unknown): ChatTranscriptState {
   if (value === undefined) return state;
   try {
@@ -128,7 +128,7 @@ export function applyModelCommand(provider: string, modelId: string) {
 export function chatTerminalIo(repoPath: string, id: string): SessionTerminalIo {
   return {
     open: (args) => ipc.chatPtyAttach({ repoPath, id, attachId: args.attachId, streamToken: args.streamToken, cols: args.cols, rows: args.rows, onBytes: args.onBytes }),
-    write: (data) => ipc.chatPtyWrite(repoPath, id, data),
+    write: (data, dispatchId) => ipc.chatPtyWrite(repoPath, id, data, dispatchId),
     resize: (cols, rows) => ipc.chatPtyResize(repoPath, id, cols, rows),
     detach: (attachId) => ipc.chatDetach(repoPath, id, attachId),
     status: () => ipc.chatSessionStatus(repoPath, id),

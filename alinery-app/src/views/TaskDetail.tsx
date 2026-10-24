@@ -11,6 +11,7 @@ import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
+import { requireWritten } from "../chat/send";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
@@ -209,6 +210,7 @@ export function TaskDetail({
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
   const executionRequest = useRef(0);
+  const executionInFlight = useRef<typeof scope | null>(null);
   const steps = executionView?.definition.step ?? [];
   const executions = Object.values(executionView?.state.executions ?? {});
   const executionForSession = (session: SessionMeta) =>
@@ -363,6 +365,8 @@ export function TaskDetail({
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
   const refreshExecution = async () => {
+    if (executionInFlight.current === scope) return;
+    executionInFlight.current = scope;
     const request = ++executionRequest.current;
     const capturedScope = scope;
     try {
@@ -373,19 +377,8 @@ export function TaskDetail({
     } catch (error) {
       if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
       setExecutionError(String(error));
-    }
-  };
-
-  const allowCompletion = async (executionId: string, sessionId: string) => {
-    if (executionView?.live?.status !== "available" || executionError || busy) return;
-    setBusy(`allow:${executionId}`);
-    try {
-      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
-      await refreshExecution();
-    } catch (error) {
-      setExecutionError(String(error));
     } finally {
-      setBusy("");
+      if (executionInFlight.current === capturedScope) executionInFlight.current = null;
     }
   };
 
@@ -407,7 +400,8 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      refreshExecution(),
+      // Live execution assessment must not hold back the saved session list.
+      void refreshExecution(),
       ipc.listSessions(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -513,7 +507,7 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      refreshExecution(),
+      void refreshExecution(),
     ]);
     if (!scope.alive || scopeRef.current !== scope) return;
     if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
@@ -1350,6 +1344,13 @@ export function TaskDetail({
                   </tr>
                 </thead>
                 <tbody>
+                  {!sessionsLoaded && !sessionsError && (
+                    <tr>
+                      <td colSpan={7} className="dim">
+                        Loading sessions…
+                      </td>
+                    </tr>
+                  )}
                   {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
                     <tr className="empty-row">
                       <td colSpan={5}>
@@ -1586,7 +1587,7 @@ export function TaskDetail({
                                 setBusy(`stop-session:${s.id}`);
                                 setErr(null);
                                 try {
-                                  await ipc.rpcWriteSession(s.id, abortCommand());
+                                  requireWritten(await ipc.rpcWriteSession(s.id, abortCommand()));
                                   await load();
                                 } catch (error) {
                                   setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
@@ -1814,8 +1815,17 @@ export function TaskDetail({
                       Graph
                     </button>
                   </div>
-                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+                  {playbookView === "graph" && <p>Retained task definition · See List for active counts and continuation settings.</p>}
                 </div>
+                {executionView?.assessment && !executionError && (
+                  <div role="status" aria-label="Playbook status">
+                    {executionView.live?.status !== "available" && <p>Saved assessment · Live continuation unavailable</p>}
+                    <p>{executionView.assessment.status === "complete" ? "Playbook complete" : `Playbook ${executionView.assessment.status}`}</p>
+                    {executionView.assessment.reasons.map((reason) => (
+                      <p key={JSON.stringify(reason)}>{reason.message}</p>
+                    ))}
+                  </div>
+                )}
                 <PlaybookGraph
                   variant={playbookView === "graph" ? "definition" : "execution"}
                   showInspector={false}
@@ -1871,19 +1881,17 @@ export function TaskDetail({
                           </ul>
                           <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
                         </details>
-                        <p className="task-history-permission">
-                          Completion permission: {execution.permission.kind}
-                          {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-                        </p>
-                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
-                          <button
-                            type="button"
-                            className="btn small"
-                            disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
-                          >
-                            Allow this session to complete · {execution.owner_session_id}
-                          </button>
+                        <p>Continuation: {execution.continuation_mode === "automatic" ? "Continue automatically" : "Wait for me"}</p>
+                        {execution.lifecycle === "running" && (
+                          <p>
+                            {execution.continuation_requested_revision != null
+                              ? "Continuation requested; handoff not yet accepted."
+                              : execution.ready_revision != null
+                                ? "Ready for review."
+                                : execution.last_ready_revision != null
+                                  ? "Review in progress; renewed readiness required."
+                                  : "Work in progress."}
+                          </p>
                         )}
                       </article>
                     ))}
