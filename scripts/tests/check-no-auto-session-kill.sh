@@ -46,7 +46,9 @@ ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_bloc
 # therefore allowlisted separately:
 #   remove_repo      close-repo confirmation (B4)
 #   close_all_repos  the quit dialog's express "close all repos" choice
-CLOSE_CALLERS_ALLOWED="remove_repo close_all_repos"
+#   close_all_repos_blocking  its body (split out so a live test can drive it); only
+#                            close_all_repos calls it
+CLOSE_CALLERS_ALLOWED="remove_repo close_all_repos close_all_repos_blocking"
 
 senders="$(
   awk '

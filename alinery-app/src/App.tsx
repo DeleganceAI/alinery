@@ -36,7 +36,7 @@ import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
 import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
 import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
-import { isRemoteRepo, parseRemoteRepo } from "./remoteRepo";
+import { isRemoteRepo, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
 import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
@@ -914,24 +914,24 @@ export default function App() {
       const repos = appConfigRef.current?.known_repos ?? [];
       if (repos.length > 0) {
         const counts = await Promise.all(repos.map(liveSessions));
-        const total = counts.reduce((a, b) => a + b, 0);
+        const total = quitLossCount(repos, counts);
+        const rows = quitRows(repos, counts);
         const choice = await askConfirm({
           title: "Quit Alinery",
           body: (
             <>
               <p>Session daemons keep running after Alinery quits, so harnesses stay alive and reattach on the next launch.</p>
               <ul className="confirm-list">
-                {repos.map((repo, i) => (
+                {rows.map(({ repo, text }) => (
                   <li key={repo}>
                     <span className="confirm-repo">{repoName(repo)}</span>
-                    <span className="dim">
-                      {counts[i]} live session{counts[i] === 1 ? "" : "s"}
-                    </span>
+                    <span className="dim">{text}</span>
                   </li>
                 ))}
               </ul>
               <p className="dim">
                 Closing every repo stops each daemon and releases its locks — nothing is left running in the background.
+                {repos.some(isRemoteRepo) && " Remote repositories are only disconnected: their sessions keep running on the host."}
                 {total > 0 && (
                   <span className="confirm-loss">
                     {" "}

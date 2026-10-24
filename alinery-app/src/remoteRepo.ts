@@ -83,6 +83,21 @@ export function providerLabel(id: string): string {
   );
 }
 
+const sessionCount = (n: number) => `${n} live session${n === 1 ? "" : "s"}`;
+
+/**
+ * One line per repo for the quit dialog. "Close all repos" stops local daemons, but only lets go of
+ * a remote host, so a remote repo's sessions stay running and are never counted as work that would be lost.
+ */
+export function quitRows(repos: string[], counts: number[]): { repo: string; text: string }[] {
+  return repos.map((repo, i) => {
+    const n = counts[i] ?? 0;
+    return { repo, text: isRemoteRepo(repo) ? `${n > 0 ? `${sessionCount(n)}, ` : ""}stays running on its host` : sessionCount(n) };
+  });
+}
+
+export const quitLossCount = (repos: string[], counts: number[]) => repos.reduce((sum, repo, i) => (isRemoteRepo(repo) ? sum : sum + (counts[i] ?? 0)), 0);
+
 /** How long a token that stops working at `expiresAt` (unix seconds) has left, as "for about 90 days (until Jan 21, 2027)". */
 export function tokenLifetime(expiresAt: number, now = Date.now()): string {
   const until = new Date(expiresAt * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });

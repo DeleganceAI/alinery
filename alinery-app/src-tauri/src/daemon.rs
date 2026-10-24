@@ -1240,10 +1240,23 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
     .map_err(|error| format!("stop daemon task: {error}"))?
 }
 
-/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof.
+/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof. A remote
+/// repo is counted through its forwarded daemon, and reads 0 while its host is not connected.
+pub(crate) fn live_sessions_in(state: &AppState, path: &str) -> u32 {
+    let path = path.trim();
+    let client = if is_remote_repo_key(path) {
+        state.daemon_for(Path::new(path))
+    } else {
+        connect_current_daemon(Path::new(path)).ok()
+    };
+    client.map_or(0, |client| client.live_session_count())
+}
+
 #[tauri::command]
-pub(crate) fn repo_live_sessions(path: String) -> u32 {
-    connect_current_daemon(Path::new(path.trim())).map(|client| client.live_session_count()).unwrap_or(0)
+pub(crate) async fn repo_live_sessions(app: AppHandle, path: String) -> u32 {
+    tauri::async_runtime::spawn_blocking(move || live_sessions_in(&app.state::<AppState>(), &path))
+        .await
+        .unwrap_or(0)
 }
 
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding
@@ -1306,56 +1319,67 @@ pub(crate) fn execute_close_repo_acknowledgment_plan(
 #[tauri::command]
 pub(crate) async fn close_all_repos(app: AppHandle) -> Result<u32, String> {
     app.state::<AppState>().begin_quit();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
-        // spawn a daemon for a repo that has none. Tearing down before shutting those off
-        // would race them into resurrecting the processes the user just asked us to stop.
-        // Stop the app-managed session producer before freezing the plan. The quit latch
-        // already prevents the GUI pollers and commands from starting replacement work.
-        state.kill_mcp();
-        // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
-        // list is the complete set of repos this app has open.
-        let repos = load_app_config(&app)
-            .known_repos
-            .into_iter()
-            .filter_map(|repo| {
-                let repo = PathBuf::from(repo.trim());
-                if repo.as_os_str().is_empty() {
-                    return None;
-                }
-                // B6: quitting closes *our* repos. A repo another alinery holds is that window's
-                // to tear down — skipping it is correct, not a failure.
-                if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
-                    return None;
-                }
-                Some(repo)
-            })
-            .collect::<Vec<_>>();
-        // Freeze every repository's session references before the first blocking shutdown.
-        // Repository order and teardown duration therefore cannot change acknowledgment.
-        let plan = close_repo_acknowledgment_plan(&repos);
-        let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| {
-            let lifecycle = state.repo_lifecycle(repo);
-            let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-            let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
-            close_repo_daemon(&state, repo, &guard)?;
-            state.release_repo(repo);
-            drop(reservation);
-            Ok(())
-        });
-        let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
-        if !errors.is_empty() {
-            // The latch stays set. Quitting is still the user's stated intent and the dialog
-            // asks them to confirm it; only their choosing to come back clears it, via
-            // `cancel_quit`. Clearing it here would let the poller start respawning daemons
-            // underneath a dialog that is still on its way to `destroy()`.
-            return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
-        }
-        Ok(closed)
-    })
-    .await
-    .map_err(|error| format!("close repositories task: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || close_all_repos_blocking(&app))
+        .await
+        .map_err(|error| format!("close repositories task: {error}"))?
+}
+
+pub(crate) fn close_all_repos_blocking<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<u32, String> {
+    let state = app.state::<AppState>();
+    // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
+    // spawn a daemon for a repo that has none. Tearing down before shutting those off
+    // would race them into resurrecting the processes the user just asked us to stop.
+    // Stop the app-managed session producer before freezing the plan. The quit latch
+    // already prevents the GUI pollers and commands from starting replacement work.
+    state.kill_mcp();
+    // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
+    // list is the complete set of repos this app has open.
+    let known = load_app_config(&app).known_repos;
+    // Remote repositories are not torn down here. Their daemons and sessions belong to the
+    // host, and stopping those is a separate, confirmed action; "close all" only lets go of
+    // the hosts, once the local repos have closed.
+    let remote_hosts = remote_host_ids(&known);
+    let repos = known
+        .into_iter()
+        .filter(|repo| !is_remote_repo_key(repo))
+        .filter_map(|repo| {
+            let repo = PathBuf::from(repo.trim());
+            if repo.as_os_str().is_empty() {
+                return None;
+            }
+            // B6: quitting closes *our* repos. A repo another alinery holds is that window's
+            // to tear down — skipping it is correct, not a failure.
+            if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
+                return None;
+            }
+            Some(repo)
+        })
+        .collect::<Vec<_>>();
+    // Freeze every repository's session references before the first blocking shutdown.
+    // Repository order and teardown duration therefore cannot change acknowledgment.
+    let plan = close_repo_acknowledgment_plan(&repos);
+    let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| {
+        let lifecycle = state.repo_lifecycle(repo);
+        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+        close_repo_daemon(&state, repo, &guard)?;
+        state.release_repo(repo);
+        drop(reservation);
+        Ok(())
+    });
+    let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
+    if !errors.is_empty() {
+        // The latch stays set. Quitting is still the user's stated intent and the dialog
+        // asks them to confirm it; only their choosing to come back clears it, via
+        // `cancel_quit`. Clearing it here would let the poller start respawning daemons
+        // underneath a dialog that is still on its way to `destroy()`.
+        return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
+    }
+    // Ends ssh only. After a failure above the hosts stay connected, for the user who comes back.
+    for host_id in &remote_hosts {
+        disconnect_host(app, host_id);
+    }
+    Ok(closed)
 }
 
 /// Abandon a quit that did not complete: `close_all_repos` failed on some repo and the

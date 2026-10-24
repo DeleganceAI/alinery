@@ -1282,6 +1282,17 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path
     Ok(())
 }
 
+/// The hosts that `known_repos` lists remote repositories on.
+pub(crate) fn remote_host_ids(known: &[String]) -> BTreeSet<String> {
+    known
+        .iter()
+        .filter_map(|key| match RepoRef::parse(key) {
+            Ok(RepoRef::Remote { host_id, .. }) => Some(host_id),
+            _ => None,
+        })
+        .collect()
+}
+
 /// After (re)connecting, bring back every known repo on the host. Failures are per repo: one
 /// busy repository must not hide the others.
 fn attach_host_repos<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, session: &RemoteSession, host_id: &str) {

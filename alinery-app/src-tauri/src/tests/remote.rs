@@ -1802,6 +1802,85 @@ fn live_a_dropped_host_comes_back_by_itself_and_a_disconnect_stays_down() {
     }
 }
 
+#[test]
+fn close_all_lets_go_of_each_host_once() {
+    let known: Vec<String> = ["/Users/me/a", "alinery+ssh://box-1/srv/a", "alinery+ssh://box-1/srv/b", "alinery+ssh://gpu-2/srv/c"]
+        .map(String::from)
+        .into();
+    assert_eq!(remote_host_ids(&known), BTreeSet::from(["box-1".to_string(), "gpu-2".to_string()]));
+    assert!(remote_host_ids(&known[..1]).is_empty());
+}
+
+/// "Quit & close all repos" with a remote repo open: it succeeds, ends the ssh connection, and
+/// leaves the host's daemon running.
+#[test]
+fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
+    use std::time::Duration;
+    use tauri::Manager;
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("quit-{}", std::process::id());
+
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+    connect_and_attach(&handle, &id, true).unwrap();
+    let home = host_views(&handle, &state)[0].home.clone().unwrap();
+    let repo = format!("{home}/work/quit-{}", std::process::id());
+    let session = state.remotes.session(&id).unwrap();
+    session
+        .conn
+        .exec_ok(
+            &format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"),
+            RemoteStdin::None,
+            Duration::from_secs(30),
+        )
+        .unwrap();
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    let daemons = |session: &RemoteSession| {
+        session
+            .conn
+            .exec_ok("pgrep -f '[a]linery-vinculum-daemon --repo' | sort", RemoteStdin::None, Duration::from_secs(20))
+            .unwrap()
+    };
+    let before = daemons(&session);
+    assert!(!before.trim().is_empty());
+    assert_eq!(crate::live_sessions_in(&state, &key), 0, "a connected remote repo is counted through its daemon");
+
+    state.begin_quit();
+    assert_eq!(crate::close_all_repos_blocking(&handle).unwrap(), 0, "no local repo, and no failure for the remote one");
+    assert_eq!(state.remotes.status(&id).state, "idle");
+    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert_eq!(crate::live_sessions_in(&state, &key), 0, "an offline remote repo reads as zero");
+
+    state.cancel_quit();
+    connect_and_attach(&handle, &id, false).unwrap();
+    assert_eq!(daemons(&state.remotes.session(&id).unwrap()), before, "the host's daemon was not stopped");
+    let _ = remove_remote_repo(&handle, &key);
+    disconnect_host(&handle, &id);
+    let _ = crate::set_active_repo_global(None);
+    if let Ok(dir) = handle.path().app_config_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
 /// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
 #[test]

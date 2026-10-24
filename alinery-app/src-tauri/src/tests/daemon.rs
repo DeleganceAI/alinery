@@ -210,7 +210,7 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let (production_requests, production) = recording_lane(production_path.clone(), 7);
     let (current_requests, current) = recording_lane(current_path.clone(), 2);
 
-    let live_sessions = crate::repo_live_sessions(repo.display().to_string());
+    let live_sessions = crate::live_sessions_in(&AppState::default(), &repo.display().to_string());
     let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
     assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
     let state = AppState::default();

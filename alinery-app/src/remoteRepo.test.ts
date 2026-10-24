@@ -1,5 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { isRemoteRepo, joinPath, parentPath, parseRemoteRepo, providerLabel, relatedRepoKey, relatedStoredPath, repoDisplayPath, sameMachine, tokenLifetime } from "./remoteRepo";
+import {
+  isRemoteRepo,
+  joinPath,
+  parentPath,
+  parseRemoteRepo,
+  providerLabel,
+  quitLossCount,
+  quitRows,
+  relatedRepoKey,
+  relatedStoredPath,
+  repoDisplayPath,
+  sameMachine,
+  tokenLifetime,
+} from "./remoteRepo";
+
+describe("the quit dialog", () => {
+  const repos = ["/Users/me/a", "alinery+ssh://box-1/srv/b", "/Users/me/c", "alinery+ssh://gpu-2/srv/d"];
+  const counts = [2, 3, 1, 0];
+
+  it("says a remote repo stays running, and a local one has live sessions", () => {
+    expect(quitRows(repos, counts).map((row) => row.text)).toEqual([
+      "2 live sessions",
+      "3 live sessions, stays running on its host",
+      "1 live session",
+      "stays running on its host",
+    ]);
+  });
+
+  it("counts only local sessions as work that would be lost", () => {
+    expect(quitLossCount(repos, counts)).toBe(3);
+    expect(quitLossCount(["alinery+ssh://box-1/srv/b"], [4])).toBe(0);
+  });
+});
 
 describe("remote repo keys", () => {
   it("parses a host id and an absolute path, and nothing else", () => {
