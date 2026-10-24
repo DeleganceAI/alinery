@@ -16,7 +16,7 @@ function ChatPaneImpl({
   onLoadOlder,
   loadingOlder = false,
   atStart = true,
-  floatingActions,
+  floatingActivity = false,
   recoveryContent,
 }: {
   entries: ChatEntry[];
@@ -28,8 +28,7 @@ function ChatPaneImpl({
   loadingOlder?: boolean;
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
-  /** Supplying this slot, including null, floats activity alongside the session actions. */
-  floatingActions?: ReactNode;
+  floatingActivity?: boolean;
   recoveryContent?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -38,7 +37,7 @@ function ChatPaneImpl({
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
   const activity = chatActivityLabel(status, shown);
-  const hasFloatingFooter = floatingActions !== undefined && Boolean(activity || floatingActions);
+  const hasFloatingFooter = floatingActivity && Boolean(activity);
 
   useEffect(() => {
     stick.current = visibility.autoScroll;
@@ -158,12 +157,11 @@ function ChatPaneImpl({
           {recoveryContent && <li>{recoveryContent}</li>}
         </ol>
       </div>
-      {floatingActions !== undefined
-        ? (activity || floatingActions) && (
+      {floatingActivity
+        ? activity && (
             <div className="session-continuation-anchor">
               <div className="chat-floating-footer" ref={floatingFooter}>
                 {activityIndicator}
-                {floatingActions}
               </div>
             </div>
           )

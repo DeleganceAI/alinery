@@ -5981,6 +5981,99 @@ dialog.modal::backdrop {
   padding: 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  container-type: inline-size;
+}
+.chat-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-composer-footer.has-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.chat-composer-footer.has-actions > .chat-composer-context {
+  margin-left: 0;
+  justify-self: center;
+}
+.chat-composer-actions {
+  min-width: 0;
+  width: 428px;
+  max-width: 100%;
+  justify-self: end;
+}
+.chat-composer-actions .session-continuation {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 140px));
+  align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+.chat-composer-actions .session-continuation > [role="status"] {
+  grid-column: 1 / -1;
+}
+.chat-composer-actions .session-continuation > span > button,
+.chat-composer-actions .continuation-modes {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  min-height: 20px;
+}
+.chat-composer-actions .continuation-modes .btn {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 0;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn {
+  height: 20px;
+  min-height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn:disabled {
+  opacity: 0.5;
+}
+.chat-composer-footer .chat-composer-actions .session-continuation .btn:not(:disabled):hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.chat-composer-actions .continuation-modes {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  gap: 4px;
+}
+.chat-composer-footer .chat-composer-actions .continuation-modes .btn[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+.continuation-label {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@container (max-width: 700px) {
+  .chat-composer-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    max-width: 100%;
+  }
 }
 .chat-composer-box {
   position: relative;
@@ -6081,7 +6174,6 @@ dialog.modal::backdrop {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  margin-top: 8px;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -9655,8 +9747,7 @@ dialog.modal::backdrop {
   right: 14px;
   bottom: 10px;
 }
-.session-continuation-anchor > .session-continuation,
-.chat-floating-footer > .session-continuation {
+.session-continuation-anchor > .session-continuation {
   max-width: calc(100% - 28px);
   padding: 0;
   border: 0;
@@ -9686,13 +9777,11 @@ dialog.modal::backdrop {
   background: transparent;
   overflow-wrap: anywhere;
 }
-.chat-floating-footer > .session-continuation {
-  position: relative;
-  margin-left: auto;
-  max-width: 100%;
-}
 .chat-pane:has(> .session-continuation-anchor) .chat-list {
   padding-bottom: calc(var(--chat-footer-height, 76px) + 20px);
+}
+.continuation-control [role="tooltip"] > span {
+  display: block;
 }
 .session-continuation {
   flex: 0 0 auto;

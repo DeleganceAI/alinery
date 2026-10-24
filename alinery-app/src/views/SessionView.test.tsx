@@ -3274,7 +3274,7 @@ describe("review continuation", () => {
     expect(screen.queryByText("Playbook complete")).toBeNull();
   });
 
-  it("shows disabled continuation before readiness but not for automatic or terminal work", async () => {
+  it("keeps continuation disabled before readiness and for automatic or terminal work", async () => {
     const unready = readyReply(null);
     unready.state.executions["execution-a"].last_ready_revision = null;
     getTaskExecution.mockResolvedValue(unready);
@@ -3288,7 +3288,10 @@ describe("review continuation", () => {
     getTaskExecution.mockResolvedValue(automatic);
     const second = renderSession();
     await flushPromises();
-    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    const automaticContinue = screen.getByRole("button", { name: /Continue (to|playbook)/ });
+    expect(automaticContinue).toHaveProperty("disabled", true);
+    fireEvent.click(automaticContinue);
+    expect(continueExecution).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Nudge to wrap up" })).toBeDefined();
@@ -3298,7 +3301,10 @@ describe("review continuation", () => {
     getTaskExecution.mockResolvedValue(terminal);
     renderSession();
     await flushPromises();
-    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    const terminalContinue = screen.getByRole("button", { name: /Continue (to|playbook)/ });
+    expect(terminalContinue).toHaveProperty("disabled", true);
+    fireEvent.click(terminalContinue);
+    expect(continueExecution).not.toHaveBeenCalled();
     expect(screen.queryByText("Playbook complete")).toBeNull();
   });
 
@@ -3317,7 +3323,7 @@ describe("review continuation", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     expect(screen.getByLabelText("Playbook status").textContent).toBe("Playbook complete");
-    expect(screen.queryByRole("button", { name: "Continue playbook" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue playbook" })).toHaveProperty("disabled", true);
     getTaskExecution.mockRejectedValue(new Error("Execution query failed"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500);

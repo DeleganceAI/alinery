@@ -2001,23 +2001,18 @@ export function SessionView({
   const capability = execution ? executionView?.continuation[execution.id] : undefined;
   const executionAssessment = execution ? executionView?.executions[execution.id] : undefined;
   const destinations = executionAssessment?.destinations ?? [];
-  const continuationLabel =
-    destinations.length === 1 ? (
-      <span>
-        Continue to <em>{destinations[0].title}</em>
-      </span>
-    ) : (
-      "Continue playbook"
-    );
+  const continuationName = destinations.length === 1 ? `Continue to ${destinations[0].title}` : "Continue playbook";
+  const continuationLabel = destinations.length === 1 ? `Cont. to ${destinations[0].title}` : "Continue playbook";
   const playbookComplete = !executionError && executionView?.assessment.status === "complete";
-  const continuationShown =
-    Boolean(execution) && !playbookComplete && !automaticContinuation && execution?.lifecycle !== "queued" && executionAssessment?.terminality !== "terminal";
   const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
   const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
   const continuationPending = requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
   const continuationReason =
     (executionError ? "Execution state is unavailable; see the warning above." : "") ||
     (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
+    (playbookComplete ? "The playbook is complete." : "") ||
+    (automaticContinuation ? "Automatic continuation is enabled; this step advances after validated readiness." : "") ||
+    (executionAssessment?.terminality === "terminal" ? "This final step completes automatically after validated readiness." : "") ||
     (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
     (endAccepted || execution?.receipt_id ? "Handoff accepted; waiting for the session to exit." : "") ||
     (!capability?.available ? `Continuation unavailable: ${capability?.reason ?? "the native continuation boundary is not available."}` : "") ||
@@ -2350,6 +2345,36 @@ export function SessionView({
           Playbook complete
         </span>
       )}
+      <span
+        className="continuation-control"
+        role="group"
+        aria-label={continuationReason ? "Unavailable continuation" : undefined}
+        aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
+        tabIndex={continuationReason ? 0 : undefined}
+        onFocus={() => setContinuationInfoOpen(true)}
+        onBlur={() => setContinuationInfoOpen(false)}
+        onMouseEnter={() => setContinuationInfoOpen(true)}
+        onMouseLeave={() => setContinuationInfoOpen(false)}
+        onClick={() => setContinuationInfoOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setContinuationInfoOpen(false);
+        }}
+      >
+        <button
+          className="btn primary"
+          type="button"
+          aria-label={continuationPending ? "Continuing…" : continuationName}
+          disabled={Boolean(continuationReason)}
+          aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
+          onClick={() => void continueReadyExecution()}
+        >
+          <span className="continuation-label">{continuationPending ? "Continuing…" : continuationLabel}</span>
+        </button>
+        <span id="continuation-reason" role="tooltip" hidden={!continuationInfoOpen}>
+          <span>{continuationName}</span>
+          {continuationReason && continuationReason !== continuationMessage && <span>{continuationReason}</span>}
+        </span>
+      </span>
       <span title={nudgeBlocker || "Ask the agent to wrap up and report readiness. Sends now, interrupting the current turn if it is working."}>
         <button
           className="btn small"
@@ -2362,38 +2387,6 @@ export function SessionView({
           Nudge to wrap up
         </button>
       </span>
-      {continuationShown && (
-        <span
-          className="continuation-control"
-          role="group"
-          aria-label={continuationReason ? "Unavailable continuation" : undefined}
-          aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
-          tabIndex={continuationReason ? 0 : undefined}
-          onFocus={() => setContinuationInfoOpen(Boolean(continuationReason))}
-          onBlur={() => setContinuationInfoOpen(false)}
-          onMouseEnter={() => setContinuationInfoOpen(Boolean(continuationReason))}
-          onMouseLeave={() => setContinuationInfoOpen(false)}
-          onClick={() => setContinuationInfoOpen(Boolean(continuationReason))}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setContinuationInfoOpen(false);
-          }}
-        >
-          <button
-            className="btn primary"
-            type="button"
-            disabled={Boolean(continuationReason)}
-            aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
-            onClick={() => void continueReadyExecution()}
-          >
-            {continuationPending ? "Continuing…" : continuationLabel}
-          </button>
-          {continuationReason && continuationReason !== continuationMessage && (
-            <span id="continuation-reason" role="tooltip" hidden={!continuationInfoOpen}>
-              {continuationReason}
-            </span>
-          )}
-        </span>
-      )}
       <fieldset className="continuation-modes" aria-label="Session continuation controls">
         <button
           type="button"
@@ -2950,9 +2943,17 @@ export function SessionView({
                   />
                   {/* The history view is the live pane with the input switched off, so a finished
                       session reads the same way as a running one. */}
-                  {liveRpc ? null : (
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
-                  )}
+                  <ChatComposer
+                    actions={continuationArea}
+                    body=""
+                    status="idle"
+                    catalog={[]}
+                    showHints={false}
+                    readOnly
+                    onBodyChange={() => undefined}
+                    onSend={() => undefined}
+                    onAbort={() => undefined}
+                  />
                 </>
               ) : (
                 <SessionTerminal
@@ -2969,7 +2970,7 @@ export function SessionView({
               )}
             </div>
           )}
-          {navHistory ? continuationArea : null}
+          {navHistory && harness !== "omp" && !liveRpc ? continuationArea : null}
           {!navHistory && termIntent && (
             <>
               {showChat ? (
@@ -3003,7 +3004,7 @@ export function SessionView({
                       onLoadOlder={loadOlder}
                       loadingOlder={loadingOlder}
                       atStart={chat.fileStart === 0}
-                      floatingActions={continuationArea}
+                      floatingActivity
                     />
                   </div>
                   {showChatComposer ? (
@@ -3016,6 +3017,7 @@ export function SessionView({
                         />
                       ) : null}
                       <ChatComposer
+                        actions={continuationArea}
                         body={messageDraft.body}
                         status={chatStatus}
                         catalog={chat.commands}
@@ -3054,6 +3056,18 @@ export function SessionView({
                         queuedCount={queuedMeta}
                       />
                     </>
+                  ) : continuationArea ? (
+                    <ChatComposer
+                      actions={continuationArea}
+                      body=""
+                      status={chatStatus}
+                      catalog={[]}
+                      showHints={false}
+                      readOnly
+                      onBodyChange={() => undefined}
+                      onSend={() => undefined}
+                      onAbort={() => undefined}
+                    />
                   ) : null}
                 </>
               ) : (
@@ -3109,7 +3123,17 @@ export function SessionView({
                       loadingOlder={loadingOlder}
                       atStart={chat.fileStart === 0}
                     />
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
+                    <ChatComposer
+                      actions={continuationArea}
+                      body=""
+                      status="idle"
+                      catalog={[]}
+                      showHints={false}
+                      readOnly
+                      onBodyChange={() => undefined}
+                      onSend={() => undefined}
+                      onAbort={() => undefined}
+                    />
                   </div>
                 ) : (
                   <div className="terminal-frame">
