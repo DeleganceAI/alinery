@@ -67,6 +67,8 @@ pub(crate) struct AppState {
     pub(crate) prepared_takeovers: Mutex<HashMap<String, PreparedTakeover>>,
     // Remote (SSH) hosts: connection phase, the ssh master and the repo-service channel.
     pub(crate) remotes: RemoteManager,
+    // Input, resize and detach of remote terminals, one ordered queue per session (see `queue_terminal_op`).
+    pub(crate) terminal_queues: Mutex<HashMap<String, std::sync::mpsc::Sender<(DaemonClient, TerminalOp)>>>,
 }
 
 /// Scope guard for `AppState::closing_repos` — teardown has several fallible steps and an

@@ -88,8 +88,8 @@ pub(crate) async fn remove_worktree_for_repo(app: AppHandle, state: State<'_, Ap
 // (manually, or by a `git worktree remove` run outside alinery); this gives the frontend a
 // live filesystem check instead of trusting the stored path.
 #[tauri::command]
-pub(crate) fn worktree_exists(state: State<'_, AppState>, slug: String) -> Result<bool, String> {
-    worktree_exists_for(&state, slug)
+pub(crate) async fn worktree_exists(app: AppHandle, slug: String) -> Result<bool, String> {
+    off_main_thread("worktree exists", move || worktree_exists_for(&app.state::<AppState>(), slug)).await
 }
 
 pub(crate) fn worktree_exists_for(state: &AppState, slug: String) -> Result<bool, String> {
@@ -137,19 +137,23 @@ pub(crate) async fn push_and_compare_url_for_repo(app: AppHandle, state: State<'
 
 // Hand-edit the PR link to the real PR URL once it exists (compare URL is just the prefill).
 #[tauri::command]
-pub(crate) fn set_pr_url(state: State<'_, AppState>, slug: String, url: String) -> Result<(), String> {
-    match require_active_target(&state)? {
+pub(crate) async fn set_pr_url(app: AppHandle, state: State<'_, AppState>, slug: String, url: String) -> Result<(), String> {
+    let target = require_active_target(&state)?;
+    off_main_thread("set PR url", move || match target {
         ActiveRepo::Local(repo) => set_pr_url_in(&repo, slug, url),
-        ActiveRepo::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
-    }
+        ActiveRepo::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn set_pr_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, url: String) -> Result<(), String> {
-    match owned_target(&app, &state, &repo_path)? {
+pub(crate) async fn set_pr_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, url: String) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    off_main_thread("set PR url", move || match target {
         RepoRef::Local(repo) => set_pr_url_in(&repo, slug, url),
-        RepoRef::Remote { host_id, path } => remote_call(&state, &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
-    }
+        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
+    })
+    .await
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

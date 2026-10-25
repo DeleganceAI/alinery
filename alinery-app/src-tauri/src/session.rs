@@ -9,7 +9,7 @@ pub(crate) use alinery_core::session_actions::{
 pub(crate) use alinery_core::SessionMeta;
 
 #[tauri::command]
-pub(crate) fn rename_session<R: tauri::Runtime>(
+pub(crate) async fn rename_session<R: tauri::Runtime>(
     app: AppHandle<R>,
     state: State<'_, AppState>,
     repo_path: String,
@@ -17,9 +17,13 @@ pub(crate) fn rename_session<R: tauri::Runtime>(
     session_id: String,
     name: String,
 ) -> Result<alinery_core::SessionName, String> {
-    match target_repo_ref_for_app(&app, &repo_path)? {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(&state, repo)?;
+    }
+    off_main_thread("rename session", move || match target {
         RepoRef::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::RenameSession {
                 repo: path.into(),
@@ -28,16 +32,15 @@ pub(crate) fn rename_session<R: tauri::Runtime>(
                 name,
             },
         ),
-        RepoRef::Local(repo) => {
-            require_repo_owned(&state, &repo)?;
-            Ok(alinery_core::set_session_name(&repo, &task_slug, &session_id, &name, alinery_core::SessionNameSource::User)?.value)
-        }
-    }
+        RepoRef::Local(repo) => Ok(alinery_core::set_session_name(&repo, &task_slug, &session_id, &name, alinery_core::SessionNameSource::User)?.value),
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_path: String, task_slug: String, session_id: String) -> Result<SessionDisplayContext, String> {
-    match target_repo_ref_for_app(&app, &repo_path)? {
+pub(crate) async fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_path: String, task_slug: String, session_id: String) -> Result<SessionDisplayContext, String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    off_main_thread("session display", move || match target {
         RepoRef::Remote { host_id, path } => remote_call(
             &app.state::<AppState>(),
             &host_id,
@@ -48,7 +51,8 @@ pub(crate) fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_pat
             },
         ),
         RepoRef::Local(repo) => session_display_context_for_repo(&repo, &task_slug, &session_id),
-    }
+    })
+    .await
 }
 
 #[derive(Deserialize, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -114,10 +118,14 @@ pub(crate) async fn create_session_for_repo(
 }
 
 #[tauri::command]
-pub(crate) fn mark_session_notification_read(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
-    match target_repo_ref_for_app(&app, &repo_path)? {
+pub(crate) async fn mark_session_notification_read(app: AppHandle, state: State<'_, AppState>, repo_path: String, task_slug: String, id: String) -> Result<(), String> {
+    let target = target_repo_ref_for_app(&app, &repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(&state, repo)?;
+    }
+    off_main_thread("mark session notification read", move || match target {
         RepoRef::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::MarkSessionNotificationRead {
                 repo: path.into(),
@@ -125,11 +133,9 @@ pub(crate) fn mark_session_notification_read(app: AppHandle, state: State<'_, Ap
                 session_id: id,
             },
         ),
-        RepoRef::Local(repo) => {
-            require_repo_owned(&state, &repo)?;
-            mark_session_notification_read_in(&repo, &task_slug, &id)
-        }
-    }
+        RepoRef::Local(repo) => mark_session_notification_read_in(&repo, &task_slug, &id),
+    })
+    .await
 }
 
 #[tauri::command]
@@ -190,10 +196,11 @@ pub(crate) fn acknowledge_exited_session_refs(repo: &Path, refs: &[(String, Stri
 }
 
 #[tauri::command]
-pub(crate) async fn list_sessions(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<Vec<SessionDisplayMeta>, String> {
-    match target_or_active_ref(&app, repo_path)? {
+pub(crate) async fn list_sessions(app: AppHandle, task_slug: String, repo_path: Option<String>) -> Result<Vec<SessionDisplayMeta>, String> {
+    let target = target_or_active_ref(&app, repo_path)?;
+    off_main_thread("list sessions", move || match target {
         RepoRef::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::ListSessions {
                 repo: path.into(),
@@ -204,7 +211,8 @@ pub(crate) async fn list_sessions(app: AppHandle, state: State<'_, AppState>, ta
             .into_iter()
             .map(|meta| project_session_display(&repo, &task_slug, meta))
             .collect()),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -465,20 +473,24 @@ pub(crate) async fn refresh_hosted_inference_before_open(app: AppHandle, intent:
 }
 
 #[tauri::command]
-pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<SessionMeta, String> {
-    let reply = repo_client(&state, &active_repo_ref()?)?.create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
-        task_slug: String::new(),
-        target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
-            harness: alinery_core::NO_HARNESS_KEY.into(),
-            model: None,
-            prompt: None,
-        },
-        launch_override: None,
-        prompt_extra: None,
-        handoff_artifact: None,
-        start: false,
-    })?;
-    Ok(reply.session)
+pub(crate) async fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<SessionMeta, String> {
+    let daemon = repo_client(&state, &active_repo_ref()?)?;
+    off_main_thread("drawer terminal", move || {
+        let reply = daemon.create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
+            task_slug: String::new(),
+            target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
+                harness: alinery_core::NO_HARNESS_KEY.into(),
+                model: None,
+                prompt: None,
+            },
+            launch_override: None,
+            prompt_extra: None,
+            handoff_artifact: None,
+            start: false,
+        })?;
+        Ok(reply.session)
+    })
+    .await
 }
 
 // Open a session: REATTACH if its pty is still running (replay scrollback, then go
@@ -491,7 +503,6 @@ pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<Sessi
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn open_session(
-    state: State<'_, AppState>,
     app: AppHandle,
     id: String,
     cwd: String,
@@ -506,114 +517,129 @@ pub(crate) async fn open_session(
     rows: Option<u16>,
     on_bytes: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    let task_slug_clean = task_slug.clone().unwrap_or_default();
-    let slug_trim = task_slug_clean.trim();
-    if slug_trim.is_empty() {
-        let meta_harness = match active_repo_ref() {
-            Ok(RepoRef::Remote { host_id, path }) => remote_call::<Option<alinery_core::LaunchFields>>(
-                &state,
-                &host_id,
-                RepoOp::ReadLaunchFields {
-                    repo: path.into(),
-                    slug: String::new(),
-                    session_id: id.clone(),
-                },
-            )
-            .ok()
-            .flatten()
-            .map(|launch| launch.harness),
-            _ => active_repo().ok().and_then(|repo| {
-                let path = session_meta_path(&repo, "", &id);
-                fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok()).map(|m| m.harness)
-            }),
-        };
-        if !allow_root_session_open(meta_harness.as_deref()) {
-            return Err("root sessions are limited to no-harness drawer".into());
-        }
-    }
-    let intent = intent.as_deref().unwrap_or(daemon_client::ops::SPAWN);
-    if !daemon_client::is_known_open_intent(intent) {
-        return Err(format!("unknown session intent '{intent}'"));
-    }
-    let target = require_active_target(&state)?;
-    let mut harness = String::new();
-    let mut session_model = model.clone().filter(|m| !m.is_empty()).unwrap_or_default();
-    if !slug_trim.is_empty() {
-        let launch = match &target {
-            ActiveRepo::Local(repo) => {
-                let task = read_task(repo, slug_trim)?;
-                if task.engine_version < 2 {
-                    return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
+    let intent = intent.unwrap_or_else(|| daemon_client::ops::SPAWN.to_string());
+    // Both stretches that wait on a task read, a launch lookup or the daemon (over ssh for a remote repo) run on
+    // the blocking pool; the hosted-inference refresh between them is its own awaited step.
+    let (target, slug, harness, session_model) = {
+        let (app, id, model, intent) = (app.clone(), id.clone(), model.clone(), intent.clone());
+        off_main_thread("open session", move || {
+            let state = app.state::<AppState>();
+            let slug = task_slug.unwrap_or_default().trim().to_string();
+            if slug.is_empty() {
+                let meta_harness = match active_repo_ref() {
+                    Ok(RepoRef::Remote { host_id, path }) => remote_call::<Option<alinery_core::LaunchFields>>(
+                        &state,
+                        &host_id,
+                        RepoOp::ReadLaunchFields {
+                            repo: path.into(),
+                            slug: String::new(),
+                            session_id: id.clone(),
+                        },
+                    )
+                    .ok()
+                    .flatten()
+                    .map(|launch| launch.harness),
+                    _ => active_repo().ok().and_then(|repo| {
+                        let path = session_meta_path(&repo, "", &id);
+                        fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok()).map(|m| m.harness)
+                    }),
+                };
+                if !allow_root_session_open(meta_harness.as_deref()) {
+                    return Err("root sessions are limited to no-harness drawer".into());
                 }
-                if task.draft || task.archived {
-                    return Err("draft or archived tasks cannot launch sessions".into());
+            }
+            if !daemon_client::is_known_open_intent(&intent) {
+                return Err(format!("unknown session intent '{intent}'"));
+            }
+            let target = require_active_target(&state)?;
+            let mut harness = String::new();
+            let mut session_model = model.filter(|m| !m.is_empty()).unwrap_or_default();
+            if !slug.is_empty() {
+                let launch = match &target {
+                    ActiveRepo::Local(repo) => {
+                        let task = read_task(repo, &slug)?;
+                        if task.engine_version < 2 {
+                            return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
+                        }
+                        if task.draft || task.archived {
+                            return Err("draft or archived tasks cannot launch sessions".into());
+                        }
+                        task_daemon_for(repo, &task.slug, &app_config_path(&app)?)?
+                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
+                        alinery_core::read_meta_launch_fields(repo, &slug, &id)
+                    }
+                    ActiveRepo::Remote { host_id, path } => {
+                        let task: Task = remote_call::<Option<Task>>(
+                            &state,
+                            host_id,
+                            RepoOp::GetTask {
+                                repo: path.clone().into(),
+                                slug: slug.clone(),
+                            },
+                        )?
+                        .ok_or_else(|| format!("no such task: {slug}"))?;
+                        if task.engine_version < 2 {
+                            return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
+                        }
+                        if task.draft || task.archived {
+                            return Err("draft or archived tasks cannot launch sessions".into());
+                        }
+                        state
+                            .daemon()
+                            .ok_or("daemon not connected")?
+                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
+                        remote_call::<Option<alinery_core::LaunchFields>>(
+                            &state,
+                            host_id,
+                            RepoOp::ReadLaunchFields {
+                                repo: path.clone().into(),
+                                slug: slug.clone(),
+                                session_id: id.clone(),
+                            },
+                        )?
+                    }
+                };
+                if let Some(launch) = launch {
+                    if !alinery_core::is_allowed_launch_harness(&launch.harness) {
+                        return Err(format!("unknown harness '{}'", launch.harness));
+                    }
+                    harness = launch.harness;
+                    if session_model.is_empty() {
+                        session_model = launch.model;
+                    }
                 }
-                task_daemon_for(repo, &task.slug, &app_config_path(&app)?)?
-                    .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
-                alinery_core::read_meta_launch_fields(repo, slug_trim, &id)
             }
-            ActiveRepo::Remote { host_id, path } => {
-                let task: Task = remote_call::<Option<Task>>(
-                    &state,
-                    host_id,
-                    RepoOp::GetTask {
-                        repo: path.clone().into(),
-                        slug: slug_trim.to_string(),
-                    },
-                )?
-                .ok_or_else(|| format!("no such task: {slug_trim}"))?;
-                if task.engine_version < 2 {
-                    return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
-                }
-                if task.draft || task.archived {
-                    return Err("draft or archived tasks cannot launch sessions".into());
-                }
-                state
-                    .daemon()
-                    .ok_or("daemon not connected")?
-                    .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
-                remote_call::<Option<alinery_core::LaunchFields>>(
-                    &state,
-                    host_id,
-                    RepoOp::ReadLaunchFields {
-                        repo: path.clone().into(),
-                        slug: slug_trim.to_string(),
-                        session_id: id.clone(),
-                    },
-                )?
-            }
-        };
-        if let Some(launch) = launch {
-            if !alinery_core::is_allowed_launch_harness(&launch.harness) {
-                return Err(format!("unknown harness '{}'", launch.harness));
-            }
-            harness = launch.harness;
-            if session_model.is_empty() {
-                session_model = launch.model;
-            }
-        }
-    }
-    refresh_hosted_inference_before_open(app.clone(), intent, &harness, &session_model).await?;
-    let daemon = match &target {
-        ActiveRepo::Local(repo) if intent == daemon_client::ops::ATTACH => client_for_session(&state, repo, slug_trim, &id)?,
-        _ => state.daemon().ok_or("daemon not connected")?,
+            Ok((target, slug, harness, session_model))
+        })
+        .await?
     };
-    open_daemon_session(
-        &daemon,
-        &id,
-        &cwd,
-        Some(slug_trim),
-        phase.as_deref(),
-        model.as_deref(),
-        attach_id,
-        stream_token,
-        intent,
-        resume_token.as_deref(),
-        cols,
-        rows,
-        on_bytes,
-        app,
-    )
+    refresh_hosted_inference_before_open(app.clone(), &intent, &harness, &session_model).await?;
+    off_main_thread("open session", move || {
+        let daemon = {
+            let state = app.state::<AppState>();
+            match &target {
+                ActiveRepo::Local(repo) if intent == daemon_client::ops::ATTACH => client_for_session(&state, repo, &slug, &id)?,
+                _ => state.daemon().ok_or("daemon not connected")?,
+            }
+        };
+        open_daemon_session(
+            &daemon,
+            &id,
+            &cwd,
+            Some(&slug),
+            phase.as_deref(),
+            model.as_deref(),
+            attach_id,
+            stream_token,
+            &intent,
+            resume_token.as_deref(),
+            cols,
+            rows,
+            on_bytes,
+            app,
+        )
+    })
+    .await
 }
 
 // Detach the frontend without killing the pty: the session keeps running in the
@@ -623,7 +649,12 @@ pub(crate) async fn open_session(
 // newer open_session is a no-op, so it can't clobber the live sink (freeze the feed).
 #[tauri::command]
 pub(crate) fn detach_session(state: State<'_, AppState>, id: String, attach_id: u64) -> Result<(), String> {
-    require_active_repo_ready(&state)?;
+    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
+        let queued = queue_terminal_op(&state, &id, TerminalOp::Detach(attach_id));
+        // The worker finishes what is queued, then ends; a later attach starts a new queue.
+        drop_terminal_queue(&state, &id);
+        return queued;
+    }
     // Route cache only (no task_slug on this command). Miss → own lane.
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     match daemon.detach_session(&id, attach_id) {
@@ -639,10 +670,80 @@ pub(crate) fn detach_session(state: State<'_, AppState>, id: String, attach_id: 
     }
 }
 
+/// One step of a remote terminal. The frontend fires these without awaiting, and each is a daemon call over
+/// the ssh forward (about 2 RTT). On the main thread that freezes the window per keystroke; on a thread pool
+/// the keystrokes could overtake each other. So a remote session gets one queue and one thread, which keeps
+/// them in order. A local session's call is a local socket and stays direct.
+pub(crate) enum TerminalOp {
+    Write(String),
+    Resize(u16, u16),
+    Detach(u64),
+}
+
+/// Queue `op` for the remote session `id`, aimed at the daemon the session belongs to now.
+fn queue_terminal_op(state: &AppState, id: &str, op: TerminalOp) -> Result<(), String> {
+    let daemon = cached_or_own_client(state, id).ok_or("daemon not connected")?;
+    queue_terminal_op_to(state, id, daemon, op)
+}
+
+/// `queue_terminal_op` for a session whose daemon the caller already resolved (a chat thread's).
+pub(crate) fn queue_terminal_op_to(state: &AppState, id: &str, daemon: DaemonClient, op: TerminalOp) -> Result<(), String> {
+    let mut queues = state.terminal_queues.lock().unwrap_or_else(|e| e.into_inner());
+    let mut item = (daemon, op);
+    // A worker only goes away if it panicked; start a fresh one once rather than lose the input.
+    for _ in 0..2 {
+        let sender = queues.entry(id.to_string()).or_insert_with(|| spawn_terminal_worker(id.to_string()));
+        match sender.send(item) {
+            Ok(()) => return Ok(()),
+            Err(returned) => {
+                item = returned.0;
+                queues.remove(id);
+            }
+        }
+    }
+    Err("terminal input queue is not running".into())
+}
+
+/// Let the session's worker finish what is queued and exit.
+pub(crate) fn drop_terminal_queue(state: &AppState, id: &str) {
+    state.terminal_queues.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+}
+
+fn spawn_terminal_worker(id: String) -> std::sync::mpsc::Sender<(DaemonClient, TerminalOp)> {
+    let (sender, receiver) = std::sync::mpsc::channel::<(DaemonClient, TerminalOp)>();
+    std::thread::spawn(move || {
+        let mut held = None;
+        while let Some((daemon, op)) = held.take().or_else(|| receiver.recv().ok()) {
+            // The frontend discards these results (a dead link shows in the connection state), so a failure
+            // only ends this call.
+            let _ = match op {
+                TerminalOp::Write(mut data) => {
+                    // What was typed while the last call was in flight goes out as one write.
+                    while let Ok(next) = receiver.try_recv() {
+                        match next.1 {
+                            TerminalOp::Write(more) => data.push_str(&more),
+                            _ => {
+                                held = Some(next);
+                                break;
+                            }
+                        }
+                    }
+                    daemon.write_session(&id, &data)
+                }
+                TerminalOp::Resize(cols, rows) => daemon.resize_session(&id, cols, rows),
+                TerminalOp::Detach(attach_id) => daemon.detach_session(&id, attach_id),
+            };
+        }
+    });
+    sender
+}
+
 // Frontend keystrokes -> pty. No-op if the session isn't registered yet.
 #[tauri::command]
 pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
-    require_active_repo_ready(&state)?;
+    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
+        return queue_terminal_op(&state, &id, TerminalOp::Write(data));
+    }
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     match daemon.write_session(&id, &data) {
         Ok(()) => Ok(()),
@@ -658,11 +759,17 @@ pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String
 }
 
 #[tauri::command]
-pub(crate) fn prepare_review_approval_prompt(state: State<'_, AppState>, task_slug: String, review_artifact: String) -> Result<PreparedSessionMessageAction, String> {
-    match require_active_target(&state)? {
+pub(crate) async fn prepare_review_approval_prompt(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_slug: String,
+    review_artifact: String,
+) -> Result<PreparedSessionMessageAction, String> {
+    let target = require_active_target(&state)?;
+    off_main_thread("prepare review approval", move || match target {
         ActiveRepo::Local(repo) => prepare_review_approval_prompt_for(&repo, &task_slug, &review_artifact),
         ActiveRepo::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::PrepareReviewApprovalPrompt {
                 repo: path.into(),
@@ -670,14 +777,23 @@ pub(crate) fn prepare_review_approval_prompt(state: State<'_, AppState>, task_sl
                 review_artifact,
             },
         ),
-    }
+    })
+    .await
 }
+
 #[tauri::command]
-pub(crate) fn finalize_session_message_actions(state: State<'_, AppState>, id: String, task_slug: String, actions: Vec<SessionMessageActionProvenance>) -> Result<(), String> {
-    match require_active_target(&state)? {
+pub(crate) async fn finalize_session_message_actions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    task_slug: String,
+    actions: Vec<SessionMessageActionProvenance>,
+) -> Result<(), String> {
+    let target = require_active_target(&state)?;
+    off_main_thread("finalize message actions", move || match target {
         ActiveRepo::Local(repo) => finalize_session_message_actions_for(&repo, &id, &task_slug, &actions),
         ActiveRepo::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::FinalizeSessionMessageActions {
                 repo: path.into(),
@@ -686,13 +802,16 @@ pub(crate) fn finalize_session_message_actions(state: State<'_, AppState>, id: S
                 actions,
             },
         ),
-    }
+    })
+    .await
 }
 
 // Resize the pty so the TUI reflows. No-op if the session isn't registered yet.
 #[tauri::command]
 pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    require_active_repo_ready(&state)?;
+    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
+        return queue_terminal_op(&state, &id, TerminalOp::Resize(cols, rows));
+    }
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
     match daemon.resize_session(&id, cols, rows) {
         Ok(()) => Ok(()),
@@ -711,46 +830,53 @@ pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, 
 // structured state axes when the daemon owns the id, checkpoint always from meta.
 #[tauri::command]
 pub(crate) async fn session_status(app: AppHandle, id: String, task_slug: Option<String>) -> SessionObservation {
-    let app_state = app.state::<AppState>();
-    let slug = task_slug.as_deref().unwrap_or("");
-    let (meta, live) = match active_repo_ref() {
-        Ok(RepoRef::Remote { host_id, path }) => {
-            let sessions: Vec<SessionDisplayMeta> = remote_call(
-                &app_state,
-                &host_id,
-                RepoOp::ListSessions {
-                    repo: path.into(),
-                    slug: slug.to_string(),
-                },
-            )
-            .unwrap_or_default();
-            let meta = sessions.into_iter().find(|session| session.meta.id == id).map(|session| session.meta);
-            let live = app_state.daemon().and_then(|client| client.session_status_observed(&id).ok().flatten());
-            (meta, live)
-        }
-        _ => {
-            let meta = active_repo()
-                .ok()
-                .map(|repo| session_meta_path(&repo, slug, &id))
-                .and_then(|p| fs::read_to_string(&p).ok())
-                .and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok());
-            let live = active_repo()
-                .ok()
-                .and_then(|repo| with_session_client(&app_state, &repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
-            (meta, live)
-        }
-    };
+    let active = active_repo_ref();
+    // A host read plus a daemon round trip (over ssh for a remote repo): never on the async runtime's own threads.
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = app.state::<AppState>();
+        let slug = task_slug.as_deref().unwrap_or("");
+        let (meta, live) = match &active {
+            Ok(RepoRef::Remote { host_id, path }) => {
+                let sessions: Vec<SessionDisplayMeta> = remote_call(
+                    &app_state,
+                    host_id,
+                    RepoOp::ListSessions {
+                        repo: path.into(),
+                        slug: slug.to_string(),
+                    },
+                )
+                .unwrap_or_default();
+                let meta = sessions.into_iter().find(|session| session.meta.id == id).map(|session| session.meta);
+                let live = app_state.daemon().and_then(|client| client.session_status_observed(&id).ok().flatten());
+                (meta, live)
+            }
+            _ => {
+                let repo = match &active {
+                    Ok(RepoRef::Local(repo)) => Some(repo),
+                    _ => None,
+                };
+                let meta = repo
+                    .map(|repo| session_meta_path(repo, slug, &id))
+                    .and_then(|p| fs::read_to_string(&p).ok())
+                    .and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok());
+                let live = repo.and_then(|repo| with_session_client(&app_state, repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
+                (meta, live)
+            }
+        };
 
-    let (started, ended, exit) = meta.as_ref().map(|m| (m.started_at, m.ended_at, m.exit_code)).unwrap_or((None, None, None));
-    let checkpoint = meta.as_ref().map(|m| m.semantic.clone()).unwrap_or_default();
+        let (started, ended, exit) = meta.as_ref().map(|m| (m.started_at, m.ended_at, m.exit_code)).unwrap_or((None, None, None));
+        let checkpoint = meta.as_ref().map(|m| m.semantic.clone()).unwrap_or_default();
 
-    let lifecycle = lifecycle_from_structured(started, ended, exit, live.as_ref().map(|live| &live.state));
-    SessionObservation {
-        lifecycle,
-        state: live.as_ref().map(|live| live.state.clone()),
-        checkpoint,
-        transport: live.map(|live| live.transport),
-    }
+        let lifecycle = lifecycle_from_structured(started, ended, exit, live.as_ref().map(|live| &live.state));
+        SessionObservation {
+            lifecycle,
+            state: live.as_ref().map(|live| live.state.clone()),
+            checkpoint,
+            transport: live.map(|live| live.transport),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| unknown_session_observation(String::new()))
 }
 
 // Thin helper: extract process axis from optional structured state and call classify.
@@ -948,19 +1074,30 @@ pub(crate) fn remote_session_statuses(state: &AppState, refs: &[SessionStatusRef
 // app IPC call and one `list` request per owning daemon lane instead of starting a poller per row.
 #[tauri::command]
 pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug: String) -> HashMap<String, SessionObservation> {
+    let active = active_repo_ref();
+    // File reads, a host read and a daemon round trip per lane (over ssh for a remote repo): never on the async runtime's own threads.
+    tauri::async_runtime::spawn_blocking(move || session_statuses_blocking(&app, &active, ids, &task_slug))
+        .await
+        .unwrap_or_default()
+}
+
+fn session_statuses_blocking(app: &AppHandle, active: &Result<RepoRef, String>, ids: Vec<String>, task_slug: &str) -> HashMap<String, SessionObservation> {
     let app_state = app.state::<AppState>();
-    let repo = active_repo().ok();
+    let repo = match active {
+        Ok(RepoRef::Local(repo)) => Some(repo.clone()),
+        _ => None,
+    };
     let mut metadata: HashMap<String, Option<SessionMeta>> = HashMap::new();
     let mut clients = BTreeMap::<PathBuf, DaemonClient>::new();
 
     // A remote repo's metas live on its host and its one daemon is the forwarded client.
-    if let Ok(RepoRef::Remote { host_id, path }) = active_repo_ref() {
+    if let Ok(RepoRef::Remote { host_id, path }) = active {
         let sessions: Vec<SessionDisplayMeta> = remote_call(
             &app_state,
-            &host_id,
+            host_id,
             RepoOp::ListSessions {
                 repo: path.into(),
-                slug: task_slug.clone(),
+                slug: task_slug.to_string(),
             },
         )
         .unwrap_or_default();
@@ -975,7 +1112,7 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
     for id in ids.iter().filter(|_| repo.is_some()) {
         let meta = repo
             .as_ref()
-            .map(|repo| session_meta_path(repo, &task_slug, id))
+            .map(|repo| session_meta_path(repo, task_slug, id))
             .and_then(|path| fs::read_to_string(path).ok())
             .and_then(|contents| serde_json::from_str::<SessionMeta>(&contents).ok());
         metadata.insert(id.clone(), meta);
@@ -983,7 +1120,7 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
         // Board observation only: a session whose owning daemon is unreachable *or*
         // incompatible simply contributes no live status, exactly as before. The mismatch
         // is refused where it would matter (attach/write/resize/detach), not here.
-        if let Some(client) = repo.as_ref().and_then(|repo| client_for_session(&app_state, repo, &task_slug, id).ok()) {
+        if let Some(client) = repo.as_ref().and_then(|repo| client_for_session(&app_state, repo, task_slug, id).ok()) {
             clients.entry(client.socket_path.clone()).or_insert(client);
         }
     }

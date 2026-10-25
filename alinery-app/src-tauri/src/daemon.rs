@@ -1582,7 +1582,8 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
     let Some(daemon) = state.daemon() else {
         return Ok(offline());
     };
-    match daemon.session_statuses_observed() {
+    // The observation waits on the daemon: up to 3 s over a remote forward.
+    match off_main_thread("daemon status", move || daemon.session_statuses_observed()).await {
         Ok(statuses) => {
             let total = statuses.len() as u32;
             let mut alive = 0u32;

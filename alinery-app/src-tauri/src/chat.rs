@@ -383,7 +383,10 @@ pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo
     let daemon = chat_daemon(&state, &target)?;
     off_main_thread("chat detach", move || {
         require_chat_thread(&app, &target, &id)?;
-        daemon.detach_session(&id, attach_id)
+        let detached = daemon.detach_session(&id, attach_id);
+        // A remote thread's input queue (see `queue_terminal_op`) ends with its terminal.
+        drop_terminal_queue(&app.state::<AppState>(), &id);
+        detached
     })
     .await
 }
@@ -462,19 +465,26 @@ pub(crate) async fn chat_pty_attach(
 pub(crate) fn chat_pty_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, data: String) -> Result<(), String> {
     let target = owned_target(&app, &state, &repo_path)?;
     // Keystrokes: no host round trip for the thread check on a remote repo.
-    if let RepoRef::Local(repo) = &target {
-        load_root_omp(repo, &id)?;
+    match &target {
+        RepoRef::Local(repo) => {
+            load_root_omp(repo, &id)?;
+            chat_daemon(&state, &target)?.write_session(&id, &data)
+        }
+        // Ordered with the other input of this thread, and off the main thread (see `queue_terminal_op`).
+        RepoRef::Remote { .. } => queue_terminal_op_to(&state, &id, chat_daemon(&state, &target)?, TerminalOp::Write(data)),
     }
-    chat_daemon(&state, &target)?.write_session(&id, &data)
 }
 
 #[tauri::command]
 pub(crate) fn chat_pty_resize(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, cols: u16, rows: u16) -> Result<(), String> {
     let target = owned_target(&app, &state, &repo_path)?;
-    if let RepoRef::Local(repo) = &target {
-        load_root_omp(repo, &id)?;
+    match &target {
+        RepoRef::Local(repo) => {
+            load_root_omp(repo, &id)?;
+            chat_daemon(&state, &target)?.resize_session(&id, cols, rows)
+        }
+        RepoRef::Remote { .. } => queue_terminal_op_to(&state, &id, chat_daemon(&state, &target)?, TerminalOp::Resize(cols, rows)),
     }
-    chat_daemon(&state, &target)?.resize_session(&id, cols, rows)
 }
 
 #[tauri::command]

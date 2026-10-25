@@ -2220,6 +2220,111 @@ fn live_storage_is_measured_and_purged_on_the_host() {
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
 }
 
+/// A host that stops answering must not hold up the command that asked: it hands the wait to the blocking
+/// pool and returns control at once, so the window keeps painting. The host's repo service is stopped
+/// (SIGSTOP), so every call to it hangs until it is resumed.
+#[test]
+fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    use tauri::Manager;
+    /// Resumes the host's processes on every exit, including a failed assertion.
+    struct Resume(std::sync::Arc<RemoteSession>);
+    impl Resume {
+        fn now(&self) {
+            let script = "pkill -CONT -f '[a]linery-mcp --repo-service'; true";
+            let _ = self.0.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(20));
+        }
+    }
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            self.now();
+        }
+    }
+    let Some(args) = live_args() else {
+        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
+        return;
+    };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let _active = super::ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+    context.config_mut().identifier = format!("test.alinery.remote.{}", uuid::Uuid::new_v4());
+    let app = tauri::test::mock_builder().manage(crate::AppState::default()).build(context).unwrap();
+    let handle = app.handle().clone();
+    let state = handle.state::<crate::AppState>();
+    let id = format!("stall-{}", std::process::id());
+    let mut config = crate::AppConfig::default();
+    config.remote_hosts.insert(
+        id.clone(),
+        crate::RemoteHost {
+            label: "live".into(),
+            ssh_args: args.clone(),
+            ..Default::default()
+        },
+    );
+    crate::write_app_config(&handle, &config).unwrap();
+    connect_and_attach(&handle, &id, true).unwrap();
+
+    let session = state.remotes.session(&id).expect("connected");
+    let home = host_views(&handle, &state)[0].home.clone().unwrap();
+    let repo = format!("{home}/work/stall-{}", std::process::id());
+    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(30)).unwrap();
+    sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
+    let key = add_remote_repo(&handle, &id, &repo).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    let task = alinery_core::Task {
+        name: "Remote task".into(),
+        slug: "remote-task".into(),
+        branch: "remote-task".into(),
+        created: 1_700_000_000,
+        ..Default::default()
+    };
+    session
+        .channel
+        .call(
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/task.md").into(),
+                contents: toml::to_string(&task).unwrap(),
+            },
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap();
+
+    let resume = Resume(session.clone());
+    sh("pkill -STOP -f '[a]linery-mcp --repo-service'");
+    // The stall is real: a call made straight from a thread is still waiting.
+    let direct = {
+        let handle = handle.clone();
+        let (id, repo) = (id.clone(), repo.clone());
+        std::thread::spawn(move || remote_call::<Vec<alinery_core::Task>>(&handle.state::<crate::AppState>(), &id, RepoOp::ListTasks { repo: repo.into() }))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
+
+    // The command is an async fn: its first poll runs up to the hand-off and returns.
+    let mut rename = Box::pin(crate::rename_task(
+        handle.clone(),
+        handle.state(),
+        key.clone(),
+        "remote-task".into(),
+        "Renamed remotely".into(),
+    ));
+    let started = std::time::Instant::now();
+    let first = rename.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    let took = started.elapsed();
+    assert!(matches!(first, Poll::Pending), "the command must wait for the host off this thread");
+    assert!(took < std::time::Duration::from_millis(250), "the command held its caller for {took:?}");
+
+    // Resumed, the host answers both, and the command finishes with the host's result.
+    resume.now();
+    let renamed = tauri::async_runtime::block_on(rename).unwrap();
+    assert_eq!(renamed.name, "Renamed remotely");
+    assert_eq!(direct.join().unwrap().unwrap().len(), 1);
+    drop(resume);
+    disconnect_host(&handle, &id);
+    let _ = std::fs::remove_dir_all(&session.secrets_dir);
+}
+
 /// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
 /// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
 #[test]

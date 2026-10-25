@@ -25,7 +25,8 @@ At 100 ms RTT a repo-service call is about 0.1 s and a daemon op about 0.2 s. A 
 - About 30 synchronous commands make a remote call directly: 19 in `artifacts.rs` (read, comments, drafts, review handoff), 6 in `session.rs` (`rename_session`, `get_session_display`, `mark_session_notification_read`, `ensure_drawer_terminal`, `prepare_review_approval_prompt`, `finalize_session_message_actions`), `set_pr_url*`, `subtask_state`, `discard_subtask`, `rename_task`, `read_chat_image` and `write_chat_attachment_bytes`.
 - Eight `async` commands make the call on a runtime worker: `list_board_tasks`, `list_tasks`, `get_task`, `list_sessions`, `list_artifacts_with_metadata`, `open_session`, `session_status`, `session_statuses`. `daemon_status` does the same through `session_statuses_observed()`. (`list_session_items`, `session_list_statuses`, `list_task_activity` and `chat_transcript` already offload.)
 - On a local disk this is invisible. On a 150 ms link every one of these is a frozen window for at least one RTT, and with the link down it is up to 30 s (`SERVICE_TIMEOUT`).
-- `scripts/tests/check-blocking-commands.sh` checks a fixed list of local commands. No gate covers remote-routed commands, which is how this got in.
+- `scripts/tests/check-blocking-commands.sh` checks a fixed list of local commands. No gate covered remote-routed commands, which is how this got in. `check-remote-offload.sh` now does (P1).
+- The inventory above missed more than it listed. The gate found `worktree_exists`, `daemon_status` and the terminal input commands (`write_session`, `resize_session`, `detach_session`, `chat_pty_write`, `chat_pty_resize`), which reach the host through a daemon client rather than `remote_call`.
 
 **F2. Pollers can pile up.** The board views (`Kanban`, `Grid`, `TaskList`) and `useDaemonStatus` use `setInterval` with no in-flight guard. If a call takes longer than the interval, the next tick starts another one, and each holds a blocked thread (F1) until it times out. Only `useBoardTaskActivity` chains its next call after the last one returns.
 
@@ -78,6 +79,7 @@ Each step names what changes, why, the expected gain, the risk, and how it is pr
 - Expected gain: the freeze disappears. No change in bandwidth or call count.
 - Risk: low. Tauri async commands cannot hold `State<'_>` across an await without care, which is why the existing pattern clones the `AppHandle` into the closure.
 - Proof: the gate, plus a live test that holds the host's channel and checks a command returns control within the budget (the call itself may still time out).
+- Done. One thing the plan did not foresee: terminal input is fired without awaiting and depended on the main thread's order, so a plain pool would have reordered keystrokes. Remote terminals use one ordered queue per session instead (see the todo).
 
 **P2. Pollers that cannot pile up or run for nothing (F2).**
 - One in-flight guard per poller: chain the next call from the previous one's completion, as `useBoardTaskActivity` already does.

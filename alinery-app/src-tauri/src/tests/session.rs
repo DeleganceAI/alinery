@@ -75,18 +75,18 @@ fn manual_rename_uses_owned_explicit_repo_without_daemon() {
     )
     .unwrap();
     set_active_repo_global(Some(repo_b.clone())).unwrap();
-    let saved = crate::rename_session(
+    let saved = tauri::async_runtime::block_on(crate::rename_session(
         app.handle().clone(),
         app.state(),
         repo_a.display().to_string(),
         "task".into(),
         "same".into(),
         "  Offline history  ".into(),
-    )
+    ))
     .unwrap();
     assert_eq!(saved.name, "Offline history");
     assert_eq!(
-        crate::get_session_display(app.handle().clone(), repo_a.display().to_string(), "task".into(), "same".into())
+        tauri::async_runtime::block_on(crate::get_session_display(app.handle().clone(), repo_a.display().to_string(), "task".into(), "same".into()))
             .unwrap()
             .session
             .name
@@ -94,10 +94,26 @@ fn manual_rename_uses_owned_explicit_repo_without_daemon() {
         Some("Offline history")
     );
     assert_eq!(alinery_core::read_session_name(&repo_b, "task", "same").unwrap(), None);
-    assert!(crate::rename_session(app.handle().clone(), app.state(), "/unknown".into(), "task".into(), "same".into(), "No".into()).is_err());
+    assert!(tauri::async_runtime::block_on(crate::rename_session(
+        app.handle().clone(),
+        app.state(),
+        "/unknown".into(),
+        "task".into(),
+        "same".into(),
+        "No".into()
+    ))
+    .is_err());
     let owner = AppState::default();
     assert!(owner.claim_repo(&repo_b));
-    assert!(crate::rename_session(app.handle().clone(), app.state(), repo_b.display().to_string(), "task".into(), "same".into(), "No".into()).is_err());
+    assert!(tauri::async_runtime::block_on(crate::rename_session(
+        app.handle().clone(),
+        app.state(),
+        repo_b.display().to_string(),
+        "task".into(),
+        "same".into(),
+        "No".into()
+    ))
+    .is_err());
     assert!(!alinery_core::alineryd_socket_path(&repo_a, None).exists());
     assert!(!alinery_core::alineryd_socket_path(&repo_b, None).exists());
     set_active_repo_global(None).unwrap();
@@ -1548,4 +1564,66 @@ fn chat_thread_attachments_land_beside_the_session_and_reject_escape() {
     assert!(crate::write_chat_thread_attachment_bytes_in(&repo, "s-j", "extra.bin", b"hello").is_err());
     assert!(!dir.join("extra.bin").exists());
     let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn remote_terminal_input_stays_in_order_and_coalesces_behind_a_slow_call() {
+    use std::os::unix::net::UnixListener;
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let socket = std::path::PathBuf::from(format!("/tmp/ao-term-queue-{n}.sock"));
+    let listener = UnixListener::bind(&socket).unwrap();
+    let (done, seen) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request: serde_json::Value = serde_json::from_str(&crate::read_socket_line(&mut stream).unwrap()).unwrap();
+            if requests.is_empty() {
+                // The first call is slow, so the rest of the input queues up behind it.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            writeln!(stream, "{}", serde_json::json!({"ok": true})).unwrap();
+            let last = request["op"] == "detach";
+            requests.push(request);
+            if last {
+                done.send(requests).unwrap();
+                return;
+            }
+        }
+    });
+    let state = AppState::default();
+    let client = alinery_core::DaemonClient::connect_path(socket.clone()).unwrap();
+    let queue = |op| crate::queue_terminal_op_to(&state, "remote-term", client.clone(), op).unwrap();
+    queue(crate::TerminalOp::Write("a".into()));
+    for _ in 0..20 {
+        queue(crate::TerminalOp::Write("x".into()));
+    }
+    queue(crate::TerminalOp::Resize(100, 30));
+    queue(crate::TerminalOp::Write("b".into()));
+    queue(crate::TerminalOp::Detach(7));
+    crate::drop_terminal_queue(&state, "remote-term");
+    let requests = seen.recv_timeout(std::time::Duration::from_secs(5)).expect("the worker delivered every op");
+    let _ = fs::remove_file(&socket);
+
+    // Whatever the timing, writes joined into one call must not cross the resize or the detach.
+    let mut steps: Vec<String> = vec![];
+    let mut writes = 0;
+    for request in &requests {
+        match request["op"].as_str().unwrap() {
+            "write" => {
+                writes += 1;
+                let data = request["data"].as_str().unwrap();
+                match steps.last_mut().filter(|last| last.starts_with("write ")) {
+                    Some(last) => last.push_str(data),
+                    None => steps.push(format!("write {data}")),
+                }
+            }
+            "resize" => steps.push(format!("resize {}x{}", request["cols"], request["rows"])),
+            "detach" => steps.push(format!("detach {}", request["attach_id"])),
+            other => panic!("unexpected op {other}"),
+        }
+    }
+    assert_eq!(steps, [format!("write a{}", "x".repeat(20)), "resize 100x30".into(), "write b".into(), "detach 7".into()]);
+    assert!(writes <= 3, "22 keystrokes should coalesce behind the slow first call, got {writes} writes");
+    assert!(state.terminal_queues.lock().unwrap().is_empty());
 }

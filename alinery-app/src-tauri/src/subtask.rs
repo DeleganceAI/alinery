@@ -34,21 +34,23 @@ pub(crate) fn discard_subtask_in(state: &AppState, repo: &Path, task_slug: &str,
 }
 
 #[tauri::command]
-pub(crate) fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<alinery_core::SubtaskManagerState, String> {
-    match target_or_active_ref(&app, repo_path)? {
+pub(crate) async fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<alinery_core::SubtaskManagerState, String> {
+    let target = target_or_active_ref(&app, repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(&state, repo)?;
+    }
+    off_main_thread("subtask state", move || match target {
         RepoRef::Remote { host_id, path } => remote_call(
-            &state,
+            &app.state::<AppState>(),
             &host_id,
             RepoOp::SubtaskState {
                 repo: path.into(),
                 slug: task_slug,
             },
         ),
-        RepoRef::Local(repo) => {
-            require_repo_owned(&state, &repo)?;
-            subtask_state_in(&repo, &task_slug)
-        }
-    }
+        RepoRef::Local(repo) => subtask_state_in(&repo, &task_slug),
+    })
+    .await
 }
 
 #[tauri::command]
@@ -116,17 +118,22 @@ pub(crate) async fn recover_subtask_manager(
 }
 
 #[tauri::command]
-pub(crate) fn discard_subtask(app: AppHandle, state: State<'_, AppState>, task_slug: String, manager_session_id: String) -> Result<(), String> {
-    match require_active_target(&state)? {
-        ActiveRepo::Local(repo) => {
-            publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
-            discard_subtask_in(&state, &repo, &task_slug, &manager_session_id)
+pub(crate) async fn discard_subtask(app: AppHandle, state: State<'_, AppState>, task_slug: String, manager_session_id: String) -> Result<(), String> {
+    let target = require_active_target(&state)?;
+    off_main_thread("discard subtask", move || {
+        let state = app.state::<AppState>();
+        match target {
+            ActiveRepo::Local(repo) => {
+                publish_auto_backup(&app, &repo, alinery_core::BackupTrigger::PreArchive);
+                discard_subtask_in(&state, &repo, &task_slug, &manager_session_id)
+            }
+            ActiveRepo::Remote { host_id, path } => {
+                publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PreArchive);
+                discard_remote_subtask(&state, &host_id, path, task_slug, manager_session_id)
+            }
         }
-        ActiveRepo::Remote { host_id, path } => {
-            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PreArchive);
-            discard_remote_subtask(&state, &host_id, path, task_slug, manager_session_id)
-        }
-    }
+    })
+    .await
 }
 
 /// Stop every live session the sub-task owns through the repo's daemon, then discard it on the
