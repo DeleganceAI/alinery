@@ -24,6 +24,7 @@ pub(super) struct ContinuationGate {
     finished_dispatches: BTreeSet<String>,
     uncertain: BTreeSet<String>,
     admissions: HashMap<String, u64>,
+    admission_sequence: u64,
     capability_revision: u64,
     capability_operations: HashMap<String, (RunnerEvent, bool)>,
     native_entries: HashMap<String, RunnerEvent>,
@@ -143,12 +144,19 @@ impl Owner {
             return Ok(());
         };
         let admissions = &mut gate.admissions;
+        let admission_sequence = &mut gate.admission_sequence;
         mutate_execution_state(repo, &self.task_slug, &self.lane()?, "admit controlled work", |_, state| {
             let record = state.executions.get(&process.execution_id).ok_or("missing execution")?;
             let sequence = match admissions.get(operation) {
                 Some(sequence) => *sequence,
                 None => {
-                    let sequence = record.last_admission_sequence.checked_add(1).ok_or("work admission sequence exhausted")?;
+                    // Failed writes still reserve their identity: a different operation
+                    // must not reuse it, even when the durable sequence did not advance.
+                    let sequence = (*admission_sequence)
+                        .max(record.last_admission_sequence)
+                        .checked_add(1)
+                        .ok_or("work admission sequence exhausted")?;
+                    *admission_sequence = sequence;
                     admissions.insert(operation.into(), sequence);
                     sequence
                 }
@@ -1674,6 +1682,43 @@ mod bookkeeping_tests {
         fn state(&self) -> TaskExecutionState {
             read_execution_state(&self.repo, "task").unwrap()
         }
+        fn owner(&self) -> Owner {
+            let meta_path = session_meta_path(&self.repo, "task", &self.process.session_id);
+            let meta = SessionMeta {
+                id: self.process.session_id.clone(),
+                execution_id: self.process.execution_id.clone(),
+                daemon_namespace: "lane".into(),
+                ..SessionMeta::default()
+            };
+            fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+            Owner {
+                gate: Arc::new(Mutex::new(ContinuationGate {
+                    process: Some(self.process.clone()),
+                    bound_session: Some("fixture".into()),
+                    available: true,
+                    ..ContinuationGate::default()
+                })),
+                inner: Arc::new(Mutex::new(Inner {
+                    parser: None,
+                    clients: Vec::new(),
+                    rpc_pending: VecDeque::new(),
+                    rpc_pending_bytes: 0,
+                    rpc_ready: None,
+                    state: SessionState {
+                        process: ProcessState::Alive,
+                        adapter: HarnessAdapter::Omp,
+                        ..SessionState::default()
+                    },
+                    activity_at: None,
+                    reaped_and_drained: false,
+                })),
+                replacing: Arc::new(AtomicBool::new(false)),
+                task_slug: "task".into(),
+                session_id: self.process.session_id.clone(),
+                meta_path,
+                token: "fixture".into(),
+            }
+        }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -1685,42 +1730,8 @@ mod bookkeeping_tests {
     #[test]
     fn capability_revision_overflow_rejects_before_durable_readiness_mutation() {
         let fixture = Fixture::with_review(true);
-        let meta_path = session_meta_path(&fixture.repo, "task", &fixture.process.session_id);
-        let meta = SessionMeta {
-            id: fixture.process.session_id.clone(),
-            execution_id: fixture.process.execution_id.clone(),
-            daemon_namespace: "lane".into(),
-            ..SessionMeta::default()
-        };
-        fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
-        let owner = Owner {
-            gate: Arc::new(Mutex::new(ContinuationGate {
-                process: Some(fixture.process.clone()),
-                bound_session: Some("fixture".into()),
-                available: true,
-                capability_revision: MAX_WORK_REVISION,
-                ..ContinuationGate::default()
-            })),
-            inner: Arc::new(Mutex::new(Inner {
-                parser: None,
-                clients: Vec::new(),
-                rpc_pending: VecDeque::new(),
-                rpc_pending_bytes: 0,
-                rpc_ready: None,
-                state: SessionState {
-                    process: ProcessState::Alive,
-                    adapter: HarnessAdapter::Omp,
-                    ..SessionState::default()
-                },
-                activity_at: None,
-                reaped_and_drained: false,
-            })),
-            replacing: Arc::new(AtomicBool::new(false)),
-            task_slug: "task".into(),
-            session_id: fixture.process.session_id.clone(),
-            meta_path,
-            token: "fixture".into(),
-        };
+        let owner = fixture.owner();
+        owner.gate.lock().unwrap_or_else(|e| e.into_inner()).capability_revision = MAX_WORK_REVISION;
         let before = fixture.state();
         assert_eq!(before.executions[&fixture.process.execution_id].ready_revision, Some(0));
         for event in [
@@ -1750,6 +1761,55 @@ mod bookkeeping_tests {
         assert_eq!(control.capability_revision, MAX_WORK_REVISION);
         assert!(control.available);
         assert_eq!(fixture.state(), before);
+    }
+
+    #[test]
+    fn failed_admission_cannot_replay_another_dispatch_after_readiness_renews() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::with_review(true);
+        let owner = fixture.owner();
+        let mut gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+        let path = execution_state_path(&fixture.repo, "task").unwrap();
+        let parent = path.parent().unwrap();
+        let permissions = fs::metadata(parent).unwrap().permissions();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).unwrap();
+        let failed = owner.admit(&fixture.repo, &mut gate, "a", false);
+        fs::set_permissions(parent, permissions).unwrap();
+        assert!(failed.unwrap_err().contains("create durable temporary file"));
+        assert_eq!(fixture.state().executions[&fixture.process.execution_id].ready_revision, Some(0));
+
+        owner.admit(&fixture.repo, &mut gate, "b", false).unwrap();
+        mutate_execution_state(&fixture.repo, "task", "lane", "renew fixture readiness", |definition, state| {
+            let revision = state.executions[&fixture.process.execution_id].work_revision;
+            let outcome = report_execution_ready(
+                &fixture.repo,
+                "task",
+                definition,
+                state,
+                &fixture.process.execution_id,
+                &fixture.process.session_id,
+                revision,
+            )?;
+            assert!(matches!(outcome, CompletionOutcome::Ready { .. }));
+            Ok(())
+        })
+        .unwrap();
+        let ready = fixture.state();
+        assert!(ready.executions[&fixture.process.execution_id].ready_revision.is_some());
+
+        // A retry of the committed operation remains idempotent, including when
+        // the caller did not observe the successful persistence acknowledgment.
+        owner.admit(&fixture.repo, &mut gate, "b", false).unwrap();
+        assert_eq!(fixture.state(), ready);
+        let mut input = Vec::new();
+        let outcome = dispatch_under_gate(&fixture.repo, &owner, &mut gate, "a", true, false, |_| {
+            input.extend_from_slice(b"x");
+            Ok(())
+        });
+        assert!(matches!(outcome, DispatchOutcome::NotSent { .. }));
+        assert!(input.is_empty(), "stale admission must be refused before raw input reaches the process");
+        assert_eq!(fixture.state(), ready, "refused stale input must not change renewed readiness");
     }
 
     #[test]
