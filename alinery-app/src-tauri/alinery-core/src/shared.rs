@@ -21,17 +21,11 @@ use crate::write_bytes_atomic;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_HARNESS_KEY: &str = "omp";
-pub const VINCULUM_HARNESS_KEY: &str = "vinculum";
 pub const NO_HARNESS_KEY: &str = "no-harness";
 
-/// Session meta for the Vinculum agent. `omp` is the registry key and the value on a file written before the rename.
-pub fn is_vinculum_session(key: &str) -> bool {
-    key == VINCULUM_HARNESS_KEY || key == DEFAULT_HARNESS_KEY
-}
-
-/// Product launch keys: Vinculum (including a session meta or settings key that still says `omp`) and compiled Terminal.
+/// Product launch keys: OMP and compiled Terminal. Leftover overlay/meta keys fail closed.
 pub fn is_allowed_launch_harness(key: &str) -> bool {
-    is_vinculum_session(key) || key == NO_HARNESS_KEY
+    key == DEFAULT_HARNESS_KEY || key == NO_HARNESS_KEY
 }
 
 /// New OMP sessions may reuse `defaults.model` unless it belongs to a leftover harness.
@@ -1428,9 +1422,8 @@ mod tests {
     }
 
     #[test]
-    fn is_allowed_launch_harness_accepts_vinculum_omp_and_terminal() {
+    fn is_allowed_launch_harness_accepts_only_omp_and_terminal() {
         assert!(is_allowed_launch_harness("omp"));
-        assert!(is_allowed_launch_harness(VINCULUM_HARNESS_KEY));
         assert!(is_allowed_launch_harness(NO_HARNESS_KEY));
         assert!(!is_allowed_launch_harness("claude"));
         assert!(!is_allowed_launch_harness("codex"));

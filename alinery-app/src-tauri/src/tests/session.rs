@@ -612,7 +612,6 @@ fn allow_root_session_open_rejects_non_drawer() {
 #[test]
 fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
     assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));
-    assert!(hosted_refresh_needed("spawn", "vinculum", "alinery/Qwen3.6-35B-A3B"));
     assert!(hosted_refresh_needed("resume", "omp", "alinery/Qwen3.6-35B-A3B"));
     assert!(hosted_refresh_needed("spawn", "omp", " alinery/Qwen3.6-35B-A3B "));
     assert!(hosted_refresh_needed("spawn", "omp", ""));

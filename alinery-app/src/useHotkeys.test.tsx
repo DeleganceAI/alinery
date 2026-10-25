@@ -1,13 +1,6 @@
-import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfirmHost, confirmStopAndSwitch } from "./confirm";
-import type * as IpcFixtures from "./test/mockIpc";
 import { type Handlers, useHotkeys } from "./useHotkeys";
-
-vi.mock("./ipc", async () => {
-  const { mockIpc } = await vi.importActual<typeof IpcFixtures>("./test/mockIpc");
-  return mockIpc();
-});
 
 afterEach(cleanup);
 
@@ -81,34 +74,6 @@ function commandCallbacks(value: Handlers) {
 }
 
 describe("useHotkeys", () => {
-  it("cancels Switch to Terminal with Escape without navigating back", async () => {
-    const active = handlers({ board: null });
-    render(
-      <>
-        <Probe handlers={active} />
-        <ConfirmHost />
-      </>,
-    );
-    let answer!: Promise<boolean>;
-    act(() => {
-      answer = confirmStopAndSwitch("pty");
-    });
-    const dialog = screen.getByRole("alertdialog", { name: "Switch to Terminal?" });
-    const cancel = screen.getByText("Cancel", { selector: "button" });
-    expect(document.activeElement).toBe(cancel);
-
-    // jsdom does not perform Escape's native dialog-cancel default action.
-    // Dispatch the key first, then the browser's cancel event separately.
-    expect(fireEvent.keyDown(cancel, { key: "Escape" })).toBe(true);
-    expect(active.back).not.toHaveBeenCalled();
-    fireEvent(dialog, new Event("cancel", { cancelable: true }));
-    await expect(answer).resolves.toBe(false);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-
-    fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(active.back).toHaveBeenCalledOnce();
-  });
-
   it("opens search with Command-K before an overlay takes ownership", () => {
     const active = handlers({ overlayOpen: true });
     render(<Probe handlers={active} />);

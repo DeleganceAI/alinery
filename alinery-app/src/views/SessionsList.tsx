@@ -1,94 +1,25 @@
-import { ChevronRight, Pencil } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
-import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
   hasAcknowledgedExit,
-  type ObservationDisplayKind,
-  observationDisplayKind,
   orderSessionListItems,
   PRIORITY_SESSION_SORT,
   type SessionSort,
   sameSessionObservationMaps,
   selectSessionSort,
-  sessionDisplayKind,
   sessionListItemKey,
   sessionSortArrow,
   sessionStartedAt,
   sessionUpdatedAt,
 } from "../sessionAttention";
-import {
-  EmptyState,
-  harnessDisplayName,
-  InlineStatus,
-  KillButton,
-  LoadingState,
-  notifySessionAttentionTransition,
-  repoName,
-  SessionTimestamp,
-  StatusDot,
-  sameSessionMetas,
-  useMinuteNow,
-} from "../shared";
+import { Checkbox, EmptyState, harnessDisplayName, InlineStatus, KillButton, LoadingState, repoName, SessionTimestamp, StatusDot, sameSessionMetas, useMinuteNow } from "../shared";
 import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
 import { useSessionSort } from "../useSessionSort";
-import "./SessionsList.css";
 
 const rowKey = sessionListItemKey;
-
-function sessionTypeLabel(item: SessionListItem) {
-  if (item.subtask_manager) return "Sub-task manager";
-  if (item.is_playbook_step) return `${item.playbook_title} · ${item.step_title}`;
-  if (item.generic) return "Generic";
-  return item.step_title || item.phase || "No step";
-}
-
-type StatusFilter = "all" | "waiting" | "running" | "failed" | "completed" | "idle" | "ended" | "not_started" | "unknown" | "archived";
-
-const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
-  { value: "all", label: "All statuses" },
-  { value: "waiting", label: "Needs input or approval" },
-  { value: "running", label: "Running" },
-  { value: "failed", label: "Failed" },
-  { value: "completed", label: "Completed" },
-  { value: "idle", label: "Idle" },
-  { value: "ended", label: "Exited or stale" },
-  { value: "not_started", label: "Not started" },
-  { value: "unknown", label: "Unknown" },
-];
-
-// Groups a row by the status its StatusDot renders, from the same canonical
-// observation and exit metadata. A row with no observation yet is Unknown —
-// absence of evidence is never reported as Not started.
-function sessionStatusGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
-  if (item.archived) return "archived";
-  const kind = sessionDisplayKind(observation, superseded, item.exit_code, hasAcknowledgedExit(item));
-  switch (kind) {
-    case "waiting_for_input":
-    case "waiting_for_approval":
-      return "waiting";
-    case "busy":
-    case "starting":
-    case "unsupported":
-      return "running";
-    case "failed":
-      return "failed";
-    case "completed":
-    case "ready_to_advance":
-      return "completed";
-    case "idle":
-      return "idle";
-    case "exited":
-    case "stale":
-      return "ended";
-    case "never_started":
-      return "not_started";
-    default:
-      return "unknown";
-  }
-}
 
 function sameSessionListItems(left: SessionListItem[], right: SessionListItem[]) {
   return (
@@ -136,10 +67,6 @@ export function SessionsList({
   const [err, setErr] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const statusFilterId = useId();
-  const sortLabelId = useId();
   const [sessionSort, setSessionSort] = useSessionSort(
     controlledSessionSort !== undefined && onSessionSortChange !== undefined ? { sort: controlledSessionSort, onChange: onSessionSortChange } : undefined,
   );
@@ -280,100 +207,27 @@ export function SessionsList({
     };
   }, []);
 
-  // Attention follows the fetched collection, not rows that filters can unmount.
-  const previousKinds = useRef(new Map<string, ObservationDisplayKind>());
-  useEffect(() => {
-    const next = new Map<string, ObservationDisplayKind>();
-    for (const item of items) {
-      if (item.archived) continue;
-      const key = rowKey(item);
-      const observation = observations[key];
-      const kind = observation ? observationDisplayKind(observation) : "loading";
-      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, item.repo_path, item.task_slug);
-      next.set(key, kind);
-    }
-    previousKinds.current = next;
-  }, [items, observations]);
-
-  const latestSessionByScope = items
-    .filter((item) => !item.archived && item.phase)
-    .reduce<Record<string, SessionListItem>>((latest, item) => {
-      const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
-      const current = latest[scope];
-      if (!current || item.created > current.created || (item.created === current.created && item.id > current.id)) {
-        latest[scope] = item;
-      }
-      return latest;
-    }, {});
-  const latestPhaseKeys = new Set(Object.values(latestSessionByScope).map(rowKey));
-  const isSuperseded = (item: SessionListItem) => !item.archived && !!item.phase && !latestPhaseKeys.has(rowKey(item));
-
   const orderedItems = orderSessionListItems(items, observations, sessionSort);
-  const queryTerms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const filtered = queryTerms.length > 0 || statusFilter !== "all";
-  const visibleItems = filtered
-    ? orderedItems.filter((item) => {
-        if (statusFilter !== "all" && sessionStatusGroup(item, observations[rowKey(item)], isSuperseded(item)) !== statusFilter) return false;
-        if (queryTerms.length === 0) return true;
-        const text = [
-          item.name,
-          item.task_name,
-          item.task_slug,
-          item.subtask_name,
-          item.subtask_slug,
-          item.subtask_manager ? "Sub-task manager" : "",
-          repoName(item.repo_path),
-          item.playbook_title,
-          item.playbook,
-          item.step_title,
-          item.phase,
-          item.harness === "omp" ? "OMP" : harnessDisplayName(item.harness),
-          item.model,
-        ]
-          .filter(Boolean)
-          .join("\n")
-          .toLowerCase();
-        return queryTerms.every((term) => text.includes(term));
-      })
-    : orderedItems;
-  const resetFilters = () => {
-    setQuery("");
-    setStatusFilter("all");
-  };
-  // Selection only ever lands on a rendered row. When a filter hides the selected
-  // session, the first visible row takes over so keyboard open never reaches a
-  // hidden session; with nothing visible the previous identity is kept.
-  const selectedIndex =
-    visibleItems.length === 0
-      ? -1
-      : Math.max(
-          0,
-          visibleItems.findIndex((item) => rowKey(item) === selectedKey),
-        );
-  const selectedItem = selectedIndex >= 0 ? visibleItems[selectedIndex] : null;
-  const selectedVisibleKey = selectedItem ? rowKey(selectedItem) : "";
+  const selectedIndex = orderedItems.findIndex((item) => rowKey(item) === selectedKey);
+  const selectedItem = selectedIndex >= 0 ? orderedItems[selectedIndex] : null;
   const selectedRowRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (selectedVisibleKey && selectedVisibleKey !== selectedKey) setSelectedKey(selectedVisibleKey);
-  }, [selectedVisibleKey, selectedKey]);
 
   // Keyboard selection (j/k) must stay visible: follow it with the scroll position.
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [selectedVisibleKey]);
+  }, [selectedKey]);
 
   useEffect(() => {
     registerNav({
       moveRow: (d) =>
         setSelectedKey((prev) => {
-          if (!visibleItems.length) return prev;
+          if (!orderedItems.length) return "";
           const current = Math.max(
             0,
-            visibleItems.findIndex((item) => rowKey(item) === prev),
+            orderedItems.findIndex((item) => rowKey(item) === prev),
           );
-          const next = Math.max(0, Math.min(current + d, visibleItems.length - 1));
-          return rowKey(visibleItems[next]);
+          const next = Math.max(0, Math.min(current + d, orderedItems.length - 1));
+          return rowKey(orderedItems[next]);
         }),
       moveCol: () => {},
       openSelected: () => {
@@ -385,34 +239,23 @@ export function SessionsList({
     return () => registerNav(null);
   });
 
-  const statusOptions = showArchived ? [...STATUS_FILTER_OPTIONS, { value: "archived", label: "Archived" }] : STATUS_FILTER_OPTIONS;
+  const latestSessionByScope = items
+    .filter((item) => !item.archived && item.phase)
+    .reduce<Record<string, SessionListItem>>((latest, item) => {
+      const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
+      const current = latest[scope];
+      if (!current || item.created > current.created || (item.created === current.created && item.id > current.id)) {
+        latest[scope] = item;
+      }
+      return latest;
+    }, {});
 
   return (
-    <section className="listwrap collection-view">
-      <ListToolbar
-        label="Sessions"
-        heading={<h1 className="view-title">Sessions</h1>}
-        query={query}
-        onQueryChange={setQuery}
-        shown={visibleItems.length}
-        total={items.length}
-        filtered={filtered}
-        onReset={resetFilters}
-      >
-        <div className="sessions-filter">
-          <label htmlFor={statusFilterId}>Status</label>
-          <select id={statusFilterId} value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>
-            {statusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="session-sort-controls sessions-sort" role="group" aria-labelledby={sortLabelId}>
-          <span id={sortLabelId} className="sessions-sort-label">
-            Sort by
-          </span>
+    <div className="listwrap">
+      <div className="listhead">
+        <h1 className="view-title">Sessions</h1>
+        <fieldset className="session-sort-controls">
+          <legend className="sr-only">Session sort</legend>
           <button
             type="button"
             className={`btn ghost small${sessionSort.field === "priority" ? " active" : ""}`}
@@ -438,15 +281,9 @@ export function SessionsList({
               </button>
             );
           })}
-        </div>
-        <ArchiveFilter
-          checked={showArchived}
-          onChange={(value) => {
-            setShowArchived(value);
-            if (!value && statusFilter === "archived") setStatusFilter("all");
-          }}
-        />
-      </ListToolbar>
+        </fieldset>
+        <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
+      </div>
       {err && (
         <InlineStatus tone="error" detail={err}>
           Could not load sessions.
@@ -478,29 +315,30 @@ export function SessionsList({
             }
           />
         </div>
-      ) : items.length > 0 && visibleItems.length === 0 ? (
-        <div className="list list-empty sessions-no-matches">
-          <EmptyState title="No matching sessions." hint="Clear filters to show all sessions." />
-        </div>
       ) : (
-        <div className="list sessions-list">
-          {visibleItems.map((item, i) => {
+        <div className="list">
+          {orderedItems.map((item, i) => {
             const openable = Boolean(item.task_worktree) && !item.archived;
             const resumedBy = items.find((other) => other.resume_of === item.id);
             const key = rowKey(item);
             const obs = observations[key];
             const isLive = obs ? obs.lifecycle.state === "live" : false;
             const awaitingName = awaitingSessionName(item, obs);
-            const sessionType = sessionTypeLabel(item);
-            const subtaskLabel = item.subtask_name || item.subtask_slug || "Sub-task setup";
-            const agent = `${item.harness === "omp" ? "OMP" : harnessDisplayName(item.harness)}${item.model ? ` · ${item.model}` : ""}`;
-            const taskTitle = `Task: ${item.task_name} (${item.task_slug})`;
-            const selected = i === selectedIndex;
+            const scope = `${item.repo_path}\u0000${item.task_slug}\u0000${item.playbook}\u0000${item.phase}`;
+            const superseded = !item.archived && !!item.phase && latestSessionByScope[scope]?.id !== item.id;
+            const sessionType = item.subtask_manager
+              ? "Sub-task manager"
+              : item.is_playbook_step
+                ? `${item.playbook_title} · ${item.step_title}`
+                : item.generic
+                  ? "Generic"
+                  : item.step_title || item.phase || "No step";
+            const sessionDetail = `${item.task_slug}${item.archived ? " · archived" : !item.task_worktree ? " · worktree removed" : ""}`;
             return (
               <div
                 key={key}
-                ref={selected ? selectedRowRef : undefined}
-                className={`row session-list-row${selected ? " sel" : ""}${openable ? "" : " disabled"}`}
+                ref={i === selectedIndex ? selectedRowRef : undefined}
+                className={`row session-list-row${i === selectedIndex ? " sel" : ""}${openable ? "" : " disabled"}`}
                 role={openable ? "button" : undefined}
                 tabIndex={openable ? 0 : undefined}
                 onClick={() => {
@@ -514,89 +352,84 @@ export function SessionsList({
                   onOpen(item);
                 }}
               >
-                <div className="session-row-main">
-                  <div className="session-row-title">
-                    <span className="rtt" title={item.name || (awaitingName ? "Waiting for session name" : taskTitle)}>
-                      {item.name || (awaitingName ? <PendingSessionName /> : item.task_name)}
-                    </span>
-                    <button
-                      type="button"
-                      className="name-edit-button"
-                      aria-label="Rename session"
-                      title="Rename session"
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-                      }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (editingKey === key) return;
-                        renameTrigger.current = event.currentTarget;
-                        editorVersion.current += 1;
-                        setEditingKey(key);
-                      }}
-                    >
-                      <Pencil size={14} strokeWidth={1.5} aria-hidden="true" />
-                    </button>
-                    {!item.archived && !item.task_worktree && <span className="session-row-flag">Worktree removed</span>}
-                    {resumedBy && <span className="session-row-flag">Resumed</span>}
+                <span className="idx">{String(i + 1).padStart(2, "0")}</span>
+                <div className="rt">
+                  <div className="rtt" title={item.name || (awaitingName ? "Waiting for session name" : item.task_name)}>
+                    {item.name || (awaitingName ? <PendingSessionName /> : item.task_name)}
                   </div>
-                  <div className="session-row-meta">
-                    {(item.name || awaitingName) && (
-                      <span className="session-row-task" title={taskTitle}>
-                        {item.task_name}
+                  <div className="meta">
+                    {(item.name || awaitingName) && <span>{item.task_name}</span>}
+                    {item.subtask_manager && <span>{item.subtask_name || item.subtask_slug || "Sub-task setup"}</span>}
+                    {item.archived && <span className="pill task-archived">Archived</span>}
+                    {sessionType === "No step" ? (
+                      <span className="pill">No step</span>
+                    ) : (
+                      <span className={`badge ${item.is_playbook_step ? "res" : "todo"}`} title={sessionType}>
+                        {sessionType}
                       </span>
                     )}
-                    {item.subtask_manager && <span title={`Sub-task: ${subtaskLabel}`}>{subtaskLabel}</span>}
-                    <span title={sessionType}>{sessionType}</span>
-                    <span className="session-row-agent" title={`Agent: ${agent}`}>
-                      {agent}
+                    <span className="pill" title={`${harnessDisplayName(item.harness)}${item.model ? ` · ${item.model}` : ""}`}>
+                      {harnessDisplayName(item.harness)}
+                      {item.model ? ` · ${item.model}` : ""}
                     </span>
-                    {allRepos && (
-                      <span className="session-row-repo" title={item.repo_path}>
-                        {repoName(item.repo_path)}
-                      </span>
+                    {allRepos && <span className="repochip">{repoName(item.repo_path)}</span>}
+                    <SessionTimestamp kind="started" value={sessionStartedAt(item)} now={now} />
+                    <SessionTimestamp kind="updated" value={sessionUpdatedAt(item)} now={now} />
+                    {!item.archived && (
+                      <StatusDot
+                        id={item.id}
+                        slug={item.task_slug}
+                        repoPath={item.repo_path}
+                        observation={obs ?? null}
+                        superseded={superseded}
+                        exitCode={item.exit_code}
+                        exitAcknowledged={hasAcknowledgedExit(item)}
+                      />
                     )}
+                    {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} onKilled={load} />}
+                    {resumedBy && <span className="pill dim">Resumed</span>}
                   </div>
                   {item.name_error && (
                     <InlineStatus tone="error" detail={item.name_error}>
                       Could not read session name.
                     </InlineStatus>
                   )}
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    aria-label="Rename session"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (editingKey === key) return;
+                      renameTrigger.current = event.currentTarget;
+                      editorVersion.current += 1;
+                      setEditingKey(key);
+                    }}
+                  >
+                    Rename
+                  </button>
                   {editingKey === key && (
                     <NameEditor key={`${scopeKey}:${key}`} value={item.name || ""} label="Session name" onSave={(name) => saveName(item, name)} onCancel={closeEditor} />
                   )}
+                  <div className="rts" title={sessionDetail}>
+                    {sessionDetail}
+                  </div>
                 </div>
-                <div className="session-row-status">
-                  {item.archived ? (
-                    <span className="statusdot">Archived</span>
-                  ) : (
-                    <StatusDot
-                      id={item.id}
-                      slug={item.task_slug}
-                      repoPath={item.repo_path}
-                      observation={obs ?? null}
-                      superseded={isSuperseded(item)}
-                      exitCode={item.exit_code}
-                      exitAcknowledged={hasAcknowledgedExit(item)}
-                      notifyTransitions={false}
-                    />
-                  )}
-                </div>
-                <div className="session-row-times">
-                  <SessionTimestamp kind="started" value={sessionStartedAt(item)} now={now} />
-                  <SessionTimestamp kind="updated" value={sessionUpdatedAt(item)} now={now} />
-                </div>
-                <div className="session-row-actions">
-                  {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} onKilled={load} />}
-                </div>
-                <span className="session-row-open" aria-hidden="true">
-                  {openable && <ChevronRight size={16} strokeWidth={1.5} />}
-                </span>
+                {openable ? (
+                  <span className="arrow" aria-hidden="true">
+                    <ChevronRight size={16} strokeWidth={1.5} />
+                  </span>
+                ) : (
+                  <span className="dim">{item.archived ? "Archived" : "Worktree removed"}</span>
+                )}
               </div>
             );
           })}
         </div>
       )}
-    </section>
+    </div>
   );
 }

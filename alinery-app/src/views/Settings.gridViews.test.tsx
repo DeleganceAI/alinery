@@ -37,7 +37,7 @@ const globalSettings: GlobalSettings = {
   model_favorites: {},
   experiments: { show_original_kanban: true },
   grid_views: [
-    { id: "canvas", name: "Canvas", slot: 1 },
+    { id: "kanban-plus", name: "Kanban+", slot: 1 },
     { id: "planning", name: "Planning", slot: 2 },
   ],
 };
@@ -89,7 +89,7 @@ describe("Settings Grid-based views", () => {
   it("shows names and fixed shortcut slots, then adds up to the maximum", async () => {
     renderGridSettings();
 
-    expect(await screen.findByDisplayValue("Canvas")).toBeTruthy();
+    expect(await screen.findByDisplayValue("Kanban+")).toBeTruthy();
     expect(screen.getByText("⌘1")).toBeTruthy();
     expect(screen.getByText("⌘2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add Grid-based View" }));
@@ -105,13 +105,13 @@ describe("Settings Grid-based views", () => {
 
   it("trims names and rejects case-insensitive duplicates without changing stable IDs", async () => {
     renderGridSettings();
-    const first = await screen.findByDisplayValue("Canvas");
+    const first = await screen.findByDisplayValue("Kanban+");
     fireEvent.change(first, { target: { value: "  Roadmap  " } });
     fireEvent.blur(first);
 
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalledTimes(1));
     const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
-    expect(saved.grid_views?.[0]).toMatchObject({ id: "canvas", name: "Roadmap", slot: 1 });
+    expect(saved.grid_views?.[0]).toMatchObject({ id: "kanban-plus", name: "Roadmap", slot: 1 });
 
     const planning = screen.getByDisplayValue("Planning");
     fireEvent.change(planning, { target: { value: "roadmap" } });
@@ -129,14 +129,14 @@ describe("Settings Grid-based views", () => {
     const reordered = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
     expect(reordered.grid_views?.map(({ id, slot }) => [id, slot])).toEqual([
       ["planning", 1],
-      ["canvas", 2],
+      ["kanban-plus", 2],
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Planning" }));
     await waitFor(() => expect(confirmDanger).toHaveBeenCalled());
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalledTimes(2));
     const afterDelete = vi.mocked(ipc.writeGlobalSettings).mock.calls[1][0] as GlobalSettings;
-    expect(afterDelete.grid_views).toEqual([{ id: "canvas", name: "Canvas", slot: 1 }]);
-    expect(((await screen.findByRole("button", { name: "Delete Canvas" })) as HTMLButtonElement).disabled).toBe(true);
+    expect(afterDelete.grid_views).toEqual([{ id: "kanban-plus", name: "Kanban+", slot: 1 }]);
+    expect(((await screen.findByRole("button", { name: "Delete Kanban+" })) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -46,8 +46,6 @@ export function SessionActionPanel({
   archiveBusy,
   onViewHistory,
   onKilled,
-  onRecover,
-  recoverBusy = false,
 }: {
   id: string;
   phase: string;
@@ -62,13 +60,9 @@ export function SessionActionPanel({
   archiveBusy: boolean;
   onViewHistory: () => void;
   onKilled: () => void;
-  onRecover?: () => void;
-  recoverBusy?: boolean;
 }) {
   const unsupported = !isAllowedLaunchHarness(harness);
-  const described = stateLabel(state, artifactReady, unsupported);
-  const label = onRecover ? "Recoverable" : described.label;
-  const hint = onRecover ? "The daemon stopped before this step was accepted. The conversation is still in the session file." : described.hint;
+  const { label, hint } = stateLabel(state, artifactReady, unsupported);
   const harnessName = harnessDisplayName(harness);
   return (
     <div className="session-action-panel">
@@ -80,11 +74,6 @@ export function SessionActionPanel({
       </div>
       {hint ? <p className="sap-hint dim">{hint}</p> : null}
       <div className="sap-actions">
-        {onRecover && (
-          <button type="button" className="btn" disabled={archiveBusy || recoverBusy} onClick={onRecover}>
-            {recoverBusy ? "Recovering session…" : "Recover session"}
-          </button>
-        )}
         {!unsupported && (
           <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>
             Start fresh

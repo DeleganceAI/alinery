@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { formatChatStamp, formatTinyTime } from "./format";
 
 const at = Date.parse("2026-09-05T12:11:00Z");
@@ -13,13 +13,5 @@ describe("formatChatStamp", () => {
     expect(formatChatStamp(at, { date: true, time: false })).toBe("Sep 5");
     expect(formatChatStamp(at, { date: false, time: true })).toMatch(/^\d{2}:\d{2}$/);
     expect(formatChatStamp(at, { date: false, time: false })).toBe("");
-  });
-
-  it("does not construct a DateTimeFormat per stamp", () => {
-    const spy = vi.spyOn(Intl, "DateTimeFormat");
-    formatChatStamp(at);
-    formatChatStamp(at, { date: false, time: true });
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
   });
 });

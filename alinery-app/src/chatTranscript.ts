@@ -828,8 +828,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
   const progress = asRecord(event.progress);
   const subagentId = subagentEnvelopeId(event);
   if (!subagentId) return state;
-  const named = asString(event.agent) ?? asString(event.name);
-  const label = named ?? subagentId;
+  const label = asString(event.agent) ?? asString(event.name) ?? subagentId;
   const role = asString(event.agentSource) ?? asString(event.role);
   // Locals so TS narrows them: optional-chain property narrowing is unreliable.
   const rawRecentOutput: unknown = progress?.recentOutput;
@@ -862,43 +861,19 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
         : typeof event.duration_ms === "number"
           ? event.duration_ms
           : undefined;
-  const at = Date.now();
-  // One row per OMP id. `events` subscription delivers a frame per tick; appending each one
-  // made the journal (and a full re-render of it) grow without bound. Same merge as the drawer:
-  // status is last-write-wins, and a frame with no summary or activity must not wipe the last one.
-  const index = state.entries.findIndex((entry) => entry.type === "subagent_status" && entry.subagentId === subagentId);
-  if (index === -1) {
-    return appendEntry(state, {
-      actor: subagent(label),
-      type: "subagent_status",
-      subagentId,
-      agent: label,
-      role,
-      status,
-      summary,
-      activity,
-      tools,
-      durationMs,
-      at,
-    });
-  }
-  const prev = state.entries[index];
-  if (prev?.type !== "subagent_status") return state;
-  const agent = named || prev.agent;
-  const entries = state.entries.slice();
-  entries[index] = {
-    ...prev,
-    actor: subagent(agent),
-    agent,
-    role: role || prev.role,
+  return appendEntry(state, {
+    actor: subagent(label),
+    type: "subagent_status",
+    subagentId,
+    agent: label,
+    role,
     status,
-    summary: summary || prev.summary,
-    activity: activity || prev.activity,
-    tools: tools ?? prev.tools,
-    durationMs: durationMs ?? prev.durationMs,
-    at,
-  };
-  return { ...state, entries };
+    summary,
+    activity,
+    tools,
+    durationMs,
+    at: Date.now(),
+  });
 }
 
 function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknown>): ChatTranscriptState {

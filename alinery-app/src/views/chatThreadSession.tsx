@@ -507,11 +507,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const entry = key ? registry.entries.get(key) : undefined;
   const api = entry?.api ?? NO_API;
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
-  // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
-  // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback((id: string, allow: boolean) => {
-    entry?.api.approve(id, allow);
-  }, [entry]);
   return {
     ...snap,
     error,
@@ -540,7 +535,7 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
-    approve,
+    approve: (id, allow) => api.approve(id, allow),
     reply: (id, value) => api.reply(id, value),
     cancelUi: (id) => api.cancelUi(id),
     applyControls: (controls) => api.applyControls(controls),

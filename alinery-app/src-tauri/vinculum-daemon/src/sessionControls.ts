@@ -55,61 +55,6 @@ export function launchThinkingFromFiles(globalText: string | null, repoText: str
   return thinkingLaunchLevel(override !== undefined ? override : global);
 }
 
-/** Settings `defaults.model`, kept only for an empty harness or a launch harness. A leftover key drops it. */
-export function launchModelFromChoice(harness: string, model: string): string {
-  const key = harness.trim();
-  if (key === "" || key === "omp" || key === "vinculum" || key === "no-harness") return model.trim();
-  return "";
-}
-
-function defaultsChoice(value: unknown): { harness?: string; model?: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const row = value as { harness?: unknown; model?: unknown };
-  return {
-    ...(typeof row.harness === "string" ? { harness: row.harness } : {}),
-    ...(typeof row.model === "string" ? { model: row.model } : {}),
-  };
-}
-
-/** Repo keys win when present, including a blank. Same file split as `launchThinkingFromFiles`. */
-export function launchModelFromFiles(globalText: string | null, repoText: string | null): string {
-  let harness = "";
-  let model = "";
-  try {
-    if (globalText) {
-      const parsed = parse(globalText) as { global?: { defaults?: unknown } };
-      const choice = defaultsChoice(parsed.global?.defaults);
-      if (choice.harness !== undefined) harness = choice.harness;
-      if (choice.model !== undefined) model = choice.model;
-    }
-  } catch {
-    harness = "";
-    model = "";
-  }
-  try {
-    if (repoText) {
-      const choice = defaultsChoice((parse(repoText) as { defaults?: unknown }).defaults);
-      if (choice.harness !== undefined) harness = choice.harness;
-      if (choice.model !== undefined) model = choice.model;
-    }
-  } catch {
-    /* a broken repo file keeps the global choice */
-  }
-  return launchModelFromChoice(harness, model);
-}
-
-/** Every launch. A blank here is not the hosted fallback; that stays in `resolveModel`. */
-export function readLaunchModel(repo: string, appConfig: string): string {
-  const text = (path: string) => {
-    try {
-      return readFileSync(path, "utf8");
-    } catch {
-      return null;
-    }
-  };
-  return launchModelFromFiles(text(appConfig), text(join(repo, ".alinery", "config.toml")));
-}
-
 /** Once, at open. Later turns do not read this again. */
 export function readLaunchThinking(repo: string, appConfig: string): ThinkingLevel {
   const text = (path: string) => {

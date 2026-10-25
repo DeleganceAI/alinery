@@ -1,6 +1,5 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { isVinculumHarness } from "./vinculumHarness";
 
 export function restoreNameFocus(trigger: HTMLElement | null) {
   if (!trigger?.isConnected) return;
@@ -125,7 +124,7 @@ export function awaitingSessionName(
   session: { name?: string | null; name_error?: string | null; archived?: boolean; harness?: string },
   observation: { lifecycle: { state: string }; state?: { process: { state: string }; agent: { state: string } } | null } | null | undefined,
 ): boolean {
-  if (session.name || session.name_error || session.archived || !isVinculumHarness(session.harness ?? "")) return false;
+  if (session.name || session.name_error || session.archived || session.harness !== "omp") return false;
   return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited" && observation.state?.agent.state !== "idle";
 }
 

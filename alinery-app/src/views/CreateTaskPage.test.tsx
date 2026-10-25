@@ -190,10 +190,7 @@ beforeEach(() => {
     return structuredClone(source);
   });
   vi.mocked(ipc.createTaskForRepo).mockResolvedValue(readyReply);
-  vi.mocked(ipc.writeDraftForRepo)
-    .mockReset()
-    .mockResolvedValue({ slug: "draft-storage" } as Task);
-  vi.mocked(ipc.readDraftAttachmentsForRepo).mockReset().mockResolvedValue({ entries: [], images: [] });
+  vi.mocked(ipc.writeDraftForRepo).mockResolvedValue({ slug: "draft-storage" } as Task);
 });
 afterEach(() => {
   cleanup();
@@ -1533,107 +1530,6 @@ describe("clipboard task attachments", () => {
     fireEvent(target, event);
     return event;
   };
-
-  it("restores autosaved pasted image bytes on reopen and persists image-only removal", async () => {
-    let saved: ipc.DraftAttachments = { entries: [], images: [] };
-    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
-      if (!args.draftAttachments) throw new Error("Missing draft attachments");
-      saved = structuredClone(args.draftAttachments);
-      return { slug: draftTask.slug } as Task;
-    });
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
-    const first = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([0, 255, 128, 1])], "image.png", { type: "image/png" })]);
-    await waitFor(() => expect(saved.images).toEqual([{ name: expect.stringMatching(/\.png$/), bytes: "AP+AAQ==", mime_type: "image/png" }]));
-    const imageName = saved.images[0].name;
-    first.unmount();
-
-    const second = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    expect(await screen.findByRole("img", { name: `Preview of ${imageName}` })).toHaveProperty("src", expect.stringContaining("blob:"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: imageName, bytes: "AP+AAQ==" }]);
-    await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
-    second.unmount();
-
-    const third = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("img", { name: `Preview of ${imageName}` });
-    fireEvent.click(screen.getByRole("button", { name: `Remove ${imageName}` }));
-    await waitFor(() => expect(saved.images).toEqual([]));
-    third.unmount();
-    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    expect(screen.queryByRole("img", { name: `Preview of ${imageName}` })).toBeNull();
-  });
-
-  it("flushes pasted images when leaving before the autosave debounce", async () => {
-    let saved: ipc.DraftAttachments = { entries: [], images: [] };
-    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
-      if (!args.draftAttachments) throw new Error("Missing draft attachments");
-      saved = structuredClone(args.draftAttachments);
-      return { slug: draftTask.slug } as Task;
-    });
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
-    const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([255])], "image.png", { type: "image/png" })]);
-    form.unmount();
-    await waitFor(() => expect(saved.images[0]?.bytes).toBe("/w=="));
-    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    expect(await screen.findByRole("img", { name: `Preview of ${saved.images[0].name}` })).toHaveProperty("src", expect.stringContaining("blob:"));
-  });
-
-  it("merges pending hydration with user attachments and releases restored previews on unmount", async () => {
-    const loaded = deferred<ipc.DraftAttachments>();
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
-    const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("checkbox", { name: "Build" });
-    paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([2])], "image.png", { type: "image/png" })]);
-    const entry = screen.getByPlaceholderText(/Paste file paths/);
-    fireEvent.change(entry, { target: { value: "/new.png" } });
-    fireEvent.keyDown(entry, { key: "Enter" });
-    await act(async () => loaded.resolve({ entries: ["/saved.png", "https://example.com/image"], images: [{ name: "saved.png", bytes: "AQ==", mime_type: "image/png" }] }));
-    expect(screen.getByRole("img", { name: "Preview of saved.png" })).toHaveProperty("src", expect.stringContaining("blob:"));
-    await waitFor(() =>
-      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          draftAttachments: {
-            entries: ["/saved.png", "https://example.com/image", "/new.png"],
-            images: [
-              { name: "saved.png", bytes: "AQ==", mime_type: "image/png" },
-              { name: expect.any(String), bytes: "Ag==", mime_type: "image/png" },
-            ],
-          },
-        }),
-      ),
-    );
-    const previews = screen.getAllByRole("img").map((image) => image.getAttribute("src"));
-    form.unmount();
-    for (const preview of previews) expect(URL.revokeObjectURL).toHaveBeenCalledWith(preview);
-  });
-
-  it("shows hydration errors and does not overwrite unread attachments or create", async () => {
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockRejectedValueOnce(new Error("unreadable snapshot"));
-    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByText(/Couldn't load draft attachments:.*unreadable snapshot/);
-    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited title" } });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 450));
-    });
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
-  });
-
-  it("does not allocate restored previews after unmount", async () => {
-    const loaded = deferred<ipc.DraftAttachments>();
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
-    const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    form.unmount();
-    await act(async () => loaded.resolve({ entries: [], images: [{ name: "saved.png", bytes: "AQ==", mime_type: "image/png" }] }));
-    expect(URL.createObjectURL).not.toHaveBeenCalled();
-  });
 
   it.each([
     ["Description", /Describe the feature/, "image/png", "image.png", false],

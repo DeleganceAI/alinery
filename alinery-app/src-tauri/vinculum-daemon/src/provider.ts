@@ -93,7 +93,7 @@ export function installAlineryProvider(models: Pick<MutableModels, "setProvider"
   };
   const streamWith = (method: "stream" | "streamSimple", model: { id: string; api?: string }, context: unknown, options: Record<string, unknown> | undefined) =>
     streamAlinery(appConfig, method, model, context, options);
-  // createProvider reads api.stream. A top-level stream is not a field it uses.
+  // pi-ai 1.3.0 ignores a top-level stream and requires api.stream (or an api map).
   const provider = createProvider({
     id: "alinery",
     name: "Alinery",

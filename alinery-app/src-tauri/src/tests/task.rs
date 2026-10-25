@@ -6,85 +6,6 @@ use crate::{artifacts_dir, chat_file_stat, copy_chat_attachments_in, read_chat_i
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
-fn draft_attachments_roundtrip_replace_and_reject_promoted_writes() {
-    use crate::{read_draft_attachments_in, DraftAttachments, DraftImage};
-
-    let repo = unique_attachment_temp("draft-attachments");
-    let save = |slug: &str, attachments: Option<DraftAttachments>| {
-        write_draft_in_with_slug(
-            &repo,
-            None,
-            slug,
-            "",
-            "Image Draft".into(),
-            "description".into(),
-            String::new(),
-            String::new(),
-            String::new(),
-            alinery_core::playbook::PlaybookRef {
-                scope: alinery_core::playbook::PlaybookScope::Bundled,
-                key: default_playbook_key(),
-            },
-            "claude".into(),
-            String::new(),
-            None,
-            None,
-            10,
-            String::new(),
-            String::new(),
-            None,
-            attachments,
-        )
-    };
-    let draft = save("", None).unwrap();
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
-    let snapshot = DraftAttachments {
-        entries: vec!["/tmp/local screenshot.png".into(), "https://example.com/reference".into()],
-        images: vec![DraftImage {
-            name: "pasted.png".into(),
-            bytes: vec![0, 127, 128, 255],
-            mime_type: "image/png".into(),
-        }],
-    };
-    save(&draft.slug, Some(snapshot.clone())).unwrap();
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), snapshot);
-    let path = task_dir(&repo, &draft.slug).join("draft-attachments.json");
-    let json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(json["images"][0]["bytes"], "AH+A/w==");
-    assert!(!artifacts_dir(&repo, &draft.slug).join("draft-attachments.json").exists());
-    assert!(!attachments_of(&repo, &draft.slug).exists());
-
-    let replacement = DraftAttachments {
-        entries: vec!["https://example.com/replacement".into()],
-        images: vec![],
-    };
-    save(&draft.slug, Some(replacement.clone())).unwrap();
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), replacement);
-    save(&draft.slug, None).unwrap();
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), replacement);
-    save(&draft.slug, Some(DraftAttachments::default())).unwrap();
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
-
-    let mut invalid = snapshot.clone();
-    invalid.images[0].name = "../escape.png".into();
-    assert!(save(&draft.slug, Some(invalid)).is_err());
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
-    alinery_core::mutate_task(&repo, &draft.slug, "promote test draft", |task| {
-        task.draft = false;
-        Ok(())
-    })
-    .unwrap();
-    assert!(save(&draft.slug, Some(snapshot)).unwrap_err().contains("promoted"));
-    assert_eq!(read_draft_attachments_in(&repo, &draft.slug).unwrap(), DraftAttachments::default());
-
-    fs::write(&path, b"invalid json").unwrap();
-    assert!(read_draft_attachments_in(&repo, &draft.slug).is_err());
-    assert!(read_draft_attachments_in(&repo, "../escape").is_err());
-    assert!(read_draft_attachments_in(&repo, "missing-task").is_err());
-    fs::remove_dir_all(repo).unwrap();
-}
-
-#[test]
 fn task_updated_ignores_observation_and_bookkeeping_files() {
     let repo = activity_repo("task-updated-observation");
     write_activity_task(&repo, "task", "build", false);
@@ -468,7 +389,6 @@ fn draft_source_roundtrips_independently_of_destination() {
             "destination-branch".into(),
             "destination-worktree".into(),
             source.map(str::to_owned),
-            None,
         )
         .unwrap();
         if !slug.is_empty() {
@@ -517,7 +437,6 @@ fn draft_step_models_round_trip() {
             10,
             String::new(),
             String::new(),
-            None,
             None,
         )
         .unwrap()
@@ -576,7 +495,6 @@ fn write_draft_in_rejects_empty_name() {
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap_err();
     assert!(err.contains("empty"), "unexpected error: {err}");
@@ -610,7 +528,6 @@ fn write_draft_in_writes_task_md_with_draft_true() {
         10,
         "feat/x".into(),
         "wt-x".into(),
-        None,
         None,
     )
     .expect("write draft");
@@ -653,7 +570,6 @@ fn write_draft_in_updates_same_slug() {
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap();
     let second = write_draft_in_with_slug(
@@ -677,7 +593,6 @@ fn write_draft_in_updates_same_slug() {
         10,
         "".into(),
         "".into(),
-        None,
         None,
     )
     .unwrap();
@@ -715,7 +630,6 @@ fn draft_autosave_only_updates_age_when_content_changes() {
             10,
             String::new(),
             String::new(),
-            None,
             None,
         )
         .unwrap()
@@ -769,7 +683,6 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap();
     alinery_core::mutate_task(&repo, &archived.slug, "archive test draft", |task| {
@@ -799,7 +712,6 @@ fn archived_draft_is_not_reused_by_same_name_autosave() {
         10,
         "".into(),
         "".into(),
-        None,
         None,
     )
     .unwrap();
@@ -846,7 +758,6 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap();
     let second = write_draft_in_with_slug(
@@ -870,7 +781,6 @@ fn draft_duplicate_regression_write_draft_reuses_suffixed_draft_when_base_slug_i
         10,
         "".into(),
         "".into(),
-        None,
         None,
     )
     .unwrap();
@@ -916,7 +826,6 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap();
     assert_eq!(draft.slug, "supplied-draft-2");
@@ -942,7 +851,6 @@ fn draft_duplicate_regression_supplied_draft_slug_updates_in_place_when_base_slu
         10,
         "updated-branch".into(),
         "".into(),
-        None,
         None,
     )
     .unwrap();
@@ -1250,7 +1158,6 @@ fn draft_ticket_carries_evidence_and_never_attachments() {
         String::new(),
         String::new(),
         None,
-        None,
     )
     .unwrap();
 
@@ -1288,7 +1195,6 @@ fn delete_draft_in_removes_task_dir() {
         "".into(),
         "".into(),
         None,
-        None,
     )
     .unwrap();
     assert!(task_dir(&repo, &task.slug).exists());
@@ -1323,7 +1229,6 @@ fn delete_draft_respects_the_task_mutation_lock() {
         10,
         String::new(),
         String::new(),
-        None,
         None,
     )
     .unwrap();
@@ -1434,7 +1339,6 @@ fn targeted_draft_writes_land_only_in_selected_repo() {
         "".into(),
         "".into(),
         Some("refs/heads/source-in-b".into()),
-        None,
     )
     .unwrap();
 
@@ -1476,7 +1380,6 @@ fn targeted_draft_cleanup_deletes_only_still_drafts() {
         10,
         "".into(),
         "".into(),
-        None,
         None,
     )
     .unwrap();
@@ -2545,7 +2448,6 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         String::new(),
         String::new(),
         None,
-        None,
     )
     .unwrap();
     let request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({
@@ -2586,7 +2488,6 @@ fn autosave_cannot_recreate_promoted_storage_slug_after_restore() {
         10,
         String::new(),
         String::new(),
-        None,
         None,
     );
     let resurrected = task_dir(&restored, &draft.slug).exists();

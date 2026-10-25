@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch Bun at or above scripts/bun-pin.txt, install the pinned pi-durable 1.4.0
+# Fetch Bun at or above scripts/bun-pin.txt, install the pinned pi-durable 1.3.0
 # packages, and compile alinery-vinculum-daemon beside the app executable for one cargo
 # profile. `npm run tauri dev` and `npm run tauri build` run this with
 # --no-download; run it bare to allow the Bun download.

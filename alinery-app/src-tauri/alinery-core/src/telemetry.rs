@@ -22,7 +22,7 @@ const INGEST_USER: &str = "saga-ingest@example.com";
 const INGEST_PASSWORD: &str = "XYXXx1fbYiiCgDlp";
 const SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
-const HARNESS_ALLOWLIST: &[&str] = &["omp", "vinculum", "no-harness"];
+const HARNESS_ALLOWLIST: &[&str] = &["omp", "no-harness"];
 const PLAYBOOK_ALLOWLIST: &[&str] = &["superdevelop", "one-shot", "free-form", "review", "bug-hunting"];
 const PHASE_ALLOWLIST: &[&str] = &[
     "research-questions",
@@ -639,7 +639,7 @@ endpoint = "{endpoint}"
 
     #[test]
     fn sanitize_unknown_harness_is_custom() {
-        for known in ["omp", "vinculum", "no-harness"] {
+        for known in ["omp", "no-harness"] {
             assert_eq!(sanitize_harness(known), known);
         }
         for leftover in ["claude", "codex", "opencode", "ds4", "grok"] {

@@ -9,29 +9,26 @@ import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension,
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarnessStatus, startGraphs } from "./graph.ts";
+import { completeSession, engineAxis, enginePlaybook, permitSession, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
-import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 23;
+const PROTOCOL = 22;
 const context = BACKGROUND_CONTEXT;
-// 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
   kind: "alinery.attention",
   version: 1,
   scope: "conversation",
   history: "latest",
   fork: "initial",
-  checkpointWhen: () => false,
   initial: () => ({ wait: null }),
 });
 const PhaseRequest = defineDoc<{ phase: string; executionId: string; nonce: string }>({
@@ -40,7 +37,6 @@ const PhaseRequest = defineDoc<{ phase: string; executionId: string; nonce: stri
   scope: "conversation",
   history: "latest",
   fork: "initial",
-  checkpointWhen: () => false,
   initial: () => ({ phase: "", executionId: "", nonce: "" }),
 });
 
@@ -124,7 +120,7 @@ function codingExtension() {
         },
         execute: async (args, api, ctx) => {
           const path = args.path.trim();
-          if (path === PHASE_WRITE) return requestPhase(api);
+          if (path === PHASE_WRITE) return requestPhase(api.conversationId);
           if (path.startsWith("xd://")) return { output: [{ type: "text", text: `Unsupported internal path ${path}.` }], isError: true };
           return fileWrite.execute(args, api, ctx);
         },
@@ -150,7 +146,7 @@ function phaseExtension() {
         prepareArguments() {
           return {};
         },
-        execute: async (_args, api) => requestPhase(api),
+        execute: async (_args, api) => requestPhase(api.conversationId),
       }),
     ],
   });
@@ -161,7 +157,7 @@ const sessionNameTool = defineTool({
   description: "Suggest this session's short work name. An existing name, including a human correction, is preserved.",
   parameters: Type.Object({ name: Type.String() }),
   execute: async (args, api) => {
-    const row = sessionForCall(api.env, api.conversationId);
+    const row = rowForConversation(api.conversationId);
     if (!row?.taskSlug) return { output: [{ type: "text", text: "Only a task session can name itself this way." }], isError: true };
     const outcome = suggestSessionName(repo, row.taskSlug, row.id, args.name);
     if ("error" in outcome) return { output: [{ type: "text", text: outcome.error }], isError: true };
@@ -175,7 +171,7 @@ function namingExtension() {
     tools: [sessionNameTool],
     sections: [
       section("session-name", (input) => {
-        const row = sessionForCall(input.env, input.conversationId);
+        const row = rowForConversation(input.conversationId);
         if (!row?.taskSlug || sessionNameSource(row.taskSlug, row.id)) return undefined;
         return SESSION_NAME_INSTRUCTION;
       }),
@@ -286,9 +282,8 @@ function repairSessionMetas() {
       } catch {
         continue;
       }
-      const fieldsReady = typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number";
-      if (fieldsReady && meta.harness !== "omp") continue;
-      writeMeta(taskSlug, name.slice(0, -".meta.json".length), meta.harness === "omp" ? { harness: "vinculum" } : {});
+      if (typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number") continue;
+      writeMeta(taskSlug, name.slice(0, -".meta.json".length), {});
     }
   };
   const tasksRoot = join(repo, ".alinery", "tasks");
@@ -356,8 +351,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   };
   live.set(id, row);
   const meta = readMeta(taskSlug, id);
-  if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "vinculum", harness_resume_token: "" });
-  if (typeof meta.ended_at === "number") writeMeta(taskSlug, id, { ended_at: null, exit_code: null });
+  if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "omp", harness_resume_token: "" });
   // Bun can finish the later awaits as microtasks. Yield once so list can observe starting.
   const turn = Promise.withResolvers();
   setImmediate(turn.resolve);
@@ -368,11 +362,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     {
       models,
       registry,
-      env: () => {
-        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id) });
-        rememberSessionEnv(env, id);
-        return env;
-      },
+      env: (target) => new NodeExecutionEnv({ cwd: sessionCwd(target.conversationId) }),
       conversationCreated: async (tx, conversation) => {
         await tx.doc(Attention, conversation.id);
         await tx.doc(PhaseRequest, conversation.id);
@@ -550,12 +540,15 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
   });
 }
 
-function sessionForCall(env: unknown, conversationId: string): Live | undefined {
-  return sessionByToolEnv(env, conversationId, (sessionId) => live.get(sessionId), live.values());
+function rowForConversation(conversationId: string): Live | undefined {
+  for (const row of live.values()) if (row.conversationId === conversationId) return row;
+  return undefined;
 }
 
-function sessionCwd(taskSlug: string, id: string): string {
-  const worktree = readMeta(taskSlug, id).worktree;
+function sessionCwd(conversationId: string): string {
+  const row = rowForConversation(conversationId);
+  if (!row) return repo;
+  const worktree = readMeta(row.taskSlug, row.id).worktree;
   return typeof worktree === "string" && worktree && existsSync(worktree) ? worktree : repo;
 }
 
@@ -581,8 +574,8 @@ function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
 }
 
-async function requestPhase(api: { conversationId: string; env?: unknown }) {
-  const row = sessionForCall(api.env, api.conversationId);
+async function requestPhase(conversationId: string) {
+  const row = rowForConversation(conversationId);
   if (!row) return { output: [{ type: "text" as const, text: "No session is open for this completion." }], isError: true };
   if (!row.taskSlug) return { output: [{ type: "text" as const, text: phaseResultText({ forwarded: false }) }] };
   const nonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1119,8 +1112,13 @@ repairSessionMetas();
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
-    status(id) {
-      return Promise.resolve(sessionHarnessStatus(live.get(id)));
+    async status(id) {
+      const row = live.get(id);
+      if (!row) return { kind: "unknown" };
+      if (row.process === "exited") return { kind: "exited", exitCode: null };
+      if (row.process === "starting") return { kind: "starting" };
+      if (row.agent.state === "busy" || row.liveRun) return { kind: "running" };
+      return { kind: "idle" };
     },
     async send(id, text) {
       const row = live.get(id);
@@ -1149,5 +1147,5 @@ server.listen(uiSocket, () => {
       const row = live.get(id);
       if (row) row.executionId = executionId;
     },
-  }, appConfig));
+  }));
 });

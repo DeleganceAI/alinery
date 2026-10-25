@@ -535,7 +535,7 @@ pub(crate) fn render_vinculum_customization_prompt(app_config: &Path, identifier
     let (agent_dir, _) = alinery_core::vinculum_home_dirs(app_config);
     let agent = crate::shell_quote(&agent_dir.to_string_lossy());
     format!(
-        r#"Help me customize the Vinculum harness in this Alinery installation. Its agent runtime is pi-durable, from Pi (@earendil-works/pi-durable 1.4.0). It is not OMP. There is no OMP binary to run. ~/.pi and ~/.omp are the wrong directories.
+        r#"Help me customize the Vinculum harness in this Alinery installation. Its agent runtime is pi-durable, from Pi (@earendil-works/pi-durable 1.3.0). It is not OMP. There is no OMP binary to run. ~/.pi and ~/.omp are the wrong directories.
 
 Alinery installation identifier: {identifier}
 Alinery app configuration: {app_config}

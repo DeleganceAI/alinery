@@ -228,7 +228,7 @@ fn customization_prompt_quotes_the_agent_directory_and_does_not_dump_secrets() {
     fs::write(agent_dir.join("skills/demo/SKILL.md"), "private-content-skill").unwrap();
     let prompt = render_vinculum_customization_prompt(&app_config, "ai.delegance.alinery.dev");
     assert!(prompt.contains("pi-durable"));
-    assert!(prompt.contains("1.4.0"));
+    assert!(prompt.contains("1.3.0"));
     assert!(!prompt.contains("oh-my-pi"));
     assert!(!prompt.contains("v18.1.13"));
     assert!(!prompt.contains("private-content"));

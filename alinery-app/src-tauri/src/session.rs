@@ -622,7 +622,7 @@ pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
 }
 
 pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
-    alinery_core::is_vinculum_session(harness) && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
+    harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
 
 /// Refresh hosted inference inside the one-hour renewal lead. Vinculum is the only daemon.

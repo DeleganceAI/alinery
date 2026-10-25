@@ -11,7 +11,6 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 pub use crate::task_creation::{
@@ -1416,14 +1415,7 @@ pub fn file_content_id(path: &Path) -> Option<String> {
 }
 
 pub fn daemon_binary_build_id() -> String {
-    // Vinculum is a large bun bundle. Attach, the poller, activity, and
-    // observation all ask for this id; hashing the file on every call keeps
-    // the blocking pool busy for the whole session. The bytes do not change
-    // until this process is replaced.
-    static CACHED: OnceLock<String> = OnceLock::new();
-    CACHED
-        .get_or_init(|| resolve_alineryd_path().and_then(|path| file_content_id(&path)).unwrap_or_default())
-        .clone()
+    resolve_alineryd_path().and_then(|path| file_content_id(&path)).unwrap_or_default()
 }
 
 pub fn configure_detached_process(command: &mut Command) {
