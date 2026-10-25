@@ -1675,6 +1675,59 @@ fn legacy_conversion_preserves_history_without_minting_intent() {
 }
 
 #[test]
+fn takeover_migrates_legacy_unsuccessful_completions_in_archived_tasks() {
+    for exit_code in [Some(1), None] {
+        let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+        let id = f.reserve(true);
+        let owner = f.run(&id);
+        f.write_output(&id, 0, None);
+        report_execution_ready(&f.repo, "task", &f.definition, &mut f.state, &id, &owner, 0).unwrap();
+        confirm_execution_exit(&mut f.state, &id, &owner, exit_code).unwrap();
+        // Version 1 recorded every accepted exit as completed, even unsuccessful exits.
+        f.state.executions.get_mut(&id).unwrap().lifecycle = ExecutionLifecycle::Completed;
+        assert!(decode_execution_state(&serde_json::to_vec(&f.state).unwrap()).is_err());
+        persist_owner_fixture(&mut f);
+        let task = crate::Task {
+            name: "Task".into(),
+            slug: "task".into(),
+            engine_version: 2,
+            archived: true,
+            ..Default::default()
+        };
+        fs::write(crate::task_dir(&f.repo, "task").join("task.md"), toml::to_string(&task).unwrap()).unwrap();
+        let path = execution_state_path(&f.repo, "task").unwrap();
+        let legacy = legacy_state_bytes(&f.state);
+        fs::write(&path, &legacy).unwrap();
+
+        let lease = crate::lockfile::try_lock_exclusive(&crate::alineryd_lock_path(&f.repo, Some("lane"))).unwrap().unwrap();
+        assert!(crate::repo_ownership::acquire(&f.repo, "next", "config").is_err());
+        assert_eq!(fs::read(&path).unwrap(), legacy);
+        drop(lease);
+        let guard = crate::repo_ownership::acquire(&f.repo, "next", "config").unwrap();
+        let migrated = read_execution_state(&f.repo, "task").unwrap();
+        assert_eq!(migrated.owning_lane, "next");
+        let record = &migrated.executions[&id];
+        assert_eq!(record.lifecycle, ExecutionLifecycle::Failed);
+        assert_eq!(record.exit_code, exit_code);
+        assert_eq!(record.receipt_id, f.state.executions[&id].receipt_id);
+        assert_eq!(record.owner_session_id, owner);
+        assert!(record.shutdown_confirmed);
+        assert!(record.human_end.is_none());
+        assert_eq!(migrated.occurrences, f.state.occurrences);
+        assert!(migrated.occurrences.values().all(|o| !occurrence_deliverable(&migrated, o)));
+        assert_eq!(
+            fs::read_to_string(crate::artifacts_dir(&f.repo, "task").join(&record.outputs[0].relative_path)).unwrap(),
+            "real output"
+        );
+        let saved = fs::read(&path).unwrap();
+        assert!(!decode_execution_state(&saved).unwrap().1);
+        drop(guard);
+        drop(crate::repo_ownership::acquire(&f.repo, "next", "config").unwrap());
+        assert_eq!(fs::read(&path).unwrap(), saved);
+    }
+}
+
+#[test]
 fn migration_preflights_all_records_and_converts_same_lane() {
     let mut f = Fixture::new("{path=\"result.md\"}", false, false, 2);
     let queued = f.reserve(false);

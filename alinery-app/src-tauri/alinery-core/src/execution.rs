@@ -279,12 +279,22 @@ pub fn decode_execution_state(bytes: &[u8]) -> Result<(TaskExecutionState, bool)
     {
         return Err("current execution state contains legacy permission".into());
     }
-    let state: TaskExecutionState = serde_json::from_value(value).map_err(|e| format!("invalid task execution state: {e}"))?;
+    let mut state: TaskExecutionState = serde_json::from_value(value).map_err(|e| format!("invalid task execution state: {e}"))?;
     if state.max_live_sessions == 0 {
         return Err("invalid task execution capacity".into());
     }
     let mut receipts = BTreeSet::new();
-    for (id, record) in &state.executions {
+    for (id, record) in &mut state.executions {
+        // Version 1 completed every accepted exit; retain its evidence without treating an unsuccessful exit as deliverable.
+        if converted
+            && record.lifecycle == ExecutionLifecycle::Completed
+            && record.receipt_id.is_some()
+            && record.shutdown_confirmed
+            && record.exit_code != Some(0)
+            && record.human_end.is_none()
+        {
+            record.lifecycle = ExecutionLifecycle::Failed;
+        }
         if let Some(receipt) = &record.receipt_id {
             if receipt.is_empty() || !receipts.insert(receipt) {
                 return Err(format!("invalid or duplicate execution receipt for {id}"));
