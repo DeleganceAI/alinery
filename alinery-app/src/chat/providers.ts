@@ -4,26 +4,76 @@ import type { HostedCatalogView } from "../types";
 /** Product provider for Alinery-hosted models. Not an OMP login row. */
 export const HOSTED_PROVIDER = "alinery";
 
-/** OMP `get_login_providers` row. */
+/** xAI chat models the daemon can launch when a Grok key is saved. Same ids as pi-ai's xAI catalog. */
+export const GROK_MODELS = ["grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7"];
+
+/** A provider the Accounts tab can sign in to. `available` is retained from the old login row. */
 export type LoginProvider = {
   id: string;
   name: string;
   available: boolean;
   authenticated: boolean;
+  /** Present when a credential is stored. An injected or ambient login has no sign-out. */
+  stored?: boolean;
+  apiKey?: boolean;
+  oauth?: boolean;
+  apiKeyName?: string;
+  oauthName?: string;
 };
 
-/**
- * Login providers that need `onPrompt` before `open_url` — RPC rejects them.
- * Best-effort snapshot from OMP `docs/providers.md`; drift is expected.
- */
-export const RPC_INCOMPATIBLE_LOGIN_IDS = new Set(["baseten", "coreweave", "sakana", "cloudflare-ai-gateway"]);
+export type ProviderCatalog = {
+  providers: Array<{
+    id: string;
+    name: string;
+    authenticated: boolean;
+    stored: boolean;
+    apiKey: boolean;
+    oauth: boolean;
+    apiKeyName: string;
+    oauthName: string;
+  }>;
+  models: Array<{ provider: string; id: string }>;
+  custom: Array<{ id: string; name: string; baseUrl: string; hasKey: boolean; models: string[] }>;
+};
+
+export type ProviderLoginStatus = {
+  loginId: string;
+  status: string;
+  prompt?: {
+    type: string;
+    message: string;
+    placeholder?: string;
+    options?: Array<{ id: string; label: string; description?: string }>;
+  };
+  events: Array<
+    | { type: "info"; message: string; links?: Array<{ url: string; label?: string }> }
+    | { type: "auth_url"; url: string; instructions?: string }
+    | { type: "device_code"; userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }
+    | { type: "progress"; message: string }
+  >;
+  failure: string;
+};
+
+export function loginProvidersFromCatalog(catalog: ProviderCatalog | null): LoginProvider[] {
+  return (catalog?.providers ?? []).map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    available: true,
+    authenticated: provider.authenticated,
+    stored: provider.stored,
+    apiKey: provider.apiKey,
+    oauth: provider.oauth,
+    apiKeyName: provider.apiKeyName,
+    oauthName: provider.oauthName,
+  }));
+}
 
 export const INTERACTIVE_PROMPT_ERROR = /requires interactive prompts which are not supported in RPC mode/i;
 
 export type AdvancedProviderRow = {
   id: string;
   name: string;
-  reason: "env" | "rpc-incompatible" | "live-promote";
+  reason: "env" | "live-promote";
   /** Models already listed for this provider → env looks ready. */
   readyViaEnv?: boolean;
 };
@@ -55,11 +105,12 @@ export function needsProviderSetup(providers: LoginProvider[], currentModel?: st
 }
 
 /** Partition login-list vs Advanced (env-only / documented incompatible / live-promoted). */
-export function partitionProviders(input: { loginProviders: LoginProvider[]; models: ChatModelOption[]; livePromotedIds?: Iterable<string> }): {
+export function partitionProviders(input: { loginProviders: LoginProvider[]; models: ChatModelOption[]; livePromotedIds?: Iterable<string>; configuredIds?: Iterable<string> }): {
   chatLogin: LoginProvider[];
   advanced: AdvancedProviderRow[];
 } {
   const loginIds = new Set(input.loginProviders.map((p) => p.id));
+  const configured = new Set(input.configuredIds ?? []);
   const modelProviders = new Map<string, number>();
   for (const m of input.models) {
     modelProviders.set(m.provider, (modelProviders.get(m.provider) ?? 0) + 1);
@@ -69,21 +120,12 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
 
   for (const [id, count] of modelProviders) {
     if (id === HOSTED_PROVIDER) continue;
-    if (loginIds.has(id)) continue;
+    if (loginIds.has(id) || configured.has(id)) continue;
     advanced.set(id, {
       id,
       name: id,
       reason: "env",
       readyViaEnv: count > 0,
-    });
-  }
-
-  for (const p of input.loginProviders) {
-    if (!RPC_INCOMPATIBLE_LOGIN_IDS.has(p.id)) continue;
-    advanced.set(p.id, {
-      id: p.id,
-      name: p.name || p.id,
-      reason: "rpc-incompatible",
     });
   }
 
@@ -100,6 +142,14 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
   const chatLogin = input.loginProviders.filter((p) => p.id !== HOSTED_PROVIDER && !advanced.has(p.id));
   const advancedList = [...advanced.values()].sort((a, b) => a.name.localeCompare(b.name));
   return { chatLogin, advanced: advancedList };
+}
+
+/** Append xAI rows when Settings has a Grok key. Absent from the hosted catalog and from OMP's model list. */
+export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): ChatModelOption[] {
+  if (!enabled) return models;
+  const seen = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  const extra = GROK_MODELS.filter((id) => !seen.has(`xai/${id}`)).map((id) => ({ provider: "xai", id }));
+  return extra.length > 0 ? [...models, ...extra] : models;
 }
 
 /** Catalog rows first; drop OMP duplicates of the same `alinery/<id>`. */

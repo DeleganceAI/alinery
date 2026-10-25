@@ -240,14 +240,19 @@ export type ExperimentalFeatures = {
   show_original_kanban?: boolean;
   /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
   show_chat?: boolean;
+  /** Retained Vinculum opt-in. Absent = off. This branch starts Vinculum either way; a saved `pi_durable` key still loads. */
+  vinculum?: boolean;
+  /** Grok key for the experimental daemon. Empty or absent is unset. */
+  grok_api_key?: string;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
-export type OmpRelease = { version: string; asset_url: string };
-export type OmpUpdateStatus = { installed: string; available: OmpRelease | null; checked_at: number; binary_path: string; config_dir: string };
-export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
-export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
+export type VinculumCustomization = { name: string; kind: string; source: string; path: string | null; offered?: boolean };
+export type VinculumCustomizations = { items: VinculumCustomization[]; errors: string[] };
+export type VinculumMcpServer = { name: string; builtin: boolean; state: "connected" | "disabled" | "error" | string; error?: string };
+export type VinculumDaemonCustomizations = { tools: string[]; servers: VinculumMcpServer[] };
+export type SkillInstall = { name: string; exists: boolean };
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;
@@ -594,6 +599,8 @@ export type ChatMessage = {
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  /** A Vinculum tool result whose call is still running. Absent once the stored result has replaced it. */
+  streaming?: boolean;
 };
 
 // Mirrors alinery-core's LifecycleState (serde tag = "state", snake_case). Derived by the
@@ -910,7 +917,7 @@ export type View =
   | { kind: "notifications" }
   | { kind: "playbooks" }
   | { kind: "settings"; section?: SettingsSectionKey }
-  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef; initialPreset?: { name: string; description: string; evidence?: string } }
+  | { kind: "create"; from: View; draft?: BoardTask; initialPlaybook?: PlaybookRef }
   | { kind: "createSession"; from: View; initialTask?: { repo_path: string; slug: string } }
   | { kind: "task"; slug: string; from: View; repoPath?: string; initialTask?: Task }
   | {

@@ -239,6 +239,8 @@ fi
 yesno() { if "$@"; then printf yes; else printf no; fi; }
 check "product daemon line accepts alineryd" "yes" \
   "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alineryd --repo /x')"
+check "product daemon line accepts vinculum" "yes" \
+  "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /x')"
 check "product daemon line rejects leftover sagad" "no" \
   "$(yesno is_product_daemon_ps_line '42 /Applications/Saga.app/Contents/MacOS/sagad --repo /x')"
 check "product daemon line rejects a lookalike helper" "no" \

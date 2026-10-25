@@ -13,8 +13,7 @@ use serde::Deserialize;
 use crate::log::{append_exception, append_info, quote_log_value};
 use crate::paths::{alinery_dir, config_toml_path};
 use crate::types::{
-    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, RepoOverrides, TelemetryPrefs, DEFAULT_GRID_VIEW_ID, DEFAULT_GRID_VIEW_NAME,
-    DEFAULT_HARNESSES_TOML, LEGACY_DEFAULT_GRID_VIEW_NAME, MAX_GRID_VIEWS,
+    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, RepoOverrides, TelemetryPrefs, DEFAULT_HARNESSES_TOML, MAX_GRID_VIEWS,
 };
 
 #[derive(Deserialize, Default)]
@@ -68,14 +67,9 @@ fn normalize_loaded_grid_views(views: Vec<GridViewDefinition>) -> Vec<GridViewDe
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut normalized = Vec::new();
-    // Saved settings keep the old default name "Kanban+"; show it as Canvas unless another view already uses that name.
-    let canvas_taken = views.iter().any(|view| view.name.trim().eq_ignore_ascii_case(DEFAULT_GRID_VIEW_NAME));
     for view in sort_grid_views_by_slot(views) {
         let id = view.id.trim();
-        let name = match view.name.trim() {
-            LEGACY_DEFAULT_GRID_VIEW_NAME if id == DEFAULT_GRID_VIEW_ID && !canvas_taken => DEFAULT_GRID_VIEW_NAME,
-            name => name,
-        };
+        let name = view.name.trim();
         let name_key = name.to_lowercase();
         if id.is_empty() || name.is_empty() || !ids.insert(id.to_string()) || !names.insert(name_key) {
             continue;
@@ -357,6 +351,15 @@ fn push_changed_u8(fields: &mut Vec<String>, key: &str, prev: u8, next: u8) {
     }
 }
 
+fn secret_if_set(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 fn push_opt_secret(fields: &mut Vec<String>, key: &str, prev: &Option<String>, next: &Option<String>) {
     if prev == next {
         return;
@@ -455,6 +458,13 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
         next.experiments.show_original_kanban,
     );
     push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
+    push_changed_bool(&mut fields, "experiments.vinculum", prev.experiments.vinculum, next.experiments.vinculum);
+    push_opt_secret(
+        &mut fields,
+        "experiments.grok_api_key",
+        &secret_if_set(&prev.experiments.grok_api_key),
+        &secret_if_set(&next.experiments.grok_api_key),
+    );
     if prev.grid_views != next.grid_views {
         fields.push("grid_views=changed".into());
     }
@@ -687,6 +697,15 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn vinculum_opt_in_still_loads_the_old_key() {
+        let (dir, app_config) = temp_app("alinery_vinculum_alias");
+        assert!(!load_global_settings(&app_config).experiments.vinculum);
+        fs::write(&app_config, "[global.experiments]\npi_durable = true\n").unwrap();
+        assert!(load_global_settings(&app_config).experiments.vinculum);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     // The daemon holds an idle-sleep inhibit off this pref, so every load that is not a clean
     // `keep_awake = true` must read as off: a corrupt file must not keep the machine awake.
     #[test]
@@ -737,8 +756,8 @@ mod tests {
                 slot: 2,
             },
             GridViewDefinition {
-                id: "canvas".into(),
-                name: "Canvas".into(),
+                id: "kanban-plus".into(),
+                name: "Kanban+".into(),
                 slot: 1,
             },
         ])
@@ -747,8 +766,8 @@ mod tests {
             prepared,
             vec![
                 GridViewDefinition {
-                    id: "canvas".into(),
-                    name: "Canvas".into(),
+                    id: "kanban-plus".into(),
+                    name: "Kanban+".into(),
                     slot: 1,
                 },
                 GridViewDefinition {
@@ -757,28 +776,6 @@ mod tests {
                     slot: 2,
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn loaded_grid_views_rename_legacy_kanban_plus_to_canvas() {
-        let view = |id: &str, name: &str, slot: u8| GridViewDefinition {
-            id: id.into(),
-            name: name.into(),
-            slot,
-        };
-        let mut global = default_global_settings();
-        global.grid_views = vec![view("default-kanban-plus", "Kanban+", 1), view("planning", "Planning", 2)];
-        assert_eq!(
-            normalize_global_settings(global.clone()).grid_views,
-            vec![view("default-kanban-plus", "Canvas", 1), view("planning", "Planning", 2)]
-        );
-        global.grid_views = vec![view("custom", "Kanban+", 1)];
-        assert_eq!(normalize_global_settings(global.clone()).grid_views, vec![view("custom", "Kanban+", 1)]);
-        global.grid_views = vec![view("default-kanban-plus", "Kanban+", 1), view("mine", "canvas", 2)];
-        assert_eq!(
-            normalize_global_settings(global).grid_views,
-            vec![view("default-kanban-plus", "Kanban+", 1), view("mine", "canvas", 2)]
         );
     }
 
@@ -837,6 +834,27 @@ mod tests {
         assert!(text.contains("github.token=changed"), "{text}");
         assert!(text.contains("harnesses=changed"), "{text}");
         assert!(!text.contains("sk-secret-material"), "{text}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn grok_key_logs_redacted_change_and_never_the_material() {
+        let (dir, app_config) = temp_app("alinery_log_grok_key");
+        write_global_settings(&app_config, &default_global_settings()).unwrap();
+        let mut next = default_global_settings();
+        next.experiments.grok_api_key = "xai-secret-material".into();
+        next.experiments.show_chat = true;
+        write_global_settings(&app_config, &next).unwrap();
+        let text = log_text(&app_config);
+        assert!(text.contains("experiments.grok_api_key=changed"), "{text}");
+        assert!(text.contains("experiments.show_chat=true"), "{text}");
+        assert!(!text.contains("xai-secret-material"), "{text}");
+        let mut cleared = next.clone();
+        cleared.experiments.grok_api_key.clear();
+        write_global_settings(&app_config, &cleared).unwrap();
+        let cleared_text = log_text(&app_config);
+        assert!(cleared_text.contains("experiments.grok_api_key=cleared"), "{cleared_text}");
+        assert!(!cleared_text.contains("xai-secret-material"), "{cleared_text}");
         let _ = fs::remove_dir_all(dir);
     }
     #[test]

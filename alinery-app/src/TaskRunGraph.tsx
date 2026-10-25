@@ -340,9 +340,7 @@ export function TaskRunGraph({
                       >
                         <strong>{nodeName(node)}</strong>
                         <span className="task-run-node-status">
-                          {!previousAttempt && execution?.lifecycle === "queued" ? (
-                            savedStatus
-                          ) : observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                          {observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
                             <StatusDot
                               id={session.id}
                               observation={observation ?? null}

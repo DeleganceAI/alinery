@@ -678,6 +678,11 @@ pub struct ExperimentalFeatures {
     pub show_original_kanban: bool,
     /// Chat tab (threads under repositories). Off until opted in.
     pub show_chat: bool,
+    /// Retained Vinculum opt-in. The old key `pi_durable` still loads. This branch starts Vinculum either way.
+    #[serde(alias = "pi_durable")]
+    pub vinculum: bool,
+    /// Grok key for the experimental daemon. Empty is unset. Kept when the toggle turns off.
+    pub grok_api_key: String,
 }
 
 impl Default for ExperimentalFeatures {
@@ -685,16 +690,14 @@ impl Default for ExperimentalFeatures {
         Self {
             show_original_kanban: true,
             show_chat: false,
+            vinculum: false,
+            grok_api_key: String::new(),
         }
     }
 }
 
 pub const MAX_GRID_VIEWS: usize = 3;
 pub const DEFAULT_GRID_VIEW_ID: &str = "default-kanban-plus";
-pub const DEFAULT_GRID_VIEW_NAME: &str = "Canvas";
-/// The default view's name before it was renamed to Canvas; saved settings still carrying it
-/// are migrated on read.
-pub const LEGACY_DEFAULT_GRID_VIEW_NAME: &str = "Kanban+";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GridViewDefinition {
@@ -707,7 +710,7 @@ pub struct GridViewDefinition {
 pub fn default_grid_views() -> Vec<GridViewDefinition> {
     vec![GridViewDefinition {
         id: DEFAULT_GRID_VIEW_ID.into(),
-        name: DEFAULT_GRID_VIEW_NAME.into(),
+        name: "Kanban+".into(),
         slot: 1,
     }]
 }

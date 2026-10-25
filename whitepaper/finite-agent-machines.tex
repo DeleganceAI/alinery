@@ -485,49 +485,27 @@ and one in the third before the review concludes.
 \section{The Playbook Engine in Alinery}
 \label{sec:playbook-engine}
 
-Alinery is a desktop application for carrying out agent-assisted
-investigations and software-development work through reusable processes.
-A user creates a \emph{task} for a particular effort, such as conducting a
-literature review or investigating a software defect, and selects a
-\emph{Playbook} that defines the steps available to the agents. In Alinery,
-a \textbf{Task} is a persistent container for that effort: it keeps the selected Playbook, working files, agent conversations,
-published artifacts, and execution history together. Users can inspect the
-resulting evidence and direct ongoing work as the process unfolds.
+Alinery implements a FAM as a Playbook whose authored steps are instantiated
+as executions over particular artifacts. A task retains the selected
+Playbook, a shared repository worktree, and the execution history. A session
+is the agent process and conversation carrying out an execution. Separating
+steps, executions, and sessions allows one reading step to serve many
+discovered sources while the engine records which inputs each invocation
+received, what it published, and whether its process has stopped.
 
-A Playbook implements a particular FAM by specifying agent instructions and
-artifact dependencies. The engine creates an \emph{execution} when it
-applies one of the Playbook's step definitions to particular input artifacts.
-A \emph{session} is the running agent process and its conversation through
-which that execution performs its work. In the literature-review example,
-the overall review occupies one task, while assessing three discovered
-sources creates three executions of the same reading step. Each reading
-execution runs in a session and publishes an assessment that subsequent
-work can consume. The task retains those assessments and their execution
-records after the sessions finish, allowing later work to build on earlier
-results.
-
-The task also provides a shared repository worktree: a working copy of the
-project's files in which agents perform their work. Executions therefore
-share both a persistent record of the investigation and a workspace, while
-retaining separate input assignments, conversations, and publications.
-These distinctions allow the engine to record which evidence each
-invocation received, what it produced, and whether the agent process has
-stopped.
-
-The filename-set model in Section~\ref{sec:fam-definition-execution}
-describes completed agentic transitions. Implementing those transitions
-requires additional decisions about which artifact publications an
-execution consumes, when its outputs become available to successors, which
-executions may run concurrently, and how interrupted work is recovered.
-The following subsections explain Alinery's choices and their consequences
-for human inspection and control. Its input modes, workspace rules, and
-recovery policies are implementation choices rather than requirements of
-every FAM.\footnote{The engine and accompanying design
-guidance described here are available at \url{https://github.com/DeleganceAI/alinery/tree/054fb36}.}
+The filename-set model in Section~\ref{sec:fam-definition-execution} describes
+completed agentic transitions. Implementing those transitions requires
+additional decisions about input binding, publication, concurrency, and
+recovery. Alinery makes those decisions for a local system in which humans
+can inspect artifacts and steer ongoing work. Its restrictions on input
+modes, workspace access, and recovery are implementation policies rather
+than requirements of every FAM.\footnote{The engine and accompanying design
+guidance described here are available in the Alinery source at revision
+\texttt{054fb36}: \url{https://github.com/DeleganceAI/alinery/tree/054fb36}.}
 
 \subsection{Authored Processes and Agent Judgment}
 
-A Playbook defines the available steps and their dependencies,
+A Playbook fixes the available step definitions and their dependencies,
 while agents determine the concrete work performed within those definitions.
 In the literature-review example, an agent chooses which sources merit
 reading and whether the accumulated evidence warrants another round. The
@@ -538,77 +516,25 @@ available operations fixed makes the permitted process available for review
 before execution, without requiring the author to enumerate the sources,
 branches, or number of iterations in advance.
 
-The agent instructions specify how to evaluate the evidence and decide what
-work should follow. The engine determines which steps can run from the
-artifacts those steps require. For example, a step that requires both a
-review and a follow-up request must wait until both are available. The
-engine does not itself judge whether the review warrants further
-investigation; an agent makes that judgment and records its decision in an
-artifact that enables the corresponding next step.
-
-Each step also specifies the artifacts its agent may produce. In the
-literature-review example, \emph{Assess next step} may publish a follow-up
-request to continue the investigation or a closing report to conclude it.
-The agent's instructions must tell it to choose one of those outcomes. The
-engine checks whether the published artifacts are permitted outputs of the
-step, but does not reject a completion merely because the agent produced
-both a request and a report. The requirement to choose one outcome therefore
-relies on the agent following its instructions.
+Alinery places domain judgments in agent instructions and artifacts. A
+general engine-level condition language would require authors to express
+additional decision logic alongside those instructions; the current engine
+instead uses declared artifact dependencies to determine readiness. Every
+listed input is required, so listing a review and a request creates an AND
+dependency. Output declarations describe possible publications, and an
+agent can enable different continuations by choosing which outputs to
+publish. The engine does not enforce an exclusive choice between two valid
+outcomes. If the review procedure requires either a continuation request or
+a closing report, the agent instructions must establish that exclusivity.
 
 \subsection{Artifact Identity and Causal Dependencies}
 
-A Playbook names the artifacts each step requires as inputs and may produce
-as outputs. Those names connect the steps: an output of one step
-can be an input to another. Figure~\ref{fig:playbook-read-step}
-shows the input and output fields of the reading step from the complete
-Playbook in Appendix~\ref{app:alinery}. The input pattern
-\texttt{source-request-*.md} names a collection of source requests, and
-\texttt{mode = "each"} asks the engine to create a separate reading execution,
-with its own agent session, for each request. If the discovery agent publishes
-500 source-request artifacts, the engine schedules 500 reading executions,
-each carried out in a separate agent session. The Playbook author does not
-specify that number in advance; the number of requests the discovery agent
-produces determines how many reading sessions are needed. A limit on live
-sessions controls how many run concurrently, with the remainder queued.
-Each reading agent may produce an assessment named \texttt{assessment.md}.
-
-\begin{figure}[t]
-\begin{lstlisting}[
-  basicstyle=\fontencoding{T1}\ttfamily\fontsize{8}{10}\selectfont,
-  backgroundcolor=\color{codebg},
-  keywordstyle=\color{codeink}\bfseries,
-  morekeywords={key,title,inputs,outputs,path,mode},
-  morestring={[b]"},
-  stringstyle=\color{teal!55!black},
-  frame=single,rulecolor=\color{black!15},
-  framerule=0.3pt,framesep=7pt,
-  xleftmargin=8pt,xrightmargin=8pt,
-  aboveskip=6pt,belowskip=6pt,
-  columns=fullflexible,keepspaces=true]
-[[step]]
-key   = "read"
-title = "Read"
-
-inputs = [
-  { path = "source-request-*.md",
-    mode = "each" }
-]
-outputs = [
-  { path = "assessment.md" }
-]
-\end{lstlisting}
-\caption{Excerpt from a Playbook showing the reading step's named inputs
-and outputs. Other fields and instructions are omitted.}
-\label{fig:playbook-read-step}
-\end{figure}
-
-If three sources are read, the engine must distinguish the three resulting
-assessments even though the Playbook gives them the same output name.
-The name \texttt{assessment.md} specifies a \emph{logical role}: the kind of
-artifact a step produces or requires. An \emph{artifact occurrence}
-identifies one accepted publication of that output and records its file path
-and the execution that produced it. Two occurrences remain distinct even
-when they have the same logical role and identical contents. Alinery
+Repeated work requires the engine to distinguish an artifact's logical role
+from a particular publication of that role. A logical role such as
+\texttt{review.md} identifies a kind of output in the Playbook; an
+\emph{artifact occurrence} records one execution's accepted publication,
+including its concrete path and producer. Two publications remain distinct
+even if they have the same logical role and identical contents. Alinery
 assigns separate physical paths to occurrences, while generated depth
 numbers and collision suffixes help people navigate the files. Scheduling
 uses the recorded occurrences and relationships, independently of those
@@ -640,10 +566,9 @@ artifact occurrences.
 
 \subsection{Publication, Acceptance, and Process Shutdown}
 
-An agent hands off its results by writing artifacts to its assigned file
-paths and requesting completion. The engine accepts those artifacts before
-making them available to subsequent steps; writing the files alone does not
-complete the handoff. To accept the results, the engine checks the requesting execution's ownership
+An artifact file can exist before the engine permits another execution to
+consume it. Agents write ordinary files at their assigned paths and then
+request completion. The engine checks the requesting execution's ownership
 and permission, inspects the assigned outputs, and requires at least one
 valid assigned artifact overall. Artifact validation checks for nonempty
 regular files at permitted assigned paths; it does not evaluate the claims

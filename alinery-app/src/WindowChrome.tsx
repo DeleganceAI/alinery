@@ -38,7 +38,7 @@ export function useWindowFullscreen() {
   return fs;
 }
 
-// Close / minimize / fullscreen-toggle (macOS order) — rendered next to the brand mark in the header.
+// Minimize / fullscreen-toggle / close — rendered next to the brand mark in the header.
 // The fullscreen button uses real native macOS fullscreen (separate Space, no menu bar).
 // Esc exiting fullscreen is macOS's own shortcut; useHotkeys stands down its own Esc="go
 // back" handler while isFullscreen is true so the OS is the sole owner of that key there.
@@ -47,14 +47,14 @@ export function WindowControls() {
   const fsLabel = fs ? "Exit full screen" : "Enter full screen";
   return (
     <div className="wctl">
-      <button type="button" className="wbtn cls" title="Close" aria-label="Close window" onClick={() => win.close()}>
-        <X size={14} strokeWidth={1.5} aria-hidden="true" />
-      </button>
       <button type="button" className="wbtn" title="Minimize" aria-label="Minimize" onClick={() => win.minimize()}>
         <Minus size={14} strokeWidth={1.5} aria-hidden="true" />
       </button>
       <button type="button" className="wbtn" title={fsLabel} aria-label={fsLabel} onClick={() => win.setFullscreen(!fs)}>
         <Maximize2 size={12} strokeWidth={1.5} aria-hidden="true" />
+      </button>
+      <button type="button" className="wbtn cls" title="Close" aria-label="Close window" onClick={() => win.close()}>
+        <X size={14} strokeWidth={1.5} aria-hidden="true" />
       </button>
     </div>
   );

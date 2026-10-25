@@ -18,12 +18,22 @@ TAURI="$ROOT/alinery-app/src-tauri"
 # The helper itself is the one legitimate raw spawn.
 hits=$(grep -rn 'Command::new("git")' \
   --include='*.rs' \
-  "$TAURI/src" "$TAURI/alinery-core" "$TAURI/alineryd" "$TAURI/mcp" "$TAURI/runner" \
+  "$TAURI/src" "$TAURI/alinery-core" "$TAURI/mcp" \
   | grep -v '^.*/alinery-core/src/git.rs:' || true)
 
 if [ -n "$hits" ]; then
   echo "ERROR: raw git spawn — use alinery_core::git_cmd(dir) so GIT_DIR cannot redirect it:" >&2
   echo "$hits" >&2
+  exit 1
+fi
+
+ts_hits=$(grep -rn -E 'spawn(Sync)?\([[:space:]]*"git"|spawn(Sync)?\([[:space:]]*'\''git'\''' \
+  --include='*.ts' \
+  "$TAURI/vinculum-daemon" || true)
+
+if [ -n "$ts_hits" ]; then
+  echo "ERROR: Vinculum must call alinery-core provisioning, not spawn git itself:" >&2
+  echo "$ts_hits" >&2
   exit 1
 fi
 

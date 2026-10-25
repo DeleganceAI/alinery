@@ -1,25 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
-import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
-import { loginReply, setModelReply } from "../chat/send";
+import { useProviderAccess } from "../chat/providerAccess";
+import { needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
-import { applyRpcLine, type ChatModelOption, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
+import { type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
-import {
-  cancelExtensionUi,
-  extensionUiConfirm,
-  extensionUiValue,
-  getAvailableModelsCommand,
-  getLoginProvidersCommand,
-  getStateCommand,
-  loginCommand,
-  setModelCommand,
-} from "../ompRpc";
+import { cancelExtensionUi, extensionUiConfirm, extensionUiValue } from "../ompRpc";
 import type { HostedCatalogView } from "../types";
 import { ChatEntryRow } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
+import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 
 export type ProviderSetupMode =
   /** Opened by the user: show the dialog regardless of what the providers turn out to be. */
@@ -28,14 +20,8 @@ export type ProviderSetupMode =
   | "auto";
 
 /**
- * The accounts dialog, backed by the daemon's reserved setup session rather than a real one.
- *
- * This is the whole point of that session: account setup used to be reachable only from inside a
- * working chat, which is precisely what you do not have when setup is missing. The dialog itself
- * is unchanged -- it only ever needed a session id to write to.
- *
- * Browser requests share the same handling as SessionView; login prompts must render inside
- * this modal so they remain reachable. Terminal `/login` still needs a real pty session.
+ * Accounts and model picker. Vinculum has no OMP process, so the list is the hosted catalog
+ * plus Grok when a key is saved. It does not open a setup session.
  */
 export type ProviderSetupClose =
   /** The providers came back and this install is already set up -- nothing was ever shown. */
@@ -43,34 +29,12 @@ export type ProviderSetupClose =
   /** The dialog was shown and the user closed it. */
   | "dismissed";
 
-const DAEMON_BACKOFF_MS = [250, 500, 1000, 2000] as const;
-
-/** Last successful `get_available_models` rows for this JS realm. An app restart drops it. */
-let lastCatalogue: ChatModelOption[] | undefined;
-
-/** Test isolation. The cache is otherwise the JS realm, so an app restart drops it. */
-export function resetProviderSetupCatalogue(): void {
-  lastCatalogue = undefined;
-}
-
-function sameCatalogue(cached: ChatModelOption[] | undefined, next: ChatModelOption[]): boolean {
-  if (!cached || cached.length !== next.length) return false;
-  return cached.every((row, index) => row.provider === next[index]?.provider && row.id === next[index]?.id);
-}
-
-/** A successful catalogue reply, matching the `get_available_models` branch in `applyRpcLine`. */
-function successfulModelsReply(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const rec = value as Record<string, unknown>;
-  const data = rec.data;
-  return rec.type === "response" && rec.command === "get_available_models" && rec.success !== false && data !== null && typeof data === "object" && !Array.isArray(data);
-}
-
 export function ProviderSetupDialog({
   mode,
   initialTab = "accounts",
   preselect = "",
   unsignedOpensAccounts = false,
+  current,
   onPick,
   onClose,
 }: {
@@ -78,6 +42,8 @@ export function ProviderSetupDialog({
   initialTab?: ProvidersDialogTab;
   /** `/model provider/id` typed in a chat: filters the Models tab to it. */
   preselect?: string;
+  /** The model the open session will use next. Form pickers have no session, so they omit this. */
+  current?: string;
   /**
    * Form pickers land on Accounts once login providers and hosted state have settled
    * and this install still needs setup. The setup session's probe model is not that
@@ -95,140 +61,21 @@ export function ProviderSetupDialog({
   const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
-  const [loginBusy, setLoginBusy] = useState<string | null>(null);
-  const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
-  const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
-  const [modelsSettled, setModelsSettled] = useState(false);
+  const access = useProviderAccess(true);
   // Same store the old ModelInput picker used, so stars survive the swap rather than resetting.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
+  const [grokReady, setGrokReady] = useState(false);
   const chatRef = useRef(emptyTranscript());
   const sessionIdRef = useRef("");
-  const loginApplyRef = useRef<string | null>(null);
   const loginOpenUrlRef = useRef(false);
   const handledUiRef = useRef(new Set<string>());
   const unsignedSwitchedRef = useRef(false);
-  const modelApplyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    const apply = (line: string) => {
-      if (cancelled) return;
-      try {
-        // `applyRpcLine` takes the parsed value, not the raw line: handed a string it silently
-        // no-ops, so every provider row would vanish without an error anywhere.
-        const value: unknown = JSON.parse(line);
-        const next = applyRpcLine(chatRef.current, value);
-        chatRef.current = next;
-        setChat(next);
-        // Publish only a live successful catalogue. A close that already set `cancelled`
-        // returned above, so a racing reply cannot become the next open's cache.
-        if (successfulModelsReply(value)) {
-          const nextModels = next.sessionMeta.models ?? [];
-          if (!sameCatalogue(lastCatalogue, nextModels)) {
-            lastCatalogue = nextModels.map((row) => ({ provider: row.provider, id: row.id }));
-          }
-          setModelsSettled(true);
-        }
-        if (modelApplyRef.current) {
-          const reply = setModelReply(value);
-          if (reply) {
-            modelApplyRef.current = false;
-            setModelError(reply.ok ? null : (reply.error ?? "Could not set model."));
-          }
-        }
-        if (loginApplyRef.current) {
-          const reply = loginReply(value);
-          if (reply) {
-            const providerId = loginApplyRef.current;
-            loginApplyRef.current = null;
-            loginOpenUrlRef.current = false;
-            setLoginBusy(null);
-            if (reply.ok) {
-              setModelError(null);
-              void ipc.rpcWriteSession(sessionIdRef.current, getLoginProvidersCommand()).catch(() => undefined);
-              void ipc.rpcWriteSession(sessionIdRef.current, getAvailableModelsCommand()).catch(() => undefined);
-            } else if (isInteractivePromptLoginError(reply.error)) {
-              setLivePromotedIds((prev) => (prev.includes(providerId) ? prev : [...prev, providerId]));
-              setModelError(reply.error ?? "This provider needs Terminal /login.");
-            } else {
-              setModelError(reply.error ?? "Login failed.");
-            }
-          }
-        }
-      } catch {
-        /* ignore non-JSON */
-      }
-    };
-
-    const attachId = Math.floor(Math.random() * 2 ** 31);
-    let attached: string | null = null;
-    let backoffTimer: number | undefined;
-
-    const reap = (id: string) => {
-      void ipc.detachSession(id, attachId);
-      if (sessionIdRef.current === id) sessionIdRef.current = "";
-      if (attached === id) attached = null;
-    };
-
-    const attachAndQuery = async (id: string) => {
-      sessionIdRef.current = id;
-      // Attach even when the effect is already torn down. The daemon's setup-session reaper only
-      // arms once it has seen a client, so a session nobody ever attached to is never reaped --
-      // attaching and immediately detaching below is what lets it go.
-      try {
-        await ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
-      } catch (error) {
-        reap(id);
-        throw error;
-      }
-      attached = id;
-      if (cancelled) {
-        reap(id);
-        return;
-      }
-      // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
-      // asking what it can see.
-      await ipc.rpcWriteSession(id, getStateCommand());
-      if (cancelled) return;
-      await ipc.rpcWriteSession(id, getLoginProvidersCommand());
-      if (cancelled) return;
-      await ipc.rpcWriteSession(id, getAvailableModelsCommand());
-    };
-
-    const run = async () => {
-      let attempt = 0;
-      while (!cancelled) {
-        try {
-          const id = await ipc.ompSetupSession();
-          await attachAndQuery(id);
-          return;
-        } catch (error) {
-          if (cancelled) return;
-          const leaked = attached || sessionIdRef.current;
-          if (leaked) reap(leaked);
-          const message = String(error);
-          if (!message.includes("daemon not connected")) {
-            setCatalogueStatus("failed");
-            setModelError(message);
-            return;
-          }
-          if (mode === "manual" && attempt >= DAEMON_BACKOFF_MS.length) {
-            setCatalogueStatus("failed");
-            setModelError(message);
-            return;
-          }
-          const delay = DAEMON_BACKOFF_MS[Math.min(attempt, DAEMON_BACKOFF_MS.length - 1)] ?? 2000;
-          attempt += 1;
-          await new Promise<void>((resolve) => {
-            backoffTimer = window.setTimeout(resolve, delay);
-          });
-        }
-      }
-    };
-    void run();
     void ipc
       .readModelFavorites("omp")
       .then((rows) => {
@@ -252,14 +99,17 @@ export function ProviderSetupDialog({
       .finally(() => {
         if (!cancelled) setHostedLoaded(true);
       });
+    void ipc.grokKeyReady().then(
+      (ready) => {
+        if (!cancelled) setGrokReady(ready);
+      },
+      () => undefined,
+    );
 
     return () => {
       cancelled = true;
-      if (backoffTimer != null) window.clearTimeout(backoffTimer);
-      const id = attached || sessionIdRef.current;
-      if (id) reap(id);
     };
-  }, [mode]);
+  }, []);
 
   const openBrowser = useCallback(async (request: PendingUi) => {
     try {
@@ -311,32 +161,26 @@ export function ProviderSetupDialog({
     }
   };
 
-  const applyModel = useCallback(async (provider: string, modelId: string) => {
+  const applyModel = useCallback((provider: string, modelId: string) => {
     setModelError(null);
-    modelApplyRef.current = true;
-    try {
-      await ipc.rpcWriteSession(sessionIdRef.current, setModelCommand(provider, modelId));
-    } catch (error) {
-      modelApplyRef.current = false;
-      setModelError(String(error));
-    }
+    setChat((current) => {
+      const next = { ...current, sessionMeta: { ...current.sessionMeta, model: `${provider}/${modelId}` } };
+      chatRef.current = next;
+      return next;
+    });
   }, []);
 
-  const startLogin = useCallback(async (providerId: string) => {
-    if (loginApplyRef.current) return;
-    setModelError(null);
-    setLoginBusy(providerId);
-    loginApplyRef.current = providerId;
-    loginOpenUrlRef.current = true;
-    try {
-      await ipc.rpcWriteSession(sessionIdRef.current, loginCommand(providerId));
-    } catch (error) {
-      loginApplyRef.current = null;
-      loginOpenUrlRef.current = false;
-      setLoginBusy(null);
-      setModelError(String(error));
-    }
-  }, []);
+  const startLogin = useCallback(
+    (providerId: string) => {
+      const row = access.loginProviders.find((provider) => provider.id === providerId);
+      if (row?.apiKey && row.oauth) {
+        access.choose(row);
+        return;
+      }
+      void access.start(providerId, row?.oauth && !row.apiKey ? "oauth" : "api_key");
+    },
+    [access],
+  );
 
   const assignRole = useCallback(
     async (role: string, model: string | null) => {
@@ -356,14 +200,12 @@ export function ProviderSetupDialog({
   // providers come back, and dismisses itself when they say this install is already set up. That
   // keeps one attach and one predicate behind both entry points, so the repo-open offer and the
   // in-session offer cannot disagree about what "set up" means.
-  const providers = chat.sessionMeta.loginProviders;
-  const models = chat.sessionMeta.models ?? [];
-  // Accounts is ready when login providers arrive. Models is not: a pending
-  // `get_available_models` must stay "Connecting…", or paint this process's last catalogue.
-  const accountsStatus = providers !== undefined ? "ready" : catalogueStatus;
-  const shownModels = modelsSettled ? models : (lastCatalogue ?? []);
-  const modelsStatus = modelsSettled || lastCatalogue ? "ready" : catalogueStatus === "failed" ? "failed" : "connecting";
-  const decided = mode === "manual" || (hostedLoaded && providers !== undefined && providers.length > 0);
+  const providers = access.loginProviders;
+  const models = access.models;
+  const accountsStatus = access.settled ? "ready" : "connecting";
+  const shownModels = models;
+  const modelsStatus = hostedLoaded && access.settled ? "ready" : "connecting";
+  const decided = mode === "manual" || (hostedLoaded && access.settled);
   const offer =
     mode === "manual" ||
     shouldOfferProviderSetup({
@@ -394,13 +236,15 @@ export function ProviderSetupDialog({
       tab={tab}
       setup={mode === "auto"}
       models={shownModels}
-      current={onPick ? undefined : chat.sessionMeta.model}
+      current={current || chat.sessionMeta.model}
       preselect={preselect}
-      loginProviders={chat.sessionMeta.loginProviders ?? []}
-      livePromotedIds={livePromotedIds}
+      loginProviders={providers}
+      livePromotedIds={[]}
       modelRoles={modelRoles}
       hosted={hosted}
+      grok={grokReady}
       favorites={favorites}
+      configuredIds={access.custom.map((row) => row.id)}
       catalogueStatus={tab === "models" ? modelsStatus : accountsStatus}
       onToggleFavorite={(model, favorite) => {
         // Optimistic: the store is the authority, but a star that lags a click reads as broken.
@@ -410,8 +254,8 @@ export function ProviderSetupDialog({
           .then(setFavorites)
           .catch((error) => setModelError(String(error)));
       }}
-      error={modelError}
-      loginBusy={loginBusy}
+      error={modelError || access.error}
+      loginBusy={access.busy}
       onTabChange={setTab}
       onApplyModel={(provider, modelId) => {
         if (onPick) {
@@ -421,9 +265,8 @@ export function ProviderSetupDialog({
         }
         void applyModel(provider, modelId);
       }}
-      onLogin={(providerId) => void startLogin(providerId)}
-      // No pty here to drop into, so say where /login lives rather than silently doing nothing.
-      onHatchTerminalLogin={() => setModelError("This provider needs Terminal /login. Open a session and switch it to Terminal.")}
+      onLogin={(providerId) => startLogin(providerId)}
+      onLogout={(providerId) => void access.logout(providerId)}
       onAssignRole={(role, model) => void assignRole(role, model)}
       onSignIn={() => {
         void ipc
@@ -443,8 +286,13 @@ export function ProviderSetupDialog({
       onBuyCredits={() => {
         void ipc.accountOpen().catch((error) => setModelError(String(error)));
       }}
-      onClose={() => onClose("dismissed")}
+      onClose={() => {
+        void access.cancel();
+        onClose("dismissed");
+      }}
+      footer={<CustomEndpointForm access={access} />}
     >
+      <ProviderAccessPanel access={access} />
       {chat.entries
         .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))
         .map((entry) => (

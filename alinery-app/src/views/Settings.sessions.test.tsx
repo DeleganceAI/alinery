@@ -61,11 +61,8 @@ const mocks = vi.hoisted(() => ({
   readGlobalSettings: vi.fn(),
   readScopedSettingsForRepo: vi.fn(),
   writeRepoOverridesForRepo: vi.fn(),
-  checkOmpUpdate: vi.fn(),
   writeAppearance: vi.fn(),
-  updateOmp: vi.fn(),
   confirmDanger: vi.fn(),
-  askConfirm: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
@@ -74,8 +71,6 @@ vi.mock("../ipc", () =>
     writeGlobalSettings: mocks.writeGlobalSettings,
     readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
     writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
-    checkOmpUpdate: mocks.checkOmpUpdate,
-    updateOmp: mocks.updateOmp,
     storageInfo: () => new Promise(() => {}),
     repoLiveSessions: async () => 0,
     listHarnessModels: async () => [],
@@ -85,20 +80,7 @@ vi.mock("../ipc", () =>
   }),
 );
 
-vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
-
-vi.mock("./ProviderSetupDialog", () => ({
-  ProviderSetupDialog: ({ onPick, onClose }: { onPick?: (model: string) => void; onClose: () => void }) => (
-    <div>
-      <button type="button" onClick={() => onPick?.("openai/gpt-5")}>
-        Pick GPT-5
-      </button>
-      <button type="button" onClick={onClose}>
-        Close picker
-      </button>
-    </div>
-  ),
-}));
+vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 import { Settings } from "./Settings";
 
@@ -146,13 +128,10 @@ beforeEach(() => {
     removeItem: vi.fn(),
     clear: vi.fn(),
   });
-  mocks.checkOmpUpdate.mockReset().mockResolvedValue({ installed: "", available: null, checked_at: 0 });
-  mocks.updateOmp.mockReset().mockResolvedValue("omp/18.2.0");
   mocks.writeAppearance
     .mockReset()
     .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
-  mocks.askConfirm.mockReset().mockResolvedValue("update");
 });
 
 afterEach(() => {
@@ -170,36 +149,21 @@ describe("Harness settings model default", () => {
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));
   });
 
-  it("stamps defaults.harness as omp when a model is picked", async () => {
-    mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, harness: "claude", model: "sonnet" } });
+  it("stamps defaults.harness as omp when committing a model", async () => {
     renderHarnessSection();
-    fireEvent.click(await screen.findByRole("combobox", { name: "Model" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Pick GPT-5" }));
+    const input = (await screen.findByLabelText("Model")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "gpt-5" } });
+    fireEvent.blur(input);
     await waitFor(() => expect(mocks.writeGlobalSettings).toHaveBeenCalled());
     const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
     expect(saved.defaults.harness).toBe("omp");
-    expect(saved.defaults.model).toBe("openai/gpt-5");
-    expect((screen.getByRole("combobox", { name: "Model" }) as HTMLInputElement).value).toBe("openai/gpt-5");
-  });
-
-  it("does not write an override merely by opening the picker", async () => {
-    renderHarnessSection();
-    const trigger = await screen.findByRole("combobox", { name: "Model" });
-    fireEvent.click(trigger);
-    fireEvent.blur(trigger);
-    fireEvent.click(await screen.findByRole("button", { name: "Close picker" }));
-    expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
-    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(saved.defaults.model).toBe("gpt-5");
   });
 });
 
 describe("Harness settings thinking default", () => {
   // By role: in a repo scope the label also holds the badge's "Use global value" button, which label text queries match too.
-  const thinkingSelect = async () => {
-    const summary = await screen.findByText("Session preferences");
-    if (!summary.closest("details")?.open) fireEvent.click(summary);
-    return (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
-  };
+  const thinkingSelect = async () => (await screen.findByRole("combobox", { name: /Default thinking level/ })) as HTMLSelectElement;
 
   it("shows high while the setting is unset", async () => {
     renderHarnessSection();
@@ -292,40 +256,66 @@ describe("Sessions view and Chat tabs", () => {
     expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
   });
-});
 
-describe("Harness OMP version", () => {
-  it("Update OMP goes through confirm, then updateOmp", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: { version: "18.2.0", asset_url: "https://example.test/omp" },
-      checked_at: 1,
-    });
-    renderHarnessSection();
-    const omp = await screen.findByRole("region", { name: "Agent & providers" });
-    const button = await within(omp).findByRole("button", { name: "Update OMP" });
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalled());
-    await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));
+  // The journal rows both tabs start with: thinking, tools and turn markers hidden; harness notices,
+  // subagent rows and drawer, date, time and the per-message copy icon shown; no actor labels,
+  // agent bubbles or block copy buttons.
+  const JOURNAL_DEFAULTS: [RegExp, boolean][] = [
+    [/Show thinking/, false],
+    [/Expand thinking by default/, false],
+    [/Show tool use/, false],
+    [/Expand tools by default/, false],
+    [/Show harness events/, true],
+    [/Show turn markers/, false],
+    [/Show subagent rows/, true],
+    [/Show subagent drawer/, true],
+    [/Show date/, true],
+    [/Show time/, true],
+    [/Show You \/ Agent labels/, false],
+    [/Show agent reply bubbles/, false],
+    [/Show block copy buttons/, false],
+    [/Show copy buttons/, true],
+  ];
 
-    mocks.updateOmp.mockClear();
-    mocks.askConfirm.mockResolvedValueOnce("cancel");
-    fireEvent.click(await screen.findByRole("button", { name: "Update OMP" }));
-    await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalledTimes(2));
-    expect(mocks.updateOmp).not.toHaveBeenCalled();
+  it.each(["sessionsView", "chat"] as const)("%s starts with the shared journal defaults", async (section) => {
+    renderSection(section, DEFAULT_APPEARANCE);
+    await screen.findByLabelText(/Show thinking/);
+    for (const [label, checked] of JOURNAL_DEFAULTS) expect((screen.getByLabelText(label) as HTMLInputElement).checked, String(label)).toBe(checked);
   });
 
-  it("hides the available offer after a successful OMP update", async () => {
-    mocks.checkOmpUpdate.mockResolvedValue({
-      installed: "18.1.10",
-      available: { version: "18.2.0", asset_url: "https://example.test/omp" },
-      checked_at: 1,
-    });
+  it("Chat describes the meta strip and column width for Ava", async () => {
+    renderSection("chat");
+    expect(await screen.findByText("— repo · branch · thinking · status line under the thread title")).toBeTruthy();
+    expect(screen.getByText("Limits the width of the message thread, composer and notices.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of the Chat view. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Chat view column width")).toBeTruthy();
+    expect(screen.getByText("Chat view text")).toBeTruthy();
+    expect(screen.queryByText(/model · thinking · event count/)).toBeNull();
+    expect(screen.queryByText(/Limits journal thread width/)).toBeNull();
+  });
+
+  it("Sessions view keeps the journal descriptions for the session thread", async () => {
+    renderSection("sessionsView");
+    expect(await screen.findByText("— model · thinking · event count · context above the chat")).toBeTruthy();
+    expect(screen.getByText("Limits journal thread width; meta and composer stay full width.")).toBeTruthy();
+    expect(screen.getByText("Which journal rows appear in session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Density, sizing and behavior of session chats. Global-only.")).toBeTruthy();
+    expect(screen.getByText("Session chat column width")).toBeTruthy();
+    expect(screen.getByText("Session chat text")).toBeTruthy();
+    expect(screen.queryByText(/status line under the thread title/)).toBeNull();
+    expect(screen.queryByText(/message thread, composer and notices/)).toBeNull();
+  });
+});
+
+describe("Harness providers", () => {
+  it("does not offer an OMP update", async () => {
     renderHarnessSection();
-    const button = await screen.findByRole("button", { name: "Update OMP" });
-    mocks.checkOmpUpdate.mockResolvedValue({ installed: "18.2.0", available: null, checked_at: 2 });
-    fireEvent.click(button);
-    await waitFor(() => expect(mocks.updateOmp).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByText(/Update available:/)).toBeNull());
+    expect(await screen.findByRole("button", { name: "Providers & accounts" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Update OMP" })).toBeNull();
+    expect(screen.queryByText(/Update available:/)).toBeNull();
+    expect(screen.queryByText(/Installed:/)).toBeNull();
+    expect(screen.getByLabelText("Model")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Stop all sessions/ })).toBeTruthy();
   });
 });

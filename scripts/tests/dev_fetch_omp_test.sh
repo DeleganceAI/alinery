@@ -53,18 +53,17 @@ CHECK_SRC="$(cat "$CHECK")"
 not_contains "check.sh does not invoke dev-fetch-omp.sh" "dev-fetch-omp.sh" "$CHECK_SRC"
 
 EXT="$(python3 -c 'import json,sys; print(",".join(json.load(open(sys.argv[1]))["bundle"]["externalBin"]))' "$TAURI")"
-if [ "$EXT" = "alineryd,alinery-mcp,alinery-runner" ]; then
-  echo "ok   - externalBin is still the three sidecars"
+if [ "$EXT" = "alinery-vinculum-daemon,alinery-mcp" ]; then
+  echo "ok   - externalBin is vinculum and mcp"
 else
-  echo "FAIL - externalBin is still the three sidecars"
+  echo "FAIL - externalBin is vinculum and mcp"
   echo "         got: [$EXT]"
   fails=$((fails + 1))
 fi
 
 COPY_SRC="$(cat "$COPY")"
-contains "copy-sidecar builds alineryd" "-p alineryd" "$COPY_SRC"
+contains "copy-sidecar builds vinculum" "alinery-vinculum-daemon" "$COPY_SRC"
 contains "copy-sidecar builds alinery-mcp" "-p alinery-mcp" "$COPY_SRC"
-contains "copy-sidecar builds alinery-runner" "-p alinery-runner" "$COPY_SRC"
 not_contains "copy-sidecar does not mention omp package" "omp-" "$COPY_SRC"
 
 if [ "$fails" -ne 0 ]; then

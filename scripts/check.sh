@@ -76,6 +76,8 @@ step "source gates"
 "$ROOT/scripts/tests/omp_lib_test.sh"
 "$ROOT/scripts/tests/git_lib_test.sh"
 "$ROOT/scripts/tests/dev_fetch_omp_test.sh"
+"$ROOT/scripts/tests/dev_fetch_bun_test.sh"
+"$ROOT/scripts/tests/check-experimental-daemon-names.sh"
 "$ROOT/scripts/tests/install_omp_place_test.sh"
 
 # ---------- behavioural shell suites (slow) ----------

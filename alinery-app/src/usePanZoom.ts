@@ -14,8 +14,6 @@ type PanZoomOptions = {
 };
 
 const WHEEL_ZOOM_SENSITIVITY = 0.0018;
-/** Margin `fit` keeps between the content and the viewport edge, per side. */
-export const FIT_PADDING = 16;
 const INTERACTIVE_TARGET =
   'button, a, input, select, textarea, summary, [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"]), [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="textbox"]';
 
@@ -79,15 +77,9 @@ export function usePanZoom({ viewportRef, paint, initialScale = 1, minScale = 0.
     (width: number, height: number) => {
       const viewport = viewportRef.current;
       if (!viewport || width <= 0 || height <= 0) return;
-      const { min: lower, max: upper } = optionsRef.current;
-      const scale = Math.min(upper, Math.max(lower, Math.min(1, (viewport.clientWidth - 2 * FIT_PADDING) / width, (viewport.clientHeight - 2 * FIT_PADDING) / height)));
-      // A min-scale clamp can leave the graph larger than the viewport; anchor it top-left so the
-      // first steps stay visible instead of centring an overflowing canvas.
-      const tx = width * scale > viewport.clientWidth ? FIT_PADDING : (viewport.clientWidth - width * scale) / 2;
-      const ty = height * scale > viewport.clientHeight ? FIT_PADDING : (viewport.clientHeight - height * scale) / 2;
-      setView({ scale, tx, ty });
+      center(width, height, Math.min(1, (viewport.clientWidth - 32) / width, (viewport.clientHeight - 32) / height));
     },
-    [viewportRef, setView],
+    [viewportRef, center],
   );
 
   const onFocusCapture = useCallback(

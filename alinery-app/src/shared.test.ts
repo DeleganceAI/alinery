@@ -63,7 +63,7 @@ describe("harnessDisplayName", () => {
   });
 
   it("uses the bundled OMP label", () => {
-    expect(harnessDisplayName("omp")).toBe("OMP CLI");
+    expect(harnessDisplayName("omp")).toBe("Vinculum");
   });
 
   it("labels leftover and empty keys Unsupported", () => {

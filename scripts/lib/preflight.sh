@@ -113,10 +113,10 @@ first_live_daemon_socket() {
   return 0
 }
 
-# Match product alineryd / leftover alineryd command lines from process listing.
+# Match the product daemon and a leftover alineryd command line.
 # Tight on the binary name so a random tool named similarly is ignored;
 # connect-don't-stat is still the true liveness check once we have a candidate path.
-ALINERYD_PROCESS_PATTERN='(^|[[:space:]/])alineryd([[:space:]]|$)'
+ALINERYD_PROCESS_PATTERN='(^|[[:space:]/])(alinery-vinculum-daemon|alineryd)([[:space:]]|$)'
 
 is_product_daemon_ps_line() {
   printf '%s' "${1-}" | grep -qE "$ALINERYD_PROCESS_PATTERN"

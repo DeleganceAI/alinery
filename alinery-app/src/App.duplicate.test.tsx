@@ -161,7 +161,7 @@ vi.mock("./views/TaskDetail", () => ({
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: {
-    getItem: vi.fn((key: string) => (key === "alinery.onboardingCompleted.v1" ? "1" : null)),
+    getItem: vi.fn(() => null),
     setItem: vi.fn(),
   },
 });

@@ -247,7 +247,7 @@ fn bound_shutdown_requires_checked_ack_without_retry() {
 
 #[test]
 fn legacy_dialect_and_unknown_impact_are_distinct() {
-    for protocol in [9, 10, 12, 15, 16] {
+    for protocol in [9, 10, 12, 15, 16, 18] {
         assert!(audited_shutdown_protocol(Some(protocol)));
     }
     for protocol in [None, Some(0), Some(11), Some(13), Some(14), Some(17), Some(u32::MAX)] {

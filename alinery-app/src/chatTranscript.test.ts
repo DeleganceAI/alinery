@@ -10,6 +10,7 @@ import {
   applyFilePage,
   applyRpcLine,
   applyRpcLines,
+  applyVinculumTranscript,
   type ChatTranscriptState,
   carryOver,
   dismissPendingUi,
@@ -18,6 +19,7 @@ import {
   mapHydratedMessage,
   matchingSendFailure,
   settleRefusedSend,
+  vinculumTranscriptPollMs,
 } from "./chatTranscript";
 import type { ChatMessage } from "./types";
 
@@ -549,43 +551,6 @@ describe("subagent envelopes", () => {
     expect(cards).toHaveLength(1);
     expect(liveIds(cards)).toEqual(["sa-1"]);
     expect(cards[0]?.preview).toBe("Still searching");
-    expect(state.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(1);
-  });
-
-  it("replaces the one row for an id and keeps the last summary across an empty frame", () => {
-    const progress = applyRpcLine(applyRpcLine(emptyTranscript(), load("live-subagent_lifecycle.json")), {
-      type: "subagent_progress",
-      payload: {
-        agent: "Explore",
-        agentSource: "bundled",
-        progress: { id: "sa-1", status: "running", currentTool: "read", lastIntent: "Search the repo", toolCount: 3, durationMs: 1500 },
-      },
-    });
-    const row = progress.entries.find((entry) => entry.type === "subagent_status");
-    expect(row?.summary).toBe("Search the repo");
-    expect(row?.activity).toBe("using read");
-
-    const emptied = applyRpcLine(progress, { type: "subagent_event", payload: { id: "sa-1", status: "running" } });
-    const kept = emptied.entries.filter((entry) => entry.type === "subagent_status");
-    expect(kept).toHaveLength(1);
-    expect(kept[0]?.id).toBe(row?.id);
-    expect(kept[0]?.agent).toBe("Explore");
-    expect(kept[0]?.summary).toBe("Search the repo");
-    expect(kept[0]?.activity).toBe("using read");
-    expect(kept[0]?.tools).toBe(3);
-
-    const done = applyRpcLine(emptied, {
-      type: "subagent_progress",
-      payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
-    });
-    const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
-    expect(finished?.id).toBe(row?.id);
-    expect(finished?.status).toBe("completed");
-    expect(finished?.summary).toBe("Search the repo");
-    expect(finished?.durationMs).toBe(4000);
-
-    const both = applyRpcLine(done, load("live-subagent_lifecycle-b.json"));
-    expect(both.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(2);
   });
 
   it("keeps two Explores with distinct ids as two cards", () => {
@@ -1551,5 +1516,85 @@ describe("carryOver", () => {
     expect(next.entries.map((entry) => entry.id)).toEqual(["f:m2", "f:m3", "e1"]);
     expect(next.entries[2]).toMatchObject({ type: "prompt", text: "refused", failed: true });
     expect(next.entrySeq).toBe(1);
+  });
+});
+
+describe("applyVinculumTranscript", () => {
+  const reply = [
+    { id: "u1", role: "user", content: [{ type: "text", text: "hi" }] },
+    {
+      id: "live",
+      role: "assistant",
+      streaming: true,
+      content: [
+        { type: "thinking", thinking: "plan" },
+        { type: "redactedThinking" },
+        { type: "text", text: "Hel" },
+        { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+      ],
+    },
+  ];
+
+  it("builds thinking, tool-call, and tool-result rows, and a longer partial keeps the earlier row ids", () => {
+    const state = applyVinculumTranscript(reply);
+    expect(state.entries.map((entry) => entry.type)).toEqual(["prompt", "thinking", "redacted_thinking", "text", "tool_call"]);
+    expect(state.entries[1]).toMatchObject({ id: "f:live:thinking:0", type: "thinking", text: "plan", streaming: true });
+    expect(state.entries[4]).toMatchObject({ id: "f:live:tool:c1", type: "tool_call", tool: "read", status: "running", args: '{"path":"a.ts"}' });
+    const ids = state.entries.map((entry) => entry.id);
+
+    const grown = applyVinculumTranscript([
+      reply[0],
+      {
+        ...reply[1],
+        content: [
+          { type: "thinking", thinking: "plan" },
+          { type: "redactedThinking" },
+          { type: "text", text: "Hello" },
+          { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+        ],
+      },
+    ]);
+    expect(grown.entries.map((entry) => entry.id)).toEqual(ids);
+    expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
+    expect(vinculumTranscriptPollMs(reply)).toBe(200);
+    expect(vinculumTranscriptPollMs([reply[0]])).toBe(1000);
+  });
+
+  it("keeps a committed tool call running while its slot has output", () => {
+    const state = applyVinculumTranscript([
+      {
+        id: "a1",
+        role: "assistant",
+        runningToolIds: ["c2"],
+        content: [
+          { type: "text", text: "Running." },
+          { type: "toolCall", id: "c1", name: "read", arguments: {} },
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "ls" } },
+        ],
+      },
+      { id: "r1", role: "toolResult", toolName: "read", toolCallId: "c1", content: [{ type: "text", text: "stored" }] },
+      { id: "live:c2", role: "toolResult", streaming: true, toolName: "bash", toolCallId: "c2", content: [{ type: "text", text: "partial out" }] },
+    ]);
+    const calls = state.entries.flatMap((entry) => (entry.type === "tool_call" ? [{ id: entry.id, status: entry.status, tool: entry.tool }] : []));
+    expect(calls).toEqual([
+      { id: "f:a1:tool:c1", status: "ok", tool: "read" },
+      { id: "f:a1:tool:c2", status: "running", tool: "bash" },
+    ]);
+    expect(state.entries.filter((entry) => entry.type === "tool_result")).toMatchObject([
+      { id: "f:r1", tool: "read", text: "stored", status: "ok" },
+      { id: "f:live:c2", tool: "bash", text: "partial out", status: "running" },
+    ]);
+  });
+
+  it("keeps the model and thinking level when a later poll only appends a message", () => {
+    const controls = { model: "xai/grok-4.6", thinking: "high", thinking_levels: ["off", "low", "high"] };
+    const first = applyVinculumTranscript({ messages: [reply[0]], ...controls });
+    expect(first.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const second = applyVinculumTranscript({ messages: [...reply], ...controls });
+    expect(second.messages).toHaveLength(2);
+    expect(second.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const quiet = applyVinculumTranscript({ messages: [reply[0]], model: "alinery/DeepSeek", thinking: "off", thinking_levels: [] });
+    expect(quiet.sessionMeta.thinking).toBe("off");
+    expect(quiet.sessionMeta.thinkingLevels).toEqual([]);
   });
 });

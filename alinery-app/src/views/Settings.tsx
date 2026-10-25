@@ -24,7 +24,7 @@ import {
   UI_SCALE_STEPS,
 } from "../appearance";
 import { copyTextToClipboard } from "../chat/CopyMessage";
-import { askConfirm, confirmDanger } from "../confirm";
+import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
@@ -54,9 +54,8 @@ import type {
   UpdateStatus,
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
-import { useOmpUpdateStatus } from "../useOmpUpdateStatus";
-import { OmpCustomizations } from "./OmpCustomizations";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { VinculumCustomizations } from "./VinculumCustomizations";
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -287,12 +286,9 @@ export function Settings({
   const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
   const displayedUpdate = update ?? localUpdate;
   const checkingUpdates = onCheckNow ? updateChecking : localChecking;
-  const ompUpdate = useOmpUpdateStatus();
-  const [ompUpdating, setOmpUpdating] = useState(false);
   const [providersOpen, setProvidersOpen] = useState(false);
   // Keyed by the choice row that opened it, so one hosted dialog serves every default-model field.
   const [pickModelFor, setPickModelFor] = useState<string | null>(null);
-  const [ompError, setOmpError] = useState("");
   const [playbookCatalog, setPlaybookCatalog] = useState<PlaybookCatalog | null>(null);
   const [playbookError, setPlaybookError] = useState("");
 
@@ -393,11 +389,6 @@ export function Settings({
       .then(setLocalUpdate)
       .catch(() => {});
   }, [activeSection, onCheckNow]);
-
-  useEffect(() => {
-    if (activeSection !== "harness") return;
-    void ompUpdate.checkNow();
-  }, [activeSection, ompUpdate.checkNow]);
 
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
@@ -678,6 +669,11 @@ export function Settings({
   const setShowChat = (value: boolean) => {
     if (!global) return;
     saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
+  };
+
+  const saveGrokKey = (value: string) => {
+    if (!global || !isGlobal) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, grok_api_key: value } }, value.trim() ? "Grok key saved" : "Grok key cleared");
   };
 
   const updateGlobalChoice = (key: ChoiceKey, patch: Partial<GlobalSettings[ChoiceKey]>) => {
@@ -1180,75 +1176,48 @@ export function Settings({
           )}
           {!isGlobal && <div className="hint">Blank can be a repository override; use the button above to inherit.</div>}
         </div>
-        <details className="harness-disclosure">
-          <summary>Session preferences</summary>
-          <div className="field">
-            <label htmlFor={`${key}-thinking`}>
-              {title} thinking level
-              {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
-            </label>
-            <select
-              id={`${key}-thinking`}
-              className="field-input"
-              value={effectiveThinking(value.thinking)}
-              onChange={(event) => {
-                const thinking = event.target.value;
-                if (isGlobal) updateGlobalChoice(key, { thinking });
-                else {
-                  setRepoChoice(key, { thinking });
-                  saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
-                }
-              }}
-            >
-              {THINKING_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
-            <div className="hint">New OMP sessions start at this level; resumed sessions keep theirs, and OMP lowers it to what the model supports.</div>
-          </div>
-          <Checkbox
-            checked={value.draft_autosave}
-            onChange={(v) => {
-              if (isGlobal) updateGlobalChoice(key, { draft_autosave: v });
-              else setRepoChoiceBool(key, "draft_autosave", v);
+        <div className="field">
+          <label htmlFor={`${key}-thinking`}>
+            {title} thinking level
+            {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
+          </label>
+          <select
+            id={`${key}-thinking`}
+            className="field-input"
+            value={effectiveThinking(value.thinking)}
+            onChange={(event) => {
+              const thinking = event.target.value;
+              if (isGlobal) updateGlobalChoice(key, { thinking });
+              else {
+                setRepoChoice(key, { thinking });
+                saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
+              }
             }}
-            label={
+          >
+            {THINKING_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          <div className="hint">New sessions start at this level; resumed sessions keep theirs.</div>
+        </div>
+        <Checkbox
+          checked={value.draft_autosave}
+          onChange={(v) => {
+            if (isGlobal) updateGlobalChoice(key, { draft_autosave: v });
+            else setRepoChoiceBool(key, "draft_autosave", v);
+          }}
+          label={
+            <div>
               <div>
-                <div>
-                  Autosave drafts
-                  {!isGlobal && sourceBadge(provenance.draft_autosave, `${key}.draft_autosave`)}
-                </div>
-                <div className="hint">Save Create Task fields as draft tasks while typing (default on)</div>
+                Autosave drafts
+                {!isGlobal && sourceBadge(provenance.draft_autosave, `${key}.draft_autosave`)}
               </div>
-            }
-          />
-          <div className="field" style={{ marginTop: 16 }}>
-            <label id="session-default-view-label">Default session view</label>
-            {!isGlobal && globalOnly("Default session view")}
-            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
-              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
-                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
-                return (
-                  <button
-                    key={view}
-                    type="button"
-                    className={`theme-card ${active ? "active" : ""}`}
-                    disabled={!isGlobal}
-                    aria-pressed={active}
-                    onClick={() => {
-                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
-                    }}
-                  >
-                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
-                  </button>
-                );
-              })}
+              <div className="hint">Save Create Task fields as draft tasks while typing (default on)</div>
             </div>
-            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
-          </div>
-        </details>
+          }
+        />
       </>
     );
   };
@@ -1646,99 +1615,48 @@ export function Settings({
     const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
-      <div className="harness-settings-layout">
+      <>
+        <section className="omp-settings" aria-labelledby="providers-settings-title">
+          <div className="omp-settings-heading">
+            <h3 id="providers-settings-title">Providers</h3>
+            <p className="hint">Sign in to model providers for this installation.</p>
+          </div>
+          <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
+            Providers &amp; accounts
+          </button>
+          {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
+          <VinculumCustomizations />
+        </section>
         <section className="harness-settings-section" aria-labelledby="session-defaults-title">
           <h3 id="session-defaults-title">Session defaults</h3>
-          <p className="hint">
-            Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. Playbooks and individual steps can override it.
-          </p>
           {choiceSection("defaults", "Default")}
-          <details className="harness-disclosure">
-            <summary>How model defaults work</summary>
-            <p className="hint">
-              A step’s model takes priority, followed by the playbook’s default, then the repository default. Repositories inherit global settings unless overridden. An empty model
-              uses the harness default.
-            </p>
-          </details>
-        </section>
-        <section className="omp-settings" aria-labelledby="omp-settings-title">
-          <div className="omp-settings-heading">
-            <h3 id="omp-settings-title">Agent &amp; providers</h3>
-            <p className="hint">OMP runs your agent sessions. Connect accounts to make their models available.</p>
-          </div>
-          <section aria-label="OMP installation and providers">
-            <div className="harness-provider-row">
-              <div>
-                <strong>OMP</strong>
-                <p className="hint">{ompUpdate.status.installed ? `Installed · ${ompUpdate.status.installed}` : "Not installed"}</p>
-              </div>
-              <button type="button" className="btn ghost small" onClick={() => setProvidersOpen(true)}>
-                Providers &amp; accounts
-              </button>
+          <div className="field" style={{ marginTop: 16 }}>
+            <label id="session-default-view-label">Default session view</label>
+            {!isGlobal && globalOnly("Default session view")}
+            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
+              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
+                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    className={`theme-card ${active ? "active" : ""}`}
+                    disabled={!isGlobal}
+                    aria-pressed={active}
+                    onClick={() => {
+                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
+                    }}
+                  >
+                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
+                  </button>
+                );
+              })}
             </div>
-            <details className="harness-disclosure">
-              <summary>Installation details</summary>
-              <div className="omp-installation-paths dim">
-                {ompUpdate.status.binary_path && <div>Binary: {ompUpdate.status.binary_path}</div>}
-                {ompUpdate.status.config_dir && <div>Config: {ompUpdate.status.config_dir}</div>}
-              </div>
-            </details>
-            {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-            {ompUpdate.status.available && (
-              <div className="field omp-update-offer">
-                <div style={{ marginBottom: 8 }}>Update available: {ompUpdate.status.available.version}</div>
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={ompUpdating}
-                  onClick={() => {
-                    void (async () => {
-                      const answer = await askConfirm({
-                        title: `Update OMP to ${ompUpdate.status.available?.version}?`,
-                        body: <p>Live sessions keep running on the current binary. New sessions use the updated one.</p>,
-                        choices: [
-                          { key: "cancel", label: "Cancel", tone: "ghost" },
-                          { key: "update", label: "Update OMP" },
-                        ],
-                        defaultKey: "cancel",
-                      });
-                      if (answer !== "update") return;
-                      setOmpUpdating(true);
-                      setOmpError("");
-                      try {
-                        await ipc.updateOmp();
-                        ompUpdate.clearOffer();
-                        await ompUpdate.checkNow();
-                      } catch (e) {
-                        setOmpError(String(e));
-                      } finally {
-                        setOmpUpdating(false);
-                      }
-                    })();
-                  }}
-                >
-                  {ompUpdating ? "Updating…" : "Update OMP"}
-                </button>
-                {ompError ? (
-                  <div className="dim" style={{ color: "var(--danger)", marginTop: 6 }}>
-                    {ompError}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </section>
-          <details className="harness-disclosure harness-customizations">
-            <summary>Customizations</summary>
-            <OmpCustomizations />
-          </details>
+            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
+          </div>
         </section>
-        <details className="harness-disclosure harness-session-service">
-          <summary>
-            Session service{" "}
-            <span className="dim">
-              {live} live session{plural(live)}
-            </span>
-          </summary>
+        <section className="harness-settings-section" aria-labelledby="session-daemon-title">
+          <h3 id="session-daemon-title">Session daemon</h3>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
             Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
             {isGlobal ? "" : " only"}
@@ -1796,8 +1714,8 @@ export function Settings({
           >
             Stop all sessions in {scopeName || "this repo"}
           </button>
-        </details>
-      </div>
+        </section>
+      </>
     );
   };
 
@@ -2155,7 +2073,7 @@ export function Settings({
             <div className="settings-subsection">
               <h2>Misc</h2>
               {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
-                (alineryd/src/idle_inhibit.rs); the note states the same rule it enforces. */}
+                (alinery-core idle_inhibit); the note states the same rule it enforces. */}
               <Checkbox
                 checked={global.power?.keep_awake ?? false}
                 disabled={!isGlobal}
@@ -2195,6 +2113,20 @@ export function Settings({
                     </div>
                   }
                 />
+                <div className="field">
+                  <label htmlFor="grok-api-key">Grok API key</label>
+                  <input
+                    id="grok-api-key"
+                    className="field-input mono"
+                    type="password"
+                    autoComplete="off"
+                    disabled={!isGlobal}
+                    defaultValue={global.experiments?.grok_api_key ?? ""}
+                    onBlur={(event) => {
+                      if (event.target.value !== (global.experiments?.grok_api_key ?? "")) saveGrokKey(event.target.value);
+                    }}
+                  />
+                </div>
               </section>
             </div>
           </>
@@ -2262,7 +2194,7 @@ export function Settings({
         return (
           <div className="settings-subsection">
             <h2>Harness</h2>
-            <p>Manage OMP, session defaults, and background session daemons.</p>
+            <p>Providers, session defaults, and background session daemons.</p>
             {renderHarness()}
           </div>
         );

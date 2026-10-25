@@ -625,6 +625,17 @@ pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) ->
     harness == alinery_core::DEFAULT_HARNESS_KEY && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
 
+/// Refresh hosted inference inside the one-hour renewal lead. Vinculum is the only daemon.
+pub(crate) const PI_DURABLE_HOSTED_REFRESH: Duration = Duration::from_secs(30 * 60);
+
+pub(crate) fn spawn_pi_hosted_refresh(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(PI_DURABLE_HOSTED_REFRESH);
+        let Ok(app_config) = app_config_path(&app) else { continue };
+        let _ = alinery_core::ensure_hosted_inference_for_spawn(&app_config);
+    });
+}
+
 pub(crate) async fn refresh_hosted_inference_before_open(app: AppHandle, intent: &str, harness: &str, model: &str) -> Result<(), String> {
     if !hosted_refresh_needed(intent, harness, model) {
         return Ok(());
@@ -1028,12 +1039,8 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
 
 #[tauri::command]
 pub(crate) fn restate_session(state: State<'_, AppState>, id: String, transport: String) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    if transport != "pty" && transport != "rpc" {
-        return Err("missing transport".into());
-    }
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    daemon.restate_session(&id, &transport)
+    let _ = (state, id, transport);
+    Err("OMP process sessions are not available".into())
 }
 
 /// Bring up the reserved setup session and return its id.
@@ -1043,23 +1050,116 @@ pub(crate) fn restate_session(state: State<'_, AppState>, id: String, transport:
 /// active repo's daemon, which is the one that owns it.
 #[tauri::command]
 pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, String> {
+    let _ = state;
+    Err("OMP process sessions are not available".into())
+}
+
+#[tauri::command]
+pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
     let _repo = require_owned_active_repo(&state)?;
-    let daemon = state.daemon().ok_or("daemon not connected")?;
-    daemon.omp_setup()
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("transcript", move || daemon.transcript(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_prompt(state: State<'_, AppState>, id: String, text: String) -> Result<(), String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("prompt", move || daemon.prompt(&id, &text)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_abort(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("abort", move || daemon.abort(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_set_model(state: State<'_, AppState>, id: String, model: String) -> Result<alinery_core::daemon_client::SessionControls, String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("set model", move || daemon.set_model(&id, &model)).await
+}
+
+#[tauri::command]
+pub(crate) async fn session_set_thinking_level(state: State<'_, AppState>, id: String, level: String) -> Result<alinery_core::daemon_client::SessionControls, String> {
+    let _repo = require_owned_active_repo(&state)?;
+    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
+    off_main_thread("set thinking level", move || daemon.set_thinking_level(&id, &level)).await
+}
+
+fn active_daemon(state: &AppState) -> Result<alinery_core::daemon_client::DaemonClient, String> {
+    let _repo = require_owned_active_repo(state)?;
+    state.daemon().ok_or_else(|| "daemon not connected".to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn provider_catalog(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider catalog", move || daemon.provider_catalog()).await
+}
+
+#[tauri::command]
+pub(crate) async fn vinculum_customizations(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::VinculumCustomizations, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("vinculum customizations", move || daemon.vinculum_customizations()).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_logout(state: State<'_, AppState>, provider: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider logout", move || daemon.provider_logout(&provider)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_start(state: State<'_, AppState>, provider: String, method: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login", move || daemon.provider_login_start(&provider, &method)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_poll(state: State<'_, AppState>, login_id: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login poll", move || daemon.provider_login_poll(&login_id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn provider_login_reply(state: State<'_, AppState>, login_id: String, value: String, cancel: bool) -> Result<(), String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("provider login reply", move || daemon.provider_login_reply(&login_id, &value, cancel)).await
+}
+
+#[tauri::command]
+pub(crate) async fn custom_provider_save(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    keep_key: bool,
+    models: Vec<String>,
+) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("custom provider", move || daemon.custom_provider_save(&id, &name, &base_url, &api_key, keep_key, &models)).await
+}
+
+#[tauri::command]
+pub(crate) async fn custom_provider_delete(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
+    let daemon = active_daemon(&state)?;
+    off_main_thread("custom provider delete", move || daemon.custom_provider_delete(&id)).await
 }
 
 #[tauri::command]
 pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    off_main_thread("rpc write", move || daemon.rpc_write_session(&id, &payload)).await
+    let _ = (state, id, payload);
+    Err("OMP process sessions are not available".into())
 }
 
 #[tauri::command]
 pub(crate) async fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
-    let _repo = require_owned_active_repo(&state)?;
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    off_main_thread("rpc attach", move || attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)).await
+    let _ = (state, app, id, attach_id, stream_token, on_line);
+    Err("OMP process sessions are not available".into())
 }
 
 /// Daemon socket I/O waits up to DAEMON_CONTROL_TIMEOUT (a daemon blocked writing a full OMP
@@ -1067,43 +1167,6 @@ pub(crate) async fn rpc_attach_session(state: State<'_, AppState>, app: AppHandl
 /// the whole window; these run on the blocking pool instead.
 pub(crate) async fn off_main_thread<T: Send + 'static>(what: &str, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|error| format!("{what}: {error}"))?
-}
-
-/// Attach to a session's RPC lines and pump them into `on_line` until the daemon closes the
-/// stream, then emit `session_stream_closed`. Shared by chat and session chat.
-pub(crate) fn attach_rpc_stream(app: AppHandle, daemon: &DaemonClient, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
-    let mut stream = daemon.send(&daemon_client::rpc_attach_request(&id, attach_id))?;
-    let line = read_socket_line(&mut stream).map_err(|error| match error {
-        SocketReadError::Closed => "daemon closed".to_string(),
-        SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(DAEMON_CONTROL_TIMEOUT)),
-    })?;
-    let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if let Some(error) = daemon_client::reply_error(&response) {
-        return Err(error.to_string());
-    }
-    // The control timeout guards the ack only. This stream is quiet for as long as OMP is (idle,
-    // or a silent tool run); keeping a read timeout cut every quiet chat after 100s.
-    stream.set_read_timeout(None).map_err(|error| error.to_string())?;
-    let event_id = id;
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        let mut reader = BufReader::new(stream);
-        let mut buf = String::new();
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let line = buf.trim_end_matches(['\n', '\r']).to_string();
-                    if on_line.send(line).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        let _ = app.emit("session_stream_closed", json!({ "id": event_id, "attach_id": attach_id, "stream_token": stream_token }));
-    });
-    Ok(())
 }
 
 #[tauri::command]

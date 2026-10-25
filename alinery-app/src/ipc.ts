@@ -22,6 +22,8 @@
 // Add a wrapper when a view needs one, not before.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
+import type { SessionControls, VinculumTranscript } from "./chatTranscript";
 import type {
   AccountSignOutResult,
   AccountStatus,
@@ -57,8 +59,6 @@ import type {
   LinearTicket,
   McpStatus,
   NormalizedPlaybook,
-  OmpCustomizations,
-  OmpUpdateStatus,
   PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
@@ -84,6 +84,7 @@ import type {
   SessionNotificationClearRef,
   SessionObservation,
   SessionStatusRef,
+  SkillInstall,
   StagedUpdate,
   StorageInfo,
   SubtaskManagerState,
@@ -96,6 +97,8 @@ import type {
   TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
+  VinculumCustomizations,
+  VinculumDaemonCustomizations,
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
@@ -288,6 +291,12 @@ export const archiveChatThread = (repoPath: string, sessionId: string, removeWor
 export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
+export type { SessionControls, VinculumTranscript };
+export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumTranscript>("chat_transcript", { repoPath, id });
+export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
+export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
+export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
+export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
 export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
@@ -350,6 +359,19 @@ export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: 
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
+export const sessionTranscript = (id: string) => invoke<VinculumTranscript>("session_transcript", { id });
+export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
+export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
+export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
+export const providerCatalog = () => invoke<ProviderCatalog>("provider_catalog");
+export const providerLogout = (provider: string) => invoke<ProviderCatalog>("provider_logout", { provider });
+export const providerLoginStart = (provider: string, method: "api_key" | "oauth") => invoke<ProviderLoginStatus>("provider_login_start", { provider, method });
+export const providerLoginPoll = (loginId: string) => invoke<ProviderLoginStatus>("provider_login_poll", { loginId });
+export const providerLoginReply = (loginId: string, value: string, cancel: boolean) => invoke<void>("provider_login_reply", { loginId, value, cancel });
+export const customProviderSave = (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) =>
+  invoke<ProviderCatalog>("custom_provider_save", input);
+export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
+export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
 export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
@@ -371,6 +393,7 @@ export const finalizeSessionMessageActions = (id: string, taskSlug: string, acti
 export const clearRepoOverrideForRepo = (repoPath: string, field: string) => invoke<ScopedSettings>("clear_repo_override_for_repo", { repoPath, field });
 export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
 export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
+export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
 export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
 export const readConfig = () => invoke<Config>("read_config");
 export const readConfigForRepo = (repoPath: string) => invoke<Config>("read_config_for_repo", { repoPath });
@@ -398,8 +421,6 @@ export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<
 export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
-export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
-export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });
 export const writeDraftForRepo = (a: {
   repoPath: string;
   name: string;
@@ -418,15 +439,14 @@ export const writeDraftForRepo = (a: {
   worktreeName: string;
   draftSlug: string;
   draftBaseRef?: string | null;
-  draftAttachments?: DraftAttachments;
 }) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
 export type ChatImage = { mime_type: string; data: string };
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
-export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array, repoPath?: string) =>
-  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes, repoPath });
+export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array) =>
+  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
 export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
   invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });
@@ -458,16 +478,16 @@ export const downloadUpdate = (version: string) => invoke<StagedUpdate>("downloa
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });
 
 // ── omp_update.rs ─────────────────────────────────────────────────────
-export const checkOmpUpdate = () => invoke<OmpUpdateStatus>("check_omp_update");
-export const updateOmp = () => invoke<string>("update_omp");
 export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
 export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
 export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
-export const openOmpConfigDir = () => invoke<void>("open_omp_config_dir");
-export const ompCustomizationPrompt = () => invoke<string>("omp_customization_prompt");
-
-// ── omp_customizations.rs ─────────────────────────────────────────────
-export const readOmpCustomizations = () => invoke<OmpCustomizations>("read_omp_customizations");
+export const openVinculumAgentDir = () => invoke<void>("open_vinculum_agent_dir");
+export const vinculumCustomizationPrompt = () => invoke<string>("vinculum_customization_prompt");
+export const readVinculumCustomizations = () => invoke<VinculumCustomizations>("read_vinculum_customizations");
+export const pickVinculumSkillDialog = () => invoke<string | null>("pick_vinculum_skill_dialog");
+export const installVinculumSkill = (sourcePath: string, replace: boolean) => invoke<SkillInstall>("install_vinculum_skill", { sourcePath, replace });
+export const deleteVinculumSkill = (name: string) => invoke<void>("delete_vinculum_skill", { name });
+export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
 
 // One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
 // chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.

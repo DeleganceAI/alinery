@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { childEnvironment, parseDevPort, reserveDevPort, selectTauriLaunch } from "./tauri.mjs";
+import { childEnvironment, parseDevPort, piDaemonCompile, reserveDevPort, selectTauriLaunch } from "./tauri.mjs";
 
 const DEV_CONFIG_ARGS = ["--config", "src-tauri/tauri.dev.conf.json"];
 
@@ -127,5 +127,21 @@ describe("selectTauriLaunch", () => {
       await Promise.all(reservations.map((reservation) => reservation.release()));
       await rm(lockDirectory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("piDaemonCompile", () => {
+  it("compiles the optional daemon into the profile the launch will run", () => {
+    expect(piDaemonCompile(["dev"])).toEqual({ release: false });
+    expect(piDaemonCompile(["dev", "--release"])).toEqual({ release: true });
+    expect(piDaemonCompile(["build", "--bundles", "app"])).toEqual({ release: true });
+    expect(piDaemonCompile(["build", "--debug"])).toEqual({ release: false });
+  });
+
+  it("leaves subcommands that run no app executable alone", () => {
+    expect(piDaemonCompile(["bundle"])).toBeUndefined();
+    expect(piDaemonCompile(["info"])).toBeUndefined();
+    expect(piDaemonCompile(["--version"])).toBeUndefined();
+    expect(piDaemonCompile([])).toBeUndefined();
   });
 });

@@ -134,4 +134,69 @@ describe("Settings experimental features", () => {
     fireEvent.click(checkbox);
     expect(await screen.findByRole("button", { name: "Chat" })).toBeTruthy();
   });
+
+  it("shows the Grok key without a daemon toggle", async () => {
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    expect(screen.queryByRole("checkbox", { name: /PI durable/ })).toBeNull();
+    expect(await screen.findByLabelText("Grok API key")).toBeTruthy();
+  });
+
+  it("disables the Grok key when the scope is not global", async () => {
+    globalSettings.experiments = { show_original_kanban: true, show_chat: false, grok_api_key: "kept" };
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    const key = (await screen.findByLabelText("Grok API key")) as HTMLInputElement;
+    expect(key.disabled).toBe(true);
+    globalSettings.experiments = undefined;
+  });
+
+  it("saves the Grok key without clearing other experimental flags", async () => {
+    globalSettings.experiments = { show_original_kanban: true, show_chat: true, grok_api_key: "" };
+    render(
+      <Settings
+        mcp={mcp}
+        activeRepo="/r"
+        knownRepos={["/r"]}
+        appearance={DEFAULT_APPEARANCE}
+        onAppearanceChange={() => {}}
+        onGlobalSettingsChange={() => {}}
+        onNotificationsChange={() => {}}
+        initialSection="general"
+      />,
+    );
+
+    const key = await screen.findByLabelText("Grok API key");
+    fireEvent.blur(key, { target: { value: "xai-test-key" } });
+    await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
+    const calls = vi.mocked(ipc.writeGlobalSettings).mock.calls;
+    const saved = calls[calls.length - 1][0] as GlobalSettings;
+    expect(saved.experiments?.grok_api_key).toBe("xai-test-key");
+    expect(saved.experiments?.show_chat).not.toBe(false);
+    expect(saved.experiments?.show_original_kanban).not.toBe(false);
+    globalSettings.experiments = undefined;
+  });
 });

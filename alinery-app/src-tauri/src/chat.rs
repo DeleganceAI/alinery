@@ -467,11 +467,61 @@ pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo
 }
 
 #[tauri::command]
-pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
+pub(crate) async fn chat_transcript(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat rpc write", move || daemon.rpc_write_session(&id, &payload)).await
+    off_main_thread("chat transcript", move || daemon.transcript(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_prompt(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, text: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat prompt", move || daemon.prompt(&id, &text)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_abort(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<(), String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat abort", move || daemon.abort(&id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_set_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    model: String,
+) -> Result<alinery_core::daemon_client::SessionControls, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat set model", move || daemon.set_model(&id, &model)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_set_thinking_level(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    level: String,
+) -> Result<alinery_core::daemon_client::SessionControls, String> {
+    let repo = owned_chat_repo(&app, &state, &repo_path)?;
+    let _ = load_root_omp(&repo, &id)?;
+    let daemon = chat_daemon(&state, &repo)?;
+    off_main_thread("chat set thinking level", move || daemon.set_thinking_level(&id, &level)).await
+}
+
+#[tauri::command]
+pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
+    let _ = (app, state, repo_path, id, payload);
+    Err("OMP process sessions are not available".into())
 }
 
 #[tauri::command]
@@ -484,10 +534,8 @@ pub(crate) async fn chat_rpc_attach(
     stream_token: u64,
     on_line: Channel<String>,
 ) -> Result<(), String> {
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let _ = load_root_omp(&repo, &id)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    off_main_thread("chat rpc attach", move || attach_rpc_stream(app, &daemon, id, attach_id, stream_token, on_line)).await
+    let _ = (app, state, repo_path, id, attach_id, stream_token, on_line);
+    Err("OMP process sessions are not available".into())
 }
 
 #[tauri::command]
@@ -527,17 +575,8 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
 /// a chat thread can live in any known repo.
 #[tauri::command]
 pub(crate) async fn chat_restate(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, transport: String) -> Result<(), String> {
-    if transport != "pty" && transport != "rpc" {
-        return Err("missing transport".into());
-    }
-    let repo = owned_chat_repo(&app, &state, &repo_path)?;
-    let daemon = chat_daemon(&state, &repo)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        load_root_omp(&repo, &id)?;
-        daemon.restate_session(&id, &transport)
-    })
-    .await
-    .map_err(|error| format!("chat restate: {error}"))?
+    let _ = (app, state, repo_path, id, transport);
+    Err("OMP process sessions are not available".into())
 }
 
 /// Attach the terminal view to a thread that is in its PTY transport. Attach only: it never spawns.

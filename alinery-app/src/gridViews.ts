@@ -3,21 +3,19 @@ import type { GridViewDefinition } from "./types";
 export const MAX_GRID_VIEWS = 3;
 export const ACTIVE_GRID_VIEW_STORAGE_KEY = "alinery:navigation:active-grid-view";
 export const DEFAULT_GRID_VIEW_ID = "default-kanban-plus";
-export const DEFAULT_GRID_VIEWS: readonly GridViewDefinition[] = [{ id: DEFAULT_GRID_VIEW_ID, name: "Canvas", slot: 1 }];
+export const DEFAULT_GRID_VIEWS: readonly GridViewDefinition[] = [{ id: DEFAULT_GRID_VIEW_ID, name: "Kanban+", slot: 1 }];
 
 export function normalizeGridViews(views: readonly GridViewDefinition[] | null | undefined): GridViewDefinition[] {
   const ids = new Set<string>();
   const names = new Set<string>();
   const normalized: GridViewDefinition[] = [];
   const candidates = [...(views ?? [])];
-  const canvasTaken = candidates.some((view) => view.name.trim().toLowerCase() === "canvas");
   const completeSlots = new Set(candidates.map((view) => view.slot)).size === candidates.length && candidates.every((view) => view.slot > 0 && view.slot <= candidates.length);
   if (completeSlots) candidates.sort((a, b) => a.slot - b.slot);
 
   for (const view of candidates) {
     const id = view.id.trim();
-    const savedName = view.name.trim();
-    const name = id === DEFAULT_GRID_VIEW_ID && savedName === "Kanban+" && !canvasTaken ? "Canvas" : savedName;
+    const name = view.name.trim();
     const nameKey = name.toLowerCase();
     if (!id || !name || ids.has(id) || names.has(nameKey)) continue;
     ids.add(id);
