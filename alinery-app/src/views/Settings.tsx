@@ -1,4 +1,21 @@
-import { AlertCircle, ArrowDown, ArrowUp, Check, ChevronRight, Circle, Copy, EllipsisVertical, ExternalLink, Minus, Monitor, Moon, Plus, Sun, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Copy,
+  EllipsisVertical,
+  ExternalLink,
+  Minus,
+  Monitor,
+  Moon,
+  Plus,
+  Sun,
+  Trash2,
+} from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import {
@@ -1835,28 +1852,30 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
-      <div className="field">
+      <div className="field startup-view-field">
         <label htmlFor="startup-view">Default starting view</label>
-        <select
-          id="startup-view"
-          className="field-input"
-          value={startupOptions.some((option) => option.value === appearance.startup_view) ? appearance.startup_view : "list"}
-          disabled={!isGlobal}
-          aria-describedby="startup-view-hint"
-          onChange={(event) => {
-            const selected = startupOptions.find((option) => option.value === event.target.value);
-            if (isGlobal && selected) saveAppearance({ ...appearance, startup_view: selected.value });
-          }}
-        >
-          {startupOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <span id="startup-view-hint" className="dsc">
+        <div className="field-select">
+          <select
+            id="startup-view"
+            value={startupOptions.some((option) => option.value === appearance.startup_view) ? appearance.startup_view : "list"}
+            disabled={!isGlobal}
+            aria-describedby="startup-view-hint"
+            onChange={(event) => {
+              const selected = startupOptions.find((option) => option.value === event.target.value);
+              if (isGlobal && selected) saveAppearance({ ...appearance, startup_view: selected.value });
+            }}
+          >
+            {startupOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+        </div>
+        <p id="startup-view-hint" className="dsc">
           Choose the view Alinery opens on launch.
-        </span>
+        </p>
       </div>
       <div className="field">
         <label id="appearance-theme-label">Theme</label>

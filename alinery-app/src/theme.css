@@ -2941,6 +2941,58 @@ textarea.field-input {
 .field input {
   width: 100%;
 }
+/* Native select without the OS chrome: appearance:none drops the system bezel and arrow,
+   and the lucide chevron stands in so it matches every other icon in the app. */
+.field-select {
+  position: relative;
+  display: block;
+}
+.field-select select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--control-h-lg);
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--ui-scale));
+  background: var(--surface);
+  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.field-select select:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text) 40%, transparent);
+  background: var(--surface-subtle);
+}
+.field-select select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.field-select select:disabled {
+  cursor: default;
+  color: var(--text-muted);
+}
+.field-select svg {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.startup-view-field .field-select {
+  max-width: 280px;
+}
+.startup-view-field select {
+  height: var(--control-h);
+}
+.startup-view-field .dsc {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
 .colorfield {
   display: flex;
   align-items: center;
@@ -5425,46 +5477,8 @@ dialog.modal::backdrop {
 .chat-new-foot {
   justify-content: flex-end;
 }
-/* Native select without the OS chrome: appearance:none drops the system bezel and arrow,
-   and the lucide chevron stands in so it matches every other icon in the app. */
-.chat-select {
-  position: relative;
-  display: block;
-}
-.chat-select select {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: var(--control-h-lg);
-  padding: 0 34px 0 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-strong);
-  cursor: pointer;
-  font: inherit;
-  font-size: calc(13px * var(--ui-scale));
-  background: var(--surface);
-  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease;
-}
-.chat-select select:hover {
-  border-color: color-mix(in srgb, var(--text) 40%, transparent);
-  background: var(--surface-subtle);
-}
-.chat-select select:focus-visible {
-  border-color: var(--accent);
-  outline: 2px solid var(--accent-subtle);
-  outline-offset: 0;
-}
-.chat-select svg {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  color: var(--text-muted);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
 /* The thinking level in a status line: reads as the text around it until it is pointed at. The
-   chevron stands in for appearance:none's arrow, as in .chat-select. */
+   chevron stands in for appearance:none's arrow, as in .field-select. */
 .thinking-select {
   position: relative;
   display: inline-block;
