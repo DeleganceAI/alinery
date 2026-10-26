@@ -31,6 +31,9 @@ pub(crate) fn default_chat_max_width() -> String {
 pub(crate) fn default_session_default_view() -> String {
     "chat".into()
 }
+pub(crate) fn default_startup_view() -> String {
+    "list".into()
+}
 
 pub(crate) fn default_appearance_mode() -> String {
     "system".into()
@@ -99,6 +102,8 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_copy_buttons: bool,
     #[serde(default = "default_session_default_view")]
     pub(crate) session_default_view: String,
+    #[serde(default = "default_startup_view")]
+    pub(crate) startup_view: String,
     /// "system" | "light" | "dark" — absent in pre-reskin configs (serde default).
     #[serde(default = "default_appearance_mode")]
     pub(crate) mode: String,
@@ -141,6 +146,7 @@ impl Default for AppearancePrefs {
             chat_show_block_copy_buttons: false,
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
+            startup_view: default_startup_view(),
             mode: default_appearance_mode(),
             ava_chat: BTreeMap::new(),
         }
@@ -252,6 +258,11 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         session_default_view: match prefs.session_default_view.trim() {
             "terminal" => "terminal".into(),
             _ => default_session_default_view(),
+        },
+        startup_view: match prefs.startup_view.trim() {
+            view @ ("list" | "sessions" | "kanban" | "chat" | "notifications" | "playbooks" | "settings") => view.into(),
+            view if view.strip_prefix("grid:").is_some_and(|id| !id.trim().is_empty()) => view.into(),
+            _ => default_startup_view(),
         },
         mode,
         ava_chat: prefs

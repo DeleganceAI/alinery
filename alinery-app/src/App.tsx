@@ -28,7 +28,7 @@ import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner, showRepoOpenFailure } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
+import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -38,6 +38,7 @@ import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, 
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { resolveStartupView } from "./startupView";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -174,16 +175,6 @@ function RemoveRepoConfirmation({ path, onConfirm }: { path: string; onConfirm: 
 type SearchData = { tasks: BoardTask[]; sessions: SessionListItem[] };
 const EMPTY_SEARCH_DATA: SearchData = { tasks: [], sessions: [] };
 
-function initialView(): View {
-  try {
-    const gridViewId = window.localStorage.getItem(ACTIVE_GRID_VIEW_STORAGE_KEY)?.trim();
-    if (gridViewId) return { kind: "grid", gridViewId };
-  } catch {
-    // Navigation persistence is optional; settings reconciliation below still chooses a safe view.
-  }
-  return { kind: "grid", gridViewId: DEFAULT_GRID_VIEW_ID };
-}
-
 // Grid layout is one workspace per view, not per repository. The first time a
 // shared key is missing, adopt the scope the user is already looking at so the
 // switch does not reset tile size, preset, or column order.
@@ -217,7 +208,7 @@ function drawerAfterClose(handle: DrawerHandle, id: string): DrawerHandle | null
   return { ...handle, tabs, activeId: next.id };
 }
 export default function App() {
-  const [view, setView] = useState<View>(initialView);
+  const [view, setView] = useState<View>({ kind: "list" });
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
@@ -309,6 +300,7 @@ export default function App() {
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
+    if (view.kind === "playbooks") setPlaybooksVisited(true);
   }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
@@ -334,19 +326,6 @@ export default function App() {
     });
   }, [appConfig, gridViews, showOriginalKanban, showChat]);
 
-  const selectedGridViewId = gridViewIdOf(view);
-  useEffect(() => {
-    if (!appConfig) return;
-    try {
-      if (selectedGridViewId && gridViews.some((gridView) => gridView.id === selectedGridViewId)) {
-        window.localStorage.setItem(ACTIVE_GRID_VIEW_STORAGE_KEY, selectedGridViewId);
-      } else {
-        window.localStorage.removeItem(ACTIVE_GRID_VIEW_STORAGE_KEY);
-      }
-    } catch {
-      // The in-memory route still works when browser storage is unavailable.
-    }
-  }, [appConfig, gridViews, selectedGridViewId]);
   const knownReposRef = useRef<string | null>(null);
 
   const navRef = useRef<BoardNav | null>(null);
@@ -513,6 +492,7 @@ export default function App() {
         setAppConfig({ ...cfg, appearance: normalized });
         const firstRun = !cfg.active_repo;
         const wizardOpens = firstRun || !isOnboardingCompleted();
+        setView(wizardOpens ? { kind: "list" } : resolveStartupView(normalized.startup_view, cfg.global));
         if (wizardOpens) {
           setOnboardingStep(firstRun ? undefined : readSavedOnboardingStep(true));
           setOnboardingOpen(true);
@@ -687,7 +667,6 @@ export default function App() {
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
     setNavInstant(Boolean(opts?.instant));
     if (kind === "playbooks" && view.kind !== "playbooks") playbooksReturnView.current = view;
-    if (kind === "playbooks") setPlaybooksVisited(true);
     if (kind === "grid") {
       const gridViewId = opts?.gridViewId ?? gridViews[0].id;
       if (!gridViews.some((gridView) => gridView.id === gridViewId)) return;
@@ -1445,7 +1424,7 @@ export default function App() {
               strip is the only actionable surface (defense-in-depth). */}
               <main>
                 {daemon.repo_busy ? null : content}
-                {playbooksVisited && (
+                {(playbooksVisited || view.kind === "playbooks") && (
                   <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
                     <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                   </div>

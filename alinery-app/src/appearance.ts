@@ -1,3 +1,4 @@
+import { normalizeStartupView } from "./startupView";
 import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
 
 export const DEFAULT_ACCENT_COLOR = "#315bff";
@@ -42,6 +43,7 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   chat_show_block_copy_buttons: false,
   chat_show_copy_buttons: true,
   session_default_view: "chat",
+  startup_view: "list",
   mode: "system",
 };
 
@@ -146,6 +148,7 @@ export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
     artifact_viewer_width: normalizeArtifactViewerWidth(raw.artifact_viewer_width),
     ...normalizeChatView(raw),
     session_default_view: normalizeSessionDefaultView(raw.session_default_view),
+    startup_view: normalizeStartupView(raw.startup_view),
     mode,
     ava_chat: normalizeChatView(raw.ava_chat ?? {}),
   };

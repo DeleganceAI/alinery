@@ -29,6 +29,7 @@ import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, n
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { startupViewOptions } from "../startupView";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -833,6 +834,7 @@ export function Settings({
   const selectedScopeLabel = isGlobal ? "All repositories" : repoName(selectedRepo || "Repository");
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
+  const startupOptions = startupViewOptions(global);
   // Chat settings belong to the experimental Chat tab: hidden with it. An open Chat section falls
   // back to General when the flag is turned off (the effect above moves the state; this covers the
   // render before it lands).
@@ -1833,6 +1835,29 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
+      <div className="field">
+        <label htmlFor="startup-view">Default starting view</label>
+        <select
+          id="startup-view"
+          className="field-input"
+          value={startupOptions.some((option) => option.value === appearance.startup_view) ? appearance.startup_view : "list"}
+          disabled={!isGlobal}
+          aria-describedby="startup-view-hint"
+          onChange={(event) => {
+            const selected = startupOptions.find((option) => option.value === event.target.value);
+            if (isGlobal && selected) saveAppearance({ ...appearance, startup_view: selected.value });
+          }}
+        >
+          {startupOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <span id="startup-view-hint" className="dsc">
+          Choose the view Alinery opens on launch.
+        </span>
+      </div>
       <div className="field">
         <label id="appearance-theme-label">Theme</label>
         <div className="theme-cards" role="group" aria-labelledby="appearance-theme-label" aria-describedby="appearance-theme-hint">
