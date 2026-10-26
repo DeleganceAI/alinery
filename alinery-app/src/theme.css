@@ -2983,15 +2983,21 @@ textarea.field-input {
   pointer-events: none;
   transform: translateY(-50%);
 }
-.startup-view-field .field-select {
+.settings-select-field .field-select {
   max-width: 280px;
 }
-.startup-view-field select {
+.settings-select-field select {
   height: var(--control-h);
 }
-.startup-view-field .dsc {
+.settings-select-field .dsc {
   margin: 8px 0 0;
   line-height: 1.5;
+}
+.default-playbook-field .field-select {
+  max-width: 480px;
+}
+.default-playbook-field > .pill + .field-select {
+  margin-top: 6px;
 }
 .colorfield {
   display: flex;

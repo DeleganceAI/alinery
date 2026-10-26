@@ -1116,39 +1116,44 @@ export function Settings({
     const unavailable = playbookCatalog && (!selected || selected.diagnostics.length > 0);
     return (
       <>
-        <div className="field">
+        <div className="field settings-select-field default-playbook-field">
           <label htmlFor="default-playbook">Default playbook</label>
           {!isGlobal && sourceBadge(effective.provenance.defaults.playbook, "defaults.playbook")}
-          <select
-            id="default-playbook"
-            className="field-input"
-            value={playbookRefKey(configured)}
-            disabled={!playbookCatalog}
-            onChange={(event) => {
-              const candidate = candidates.find((item) => playbookRefKey(item.source.reference) === event.target.value);
-              if (!candidate || candidate.diagnostics.length) return;
-              const playbook = candidate.source.reference;
-              if (isGlobal) updateGlobalChoice("defaults", { playbook });
-              else saveRepoOverrides({ ...overrides, defaults: { ...overrides.defaults, playbook } });
-            }}
-          >
-            {!selected && (
-              <option value={playbookRefKey(configured)} disabled>
-                {playbookRefKey(configured)} — unavailable
-              </option>
-            )}
-            {candidates.map((candidate) => (
-              <option key={playbookRefKey(candidate.source.reference)} value={playbookRefKey(candidate.source.reference)} disabled={candidate.diagnostics.length > 0}>
-                {candidate.title || candidate.source.reference.key} — {playbookRefKey(candidate.source.reference)}
-                {candidate.diagnostics.length ? " — invalid" : ""}
-              </option>
-            ))}
-          </select>
+          <div className="field-select">
+            <select
+              id="default-playbook"
+              value={playbookRefKey(configured)}
+              disabled={!playbookCatalog}
+              aria-describedby="default-playbook-hint"
+              onChange={(event) => {
+                const candidate = candidates.find((item) => playbookRefKey(item.source.reference) === event.target.value);
+                if (!candidate || candidate.diagnostics.length) return;
+                const playbook = candidate.source.reference;
+                if (isGlobal) updateGlobalChoice("defaults", { playbook });
+                else saveRepoOverrides({ ...overrides, defaults: { ...overrides.defaults, playbook } });
+              }}
+            >
+              {!selected && (
+                <option value={playbookRefKey(configured)} disabled>
+                  {playbookRefKey(configured)} — unavailable
+                </option>
+              )}
+              {candidates.map((candidate) => (
+                <option key={playbookRefKey(candidate.source.reference)} value={playbookRefKey(candidate.source.reference)} disabled={candidate.diagnostics.length > 0}>
+                  {candidate.title || candidate.source.reference.key} — {playbookRefKey(candidate.source.reference)}
+                  {candidate.diagnostics.length ? " — invalid" : ""}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+          </div>
+          <p id="default-playbook-hint" className="dsc">
+            Manage preferred playbooks for each repository in Playbooks. Preferences do not change this default.
+          </p>
           {unavailable && (
             <InlineStatus tone="warning">The configured default is unavailable. Choose a valid scoped playbook explicitly; no replacement is selected automatically.</InlineStatus>
           )}
         </div>
-        <p className="hint">Manage preferred playbooks for each repository in Playbooks. Preferences do not change this default.</p>
         {playbookError && (
           <InlineStatus tone="error" detail={playbookError}>
             Could not load playbooks.
@@ -1852,7 +1857,7 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
-      <div className="field startup-view-field">
+      <div className="field settings-select-field">
         <label htmlFor="startup-view">Default starting view</label>
         <div className="field-select">
           <select
