@@ -34,6 +34,7 @@ export type ChatComposerProps = {
   onClear?: () => void;
   onPasteFiles?: (files: File[]) => void;
   actions?: ReactNode;
+  beforeSend?: ReactNode;
 };
 
 export function ChatComposer({
@@ -59,6 +60,7 @@ export function ChatComposer({
   onClear,
   onPasteFiles,
   actions,
+  beforeSend,
 }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -311,6 +313,7 @@ export function ChatComposer({
                 Send now
               </button>
             ) : null}
+            {beforeSend}
             <button type="button" className="btn primary small chat-composer-send" onClick={submit} disabled={sendDisabled} aria-label={sendLabel} title="Enter send">
               <ArrowUp className="chat-composer-icon" strokeWidth={2.2} />
             </button>

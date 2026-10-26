@@ -18,6 +18,8 @@ function ChatPaneImpl({
   atStart = true,
   floatingActivity = false,
   recoveryContent,
+  activityContent,
+  activityRunning,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -30,13 +32,15 @@ function ChatPaneImpl({
   atStart?: boolean;
   floatingActivity?: boolean;
   recoveryContent?: ReactNode;
+  activityContent?: ReactNode;
+  activityRunning?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const floatingFooter = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
-  const activity = chatActivityLabel(status, shown);
+  const activity = activityContent ?? chatActivityLabel(status, shown);
   const hasFloatingFooter = floatingActivity && Boolean(activity);
 
   useEffect(() => {
@@ -116,7 +120,7 @@ function ChatPaneImpl({
   const liveSubs = useMemo(() => collectLiveSubagents(entries), [entries]);
   const activityIndicator = activity ? (
     <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-      <RunningIndicator running={status === "running"} />
+      {activityRunning !== false && <RunningIndicator running={activityRunning ?? status === "running"} />}
       <span>{activity}</span>
     </div>
   ) : null;

@@ -655,6 +655,10 @@ fn single_result_trace(key: &str, step: &str, output: &str) {
     trace.start(&id);
     assert!(matches!(trace.accept(&id), CompletionOutcome::InvalidOutputs { .. }));
     trace.write(&id, output, "Completed the assigned request with evidence");
+    assert!(matches!(trace.accept(&id), CompletionOutcome::Ready { .. }));
+    assert_eq!(trace.state.executions[&id].lifecycle, ExecutionLifecycle::Running);
+    assert!(trace.state.executions[&id].receipt_id.is_none());
+    assert!(trace.state.executions[&id].continuation_requested_revision.is_none());
     trace.accepted(&id);
     trace.exit(&id);
     trace.tick();

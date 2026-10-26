@@ -1153,8 +1153,8 @@ export function TaskDetail({
               disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
               title={
                 autoApproveAll
-                  ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
-                  : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+                  ? "Auto Approval All is on. Steps with a next destination may advance automatically; endpoints stay open for review. Turn off to restore the steps chosen at creation."
+                  : "Auto Approval All is off. This task keeps the automatic-continuation steps chosen at creation; endpoints stay open for review."
               }
               onClick={() => setAutoApproveAll(!autoApproveAll)}
             >

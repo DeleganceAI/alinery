@@ -6036,6 +6036,10 @@ dialog.modal::backdrop {
   border: 0;
   font-size: 12px;
 }
+.chat-composer-actions .session-continuation.continue-in-composer {
+  grid-template-columns: repeat(2, minmax(0, 140px));
+  justify-content: end;
+}
 .chat-composer-actions .session-continuation > [role="status"] {
   grid-column: 1 / -1;
 }
@@ -6071,6 +6075,16 @@ dialog.modal::backdrop {
 .chat-composer-footer .chat-composer-actions .session-continuation .btn:not(:disabled):hover {
   color: var(--text);
   border-color: var(--border-strong);
+}
+.chat-composer-footer .chat-composer-actions .continuation-control .btn:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.chat-composer-footer .chat-composer-actions .continuation-control .btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 86%, var(--text-strong));
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .chat-composer-actions .continuation-modes {
   border: 0;
@@ -9883,6 +9897,16 @@ dialog.modal::backdrop {
   padding-block: 6px;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.chat-composer-row > .continuation-control {
+  min-width: 0;
+  max-width: 50%;
+}
+.chat-composer-row > .continuation-control > button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: calc(12px * var(--ui-scale));
 }
 
 .session-input-recovery {

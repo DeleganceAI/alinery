@@ -1665,9 +1665,13 @@ mod bookkeeping_tests {
             let path = &state.executions[&id].outputs[0].relative_path;
             fs::write(alinery_core::artifacts_dir(&repo, "task").join(path), "verified output").unwrap();
             let completion = report_execution_ready(&repo, "task", &definition, &mut state, &id, &session_id, 0).unwrap();
-            if review {
-                assert!(matches!(completion, CompletionOutcome::Ready { .. }));
-            } else {
+            assert!(matches!(completion, CompletionOutcome::Ready { .. }));
+            if !review {
+                assert!(matches!(
+                    request_execution_continuation(&mut state, &id, &session_id, 0).unwrap(),
+                    CompletionOutcome::Requested { .. }
+                ));
+                let completion = finalize_execution_continuation(&repo, "task", &definition, &mut state, &id, &session_id, 0).unwrap();
                 assert!(matches!(completion, CompletionOutcome::Accepted { .. }));
             }
             write_execution_state_unlocked(&repo, "task", &mut state).unwrap();

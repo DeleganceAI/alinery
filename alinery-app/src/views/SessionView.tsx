@@ -2002,17 +2002,14 @@ export function SessionView({
   const executionAssessment = execution ? executionView?.executions[execution.id] : undefined;
   const destinations = executionAssessment?.destinations ?? [];
   const continuationName = destinations.length === 1 ? `Continue to ${destinations[0].title}` : "Continue playbook";
-  const continuationLabel = destinations.length === 1 ? `Cont. to ${destinations[0].title}` : "Continue playbook";
   const playbookComplete = !executionError && executionView?.assessment.status === "complete";
   const requestedHere = requestedContinuation?.id === execution?.id && requestedContinuation?.revision === execution?.ready_revision;
   const invalidatedHere = invalidatedReady?.id === execution?.id && invalidatedReady?.revision === execution?.ready_revision;
   const continuationPending = requestedHere || execution?.continuation_requested_revision != null || !!execution?.receipt_id || endAccepted;
-  const continuationReason =
+  const readinessBlocker =
     (executionError ? "Execution state is unavailable; see the warning above." : "") ||
     (!executionAvailable ? "Continuation unavailable: the execution owner cannot be queried." : "") ||
     (playbookComplete ? "The playbook is complete." : "") ||
-    (automaticContinuation ? "Automatic continuation is enabled; this step advances after validated readiness." : "") ||
-    (executionAssessment?.terminality === "terminal" ? "This final step completes automatically after validated readiness." : "") ||
     (execution?.owner_session_id !== id ? "This session is no longer the execution owner." : "") ||
     (endAccepted || execution?.receipt_id ? "Handoff accepted; waiting for the session to exit." : "") ||
     (!capability?.available ? `Continuation unavailable: ${capability?.reason ?? "the native continuation boundary is not available."}` : "") ||
@@ -2022,7 +2019,12 @@ export function SessionView({
     (pendingUiReply ? "Resolve the pending approval or question before continuing." : "") ||
     (continuationPending ? "Continuation requested; waiting for the handoff." : "") ||
     (completionBusy ? "A session action is in progress." : "") ||
-    (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "") ||
+    (invalidatedHere || messageSending || execution?.ready_revision == null ? "Waiting for renewed readiness after review." : "");
+  const terminalReviewReady = !readinessBlocker && executionAssessment?.terminality === "terminal";
+  const continuationReason =
+    readinessBlocker ||
+    (executionAssessment?.terminality === "terminal" ? "This endpoint stays open for review and follow-up messages." : "") ||
+    (automaticContinuation ? "Automatic continuation is enabled; this step advances after validated readiness." : "") ||
     (executionAssessment?.terminality !== "nonterminal" ? "Waiting for an authoritative continuation assessment." : "");
   const controlsShown = Boolean(execution) && hasTask && harness === "omp";
   const controlBlocker =
@@ -2338,13 +2340,19 @@ export function SessionView({
       }
     }
   };
-  const continuationArea = controlsShown ? (
-    <section className="session-continuation" aria-label="Playbook continuation">
-      {playbookComplete && (
-        <span role="status" aria-label="Playbook status">
-          Playbook complete
+  const continuationStatus = useMemo(
+    () =>
+      controlsShown && (playbookComplete || terminalReviewReady || continuationMessage) ? (
+        <span id="continuation-message" aria-label={playbookComplete ? "Playbook status" : undefined}>
+          {playbookComplete ? "Playbook complete" : terminalReviewReady ? "Ready for review" : continuationMessage}
         </span>
-      )}
+      ) : null,
+    [controlsShown, playbookComplete, terminalReviewReady, continuationMessage],
+  );
+  const continuationStatusRunning = continuationStatus ? !playbookComplete && !terminalReviewReady && continuationPending : undefined;
+  const continueInComposer = controlsShown && showChatComposer && !continuationReason && messageDraft.body.length === 0;
+  const continuationControl =
+    controlsShown && !terminalReviewReady ? (
       <span
         className="continuation-control"
         role="group"
@@ -2368,80 +2376,81 @@ export function SessionView({
           aria-describedby={continuationMessage ? "continuation-message" : continuationReason ? "continuation-reason" : undefined}
           onClick={() => void continueReadyExecution()}
         >
-          <span className="continuation-label">{continuationPending ? "Continuing…" : continuationLabel}</span>
+          <span className="continuation-label">{continuationPending ? "Continuing…" : continuationName}</span>
         </button>
         <span id="continuation-reason" role="tooltip" hidden={!continuationInfoOpen}>
           <span>{continuationName}</span>
           {continuationReason && continuationReason !== continuationMessage && <span>{continuationReason}</span>}
         </span>
       </span>
-      <span title={nudgeBlocker || "Ask the agent to wrap up and report readiness. Sends now, interrupting the current turn if it is working."}>
-        <button
-          className="btn small"
-          type="button"
-          disabled={Boolean(nudgeBlocker)}
-          onClick={() => {
-            if (!nudgeBlocker) void sendCurrentMessage(WRAP_UP_MESSAGE, "nudge");
-          }}
-        >
-          Nudge to wrap up
-        </button>
-      </span>
-      <fieldset className="continuation-modes" aria-label="Session continuation controls">
-        <button
-          type="button"
-          className="btn icon"
-          aria-label="Wait for me"
-          aria-pressed={!automaticContinuation}
-          disabled={Boolean(modeBlocker) || executionView?.state.auto_approve_all === true}
-          title={
-            modeBlocker ||
-            (executionView?.state.auto_approve_all
-              ? "Auto Approval All is enabled for this task. Turn it off in Task Detail to wait for this step."
-              : "Wait for me — this step in this task, including future iterations.")
-          }
-          onClick={() => void setContinuationMode(false)}
-        >
-          <Hand size={16} />
-        </button>
-        <button
-          type="button"
-          className="btn icon"
-          aria-label="Continue automatically"
-          aria-pressed={automaticContinuation}
-          disabled={Boolean(modeBlocker)}
-          title={modeBlocker || "Continue automatically — this step in this task, including future iterations. Advances after validation; a final step finishes the playbook."}
-          onClick={() => void setContinuationMode(true)}
-        >
-          <FastForward size={16} />
-        </button>
-        <button
-          type="button"
-          className="btn icon"
-          aria-label="Follow next session"
-          aria-pressed={followEnabled}
-          disabled={!onOpenSession}
-          title={
-            followEnabled
-              ? "Follow next session: on. When this step finishes and a single successor starts, open it and keep following, in either continuation mode. Browsing another session pauses following. Click to stay here."
-              : "Follow next session: off. Stay on this session while the playbook continues. Click to follow its single started successor and keep following. This does not change continuation permissions."
-          }
-          onClick={() => {
-            followContinuation.current = !followEnabled && execution?.owner_session_id === id ? execution.id : null;
-            followNavigation.current = null;
-            setFollowEnabled(!followEnabled);
-          }}
-        >
-          {followEnabled ? <Eye size={16} /> : <EyeOff size={16} />}
-        </button>
-      </fieldset>
-      {continuationMessage && (
-        <span id="continuation-message" role="status">
-          {continuationMessage}
+    ) : null;
+  const continuationArea =
+    controlsShown && !terminalReviewReady ? (
+      <section className={`session-continuation${continueInComposer ? " continue-in-composer" : ""}`} aria-label="Playbook continuation">
+        {!continueInComposer && continuationControl}
+        <span title={nudgeBlocker || "Ask the agent to wrap up and report readiness. Sends now, interrupting the current turn if it is working."}>
+          <button
+            className="btn small"
+            type="button"
+            disabled={Boolean(nudgeBlocker)}
+            onClick={() => {
+              if (!nudgeBlocker) void sendCurrentMessage(WRAP_UP_MESSAGE, "nudge");
+            }}
+          >
+            Nudge to wrap up
+          </button>
         </span>
-      )}
-    </section>
-  ) : null;
+        <fieldset className="continuation-modes" aria-label="Session continuation controls">
+          <button
+            type="button"
+            className="btn icon"
+            aria-label="Wait for me"
+            aria-pressed={!automaticContinuation}
+            disabled={Boolean(modeBlocker) || executionView?.state.auto_approve_all === true}
+            title={
+              modeBlocker ||
+              (executionView?.state.auto_approve_all
+                ? "Auto Approval All is enabled for this task. Turn it off in Task Detail to wait for this step."
+                : "Wait for me — this step in this task, including future iterations.")
+            }
+            onClick={() => void setContinuationMode(false)}
+          >
+            <Hand size={16} />
+          </button>
+          <button
+            type="button"
+            className="btn icon"
+            aria-label="Continue automatically"
+            aria-pressed={automaticContinuation}
+            disabled={Boolean(modeBlocker)}
+            title={modeBlocker || "Continue automatically — this step in this task, including future iterations. Advances after validation; a final step finishes the playbook."}
+            onClick={() => void setContinuationMode(true)}
+          >
+            <FastForward size={16} />
+          </button>
+          <button
+            type="button"
+            className="btn icon"
+            aria-label="Follow next session"
+            aria-pressed={followEnabled}
+            disabled={!onOpenSession}
+            title={
+              followEnabled
+                ? "Follow next session: on. When this step finishes and a single successor starts, open it and keep following, in either continuation mode. Browsing another session pauses following. Click to stay here."
+                : "Follow next session: off. Stay on this session while the playbook continues. Click to follow its single started successor and keep following. This does not change continuation permissions."
+            }
+            onClick={() => {
+              followContinuation.current = !followEnabled && execution?.owner_session_id === id ? execution.id : null;
+              followNavigation.current = null;
+              setFollowEnabled(!followEnabled);
+            }}
+          >
+            {followEnabled ? <Eye size={16} /> : <EyeOff size={16} />}
+          </button>
+        </fieldset>
+        {showPtyTerminal && !navHistory && !showPanel && continuationStatus && <span role="status">{continuationStatus}</span>}
+      </section>
+    ) : null;
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -2933,6 +2942,8 @@ export function SessionView({
                 <>
                   <ChatPane
                     recoveryContent={recoveryContent}
+                    activityContent={continuationStatus}
+                    activityRunning={continuationStatusRunning}
                     entries={chatEntries}
                     status={chatStatus}
                     visibility={chatVisibility}
@@ -2997,6 +3008,8 @@ export function SessionView({
                   <div className="terminal-frame">
                     <ChatPane
                       recoveryContent={recoveryContent}
+                      activityContent={continuationStatus}
+                      activityRunning={continuationStatusRunning}
                       entries={chatEntries}
                       status={chatStatus}
                       visibility={chatVisibility}
@@ -3018,6 +3031,7 @@ export function SessionView({
                       ) : null}
                       <ChatComposer
                         actions={continuationArea}
+                        beforeSend={continueInComposer ? continuationControl : null}
                         body={messageDraft.body}
                         status={chatStatus}
                         catalog={chat.commands}
@@ -3116,6 +3130,8 @@ export function SessionView({
                   <div className="terminal-frame">
                     <ChatPane
                       recoveryContent={recoveryContent}
+                      activityContent={continuationStatus}
+                      activityRunning={continuationStatusRunning}
                       entries={chat.entries}
                       status="idle"
                       visibility={chatVisibility}

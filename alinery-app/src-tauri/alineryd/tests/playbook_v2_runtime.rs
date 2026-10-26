@@ -459,6 +459,23 @@ export default function (api) {{
             fs::write(self.root.join(".alinery/tasks/fixture/artifacts").join(&output.relative_path), "accepted evidence").unwrap();
         }
     }
+    fn assert_terminal_ready(&self, record: &ExecutionRecord) {
+        let state = self.persisted();
+        let current = &state.executions[&record.id];
+        assert_eq!(current.lifecycle, ExecutionLifecycle::Running);
+        assert_eq!(current.ready_revision, Some(current.work_revision));
+        assert_eq!(
+            current.ready_assessment.as_ref().unwrap().terminality,
+            alinery_core::playbook_scheduler::Terminality::Terminal
+        );
+        assert!(current.receipt_id.is_none());
+        assert!(current.continuation_requested_revision.is_none());
+        assert!(!current.shutdown_confirmed);
+        assert!(!state
+            .occurrences
+            .values()
+            .any(|occurrence| occurrence.producer_execution_id.as_deref() == Some(record.id.as_str())));
+    }
     fn release(&self, id: &str) {
         fs::write(self.root.join(format!("release-{id}")), "exit").unwrap();
     }
@@ -987,7 +1004,7 @@ fn stock_continuation_native_tools_and_nested_completion() {
 #[test]
 #[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_automatic_and_terminal() {
-    for terminal in [false, true] {
+    for (terminal, auto_approve_all) in [(false, false), (true, false), (true, true)] {
         let fixture = Fixture::stock("automatic_and_terminal");
         let source = if terminal {
             format!(
@@ -997,10 +1014,31 @@ fn stock_continuation_automatic_and_terminal() {
         } else {
             stock_definition()
         };
-        let created = fixture.create_with(&source, 1, if terminal { &[] } else { &["first"] }, true);
+        let created = fixture.create_with(&source, 1, if auto_approve_all { &[] } else { &["first"] }, true);
+        if auto_approve_all {
+            alinery_core::with_task_mutation_lock_waiting(&fixture.root, "fixture auto approval", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+                let mut state = fixture.persisted();
+                alinery_core::execution::set_execution_auto_approve_all(&mut state, true);
+                alinery_core::execution::write_execution_state_unlocked(&fixture.root, "fixture", &mut state)
+            })
+            .unwrap();
+        }
         let first = created.executions.iter().find(|r| r.candidate.step_key == "first").unwrap();
-        fixture.stock_write_and_ready(first, 1, "automatic native handoff", false);
-        fixture.wait_state("automatic and terminal work accepts without a desktop gesture", |state| {
+        let index = fixture.stock_write_and_ready(first, 1, "automatic native handoff", false);
+        if terminal {
+            fixture.assert_terminal_ready(first);
+            let revision = fixture.persisted().executions[&first.id].work_revision;
+            fixture.stock_send(first, "terminal-followup", "prompt", "Revise the final output with the requested follow-up.");
+            fixture.stock_write_and_ready(first, index, "revised terminal output", false);
+            fixture.assert_terminal_ready(first);
+            assert!(fixture.persisted().executions[&first.id].work_revision > revision);
+            assert_eq!(
+                fs::read_to_string(fixture.root.join(".alinery/tasks/fixture/artifacts").join(&first.outputs[0].relative_path)).unwrap(),
+                "revised terminal output"
+            );
+            continue;
+        }
+        fixture.wait_state("nonterminal automatic work accepts without a desktop gesture", |state| {
             state.executions[&first.id].receipt_id.is_some()
         });
         fixture.wait_state("automatic acceptance still requires successful exit and drain", |state| {
@@ -1497,13 +1535,14 @@ fn stock_continuation_graph_release_and_failure() {
             json!({"path":artifacts.join(record.outputs[0].relative_path.replace('*',"answer")),"content":format!("native {}",record.candidate.step_key)}),
         );
         index = fanout.stock_report_ready(&record, index + 1, false);
-        if fanout.persisted().executions[&record.id].receipt_id.is_none() {
-            fanout.stock_continue(&record);
+        if record.candidate.step_key == "collect" {
+            fanout.assert_terminal_ready(&record);
+            break;
         }
+        fanout.stock_continue(&record);
         fanout.wait_state("native graph child must exit and drain", |state| state.executions[&record.id].shutdown_confirmed);
         completed.insert(record.id);
     }
-    assert_eq!(serde_json::to_value(fanout.state().assessment).unwrap()["status"], "complete");
 
     let looping = Fixture::stock("graph_release_and_failure");
     let mut source = "+++\nversion=2\nkey='fixture'\ntitle='Loop'\ndescription=''\ndefault_model='continuation-local/fixture'\ndefault_harness='omp'\n".to_string();
@@ -1546,8 +1585,10 @@ fn stock_continuation_graph_release_and_failure() {
         index = looping.stock_report_ready(&record, index, false);
         if continue_loop {
             looping.stock_continue(&record);
+            looping.wait_state("loop pass must exit after acceptance", |state| state.executions[&record.id].shutdown_confirmed);
+        } else {
+            looping.assert_terminal_ready(&record);
         }
-        looping.wait_state("loop pass must exit after acceptance", |state| state.executions[&record.id].shutdown_confirmed);
         previous_producer = record.id;
     }
     let final_state = looping.persisted();
@@ -1556,7 +1597,6 @@ fn stock_continuation_graph_release_and_failure() {
         2,
         "intentional omission must not manufacture another pass"
     );
-    assert_eq!(serde_json::to_value(looping.state().assessment).unwrap()["status"], "complete");
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -1929,7 +1969,7 @@ fn manual_completion_reports_ready_without_publishing_or_releasing_join() {
 }
 
 #[test]
-fn manual_one_step_completion_accepts_without_finish_permission_and_waits_for_exit() {
+fn manual_one_step_completion_stays_ready_without_publishing_or_exiting() {
     let fixture = Fixture::new();
     let source = "+++\nversion=2\nkey='fixture'\ntitle='Fixture'\ndescription=''\ndefault_model=''\ndefault_harness='omp'\n[[step]]\nkey='only'\ntitle='Only'\nshort=''\ninputs=[]\noutputs=[{path='result.md'}]\nmodel=''\nharness=''\nis_coding_step=false\nauto_advance_default=false\n+++\n<!-- alinery:step only -->\nWrite your assigned output.\n";
     let created = fixture.create_with(source, 1, &[], false);
@@ -1940,24 +1980,10 @@ fn manual_one_step_completion_accepts_without_finish_permission_and_waits_for_ex
     fixture.outputs(only);
 
     let outcome = fixture.event(&only.owner_session_id);
-    assert_eq!(
-        outcome["completion"]["status"], "accepted",
-        "a terminal step needs no continuation gesture or finish permission"
-    );
-    let finishing = fixture.persisted();
-    assert_eq!(finishing.executions[&only.id].lifecycle, ExecutionLifecycle::Finishing);
-    assert!(finishing.executions[&only.id].receipt_id.is_some());
-    assert!(!finishing.executions[&only.id].shutdown_confirmed);
-    assert!(finishing
-        .occurrences
-        .values()
-        .filter(|occurrence| occurrence.producer_execution_id.as_deref() == Some(only.id.as_str()))
-        .all(|occurrence| !alinery_core::execution::occurrence_deliverable(&finishing, occurrence)));
-    fixture.release(&only.owner_session_id);
-    fixture.wait_state("terminal handoff completes only after exit", |state| {
-        state.executions[&only.id].lifecycle == ExecutionLifecycle::Completed
-    });
-    assert!(fixture.persisted().executions[&only.id].shutdown_confirmed);
+    assert_eq!(outcome["completion"]["status"], "ready");
+    fixture.assert_terminal_ready(only);
+    assert_eq!(fixture.event(&only.owner_session_id)["completion"], outcome["completion"]);
+    fixture.assert_terminal_ready(only);
 }
 
 #[test]
@@ -2617,9 +2643,8 @@ fn fanout_complete_waits_for_the_paused_worker_and_computes_assigned_results() {
     assert_eq!(answer, 38);
     fs::write(artifacts.join(&collector.outputs[0].relative_path), answer.to_string()).unwrap();
     wait(|| fixture.root.join(format!("token-{}", collector.owner_session_id)).exists());
-    assert_eq!(fixture.event(&collector.owner_session_id)["completion"]["status"], "accepted");
-    fixture.release(&collector.owner_session_id);
-    wait(|| fixture.state().state.executions[&collector.id].lifecycle == ExecutionLifecycle::Completed);
+    assert_eq!(fixture.event(&collector.owner_session_id)["completion"]["status"], "ready");
+    fixture.assert_terminal_ready(collector);
 }
 
 #[test]
@@ -2830,14 +2855,13 @@ fn shared_exact_automatic_scheduling_waits_for_publisher_exit() {
             .unwrap();
         assert!(state.executions[&publisher.id].shutdown_confirmed);
         assert!(handled.insert(designer.id.clone()));
-        // No manual start or UI grant: automatic completion and exit drive delivery.
+        // Automatic delivery starts the terminal Designer, but does not finish it.
         wait(|| fixture.root.join(format!("token-{}", designer.owner_session_id)).exists());
         fixture.outputs(designer);
-        assert_eq!(fixture.event(&designer.owner_session_id)["completion"]["status"], "accepted");
-        fixture.release(&designer.owner_session_id);
-        fixture.wait_state("automatic Designer must complete after release", |state| {
-            state.executions[&designer.id].lifecycle == ExecutionLifecycle::Completed
-        });
+        assert_eq!(fixture.event(&designer.owner_session_id)["completion"]["status"], "ready");
+        fixture.assert_terminal_ready(designer);
+        // Explicitly retire this owner so the next publisher can use capacity.
+        fixture.finish(designer);
     }
     assert_eq!(
         shared_exact_designers(&fixture)

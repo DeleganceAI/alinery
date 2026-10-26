@@ -1002,6 +1002,12 @@ fn assessment_key(definition: &NormalizedPlaybook, state: &TaskExecutionState, i
     })
 }
 
+// An assessed endpoint stays open for review, regardless of automatic settings.
+// A later work revision can publish a destination and resume normal routing.
+fn permits_automatic_continuation(record: &ExecutionRecord) -> bool {
+    record.ready_assessment.as_ref().is_some_and(|assessment| assessment.terminality != Terminality::Terminal)
+}
+
 pub fn report_execution_ready(
     repo: &Path,
     slug: &str,
@@ -1050,12 +1056,11 @@ pub fn report_execution_ready(
         });
     }
     let record = owned_execution(state, id, session_id)?;
-    let automatic = auto_approve_all || record.continuation_mode == ContinuationMode::Automatic || key.terminality == Terminality::Terminal;
     record.last_ready_revision = Some(expected_work_revision);
     record.ready_revision = Some(expected_work_revision);
     record.ready_assessment = Some(key);
     record.error = None;
-    if automatic {
+    if permits_automatic_continuation(record) && (auto_approve_all || record.continuation_mode == ContinuationMode::Automatic) {
         record.continuation_requested_revision = Some(expected_work_revision);
         finalize_execution_continuation(repo, slug, definition, state, id, session_id, expected_work_revision)
     } else {
@@ -1079,13 +1084,18 @@ pub fn request_execution_continuation(state: &mut TaskExecutionState, id: &str, 
     Ok(CompletionOutcome::Requested { ready_revision })
 }
 
-/// Enabling the task override authorizes current ready work without changing step policy.
+/// Enabling the task override authorizes eligible ready work without changing step policy.
 /// Disabling it does not revoke continuation already requested, just like an explicit Continue.
 pub fn set_execution_auto_approve_all(state: &mut TaskExecutionState, enabled: bool) {
     state.auto_approve_all = enabled;
     if enabled {
         for record in state.executions.values_mut() {
-            if record.lifecycle == ExecutionLifecycle::Running && record.receipt_id.is_none() && record.human_end.is_none() && record.ready_revision == Some(record.work_revision) {
+            if record.lifecycle == ExecutionLifecycle::Running
+                && record.receipt_id.is_none()
+                && record.human_end.is_none()
+                && record.ready_revision == Some(record.work_revision)
+                && permits_automatic_continuation(record)
+            {
                 record.continuation_requested_revision = record.ready_revision;
             }
         }
@@ -1110,7 +1120,7 @@ pub fn set_step_continuation(state: &mut TaskExecutionState, definition: &Normal
             continue;
         }
         record.continuation_mode = if automatic { ContinuationMode::Automatic } else { ContinuationMode::Manual };
-        if automatic && record.lifecycle == ExecutionLifecycle::Running && record.ready_revision == Some(record.work_revision) {
+        if automatic && record.lifecycle == ExecutionLifecycle::Running && record.ready_revision == Some(record.work_revision) && permits_automatic_continuation(record) {
             record.continuation_requested_revision = record.ready_revision;
         }
     }
@@ -1330,7 +1340,7 @@ pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutio
     }
     prompt.push_str(concat!(
         "\nEach output declaration is a possible publication, not an individual file requirement. Successful completion requires at least one valid assigned artifact overall. Safely absent outputs and zero-member wildcard families may be omitted; present invalid artifacts and genuine filesystem inspection errors reject the entire attempt. Publish only within these exact assigned paths. This current publication rule supersedes older blanket all-output requirements and older zero-publication guidance, but never waives substantive work, deliverables, verification, decisions, or human approval. Missing substantive work stays interactive. Accepted publications are immutable: files written after acceptance do not extend the receipt.\n",
-        "\nCompletion is an explicit handshake: alinery_phase_complete reports validated readiness. Manual nonterminal work stays in this session for review until the user chooses Continue in the desktop; automatic or terminal work uses the same final validation and acceptance path without a separate Finish approval. Only Accepted requests ordinary shutdown. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
+        "\nCompletion is an explicit handshake: alinery_phase_complete reports validated readiness. An assessed endpoint with no next destination stays in this session for human review, even with automatic continuation enabled; remain available for follow-up instructions. Manual nonterminal work stays in this session until the user chooses Continue in the desktop; automatic nonterminal work uses the same final validation and acceptance path. Only Accepted requests ordinary shutdown. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
         "## Deliver the result\n\n",
         "Your artifact is a file on disk, not your chat response. Printing its contents or naming its path does not create it.\n\n",
         "When the assigned work, verification, and substantive decisions are ready:\n",

@@ -2989,8 +2989,7 @@ describe("review continuation", () => {
         },
       ]);
       renderSession();
-      const control = await screen.findByRole("button", { name: "Continue to Review changes" });
-      await waitFor(() => expect(control).toHaveProperty("disabled", false));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
       expect(screen.queryByRole("button", { name: "End & continue…" })).toBeNull();
       expect(screen.queryByLabelText("Session execution")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -3153,11 +3152,9 @@ describe("review continuation", () => {
     const result = deferred<{ status: string; ready_revision: number }>();
     continueExecution.mockReturnValue(result.promise);
     renderSession();
-    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
-    expect(within(screen.getByRole("region", { name: "Playbook continuation" })).getByRole("button", { name: "Continue to Review changes" })).toBe(control);
-    fireEvent.click(control);
-    fireEvent.click(control);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continuing…" }));
     expect(continueExecution).toHaveBeenCalledExactlyOnceWith(
       {
         task_slug: "task",
@@ -3176,28 +3173,26 @@ describe("review continuation", () => {
   it("keeps accepted handoff evidence when the subsequent observation fails", async () => {
     continueExecution.mockResolvedValueOnce({ status: "accepted", receipt_id: "accepted-receipt" });
     renderSession();
-    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
     getTaskExecution.mockRejectedValue(new Error("Snapshot unavailable"));
-    fireEvent.click(control);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await screen.findByText("Handoff accepted; waiting for the session to exit.");
     await screen.findByText(/Snapshot unavailable/);
     expect(screen.queryByText(/Continuation outcome unavailable/)).toBeNull();
     expect(screen.queryByText("Playbook complete")).toBeNull();
-    expect(control).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Continuing…" })).toHaveProperty("disabled", true);
     expect(continueExecution).toHaveBeenCalledTimes(1);
   });
 
   it("allows explicit same-owner retry after a lost Continue reply and live refresh", async () => {
     continueExecution.mockRejectedValueOnce(new Error("Reply lost"));
     renderSession();
-    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
-    fireEvent.click(control);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await screen.findByText(/Continuation outcome unavailable/);
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
     expect(continueExecution).toHaveBeenCalledTimes(1);
-    fireEvent.click(control);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await waitFor(() => expect(continueExecution).toHaveBeenCalledTimes(2));
     expect(continueExecution).toHaveBeenNthCalledWith(
       2,
@@ -3209,13 +3204,12 @@ describe("review continuation", () => {
   it("allows an explicit retry at the same ready revision after a definite non-requested outcome", async () => {
     continueExecution.mockResolvedValueOnce({ status: "waiting", reason: "A native operation is still settling" });
     renderSession();
-    const control = await screen.findByRole("button", { name: "Continue to Review changes" });
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
-    fireEvent.click(control);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await waitFor(() => expect(screen.getByText("A native operation is still settling")).toBeDefined());
-    await waitFor(() => expect(control).toHaveProperty("disabled", false));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue to Review changes" })).toHaveProperty("disabled", false));
     expect(continueExecution).toHaveBeenCalledTimes(1);
-    fireEvent.click(control);
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Review changes" }));
     await waitFor(() => expect(continueExecution).toHaveBeenCalledTimes(2));
     expect(continueExecution.mock.calls[1]?.[0]).toMatchObject({ ready_revision: 7, process_incarnation: "incarnation-a" });
   });
@@ -3274,7 +3268,7 @@ describe("review continuation", () => {
     expect(screen.queryByText("Playbook complete")).toBeNull();
   });
 
-  it("keeps continuation disabled before readiness and for automatic or terminal work", async () => {
+  it("keeps routing controls disabled until ready and leaves ready endpoints open for conversation", async () => {
     const unready = readyReply(null);
     unready.state.executions["execution-a"].last_ready_revision = null;
     getTaskExecution.mockResolvedValue(unready);
@@ -3299,11 +3293,16 @@ describe("review continuation", () => {
     const terminal = readyReply();
     terminal.executions["execution-a"] = { destinations: [], terminality: "terminal", reasons: [] };
     getTaskExecution.mockResolvedValue(terminal);
-    renderSession();
+    renderSession({ messageDraft: { body: "Tell me how it went", pendingActions: [], attachments: [] } });
     await flushPromises();
-    const terminalContinue = screen.getByRole("button", { name: /Continue (to|playbook)/ });
-    expect(terminalContinue).toHaveProperty("disabled", true);
-    fireEvent.click(terminalContinue);
+    expect(screen.queryByRole("button", { name: /Continue (to|playbook)/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Nudge to wrap up" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Wait for me" })).toBeNull();
+    expect(screen.getByTestId("chat-activity").textContent).toBe("Ready for review");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await flushPromises();
+    expect(rpcWriteSession).toHaveBeenCalledWith("session", expect.objectContaining({ message: "Tell me how it went" }));
+    expect(screen.queryByText("Ready for review")).toBeNull();
     expect(continueExecution).not.toHaveBeenCalled();
     expect(screen.queryByText("Playbook complete")).toBeNull();
   });
