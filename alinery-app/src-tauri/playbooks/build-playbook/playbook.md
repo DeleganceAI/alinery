@@ -86,7 +86,7 @@ Write the specification at the assigned path. Explain the process for a human re
 
 The specification is ready when the responsibilities, handoffs and human checkpoints describe a consistent process that the human has agreed to. Hand off its path and explain any remaining limitations.
 
-The declared output is a possible publication, and every successful execution must leave at least one valid assigned artifact overall. Here the agreed specification is the substantive deliverable and the sole assignment; publish it at its assigned path. Invalid present output or inspection errors reject completion. Resolve required human decisions, finish the user-facing handoff, then use the runtime's completion gate. Permission to finish is separate from agreement on the process, and eligible successors wait for accepted completion and confirmed exit.
+The declared output is a possible publication, and every successful execution must leave at least one valid assigned artifact overall. Here the agreed specification is the substantive deliverable and the sole assignment; publish it at its assigned path. Invalid present output or inspection errors reject completion. Resolve required human decisions, finish the user-facing handoff, then invoke the supplied completion operation. Ready leaves the session available for review; eligible successors still wait for accepted completion and confirmed successful exit.
 
 <!-- alinery:step draft-refine -->
 
@@ -200,7 +200,7 @@ The step definitions establish the process; they do not fix how many agent sessi
 
 Agents interpret artifact contents to decide how to carry out their responsibilities. The declared dependencies determine when a playbook step is ready to run. Each execution uses its assigned artifacts, so a later change elsewhere in the task's state does not silently replace those inputs.
 
-The engine handles input assignments, reservations, scheduling, completion permission and process lifetime for playbook executions. Prompts describe the assigned work.
+The engine handles input assignments, reservations, scheduling, readiness, continuation and process lifetime for playbook executions. Prompts describe the assigned work.
 
 ### Understand where playbooks are saved
 
@@ -565,9 +565,9 @@ Filename prefixes and suffixes do not establish chronology, loop counts or relat
 
 ### Pause at the human checkpoints defined by the process
 
-Set `auto_advance_default = false` at checkpoints where the process requires the human to review the work, check direction or make a decision before dependent work proceeds. The field initializes the task's choice; it does not prevent the human from changing that choice. Completion permission applies to an execution, and the runtime supplies the completion operation and its permission gate.
+Set `auto_advance_default = false` at checkpoints where the process requires the human to review the work, check direction or make a decision before dependent work proceeds. The field initializes the task's choice; it does not prevent the human from changing that choice. The runtime supplies the completion operation: manual nonterminal work reports Ready and stays conversational until the desktop Continue action; automatic and terminal work need no redundant Finish permission.
 
-An execution must finish its substantive work, selected publications and handoff before completing, with at least one valid assigned artifact overall. The human decision, permission to finish, valid publication, and confirmed shutdown are separate gates. Completion does not promise that every declared successor will run: only those with satisfied inputs become eligible after confirmed exit.
+An execution must finish its substantive work, selected publications and handoff before completing, with at least one valid assigned artifact overall. The substantive human decision, validated readiness, continuation intent, accepted publication and confirmed shutdown are distinct. Completion does not promise that every declared successor will run: only those with satisfied inputs become eligible after confirmed exit.
 
 ### Separate coding access from session capacity
 
@@ -608,7 +608,7 @@ Walk through the chosen process, including discoveries and decisions that could 
 9. **Reuse:** Do prompts contain the instructions they need, use supported fields and tokens, and avoid paths or tools unavailable to the task?
 10. **Writing:** Can the intended human reader understand the process and each step? Are essential ideas explained before use, instructions direct, and technical requirements intact? Does each step contain any writing requirements its outputs need?
 11. **No-result routing:** Test summary-outside-family success with zero item workers, an intentionally matching `papers/no-results.md` with one supported disposition worker, and an exact `no-results.md` with its matching handler. Inspect actual selector matches and confirm reports meant to stop do not accidentally enter item wildcards.
-12. **Substantive and completion gates:** Do alternative publications preserve real deliverables and human decisions? Does a denied/invalid completion stay interactive? Do successor claims depend on actual accepted inputs and confirmed exit rather than mere permission or file presence?
+12. **Substantive decisions and continuation:** Do alternative publications preserve real deliverables and human decisions? Do Ready/Waiting and invalid outputs leave review or repair possible? Do successor claims depend on accepted inputs and successful exit plus drain rather than readiness, intent or file presence?
 13. **Enforcement:** Which required properties follow from the declared dependencies, and which rely only on prompt instructions? Do not report parser acceptance or one successful run as proof of a property those checks did not establish.
 
 Correct defects before handing off the candidate. For each requirement, show which agent responsibility, prompt, artifact, dependency or human checkpoint represents it. Walk through the normal case and relevant alternatives with the human, and revise the representation wherever that walkthrough exposes a gap.
@@ -686,7 +686,7 @@ Present the verified source, material findings and their resolutions to the huma
 
 ## Review and save
 
-Review the complete verified source with the human and confirm its scope, key and destination. Use choices they have already supplied. Otherwise, prefer a global entry unless the playbook depends on a particular repository. Follow the save tool's authorization requirements; substantive agreement and permission to complete an execution are separate decisions.
+Review the complete verified source with the human and confirm its scope, key and destination. Use choices they have already supplied. Otherwise, prefer a global entry unless the playbook depends on a particular repository. Follow the save tool's authorization requirements; readiness, continuation and acceptance do not grant permission to save or publish a playbook.
 
 ### Save a repository-specific playbook
 

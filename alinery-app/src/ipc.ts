@@ -40,15 +40,21 @@ import type {
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
+  CompletionOutcome,
   Config,
   ConnectionStatus,
+  ContinueExecutionRequest,
   CreateExecutionSessionReply,
   CreateExecutionSessionRequest,
   CreateTaskRequest,
   CreateTaskResult,
   DaemonStatus,
   DesktopCreditsView,
+  DispatchOutcome,
   DownloadStatusRow,
+  EndExecutionPreparation,
+  EndExecutionRequest,
+  ExecutionArtifactsPreview,
   GitHubIssue,
   GlobalSettings,
   HostedCatalogView,
@@ -85,8 +91,10 @@ import type {
   SessionObservation,
   SessionStatusRef,
   StagedUpdate,
+  StopExecutionReply,
   StorageInfo,
   SubtaskManagerState,
+  SuppliedExecutionArtifact,
   TakeoverOutcome,
   TakeoverPreview,
   Task,
@@ -288,7 +296,7 @@ export const archiveChatThread = (repoPath: string, sessionId: string, removeWor
 export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
-export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
+export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<DispatchOutcome>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
 export const chatRestate = (repoPath: string, id: string, transport: "pty" | "rpc") => invoke<void>("chat_restate", { repoPath, id, transport });
@@ -301,7 +309,7 @@ export const chatPtyAttach = (a: {
   rows?: number | null;
   onBytes: Channel<ArrayBuffer>;
 }) => invoke<void>("chat_pty_attach", a);
-export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
+export const chatPtyWrite = (repoPath: string, id: string, data: string, dispatchId: string) => invoke<DispatchOutcome>("chat_pty_write", { repoPath, id, data, dispatchId });
 export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
 export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
 export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
@@ -317,8 +325,24 @@ export const createSession = (request: CreateExecutionSessionRequest) => invoke<
 export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
 export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
 export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
-export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
-  invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
+export const continueExecution = (request: ContinueExecutionRequest, repoPath?: string) =>
+  invoke<CompletionOutcome>("continue_execution", {
+    taskSlug: request.task_slug,
+    executionId: request.execution_id,
+    sessionId: request.session_id,
+    processIncarnation: request.process_incarnation,
+    readyRevision: request.ready_revision,
+    repoPath,
+  });
+export const prepareEndExecution = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
+  invoke<EndExecutionPreparation>("prepare_end_execution", { taskSlug, executionId, sessionId, repoPath });
+export const endExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<CompletionOutcome>("end_execution", { request, repoPath });
+export const stopExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<StopExecutionReply>("stop_execution", { request, repoPath });
+export const restartExecution = (request: EndExecutionRequest, repoPath?: string) => invoke<CreateExecutionSessionReply>("restart_execution", { request, repoPath });
+export const previewExecutionArtifacts = (request: EndExecutionRequest, artifacts: SuppliedExecutionArtifact[], repoPath?: string) =>
+  invoke<ExecutionArtifactsPreview>("preview_execution_artifacts", { request, artifacts, repoPath });
+export const submitExecutionArtifacts = (request: EndExecutionRequest, artifacts: SuppliedExecutionArtifact[], repoPath?: string) =>
+  invoke<CompletionOutcome>("submit_execution_artifacts", { request, artifacts, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
@@ -352,9 +376,9 @@ export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boo
 export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
-export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
+export const writeSession = (id: string, data: string, dispatchId: string) => invoke<DispatchOutcome>("write_session", { id, data, dispatchId });
 export const restateSession = (id: string, transport: "pty" | "rpc") => invoke<void>("restate_session", { id, transport });
-export const rpcWriteSession = (id: string, payload: unknown) => invoke<void>("rpc_write_session", { id, payload });
+export const rpcWriteSession = (id: string, payload: unknown) => invoke<DispatchOutcome>("rpc_write_session", { id, payload });
 /** Bring up (or reuse) the reserved setup session and get its id. Attach to it like any session. */
 export const ompSetupSession = () => invoke<string>("omp_setup_session");
 export const rpcAttachSession = (a: { id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
@@ -397,6 +421,8 @@ export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<strin
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
 export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
+export const setStepContinuationForRepo = (repoPath: string, taskSlug: string, stepKey: string, automatic: boolean) =>
+  invoke<Task>("set_step_continuation_for_repo", { repoPath, taskSlug, stepKey, automatic });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
 export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
 export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });

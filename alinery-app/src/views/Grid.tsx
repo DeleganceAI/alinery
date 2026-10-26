@@ -1,5 +1,5 @@
 import "../onboarding.css";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { CURATED_PLAYBOOK_ARCHETYPES, type StarterTaskPreset } from "../onboarding";
@@ -858,8 +858,7 @@ function ScopedGrid({
   const draggedTaskId = useRef<string | null>(null);
   const movementHistory = useRef<MovementHistory>({});
   const pointerDrag = usePointerDrag();
-  const boardRequest = useRef<symbol | null>(null);
-  const boardActive = useRef(false);
+  const load = useRef<() => void>(() => {});
   const activity = useBoardTaskActivity(tasks, active);
 
   useEffect(() => {
@@ -894,35 +893,48 @@ function ScopedGrid({
     }
   }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, columnOrder, hiddenTaskIds, hiddenGroupKeys]);
 
-  const load = useCallback(async () => {
-    if (!boardActive.current) return;
-    const request = Symbol();
-    boardRequest.current = request;
-    boardRequests.set(scopeKey, request);
-    try {
-      const [nextColumns, nextTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
-      if (boardRequest.current !== request) return;
-      if (boardRequests.get(scopeKey) === request) boardSnapshots.set(scopeKey, { tasks: nextTasks, columns: nextColumns });
-      setColumns((current) => (sameKanbanColumns(current, nextColumns) ? current : nextColumns));
-      setTasks((current) => (sameBoardTasks(current, nextTasks) ? current : nextTasks));
-      setErr("");
-      setLoaded(true);
-    } catch (error) {
-      if (boardRequest.current === request) setErr(String(error));
-    }
-  }, [allRepos, scopeKey]);
-
   useEffect(() => {
     if (!active) return;
-    boardActive.current = true;
-    void load();
-    const timer = window.setInterval(load, 3000);
+    let alive = true;
+    let inFlight = false;
+    let refreshPending = false;
+    const fetchBoard = async (refresh = false) => {
+      if (inFlight) {
+        refreshPending ||= refresh;
+        return;
+      }
+      inFlight = true;
+      const request = Symbol();
+      boardRequests.set(scopeKey, request);
+      try {
+        const [nextColumns, nextTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
+        if (!alive) return;
+        if (boardRequests.get(scopeKey) === request) boardSnapshots.set(scopeKey, { tasks: nextTasks, columns: nextColumns });
+        setColumns((current) => (sameKanbanColumns(current, nextColumns) ? current : nextColumns));
+        setTasks((current) => (sameBoardTasks(current, nextTasks) ? current : nextTasks));
+        setErr("");
+      } catch (error) {
+        if (alive) setErr(String(error));
+      } finally {
+        inFlight = false;
+        if (alive) {
+          setLoaded(true);
+          if (refreshPending) {
+            refreshPending = false;
+            void fetchBoard();
+          }
+        }
+      }
+    };
+    load.current = () => void fetchBoard(true);
+    void fetchBoard();
+    const timer = window.setInterval(() => void fetchBoard(), 3000);
     return () => {
-      boardActive.current = false;
-      boardRequest.current = null;
+      alive = false;
+      load.current = () => {};
       window.clearInterval(timer);
     };
-  }, [active, load]);
+  }, [active, allRepos, scopeKey]);
 
   const libraryRefs = useMemo(() => {
     const refs = new Map<string, BoardTask>();
@@ -1036,14 +1048,14 @@ function ScopedGrid({
   }, [tasks, activity, showArchived, taskSteps]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || err) return;
     const ids = new Set(facts.map((fact) => fact.id));
     setManualOrder((current) => {
       const next = current.filter((id) => ids.has(id));
       for (const fact of facts) if (!next.includes(fact.id)) next.push(fact.id);
       return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
     });
-  }, [facts, loaded]);
+  }, [facts, loaded, err]);
 
   const movementSnapshots = useMemo(
     () =>
@@ -1146,9 +1158,9 @@ function ScopedGrid({
   );
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || err) return;
     setSelectedTaskKey((current) => (current && displayFacts.some((fact) => fact.id === current) ? current : (displayFacts[0]?.id ?? "")));
-  }, [displayFacts, loaded]);
+  }, [displayFacts, loaded, err]);
 
   useEffect(() => {
     if (!active) return;
@@ -1558,7 +1570,7 @@ function ScopedGrid({
       setErr(`${failure.msg} ${failure.detail}`);
       return;
     }
-    void load();
+    load.current();
   };
 
   return (

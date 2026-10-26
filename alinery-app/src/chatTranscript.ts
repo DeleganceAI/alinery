@@ -14,6 +14,13 @@ import type { ChatMessage, ChatPart } from "./types";
 
 export type { ChatCommand } from "./chat/types";
 
+function imageAttachments(content: ChatPart[]): UserRowAttachment[] {
+  return content.flatMap<UserRowAttachment>((part) => {
+    if (part.type !== "image") return [];
+    return [{ kind: "image", name: "image", mimeType: part.mimeType, ...(part.data ? { src: `data:${part.mimeType};base64,${part.data}` } : {}) }];
+  });
+}
+
 export type PendingUi = {
   id: string;
   method?: string;
@@ -493,15 +500,7 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("");
       const parsed = parseFileTrailers(joined);
-      const attachments: UserRowAttachment[] = [
-        ...message.content.flatMap((part) => {
-          if (part.type !== "image") return [];
-          const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-          if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-          return [chip];
-        }),
-        ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name })),
-      ];
+      const attachments: UserRowAttachment[] = [...imageAttachments(message.content), ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name }))];
       entries.push({
         id: alloc(),
         actor: ACTOR.you,
@@ -902,7 +901,7 @@ export function dismissPendingUi(state: ChatTranscriptState, id: string): ChatTr
   };
 }
 
-export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTranscriptState {
+export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconcileOptimisticEcho = true): ChatTranscriptState {
   const event = asRecord(value);
   if (!event || typeof event.type !== "string") return state;
 
@@ -1025,7 +1024,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         for (let i = state.entries.length - 1; i >= 0; i -= 1) {
           const entry = state.entries[i];
           // A not-sent row is not this echo's send: OMP never took it.
-          if ((entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed) {
+          if (reconcileOptimisticEcho && (entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed && !entry.id.startsWith("dispatch:")) {
             lastUserIndex = i;
             break;
           }
@@ -1043,12 +1042,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
                 parsedIncoming.caption === lastUserEntry.text ||
                 (incoming === "" && attachments.some((item) => item.kind === "image"))));
           if (sameOptimistic) {
-            const imageChips: UserRowAttachment[] = content.flatMap((part) => {
-              if (part.type !== "image") return [];
-              const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
-              if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
-              return [chip];
-            });
+            const imageChips = imageAttachments(content);
             const fileChips: UserRowAttachment[] =
               parsedIncoming.files.length > 0
                 ? parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))
@@ -1068,7 +1062,9 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTr
         if (parsed) {
           return appendEntry(next, { actor: ACTOR.you, type: "slash", name: parsed.name, args: parsed.args || undefined, at: Date.now() });
         }
-        return appendEntry(next, { actor: ACTOR.you, type: "prompt", text: incoming, at: Date.now() });
+        const parsedIncoming = parseFileTrailers(incoming);
+        const attachments: UserRowAttachment[] = [...imageAttachments(content), ...parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))];
+        return appendEntry(next, { actor: ACTOR.you, type: "prompt", text: parsedIncoming.caption, ...(attachments.length > 0 ? { attachments } : {}), at: Date.now() });
       }
       return state;
     }

@@ -1,8 +1,21 @@
 import { appendHarnessNotice, appendOptimisticUser, type ChatTranscriptState, type OptimisticKind } from "../chatTranscript";
+import type { DispatchOutcome } from "../types";
 import type { UserRowAttachment } from "./attachments";
 import { findCommand, parseSlash } from "./commands";
 import { routeSlash, type SlashDispatch } from "./slash";
 import type { ChatCommand } from "./types";
+export class DispatchFailure extends Error {
+  constructor(
+    readonly status: "not_sent" | "unknown",
+    readonly reason: string,
+  ) {
+    super(`${status === "not_sent" ? "Not sent" : "Delivery unknown — check the session before resending"}: ${reason}`);
+  }
+}
+
+export function requireWritten(outcome: DispatchOutcome): void {
+  if (outcome.status !== "written") throw new DispatchFailure(outcome.status, outcome.reason);
+}
 
 export type ChatSendDispatch = SlashDispatch | { kind: "plain"; message: string };
 

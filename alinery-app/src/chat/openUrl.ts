@@ -1,5 +1,6 @@
 import * as ipc from "../ipc";
 import { extensionUiConfirm } from "../ompRpc";
+import { requireWritten } from "./send";
 
 /** Extension URLs may only use HTTP(S); custom schemes can invoke other applications. */
 function browsableUrl(raw: string | undefined): string | null {
@@ -19,7 +20,7 @@ export async function settleOpenUrl(
   raw: string | undefined,
   reportError: (error: string) => void,
   // Task sessions answer over the session RPC; a chat thread passes its own writer.
-  write: (payload: object) => Promise<unknown> = (payload) => ipc.rpcWriteSession(sessionId, payload),
+  write: (payload: object) => Promise<unknown> = (payload) => ipc.rpcWriteSession(sessionId, payload).then(requireWritten),
 ): Promise<void> {
   const url = browsableUrl(raw);
   if (!url) reportError("Blocked that link: only http and https links can be opened.");

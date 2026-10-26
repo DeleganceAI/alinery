@@ -364,9 +364,9 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
 }
 
 #[tauri::command]
-pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, EnsureDaemonError> {
     // Killing each drawer shell waits on the daemon; a sync command would run that on the main thread.
-    // The whole switch moves together so reservation, config write, kill, commit stay in order.
+    // Connect before persisting selection or tearing down the previous drawer.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         set_active_repo_sync(app.clone(), state, path, drawer_session_ids)
@@ -375,12 +375,17 @@ pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session
     .map_err(|e| format!("set active repo task: {e}"))?
 }
 
-pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    path: String,
+    drawer_session_ids: Vec<String>,
+) -> Result<AppConfig, EnsureDaemonError> {
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let lifecycle = state.repo_lifecycle(&repo);
-    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
     if state.is_quitting() || state.is_closing(&repo) {
-        return Err("project is closing".into());
+        return Err(EnsureDaemonError::Failed("project is closing".into()));
     }
     let reservation = state.reserve_repo(&repo)?.ok_or_else(|| {
         let name = repo
@@ -394,6 +399,12 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
 
     ensure_repo_ready(&repo)?;
     let app_config = app_config_path(&app)?;
+    // Keep the reservation provisional: failed attachment must not add/select the
+    // repository, clear the old drawer, or retain a blocked GUI ownership claim.
+    let (client, compat, identity, warning) = ensure_daemon(&repo, &app_config)?;
+    if state.is_quitting() || state.is_closing(&repo) {
+        return Err(EnsureDaemonError::Failed("project is closing".into()));
+    }
     let previous_repo = active_repo().ok();
     let repo_s = repo.to_string_lossy().to_string();
     let mut cfg = load_app_config(&app);
@@ -413,7 +424,7 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
 
     reservation.commit(&state);
     set_active_repo_global(Some(repo.clone()))?;
-    attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
+    state.set_daemon(&repo, client, compat, identity, warning);
     ensure_mcp_server(&app, &repo, false);
     emit(
         &app,

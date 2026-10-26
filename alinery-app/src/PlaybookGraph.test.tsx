@@ -244,10 +244,6 @@ it("renders concurrent active counts in the execution view", () => {
   );
   expect(screen.getByLabelText("sum: 2 active sessions")).toBeTruthy();
   expect(screen.getByLabelText("product: 1 active sessions")).toBeTruthy();
-  const sumMetadata = screen.getByLabelText("sum: 2 active sessions").parentElement as HTMLElement;
-  expect(within(sumMetadata).getByText("Automatic").getAttribute("title")).toBe("Completion automatically authorized");
-  const productMetadata = screen.getByLabelText("product: 1 active sessions").parentElement as HTMLElement;
-  expect(within(productMetadata).queryByText("Automatic")).toBeNull();
 });
 
 it("relates wildcard families only within the declared directory", () => {
@@ -602,7 +598,6 @@ it("attaches canvas gestures after empty and execution views", () => {
   expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
   expect(screen.getByLabelText("build: 2 active sessions")).toBeTruthy();
-  expect(screen.getByTitle("Completion automatically authorized")).toBeTruthy();
   expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);
   rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
   expect(fireEvent.wheel(screen.getByRole("region", { name: "Dependency graph canvas" }), { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);

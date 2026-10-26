@@ -201,6 +201,24 @@ fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) ->
 }
 
 #[test]
+fn repository_live_count_reports_unavailable_instead_of_zero() {
+    let repo = activity_repo("live-count-error");
+    let socket = current_alineryd_socket_path(&repo);
+    let (_, server) = recording_lane_with_response(socket.clone(), |op| {
+        if op == "shutdown" {
+            serde_json::json!({"ok": true}).to_string()
+        } else {
+            serde_json::json!({"error": "session observation unavailable"}).to_string()
+        }
+    });
+    let result = tauri::async_runtime::block_on(crate::repo_live_sessions(repo.display().to_string()));
+    DaemonClient::connect_path_checked(socket).unwrap().call(&crate::daemon_client::shutdown_request()).unwrap();
+    server.join().unwrap();
+    fs::remove_dir_all(repo).unwrap();
+    assert!(result.is_err(), "failed observation must not report zero live sessions");
+}
+
+#[test]
 fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let repo = activity_repo("app-lifecycle-lane");
     let production_path = alinery_core::alineryd_socket_path(&repo, None);
@@ -210,7 +228,7 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let (production_requests, production) = recording_lane(production_path.clone(), 7);
     let (current_requests, current) = recording_lane(current_path.clone(), 2);
 
-    let live_sessions = crate::repo_live_sessions(repo.display().to_string());
+    let live_sessions = tauri::async_runtime::block_on(crate::repo_live_sessions(repo.display().to_string())).unwrap();
     let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
     assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
     let state = AppState::default();
@@ -1152,6 +1170,8 @@ fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
     assert_eq!(payload["state"], serde_json::to_value(&saved.state).unwrap());
     assert_eq!(payload["definition"], serde_json::to_value(&saved.definition).unwrap());
     assert!(payload["live"]["detail"].is_string());
+    assert_eq!(payload["continuation"], serde_json::json!({}), "saved progress must never authorize continuation");
+    assert_ne!(payload["assessment"]["status"], "complete", "an unexited owner is not settled");
     assert!(crate::task_daemon_for(&repo, "task", &config).is_err());
     assert!(require_repo_owned(&guest, &repo).is_err());
     assert!(!guest.owns_repo(&repo));
@@ -1172,6 +1192,25 @@ fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
         let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
         let mut live = saved.clone();
         live.state.revision += 10;
+        let seed = alinery_core::execution::install_seed(&mut live.state, "ticket.md", "0-ticket-1.md").unwrap();
+        let candidate = alinery_core::execution::ExecutionCandidate {
+            step_key: "implementation".into(),
+            context_id: "root".into(),
+            inputs: std::collections::BTreeMap::from([("ticket.md".into(), vec![seed])]),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: false,
+        };
+        let execution_id = alinery_core::execution::reserve_execution(&repo, "task", &live.definition, &mut live.state, candidate, &Default::default(), None, false).unwrap();
+        live.continuation.insert(
+            execution_id,
+            alinery_core::ContinuationCapability {
+                process_incarnation: "live-incarnation".into(),
+                available: true,
+                reason: None,
+            },
+        );
         let expected_live = serde_json::to_value(&live).unwrap();
         let identity = alinery_core::app_config_identity(&config);
         let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
@@ -1196,6 +1235,9 @@ fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
         let expected = if status == "available" { expected_live } else { serde_json::to_value(&saved).unwrap() };
         assert_eq!(payload["state"], expected["state"]);
         assert_eq!(payload["definition"], expected["definition"]);
+        assert_eq!(payload["assessment"], expected["assessment"]);
+        assert_eq!(payload["executions"], expected["executions"]);
+        assert_eq!(payload["continuation"], expected["continuation"]);
         let mut expected_requests = vec!["version"];
         if matches!(status, "available" | "query_failure") {
             expected_requests.push("get_task_execution");

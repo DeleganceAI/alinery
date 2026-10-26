@@ -423,6 +423,7 @@ fn exec_replace(executable: &str, argv: &[String]) -> Result<(), String> {
 enum DaemonEventAck {
     Passive,
     Completion(CompletionOutcome),
+    Control(alinery_core::ContinuationControl),
     SessionName(alinery_core::SessionNameOutcome),
     Rejected { reason: String },
 }
@@ -431,6 +432,8 @@ enum DaemonEventAck {
 enum ExpectedResult {
     Passive,
     Completion,
+    Control,
+    ReplayableControl,
     SessionName,
 }
 
@@ -450,6 +453,7 @@ fn cmd_emit(report_result: bool) -> i32 {
 fn emit_report(result: Result<DaemonEventAck, ()>) -> (Value, i32) {
     match result {
         Ok(DaemonEventAck::Completion(outcome)) => (serde_json::to_value(outcome).expect("completion outcome is serializable"), 0),
+        Ok(DaemonEventAck::Control(control)) => (serde_json::to_value(control).expect("continuation control is serializable"), 0),
         Ok(DaemonEventAck::SessionName(outcome)) => (serde_json::to_value(outcome).expect("session name outcome is serializable"), 0),
         Ok(DaemonEventAck::Passive) => (serde_json::json!({"status": "delivery_failed"}), 3),
         Ok(DaemonEventAck::Rejected { reason }) => (serde_json::json!({"status": "rejected", "reason": reason}), 2),
@@ -479,7 +483,15 @@ fn try_emit() -> Result<DaemonEventAck, ()> {
     }
     validate_event(&event)?;
     let expected = match &event {
-        RunnerEvent::PhaseCompleted { .. } => ExpectedResult::Completion,
+        RunnerEvent::ReadinessReported { .. } | RunnerEvent::ContinuationFinalize { .. } => ExpectedResult::Completion,
+        RunnerEvent::ContinuationPoll { process_incarnation: Some(_) } | RunnerEvent::ContinuationRevoke { .. } => ExpectedResult::ReplayableControl,
+        RunnerEvent::ContinuationBind { .. }
+        | RunnerEvent::ContinuationPoll { process_incarnation: None }
+        | RunnerEvent::NativeWorkEntered { .. }
+        | RunnerEvent::NativeWorkSettled { .. }
+        | RunnerEvent::NativeDispatchConsumed { .. }
+        | RunnerEvent::NativeDispatchTransferred { .. }
+        | RunnerEvent::NativeDispatchRejected { .. } => ExpectedResult::Control,
         RunnerEvent::SessionNameSuggested { .. } => ExpectedResult::SessionName,
         _ => ExpectedResult::Passive,
     };
@@ -521,8 +533,36 @@ fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, ()> {
 /// Validate that the event is a well-formed typed vocabulary member.
 fn validate_event(event: &RunnerEvent) -> Result<(), ()> {
     match event {
-        RunnerEvent::Busy { .. } | RunnerEvent::Idle { .. } | RunnerEvent::PhaseCompleted { .. } | RunnerEvent::AdapterError { .. } | RunnerEvent::SessionNameSuggested { .. } => {
-            Ok(())
+        RunnerEvent::Busy { .. }
+        | RunnerEvent::Idle { .. }
+        | RunnerEvent::AdapterError { .. }
+        | RunnerEvent::SessionNameSuggested { .. }
+        | RunnerEvent::ContinuationPoll { .. }
+        | RunnerEvent::NativeWorkEntered { .. }
+        | RunnerEvent::NativeWorkSettled { .. }
+        | RunnerEvent::NativeDispatchConsumed { .. }
+        | RunnerEvent::NativeDispatchTransferred { .. }
+        | RunnerEvent::NativeDispatchRejected { .. } => Ok(()),
+        RunnerEvent::ContinuationBind { expected_capability_revision, .. } | RunnerEvent::ContinuationRevoke { expected_capability_revision, .. } => {
+            if *expected_capability_revision <= 9_007_199_254_740_991 {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+        RunnerEvent::ReadinessReported { expected_work_revision, .. } => {
+            if *expected_work_revision <= 9_007_199_254_740_991 {
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+        RunnerEvent::ContinuationFinalize { ready_revision, .. } => {
+            if *ready_revision <= 9_007_199_254_740_991 {
+                Ok(())
+            } else {
+                Err(())
+            }
         }
         RunnerEvent::WaitingForInput { correlation_id, .. } | RunnerEvent::WaitingForApproval { correlation_id, .. } => {
             if correlation_id.trim().is_empty() {
@@ -619,7 +659,7 @@ fn send_event_to_daemon(socket_path: &str, request: &[u8], expected: ExpectedRes
     let ack: Value = serde_json::from_slice(&ack_buf).map_err(|_| ())?;
     if let Some(error) = ack.get("error") {
         let reason = error.as_str().ok_or(())?;
-        if !reason.is_empty() && ack.get("ok").is_none() && ack.get("completion").is_none() && ack.get("session_name").is_none() {
+        if !reason.is_empty() && ack.get("ok").is_none() && ack.get("completion").is_none() && ack.get("session_name").is_none() && ack.get("control").is_none() {
             return Ok(DaemonEventAck::Rejected { reason: reason.to_string() });
         }
         return Err(());
@@ -627,10 +667,36 @@ fn send_event_to_daemon(socket_path: &str, request: &[u8], expected: ExpectedRes
     if ack.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(());
     }
+    if let Some(control) = ack.get("control") {
+        if !matches!(expected, ExpectedResult::Control | ExpectedResult::ReplayableControl) || ack.get("completion").is_some() || ack.get("session_name").is_some() {
+            return Err(());
+        }
+        let control: alinery_core::ContinuationControl = serde_json::from_value(control.clone()).map_err(|_| ())?;
+        if control.process_incarnation.is_empty()
+            || control.capability_revision > 9_007_199_254_740_991
+            || control.work_revision > 9_007_199_254_740_991
+            || control.continuation_requested_revision.is_some_and(|revision| revision > 9_007_199_254_740_991)
+        {
+            return Err(());
+        }
+        return Ok(DaemonEventAck::Control(control));
+    }
     match (expected, ack.get("completion"), ack.get("session_name")) {
-        (ExpectedResult::Completion, Some(value), None) => {
+        (ExpectedResult::Completion | ExpectedResult::ReplayableControl, Some(value), None) => {
+            if value.as_object().is_none_or(|object| object.len() != 2) {
+                return Err(());
+            }
             let outcome: CompletionOutcome = serde_json::from_value(value.clone()).map_err(|_| ())?;
-            if matches!(&outcome, CompletionOutcome::Accepted { receipt_id } if receipt_id.is_empty()) {
+            if matches!(expected, ExpectedResult::ReplayableControl) && !matches!(outcome, CompletionOutcome::Accepted { .. }) {
+                return Err(());
+            }
+            let valid = match &outcome {
+                CompletionOutcome::Accepted { receipt_id } => !receipt_id.trim().is_empty(),
+                CompletionOutcome::Ready { ready_revision } | CompletionOutcome::Requested { ready_revision } => *ready_revision <= 9_007_199_254_740_991,
+                CompletionOutcome::Waiting { reason } | CompletionOutcome::Stale { reason } | CompletionOutcome::Unavailable { reason } => !reason.trim().is_empty(),
+                CompletionOutcome::InvalidOutputs { .. } => true,
+            };
+            if !valid {
                 return Err(());
             }
             Ok(DaemonEventAck::Completion(outcome))
@@ -1020,9 +1086,9 @@ mod tests {
             omp_turn_id: None,
         })
         .is_ok());
-        assert!(validate_event(&RunnerEvent::PhaseCompleted {
-            omp_session_id: "sess".into(),
-            omp_turn_id: None,
+        assert!(validate_event(&RunnerEvent::ReadinessReported {
+            process_incarnation: "incarnation".into(),
+            expected_work_revision: 7,
         })
         .is_ok());
         assert!(validate_event(&RunnerEvent::AdapterError { detail: "oops".into() }).is_ok());

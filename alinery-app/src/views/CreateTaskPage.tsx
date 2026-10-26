@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
-import { PlaybookGraph } from "../PlaybookGraph";
+import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
@@ -67,10 +67,9 @@ const slugifyTaskName = (value: string) => {
 
 export type StepModelSource = "playbook-step" | "playbook-default" | "task-default" | "product-default" | "override";
 
-const STEP_MODEL_CAPTION: Record<StepModelSource, string> = {
+const STEP_MODEL_CAPTION: Record<Exclude<StepModelSource, "task-default">, string> = {
   "playbook-step": "Playbook step",
   "playbook-default": "Playbook default",
-  "task-default": "Task default",
   "product-default": "Product default",
   override: "Override",
 };
@@ -1215,12 +1214,18 @@ export function CreateTaskPage({
           </label>
           {!!selectedSource?.definition.step.length && (
             <div className="create-field">
-              <span>Automatic completion permission for future executions</span>
+              <span>Step settings</span>
               <div className="step-model-list">
                 <div className="step-model-head">
-                  <span className="step-model-title">Step model</span>
+                  <span>Step</span>
+                  <span>After each step</span>
+                  <span>Step model / source</span>
                 </div>
                 {selectedSource.definition.step.map((step) => {
+                  const hasDestination = selectedSource.definition.step.some((consumer) =>
+                    step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
+                  );
+                  const automatic = autoAdvance.includes(step.key);
                   const display = stepModelDisplay({
                     stepModel: step.model,
                     playbookDefaultModel: selectedSource.definition.default_model,
@@ -1230,25 +1235,48 @@ export function CreateTaskPage({
                   });
                   return (
                     <div key={step.key} className="step-model-row">
-                      <Checkbox
-                        checked={autoAdvance.includes(step.key)}
-                        onChange={(checked) => {
-                          dirtyRef.current = true;
-                          setAutoAdvance((cur) => (checked ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                        }}
-                        label={step.title}
-                      />
-                      <ModelInput
-                        harness="omp"
-                        repoPath={repoPath}
-                        prefillRemembered={false}
-                        placeholder="Inherits"
-                        ariaLabel={`${step.title} model`}
-                        value={display.value}
-                        onChange={(value) => onStepModelChange(step.key, value)}
-                        onOpenPicker={() => setPicking(step.key)}
-                      />
-                      <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{display.source ? STEP_MODEL_CAPTION[display.source] : ""}</span>
+                      <span className="create-continuation-label">{step.title}</span>
+                      <div className="step-continuation-control" data-label="After each step">
+                        {hasDestination ? (
+                          <div className="create-continuation-choices" role="group" aria-label={step.title}>
+                            {[true, false].map((value) => (
+                              <button
+                                key={String(value)}
+                                type="button"
+                                aria-pressed={automatic === value}
+                                disabled={creating || clearing || creatingRef.current}
+                                onClick={() => {
+                                  if (automatic === value) return;
+                                  dirtyRef.current = true;
+                                  setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                                }}
+                              >
+                                <span className="create-continuation-check" aria-hidden="true">
+                                  {automatic === value ? "✓" : ""}
+                                </span>
+                                {value ? "Continue automatically" : "Wait for me"}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="create-continuation-complete">Playbook complete</span>
+                        )}
+                      </div>
+                      <div className="step-model-control" data-label="Step model / source">
+                        <ModelInput
+                          harness="omp"
+                          repoPath={repoPath}
+                          prefillRemembered={false}
+                          placeholder="Inherits"
+                          ariaLabel={`${step.title} model`}
+                          value={display.value}
+                          onChange={(value) => onStepModelChange(step.key, value)}
+                          onOpenPicker={() => setPicking(step.key)}
+                        />
+                        {display.source && display.source !== "task-default" && (
+                          <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{STEP_MODEL_CAPTION[display.source]}</span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

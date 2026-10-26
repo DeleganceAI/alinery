@@ -95,8 +95,8 @@ fn set_active_repo_rejects_a_deleted_git_dir_without_creating_alinery() {
         Ok(_) => panic!("deleted .git must not open"),
         Err(err) => err,
     };
-    assert!(err.contains("Couldn't open"), "{err}");
-    assert!(err.contains("not a git repository"), "{err}");
+    assert!(err.to_string().contains("Couldn't open"), "{err}");
+    assert!(err.to_string().contains("not a git repository"), "{err}");
     assert!(!repo.join(".alinery").exists());
     drop(app);
     let _ = fs::remove_dir_all(repo);
@@ -289,7 +289,7 @@ fn set_active_repo_kills_every_drawer_id_only_when_the_repo_changes() {
         fixture.destination.display().to_string(),
         vec!["s-a".into(), "s-b".into()],
     );
-    assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
+    result.unwrap();
     assert_eq!(kills_of(&fixture.prev_requests), vec!["s-a".to_string(), "s-b".to_string()]);
     assert!(kills_of(&fixture.dest_requests).is_empty(), "destination socket received a kill");
     let routes = state.session_routes.lock().unwrap_or_else(|error| error.into_inner());
@@ -305,7 +305,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_the_repo_stays() {
     let again = alinery_core::require_working_tree(Path::new(&fixture.previous.display().to_string())).unwrap();
     assert_eq!(again, fixture.previous);
     let result = crate::set_active_repo_sync(fixture.app.handle().clone(), fixture.app.state(), again.display().to_string(), vec!["s-a".into()]);
-    assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
+    result.unwrap();
     assert!(kills_of(&fixture.prev_requests).is_empty(), "same-repo switch must not kill");
 }
 
@@ -315,7 +315,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_the_list_is_empty() {
     let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let fixture = drawer_switch("drawer-empty", false);
     let result = crate::set_active_repo_sync(fixture.app.handle().clone(), fixture.app.state(), fixture.destination.display().to_string(), Vec::new());
-    assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
+    result.unwrap();
     assert!(kills_of(&fixture.prev_requests).is_empty());
     assert!(kills_of(&fixture.dest_requests).is_empty());
 }
@@ -333,9 +333,58 @@ fn set_active_repo_clears_drawer_routes_when_kill_fails() {
         fixture.destination.display().to_string(),
         vec!["s-a".into()],
     );
-    assert!(result.is_ok(), "{}", result.err().unwrap_or_default());
+    result.unwrap();
     assert_eq!(kills_of(&fixture.prev_requests), vec!["s-a".to_string()]);
     assert!(!state.session_routes.lock().unwrap_or_else(|error| error.into_inner()).contains_key("s-a"));
+}
+
+#[test]
+fn set_active_repo_rejects_unusable_daemon_without_changing_selection_or_sessions() {
+    use tauri::Manager;
+    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut fixture = drawer_switch("open-conflict", false);
+    let state = fixture.app.state::<AppState>();
+    let config = AppConfig {
+        active_repo: fixture.previous.display().to_string(),
+        known_repos: vec![fixture.previous.display().to_string()],
+        ..Default::default()
+    };
+    crate::write_app_config(fixture.app.handle(), &config).unwrap();
+    let config_path = crate::app_config_path(fixture.app.handle()).unwrap();
+    let saved_config = fs::read(&config_path).unwrap();
+    seed_routes(&state, &["drawer"]);
+    fixture.dest_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.dest_thread.take().unwrap().join().unwrap();
+    let (requests, stop, thread) = serve_daemon(current_alineryd_socket_path(&fixture.destination), "other-config".into(), false);
+    fixture.dest_requests = requests;
+    fixture.dest_stop = stop;
+    fixture.dest_thread = Some(thread);
+
+    let result = crate::set_active_repo_sync(
+        fixture.app.handle().clone(),
+        fixture.app.state(),
+        fixture.destination.display().to_string(),
+        vec!["drawer".into()],
+    );
+    assert!(result.is_err(), "an unusable daemon must reject opening the repository");
+    let crate::EnsureDaemonError::Mismatch(conflict) = result.err().unwrap() else {
+        panic!("ownership failure must include structured diagnostics");
+    };
+    assert_eq!(conflict.repo, fixture.destination.display().to_string());
+    assert!(conflict.owners.iter().any(|owner| owner.app_config_identity.as_deref() == Some("other-config")));
+    assert_eq!(fs::read(&config_path).unwrap(), saved_config);
+    assert_eq!(crate::active_repo().unwrap(), fixture.previous);
+    assert!(state.owns_repo(&fixture.previous));
+    assert!(!state.owns_repo(&fixture.destination));
+    assert!(state.repo_daemon(&fixture.destination).is_none());
+    assert!(state.session_routes.lock().unwrap_or_else(|error| error.into_inner()).contains_key("drawer"));
+    assert!(kills_of(&fixture.prev_requests).is_empty());
+    assert!(fixture
+        .dest_requests
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .all(|request| request.op != "shutdown" && request.op != "kill"));
 }
 
 #[test]
@@ -378,7 +427,7 @@ fn set_active_repo_does_not_kill_drawer_ids_when_reservation_fails() {
         Ok(_) => panic!("a held destination lock must reject the switch"),
         Err(err) => err,
     };
-    assert!(err.contains("open in another Alinery window"), "{err}");
+    assert!(err.to_string().contains("open in another Alinery window"), "{err}");
     assert!(kills_of(&prev_requests).is_empty(), "reservation failure must not kill");
     let _ = holder.kill();
     let _ = holder.wait();

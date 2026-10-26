@@ -13,6 +13,7 @@ import { ChatView, repoLabel } from "./ChatView";
 
 vi.mock("../confirm", () => ({
   confirmDanger: vi.fn(async () => true),
+  confirmStopAndSwitch: vi.fn(async () => true),
   askConfirm: vi.fn(async () => "cancel"),
 }));
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
+  chatPtyWrite: vi.fn(),
   chatRestate: vi.fn(),
   readChatOmp: vi.fn(),
   openUrl: vi.fn(),
@@ -59,6 +61,7 @@ vi.mock("../ipc", () =>
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatRpcWrite: mocks.chatRpcWrite,
+    chatPtyWrite: mocks.chatPtyWrite,
     chatRestate: mocks.chatRestate,
     readChatOmp: mocks.readChatOmp,
     openUrl: mocks.openUrl,
@@ -132,7 +135,8 @@ beforeEach(() => {
   mocks.chatRpcAttach.mockResolvedValue(undefined);
   mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
-  mocks.chatRpcWrite.mockResolvedValue(undefined);
+  mocks.chatRpcWrite.mockResolvedValue({ status: "written" });
+  mocks.chatPtyWrite.mockResolvedValue({ status: "written" });
   mocks.chatRestate.mockResolvedValue(undefined);
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   mocks.openUrl.mockResolvedValue(undefined);
@@ -521,6 +525,28 @@ describe("ChatView", () => {
       expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("see");
     });
 
+    it("preserves newer input and attachments while recovering a refused copied file", async () => {
+      const { emit } = await openLive(observed("idle", "alive", "rpc"));
+      await attachNotes();
+      sendIdle("original caption");
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Remove notes.pdf" })).toBeNull());
+      const sent = mocks.chatRpcWrite.mock.calls.map((call) => call[2] as { id: string; message?: string }).find((payload) => payload.message?.includes("notes.pdf"));
+      mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/new.pdf"]);
+      fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+      await screen.findByRole("button", { name: "Remove new.pdf" });
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "new caption" } });
+      emit({ type: "response", id: sent?.id, command: "prompt", success: false, error: "model busy" });
+      await screen.findByRole("button", { name: "Remove notes.pdf" });
+      expect(screen.getByRole("button", { name: "Remove new.pdf" })).toBeTruthy();
+      expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("new caption");
+      fireEvent.click(screen.getByRole("button", { name: "Remove new.pdf" }));
+      mocks.chatFileStat.mockRejectedValue(new Error("source disappeared"));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() =>
+        expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: `new caption\n\nAttached file: ${dir}/notes.pdf` })),
+      );
+    });
+
     it("copies onto the successor when a resumed thread sends", async () => {
       mocks.listChatThreads.mockResolvedValueOnce([thread("s-old")]).mockResolvedValue([live("s-next")]);
       mocks.resumeChatThread.mockResolvedValue(meta("s-next", liveMeta));
@@ -566,8 +592,8 @@ describe("ChatView", () => {
       let ack = () => {};
       mocks.chatRpcWrite.mockImplementationOnce(
         () =>
-          new Promise<void>((resolve) => {
-            ack = resolve;
+          new Promise<{ status: "written" }>((resolve) => {
+            ack = () => resolve({ status: "written" });
           }),
       );
       return () => act(async () => ack());
@@ -887,6 +913,40 @@ describe("ChatView", () => {
     expect(screen.getByLabelText("Message or /command")).toBeTruthy();
   });
 
+  it("keeps original input recoverable when a failed write races a newer draft", async () => {
+    await openLive(observed("idle"));
+    let rejectWrite!: (reason: Error) => void;
+    const promise = new Promise<never>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    mocks.chatRpcWrite.mockReturnValueOnce(promise);
+    sendIdle("original input");
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8));
+    fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "new input" } });
+    await act(async () => rejectWrite(new Error("write disconnected")));
+    expect(await screen.findByText(/Original input:\s*original input/)).toBeTruthy();
+    expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("new input");
+  });
+
+  it("retains the exact draft when RPC delivery is unknown without retrying", async () => {
+    await openLive(observed("idle"));
+    mocks.chatRpcWrite.mockResolvedValueOnce({ status: "unknown", reason: "Lost write acknowledgement" });
+    sendIdle("  keep my original  ");
+    expect(await screen.findByText(/unknown.*Lost write acknowledgement/i)).toBeTruthy();
+    expect((screen.getByLabelText("Message or /command") as HTMLTextAreaElement).value).toBe("  keep my original  ");
+    expect(mocks.chatRpcWrite).toHaveBeenCalledTimes(8);
+  });
+
+  it("keeps the terminal attached when interrupt delivery is unknown", async () => {
+    await openLive(observed("busy", "alive", "pty"));
+    mocks.chatPtyWrite.mockResolvedValueOnce({ status: "unknown", reason: "Partial interrupt write" });
+    fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+    expect(await screen.findByText(/unknown.*Partial interrupt write/i)).toBeTruthy();
+    expect(mocks.chatRestate).not.toHaveBeenCalled();
+    expect(mocks.chatPtyWrite).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("terminal")).toBeTruthy();
+  });
+
   describe("the thinking level in the title bar", () => {
     const reasoningState = {
       type: "response",
@@ -1101,10 +1161,12 @@ describe("ChatView", () => {
   it("sends one answer for a double click while the first is in flight", async () => {
     const { emit } = await openLive(observed("idle"));
     let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
+    const gate = new Promise<{ status: "written" }>((resolve) => {
+      release = () => resolve({ status: "written" });
     });
-    mocks.chatRpcWrite.mockImplementation((_repo: string, _id: string, payload: { type?: string }) => (payload.type === "extension_ui_response" ? gate : Promise.resolve()));
+    mocks.chatRpcWrite.mockImplementation((_repo: string, _id: string, payload: { type?: string }) =>
+      payload.type === "extension_ui_response" ? gate : Promise.resolve({ status: "written" }),
+    );
     emit(uiConfirm);
     const allow = await screen.findByRole("button", { name: "Allow" });
     fireEvent.click(allow);
@@ -1126,6 +1188,19 @@ describe("ChatView", () => {
     await waitFor(() => expect(uiResponses()).toHaveLength(2));
     expect(uiResponses()[1]).toEqual({ type: "extension_ui_response", id: "ui-confirm-1", confirmed: true });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+  });
+
+  it("keeps a typed refused approval actionable without dismissing or replaying it", async () => {
+    const { emit } = await openLive(observed("idle"));
+    emit(uiConfirm);
+    mocks.chatRpcWrite.mockResolvedValueOnce({ status: "not_sent", reason: "Continuation requested" });
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(await screen.findByText(/Not sent.*Continuation requested/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();
+    expect(uiResponses()).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+    expect(uiResponses()[1]).toEqual({ type: "extension_ui_response", id: "ui-confirm-1", confirmed: false });
   });
 
   it("opens an approved link in the browser before confirming it", async () => {

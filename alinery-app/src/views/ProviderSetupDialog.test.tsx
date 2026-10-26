@@ -62,7 +62,7 @@ function renderModelsPicker(lines: string[], unsignedOpensAccounts = false) {
   mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
   mocks.readOmpModelRoles.mockResolvedValue({});
   mocks.hostedCatalog.mockResolvedValue(unsettledHosted);
-  mocks.rpcWriteSession.mockResolvedValue(undefined);
+  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
   mocks.detachSession.mockResolvedValue(undefined);
   mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
     await Promise.resolve();
@@ -84,7 +84,7 @@ function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedRead
     upsell: hostedReady ? null : "sign-in",
     source: hostedReady ? "live" : "empty",
   });
-  mocks.rpcWriteSession.mockResolvedValue(undefined);
+  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
   mocks.detachSession.mockResolvedValue(undefined);
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
@@ -156,6 +156,21 @@ describe("ProviderSetupDialog", () => {
 
     await waitFor(() => expect(uiResponses("failed-url")).toEqual([{ type: "extension_ui_response", id: "failed-url", confirmed: false }]));
     expect(screen.getByText(/browser could not open/)).toBeTruthy();
+  });
+
+  it("retains a refused login code and permits an explicit retry", async () => {
+    await startLogin();
+    await emit({ type: "extension_ui_request", id: "refused-code", method: "input", title: "Paste your login code" });
+    const field = await screen.findByRole("textbox", { name: "Paste your login code" });
+    fireEvent.change(field, { target: { value: "keep-code" } });
+    mocks.rpcWriteSession.mockResolvedValueOnce({ status: "not_sent", reason: "Session unavailable" });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText(/Not sent.*Session unavailable/)).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Paste your login code" }) as HTMLInputElement).value).toBe("keep-code");
+    expect(uiResponses("refused-code")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Paste your login code" })).toBeNull());
+    expect(uiResponses("refused-code")).toHaveLength(2);
   });
 
   it("lets the user submit a login code inside the provider dialog", async () => {
@@ -241,7 +256,7 @@ describe("ProviderSetupDialog", () => {
   it("shows Connecting… in manual mode before providers arrive", async () => {
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockImplementation(async () => undefined);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
@@ -254,7 +269,7 @@ describe("ProviderSetupDialog", () => {
     vi.useFakeTimers();
     mocks.ompSetupSession.mockRejectedValueOnce(new Error("daemon not connected")).mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
       await Promise.resolve();
@@ -303,7 +318,7 @@ describe("ProviderSetupDialog", () => {
     vi.useFakeTimers();
     mocks.ompSetupSession.mockResolvedValueOnce("__omp-setup-1__").mockResolvedValueOnce("__omp-setup-2__");
     mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockRejectedValueOnce(new Error("daemon not connected")).mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
       await Promise.resolve();
@@ -328,7 +343,7 @@ describe("ProviderSetupDialog", () => {
     const extras = { unsignedOpensAccounts: true };
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
       await Promise.resolve();
@@ -341,7 +356,7 @@ describe("ProviderSetupDialog", () => {
   it("stays on Models without unsignedOpensAccounts", async () => {
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
       await Promise.resolve();
@@ -409,7 +424,7 @@ describe("ProviderSetupDialog", () => {
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
     mocks.hostedCatalog.mockReturnValue(hostedPromise);
-    mocks.rpcWriteSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
     mocks.detachSession.mockResolvedValue(undefined);
     mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
       await Promise.resolve();

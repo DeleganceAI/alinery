@@ -1,0 +1,208 @@
+.session-lineage {
+  flex-shrink: 0;
+  min-width: 0;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.session-lineage-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+}
+
+.session-lineage-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-lineage-details > summary::before,
+.session-lineage-details > summary::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.session-lineage-details > summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-lineage-details[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+.session-lineage-details > summary:hover {
+  color: var(--text);
+}
+
+.session-lineage-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow: auto;
+  max-height: 180px;
+  padding: 2px 16px 12px;
+}
+
+.session-lineage-column {
+  display: flex;
+  flex: 1 0 150px;
+  flex-direction: column;
+  align-self: stretch;
+  gap: 5px;
+  min-width: 0;
+}
+
+.session-lineage-column h3 {
+  margin: 0 0 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.session-lineage-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+
+button.session-lineage-node {
+  cursor: pointer;
+}
+
+button.session-lineage-node:disabled {
+  cursor: default;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+button.session-lineage-node:hover:not(:disabled),
+.session-lineage-current {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.session-lineage-node strong,
+.session-lineage-node span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-lineage-node small,
+.session-lineage-empty {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-lineage-working {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-lineage-newest {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 9px;
+}
+
+.session-lineage-empty {
+  padding: 8px 0;
+}
+
+.session-lineage-artifact {
+  flex-direction: row;
+  align-items: center;
+  color: var(--accent);
+}
+
+.session-lineage-arrow,
+.session-lineage-artifact svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.session-lineage-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 0 16px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-lineage-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.session-lineage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-lineage-step,
+.session-lineage-attempts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.session-lineage-attempts > summary {
+  padding: 5px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.session-lineage-attempts > .session-lineage-node {
+  margin-top: 5px;
+}
+
+.session-lineage-current {
+  position: relative;
+}
+.session-lineage-current:has(.session-lineage-actions) > strong {
+  padding-right: 30px;
+}
+.session-lineage-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+}

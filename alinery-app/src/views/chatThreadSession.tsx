@@ -2,10 +2,11 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useL
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
 import { formatContextUsage } from "../chat/format";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
-import { applySendPlan, commandOutputText, planChatSend } from "../chat/send";
+import { applySendPlan, commandOutputText, planChatSend, requireWritten } from "../chat/send";
 import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import {
+  appendHarnessNotice,
   appendOptimisticAbort,
   appendOptimisticUser,
   type ChatTranscriptState,
@@ -522,9 +523,12 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
   // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
   // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback((id: string, allow: boolean) => {
-    entry?.api.approve(id, allow);
-  }, [entry]);
+  const approve = useCallback(
+    (id: string, allow: boolean) => {
+      entry?.api.approve(id, allow);
+    },
+    [entry],
+  );
   return {
     ...snap,
     error,
@@ -592,7 +596,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const id = thread.session.id;
   const key = entry.key;
   const [epoch, setEpoch] = useState(0);
-  const [transcript, setTranscript] = useState<ChatTranscriptState>(NO_TRANSCRIPT);
+  const [transcript, setTranscript] = useState<ChatTranscriptState>(entry.snapshot.transcript);
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
   const [observation, setObservation] = useState<SessionObservation | null>(null);
@@ -620,9 +624,16 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     };
   }, [entry]);
 
-  const updateTranscript = useCallback((update: (current: ChatTranscriptState) => ChatTranscriptState) => {
-    setTranscript(update);
-  }, []);
+  const updateTranscript = useCallback(
+    (update: (current: ChatTranscriptState) => ChatTranscriptState) => {
+      const next = update(transcriptRef.current);
+      transcriptRef.current = next;
+      entry.snapshot = { ...entry.snapshot, transcript: next };
+      setTranscript(next);
+      registry.touch(entry);
+    },
+    [entry, registry],
+  );
 
   // The thread object is read at the start of the run. A later list refresh must not restart the attach.
   // biome-ignore lint/correctness/useExhaustiveDependencies: epoch, repo, and id are the attach identity.
@@ -716,13 +727,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
                   awaiting.refused = true;
                   entry.verdicts.delete(commandId);
                   const draft = entry.draft;
-                  const blank = draft.trim() === "" && entry.attachments.length === 0;
-                  const restore = blank || (draft !== "" && draft === awaiting.text);
-                  if (restore) {
-                    entry.draft = awaiting.text;
-                    entry.attachments = awaiting.attachments;
-                    registry.touch(entry);
-                  }
+                  const restore = draft.trim() === "" || draft === awaiting.text;
+                  if (restore) entry.draft = awaiting.text;
+                  restoreAttachments(awaiting.attachments);
                   updateTranscript((current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
                   registry.setError(`Not sent: ${refused}`);
                   break;
@@ -742,7 +749,11 @@ function ChatThreadController({ entry }: { entry: Entry }) {
                 }
               }
               const refresh = queueRefreshCommand(value);
-              if (refresh) ipc.chatRpcWrite(repo, id, refresh).catch(() => {});
+              if (refresh)
+                ipc
+                  .chatRpcWrite(repo, id, refresh)
+                  .then(requireWritten)
+                  .catch((cause: unknown) => registry.setError(errorMessage(cause)));
             },
           });
           if (cancelled) {
@@ -750,7 +761,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
             return;
           }
           for (const command of attachHandshake(autoCompactionRef.current)) {
-            await ipc.chatRpcWrite(repo, id, command);
+            requireWritten(await ipc.chatRpcWrite(repo, id, command));
           }
         } catch (cause) {
           if (cancelled) return;
@@ -764,13 +775,14 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         setConnection({ state: "ready" });
         if (!claimed) return;
         try {
-          const prepared = claimed.attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), claimed.text, claimed.attachments) : null;
-          const row = prepared ? draftToRowAttachments(claimed.attachments) : undefined;
+          const prepared = claimed.attachments.length > 0 ? await prepareAttachments(claimed.text, claimed.attachments) : null;
+          if (cancelled) return;
+          const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
           await writeSend(
             claimed.text,
             sendCommand(prepared?.message ?? claimed.text, false, prepared?.images),
             (current) => applyPlainSend(current, claimed.text, false, row),
-            claimed.attachments,
+            prepared?.copied ?? claimed.attachments,
           );
         } catch (cause) {
           if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
@@ -781,11 +793,32 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       });
     return () => {
       cancelled = true;
+      if (claimed && registry.pendingPrompt === claimed) {
+        registry.pendingPrompt = null;
+        if (registry.sendingKey === key) registry.setSending(null);
+      }
       window.clearInterval(timer);
       stopClosed();
       ipc.chatDetach(repo, id, attachId).catch(() => {});
     };
   }, [epoch, repo, id]);
+
+  function restoreAttachments(attachments: DraftAttachment[]) {
+    const restored = new Map(attachments.map((item) => [item.id, item]));
+    entry.attachments = entry.attachments.map((item) => restored.get(item.id) ?? item);
+    const present = new Set(entry.attachments.map((item) => item.id));
+    entry.attachments.push(...attachments.filter((item) => !present.has(item.id)));
+    registry.touch(entry);
+  }
+
+  async function prepareAttachments(text: string, attachments: DraftAttachment[]) {
+    const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
+    // Keep copied paths for a retry even when the source disappears after this write.
+    const copied = new Map(prepared.copied.map((item) => [item.id, item]));
+    entry.attachments = entry.attachments.map((item) => copied.get(item.id) ?? item);
+    registry.touch(entry);
+    return prepared;
+  }
 
   async function writeSend(
     text: string,
@@ -797,9 +830,15 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      await ipc.chatRpcWrite(repo, id, command);
+      requireWritten(await ipc.chatRpcWrite(repo, id, command));
     } catch (cause) {
       entry.verdicts.delete(command.id);
+      if (!verdict.refused) {
+        restoreAttachments(attachments);
+        if (entry.draft !== text) {
+          updateTranscript((current) => appendHarnessNotice(current, "input_recovery", `${errorMessage(cause)}\nOriginal input:\n${text}`));
+        }
+      }
       throw cause;
     }
     if (verdict.refused || !alive.current) return;
@@ -820,7 +859,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const currentThread = entry.thread;
     if (!currentThread || registry.sendingKey === key) return;
     const text = override ?? entry.draft;
-    const attachments = override === undefined ? entry.attachments.slice() : [];
+    let attachments = override === undefined ? entry.attachments.slice() : [];
     if (!text.trim() && attachments.length === 0) return;
     if (text.trim().startsWith("/") && attachments.length > 0) {
       registry.setError("Remove attachments or clear the slash command");
@@ -906,9 +945,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       let images: ImageContent[] | undefined;
       let row: ReturnType<typeof draftToRowAttachments> | undefined;
       if (attachments.length > 0 && carriesAttachments) {
-        const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
+        const prepared = await prepareAttachments(text, attachments);
         wire = prepared.message;
         images = prepared.images;
+        attachments = prepared.copied;
         row = draftToRowAttachments(attachments);
       }
       const command =
@@ -941,8 +981,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     }
     registry.setError("");
     try {
-      const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
-      const row = prepared ? draftToRowAttachments(attachments) : undefined;
+      const prepared = attachments.length > 0 ? await prepareAttachments(text, attachments) : null;
+      const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
       await writeSend(
         text,
         sendNowCommand(prepared?.message ?? text, prepared?.images),
@@ -950,7 +990,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           const state = appendOptimisticUser(current, text, "prompt", undefined, row);
           return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
         },
-        attachments,
+        prepared?.copied ?? attachments,
       );
     } catch (cause) {
       registry.setError(errorMessage(cause));
@@ -958,8 +998,11 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   }
 
   function abort() {
-    updateTranscript((current) => appendOptimisticAbort(current));
-    ipc.chatRpcWrite(repo, id, abortTurnCommand()).catch((cause: unknown) => registry.setError(String(cause)));
+    ipc
+      .chatRpcWrite(repo, id, abortTurnCommand())
+      .then(requireWritten)
+      .then(() => updateTranscript((current) => appendOptimisticAbort(current)))
+      .catch((cause: unknown) => registry.setError(String(cause)));
   }
 
   const activity = chatActivity(observation, transcript);
@@ -1007,7 +1050,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const pushed = `${key}:${autoCompaction}`;
     if (compactionPushed.current === pushed) return;
     compactionPushed.current = pushed;
-    ipc.chatRpcWrite(repo, id, setAutoCompactionCommand(autoCompaction)).catch(() => {});
+    ipc
+      .chatRpcWrite(repo, id, setAutoCompactionCommand(autoCompaction))
+      .then(requireWritten)
+      .catch((cause: unknown) => registry.setError(errorMessage(cause)));
   }, [autoCompaction, processLive, repo, id, key]);
 
   const stageIncoming = (accepted: DraftAttachment[]) => {
@@ -1158,7 +1204,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           preselect={providersDialog.preselect}
           onPick={(model) => {
             const slash = model.indexOf("/");
-            ipc.chatRpcWrite(repo, id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1))).catch((cause: unknown) => registry.setError(String(cause)));
+            ipc
+              .chatRpcWrite(repo, id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1)))
+              .then(requireWritten)
+              .catch((cause: unknown) => registry.setError(String(cause)));
           }}
           onClose={() => setProvidersDialog(null)}
         />

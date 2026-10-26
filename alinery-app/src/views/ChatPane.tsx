@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
 import { collectLiveSubagents } from "../chat/subagents";
@@ -15,6 +16,10 @@ function ChatPaneImpl({
   onLoadOlder,
   loadingOlder = false,
   atStart = true,
+  floatingActivity = false,
+  recoveryContent,
+  activityContent,
+  activityRunning,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -25,12 +30,18 @@ function ChatPaneImpl({
   loadingOlder?: boolean;
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
+  floatingActivity?: boolean;
+  recoveryContent?: ReactNode;
+  activityContent?: ReactNode;
+  activityRunning?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const floatingFooter = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
-  const activity = chatActivityLabel(status, shown);
+  const activity = activityContent ?? chatActivityLabel(status, shown);
+  const hasFloatingFooter = floatingActivity && Boolean(activity);
 
   useEffect(() => {
     stick.current = visibility.autoScroll;
@@ -42,9 +53,26 @@ function ChatPaneImpl({
     el.scrollTop = el.scrollHeight;
   }, [visibility.autoScroll]);
 
+  useLayoutEffect(() => {
+    const footer = floatingFooter.current;
+    const list = scroller.current;
+    if (!hasFloatingFooter || !footer || !list) return;
+    const measure = () => {
+      list.style.setProperty("--chat-footer-height", `${footer.getBoundingClientRect().height}px`);
+      scrollToEnd();
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      list.style.removeProperty("--chat-footer-height");
+    };
+  }, [hasFloatingFooter, scrollToEnd]);
+
   useEffect(() => {
     scrollToEnd();
-  }, [shown, activity, scrollToEnd]);
+  }, [shown, activity, recoveryContent, scrollToEnd]);
 
   const requestOlder = useCallback(() => {
     const el = scroller.current;
@@ -90,6 +118,12 @@ function ChatPaneImpl({
   }
 
   const liveSubs = useMemo(() => collectLiveSubagents(entries), [entries]);
+  const activityIndicator = activity ? (
+    <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
+      {activityRunning !== false && <RunningIndicator running={activityRunning ?? status === "running"} />}
+      <span>{activity}</span>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -106,7 +140,7 @@ function ChatPaneImpl({
     >
       {visibility.showSubagentDrawer ? <SubagentDrawer agents={liveSubs} /> : null}
       <div ref={scroller} onScroll={onScroll} className="chat-list">
-        {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
+        {shown.length === 0 && !recoveryContent ? <div className="chat-empty">No messages yet</div> : null}
         <ol className="chat-journal">
           {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
           {shown.map((entry) => (
@@ -124,14 +158,18 @@ function ChatPaneImpl({
               />
             </li>
           ))}
+          {recoveryContent && <li>{recoveryContent}</li>}
         </ol>
       </div>
-      {activity ? (
-        <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-          <RunningIndicator running={status === "running"} />
-          <span>{activity}</span>
-        </div>
-      ) : null}
+      {floatingActivity
+        ? activity && (
+            <div className="session-continuation-anchor">
+              <div className="chat-floating-footer" ref={floatingFooter}>
+                {activityIndicator}
+              </div>
+            </div>
+          )
+        : activityIndicator}
     </div>
   );
 }

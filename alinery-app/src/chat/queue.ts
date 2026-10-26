@@ -1,40 +1,41 @@
 import type { DraftAttachment } from "./attachments";
 import type { ChatEntry } from "./types";
 
-export type QueuedFollowUp = { text: string; attachments: DraftAttachment[] };
-
-export function reconcileQueuedFollowUps<T>(local: T[], count: number | undefined): { texts: T[]; unmatchedCount: number } {
-  if (count === undefined) return { texts: local, unmatchedCount: 0 };
-  if (count === 0) return { texts: [], unmatchedCount: 0 };
-  if (count < local.length) return { texts: local.slice(local.length - count), unmatchedCount: 0 };
-  if (count > local.length) return { texts: local, unmatchedCount: count - local.length };
-  return { texts: local, unmatchedCount: 0 };
-}
-
-/** `queuedMessageCount` from this line only — sticky sessionMeta must not trim the local queue. */
-export function queuedCountFromGetState(value: unknown): number | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  if (!("type" in value) || !("success" in value) || !("command" in value) || !("data" in value)) return undefined;
-  if (value.type !== "response" || value.success !== true || value.command !== "get_state") return undefined;
-  const data = value.data;
-  if (typeof data !== "object" || data === null || !("queuedMessageCount" in data)) return undefined;
-  const count = data.queuedMessageCount;
-  return typeof count === "number" ? count : undefined;
-}
+export type QueuedFollowUp = { text: string; attachments: DraftAttachment[]; dispatchId?: string; entryId?: string };
 
 export function latestQueuedFollowUp<T>(local: T[]): T | undefined {
   return local.length === 0 ? undefined : local[local.length - 1];
 }
 
-export function queuedTextsNotInEntries(texts: string[], entries: ChatEntry[]): string[] {
-  const present = new Set(entries.flatMap((entry) => (entry.type === "follow_up" ? [entry.text] : [])));
-  return texts.filter((text) => !present.has(text));
+/** Generic chat's count projection must never consume protected dispatch-tagged input. */
+export function trimQueuedFollowUps(entries: ChatEntry[], count: number): ChatEntry[] {
+  let remaining = entries.filter((entry) => entry.type === "follow_up" && !entry.id.startsWith("dispatch:")).length - count;
+  if (remaining <= 0) return entries;
+  return entries.filter((entry) => {
+    if (remaining > 0 && entry.type === "follow_up" && !entry.id.startsWith("dispatch:")) {
+      remaining -= 1;
+      return false;
+    }
+    return true;
+  });
 }
 
-/** Keep only the newest `count` follow-up rows: OMP delivers its queue oldest first. */
-export function trimQueuedFollowUps(entries: ChatEntry[], count: number): ChatEntry[] {
-  const queued = entries.filter((entry) => entry.type === "follow_up");
-  if (queued.length <= count) return entries;
-  const delivered = new Set(queued.slice(0, queued.length - count));
-  return entries.filter((entry) => !delivered.has(entry));
+export function queuedCountFromGetState(value: unknown): number | undefined {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("type" in value) ||
+    value.type !== "response" ||
+    !("command" in value) ||
+    value.command !== "get_state" ||
+    !("success" in value) ||
+    value.success !== true ||
+    !("data" in value) ||
+    !value.data ||
+    typeof value.data !== "object" ||
+    !("queuedMessageCount" in value.data)
+  )
+    return undefined;
+  const count = value.data.queuedMessageCount;
+  return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : undefined;
 }

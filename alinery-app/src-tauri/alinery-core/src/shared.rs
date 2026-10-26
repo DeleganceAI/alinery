@@ -1128,14 +1128,22 @@ pub fn reduce_runner_event(current: &SessionState, event: &RunnerEvent) -> Runne
                 correlation_id: correlation_id.clone(),
             };
         }
-        RunnerEvent::PhaseCompleted { .. } => {
+        RunnerEvent::ReadinessReported { .. } | RunnerEvent::ContinuationFinalize { .. } => {
             completion_attempt_required = !matches!(current.playbook, PlaybookState::ReadyToAdvance | PlaybookState::Completed);
         }
         RunnerEvent::AdapterError { detail } => {
             state.agent = AgentState::Unknown;
             state.playbook = PlaybookState::Failed { reason: detail.clone() };
         }
-        RunnerEvent::SessionNameSuggested { .. } => {}
+        RunnerEvent::SessionNameSuggested { .. }
+        | RunnerEvent::ContinuationBind { .. }
+        | RunnerEvent::ContinuationPoll { .. }
+        | RunnerEvent::ContinuationRevoke { .. }
+        | RunnerEvent::NativeWorkEntered { .. }
+        | RunnerEvent::NativeWorkSettled { .. }
+        | RunnerEvent::NativeDispatchConsumed { .. }
+        | RunnerEvent::NativeDispatchTransferred { .. }
+        | RunnerEvent::NativeDispatchRejected { .. } => {}
     }
 
     RunnerReduction {
@@ -2383,9 +2391,9 @@ prompt_injection = "arg"
                     correlation_id: "approval-1".into(),
                     omp_turn_id: Some(7),
                 },
-                RunnerEvent::PhaseCompleted {
-                    omp_session_id: "omp-session".into(),
-                    omp_turn_id: Some(7),
+                RunnerEvent::ReadinessReported {
+                    process_incarnation: "incarnation-1".into(),
+                    expected_work_revision: 7,
                 },
                 RunnerEvent::AdapterError {
                     detail: "extension failed".into(),

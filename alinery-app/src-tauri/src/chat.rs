@@ -467,7 +467,7 @@ pub(crate) fn chat_branch_label(app: AppHandle, state: State<'_, AppState>, repo
 }
 
 #[tauri::command]
-pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
+pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<alinery_core::DispatchOutcome, String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
     let daemon = chat_daemon(&state, &repo)?;
@@ -580,10 +580,17 @@ pub(crate) async fn chat_pty_attach(
 }
 
 #[tauri::command]
-pub(crate) fn chat_pty_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, data: String) -> Result<(), String> {
+pub(crate) fn chat_pty_write(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    id: String,
+    data: String,
+    dispatch_id: String,
+) -> Result<alinery_core::DispatchOutcome, String> {
     let repo = owned_chat_repo(&app, &state, &repo_path)?;
     let _ = load_root_omp(&repo, &id)?;
-    chat_daemon(&state, &repo)?.write_session(&id, &data)
+    chat_daemon(&state, &repo)?.write_session(&id, &data, &dispatch_id)
 }
 
 #[tauri::command]

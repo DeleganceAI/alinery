@@ -158,6 +158,67 @@ pub struct CreateExecutionSessionReply {
 pub struct TaskExecutionReply {
     pub state: TaskExecutionState,
     pub definition: crate::playbook::NormalizedPlaybook,
+    pub assessment: crate::playbook_scheduler::TaskAssessment,
+    pub executions: std::collections::BTreeMap<String, crate::playbook_scheduler::ExecutionAssessment>,
+    pub continuation: std::collections::BTreeMap<String, ContinuationCapability>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuationCapability {
+    pub process_incarnation: String,
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DispatchOutcome {
+    Written,
+    NotSent { reason: String },
+    Unknown { reason: String },
+}
+
+/// Saved observations share graph assessment with live observations, but never carry authority.
+pub fn task_execution_reply(repo: &Path, slug: &str, state: TaskExecutionState, definition: crate::playbook::NormalizedPlaybook) -> Result<TaskExecutionReply, String> {
+    use crate::playbook_scheduler::{assess_execution, assess_settled_executions, assess_task, AssessmentReason, ExecutionAssessment, Terminality};
+    let assessment = assess_task(&definition, &state)?;
+    let mut executions = assess_settled_executions(&definition, &state)?;
+    for (id, record) in &state.executions {
+        if executions.contains_key(id) {
+            continue;
+        }
+        let publications = if record.receipt_id.is_some() {
+            Ok(Vec::new())
+        } else {
+            crate::execution::inspect_execution_publications(repo, slug, record)
+        };
+        let execution = match publications {
+            Ok(publications) => assess_execution(&definition, &state, id, &publications)?,
+            Err(diagnostics) => ExecutionAssessment {
+                destinations: Vec::new(),
+                terminality: Terminality::Unresolved,
+                reasons: diagnostics
+                    .into_iter()
+                    .map(|message| AssessmentReason {
+                        code: "publication_inspection_unavailable".into(),
+                        message,
+                        execution_id: Some(id.clone()),
+                        context_id: None,
+                        collection_id: None,
+                        selector: None,
+                    })
+                    .collect(),
+            },
+        };
+        executions.insert(id.clone(), execution);
+    }
+    Ok(TaskExecutionReply {
+        state,
+        definition,
+        assessment,
+        executions,
+        continuation: std::collections::BTreeMap::new(),
+    })
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -170,12 +231,57 @@ pub struct StartSessionRequest {
 pub struct GetTaskExecutionRequest {
     pub task_slug: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct AllowExecutionCompletionRequest {
+pub struct PrepareEndExecutionRequest {
     pub task_slug: String,
     pub execution_id: String,
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EndExecutionRequest {
+    pub task_slug: String,
+    pub execution_id: String,
+    pub session_id: String,
+    pub process_incarnation: String,
+    pub work_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndExecutionPreparation {
+    pub request: EndExecutionRequest,
+    pub artifacts: Vec<String>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuppliedExecutionArtifact {
+    pub relative_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopExecutionReply {
+    pub shutdown_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionArtifactsPreview {
+    pub assessment: crate::playbook_scheduler::ExecutionAssessment,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContinueExecutionRequest {
+    pub task_slug: String,
+    pub execution_id: String,
+    pub session_id: String,
+    pub process_incarnation: String,
+    pub ready_revision: u64,
 }
 
 fn now() -> u64 {

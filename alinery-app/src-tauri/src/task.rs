@@ -997,9 +997,10 @@ pub(crate) fn retained_task_definition(repo: &Path, task: &Task) -> Result<Optio
         return Ok(None);
     }
     // Display uses the task-owned snapshot, never a live owner or the mutable library.
-    // The shared reader checks both the stored state and the retained source's integrity.
-    saved_task_execution_for(repo, &task.slug)
-        .map(|execution| Some(execution.definition))
+    // Validate the saved state and definition without projecting every execution's continuation.
+    alinery_core::execution::read_execution_state(repo, &task.slug)
+        .and_then(|state| alinery_core::execution::read_task_playbook(repo, &task.slug, &state))
+        .map(Some)
         .map_err(|error| format!("task {}: {error}", task_dir(repo, &task.slug).display()))
 }
 
@@ -1114,13 +1115,17 @@ pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<
     } else {
         vec![active_repo()?.to_string_lossy().to_string()]
     };
-    let mut out = vec![];
-    for repo_path in dedupe_known_repos(repos) {
-        let repo = PathBuf::from(&repo_path);
-        out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
-    }
-    out.sort_by_key(|task| task.task.created);
-    Ok(out)
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = vec![];
+        for repo_path in dedupe_known_repos(repos) {
+            let repo = PathBuf::from(&repo_path);
+            out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?);
+        }
+        out.sort_by_key(|task| task.task.created);
+        Ok(out)
+    })
+    .await
+    .map_err(|error| format!("load board tasks: {error}"))?
 }
 
 #[tauri::command]
@@ -1243,7 +1248,7 @@ pub(crate) fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) 
         task.auto_approve_all = enabled;
         write_task_unlocked(repo, &task)?;
         if state.auto_approve_all != enabled {
-            state.auto_approve_all = enabled;
+            alinery_core::execution::set_execution_auto_approve_all(&mut state, enabled);
             alinery_core::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
         }
         Ok(task)
@@ -1255,6 +1260,48 @@ pub(crate) fn set_auto_approve_all_for_repo(app: AppHandle, state: State<'_, App
     let repo = target_repo_for_app(&app, &repo_path)?;
     require_repo_owned(&state, &repo)?;
     set_auto_approve_all_in(&repo, slug, enabled)
+}
+
+pub(crate) fn set_step_continuation_in(repo: &Path, task_slug: String, step_key: String, automatic: bool) -> Result<Task, String> {
+    alinery_core::with_task_mutation_lock_waiting(repo, "set step continuation", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let mut task = read_task(repo, &task_slug)?;
+        if task.archived {
+            return Err("task is archived — read-only".into());
+        }
+        if task.draft {
+            return Err("draft tasks have no execution to configure".into());
+        }
+        if task.engine_version < 2 {
+            return Err("pre-v2 tasks have no step continuation to configure".into());
+        }
+        if task.auto_approve_all && !automatic {
+            return Err("Turn off Auto Approval All before selecting Wait for me".into());
+        }
+        let mut state = alinery_core::execution::read_execution_state(repo, &task_slug)?;
+        let definition = alinery_core::execution::read_task_playbook(repo, &task_slug, &state)?;
+        alinery_core::execution::set_step_continuation(&mut state, &definition, &step_key, automatic)?;
+        task.auto_advance = state.enabled_steps.iter().cloned().collect();
+        // Persist the displayed policy before authorizing the engine, as for Auto Approval All.
+        write_task_unlocked(repo, &task)?;
+        alinery_core::execution::write_execution_state_unlocked(repo, &task_slug, &mut state)?;
+        Ok(task)
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn set_step_continuation_for_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    task_slug: String,
+    step_key: String,
+    automatic: bool,
+) -> Result<Task, String> {
+    let repo = target_repo_for_app(&app, &repo_path)?;
+    require_repo_owned(&state, &repo)?;
+    tauri::async_runtime::spawn_blocking(move || set_step_continuation_in(&repo, task_slug, step_key, automatic))
+        .await
+        .map_err(|error| format!("set step continuation: {error}"))?
 }
 
 #[tauri::command]

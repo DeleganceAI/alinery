@@ -1,7 +1,7 @@
 import { ChevronDown, CircleAlert, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { copyTextToClipboard } from "./chat/CopyMessage";
-import { confirmDanger } from "./confirm";
+import { askConfirm, confirmDanger } from "./confirm";
 import * as ipc from "./ipc";
 import { repoName } from "./shared";
 import { toast } from "./toast";
@@ -50,7 +50,7 @@ function RepoStatusStrip({ tone, children, action, details }: { tone: "warning" 
 const EVIDENCE_NOTE = "Sessions started after this check also stop. Lock files are released when their owner stops; deleting them doesn't force access.";
 
 /** Copyable monospace evidence plus one line of guidance. */
-function EvidenceBlock({ text }: { text: string }) {
+function EvidenceBlock({ text, note = EVIDENCE_NOTE }: { text: string; note?: string }) {
   const copy = () =>
     copyTextToClipboard(text).then(
       () => toast.success("Details copied", "short"),
@@ -60,7 +60,7 @@ function EvidenceBlock({ text }: { text: string }) {
     <>
       <pre className="repo-evidence">{text}</pre>
       <div className="repo-evidence-foot">
-        <span>{EVIDENCE_NOTE}</span>
+        <span>{note}</span>
         <button type="button" className="btn ghost small" onClick={() => void copy()}>
           Copy details
         </button>
@@ -114,6 +114,25 @@ function evidenceText(conflict: DaemonConflict): string {
     lines.push(row(index === 0 ? "Issues" : "", issue));
   });
   return lines.join("\n");
+}
+
+/** An unsuccessful open never selects the repository or authorizes a takeover. */
+export function showRepoOpenFailure(repo: string, cause: unknown): string {
+  const conflict = cause && typeof cause === "object" && "repo" in cause && "owners" in cause && "issues" in cause ? (cause as DaemonConflict) : null;
+  const message = conflict ? `Couldn't connect to ${repoName(repo)}. The repository was not opened.` : cause instanceof Error ? cause.message : String(cause);
+  void askConfirm({
+    title: `Couldn't open ${repoName(repo)}`,
+    body: (
+      <>
+        <p>{message}</p>
+        {conflict && <EvidenceBlock text={evidenceText(conflict)} note="No sessions were stopped. Resolve the ownership conflict, then try opening the repository again." />}
+      </>
+    ),
+    choices: [{ key: "close", label: "Close", tone: "ghost" }],
+    defaultKey: "close",
+    cancelKey: "close",
+  });
+  return message;
 }
 
 /** Dialog sentence and accept label, both naming what the takeover stops. */

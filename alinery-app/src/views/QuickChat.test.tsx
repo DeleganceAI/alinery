@@ -128,7 +128,7 @@ beforeEach(() => {
   mocks.chatRpcAttach.mockResolvedValue(undefined);
   mocks.onStreamClosed.mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
-  mocks.chatRpcWrite.mockResolvedValue(undefined);
+  mocks.chatRpcWrite.mockResolvedValue({ status: "written" });
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   mocks.sessionListStatuses.mockResolvedValue({});
   mocks.chatThreadName.mockResolvedValue(null);

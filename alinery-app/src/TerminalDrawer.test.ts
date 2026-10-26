@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ipc from "./ipc";
 import { shellCdCommand, shellSingleQuote, TerminalDrawer } from "./TerminalDrawer";
+import { toast } from "./toast";
 import type { RepoScope, SessionObservation, View } from "./types";
 
 type SessionHostProps = {
@@ -21,6 +22,7 @@ const sessionHost = vi.hoisted(() => ({
 }));
 
 vi.mock("./ipc");
+vi.mock("./toast", () => ({ toast: vi.fn() }));
 vi.mock("./SessionTerminal", () => ({
   SessionTerminal: (props: SessionHostProps) => sessionHost.render(props),
 }));
@@ -41,6 +43,7 @@ beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.mocked(ipc.homeDir).mockResolvedValue("/Users/test");
+  vi.mocked(ipc.writeSession).mockResolvedValue({ status: "written" });
   vi.mocked(ipc.sessionStatus).mockResolvedValue({
     lifecycle: { state: "live" },
     state: null,
@@ -327,17 +330,26 @@ describe("TerminalDrawer tab bar", () => {
     expect(cdHere.getAttribute("title")).toBe("cd here: /repo");
     fireEvent.click(cdHere);
     expect(ipc.writeSession).toHaveBeenCalledTimes(1);
-    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
-    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-2", expect.anything());
+    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"), expect.any(String));
+    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-2", expect.anything(), expect.anything());
 
     cleanup();
     vi.mocked(ipc.writeSession).mockClear();
     const other = renderDrawer({ activeId: "drawer-2" });
     fireEvent.click(await screen.findByRole("button", { name: "cd here: /repo" }));
     expect(ipc.writeSession).toHaveBeenCalledTimes(1);
-    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-2", shellCdCommand("/repo"));
-    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
+    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-2", shellCdCommand("/repo"), expect.any(String));
+    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"), expect.anything());
     expect(other.props.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("surfaces unknown cd delivery without resending the shell command", async () => {
+    vi.mocked(ipc.writeSession).mockResolvedValue({ status: "unknown", reason: "Connection lost after write" });
+    renderDrawer();
+    const button = await screen.findByRole("button", { name: "cd here: /repo" });
+    await act(async () => fireEvent.click(button));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/unknown.*Connection lost after write/i), "error");
+    expect(ipc.writeSession).toHaveBeenCalledTimes(1);
   });
 
   it("keeps cd-here disabled until a target exists, and when there is no active id", async () => {

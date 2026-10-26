@@ -33,6 +33,8 @@ export type ChatComposerProps = {
   onRemoveAttachment?: (id: string) => void;
   onClear?: () => void;
   onPasteFiles?: (files: File[]) => void;
+  actions?: ReactNode;
+  beforeSend?: ReactNode;
 };
 
 export function ChatComposer({
@@ -57,6 +59,8 @@ export function ChatComposer({
   onRemoveAttachment,
   onClear,
   onPasteFiles,
+  actions,
+  beforeSend,
 }: ChatComposerProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -309,6 +313,7 @@ export function ChatComposer({
                 Send now
               </button>
             ) : null}
+            {beforeSend}
             <button type="button" className="btn primary small chat-composer-send" onClick={submit} disabled={sendDisabled} aria-label={sendLabel} title="Enter send">
               <ArrowUp className="chat-composer-icon" strokeWidth={2.2} />
             </button>
@@ -316,49 +321,52 @@ export function ChatComposer({
         </div>
       )}
 
-      <div className="chat-composer-hints">
-        {showHints ? (
-          palette ? (
-            <>
-              <Hint keys={[<Kbd key="up">↑</Kbd>, <Kbd key="down">↓</Kbd>]} label="move" />
-              <Hint keys={[<Kbd key="tab">tab</Kbd>]} label="fill" />
-              <Hint
-                keys={[
-                  <Kbd key="enter">
-                    <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
-                  </Kbd>,
-                ]}
-                label="run"
-              />
-              <Hint keys={[<Kbd key="esc">esc</Kbd>]} label="close" />
-            </>
-          ) : (
-            <>
-              <Hint
-                keys={[
-                  <Kbd key="enter">
-                    <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
-                  </Kbd>,
-                ]}
-                label="send"
-              />
-              <Hint
-                keys={[
-                  <Kbd key="shift">⇧</Kbd>,
-                  <Kbd key="enter">
-                    <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
-                  </Kbd>,
-                ]}
-                label="line"
-              />
-              <Hint keys={[<Kbd key="slash">/</Kbd>]} label="commands" />
-              <Hint keys={[<Kbd key="tab">tab</Kbd>]} label="complete" />
-              <Hint keys={[<Kbd key="esc">esc</Kbd>]} label={running ? "abort" : "clear"} />
-            </>
-          )
-        ) : null}
-        {queuedCount != null && queuedCount > 0 ? <span className="dim">{queuedCount} queued</span> : null}
+      <div className={actions ? "chat-composer-footer has-actions" : "chat-composer-footer"}>
+        <div className="chat-composer-hints">
+          {showHints ? (
+            palette ? (
+              <>
+                <Hint keys={[<Kbd key="up">↑</Kbd>, <Kbd key="down">↓</Kbd>]} label="move" />
+                <Hint keys={[<Kbd key="tab">tab</Kbd>]} label="fill" />
+                <Hint
+                  keys={[
+                    <Kbd key="enter">
+                      <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
+                    </Kbd>,
+                  ]}
+                  label="run"
+                />
+                <Hint keys={[<Kbd key="esc">esc</Kbd>]} label="close" />
+              </>
+            ) : (
+              <>
+                <Hint
+                  keys={[
+                    <Kbd key="enter">
+                      <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
+                    </Kbd>,
+                  ]}
+                  label="send"
+                />
+                <Hint
+                  keys={[
+                    <Kbd key="shift">⇧</Kbd>,
+                    <Kbd key="enter">
+                      <CornerDownLeft className="chat-composer-icon" strokeWidth={2} />
+                    </Kbd>,
+                  ]}
+                  label="line"
+                />
+                <Hint keys={[<Kbd key="slash">/</Kbd>]} label="commands" />
+                <Hint keys={[<Kbd key="tab">tab</Kbd>]} label="complete" />
+                <Hint keys={[<Kbd key="esc">esc</Kbd>]} label={running ? "abort" : "clear"} />
+              </>
+            )
+          ) : null}
+          {queuedCount != null && queuedCount > 0 ? <span className="dim">{queuedCount} queued</span> : null}
+        </div>
         <span className={`chat-composer-context${metrics.overLimit ? " over" : ""}`}>{formatComposerStats(metrics.codePoints)}</span>
+        {actions ? <div className="chat-composer-actions">{actions}</div> : null}
       </div>
     </div>
   );
