@@ -1554,7 +1554,7 @@ pub(super) fn exited(repo: &Path, slug: &str, process: Option<&ExecutionProcess>
     let path = proof_path(repo, slug, process);
     pending_exits().lock().unwrap_or_else(|e| e.into_inner()).insert(path, proof);
     if let Err(error) = reconcile_exits(repo, slug, lane) {
-        eprintln!("execution exit pending {slug}/{}: {error}", process.session_id);
+        eprintln!("execution exit pending {slug}/[redacted]: {error}");
     }
 }
 pub(super) fn reconcile_repo(repo: &Path, reg: &Registry, lane: &str, config: &Path, host: &ProtectedHost) {
