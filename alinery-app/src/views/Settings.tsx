@@ -178,7 +178,7 @@ type SettingsScope = { kind: "global" } | { kind: "repo"; repoPath: string };
 type ChoiceKey = "defaults";
 type ChoiceBoolField = "draft_autosave";
 
-const SETTINGS_SCOPE_EMPTY_TITLE = "Select a settings scope to see these settings";
+const SETTINGS_SCOPE_EMPTY_TITLE = "Select a repo to see these settings";
 const GLOBAL_SOURCE: SettingSource = "global";
 const REPO_SOURCE: SettingSource = "repository";
 
