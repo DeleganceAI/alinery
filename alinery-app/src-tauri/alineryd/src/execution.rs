@@ -913,7 +913,7 @@ fn apply_exit_proof(repo: &Path, slug: &str, lane: &str, proof: &ExitProof) -> R
         let current = read_process(repo, slug, &proof.process.session_id)?.ok_or("missing execution process incarnation for exit proof")?;
         let record = state.executions.get(&proof.process.execution_id).ok_or("missing execution for exit proof")?;
         if current != proof.process || record.owner_session_id != proof.process.session_id {
-            eprintln!("discard stale exit obligation {slug}/{}", proof.process.session_id);
+            eprintln!("discard stale exit obligation for {slug}");
             return Ok(());
         }
         if matches!(record.lifecycle, ExecutionLifecycle::Starting | ExecutionLifecycle::Queued) {
