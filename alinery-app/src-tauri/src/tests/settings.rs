@@ -167,9 +167,9 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert_eq!(empty.appearance.chat_max_width, "900");
     assert!(empty.appearance.chat_show_date);
     assert!(empty.appearance.chat_show_time);
-    assert!(!empty.appearance.chat_show_actor_labels);
-    assert!(!empty.appearance.chat_show_agent_bubbles);
-    assert!(!empty.appearance.chat_show_block_copy_buttons);
+    assert!(empty.appearance.chat_show_actor_labels);
+    assert!(empty.appearance.chat_show_agent_bubbles);
+    assert!(empty.appearance.chat_show_block_copy_buttons);
     assert!(empty.appearance.chat_show_copy_buttons);
     assert_eq!(empty.appearance.session_default_view, "chat");
     assert_eq!(empty.appearance.startup_view, "list");
@@ -209,8 +209,8 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_max_width: "1200".into(),
         chat_show_date: false,
         chat_show_time: true,
-        chat_show_actor_labels: true,
-        chat_show_agent_bubbles: true,
+        chat_show_actor_labels: false,
+        chat_show_agent_bubbles: false,
         chat_show_block_copy_buttons: false,
         chat_show_copy_buttons: false,
         session_default_view: "terminal".into(),
@@ -232,8 +232,8 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert_eq!(back.chat_max_width, "1200");
     assert!(!back.chat_show_date);
     assert!(back.chat_show_time);
-    assert!(back.chat_show_actor_labels);
-    assert!(back.chat_show_agent_bubbles);
+    assert!(!sanitize_appearance(back.clone()).chat_show_actor_labels);
+    assert!(!sanitize_appearance(back.clone()).chat_show_agent_bubbles);
     assert!(!sanitize_appearance(back.clone()).chat_show_block_copy_buttons);
     assert!(!back.chat_show_copy_buttons);
     let ava = sanitize_appearance(back.clone()).ava_chat;
@@ -269,6 +269,9 @@ primary = "#ff00ff"
     assert_eq!(legacy.accent_color, "#315bff");
     assert_eq!(legacy.mode, "dark");
     assert_eq!(legacy.startup_view, "list");
+    assert!(legacy.chat_show_actor_labels);
+    assert!(legacy.chat_show_agent_bubbles);
+    assert!(legacy.chat_show_block_copy_buttons);
     let serialized = toml::to_string(&legacy).expect("legacy appearance serializes");
     assert!(!serialized.contains("colors"));
 

@@ -19,15 +19,10 @@ function pane(entries: ChatEntry[], visibility = DEFAULT_CHAT_VISIBILITY, status
 describe("ChatPane", () => {
   it("updates block copy controls on existing replies without hiding whole-message copying", () => {
     const entries: ChatEntry[] = [{ id: "copy", at, actor: ACTOR.agent, type: "text", text: "```sh\nsudo ls\n```\n\n> Quoted advice" }];
-    // Block copy buttons start off; the whole-message copy icon starts on.
     const view = render(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({})} />);
-    expect(view.queryByRole("button", { name: "Copy code block" })).toBeNull();
-    expect(view.queryByRole("button", { name: "Copy quote" })).toBeNull();
-    expect(view.getByRole("button", { name: "Copy message" })).toBeTruthy();
-
-    view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: true })} />);
     expect(view.getByRole("button", { name: "Copy code block" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy quote" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Copy message" })).toBeTruthy();
 
     view.rerender(<ChatPane entries={entries} visibility={chatVisibilityFromAppearance({ chat_show_block_copy_buttons: false })} />);
     expect(view.queryByRole("button", { name: "Copy code block" })).toBeNull();
@@ -188,15 +183,20 @@ describe("ChatPane", () => {
     expect(html).toContain("chat-msg-who");
   });
 
-  it("starts without actor labels or agent bubbles", () => {
-    const html = pane([
+  it("starts with actor labels and agent bubbles and honors saved opt-outs", () => {
+    const entries: ChatEntry[] = [
       { id: "1", at, actor: ACTOR.you, type: "prompt", text: "Hello" },
       { id: "2", at, actor: ACTOR.agent, type: "text", text: "Reply" },
-    ]);
-    expect(html).toContain('data-agent-bubbles="off"');
-    expect(html).toContain('data-actor-labels="off"');
+    ];
+    const html = pane(entries);
+    expect(html).toContain('data-agent-bubbles="on"');
+    expect(html).toContain('data-actor-labels="on"');
     expect(html).toContain("chat-msg-mine");
-    expect(html).not.toContain("chat-msg-who");
+    expect(html).toContain("chat-msg-who");
+    const hidden = pane(entries, chatVisibilityFromAppearance({ chat_show_actor_labels: false, chat_show_agent_bubbles: false }));
+    expect(hidden).toContain('data-agent-bubbles="off"');
+    expect(hidden).toContain('data-actor-labels="off"');
+    expect(hidden).not.toContain("chat-msg-who");
   });
 
   it("shows a sticky activity strip while running", () => {

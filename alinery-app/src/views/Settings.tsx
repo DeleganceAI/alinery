@@ -1486,7 +1486,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_actor_labels === true}
+          checked={view.chat_show_actor_labels !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_actor_labels: enabled });
@@ -1498,7 +1498,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_agent_bubbles === true}
+          checked={view.chat_show_agent_bubbles !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_agent_bubbles: enabled });
@@ -1510,7 +1510,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_block_copy_buttons === true}
+          checked={view.chat_show_block_copy_buttons !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_block_copy_buttons: enabled });

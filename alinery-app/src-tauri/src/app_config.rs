@@ -92,11 +92,11 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_show_date: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_time: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_actor_labels: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_agent_bubbles: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(crate) chat_show_block_copy_buttons: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_show_copy_buttons: bool,
@@ -141,9 +141,9 @@ impl Default for AppearancePrefs {
             chat_max_width: default_chat_max_width(),
             chat_show_date: true,
             chat_show_time: true,
-            chat_show_actor_labels: false,
-            chat_show_agent_bubbles: false,
-            chat_show_block_copy_buttons: false,
+            chat_show_actor_labels: true,
+            chat_show_agent_bubbles: true,
+            chat_show_block_copy_buttons: true,
             chat_show_copy_buttons: true,
             session_default_view: default_session_default_view(),
             startup_view: default_startup_view(),

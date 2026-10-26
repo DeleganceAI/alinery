@@ -256,7 +256,7 @@ describe("applyAppearance", () => {
       chat_show_agent_bubbles: true,
       chat_show_copy_buttons: true,
     });
-    // Absent keys: labels, reply bubbles and block copy buttons start off; the per-message copy icon starts on.
+    // Missing preferences use the defaults without overriding saved false values.
     expect(
       normalizeAppearance({
         ...prefs(),
@@ -266,9 +266,9 @@ describe("applyAppearance", () => {
         chat_show_copy_buttons: undefined,
       }),
     ).toMatchObject({
-      chat_show_actor_labels: false,
-      chat_show_agent_bubbles: false,
-      chat_show_block_copy_buttons: false,
+      chat_show_actor_labels: true,
+      chat_show_agent_bubbles: true,
+      chat_show_block_copy_buttons: true,
       chat_show_copy_buttons: true,
     });
   });
