@@ -1,0 +1,22 @@
+{
+  "name": "thick-daemon-spikes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "buf generate && buf lint"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.16.0",
+    "@connectrpc/connect": "2.2.0",
+    "@connectrpc/connect-node": "2.2.0",
+    "@connectrpc/connect-web": "2.2.0",
+    "@parcel/watcher": "2.6.0",
+    "fflate": "0.8.3",
+    "smol-toml": "1.9.1"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "1.75.0",
+    "@bufbuild/protoc-gen-es": "2.16.0",
+    "typescript": "5.8.3"
+  }
+}

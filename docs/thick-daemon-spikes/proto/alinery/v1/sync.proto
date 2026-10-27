@@ -1,0 +1,51 @@
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+
+service SyncService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+message SubscribeRequest {
+  Scope scope = 1;
+  Cursor cursor = 2;
+}
+
+message Scope {
+  oneof kind {
+    RepoScope repo = 1;
+    TaskScope task = 2;
+    SessionScope session = 3;
+    ChatScope chat = 4;
+  }
+}
+message RepoScope {}
+message TaskScope { string slug = 1; }
+message SessionScope { SessionRef session = 1; }
+message ChatScope {}
+
+// One frame of the stream (the plan called it SyncFrame; buf STANDARD wants <Rpc>Response).
+message SubscribeResponse {
+  oneof frame {
+    Snapshot snapshot = 1;
+    Delta delta = 2;
+    UpToDate up_to_date = 3;
+    MustRefetch must_refetch = 4;
+    Heartbeat heartbeat = 5;
+  }
+}
+
+message Snapshot { repeated Entity entities = 1; Cursor cursor = 2; bool complete = 3; }
+message Delta { repeated Change changes = 1; Cursor cursor = 2; }
+message UpToDate { Cursor cursor = 1; }
+message MustRefetch { string reason = 1; }
+message Heartbeat { Cursor cursor = 1; }
+
+message Change {
+  oneof op {
+    Entity put = 1;
+    string delete = 2;
+  }
+}

@@ -1,0 +1,13 @@
+# S0.5 sample: the Rust half of the flock interop test, on alinery-core's real lockfile.rs and
+# fs_atomic.rs. Build with alinery-app/src-tauri/Cargo.lock copied beside this file and `--locked`
+# (see ../src/lock.test.ts for the commands).
+[package]
+name = "lock-rs"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+alinery-core = { path = "../../../alinery-app/src-tauri/alinery-core" }

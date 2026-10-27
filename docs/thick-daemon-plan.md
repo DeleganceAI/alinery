@@ -1,6 +1,6 @@
 # Thick daemon plan: the Bun daemon becomes the application
 
-Status: living draft v0.3, 2026-10-27. Nothing in this plan is built yet. The work lands on branch `remote-daemon` and grows [PR #154](https://github.com/DeleganceAI/alinery/pull/154), which stacks on [PR #135](https://github.com/DeleganceAI/alinery/pull/135) (`experimental-pi-durable-as-a-harness`) (O16).
+Status: living draft v0.4, 2026-10-27. No product code is built yet. The P0 spikes ran on 2026-10-27 (Bun 1.4.3, darwin-arm64): their code, numbers and rerun commands are in `docs/thick-daemon-spikes/` (its `README.md`), and their results are folded into this doc. The work lands on branch `remote-daemon` and grows [PR #154](https://github.com/DeleganceAI/alinery/pull/154), which stacks on [PR #135](https://github.com/DeleganceAI/alinery/pull/135) (`experimental-pi-durable-as-a-harness`) (O16).
 
 Supersedes: the repo-service `RepoOp` channel as the long-term wire, and items P2 to P7 of `docs/remote-repos-performance.md` (subscriptions replace every poller those items tuned). What already shipped on this branch stays and is reused: A1 to A6, P1 and B1 in `docs/remote-repos-todo.md` (ssh master and forwards, runtime install, credential sync, the ui secret, the repo-service). The repo-service is the bridge this plan retires one domain at a time.
 
@@ -15,13 +15,15 @@ Background: `docs/remote-daemon-architectures.md` (architecture B is the one cho
 
 Every session in Part 3 ends the same way: update its status line, move resolved Open items to the decision log (4.1), add a changelog line (4.5). A session is one PR-sized change that passes `./scripts/check.sh`.
 
+**Rule for implementers: no silent decisions.** If a session finds a fact that contradicts a WA, an Open item, a Decided row or a sketch's behaviour, or needs a choice this doc doesn't make about architecture (what owns what, what is stored where, who can do what, what the user sees change), it stops, writes the finding into the session, and asks the user. Choices inside one module (names, helper shape, file split) are the implementer's. Each session's **Accept** lines are the commands a reviewer runs; a session is done only when each gives its stated result.
+
 ---
 
 # Part 1: High-level plan
 
 ## 1.1 Goal
 
-One application, the Bun daemon, owns every business rule and all repo state on the host where the repo lives (this Mac or a remote Linux box). Clients (the desktop webview, a web app, an iOS app) render a synced replica of the daemon's data and send intent commands. The Rust desktop shell provisions daemons (local spawn, or install and start over ssh), bridges the webview to them, and does the OS jobs a host-side process can't do for this Mac (dialogs, notifications, keychain, browser sign-in, updates).
+One application, the Bun daemon, owns every business rule and all repo state on the host where the repo lives (this Mac or a remote Linux box). The client is the desktop app's webview, the Tauri UI we have today (D8): it renders a synced replica of the daemon's data and sends intent commands. MCP is a second, headless client of the same services (O18). The Rust desktop shell provisions daemons (local spawn, or install and start over ssh), bridges the webview to them, and does the OS jobs a host-side process can't do for this Mac (dialogs, notifications, keychain, browser sign-in, updates).
 
 ## 1.2 Decisions taken
 
@@ -34,6 +36,7 @@ One application, the Bun daemon, owns every business rule and all repo state on 
 | D5 | The UI talks only to the daemon, except for daemon setup and OS-only jobs. | User, 2026-10-26 |
 | D6 | Host tools the daemon spawns (git today) are not shipped to a remote host. The setup wizard probes for them and, when one is missing, stops and tells the user to install it on that host first. | User, 2026-10-27 |
 | D7 | A client needs a connected, compatible daemon to work on a repo. There is no browsing from files without one (O19). | User, 2026-10-27 |
+| D8 | The Tauri UI is the only client this plan makes work with the new daemon. Web and iOS clients are out of scope (S6.1 to S6.3 and O13 of v0.3 are withdrawn). P6 builds the daemon setup screen instead: with no daemon to connect to, the UI offers to set up a local repo or to add an ssh remote first; both end with the user picking a repo. | User, 2026-10-27 |
 
 ## 1.3 Invariants that survive the move
 
@@ -64,7 +67,7 @@ These hold in every phase. A session that has to break one stops and asks.
 | PROXY | 36 | Forwards to the daemon | Deleted; the client calls the daemon |
 | SHELL | 47 | OS or this-Mac job | Stays in Rust |
 | PROVISION | 21 | Starts, connects or installs daemons | Stays in Rust |
-| MIXED | 28 | Several of the above in one command | Split (rules in 2.3.4) |
+| MIXED | 28 | Several of the above in one command | Split (rules in 2.3.4, which moves two chat DOMAIN commands here, making 30) |
 | STUB | 7 | Return "OMP process sessions are not available" | Deleted in S0.6 |
 
 Per module: task 25 (D17 P2 S3 M3), session 43 (D11 P22 M6, 4 stubs), chat 27 (D11 P10 S1 M2, 3 stubs), artifacts 25 (D25), daemon 10 (P2 PV4 S1 M3), remote 14 (PV11 S3), app_config 8 (S4 PV3 M1), settings 16 (D8 S7 M1), playbook 9 (D9), community_playbooks 8 (D1 S3 M4), account 9 (S9), connections 4 (S4), imports 4 (S2 M2), git_ops 11 (D10 M1), backup 6 (D4 S1 M1), notify 3 (S2 M1), mcp 3 (PV3), update 3 (S3), omp_update 3 (D2 S1), subtask 4 (D1 M3), vinculum_customizations 6 (D3 S3).
@@ -77,11 +80,11 @@ Per module: task 25 (D17 P2 S3 M3), session 43 (D11 P22 M6, 4 stubs), chat 27 (D
 
 | Id | Defect | Where |
 |---|---|---|
-| R1 | `addExecution` read-modify-writes `execution.json` with no lock and no revision, while Rust writes the same file under `.alinery/.task-mutation.lock` (`lockfile.rs:127`, a process mutex plus a repo flock) | daemon `tasks.ts:291-296` |
+| R1 | `addExecution` read-modify-writes `execution.json` with no lock and no revision, while Rust writes the same file under `.alinery/.task-mutation.lock` (`lockfile.rs:127`, a process mutex plus a repo flock). Also `tasks.ts:200` maps with `.map(projectExecution)`, so the array index lands in `autoApproveAll` and every execution after the first reports permission `automatic` | daemon `tasks.ts:291-296`, `:200` |
 | R2 | Two execution state machines: `execution.json` and the `engine.jsonl` fold | daemon and playbook-engine |
 | R3 | Same rule implemented twice, differently: current step (`board.rs:166-171` vs the engine fold), playbook parsing, settings precedence (`sessionControls.ts:75-123` vs `settings.rs`) | Rust and TS |
 | R4 | Writes that are not crash-safe (plain `writeFileSync`, no temp file and rename) | `main.ts:295`; `tasks.ts:295`, `:324`, `:361`, `:383`, `:402` |
-| R5 | Telemetry credentials hardcoded at `telemetry.rs:21-22` | handoff, not this plan |
+| R5 | Telemetry credentials hardcoded at `alinery-core/src/telemetry.rs:21-22` | handoff, not this plan |
 | R6 | Dead Rust: `playbook_scheduler.rs` (3,018 lines, used only by one `subtask.rs` test) and the 7 stubs | `alinery-core`, app crate |
 | R7 | No push: every view polls | frontend |
 | R8 | One request per connection; auth only on `ui_control` | daemon wire |
@@ -89,15 +92,13 @@ Per module: task 25 (D17 P2 S3 M3), session 43 (D11 P22 M6, 4 stubs), chat 27 (D
 ## 1.5 End state
 
 ```
-+------------------+  +------------------+  +------------------+
-| Desktop webview  |  | Web app          |  | iOS app          |
-| sync client      |  | sync client      |  | sync client      |
-+---------+--------+  +---------+--------+  +---------+--------+
-          |                     |                     |
-          +---------------------+---------------------+
-                                | alinery.v1 (protobuf) over UDS, ssh,
-                                | Tauri bridge, WebSocket+TLS
-                                v   HOST (local or remote)
++------------------------------+
+| Desktop webview (Tauri UI)   |
+| sync client (D8)             |
++--------------+---------------+
+               | alinery.v1 (Connect, protobuf) through the shell
+               | bridge, then a unix socket or an ssh forward
+               v   HOST (local or remote)
 +--------------------------------------------------------------+
 | DAEMON (Bun): the application, one per repo (assumed)        |
 |  +--------------------------------------------------------+  |
@@ -132,7 +133,7 @@ Per module: task 25 (D17 P2 S3 M3), session 43 (D11 P22 M6, 4 stubs), chat 27 (D
 +----------------------+   keychain, browser sign-in, updates
 ```
 
-- **Clients** keep a replica per scope (repo, task, session, chat), send unary commands, and open streams for terminals, transcripts and blobs. The desktop webview reaches the daemon through the shell bridge; web and iOS reach it over HTTPS or WebSocket (P6).
+- **The client** (the Tauri UI, D8) keeps a replica per scope (repo, task, session, chat), sends unary commands, and opens streams for terminals, transcripts and blobs. It reaches the daemon only through the shell bridge (T3 over T1 or T2). MCP calls the same services headless (O18).
 - **The daemon** is one Bun process per repo (WA, O4) with six areas: `rpc/` (transports, router, auth), `sync/` (store, changelog, subscriptions, watcher), `domain/` (all business rules), `runtime/` (today's session runner: PTYs, pi-durable, transcripts), `jobs/` (slow work in child processes), `platform/` (atomic writes, flock, git spawn).
 - **Files** under `.alinery/` stay the truth; the store is an in-memory index rebuilt at start (WA, O3).
 - **The shell** keeps about 70 commands (SHELL 47, PROVISION 21, the shell halves of MIXED) plus one bridge command. It holds no business state.
@@ -141,13 +142,13 @@ Per module: task 25 (D17 P2 S3 M3), session 43 (D11 P22 M6, 4 stubs), chat 27 (D
 
 | Phase | Outcome | Exit check |
 |---|---|---|
-| **P0** Contract, cleanup, spikes | `proto/` with buf and generated TS; dead code gone; R1 fixed; spikes answer O1, O2, O6, O7 and the watcher choice | `buf lint` green; spike notes in 4.1; check.sh green |
+| **P0** Contract, cleanup, spikes | `proto/` with buf and generated TS; dead code gone; R1 fixed; spikes answer O1, O2, O3, O6, O7 and the watcher choice | `buf lint` green; spike notes in 4.1; check.sh green |
 | **P1** RPC host and transports | The daemon serves `alinery.v1` on a second socket next to the JSON-lines one; the shell bridges the webview to it, locally and over the ssh forward; `Shutdown` carries its origin | A webview call reaches a local and a remote daemon through the bridge; auth rejects a bad token |
 | **P2** Sync engine core | Store, changelog, `Subscribe`; fed by commands, a file watcher plus reconcile, the session runner, engine events and jobs | A replica built from `Subscribe` equals the store after random commits, restarts and dropped streams |
 | **P3** Client library and first slices | `src/sync/` replica and hooks; session status, transcript, terminal and board reads move to subscriptions and streams | The pollers for those views are deleted; their Tauri commands are deleted |
 | **P4** Domain ports | One domain per session moves its writes into TypeScript, with conformance fixtures from the Rust goldens | Each session deletes its Tauri commands, `RepoOp` variants and core code |
 | **P5** Shell slimming | JSON-lines wire, `daemon_client.rs`, `repo_service`, the daemon's `libalinery_core` FFI gone; MCP and host bootstrap settled (O10, O15) | The shell is SHELL plus PROVISION plus the bridge; AGENTS.md rewritten |
-| **P6** Remote, web, iOS | TLS door, pairing and capabilities, web build of the UI, iOS spike, per-host daemon question (O4, todo B2) | A browser on another machine views and acts on a repo |
+| **P6** Setup screen | O4 (daemon per repo or per host, todo B2) decided first; then a setup screen the UI shows whenever it has no daemon to connect to: set up a local repo, or add an ssh remote and then pick a repo on it, ending with a connected daemon (D8) | On a fresh app config the UI opens on the setup screen; the local flow and the ssh flow each end on the picked repo's live board |
 | **P7** Hardening | Keeper and brain split (O5), memory and metrics, upgrade while sessions run | Upgrading the daemon keeps sessions alive |
 
 Order: transport and sync come before domain ports, so each port lands straight onto subscriptions. Reads move before writes: the watcher keeps the store right while Rust still writes a domain's files, so the UI can switch to subscriptions before the write path moves.
@@ -156,25 +157,27 @@ Order: transport and sync come before domain ports, so each port lands straight 
 
 | Id | Question | Options | WA | Decided by |
 |---|---|---|---|---|
-| O1 | RPC flavour on Bun | (a) Connect-ES on `node:http` (Connect and gRPC-Web over HTTP/1.1; gRPC too if `node:http2` works under Bun); (b) `@grpc/grpc-js` server (real gRPC, HTTP/2 only, browsers need a proxy); (c) protobuf messages in our own length-prefixed framing over any byte stream | (a) | S0.2 |
-| O2 | Webview to daemon | (a) Tauri command plus `Channel` proxy, shell forwards bytes to the socket; (b) daemon loopback TCP plus a token; (c) custom URI scheme handled by the shell | (a) | S0.3 |
-| O3 | Source of truth | (a) files plus in-memory index; (b) SQLite as truth, files as export; (c) files plus a SQLite index cache | (a) | S0.7 |
-| O4 | Daemon per repo or per host | (a) per repo, as today; (b) per host, many repos | (a) until P6 | S6.4 |
+| O1 | RPC flavour on Bun | (a) Connect-ES on `node:http` (Connect and gRPC-Web over HTTP/1.1; gRPC too, since `node:http2` works under Bun 1.4.3); (b) `@grpc/grpc-js` server (real gRPC, HTTP/2 only, browsers need a proxy); (c) protobuf messages in our own length-prefixed framing over any byte stream | (a), spike-backed (4.1 S0.2): ready to confirm | S0.2 |
+| O2 | Webview to daemon | (a) Tauri command plus `Channel` proxy, shell forwards bytes to the socket; (b) daemon loopback TCP plus a token; (c) custom URI scheme handled by the shell | (a), spike-backed except the live webview (4.1 S0.3): ready to confirm | S0.3 |
+| O3 | Source of truth | (a) files plus in-memory index; (b) SQLite as truth, files as export; (c) files plus a SQLite index cache | (a), scan numbers in 4.1 (S0.7 spike) | S0.7 |
+| O4 | Daemon per repo or per host | (a) per repo, as today; (b) per host, many repos | (a) until P6 | S6.1 |
 | O5 | Keeper and brain | (a) one process; (b) small keeper holds PTYs and scrollback, restartable brain holds the rest | (a) until P7 | S7.1 |
 | O6 | flock from Bun | (a) `bun:ffi` to libc `flock(2)` (libc is already dlopened); (b) `flock(1)` child holding the lock (Linux only, macOS has no `flock(1)`); (c) no file lock once Rust stops writing (needs a lock during the strangler period anyway) | (a) | S0.5 |
 | O7 | Where slow work runs | (a) child process of the same binary, `--job <kind>`; (b) Bun `Worker` (experimental per Bun docs; a crash takes the daemon) | (a) | S0.7 |
-| O8 | Terminal input from browsers | (a) split: `Attach` server stream plus unary `Write` with `input_seq`; (b) WebSocket tunnel with a bidi frame stream | (a), measure | S3.4 |
+| O8 | Terminal input over the bridge (a `fetch` has no request stream, so no bidi) | (a) split: `Attach` server stream plus unary `Write` with `input_seq`; (b) WebSocket tunnel with a bidi frame stream | (a), measure | S3.4 |
 | O9 | Keep-awake | (a) keep the IOKit FFI; (b) `caffeinate -w <pid>` on macOS, `systemd-inhibit` on Linux | (b) | S4.11 |
 | O10 | MCP server for agents | (a) Rust `alinery-mcp` becomes a thin client of the new RPC; (b) the Bun binary gets an `--mcp` stdio mode that calls the daemon socket | Open | S5.1 |
-| O11 | Zip for backups | (a) `fflate` in a job child; (b) system `zip`/`ditto`; must write and read today's `-v1.zip` | (a) | S4.9 |
+| O11 | Zip for backups | (a) `fflate` in a job child; (b) system `zip`/`ditto`; must write and read today's `-v1.zip` | Open: `fflate` writes no zip64, so (a) caps an archive at 4 GiB or 65,535 entries; Rust's writer has no such cap (S4.9, 4.1) | S4.9 |
 | O12 | Agent dir placement (`omp_update`, `vinculum_customizations`) | (a) per host, daemon owns it, shell mirrors the Mac's copy; (b) Mac only, shell owns and pushes | Open | S4.10 |
-| O13 | Pairing and the door for web and iOS | (a) shell-issued token by QR with capabilities; (b) through the existing account pairing (`account.rs`); iOS cannot forward unix sockets over ssh (no streamlocal in swift-nio-ssh or Citadel), so it needs TLS or an ssh `direct-tcpip` channel to a loopback port | Open | S6.1 |
-| O14 | One execution state machine | (a) `engine.jsonl` fold is the truth, `execution.json` goes; (b) `execution.json` is the truth, the fold feeds it | Open, traced in S0.6 | S4.2 |
+| O13 | Pairing and the door for web and iOS | | **Withdrawn** 2026-10-27 (D8): no web or iOS client | |
+| O14 | One execution state machine | (a) `engine.jsonl` fold is the truth, `execution.json` goes; (b) `execution.json` is the truth, the fold feeds it | Open; traced 2026-10-27 (4.1, "O14 trace") | S4.2 |
 | O15 | Host bootstrap without a daemon | (a) keep `alinery-mcp --repo-service` for host-only ops (ListDir, Classify, Init, ClaimRepo, SpawnDaemon, WriteConfigFiles, MergeCredentials, WaitDaemonGone); (b) a `--host-service` stdio mode of the Bun binary, so the host runtime carries no Rust (no zig cross-build) | Open | S5.2 |
 | O16 | What happens to PR #154 | (a) merge as is: remote repos work now through the repo-service, and this plan replaces it later; (b) keep it open and land the thick daemon on top | **Decided (b)**: the plan lands on `remote-daemon` and becomes PR #154, stacked on PR #135 | User, 2026-10-27 |
 | O17 | Telemetry for ported commands (consent and ingest credentials live in the shell) | (a) the shell emits after `Applied`, with ids read from the replica entity, through one new allowlisted shell command; (b) the daemon returns a telemetry hint in `Applied` and the shell records it under its consent; (c) the daemon sends directly, with consent passed at spawn (a remote host would then hold the ingest credentials, R5) | **Decided (c)**: the daemon sends its own events when it can reach the ingest URL, best effort, and drops a failed send silently. Consent reaches it through `app.toml`. Events with no repo stay in the shell (S4.1) | User, 2026-10-27 |
 | O18 | Capabilities for MCP's 21 tools beyond the four session tools, once they go through the daemon | (a) MCP holds a token passed at spawn and gets VIEW and ACT, like any local peer that isn't the shell (2.1.10); tools that need ADMIN (`alinery_storage_info`, `alinery_delete_archived_storage`) leave MCP; (b) a new capability that lists exactly the tools MCP exposes today, so no tool changes; (c) MCP keeps AGENT only and drops the other 21 tools | **Decided (b)**: MCP is a headless, AI-first client of the daemon, connecting like the desktop (T1 or T2) from any machine. Its token grants AGENT, exactly the RPCs behind its tools, storage scan and purge included; never `Shutdown` or approvals | User, 2026-10-27 |
 | O19 | Reading a repo whose daemon is down, incompatible, or owned by another app instance (today the board reads files directly, `README.md:87`) | (a) the board needs a compatible daemon; such a repo shows only the conflict banner and its explicit restart; (b) the shell starts this app's daemon binary in a read-only mode beside the owner: it takes no ownership lock, runs no sessions, serves VIEW only from the files; (c) keep the Rust board reads for this case only | **Decided (a)** (D7) | User, 2026-10-27 |
+| O20 | How MCP gets AGENT, now that O13 (pairing) is withdrawn and O18 says "from any machine" | (a) socket access is the credential: a request with no token on T1, or on a T2 forward the user opened, gets AGENT. The socket is 0600 and only the same OS user reaches it; any agent running as that user could also read a minted token from a harness's environment, so on the host a token adds no boundary. (b) minted tokens (today's WA in S5.1): the daemon puts one in each harness's environment, the shell mints one for its managed MCP through `AdminService.MintToken` (ADMIN), and an MCP on another machine needs a token the user copies from the shell. (c) as (b), but MCP runs only on the daemon's host or as the shell's managed MCP; "from any machine" is dropped | Open | S5.1 |
+| O21 | Execution records with no `engine.jsonl` events (written by the old Rust runner, if any exist; the trace could not confirm any) | Matters only under O14 (a). (a) a one-time converter at daemon start writes events for them; (b) they show as finished history, read-only, and never run again; (c) they fold to empty and are seeded again, as `graph.ts:300` does today (a task created with start requested would rerun from its root steps, inferred) | Open | S4.2 |
 
 ## 1.8 Migration rules (strangler)
 
@@ -185,7 +188,7 @@ Order: transport and sync come before domain ports, so each port lands straight 
 5. **Conformance fixtures.** A port session turns the Rust tests for its domain (the inline `#[cfg(test)]` modules, `execution_tests.rs`, `alinery-core/tests/`) into fixture directories with expected JSON, runs them against Rust and TypeScript, and keeps them as TypeScript tests after Rust is deleted.
 6. **Each port deletes what it replaced**: Tauri commands, `ipc.ts` wrappers, `RepoOp` variants, core functions with no callers, entries in `remote-local-only.txt` and `remote-offload-ok.txt`.
 7. **Every command answers with its cursor** (`Applied`), so the client knows when its subscription shows the change.
-8. **Protocol**: `PROTOCOL` moves whenever the op set changes (D4). `buf breaking` turns on once a client ships outside this repo (web or iOS).
+8. **Protocol**: `PROTOCOL` moves whenever the op set changes (D4). `buf breaking` stays off: every client ships in this repo (D8), and a daemon of another protocol is a conflict with an explicit restart, as today.
 
 ---
 
@@ -235,7 +238,9 @@ plugins:
     opt: [target=ts]
 ```
 
-Connect-ES v2 has no separate `protoc-gen-connect-es`: one `protoc-gen-es` (2.16.0) emits messages and service descriptors. Whether the default `import_extension` suits both Bun and Vite is checked in S0.1. buf is not installed here; `npx @bufbuild/buf` (1.75.0) avoids a system install.
+Connect-ES v2 has no separate `protoc-gen-connect-es`: one `protoc-gen-es` (2.16.0) emits messages and service descriptors, with `@bufbuild/protobuf` 2.16.0 at runtime. Spike result (S0.1): the default `import_extension` (none) resolves under `bun run`, `bun build --compile`, `tsc --noEmit` with `moduleResolution: "bundler"` (the app's setting) and Vite 7.3.6, so `buf.gen.yaml` sets nothing. `@bufbuild/buf` 1.75.0 as a pinned devDependency puts the buf binary in `node_modules/.bin`, so `buf generate` and `buf lint` run offline after install; no `npx`, no system install.
+
+**Naming (buf STANDARD lint, checked in the spike).** Every RPC has its own `<Rpc>Request` and `<Rpc>Response`, also for streams. All messages share the package `alinery.v1`, so an RPC name carries its entity (`RenameTask`, `ReadBlob`, `CancelJob`), which keeps message names unique. A write's response embeds `Applied applied = 1`; there is no shared response message.
 
 ### 2.1.2 Common messages
 
@@ -257,12 +262,9 @@ message MutationMeta {
 }
 
 // Every write answers with the cursor that contains its effect (migration rule 7).
+// Each write RPC's own <Rpc>Response embeds it as `Applied applied = 1`.
 message Applied {
   Cursor cursor = 1;
-}
-
-message MutationResponse {
-  Applied applied = 1;
 }
 
 // Attached to every error as a Connect error detail.
@@ -281,13 +283,19 @@ service AdminService {
   rpc Hello(HelloRequest) returns (HelloResponse);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
   rpc Stats(StatsRequest) returns (StatsResponse);  // P7
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // S5.1, only if O20 picks (b) or (c)
 }
 
 message HelloRequest {
   string client_id = 1;
-  string client_kind = 2;  // "desktop", "web", "ios", "mcp"
+  string client_kind = 2;  // "desktop", "mcp"
   uint32 protocol = 3;
 }
+
+// Needs ADMIN. Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT.
+// The token is 32 random bytes, hex; it lives in memory and dies with the daemon.
+message MintTokenRequest { Capability capability = 1; string label = 2; }  // label: for the log only
+message MintTokenResponse { string token = 1; }
 
 message HelloResponse {
   uint32 protocol = 1;
@@ -327,14 +335,14 @@ message ShutdownResponse {
 }
 ```
 
-`Hello` is also the liveness probe. A successful socket connect proves nothing over a forward (today's lesson in `remote.rs`); a `Hello` round-trip does.
+`Hello` needs any one capability, so every credential in 2.1.10 can call it and learn what it holds. It is also the liveness probe. A successful socket connect proves nothing over a forward (today's lesson in `remote.rs`); a `Hello` round-trip does.
 
 ### 2.1.4 Sync
 
 ```proto
 // proto/alinery/v1/sync.proto
 service SyncService {
-  rpc Subscribe(SubscribeRequest) returns (stream SyncFrame);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
 }
 
 message SubscribeRequest {
@@ -355,7 +363,7 @@ message TaskScope { string slug = 1; }
 message SessionScope { SessionRef session = 1; }
 message ChatScope {}
 
-message SyncFrame {
+message SubscribeResponse {  // one frame of the stream
   oneof frame {
     Snapshot snapshot = 1;
     Delta delta = 2;
@@ -417,12 +425,10 @@ Entity message fields start as copies of today's TypeScript types in `alinery-ap
 ```proto
 // proto/alinery/v1/terminal.proto
 service TerminalService {
-  rpc Attach(AttachRequest) returns (stream TerminalOutput);
+  rpc Attach(AttachRequest) returns (stream AttachResponse);
   rpc Write(WriteRequest) returns (WriteResponse);
   rpc Resize(ResizeRequest) returns (ResizeResponse);
   rpc Detach(DetachRequest) returns (DetachResponse);
-  // Possible later, HTTP/2 native clients only (O8):
-  // rpc Stream(stream TerminalClientFrame) returns (stream TerminalOutput);
 }
 
 message AttachRequest {
@@ -433,7 +439,7 @@ message AttachRequest {
   bool read_only = 5;      // VIEW capability attaches read-only
 }
 
-message TerminalOutput {
+message AttachResponse {  // one frame of terminal output
   oneof body {
     bytes data = 1;
     Exit exit = 2;
@@ -457,17 +463,24 @@ message DetachResponse {}
 ```
 
 - **Replay is a file read.** The scrollback file is append-only and the daemon already replays its tail on attach (`terminal.ts:162`; `terminal.ts:2` says there is no vt100 frame). An offset turns reattach into "read from here", so a client that dropped for a second gets only what it missed.
+- **Offset rules** (so client and daemon can't disagree):
+  - An offset is a byte position in `sessions/<id>.scrollback`, counted from the file's first byte. The file only grows; nothing truncates or rotates it while the session exists.
+  - `from_offset = 0` means "the tail": the daemon starts at `max(0, size - REPLAY_BYTES)` (`terminal.ts:7`), sets `truncated` when that is above 0, and the first frame's `offset` says where it started.
+  - `from_offset > 0` starts exactly there. Above the current size is INVALID_ARGUMENT (the client is from another file, for example after a restore). Below `size - REPLAY_BYTES` is allowed: it is a file read, and the client asked for it.
+  - Each frame's `offset` is the position of its first byte, and the next frame starts at `offset + data.length`. A client keeps `offset + data.length` of the last frame it rendered and reattaches from that.
+  - Replay and live bytes meet without a gap or a repeat: the daemon reads the file up to the size it saw when it registered the live listener, and live frames start at that size. The registration and the size read happen in the same tick.
+  - Bytes are cut anywhere, including inside a UTF-8 sequence or an escape sequence; xterm handles split writes.
 - **Input order lives in the daemon.** `input_seq` replaces the app-side ordered worker `queue_terminal_op` (`session.rs:684`). The daemon buffers an out-of-order write until the gap fills (WA: give up after 2 s and apply in arrival order, logging it).
 - **Pi sessions** have transcripts, not just bytes:
 
 ```proto
 // in sessions.proto
 service SessionService {
-  // Create, Start, Rename, Archive, Kill, Resume: unary, MutationMeta first
-  rpc WatchTranscript(WatchTranscriptRequest) returns (stream TranscriptFrame);
+  // CreateSession, StartSession, RenameSession, ArchiveSession, KillSession, ResumeSession: unary, MutationMeta first (S4.4)
+  rpc WatchTranscript(WatchTranscriptRequest) returns (stream WatchTranscriptResponse);
 }
 message WatchTranscriptRequest { SessionRef session = 1; uint64 from_item = 2; }
-message TranscriptFrame {
+message WatchTranscriptResponse {
   repeated TranscriptItem items = 1;  // fields defined in S3.3 from today's transcript type
   uint64 next_item = 2;
   bool replace = 3;                   // true: items replace the client's copy from from_item on
@@ -479,27 +492,29 @@ message TranscriptFrame {
 ```proto
 // proto/alinery/v1/blobs.proto
 service BlobService {
-  rpc Read(ReadBlobRequest) returns (stream BlobChunk);
+  rpc ReadBlob(ReadBlobRequest) returns (stream ReadBlobResponse);
   rpc BeginUpload(BeginUploadRequest) returns (BeginUploadResponse);
   rpc UploadChunk(UploadChunkRequest) returns (UploadChunkResponse);
-  rpc CommitUpload(CommitUploadRequest) returns (MutationResponse);
+  rpc CommitUpload(CommitUploadRequest) returns (CommitUploadResponse);
 }
 
 message BlobRef {
   oneof target {
-    ArtifactBlob artifact = 1;          // {task_slug, name}
-    AttachmentBlob attachment = 2;      // {task_slug, name}
-    ChatAttachmentBlob chat_attachment = 3;
+    ArtifactBlob artifact = 1;                 // {task_slug, name}
+    AttachmentBlob attachment = 2;             // {task_slug, name}
+    ChatAttachmentBlob chat_attachment = 3;    // {thread_id, name}
+    PlaybookPackageBlob playbook_package = 4;  // {upload_name}: a community package the shell downloaded (S4.10); staged only, never read back
   }
 }
 message ReadBlobRequest { BlobRef ref = 1; uint64 offset = 2; uint64 length = 3; }  // length 0: to the end
-message BlobChunk { bytes data = 1; uint64 offset = 2; uint64 total = 3; string content_type = 4; }
+message ReadBlobResponse { bytes data = 1; uint64 offset = 2; uint64 total = 3; string content_type = 4; }
 
 message BeginUploadRequest { MutationMeta meta = 1; BlobRef target = 2; uint64 size = 3; string sha256 = 4; }
 message BeginUploadResponse { string upload_id = 1; uint32 chunk_size = 2; }  // WA 256 KiB
 message UploadChunkRequest { string upload_id = 1; uint64 offset = 2; bytes data = 3; }
 message UploadChunkResponse {}
 message CommitUploadRequest { string upload_id = 1; }  // sha256 checked here, then atomic rename
+message CommitUploadResponse { Applied applied = 1; BlobRef ref = 2; }  // ref: the final name (deduplicated)
 ```
 
 Uploads are unary chunks because browsers and WebKit can't stream a request body. Staged chunks live in `.alinery/tmp/uploads/<upload_id>` and are cleared at daemon start.
@@ -507,10 +522,12 @@ Uploads are unary chunks because browsers and WebKit can't stream a request body
 ```proto
 // proto/alinery/v1/jobs.proto
 service JobService {
-  rpc Start(StartJobRequest) returns (StartJobResponse);  // {MutationMeta, oneof kind params}
-  rpc Cancel(CancelJobRequest) returns (MutationResponse);
+  rpc StartJob(StartJobRequest) returns (StartJobResponse);  // {MutationMeta, oneof kind params}
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
 }
-message StartJobResponse { string job_id = 1; Applied applied = 2; }
+message StartJobResponse { Applied applied = 1; string job_id = 2; }
+message CancelJobRequest { MutationMeta meta = 1; string job_id = 2; }
+message CancelJobResponse { Applied applied = 1; }
 
 message Job {  // an Entity; progress arrives through Subscribe
   string id = 1;
@@ -542,10 +559,10 @@ enum JobState {
 ```proto
 // proto/alinery/v1/tasks.proto
 service TaskService {
-  rpc Create(CreateTaskRequest) returns (CreateTaskResponse);
-  rpc Rename(RenameTaskRequest) returns (MutationResponse);
-  rpc Archive(ArchiveTaskRequest) returns (MutationResponse);
-  rpc Restore(RestoreTaskRequest) returns (MutationResponse);
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc RenameTask(RenameTaskRequest) returns (RenameTaskResponse);
+  rpc ArchiveTask(ArchiveTaskRequest) returns (ArchiveTaskResponse);
+  rpc RestoreTask(RestoreTaskRequest) returns (RestoreTaskResponse);
 }
 
 message ArchiveTaskRequest {
@@ -553,11 +570,12 @@ message ArchiveTaskRequest {
   string slug = 2;
   uint64 expected_revision = 3;  // 0: no check; a mismatch is ABORTED
 }
+message ArchiveTaskResponse { Applied applied = 1; }
 ```
 
-Every write follows that shape: `MutationMeta` first, the target, an optional `expected_revision`, and `MutationResponse` (or a response that embeds `Applied`) back.
+Every write follows that shape: `MutationMeta` first, the target, an optional `expected_revision`, and its own `<Rpc>Response` with `Applied applied = 1` (2.1.1, naming). `docs/thick-daemon-spikes/proto/alinery/v1/tasks.proto` is a lint-clean example.
 
-**What becomes an entity and what becomes an RPC.** State that several views show and that changes over time is an entity in the store, read only through `Subscribe`. A one-off computed answer (a diff, a compare URL, a dry run, a directory listing) is a unary RPC. No `List*` or `Get*` RPC exists for something that is an entity.
+**What becomes an entity and what becomes an RPC.** State that several views show and that changes over time is an entity in the store, read only through `Subscribe`. A one-off computed answer (a diff, a compare URL, a dry run, a directory listing) is a unary RPC. No `List*` or `Get*` RPC exists for something that is an entity. A one-shot read (MCP, a CLI) is `Subscribe` with no cursor, read until the `Snapshot` frame with `complete = true`, then cancelled (WA).
 
 **Errors** use Connect codes, each with an `ErrorDetail`:
 
@@ -575,12 +593,12 @@ Every write follows that shape: `MutationMeta` first, the target, an optional `e
 
 Research facts that decide it:
 - `Bun.serve` has no HTTP/2 response trailers, so it can't serve gRPC.
-- Connect-ES 2.2.0 serves Connect and gRPC-Web over HTTP/1.1 through `node:http`. gRPC proper needs `node:http2`, and whether that works under Bun is UNCONFIRMED.
+- Connect-ES 2.2.0 serves Connect and gRPC-Web over HTTP/1.1 through `node:http`. gRPC proper needs `node:http2`; the S0.2 spike served gRPC through `node:http2` on Bun 1.4.3.
 - Over HTTP/1.1 Connect supports unary and server streaming; bidi needs HTTP/2.
 
 | | (a) Connect-ES on `node:http` | (b) `@grpc/grpc-js` | (c) own framing |
 |---|---|---|---|
-| Runs on Bun | `node:http` handler; gRPC also if `node:http2` works | needs `node:http2` (UNCONFIRMED) | any byte stream |
+| Runs on Bun | `node:http` handler (measured, 4.1 S0.2); gRPC through `node:http2` also works | needs `node:http2` (works) | any byte stream |
 | Browser and WebKit | Connect over fetch, unary and server streaming | needs a proxy | WebSocket only |
 | Bidi | HTTP/2 only | yes | yes |
 | Codegen | `protoc-gen-es`, one plugin | separate generator | hand-written dispatch |
@@ -590,24 +608,38 @@ Research facts that decide it:
 WA (a). The plan needs no bidi call: terminals use the split form (O8 a), uploads are chunked. S0.2 measures it.
 
 ```ts
-// vinculum-daemon/src/rpc/server.ts (sketch)
+// vinculum-daemon/src/rpc/server.ts (sketch; working code: docs/thick-daemon-spikes/src/rpc-server.ts)
 import { createServer } from "node:http";
+import { createServer as createNetServer, type Socket } from "node:net";
+import { createContextValues } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
-import { AdminService, SyncService } from "alinery-proto/gen/alinery/v1/...";
 
-export function serveRpc(socketPath: string, secret: Buffer) {
+export function serveRpc(socketPath: string, secret: Buffer, shellExe: string) {
   const handler = connectNodeAdapter({
     routes(router) {
       router.service(AdminService, admin);
       router.service(SyncService, sync);
     },
-    interceptors: [authInterceptor(secret)],  // server interceptors: confirm in S0.2
+    // The interceptor sees only headers; contextValues sees the node request and its socket.
+    contextValues: (req) => createContextValues().set(PEER, peerExecutable(req.socket as Socket)),
+    interceptors: [authInterceptor(secret, shellExe)],
   });
-  createServer(handler).listen(socketPath);
+  const http = createServer(handler);
+  // Bun's node:http hides the socket fd, so a peer check on req.socket would always fail.
+  // A node:net listener keeps the fd, and handing each socket to the HTTP server keeps it on req.socket.
+  createNetServer((sock) => http.emit("connection", sock)).listen(socketPath);
 }
 ```
 
-A Bun or Node client reaches the socket with connect-node's `createConnectTransport` and `nodeOptions: { socketPath }` (UNCONFIRMED, S0.2). The shell bridge needs no protobuf client at all (2.1.9).
+Facts the S0.2 spike confirmed, which the sketch relies on:
+- A server interceptor sees the request headers and can throw `Code.Unauthenticated` before the handler runs (HTTP 401 on the wire).
+- `contextValues(req)` runs per request with the node request, so the peer check runs there and the interceptor reads it from `req.contextValues`.
+- connect-node's `createConnectTransport({ httpVersion: "1.1", baseUrl: "http://daemon", nodeOptions: { socketPath } })` reaches the socket. curl does too (`--unix-socket`, Connect JSON).
+- Client cancel aborts the handler's `ctx.signal`.
+
+**Rule: every streaming handler wakes on `ctx.signal`.** A handler that awaits a timer or a queue must race it against the signal (`Promise.race([sleep, abortPromise(ctx.signal)])`), or an idle stream keeps its handler, and its memory, until the timer fires. The spike's `ticks` shows the pattern; S2.1's `Subscriber.frames` and S3.3's transcript watch follow it.
+
+The shell bridge needs no protobuf client at all (2.1.9).
 
 ### 2.1.8 Transports
 
@@ -616,10 +648,9 @@ A Bun or Node client reaches the socket with connect-node's `createConnectTransp
 | T1 | UDS `<repo>/.alinery/rpc[-ns].sock` | shell bridge for local repos, MCP on the daemon's host, tests | Same lane naming as `alineryd[-ns].sock`; 0600 |
 | T2 | ssh `-O forward -L <local sock>:<remote rpc sock>` on the existing ControlMaster | shell bridge for remote repos, MCP on another machine (O18) | Reuses `remote.rs` masters and forward naming. Needs sshd `AllowStreamLocalForwarding`, which the probe already checks |
 | T3 | Tauri bridge (O2) | desktop webview | The webview never opens a socket. The shell forwards HTTP/1.1 bytes to T1 or T2 |
-| T4 | HTTPS (Connect), optional WebSocket | web and iOS (P6) | TLS listener on the daemon or a relay; pairing tokens (O13) |
-| T5 | loopback TCP | only if O2 (b) wins, or iOS `direct-tcpip` | token required |
-| T6 | iOS | P6 (O13) | no streamlocal in swift-nio-ssh or Citadel, so T2 is out; TLS or `direct-tcpip` to T5 |
 | T7 | in-memory `createRouterTransport` | vitest and bun tests | replaces `mockIpc` for daemon calls (2.5) |
+
+T4 to T6 (HTTPS, loopback TCP, iOS) were for web and iOS clients and are withdrawn (D8). The ids are not reused.
 
 The protocol is the same on every row. Only the byte pipe changes.
 
@@ -630,20 +661,26 @@ WA (a): one Tauri command proxies a Connect request to the daemon socket and str
 ```
 webview: Connect client
   -> createConnectTransport({ baseUrl: "http://daemon", fetch: bridgeFetch(repoKey), useBinaryFormat: true })
-  -> bridgeFetch: invoke("daemon_rpc", {repo, method, headers, body}, channel)
-shell:  daemon_rpc
+  -> bridgeFetch: invoke("daemon_rpc", <request body bytes>, { headers: { x-alinery-rpc: {repo, call_id, path, headers}, x-alinery-channel: <channel> } })
+shell:  daemon_rpc(request: tauri::ipc::Request, webview: Webview)
+  -> body = request.body() (raw bytes); call = JSON of the x-alinery-rpc header
+  -> channel = JavaScriptChannelId::from_str(<x-alinery-channel header>)?.channel_on(webview)
   -> resolve repoKey: local rpc.sock (T1) or the ssh forward (T2)
   -> add authorization header (the token never reaches the webview)
-  -> hyper HTTP/1.1 over UnixStream (hyper is already in Cargo.lock)
-  -> each response chunk -> Channel frame
+  -> hyper HTTP/1.1, one new connection per call, over UnixStream
+  -> response chunks -> batched frames -> Channel messages
 webview: bridgeFetch builds a Response with a ReadableStream body from the frames
 ```
 
-- **The bridge is a `fetch`, not a protocol.** The Connect client is unchanged; `bridgeFetch` only moves bytes. That keeps one client code path for the webview (bridge), web (real fetch) and tests (in-memory).
-- **Frame format on the Channel:** `[u32 len][u8 kind][payload]`, kind = head (status and headers as JSON), body chunk, end (trailers or transport error). Frames are padded to at least 1 KiB: Tauri 2.11 sends raw channel bodies under 1 KiB through `webview.eval` as JavaScript array literals (`session.rs:384`, `TAURI_RAW_FETCH_MIN_BYTES`). Today's terminal pump already does exactly this.
-- **Coalescing:** body chunks are batched like `pump_session_stream` (`session.rs:401`, 8 ms or 16 KiB) before they cross into the webview.
-- **Request body:** Open in S0.3. A raw `tauri::ipc::Request` body and a `Channel` argument in one invoke is UNCONFIRMED. Fallback: the request body goes base64 in the JSON args. Requests are small; uploads are chunked at 256 KiB.
-- **Cancel:** the `AbortSignal` calls `daemon_rpc_cancel(call_id)`, and the shell drops the hyper request, which ends the server stream.
+Working code: `docs/thick-daemon-spikes/src/bridge-fetch.ts` (the webview half, plus a Bun stand-in for the shell) passes unary, error, streaming and cancel tests with a stock connect-web client; `docs/thick-daemon-spikes/bridge-rs/` is the shell half over hyper (4.1 S0.3).
+
+- **The bridge is a `fetch`, not a protocol.** The Connect client is unchanged; `bridgeFetch` only moves bytes. That keeps one client code path for the webview (bridge) and tests (in-memory).
+- **Request body and channel in one invoke.** A raw-body invoke (`invoke(cmd, Uint8Array, options)`) can't also carry a keyed `Channel` argument. The webview passes the channel in a header instead: Tauri's JS `Channel` serializes as `__CHANNEL__:<id>`, and the command takes `tauri::ipc::Request` plus `Webview` and calls `JavaScriptChannelId::from_str(..)?.channel_on(webview)`. Both are public API in Tauri 2.11.3 (re-exported at `tauri/src/ipc/mod.rs:39`). Read in the Tauri source, not yet run in a webview (4.2).
+- **Frame format on the Channel:** `[u32 LE len][u8 kind][payload]`, where `len` counts the kind byte and the payload. Kinds: HEAD = 1 (status and headers as JSON), BODY = 2 (a response chunk), END = 3 (empty, or a transport error string). One Channel message holds one or more frames, then zeros up to at least 1 KiB; a zero length ends the message. The padding is because Tauri 2.11 sends raw channel bodies under 1 KiB (`MAX_RAW_DIRECT_EXECUTE_THRESHOLD`, `tauri/src/ipc/channel.rs:39`) through `webview.eval` as JavaScript array literals (`session.rs:384`). The TypeScript `encodeFrames` and Rust `encode_frame` in the samples are tested to give the same bytes.
+- **Batching is mandatory.** Unbatched, a busy stream sent about 116,000 channel messages a second in the spike. The shell batches frames like `pump_session_stream` (`session.rs:401`): flush at 8 ms or 16 KiB, whichever comes first, and at END. `splitFrames` already reads several frames per message.
+- **One HTTP/1.1 connection per call.** After a cancelled stream the daemon drops that connection, and a pooled reuse failed with ECONNRESET in the spike. A unix-socket connect costs microseconds (unary p50 through hyper was 0.076 ms with a new connection each call).
+- **Cancel:** the `AbortSignal` calls `daemon_rpc_cancel(call_id)`; the shell aborts the call's task, which drops the connection, and the daemon's `ctx.signal` fires. **An abort before HEAD has arrived must reject the `fetch` itself**: the shell sends nothing more for a cancelled call, and Connect is still awaiting the `Response`. The sample's `abort()` does this; without it the cancel test hung.
+- **Origin-form request line.** hyper's connection API sends the URI as given; an absolute `http://daemon/...` request line made the Connect router answer 404. Build the request with the path only and a `host` header.
 - **Prior art:** connectrpc-tauri 0.1.6 does the same with JSON bodies. We use binary.
 
 ### 2.1.10 Auth and capabilities
@@ -657,11 +694,14 @@ webview: bridgeFetch builds a Response with a ReadableStream body from the frame
 | Shell token, local, and the peer executable is the shell | VIEW, ACT, APPROVE, ADMIN |
 | Shell token over ssh (peer is sshd) | VIEW, ACT, APPROVE, ADMIN. The token is stored on the Mac only, never on the host, so host agents can't read it |
 | Shell token, local, peer is something else | VIEW, ACT. On this Mac agents run as the same user and can read `<app_config_dir>`, so APPROVE and ADMIN keep today's peer-executable check |
-| No token | AGENT, limited to the four MCP session tools (today's exposure). S5.1 deletes this row: MCP then carries a token |
-| MCP token (from S5.1) | AGENT: exactly the RPCs behind MCP's tools, storage scan and purge included. Never `Shutdown`, the rest of ADMIN, or APPROVE (O18 b) |
-| Pairing token (P6) | what the pairing granted (O13) |
+| No token | AGENT, limited to the four MCP session tools (today's exposure) until S5.1. Under O20 (a) this row then grants full AGENT; under (b) or (c) S5.1 deletes it |
+| Minted AGENT token (S5.1, only under O20 (b) or (c)) | AGENT |
+
+**AGENT** is exactly the RPCs behind MCP's tools, storage scan and purge included. Never `Shutdown`, the rest of ADMIN, or APPROVE (O18 b). The v0.3 pairing-token row is withdrawn with O13 (D8).
 
 APPROVE is never reachable from anything an agent on the host can read, so an agent can't approve its own step.
+
+**Single OS user (WA).** Every row assumes the daemon, its socket and the agents it runs belong to one OS user, as today. Socket files are 0600 in a 0700 directory. A second OS user on the same host is not a client.
 
 ## 2.2 Sync engine
 
@@ -688,8 +728,11 @@ cursor unset, or epoch differs, or seq older than the ring
 cursor current
   -> Deltas since cursor.seq (from the ring) -> UpToDate -> live Deltas
 always
-  -> Heartbeat every 15 s with the current cursor
+  -> Heartbeat after 15 s with nothing queued for this subscriber
 ```
+
+- **The subscriber is registered and its snapshot or replay is taken in the same tick**, with no `await` between, so no commit falls between the two.
+- **A heartbeat carries the store's current seq, and is sent only when the subscriber's queue is empty.** That moves a quiet scope's cursor past commits outside its scope, so the ring can roll over without forcing that client to refetch. With items queued, the next delta carries the cursor instead. The property test in `docs/thick-daemon-spikes/src/store.test.ts` pins this down: its last check needs the task-scope replica's cursor to reach the store's seq, which only a heartbeat can do.
 
 ### 2.2.5 Batching and backpressure
 
@@ -716,7 +759,7 @@ Keys are `<kind>/<task slug or _>/<id>`. A scope is a filter over kind and slug:
 ### 2.2.8 What feeds the store
 
 1. **Domain commands.** Each domain function writes files through `platform/fs` and then calls `store.commit`. The code that makes a change also reports it.
-2. **File watcher plus reconcile.** Covers agents and Rust (during the strangler period) writing files directly. Watch `.alinery/tasks/**` and the config files (`config.toml`, `harnesses.toml`, `playbooks.toml`). Ignore `worktrees/`, `*.scrollback` (every PTY byte is appended there) and `.alinery/tmp/`. On an event, re-read the path, rebuild the entity, and commit only if protobuf-es `equals()` says it changed, so the daemon's own writes cost a re-read and no delta. A reconcile pass every 30 s (WA) stats every tracked file and re-reads what changed, which covers missed events. Watcher choice in S0.4 (Bun `fs.watch` has open bugs #44780 and #34160, as reported by research; `@parcel/watcher` 2.6.0 is a native addon).
+2. **File watcher plus reconcile.** Covers agents and Rust (during the strangler period) writing files directly. Watch `.alinery/tasks/**` and the config files (`config.toml`, `harnesses.toml`, `playbooks.toml`). Ignore `worktrees/`, `*.scrollback` (every PTY byte is appended there) and `.alinery/tmp/`. On an event, re-read the path, rebuild the entity, and commit only if protobuf-es `equals()` says it changed, so the daemon's own writes cost a re-read and no delta. A reconcile pass every 30 s (WA) stats every tracked file and re-reads what changed, which covers missed events. **The pass is async and batched** (`readdir` and `stat` from `node:fs/promises`, 256 at a time): on 1,075 tasks it took 42 ms with the longest event-loop gap 3.3 ms, and on 4,300 tasks 167 ms with a 5.4 ms gap (4.1, O3 scan). A synchronous pass would block the loop for its whole length. The watcher is a WA from S0.4: Bun `fs.watch` with `recursive: true` on `.alinery/tasks`, plus one non-recursive watch on `.alinery/` for the config files. On macOS it missed no op in 3,000, against Bun issues #44780 and #34160 too; Linux is S2.3's Accept. The handler re-reads and trusts no event's kind or path (S0.4 rules).
 3. **The session runner.** Session start, exit, status and attention changes commit directly.
 4. **Playbook engine events.** A hook in `appendLog` commits the execution entity after each event. Events gain an `at` timestamp (today they carry none, `state.ts`).
 5. **Jobs.** The job runner commits job state and progress (throttled to about 4 per second).
@@ -736,26 +779,27 @@ export class Store {
 
   // Synchronous on the event loop: no await between assigning seq and fanning out.
   commit(puts: Entity[], deletes: string[] = []): bigint {
-    const seq = ++this.seq;
     const changes: Change[] = [];
-    for (const entity of puts) {
-      const prev = this.rows.get(entity.key);
-      if (prev && equals(EntitySchema, { ...prev.entity, revision: 0n }, { ...entity, revision: 0n })) continue;
-      entity.revision = seq;
-      this.rows.set(entity.key, { revision: seq, entity });
-      changes.push(create(ChangeSchema, { op: { case: "put", value: entity } }));
+    for (const e of puts) {
+      const prev = this.rows.get(e.key);
+      if (prev && equals(EntitySchema, { ...prev.entity, revision: 0n }, { ...e, revision: 0n })) continue;
+      changes.push(create(ChangeSchema, { op: { case: "put", value: e } }));
     }
-    for (const key of deletes) {
-      if (this.rows.delete(key)) changes.push(create(ChangeSchema, { op: { case: "delete", value: key } }));
+    for (const key of deletes) if (this.rows.has(key)) changes.push(create(ChangeSchema, { op: { case: "delete", value: key } }));
+    if (!changes.length) return this.seq;  // nothing changed: no seq taken, nothing sent
+    const seq = ++this.seq;
+    for (const c of changes) {
+      if (c.op.case === "put") { c.op.value.revision = seq; this.rows.set(c.op.value.key, { revision: seq, entity: c.op.value }); }
+      else this.rows.delete(c.op.value);
+      this.pushRing(seq, c);
     }
-    if (!changes.length) return this.seq - 1n;  // nothing changed; seq not consumed
-    // (real code assigns seq only after finding a change; sketch kept short)
-    for (const change of changes) this.pushRing(seq, change);
     for (const sub of this.subs) sub.offer(seq, changes);
     return seq;
   }
 }
 ```
+
+Working code with tests: `docs/thick-daemon-spikes/src/store.ts` and `store.test.ts`. The property test runs 20 seeds of 400 random commits with dropped and resumed streams, queue overflow and ring rollover, and checks that each replica equals the store's rows in its scope with the same cursor. Measured cost of one commit: 0.8 µs with 1 subscriber, 2.4 µs with 10, 9.1 µs with 100; one task delta is 93 bytes on the wire (4.1, store spike).
 
 ```ts
 // vinculum-daemon/src/sync/service.ts (sketch)
@@ -770,7 +814,7 @@ The index is built at start by scanning `.alinery/` with the same parsers the wa
 
 ### 2.2.10 Client replica
 
-Lives in `alinery-app/src/sync/` (a shared package once web exists).
+Lives in `alinery-app/src/sync/`. The `Replica` class at the end of `docs/thick-daemon-spikes/src/store.ts` is the tested core of `apply`; the property test drives it.
 
 ```ts
 // alinery-app/src/sync/replica.ts (sketch)
@@ -780,7 +824,7 @@ export class Replica {
   private rows = new Map<string, Entity>();
   private listeners = new Set<() => void>();
 
-  apply(frame: SyncFrame) { /* snapshot: replace; delta: put/delete; must_refetch: clear cursor */ }
+  apply(r: SubscribeResponse) { /* snapshot chunks: build, swap in on complete; delta: put/delete; up_to_date and heartbeat: move cursor; must_refetch: clear cursor */ }
   get = (key: string) => this.rows.get(key);
   listen = (fn: () => void) => (this.listeners.add(fn), () => this.listeners.delete(fn));
 }
@@ -807,10 +851,11 @@ Measured in `alinery-app/src` on 2026-10-26.
 | `TaskDetail.tsx:580` | `refreshLiveTaskState` (task, artifacts, execution) | task scope |
 | `CreateSessionPage.tsx:113` | `readTaskExecution` | task scope |
 | `SessionView.tsx:298` | `refreshDisplay` | session scope |
-| `SessionView.tsx:590`, `:613` | `readTaskExecution` | task scope |
+| `SessionView.tsx:590` | `sessionStatus` every 1.5 s | session scope |
+| `SessionView.tsx:605`, `:613` | `readTaskExecution` every 1.5 s | task scope |
 | `SessionView.tsx:671` | `ipc.listTasks` (parent task) | repo scope |
 | `SessionView.tsx:719`, `:736` | `listArtifactsWithMetadata`, `listTaskArtifactTree` | task scope |
-| `SessionsList.tsx:239`, `:273` | `listBoardTasks`, `refreshStatuses` | repo scope plus session entities |
+| `SessionsList.tsx:239`, `:273` | `listSessionItems` (`:198`) every 3 s, `refreshStatuses` every 1.5 s (`listBoardTasks` at `:260` runs once, not polled) | repo scope plus session entities |
 | `shared.tsx:1131`, `:1289` | `sessionStatus` every 1.5 s | session scope |
 | `shared.tsx:1338` | `ipc.listTaskActivity` | repo scope |
 | `TerminalDrawer.tsx:213` | `sessionStatus` | session scope |
@@ -875,15 +920,20 @@ export function writeAtomic(path: string, data: string | Uint8Array, mode = 0o64
   renameSync(tmp, path);
 }
 
-// fs_atomic.rs:30 write_bytes_durable: as above, plus fsync of the file and its directory.
-export function writeDurable(path: string, data: string | Uint8Array, mode = 0o644) { /* fsyncSync(fd) before close, then fsync the dir fd */ }
+// fs_atomic.rs:30 write_bytes_durable: as above, plus a full sync of the file and its directory.
+// Rust's sync_all is fcntl(F_FULLFSYNC) on macOS; Bun's fsyncSync is plain fsync(2) (S0.5).
+export function writeDurable(path: string, data: string | Uint8Array, mode = 0o644) { /* fullSync(fd) before close, then fullSync(dir fd) */ }
+const fullSync = process.platform === "darwin"
+  ? (fd: number) => { if (libc.symbols.fcntl(fd, F_FULLFSYNC) !== 0) throw errnoError("F_FULLFSYNC"); }
+  : (fd: number) => fsyncSync(fd);
 
 // fs_atomic.rs:62-99: 0700 directories and 0600 files for anything secret.
 export function mkdirOwnerOnly(path: string) { mkdirSync(path, { recursive: true, mode: 0o700 }); chmodSync(path, 0o700); }
 export function writeOwnerOnly(path: string, data: string | Uint8Array) { writeAtomic(path, data, 0o600); }
 ```
 
-- Whether Rust's durable write uses `F_FULLFSYNC` on macOS, and whether Bun's `fsyncSync` does, is checked in S0.5 (UNCONFIRMED). If Rust does and Bun doesn't, `writeDurable` calls `fcntl(fd, F_FULLFSYNC)` through `bun:ffi`.
+- **Answered in S0.5.** Rust std 1.96.1 `File::sync_all` is `fcntl(F_FULLFSYNC)` on Apple targets, and `write_bytes_durable` calls it on the file and the directory (`fs_atomic.rs:42`, `:50-51`). Bun 1.4.3 `fs.fsyncSync` is plain `fsync(2)` on every Unix (read in Bun's source; the timings agree). So on macOS `writeDurable` calls `fcntl(fd, F_FULLFSYNC)` through `bun:ffi`. `fcntl` is variadic and `bun:ffi` has no variadic calls: bind it with two arguments, which is valid only for commands with no third argument, such as `F_FULLFSYNC`. On Linux `fsyncSync` matches Rust.
+- **Cost (WA).** One 1 KiB durable replace on an M4 Max with FileVault: about 9.8 ms p50 and 13 to 18 ms p99 with `F_FULLFSYNC`, against 0.12 ms with plain fsync; Rust's `write_bytes_durable` costs the same 9.8 ms. The FFI call is synchronous, so it blocks the event loop that long. Use `writeDurable` exactly where Rust uses `write_bytes_durable` today: task creation (`task_creation.rs:211`, `:352`, `:403`, `:411`, so task.md, the playbook copy, each attachment and the ticket) and `execution.json` (`execution.rs:322`). Everything else uses `writeAtomic`. A session that sees the loop stall from this (terminal echo, Subscribe latency) stops and asks.
 - A gate (`check-daemon-fs-writes.sh`, S0.6) fails on `writeFileSync` or `Bun.write` outside `platform/fs.ts`.
 
 **`platform/lock.ts`** ports `alinery-core/src/lockfile.rs`:
@@ -911,10 +961,12 @@ export function tryLockExclusive(path: string): LockHandle | null {
 export function isLockedByOther(path: string): boolean { /* LOCK_SH | LOCK_NB, then LOCK_UN */ }
 ```
 
-- A `-1` from `flock` with `LOCK_NB` is treated as busy. Telling `EWOULDBLOCK` from other errors needs errno (`__error()` on macOS, `__errno_location()` on Linux, read with `bun:ffi` `read.i32`); S0.5 checks that this works.
+- **Interop is confirmed (S0.5).** A Rust `try_lock_exclusive` holder blocks Bun's `flock(LOCK_EX|LOCK_NB)` and the reverse, on macOS arm64, Linux arm64 and Linux x64 (60 of 60 runs each). Two descriptors in one process also exclude each other. Working code: `docs/thick-daemon-spikes/src/lock.ts`, `lock.test.ts` and `lock-rs/`.
+- **errno.** Rust returns `Ok(None)` only for `EWOULDBLOCK` or `EAGAIN` and an error for anything else (`lockfile.rs:51-56`), so the port must read errno (`__error()` on macOS, `__errno_location()` on Linux, then `read.i32`). Read straight after the failed call it was right in 10,000 of 10,000 tries per platform. `bun:ffi` 1.4.3 can't capture errno, so **no JavaScript may run between the `flock` call and the errno read**: put both in one function with nothing between them. Measured with something between: a failing `statSync` clobbered errno every time, and a forced `Bun.gc(true)` clobbered it on macOS in 21 of 1,000 tries.
+- **Hardened runtime: UNCONFIRMED.** The installed release (0.26.0) signs its binaries with the hardened runtime and no entitlements, and ships no Bun binary. The daemon already uses `bun:ffi` (1.4), so this risk predates the plan, but nobody has run `bun:ffi` under that signature. `docs/thick-daemon-spikes/src/hardened-probe.ts` is the probe (dlopen, two flocks, errno, `F_FULLFSYNC`); it passed with Bun's ad-hoc signature, and the user must sign it with the release identity (4.2).
 - Lock marker files are never unlinked (invariant 2).
 
-**`withTaskMutation`** is the TypeScript side of `with_task_mutation_lock` (`lockfile.rs:127`), which takes a process mutex and then a flock on `.alinery/.task-mutation.lock` (`paths.rs:88`):
+**`withTaskMutation`** is the TypeScript side of `with_task_mutation_lock` (`lockfile.rs:127`), which takes a process mutex and then a flock on `.alinery/.task-mutation.lock` (`alinery-core/src/paths.rs:88`):
 
 ```ts
 // vinculum-daemon/src/platform/lock.ts (continued)
@@ -961,13 +1013,13 @@ Ordered by risk and by what unblocks the next port. Each row is one P4 session.
 | S4.9 | Storage and backup as jobs | `storage.rs` 816, `backup.rs` 1,188, app `backup.rs` 372, `backup_queue.rs` 342 | StorageInfo, PurgeArchived, BackupCreate, BackupList, BackupCheckDestination, BackupVerify, BackupRestore | The app's only business state (the backup queue) leaves the shell |
 | S4.10 | Imports, community import, agent dir | app `imports.rs` 644, the repo half of `community_playbooks.rs` 1,362, `omp_update.rs` 182 and `vinculum_customizations.rs` 641 (per O12) | none (GitOriginUrl is counted under S4.7) | Network calls that need Mac secrets stay in the shell (2.3.4) |
 | S4.11 | Ownership, takeover, keep-awake, hosted handoff | `repo_ownership.rs` 397, `ownership_ffi.rs` 59, `idle_inhibit.rs` 554 | none | Last FFI users; after this the daemon dlopens no `libalinery_core` |
-| S4.12 | Providers and models | daemon `main.ts:965-1002` (JSON-lines ops), app `session.rs` provider commands (:1215-:1251), `list_harness_models(_for_repo)` | none | Takes the provider ops off the JSON-lines wire before S5.3 deletes it |
+| S4.12 | Providers and models | daemon `main.ts:964-1021` (JSON-lines ops), the seven app `session.rs` provider commands (`:1215`, `:1227`, `:1233`, `:1239`, `:1245`, `:1251`, `:1265`), `list_harness_models(_for_repo)` | none | Takes the provider ops off the JSON-lines wire before S5.3 deletes it |
 
 The 11 host-level variants (Ping, ClaimRepo, ReleaseRepo, Classify, Init, ListDir, WriteFile, RemoveFile, SyncCredentials, WaitDaemonGone, SpawnDaemon) work when no daemon runs; O15 decides them in S5.2. The 8 board-read variants (ListBoardTasks, ListTasks, GetTask, TaskActivity, ListSessions, ListSessionItems, ReadSessionMetas, GetSessionDisplay) retire in S3.5. 11 + 8 + 77 above = 96.
 
 ### 2.3.4 Splitting the MIXED commands
 
-28 commands do two kinds of work at once. Each splits by one of these rules:
+30 commands do two kinds of work at once (1.4 counts 28; `create_chat_thread` and `start_chat_thread` also refresh the hosted token before opening, like `open_session`). Each splits by one of these rules:
 
 | Shape today | Becomes |
 |---|---|
@@ -979,8 +1031,36 @@ The 11 host-level variants (Ping, ClaimRepo, ReleaseRepo, Classify, Init, ListDi
 | Calls a network API that needs no Mac secret | The daemon calls it |
 | `open_session` (meta preflight, hosted refresh, attach) | The daemon owns preflight and attach; hosted-token refresh stays in the shell and reaches the daemon as a settings write (S4.11) |
 | `set_active_repo` (select, provision, ready the repo) | Selection and provisioning stay in the shell; a new `RepoService.EnsureReady` in the daemon does the repo half |
+| Stops sessions, rewrites the repo, starts again (`restore_backup`) | `Shutdown` with origin `RESTORE_BACKUP` (S1.4), the restore itself while no daemon runs (S4.9), then a normal start |
 
-S0.7 lists the 28 by name with the rule each takes, so each P4 session knows which halves it owns.
+The 30, with the rule and the session that owns each half (measured 2026-10-27; lines are the `fn` line under `alinery-app/src-tauri/src/`):
+
+| Command | Rule | Owner |
+|---|---|---|
+| `task.rs:92` duplicate_task_for_repo | 3 | S4.3 |
+| `task.rs:282` copy_chat_attachments | 4 | S4.3 (builds `BlobService` upload) |
+| `task.rs:645` list_task_activity | 1 | S3.5 |
+| `session.rs:321` archive_session, `:369` archive_session_for_repo | 2 | S4.4 |
+| `session.rs:505` open_session | 7 | attach S3.4; preflight S4.3; hosted refresh stays in the shell (S4.11) |
+| `session.rs:832` session_status, `:1013` session_list_statuses, `:1076` session_statuses, `chat.rs:395` chat_session_status | 1 | S3.2 |
+| `chat.rs:152` create_chat_thread, `:180` start_chat_thread | 7 | S4.4; hosted refresh stays in the shell (S4.11) |
+| `chat.rs:538` copy_chat_thread_attachments | 4 | S4.4 (uses S4.3's upload) |
+| `daemon.rs:328` observe_task_executions | 1 | S4.2 |
+| `daemon.rs:1345` close_all_repos | 2, in part | shutdown S1.4; the exited-session acks S4.4; the quit latch and MCP stop stay in the shell |
+| `daemon.rs:1549` daemon_status | 1 | daemon half S2.5 and S3.1; lane, conflict and drift stay in the shell until P5 |
+| `app_config.rs:411` set_active_repo | 8 | `EnsureReady` S4.1; the shell half S6.2 |
+| `settings.rs:354` delete_all_archived_storage | 2, as a job | S4.9 |
+| `community_playbooks.rs:455` community_download_status | 6 | S4.10 |
+| `community_playbooks.rs:933` import_community_playbook, `:951` update_community_import | 5 (the package moves as `PlaybookPackageBlob`) | S4.10 |
+| `community_playbooks.rs:1343` publish_community_playbook | 5, reversed: the daemon reads, the shell sends | S4.10 |
+| `imports.rs:635` import_github, `:641` import_github_for_repo | 5 | S4.10 |
+| `git_ops.rs:400` list_task_pull_requests | 5 | S4.7 |
+| `backup.rs:318` restore_backup | the restore row | S4.9 (local and remote) |
+| `notify.rs:82` notify_session_attention | 1 | body S4.4; trigger S3.2; the OS notification stays in the shell |
+| `subtask.rs:57` start_subtask_manager, `:108` recover_subtask_manager | 3 | S4.8 |
+| `subtask.rs:121` discard_subtask | 2 | S4.8; its pre-archive backup S4.9 |
+
+These stay DOMAIN, because a remote repo already runs each as one `RepoOp`: `archive_chat_thread`, `remove_chat_worktree`, `resume_chat_thread`, `archive_task(_for_repo)`. `read_app_config` is shell plus provision and doesn't split.
 
 ### 2.3.5 Jobs and workers
 
@@ -1066,22 +1146,24 @@ Each session is one PR. The fields are always the same:
 - **Research**: what to confirm before building, and how. Results go to 4.1 or 4.2.
 - **Build**: the change, with sketches. Sketches show shape, not final code.
 - **Tests**: what proves it. Inner loop is targeted (`bun test <file>`, `npx vitest run <file>`, `cargo check -p alinery-app`); `./scripts/check.sh` runs once at check-in.
+- **Accept**: commands a reviewer runs, each with the result it must give. A session is done when every line gives its result and `./scripts/check.sh` passes. A line that can't be run without the app open says so; the user runs it or allows it.
 - **Exit**: the observable result, and what got deleted.
 
 ## P0: Contract, cleanup, spikes
 
 ### S0.1 Proto toolchain and the daemon test step
 
-Status: not started. Needs: nothing.
+Status: not started. Needs: nothing. Its research was answered by the review spike (4.1 S0.1).
 
 **Goal.** `proto/` exists with `common.proto` and `admin.proto`, generated TypeScript is checked in, and both the daemon and the app import it. `./scripts/check.sh` runs the daemon's and the engine's `bun test` (today it runs neither: its steps are biome, typecheck, vitest, the omp extension, the Rust steps and the shell gates).
 
-**Read first.** `alinery-app/src-tauri/vinculum-daemon/package.json` (the `file:` dependency on `playbook-engine` is the pattern for `alinery-proto`); `scripts/check.sh:37-90`; `scripts/dev-fetch-bun.sh` (how the compiled daemon is built, so the proto package resolves in `bun build --compile`); `alinery-app/vite.config.ts` and `tsconfig.json` (import resolution for a `file:` package).
+**Read first.** `docs/thick-daemon-spikes/` (`package.json`, `buf.yaml`, `buf.gen.yaml`, `tsconfig.json`, `vite.config.mjs`, `proto/`): the working toolchain this session moves into the repo. `alinery-app/src-tauri/vinculum-daemon/package.json` (the `file:` dependency on `playbook-engine` is the pattern for `alinery-proto`); `scripts/check.sh:37-90`; `scripts/dev-fetch-bun.sh` (how the compiled daemon is built); `alinery-app/vite.config.ts` and `tsconfig.json`.
 
-**Research.**
-- protoc-gen-es 2.16.0 `import_extension`: the default in v2 is no extension (UNCONFIRMED). Generate both ways and check that `bun build --compile`, `vite build` and `tsc --noEmit` all resolve the imports. Record the setting in `buf.gen.yaml`.
-- `npx @bufbuild/buf@1.75.0` works offline after the first fetch? If not, the gate skips with a message when buf is unavailable, and CI runs it.
-- `@bufbuild/protobuf` version that matches protoc-gen-es 2.16.0 (same major and minor).
+**Research (answered 2026-10-27).**
+- protoc-gen-es 2.16.0, `target=ts`, default import extension (none): resolves under `bun run`, `bun build --compile`, `tsc --noEmit` with `moduleResolution: "bundler"` and Vite 7.3.6 `vite build`. `buf.gen.yaml` sets nothing more.
+- `@bufbuild/buf` 1.75.0 as a pinned devDependency runs from `node_modules/.bin/buf` with no network. No `npx`.
+- `@bufbuild/protobuf` 2.16.0 pairs with protoc-gen-es 2.16.0; Connect 2.2.0 works with both.
+- **Left for this session (UNCONFIRMED, 4.2):** the spike imported the generated files by relative path. As a `file:` package, `alinery-proto/alinery/v1/admin_pb` must resolve through `exports`, and an extensionless subpath needs `"./*": "./gen/*.ts"`. Check it in Bun, Vite and `tsc`; if one refuses it, record what works in 4.1.
 
 **Build.**
 - `proto/` as in 2.1.1, with `common.proto` and `admin.proto` only. Later sessions add their files.
@@ -1092,195 +1174,129 @@ Status: not started. Needs: nothing.
   "name": "alinery-proto",
   "private": true,
   "type": "module",
-  "exports": { "./*": "./gen/*" },
-  "dependencies": { "@bufbuild/protobuf": "2.x (pin in S0.1)" },
-  "devDependencies": { "@bufbuild/protoc-gen-es": "2.16.0" },
-  "scripts": { "gen": "npx @bufbuild/buf@1.75.0 generate && npx @bufbuild/buf@1.75.0 lint" }
+  "exports": { "./*": "./gen/*.ts" },
+  "dependencies": { "@bufbuild/protobuf": "2.16.0" },
+  "devDependencies": { "@bufbuild/buf": "1.75.0", "@bufbuild/protoc-gen-es": "2.16.0" },
+  "scripts": { "gen": "buf generate && buf lint" }
 }
 ```
 
 - `"alinery-proto": "file:../../../proto"` in the daemon's `package.json` (path relative to `vinculum-daemon/`, like `playbook-engine`), and `"alinery-proto": "file:../proto"` in `alinery-app/package.json`.
 - `scripts/tests/check-proto-gen.sh`: run `npm --prefix proto run gen` into a temp copy and `diff -r` against `proto/gen`; fail on any difference. Listed in `scripts/check.sh` with the source gates.
-- Two steps in `scripts/check.sh`, before the Rust steps:
+- Two steps in `scripts/check.sh`, before the Rust steps, in `--quick` too:
 
 ```bash
 step "daemon: bun test"
-(cd "$TAURI/vinculum-daemon" && bun test)
+(cd "$TAURI/vinculum-daemon" && "$BUN" test)
 
 step "playbook engine: bun test"
-(cd "$ROOT/playbook-engine" && bun test)
+(cd "$ROOT/playbook-engine" && "$BUN" test)
 ```
 
-The `bun` they run is the pinned one from `dev-fetch-bun.sh`, not a PATH search, if that script exposes its path; otherwise the step fails with the command to fetch it.
+`$BUN` is the pinned one from `dev-fetch-bun.sh`, not a PATH search, if that script exposes its path; otherwise the step fails with the command to fetch it.
 
-**Tests.** `proto/roundtrip.test.ts` (run by `bun test` from the daemon step through an import, or a third step): build a `HelloResponse` with every field set, `toBinary` then `fromBinary`, and `equals()` is true; the same through `toJson`/`fromJson`. One vitest file in the app imports the same generated module, so a resolution break fails in both toolchains.
+**Tests.** `proto/roundtrip.test.ts`: build a `HelloResponse` with every field set, `toBinary` then `fromBinary`, and `equals()` is true; the same through `toJson`/`fromJson`. One vitest file in the app imports the same generated module, so a resolution break fails in both toolchains.
 
-**Exit.** `buf lint` green; `check-proto-gen.sh` green; the two `bun test` steps run in `check.sh` and pass; the compiled daemon binary built by `dev-fetch-bun.sh` still starts (`--protocol-version` prints 24).
+**Accept.**
+- `npm --prefix proto ci && npm --prefix proto run gen && git diff --exit-code proto/gen`: no diff, and buf lint prints nothing.
+- `scripts/tests/check-proto-gen.sh`: exit 0. After adding a field to `common.proto` without regenerating: exit 1.
+- `./scripts/check.sh --quick`: the output shows the two `bun test` steps, both passing.
+- The binary `dev-fetch-bun.sh` builds, run with `--protocol-version`, prints the current `PROTOCOL`.
+
+**Exit.** As Accept.
 
 ### S0.2 RPC spike (O1)
 
-Status: not started. Needs: S0.1.
+Status: **done by the plan review, 2026-10-27.** Code: `docs/thick-daemon-spikes/src/rpc-server.ts`, `rpc-bench.ts`, `jsonl-server.ts`, `idle-streams.ts`, `h2-probe.ts`, `peer.ts`. What remains is the user's call on O1 (S0.7); no product code.
 
-**Goal.** Evidence for O1 on this machine: does Connect-ES on `node:http` serve unary and server streams over a unix socket under Bun, in `bun run` and in the compiled binary, and what does it cost.
+**Results** (Bun 1.4.3, darwin-arm64; 4.1 S0.2):
+- `connectNodeAdapter` on `node:http` serves unary and server streams over a unix socket, under `bun run` and in the compiled binary (71 MB). `node:http2` serves gRPC too (`h2-probe.ts`).
+- An interceptor sees headers only. The peer check needs the `node:net` listener and `contextValues` (2.1.7); Bun's `node:http` hides the socket fd.
+- connect-node over `nodeOptions.socketPath` works. Client cancel fires the handler's `ctx.signal`; a handler parked on its own timer doesn't see it until it wakes (the 2.1.7 rule).
+- Unary 100-byte echo: p50 0.078 to 0.081 ms, p99 0.27 to 0.35 ms. The JSON-lines wire (one connection per op) as baseline: p50 0.035 ms. About 34,500 calls a second with 16 in flight.
+- Server stream with 16 KiB frames: 356 to 362 MB/s.
+- Memory: idle RSS about 47 MB; idle streams about 143 KB each at 100 open and 55 KB each at 1,000.
 
-**Read first.** 2.1.7; `vinculum-daemon/src/main.ts:1075` (today's `createServer`); connect-node's `connectNodeAdapter` and `createConnectTransport` docs (4.3).
-
-**Research.** Each line becomes a 4.1 entry or stays in 4.2 with what failed.
-- `connectNodeAdapter` behind `node:http` `createServer` listening on a socket path, under `bun run` and under `bun build --compile`.
-- The same with `node:http2` `createServer` (gRPC proper). If it fails, record the error and keep (a) with Connect and gRPC-Web only.
-- Server interceptors in `connectNodeAdapter({ interceptors })`: does an interceptor see the request headers and can it reject with UNAUTHENTICATED before the handler runs?
-- Clients: connect-node `createConnectTransport({ httpVersion: "1.1", baseUrl: "http://daemon", nodeOptions: { socketPath } })`; `curl --unix-socket` with `Content-Type: application/json` (Connect JSON); `grpcurl -unix` (only if http2 works); `npx @bufbuild/buf curl --unix-socket` if supported.
-- Cancelling a server stream from the client: does the handler's `ctx.signal` abort?
-
-**Build.** A throwaway `vinculum-daemon/spike/rpc.ts`, not imported by `main.ts`, deleted at the end of the session (its numbers move to 4.1):
-
-```ts
-// spike/rpc.ts (throwaway)
-const routes = (router: ConnectRouter) =>
-  router.service(SpikeService, {
-    echo: (req) => ({ data: req.data }),
-    async *ticks(req, ctx) {
-      for (let i = 0; !ctx.signal.aborted; i++) {
-        yield { seq: BigInt(i), data: new Uint8Array(req.size) };
-        if (req.intervalMs) await Bun.sleep(req.intervalMs);
-      }
-    },
-  });
-createServer(connectNodeAdapter({ routes, interceptors: [rejectWithoutToken] })).listen(process.argv[2]);
-```
-
-`SpikeService` lives in `proto/alinery/v1/spike.proto` for the session only.
-
-**Measure.** p50 and p99 of 1,000 unary `echo` calls with 100-byte bodies; throughput of `ticks` with 16 KiB frames and no interval, for 10 s; RSS with 100 idle `ticks` streams open (interval 15 s, like the heartbeat); the same numbers for the old JSON-lines wire (one connection per `version` op) as the baseline.
-
-**Exit.** O1 moves to 4.1 as Decided (with the user) or stays WA with the numbers; the four UNCONFIRMED items for it in 4.2 are resolved; the spike code is deleted.
+**Accept.** The rerun commands in `docs/thick-daemon-spikes/README.md` give numbers within 2x of these on Apple silicon.
 
 ### S0.3 Bridge spike (O2)
 
-Status: not started. Needs: S0.2.
+Status: **done by the plan review, 2026-10-27, except one check in the real webview** (moved to S1.2's Accept, because it needs the app launched, which the user must allow). Code: `docs/thick-daemon-spikes/src/bridge-fetch.ts` and its test, `bridge-rs/`, `src/ui-client.ts`.
 
-**Goal.** Prove 2.1.9: a Connect client in the webview reaches a daemon socket through one Tauri command and a `Channel`, unary and streaming, with cancel.
+**Results** (4.1 S0.3):
+- A stock connect-web client with `bridgeFetch` as its `fetch`: unary, Connect error codes, a 100-frame server stream and mid-stream cancel all pass (6 tests). Through the Bun stand-in for the shell, unary p50 is 0.095 ms, p99 0.45 ms.
+- Request body and channel in one invoke: raw body plus the channel id in a header, read with `JavaScriptChannelId::from_str(..).channel_on(webview)` (2.1.9). Read in Tauri 2.11.3's source; not yet run in a webview.
+- Rust hyper 1 over a unix socket, one connection per call: p50 0.076 ms; the daemon's peer check sees the shell binary. The TypeScript and Rust frame encoders give the same bytes (`frame_matches_typescript`).
+- An abort before HEAD must reject the `fetch`; a pooled connection after a cancelled stream fails with ECONNRESET; an absolute-form URI gets 404. All three are rules in 2.1.9.
+- Unbatched, a busy stream sent about 116,000 channel messages a second; batching is mandatory (2.1.9).
+- hyper, hyper-util, http-body-util and atomic-waker are in `Cargo.lock` but not built by the app today, so the first build downloads them at the lock's versions.
+- The UI bundle of a connect-web client with two services is 176,382 bytes, 41,886 gzipped (Vite 7.3.6).
 
-**Read first.** 2.1.9; `src/session.rs:384` (`TAURI_RAW_FETCH_MIN_BYTES` and why frames are padded); `pump_session_stream` (`session.rs:401`, coalescing); `open_daemon_session` (`daemon.rs:450`); Tauri 2.11.3 `ipc::Channel` and `ipc::Request` docs.
-
-**Research.**
-- Can one command take a raw `tauri::ipc::Request` body and a `Channel` argument together? If not, the body goes base64 in JSON args (fallback in 2.1.9).
-- Does Connect-ES's `createConnectTransport` accept a custom `fetch` (UNCONFIRMED), and does it read a `Response` whose body is a `ReadableStream` built in JS? Check streaming responses specifically.
-- hyper (already in `Cargo.lock` as a transitive dependency; `hyper`, `hyper-util` and `http-body-util` are present, not direct dependencies of the app crate) as an HTTP/1.1 client over `tokio::net::UnixStream`: add them as direct dependencies at the versions the lock already carries, so nothing new downloads.
-- A custom URI scheme (O2 c) streams a response body? Checked only if (a) fails.
-
-**Build.**
-- `daemon_rpc` and `daemon_rpc_cancel` in a new `src/daemon_rpc.rs` (the module owns the bridge; `lib.rs` only gains the two names):
-
-```rust
-// src/daemon_rpc.rs (sketch)
-#[tauri::command]
-pub(crate) async fn daemon_rpc(
-    state: State<'_, AppState>,
-    repo: String,
-    call_id: String,
-    path: String,                   // "/alinery.v1.AdminService/Hello"
-    headers: Vec<(String, String)>, // content-type, connect-protocol-version, timeouts
-    body_b64: String,               // fallback until the raw body is confirmed
-    channel: Channel<InvokeResponseBody>,
-) -> Result<(), String> {
-    let target = rpc_socket_for(&state, &repo)?;   // T1 local, T2 forward (S1.3)
-    let token = rpc_token_for(&state, &repo)?;     // never sent to the webview
-    let stream = UnixStream::connect(&target).await.map_err(|e| e.to_string())?;
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(|e| e.to_string())?;
-    tokio::spawn(conn);
-    let req = build_request(&path, &headers, &token, decode(&body_b64)?)?;
-    let cancel = state.rpc_calls.register(&call_id);
-    let res = tokio::select! { r = sender.send_request(req) => r.map_err(|e| e.to_string())?, _ = cancel.cancelled() => return Ok(()) };
-    send_frame(&channel, FrameKind::Head, &head_json(&res))?;
-    let mut body = res.into_body();
-    let mut batch = FrameBatch::new(Duration::from_millis(8), 16 * 1024);  // as pump_session_stream
-    loop {
-        tokio::select! {
-            frame = body.frame() => match frame { Some(Ok(f)) => batch.push(&channel, f)?, Some(Err(e)) => return send_end(&channel, Some(e)), None => break },
-            _ = cancel.cancelled() => return Ok(()),
-        }
-    }
-    batch.flush(&channel)?;
-    send_end(&channel, None)
-}
-```
-
-- The frame format from 2.1.9 (`[u32 len][u8 kind][payload]`, padded to 1 KiB) shares its padding helper with today's terminal pump; extract it if both exist at once.
-- `alinery-app/src/daemon/bridgeFetch.ts`: builds a `Response` from the frames:
-
-```ts
-// src/daemon/bridgeFetch.ts (sketch)
-export function bridgeFetch(repo: string): typeof fetch {
-  return async (input, init) => {
-    const callId = crypto.randomUUID();
-    let head: (h: ResponseInit) => void;
-    const headP = new Promise<ResponseInit>((r) => (head = r));
-    const body = new ReadableStream<Uint8Array>({
-      start(ctrl) {
-        const onFrame = (frame: ArrayBuffer) => {
-          for (const f of splitFrames(frame)) {
-            if (f.kind === HEAD) head(JSON.parse(text(f.payload)));
-            else if (f.kind === BODY) ctrl.enqueue(f.payload);
-            else f.error ? ctrl.error(new Error(f.error)) : ctrl.close();
-          }
-        };
-        void ipc.daemonRpc(repo, callId, pathOf(input), headersOf(init), bodyOf(init), onFrame);
-      },
-      cancel: () => ipc.daemonRpcCancel(callId),
-    });
-    init?.signal?.addEventListener("abort", () => ipc.daemonRpcCancel(callId));
-    return new Response(body, await headP);
-  };
-}
-```
-
-`ipc.daemonRpc` is a wrapper in `ipc.ts` (the IPC rule); `bridgeFetch.ts` imports nothing from `@tauri-apps/*`.
-
-**Tests.** A Rust test in `src/tests/daemon_rpc.rs` that runs a tiny hyper server on a temp socket and checks the frames for a unary call, a stream of 100 chunks, cancel mid-stream, and a server that closes early. A vitest for `splitFrames` and for `bridgeFetch` against a fake `ipc.daemonRpc` that replays recorded frames. Seeing it in the real webview needs the app running: ask the user first (AGENTS.md "Do not launch the app").
-
-**Exit.** O2 moves to 4.1; the raw-body and custom-fetch items leave 4.2; `daemon_rpc` stays (S1.2 makes it real) or is reverted if O2 lands elsewhere.
+**Accept.**
+- `cd docs/thick-daemon-spikes && bun install --frozen-lockfile && bun test src/bridge-fetch.test.ts`: 6 pass. (A stack trace from the server after the cancel test is the expected broken pipe.)
+- `cd docs/thick-daemon-spikes/bridge-rs && CARGO_TARGET_DIR=<outside the repo> cargo test --locked`: `frame_matches_typescript` passes.
 
 ### S0.4 Watcher spike
 
-Status: not started. Needs: nothing.
+Status: **done on macOS by the plan review, 2026-10-27.** Linux was not run; that run moves to S2.3's Accept. Code: `docs/thick-daemon-spikes/src/watch.ts`.
 
 **Goal.** Choose the file watcher for 2.2.8: Bun `fs.watch` with `recursive: true`, or `@parcel/watcher` 2.6.0.
 
-**Read first.** 2.2.8; Bun issues #44780 and #34160 (as reported by research; read them and note whether they apply to macOS FSEvents, Linux inotify, or both).
+**What ran.** One watch on a synthetic `.alinery/tasks` of 45 tasks. Another process ran 3,000 ops on 1,000 paths (500 creates, 1,000 appends, 1,000 renames over in the `writeAtomic` pattern, 500 deletes) while a third appended 10 MB/s to a `*.scrollback` file. *Paced*: ops on one file 1 s apart, so each event maps to one op. *Burst*: no sleeps; only whether each path's last op got an event. Two seeds each, under `bun run` and as a compiled binary.
 
-**Research and measure,** on macOS and in the Linux sshd container (`scripts/tests/remote-sshd/run.sh start`), each in `bun run` and the compiled binary:
-- A script that creates, appends, renames over (the `writeAtomic` pattern) and deletes 1,000 files under `.alinery/tasks/*/` while a 10 MB/s append runs on a `*.scrollback` file. Count missed and duplicated events per watcher.
-- `@parcel/watcher` inside `bun build --compile`: does the `.node` addon load from the binary, or does it need to sit beside it? (UNCONFIRMED.) If beside, the runtime tarball (`build-remote-runtimes.sh`) and the sidecar copy (`copy-sidecar.sh`) both gain a file.
-- CPU while idle with the watcher on a repo of 200 tasks.
+**Results** (macOS arm64, Bun 1.4.3; the two runners agree within noise):
 
-**Build.** A throwaway script under `vinculum-daemon/spike/watch.ts`; deleted at the end.
+| | Bun `fs.watch` recursive | `@parcel/watcher` 2.6.0 |
+|---|---|---|
+| Paced: ops with no event | 0 | 0 |
+| Paced: extra events per 3,000 ops | 1 to 5 | 0 |
+| Paced: latency p50 / p95 / max | 30 to 31 / 53 to 54 / 61 to 63 ms | 246 to 269 / 475 to 487 / 503 to 514 ms |
+| Paced: watcher CPU | 0.8 to 0.9% | 2.7 to 4.4%; 3.1 to 4.9% with `ignore: ["**/*.scrollback"]` |
+| Scrollback events a second | 19.8 | 2; 0 with the ignore list |
+| Burst: paths whose last op got no event | 0 | 0; 1 in one `bun run` seed with the ignore list |
+| Scrollback appends through one held fd | 2 to 3 extra events, no misses | no extras, no misses |
+| Idle, 200 tasks, 30 s: CPU, RSS, events | 0.1%, 7.4 MB, 0 | 0.1%, 7.6 to 7.9 MB, 0 |
+| Subscribe, 200 tasks | 9.8 to 9.9 ms | 12.6 to 14 ms |
 
-**Exit.** The watcher choice is recorded in 4.1. Whatever is chosen, the 30 s reconcile stays (2.2.8), because no watcher is trusted alone.
+With no watcher the idle process used 0.1% CPU and 6.3 MB.
+
+- **Bun #44780's trigger** (`--flat`): two processes replacing files in a hot loop under `.alinery/worktrees/w/src`, with a non-recursive `fs.watch` on each of its five folders up to the repo root. Bun on macOS feeds every watch into one FSEvents stream. Bun missed nothing; latency fell to 6 ms p50, scrollback events rose to 131 to 135 a second and CPU to 2.7 to 2.8%. One compiled run reported two events for `.alinery/tasks/tasks`, a path that does not exist. `@parcel/watcher` was unchanged.
+- **Bun #34160** (cost of each further non-recursive watch): 500 took 345 to 810 ms, 1,500 about 4.7 s, 3,000 about 22.8 s. The cost grows faster than the count. One recursive watch never meets it.
+- **The addon in a compiled binary.** `@parcel/watcher` picks its prebuilt with a computed `require`, which `bun build --compile` can't follow. Required by a literal per-platform path (`watch.ts:55-66`), the `.node` file is embedded: the compiled binary, run from a folder with no `node_modules` above it, loaded it. Nothing sits beside the binary, but each build target needs its own literal line, and its addon package installed at build time. `--compile` drops the branches for other platforms, so a macOS build needs only the macOS addon; a plain `bun build` without `--compile` fails on any named addon that is not installed.
+
+**WA: Bun `fs.watch` with `recursive: true`** on `.alinery/tasks`. On this evidence it needs no native addon, has about an eighth of the latency and a quarter of the CPU, and its extra events cost one re-read each, because the handler commits only when `equals()` says the entity changed (2.2.8). `@parcel/watcher` had no extra events and is the fallback if the Linux run misses events; switching changes only `sync/watcher.ts`.
+
+**Rules for S2.3** (whichever watcher):
+- The handler trusts neither an event's kind nor its path. It re-reads the path; a path no parser matches is dropped, which covers the stray `tasks/tasks` events. A missing file deletes the key of the parser that matches it.
+- `*.scrollback` and the `.tmp.` names `writeAtomic` makes are dropped by name before any I/O.
+- The config files (`config.toml`, `harnesses.toml`, `playbooks.toml`) sit in `.alinery/` beside `worktrees/`. WA: one non-recursive watch on `.alinery/`, filtered to those three names. On macOS that is the #44780 shape above (a busy `worktrees/` under a non-recursive watch): no misses, about 2.7% CPU while a build churns, stray paths possible.
+- The 30 s reconcile stays (2.2.8), because no watcher is trusted alone.
+
+**Accept.** `cd docs/thick-daemon-spikes && bun install --frozen-lockfile && bun run src/watch.ts matrix --reps 2 --idle-seconds 30`, and the same through a compiled binary (README): Bun's rows show 0 ops with no event and 0 burst misses, and the numbers fall within 2x of the table on Apple silicon.
+
+**Exit.** The WA is recorded in 4.1.
 
 ### S0.5 Platform spike (O6, durability)
 
-Status: not started. Needs: nothing.
+Status: **done by the plan review, 2026-10-27, except the hardened-runtime check**, which needs the user's signing identity (4.2). Code: `docs/thick-daemon-spikes/src/lock.ts`, `lock.test.ts`, `fsync-bench.ts`, `hardened-probe.ts`, `lock-rs/`.
 
-**Goal.** Confirm the three platform facts `platform/lock.ts` and `platform/fs.ts` stand on.
+**Results** (4.1 S0.5; the rules they set are in 2.3.2):
+1. **flock interop works both ways** on macOS arm64, Linux arm64 and Linux x64 (emulated): 60 of 60 runs each. Two descriptors in one process also exclude each other.
+2. **errno** read straight after the failed call is right in 10,000 of 10,000 tries per platform. Any JavaScript between the call and the read can clobber it.
+3. **Durability:** Rust's `write_bytes_durable` uses `F_FULLFSYNC` on macOS; Bun's `fsyncSync` is plain `fsync`. `F_FULLFSYNC` through `bun:ffi` costs the same as Rust (about 9.8 ms p50 per 1 KiB replace, against 0.12 ms for plain fsync).
+4. **Hardened runtime:** the probe passed with Bun's ad-hoc signature only.
 
-**Read first.** `alinery-core/src/lockfile.rs:25-135`; `alinery-core/src/fs_atomic.rs:20-99`; the existing libc `dlopen` in `main.ts:679` and `:703`.
+**Accept.**
+- `cd docs/thick-daemon-spikes/lock-rs && CARGO_TARGET_DIR=$T cargo build --release --locked`, then `LOCK_RS_BIN=$T/release/lock-rs bun test --rerun-each 10 src/lock.test.ts` from `docs/thick-daemon-spikes`: 60 pass.
+- For the user: build `hardened-probe.ts` with `bun build --compile`, sign it with the release identity and entitlements (`--options runtime`), run it: exit 0 and `"ok":true`. The commands are in `docs/thick-daemon-spikes/README.md`.
 
-**Research.**
-1. **flock interop.** A Rust test binary holds `LOCK_EX` on a temp file through `lockfile.rs`; a Bun script calls `flock(fd, LOCK_EX | LOCK_NB)` through `bun:ffi` and must get `-1`. Then the reverse. On macOS and in the Linux container.
-2. **errno.** Read errno after the failed call (`__error()` on macOS, `__errno_location()` on Linux, then `read.i32` on the pointer) and check it equals `EWOULDBLOCK` (35 on macOS, 11 on Linux).
-3. **Durable writes.** Does `fs_atomic.rs` `write_bytes_durable` call `F_FULLFSYNC` on macOS, or plain `fsync`? Does Bun's `fsyncSync` call `F_FULLFSYNC`? Read the Rust source; for Bun, run under `sudo dtruss` (or check Bun's source) for the syscall. Whatever Rust does, `writeDurable` matches.
-4. **Hardened runtime.** Does `bun:ffi` `dlopen` of `libSystem.B.dylib` work in the signed, notarized daemon? Signing lives in `alinery-deploy`, so this check goes to the user with a one-line test binary. Today's daemon already dlopens libc in production, which suggests yes.
-
-**Build.** Nothing kept, except the interop test, which becomes the S2.2 test.
-
-**Exit.** O6 moves to 4.1; the errno, F_FULLFSYNC and hardened-runtime items leave 4.2 (the last one may stay with the user).
+**Exit.** O6 (a) moves to 4.1 with the user; the hardened-runtime item leaves 4.2 when the user runs the probe.
 
 ### S0.6 Cleanup and R1
 
-Status: not started. Needs: nothing (S0.5 for the flock call; until it lands, `withTaskMutation` can use the process queue alone, behind a `ponytail:` comment naming the missing flock).
+Status: not started. Needs: nothing. `withTaskMutation` takes the flock through `bun:ffi` as in 2.3.2: S0.5 confirmed the interop, and `docs/thick-daemon-spikes/src/lock.ts` is the starting code (with its errno rule).
 
-**Goal.** Delete the dead code, make every daemon write crash-safe, fix R1, and trace O14 so S4.2 starts from facts.
+**Goal.** Delete the dead code, make every daemon write crash-safe and fix R1.
 
 **Read first.** The stubs: `chat.rs` `chat_rpc_write` :361, `chat_rpc_attach` :367, `chat_restate` :421; `session.rs` `restate_session` :1158, `omp_setup_session` :1169, `rpc_write_session` :1271, `rpc_attach_session` :1277. `alinery-core/src/lib.rs:27` and `:68` (the `playbook_scheduler` module and its re-exports); the test at `alinery-core/src/subtask.rs:1118`. The R4 sites (1.4). `tasks.ts:291-296` (`addExecution`).
 
@@ -1311,75 +1327,80 @@ export function addExecution(repo: string, slug: string, entry: ExecutionEntry) 
 }
 ```
 
-6. **O14 trace.** Write in 4.1 (as a note, not a decision) which behaviours read `execution.json` and which read the `engine.jsonl` fold: `executionState` `tasks.ts:155`, `getTaskExecution` :178, the board's current step (`board.rs:166-171`), the Rust readers in `execution.rs`, the subtask manager. List every field each side owns and where the two can disagree.
+6. **O14 trace.** Done by the plan review (4.1, "O14 trace"). This session only re-runs its writer search (`grep -rn 'execution.json\|execution_state_path' alinery-app/src-tauri vinculum-daemon/src`) and corrects the note if code moved.
 
 **Tests.**
 - `bun test`: 50 concurrent `addExecution` calls on one task end with 50 entries.
 - The same with a Rust helper process holding `.alinery/.task-mutation.lock` for 500 ms during the burst: all 50 land after it releases, none is lost, and a hold longer than 2 s gives `repo_busy`.
 - `check-daemon-fs-writes.sh` passes, and fails on a planted `writeFileSync`.
 
-**Exit.** 7 stubs, `playbook_scheduler.rs` and every R4 site gone; the gate is in `check.sh`; the O14 trace is in 4.1.
+**Accept.**
+- `grep -rn 'chat_rpc_write\|chat_rpc_attach\|chat_restate\|restate_session\|omp_setup_session\|rpc_write_session\|rpc_attach_session\|playbook_scheduler' alinery-app/src alinery-app/src-tauri/src alinery-app/src-tauri/alinery-core/src`: no output.
+- `scripts/tests/check-daemon-fs-writes.sh`: exit 0; with a planted `writeFileSync` in a daemon module: exit 1 naming that line.
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test)`: the two `addExecution` tests above pass, and `rerun-each 20` of them passes.
+- `cargo test --workspace` passes (the rewritten `subtask.rs` test included).
+
+**Exit.** 7 stubs, `playbook_scheduler.rs` and every R4 site gone; the gate is in `check.sh`.
 
 ### S0.7 Decisions with the user
 
-Status: not started. Needs: S0.2, S0.3, S0.4, S0.5, S0.6.
+Status: in progress. The plan review (2026-10-27) wrote 2.3.4's table of the 30 MIXED commands and put O1, O2, O3, O6 and O7 to the user with the spike numbers (4.1). The watcher WA from S0.4 is in 4.1 too; its Linux run is in S2.3. Needs: nothing.
 
-**Goal.** Close the P0 Open items and give P4 its split list.
+**Goal.** Close the P0 Open items.
 
-**Build.** No code. A short writeup in this doc:
-1. O3 (source of truth) and O7 (jobs), with the spike numbers. Ask the user; record the answers in 4.1.
-2. The 28 MIXED commands by name, each with its 2.3.4 rule and the P4 session that owns each half. This becomes section 2.3.4's table.
-3. O1, O2 and the watcher from the spikes: confirm with the user or leave as WA.
+**Build.** No code. Record the user's answers in 4.1 and 1.7. Whatever is still open when S1.1 starts is asked again here.
 
-**Exit.** O1, O2, O3, O6 and O7 are Decided or explicitly WA with evidence; 2.3.4 has the full list.
+**Accept.** In 1.7, O1, O2, O3, O6 and O7 each say Decided (with the user and date) or WA with a 4.1 evidence line; the watcher choice has a 4.1 row.
 
 ## P1: RPC host and transports
 
 ### S1.1 RPC server, Admin and auth
 
-Status: not started. Needs: S0.7.
+Status: not started. Needs: S0.1, S0.7.
 
 **Goal.** The daemon serves `alinery.v1` on `<repo>/.alinery/rpc[-ns].sock` beside `alineryd[-ns].sock`, with `AdminService.Hello` and bearer-token auth on every call (R8).
 
-**Read first.** 2.1.3, 2.1.7, 2.1.10; `main.ts:26` (`PROTOCOL`), `main.ts:80-97` (ui secret read and delete), `main.ts:660-710` (peer credential checks: `getpeereid` and `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux); `alinery-core/src/daemon_client.rs:1470` (`daemon_command`, the one place that builds the daemon's arguments, used by local spawn in `pi_durable.rs:42` and the host spawn in `repo_service.rs:1021`); `alinery-core/src/protocol.rs:15`.
+**Read first.** 2.1.3, 2.1.7, 2.1.10; `docs/thick-daemon-spikes/src/rpc-server.ts` and `peer.ts` (the working server, auth and peer check); `main.ts:26` (`PROTOCOL`), `main.ts:80-97` (ui secret read and delete), `main.ts:660-710` (peer credential checks: `getpeereid` and `LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux); `alinery-core/src/daemon_client.rs:1470` (`daemon_command`, the one place that builds the daemon's arguments, used by local spawn in `pi_durable.rs:42` and the host spawn in `repo_service.rs:1021`); `alinery-core/src/protocol.rs:15`.
 
 **Build.**
-- `rpc/server.ts` as in 2.1.7, started from `main.ts` after the secret files are read and before sessions resume.
-- `rpc/auth.ts`: an interceptor that reads `authorization: Bearer <hex>`, compares with `timingSafeEqual`, and attaches the capability set from 2.1.10 to the context. The peer check needs the socket, which a Connect interceptor does not see; the `node:http` `connection` event records the peer executable per socket in a `WeakMap`, keyed by the request's socket.
+- `rpc/server.ts` as in 2.1.7, started from `main.ts` after the secret files are read and before sessions resume. The socket is created 0600: set `process.umask(0o077)` around `listen`, because today's socket (`main.ts:1146`) takes whatever umask the daemon inherited, and a chmod after `listen` leaves a window.
+- `rpc/auth.ts`: an interceptor that reads `authorization: Bearer <hex>`, compares with `timingSafeEqual`, and attaches the capability set from 2.1.10 to the context. The peer executable comes from `contextValues` (2.1.7: the `node:net` listener keeps the socket fd; `peerExecutable` is `main.ts:666`, moved).
 
 ```ts
 // rpc/auth.ts (sketch)
-const peerOf = new WeakMap<Socket, string | null>();
-export function trackPeers(server: Server) {
-  server.on("connection", (sock: Socket) => peerOf.set(sock, peerExecutable(sock)));  // main.ts:666, moved
-}
 export const authInterceptor = (secret: Buffer, shellExe: string): Interceptor => (next) => async (req) => {
-  const caps = capabilitiesFor(bearer(req.header), secret, peerOf.get(socketOf(req)), shellExe);
-  if (!caps.size) throw new ConnectError("missing or wrong token", Code.Unauthenticated);
+  const caps = capabilitiesFor(bearer(req.header), secret, req.contextValues.get(PEER), shellExe);
+  if (!caps.size) throw new ConnectError("wrong token", Code.Unauthenticated);  // a wrong token is never "no token"
   req.contextValues.set(CAPS, caps);
   return next(req);
 };
 ```
-
-Whether an interceptor can reach the underlying socket is part of S0.2; if not, the `connectNodeAdapter` is wrapped in a `node:http` handler that sets the capabilities on a context value before handing off.
 - `--rpc-secret-file <path>` in `daemon_command`, and the shell side in `daemon.rs` and `remote.rs`: create 32 random bytes, write 0600, pass the path; keep the copy per repo and lane under `<app_config_dir>`.
 - `Hello` returns `protocol`, `build_id` (already cached per a2d23306), `epoch` (from the store, or a random UUID until S2.1), the capabilities, `repo_root`, `app_config_identity`.
 - `PROTOCOL` 24 to 25 in `main.ts:26` and `protocol.rs:15` (the second socket is an op-set change).
 
-**Tests.** `bun test` with connect-node over a temp socket: no token gives UNAUTHENTICATED; a wrong token likewise; the right token gives `Hello` with all four capabilities when the peer is the expected executable and VIEW and ACT when it is not; the secret file is gone before the socket accepts. `cargo test` for `daemon_command` argument order. `protocol_gate_test.sh` passes at 25.
+**Tests.** `bun test` with connect-node over a temp socket: a wrong token gives UNAUTHENTICATED; no token gives `Hello` with AGENT only, and any non-AGENT RPC gives PERMISSION_DENIED; the right token gives `Hello` with VIEW, ACT, APPROVE and ADMIN when the peer is the expected executable and VIEW and ACT when it is not; the secret file is gone before the socket accepts. `cargo test` for `daemon_command` argument order. `protocol_gate_test.sh` passes at 25.
 
-**Exit.** `curl --unix-socket .alinery/rpc.sock -H 'authorization: Bearer …' -H 'content-type: application/json' -d '{}' http://daemon/alinery.v1.AdminService/Hello` answers; without the header it is refused.
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/rpc)`: the cases above pass.
+- Against a daemon started by the app, from a terminal: `curl -s --unix-socket <repo>/.alinery/rpc.sock -H 'content-type: application/json' -H "authorization: Bearer $(cat <the shell's token file>)" -d '{}' http://daemon/alinery.v1.AdminService/Hello` prints JSON with `"protocol":25` and capabilities VIEW and ACT only (curl is not the shell). With `Bearer 00` it prints HTTP 401. With no header it lists AGENT only.
+- `ls <repo>/.alinery/` shows `rpc.sock` with mode `srw-------`; no secret file is left in the temp dir the shell used.
+- `scripts/tests/protocol_gate_test.sh`: passes.
+
+**Exit.** As Accept.
 
 ### S1.2 The webview bridge for real
 
-Status: not started. Needs: S1.1, S0.3.
+Status: not started. Needs: S1.1.
 
 **Goal.** Any view can call any daemon service through `daemonTransport(repoKey)`.
 
-**Read first.** S0.3's result; `daemon.rs` lane routing (`current_alineryd_socket_path`); `paths.rs` `RepoRef`.
+**Read first.** 2.1.9; `docs/thick-daemon-spikes/src/bridge-fetch.ts` and `bridge-fetch.test.ts` (the webview half, tested), `docs/thick-daemon-spikes/bridge-rs/src/main.rs` (`call` and `encode_frame`, the shell half); `pump_session_stream` (`session.rs:401`, the batching to copy); `daemon.rs` lane routing (`current_alineryd_socket_path`); `paths.rs` `RepoRef`.
 
 **Build.**
-- `daemon_rpc` resolves the repo key with `RepoRef::parse`: local gives `rpc[-ns].sock` for the current lane; remote waits for S1.3 and errors until then.
+- `src/daemon_rpc.rs` (the module owns the bridge; `lib.rs` only gains two names): `daemon_rpc(request: tauri::ipc::Request, webview: Webview)` and `daemon_rpc_cancel(call_id)`, from `bridge-rs` `call()` plus 2.1.9's rules: channel from the `x-alinery-channel` header, one hyper http1 connection per call, origin-form path with a `host` header, 8 ms or 16 KiB batching, nothing sent after cancel. `hyper` 1.10.1 (`client`, `http1`), `hyper-util` 0.1.20 (`tokio`) and `http-body-util` 0.1.3 become direct dependencies at the versions `Cargo.lock` already holds; `cargo build --locked` downloads them once.
+- `daemon_rpc` resolves the repo key with `RepoRef::parse`: local gives `rpc[-ns].sock` for the current lane; remote waits for S1.3 and errors until then. It adds the `authorization` header from the shell's token store; the webview never sees the token.
+- `src/daemon/bridgeFetch.ts` from the spike's `bridgeFetch`, calling one wrapper in `ipc.ts` (the IPC rule); it imports nothing from `@tauri-apps/*`.
 - `src/daemon/transport.ts`:
 
 ```ts
@@ -1398,7 +1419,15 @@ export const admin = (repo: string) => createClient(AdminService, daemonTranspor
 
 - `useDaemonStatus.ts` calls `Hello` once per repo open to read `protocol` and `build_id` (it keeps its poll for live status until S2.5).
 
-**Tests.** vitest: `daemonTransport` caches per repo; a `Hello` through a fake bridge decodes. Rust: `daemon_rpc` on an unknown repo key errors without touching the filesystem.
+**Tests.**
+- Rust, `src/tests/daemon_rpc.rs`, against a tiny hyper server on a temp socket: frames for a unary call; a stream of 100 chunks arrives in fewer than 100 channel messages (batching); cancel mid-stream reaches the server; a server that closes early gives END with an error; an unknown repo key errors without touching the filesystem.
+- vitest: the spike's six `bridgeFetch` cases, ported to a fake `ipc.daemonRpc`; `daemonTransport` caches per repo.
+
+**Accept.**
+- `cargo test -p alinery-app --lib -- tests::daemon_rpc`: all pass.
+- `cd alinery-app && npx vitest run src/daemon`: all pass.
+- `grep -rn '@tauri-apps' alinery-app/src/daemon`: no output (`check-ipc-boundary.sh` passes).
+- **In the real webview** (needs the app running; the user runs it or allows it): open a repo, and in the devtools console `await (await import("/src/daemon/transport.ts")).admin(<repo key>).hello({})` returns the protocol and capabilities VIEW, ACT, APPROVE and ADMIN. This is the one O2 check the spike could not make (4.2). If it fails, stop and ask: O2 is then open again.
 
 **Exit.** A view gets `Hello` from a local daemon through the bridge.
 
@@ -1414,11 +1443,15 @@ Status: not started. Needs: S1.2.
 
 **Tests.** The live remote test (`cargo test -p alinery-app --lib -- tests::remote::live`, with `remote-sshd/run.sh`) gains: `Hello` through the forward; `-O exit` on the master, reconnect, `Hello` again with the same `epoch` (the daemon didn't restart).
 
+**Accept.**
+- `scripts/tests/remote-sshd/run.sh start`, export the printed `ALINERY_TEST_SSH_ARGS`, then `cargo test -p alinery-app --lib -- tests::remote::live`: the two new cases pass; `run.sh stop`.
+- `scripts/tests/check-no-auto-session-kill.sh` passes (the forward code sends no shutdown).
+
 **Exit.** A remote repo answers `Hello` through the bridge; disconnect and reconnect keep the epoch.
 
 ### S1.4 Shutdown with an origin
 
-Status: not started. Needs: S1.1.
+Status: not started. Needs: S1.1, S1.2 (the hyper client).
 
 **Goal.** The five teardown origins (invariant 1) call `AdminService.Shutdown` with their `ShutdownOrigin`, and the gate checks the enum's callers.
 
@@ -1426,10 +1459,15 @@ Status: not started. Needs: S1.1.
 
 **Build.**
 - `Shutdown` in `rpc/admin.ts` requires ADMIN, rejects `UNSPECIFIED`, checks `confirmation_id` for `CONFIRMED_TAKEOVER`, logs the origin, then runs the same teardown as `main.ts:761`.
-- The shell sends it through a small Rust helper (the shell has no generated protobuf client; a Connect unary call is a POST with a protobuf body, so `prost` or a hand-encoded two-field message is enough). Keep the helper in `daemon_rpc.rs` beside the bridge.
+- The shell sends it with Connect JSON (WA): a unary Connect call is a POST with `content-type: application/json`, so `serde_json` and the hyper client from S1.2 are enough, with no protobuf code in Rust. Keep the helper in `daemon_rpc.rs` beside the bridge. Any later unary call the shell makes for itself (S2.5's status read, S4.11's settings write) uses the same helper.
 - The gate checks that `ShutdownOrigin::` appears only in the five functions, and that the old `shutdown` op has no new callers (it goes in S5.3).
 
 **Tests.** `bun test`: each origin shuts down; `UNSPECIFIED` is INVALID_ARGUMENT; no ADMIN is PERMISSION_DENIED. The gate fails on a planted sixth caller.
+
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/rpc)`: the three cases pass.
+- `scripts/tests/check-no-auto-session-kill.sh`: exit 0; with a planted `ShutdownOrigin::StopDaemon` call in a sixth function: exit 1 naming it.
+- `grep -rn '"shutdown"' alinery-app/src-tauri/src`: only the old-op definitions S5.3 deletes, no callers.
 
 **Exit.** Teardown goes through `Shutdown` with an origin; the old op is unused by the shell.
 
@@ -1441,11 +1479,9 @@ Status: not started. Needs: S1.1.
 
 **Goal.** `SyncService.Subscribe` serves any scope from an in-memory store: snapshot, ring replay, live deltas, backpressure and heartbeats. Only tests commit to the store in this session; S2.3 to S2.6 connect the real feeds.
 
-**Read first.** 2.1.4 (the messages), 2.2.1 to 2.2.7, 2.2.9; S0.2's notes on server streams and `ctx.signal`.
+**Read first.** 2.1.4 (the messages), 2.2.1 to 2.2.7, 2.2.9; `docs/thick-daemon-spikes/src/store.ts` and `store.test.ts` (a working store, replica and property test against the spike's `sync.proto`); the 2.1.7 rule on `ctx.signal`.
 
-**Research.**
-- Does protobuf-es v2 `equals(EntitySchema, a, b)` compare a set oneof message field by field? Read `equals.ts` in protobuf-es and confirm with a test. If it doesn't, compare `toBinary` of both with `revision` cleared: protobuf-es writes fields in field-number order, and entities use no map fields, so equal messages give equal bytes.
-- Does a client that goes away fire `ctx.signal` both on connect-node over a unix socket and through the bridge (`daemon_rpc_cancel`, 2.1.9)? S0.2 measured the first; this session checks the second.
+**Research (answered 2026-10-27).** protobuf-es 2.16.0 `equals` compares a set oneof field by field, case included (spike test "equals ignores nothing but what we zero"). A client cancel fires `ctx.signal` over connect-node and through the bridge sample (S0.2, S0.3).
 
 **Build.**
 - `proto/alinery/v1/sync.proto` and `entities.proto` as in 2.1.4. The oneof field numbers are fixed now. Each entity message gets its fields in the session that first produces it (S2.3 session, S2.4 execution, S2.5 daemon status, S2.6 job, S3.5 task, P4 the rest). Field names are the snake_case form of today's serde names, so proto JSON lines up with the IPC JSON for the conformance tests (S2.3).
@@ -1454,7 +1490,7 @@ Status: not started. Needs: S1.1.
 
 ```ts
 // vinculum-daemon/src/sync/store.ts (continued, sketch)
-async *open(scope: Scope, cursor: Cursor | undefined, signal: AbortSignal): AsyncGenerator<SyncFrame> {
+async *open(scope: Scope, cursor: Cursor | undefined, signal: AbortSignal): AsyncGenerator<SubscribeResponse> {
   const sub = new Subscriber(matcher(scope), this.timers);
   this.subs.add(sub);  // same tick as the read below: no commit can fall between them
   try {
@@ -1479,7 +1515,7 @@ async *open(scope: Scope, cursor: Cursor | undefined, signal: AbortSignal): Asyn
 - `Hello.epoch` returns `store.epoch` (S1.1 used a random UUID).
 
 **Tests.** `bun test` in `vinculum-daemon/`:
-- A seeded property test with a small LCG (no new dependency): 1,000 commits of puts and deletes over 50 keys in 3 scopes. A replica subscribes, drops its stream at random points and resumes with its last cursor. After the last commit the replica equals `rowsMatching(scope)`. Three seeds.
+- The spike's seeded property test, ported (20 seeds of 400 commits, dropped and resumed streams, ring rollover, queue overflow): each replica ends equal to `rowsMatching(scope)` with the store's seq as its cursor.
 - A cursor from another epoch, or older than the ring, gets a snapshot. A current cursor gets only the missed deltas, then `UpToDate`.
 - A subscriber that never reads gets `MustRefetch` after 1,000 frames, and commit time does not grow with it.
 - A put equal to the stored row consumes no seq and sends nothing.
@@ -1487,30 +1523,40 @@ async *open(scope: Scope, cursor: Cursor | undefined, signal: AbortSignal): Asyn
 - Dedupe: a repeated `mutation_id` gets the first answer; the 257th id evicts the oldest.
 - Aborting the signal removes the subscriber.
 
-**Measure.** 200 subscribers on the repo scope with 10,000 rows: snapshot time, memory per subscriber, and the time one commit takes to fan out. Record in 4.1.
+**Measure.** 200 subscribers on the repo scope with 10,000 rows: snapshot time and memory per subscriber. Record in 4.1 beside the spike's fan-out numbers (one commit: 0.8 µs at 1 subscriber, 9.1 µs at 100).
 
-**Exit.** `Subscribe` over the bridge returns test rows; the property test passes on three seeds.
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/sync)`: all pass; `bun test --rerun-each 5 src/sync/store.test.ts` passes.
+- A connect-node client against a daemon with test rows: `Subscribe` on the repo scope returns a snapshot with `complete = true`, then a heartbeat within 16 s.
+
+**Exit.** As Accept. (Over the bridge it is S3.1's check.)
 
 ### S2.2 Platform layer for real
 
-Status: not started. Needs: S0.5, S0.6.
+Status: not started. Needs: S0.6.
 
-**Goal.** `withTaskMutation` takes the real flock, and one file sends every signal to a child.
+**Goal.** `writeDurable` matches Rust's durability, `isLockedByOther` exists, and one file sends every signal to a child. (S0.6 already put the flock under `withTaskMutation`.)
 
-**Read first.** 2.3.2; S0.5's spike notes (flock and errno through `bun:ffi`, `F_FULLFSYNC`); the `ponytail:` comment S0.6 left in `platform/lock.ts`; `mcp.ts:246` (spawn) and `:323` (kill); `terminal.ts:127` (spawn) and `:198` (kill); `scripts/tests/check-no-auto-session-kill.sh`.
+**Read first.** 2.3.2 (the S0.5 results and rules); `docs/thick-daemon-spikes/src/lock.ts` (`fcntl` binding, errno read); `mcp.ts:246` (spawn) and `:323` (kill); `terminal.ts:127` (spawn) and `:198` (kill); `scripts/tests/check-no-auto-session-kill.sh`.
 
 **Build.**
-- `platform/lock.ts`: `tryLockExclusive`, `isLockedByOther` and `waitForLock` as in 2.3.2. `withTaskMutation` takes the flock after the process queue; the `ponytail:` comment goes.
-- `writeDurable` calls `F_FULLFSYNC` if S0.5 found that Rust does.
+- `platform/lock.ts`: `isLockedByOther` as in 2.3.2, beside S0.6's `tryLockExclusive` and `waitForLock`.
+- `writeDurable` calls `fcntl(F_FULLFSYNC)` on macOS for the file and the directory (2.3.2), and is used only at the sites Rust makes durable today.
 - `platform/process.ts`: `spawnDetached` and `signalChild(child, signal, reason)`. The spawns and kills in `mcp.ts` and `terminal.ts` move there.
 - `check-no-auto-session-kill.sh` also scans `vinculum-daemon/src`: `.kill(` and `process.kill(` may appear only in `platform/process.ts`, and every `signalChild` caller is listed in an allowlist with its reason (user kill of a session, MCP child restart, job cancel).
 
 **Tests.**
-- The S0.5 interop test now runs against the real `withTaskMutation`: a Rust helper process holds `.alinery/.task-mutation.lock`; the TypeScript call waits and then runs; a hold longer than 2 s gives `repo_busy`.
+- `isLockedByOther` is true while the S0.5 Rust helper holds the lock and false after.
 - A lock file replaced between open and flock is retried and the new file is locked.
+- On macOS, `writeDurable` issues `F_FULLFSYNC` twice per write (a test double for the `fcntl` symbol counts calls).
 - The gate fails on a planted `proc.kill()` in `runtime/`.
 
-**Exit.** No `.kill(` outside `platform/process.ts`; the interop test passes.
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/platform)`: all pass.
+- `scripts/tests/check-no-auto-session-kill.sh`: exit 0; with a planted `proc.kill()` in `runtime/`: exit 1.
+- `grep -rn '\.kill(' alinery-app/src-tauri/vinculum-daemon/src --include='*.ts' | grep -v test | grep -v platform/process.ts`: no output.
+
+**Exit.** As Accept.
 
 ### S2.3 Watcher, reconcile and the first parser
 
@@ -1523,10 +1569,10 @@ Status: not started. Needs: S2.1, S0.4.
 **Research.** Which `SessionMeta` fields Rust writes today and which the daemon writes (grep the `meta.json` writers on both sides), so the parser reads every field either side writes.
 
 **Build.**
-- `sync/watcher.ts` wraps the S0.4 choice. It watches `.alinery/tasks/**`, `config.toml`, `harnesses.toml` and `playbooks.toml`, ignores `worktrees/`, `*.scrollback` and `.alinery/tmp/`, debounces per path (WA 50 ms), and routes each path to a parser.
+- `sync/watcher.ts` wraps the S0.4 WA and follows its rules: a recursive watch on `.alinery/tasks`, a non-recursive one on `.alinery/` filtered to `config.toml`, `harnesses.toml` and `playbooks.toml`; it drops `*.scrollback` and `.tmp.` names before any I/O, debounces per path (WA 50 ms), and routes each path to a parser.
 - `sync/parsers/index.ts`: a list of `{ match: RegExp, parse(path): Entity | null }`. `null` deletes the key.
 - `sync/parsers/sessionMeta.ts` ports `read_session_meta_full`.
-- `sync/reconcile.ts`: every 30 s, stat each tracked file and re-parse it when mtime or size changed; a missing file deletes its key; `readdir` of the task directories finds new files.
+- `sync/reconcile.ts`: every 30 s, stat each tracked file and re-parse it when mtime or size changed; a missing file deletes its key; `readdir` of the task directories finds new files. Async and batched, 256 stats at a time (2.2.8); `docs/thick-daemon-spikes/src/scan-bench.ts` `reconcileAsync` is the pattern.
 - Start order in `main.ts`: full scan with the same parsers, then the watcher, then the reconcile timer, then the RPC server listens.
 - Conformance layout (WA): `alinery-app/src-tauri/conformance/<domain>/<case>/input/` (a small `.alinery` tree) and `expected.json` (today's serde JSON of the Rust result). A Rust test in `alinery-core/tests/conformance.rs` runs the Rust reader over each case; `UPDATE_FIXTURES=1` rewrites `expected.json`. A `bun test` runs the TypeScript parser over the same cases and compares `toJson(entity)`. Both sides drop null and default-valued fields before comparing, because proto3 JSON omits defaults. The directory outlives Rust (migration rule 5).
 
@@ -1535,6 +1581,13 @@ Status: not started. Needs: S2.1, S0.4.
 - With the watcher stopped, a changed file appears after one reconcile pass (injected clock).
 - Appending 1 MB to a `.scrollback` calls no parser.
 - Every session-meta conformance case passes in `cargo test -p alinery-core` and `bun test`.
+
+- The reconcile pass over 1,000 synthetic tasks keeps the longest event-loop gap under 20 ms (measured with a 1 ms interval timer, as the spike did).
+
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/sync)` and `cargo test -p alinery-core --test conformance`: all pass.
+- `UPDATE_FIXTURES=1 cargo test -p alinery-core --test conformance && git diff --exit-code alinery-app/src-tauri/conformance`: no diff.
+- **The Linux watcher run S0.4 left.** In `debian:12` (x64 and arm64) under Docker, the spike's `watch.ts matrix --reps 2 --idle-seconds 30`, under `bun run` and compiled (README). Bun's rows show 0 ops with no event and 0 burst misses, and `inotifyWatches` stays under the default `max_user_watches`. If Bun misses events and `@parcel/watcher` does not, switch `sync/watcher.ts` to it (one literal `require` per build target, as `watch.ts:55-66` does) and record the switch in 4.1. If both miss, stop and ask.
 
 **Exit.** A session meta written by Rust reaches a subscriber as a delta.
 
@@ -1554,6 +1607,9 @@ Status: not started. Needs: S2.1.
 
 **Tests.** Run `alinery-core/tests/fixtures/parallel-numbers.md` through the engine with the fake harness the engine tests already use. A task-scope subscriber sees one execution delta per event, and the last one equals `getTaskExecution`. An `engine.jsonl` written before this change folds to the same state.
 
+**Accept.**
+- `(cd playbook-engine && bun test)` and `(cd alinery-app/src-tauri/vinculum-daemon && bun test)`: all pass, the old-log fold case included.
+
 **Exit.** A step finishing in a playbook run reaches a subscriber as an execution delta.
 
 ### S2.5 Session, attention and daemon status entities
@@ -1571,6 +1627,10 @@ Status: not started. Needs: S2.3.
 - `daemon/_/status` carries the daemon's half of `DaemonStatus`: protocol, build id, live session count, `host_guard_warning`. It commits at start and when the live count changes. The shell keeps `reachable`, `build_drift`, `conflict` and the lanes, because only the shell can see them (WA).
 
 **Tests.** `bun test` starts a Terminal session running `sh`. A subscriber sees a put while it runs and a put after `exit`. Setting and clearing the Attention doc gives two deltas. The live count in `daemon/_/status` follows sessions starting and ending.
+
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/domain/sessions)`: the three cases pass.
+- `grep -n 'live.set\|live.delete' alinery-app/src-tauri/vinculum-daemon/src/main.ts`: each hit has a `commitSession` call beside it.
 
 **Exit.** A session-scope subscription shows start, attention and exit with no poll.
 
@@ -1591,13 +1651,17 @@ Status: not started. Needs: S2.1, S2.2.
 
 **Tests.** A fake kind that writes 100 progress lines in 100 ms commits one or two progress updates and the result. A child that exits 1 with no result ends FAILED with the tail of its stderr. Cancel ends CANCELLED and the child is gone. Two backups on one repo run one after the other.
 
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/jobs)`: all pass.
+- Against a running daemon: a storage-scan Job through connect-node reaches DONE, and its `StorageInfo` equals the Rust `storage_info` for the same repo field by field.
+
 **Exit.** `JobService.Start` for a storage scan returns an id, and the Job reaches DONE with a `StorageInfo` result.
 
 ## P3: Client library and first slices
 
 ### S3.1 Replica and hooks
 
-Status: not started. Needs: S1.2, S2.1, S2.5.
+Status: not started. Needs: S1.2, S1.3 (the polls it deletes serve remote repos too), S2.1, S2.5.
 
 **Goal.** Views read entities through `src/sync/`. Daemon status moves first.
 
@@ -1612,6 +1676,11 @@ Status: not started. Needs: S1.2, S2.1, S2.5.
 - The optimistic overlay (2.2.7) waits for the first port that sends a mutation (S4.1).
 
 **Tests.** vitest with `daemonHarness`: a status delta re-renders the badge with no timer; a dropped stream sets `stale` and keeps the last value; a resubscribe sends the last cursor.
+
+**Accept.**
+- `cd alinery-app && npx vitest run src/sync src/useDaemonStatus`: all pass.
+- `grep -n 'setInterval\|setTimeout' alinery-app/src/useDaemonStatus.ts`: no output. `grep -rn 'repoLiveSessions\|repo_live_sessions' alinery-app/src alinery-app/src-tauri/src`: no output.
+- In the app (the user runs it): with a local and a remote repo open, starting a terminal session updates the live count in Settings within a second, with no poll in the network panel.
 
 **Exit.** `useDaemonStatus` has no interval; `repo_live_sessions` is gone.
 
@@ -1630,6 +1699,11 @@ Status: not started. Needs: S3.1.
 
 **Tests.** vitest with `daemonHarness`: a session going from running to waiting to exited updates its badge with no timer; the attention transition raises one notification; a reconnect snapshot with the same `wait` raises none.
 
+**Accept.**
+- `cd alinery-app && npx vitest run`: passes.
+- `grep -rn 'sessionStatus\|sessionListStatuses\|sessionStatuses\|chatSessionStatus' alinery-app/src --include='*.ts*' | grep -v test`: no output.
+- `scripts/tests/check-ipc-commands.sh`: passes.
+
 **Exit.** No session status poll is left in `src/`; the four commands are gone.
 
 ### S3.3 WatchTranscript
@@ -1640,7 +1714,7 @@ Status: not started. Needs: S3.1.
 
 **Read first.** 2.1.5 (`WatchTranscript`); `transcript.ts:23` (`TranscriptPart`), `:29` (`TranscriptReply`); `main.ts:446` (`transcriptMessages`), `:882-896` (the `transcript` op); `session_transcript` (`session.rs:1175`, called from `SessionView.tsx:1382`); `read_session_history` (`session.rs:1424`); `ipc.ts:338` (`readChatOmp`), `:380` (`readSessionHistory`), `:385` (`sessionTranscript`).
 
-**Research (UNCONFIRMED).** Does pi-durable notify on a change to a conversation, the way `watch` (:532) gets one for the Attention doc? If not, the daemon polls the conversation every 250 ms for each open watch. That is one poll in the daemon instead of one per client.
+**Research (answered 2026-10-27, from the pi-durable 1.4.0 package).** pi-durable exports `watchEvents`, marked experimental, which notifies on a conversation's events. WA: use it; if it misbehaves, fall back to the LiveDoc watch the daemon already uses for Attention (`main.ts:532`), and only then to a 250 ms poll per open watch. A session that falls back says so in 4.1.
 
 **Build.**
 - `TranscriptItem` in `sessions.proto`, built from `TranscriptReply` and `TranscriptPart`.
@@ -1649,6 +1723,10 @@ Status: not started. Needs: S3.1.
 - `SessionView` and `ChatView` render from the stream. Delete `session_transcript`, the `transcript` op, and `read_chat_omp` and `read_session_history` if nothing else calls them, with their wrappers.
 
 **Tests.** `bun test`: from item 0 gets everything; an append sends only the new item; editing the last item sends it with `replace`; resuming at `next_item` sends nothing old.
+
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/runtime/transcript)`: the four cases pass.
+- `grep -n '"transcript"' alinery-app/src-tauri/vinculum-daemon/src/main.ts` and `grep -rn 'sessionTranscript' alinery-app/src`: no output.
 
 **Exit.** A Pi transcript renders from `WatchTranscript`; the `transcript` op is gone.
 
@@ -1670,6 +1748,12 @@ Status: not started. Needs: S3.1, S1.3.
 
 **Tests.** `bun test`: a reattach from an offset gets exactly the bytes after it; writes sent out of order apply in `input_seq` order; a gap over 2 s applies in arrival order. vitest: `SessionTerminal` reattaches from its last offset.
 
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/rpc/terminal)` and `cd alinery-app && npx vitest run src/SessionTerminal`: all pass.
+- `grep -rn 'pump_session_stream\|queue_terminal_op' alinery-app/src-tauri/src`: no output.
+- The O8 numbers are in 4.1 for local, bridge and ssh forward.
+- In the app (the user runs it): in a remote Terminal session, `seq 1 100000`, then `ssh -O exit` on the host's ControlMaster while it prints; after the reconnect the output has every number once.
+
 **Exit.** A remote terminal survives a forward drop with no duplicated output; the pump and the queue are gone.
 
 ### S3.5 Board reads
@@ -1689,6 +1773,11 @@ Status: not started. Needs: S3.1, S2.3, S2.4.
 
 **Tests.** Task conformance cases and current-step cases (from `board.rs` tests) in cargo and bun. vitest: a Kanban card moves when an execution delta arrives; with one repo's daemon down, the other repo's board stays live and the down one shows stale; a repo opened with a conflicted daemon shows the banner and no tasks.
 
+**Accept.**
+- `cargo test --workspace` and `(cd alinery-app/src-tauri/vinculum-daemon && bun test)`: task and current-step conformance cases pass on both sides.
+- `grep -n 'ListBoardTasks\|ListTasks\|GetTask\b\|TaskActivity\|ListSessions\b\|ListSessionItems\|ReadSessionMetas\|GetSessionDisplay' alinery-app/src-tauri/alinery-core/src/repo_service.rs`: no output.
+- `scripts/tests/check-remote-routing.sh` and `check-remote-offload.sh`: pass.
+
 **Exit.** No board poller is left; the 8 variants are gone; `remote-local-only.txt` and `remote-offload-ok.txt` lose their entries for the deleted commands.
 
 ## P4: Domain ports
@@ -1706,17 +1795,29 @@ Every P4 session follows the same recipe. Its **Build** lists only what the reci
 8. **Bump `PROTOCOL`** (`protocol.rs:15` and `main.ts:26`).
 9. **Records.** Status line, the 1.4 counts, 4.1 for any decision, 4.5.
 
-**The standing exception to rule 2: `alinery-mcp`.** Agents call it, and it writes four domains itself until S5.1 settles O10: settings TOML (`write_toml_file`, `mcp/src/main.rs:1154`, a plain `fs::write` with no lock), task creation (`create_task`, `:1196`), the playbook library (`call_playbook_library`, `:528`) and the pre-archive backup (`create_pre_archive_backup`, `:397`). The session that ports one of those domains moves the MCP write under the shared flock if it isn't already there, and keeps the core function it calls. The watcher picks up its writes (2.2.8). S5.1 deletes what is left.
+The delete (step 7) is its own commit, after the commit that flips the callers. At the commit before it, both sides of the conformance suite still run, so a reviewer can check the port against Rust there.
+
+**Accept, for every P4 session.** Each session lists only what it adds.
+- At the commit before the delete: `cargo test -p alinery-core --test conformance` and `(cd alinery-app/src-tauri/vinculum-daemon && bun test)` pass, and the domain's cases run on both sides (the number of `conformance/<domain>/*/` directories equals the number of cases each side reports).
+- At the session's last commit: `(cd alinery-app/src-tauri/vinculum-daemon && bun test)` passes over the same `expected.json` files (`git diff <port commit> -- alinery-app/src-tauri/conformance/<domain>` shows no change to any `expected.json`).
+- For each deleted command: `rg -nw '<command>' alinery-app/src alinery-app/src-tauri/src` finds nothing; `scripts/tests/check-ipc-commands.sh` and `check-ipc-boundary.sh` exit 0.
+- `scripts/tests/check-protocol-version-bump.sh`: exit 0.
+- `./scripts/check.sh`: exit 0, at check-in.
+
+**The standing exception to rule 2: `alinery-mcp`.** Agents call it, and it writes these itself until S5.1 settles O10 (the last five were found in the plan review): settings TOML (`write_toml_file`, `mcp/src/main.rs:1154`, a plain `fs::write` with no lock), task creation (`create_task`, `:1196`), the playbook library (`call_playbook_library`, `:528`), the pre-archive backup (`create_pre_archive_backup`, `:397`), task archive (`archive_task_guarded`, `:1079`), subtask finalize (`finalize_subtask`, `:1062`), purge (`purge_archived_storage`, `:1110`), backup now (`create_backup`, `:1128`) and the review handoff (`send_review_handoff_for_repos`, `:906`). The session that ports one of those domains moves the MCP write under the shared flock if it isn't already there, and keeps the core function it calls. The watcher picks up its writes (2.2.8). S5.1 deletes what is left.
 
 ### S4.1 Settings
 
-Status: not started. Needs: S3.1, S2.3.
+Status: not started. Needs: S3.1, S2.3, S2.2 (`writeAtomic`, `withTaskMutation`).
 
 **Goal.** The daemon owns repo `config.toml`, `harnesses.toml` and the effective settings; the shell keeps global `app.toml`. The first mutation lands, and with it the optimistic overlay. Fixes R3 for settings precedence.
 
 **Read first.** App `settings.rs`: `:97-99` (absent inherits, a present blank string is a value), `read_overrides` :125, `write_overrides` :132, `scoped_for` :148, `read_config` :166, `read_config_for_repo` :172, `read_global_settings` :178, `write_global_settings` :229, `read_scoped_settings_for_repo` :261, `read_repo_overrides_for_repo` :267, `emit_repo_settings_change` :272, `write_repo_overrides_for_repo` :283, `clear_repo_override_for_repo` :300, `write_config` :315. Core `shared.rs` from :756: `ScopedSettings` :765, `resolve_backup` :816, `resolve_effective_config` :827, `read_scoped_settings` :843, `clear_repo_override` :861, the harness overlay :888-:1049. Core `types.rs:917` (`RepoOverrides`: github, defaults, backup); core `settings.rs:290`, `:296`, `:326` (the TOML writes) and `:483` (`log_repo_settings_event`). Daemon `sessionControls.ts:75-123` (the second precedence). 2.2.7.
 
-**Research (UNCONFIRMED).** Does the pinned Bun's `Bun.TOML` have only `parse`? Today Rust writes with `toml::to_string`, so comments in `config.toml` are already lost on every write; the port need not keep them. Writer options, to decide in this session: (a) `smol-toml` `stringify` (already a daemon dependency, `package.json:11`); (b) a writer for the `RepoOverrides` shape only. Either way the `after/` fixtures pin the bytes.
+**Research (answered 2026-10-27, `docs/thick-daemon-spikes/src/toml-roundtrip.ts`).** Bun 1.4.3 has `Bun.TOML.stringify`. Each of this repo's 43 `task.md` files, parsed and written again with `Bun.TOML.stringify`, comes out byte for byte as Rust's `toml::to_string` wrote it. `config.toml` differs only by its header comment, which Rust's own write drops too (core `settings.rs:326` writes `toml::to_string(overrides)`). smol-toml 1.9.1 matches 5 of 44 files (same values, different layout).
+- **WA: write with `Bun.TOML.stringify`.** smol-toml stays where it parses today (`graph.ts:6`, `sessionControls.ts:6`, `playbook-md.ts:10`).
+- The bytes follow key order, so each TypeScript shape lists its keys in the Rust struct's field order. A golden test per written shape (`RepoOverrides`, `task.md`) compares against bytes Rust wrote.
+- UNCONFIRMED (4.2): `Bun.TOML.stringify` is missing from Bun's API docs. If a Bun upgrade drops or changes it, the golden test fails; the fallback is smol-toml with new golden bytes, which are a format change Rust readers accept (same values).
 
 **Build.**
 - `domain/settings.ts`: `effectiveSettings(global, repo)` ported from `resolve_effective_config`, with the precedence of `:97-99`. `sessionControls.ts:75-123` calls it; its own copy goes.
@@ -1734,6 +1835,7 @@ export function pick<T>(repo: T | undefined, global: T): Scoped<T> {
 - `src/sync/overlay.ts` (2.2.7): the Settings view applies its write locally and drops the overlay at `Applied.cursor.seq`. An ABORTED reply refetches and shows the newer values.
 - Global settings stay in the shell: `read_global_settings`, `write_global_settings`, the model favorites. When they change the shell re-renders the remote `app.toml` and pushes it, as today.
 - `alinery-mcp` `write_toml_file` (`main.rs:1154`) takes the flock (see the exception above).
+- **`RepoService.EnsureReady`** (ADMIN), the repo half of `set_active_repo` (2.3.4), ported from `ensure_repo_ready` (app `paths.rs:203`): `.alinery/`, the ignore entry (`ensure_task_data_ignored`), `harnesses.toml`, `config.toml`. Idempotent. The shell calls it once the daemon answers `Hello`, for local and remote repos alike. Today a remote repo never runs it (`activate_remote_repo`, `remote.rs:1417`, only attaches): it gets `config.toml` on its first settings read, and the ignore entry only when a task is created (core `task_creation.rs:300`). The daemon already creates `.alinery/` for its socket (`main.ts:124`).
 - **Telemetry sender (O17 c).** `platform/telemetry.ts` ports core `telemetry.rs`: the consent rule (`consented` :563: enabled, prompted, and an install id), the record shape (`event_record` :506), the allowlists, the ingest URL and the basic auth. A send is one `fetch` with a 2 s `AbortSignal.timeout`, not awaited by the caller; any failure, an unreachable URL included, is dropped. No queue and no retry, as in Rust today (the comment above `send`, :530).
 - Consent is read from `app.toml`, which is on the watch list above, so a change applies without a restart. `render_remote_app_toml` (`remote.rs:490`) stops blanking `telemetry` and copies `enabled`, `prompted`, `install_id` and `endpoint`, so a remote daemon sends under the Mac's install id; its doc comment ("the host records no events under this install") changes with it.
 - `check-telemetry-privacy.sh` also scans `vinculum-daemon/src`: only `platform/telemetry.ts` builds an ingest request, and the banned fields apply there too.
@@ -1741,24 +1843,39 @@ export function pick<T>(repo: T | undefined, global: T): Scoped<T> {
 
 **Tests.** Conformance from the core `settings.rs` tests and `shared.rs` precedence cases: absent inherits, blank wins, a clear restores the global value. `after/` trees for write and clear. vitest: the overlay shows the new value at once, keeps it until the cursor passes, and rolls back on an error. Telemetry: one fixture event gives the same JSON record from Rust's `event_record` and the TypeScript port; with consent off nothing is sent; an unreachable endpoint neither throws nor delays the command.
 
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/domain/settings src/platform/telemetry)`: all pass, the golden TOML cases included.
+- `rg -n 'smol-toml|from "smol-toml"' alinery-app/src-tauri/vinculum-daemon/src/sessionControls.ts`: no hit (its precedence copy and the import go together); `rg -n effectiveSettings` there finds the call.
+- On a scratch git repo, against a running daemon: `EnsureReady` twice. After the first, `.alinery/config.toml` and `.alinery/harnesses.toml` exist and `git check-ignore -q .alinery/tasks` exits 0. The second call changes no mtime under `.alinery/`.
+- `WriteOverrides` with a stale `expected_revision`: ABORTED, and `config.toml` is unchanged (sha256 before and after).
+- Telemetry, with a local HTTP listener as the endpoint in `app.toml`: one repo settings write sends one record whose JSON equals Rust's `event_record` for the same event (fixture). With consent off, the listener gets nothing within 3 s. `scripts/tests/check-telemetry-privacy.sh`: exit 0.
+
 **Exit.** The settings commands above, `ReadRepoOverrides` and `WriteRepoOverrides`, and the TS precedence copy are gone. `read_config` callers read `settings/_/repo`.
 
 ### S4.2 Executions
 
-Status: not started. Needs: S4.1, S2.4, S0.6 (the O14 trace).
+Status: not started. Needs: S4.1, S2.4; O14 and O21 Decided (S0.7).
 
 **Goal.** One execution state machine in TypeScript (R2), and execution reads and approvals through the store.
 
-**Read first.** The S0.6 trace (O14) in 4.1. Core `execution.rs`: `mutate_execution_state` :325, `reserve_execution` :496, the transitions :619-:857, `execution_assignment_prompt` :866; `execution_tests.rs` (53 tests). App `daemon.rs`: `task_execution_for` :76, `observe_task_executions_in` :207, `observe_task_executions` :328, `observe_remote_task_execution` :364, `allow_execution_completion` :417. `ipc.ts:350-353`. Daemon `tasks.ts`: `executionState` :155, `getTaskExecution` :178, `addExecution` :291. `playbook-engine/state.ts`.
+**Read first.** The O14 trace in 4.1 (done in the plan review). Core `execution.rs`: `mutate_execution_state` :325, `reserve_execution` :496, the transitions :619-:857, `execution_assignment_prompt` :866; `execution_tests.rs` (53 tests). App `daemon.rs`: `task_execution_for` :76, `observe_task_executions_in` :207, `observe_task_executions` :328, `observe_remote_task_execution` :364, `allow_execution_completion` :417. `ipc.ts:350-353`. Daemon `tasks.ts`: `executionState` :155, `getTaskExecution` :178, `addExecution` :291. `playbook-engine/state.ts`.
 
 **Build.**
-- Put O14 to the user with the trace: (a) the `engine.jsonl` fold is the truth and `execution.json` goes; (b) `execution.json` is the truth and the fold feeds it. Record the answer in 4.1 before writing code.
+- O14 and O21 are the user's, put to them with the trace before this session starts (S0.7). If either is still Open, stop here. Under O14 (a) the log is the truth, and its only writer appends with a plain `fsyncSync` (`playbook-engine/src/state.ts:200`), weaker than the `F_FULLFSYNC` that Rust's durable writes use on macOS (2.3.2). O14 (a) therefore carries one more choice for the user: keep plain `fsync` for the log, or pay about 10 ms per event on macOS (S0.5).
 - `domain/executions.ts`: the transitions ported from `execution.rs` :219-:866, writing the chosen truth.
 - The execution entity (from S2.4) gets every field the views read. `ExecutionService.AllowCompletion` (APPROVE, `expected_revision`) replaces `allow_execution_completion`.
 - The four observe commands and `ipc.ts:351-353` go; their callers read the execution entity.
-- **Caveat, rule 2 does not hold yet.** Five Rust modules besides `execution.rs` write execution state: `task_creation.rs`, `task.rs`, `session_name.rs`, `subtask.rs` and `repo_ownership.rs`. They keep writing, under the shared flock, until S4.3, S4.4, S4.8 and S4.11 port them. Every TypeScript write in this session goes through `withTaskMutation`, and the watcher commits the Rust writes. Write this down in 4.1 as a known exception.
+- **Caveat, rule 2 does not hold yet.** Besides `execution.rs` (:319, :325), these write `execution.json` in production (the trace): core `task_creation.rs` (:354, :358, :414, :443), core `task.rs:378` (`auto_approve_all`), core `repo_ownership.rs:290` (reached from the daemon through `ownership_ffi.rs:35`), and core `subtask.rs:436`, which goes through `task_creation`. `session_name.rs` only reads. They keep writing, under the shared flock, until S4.3 (task creation, auto-approve), S4.8 (subtasks) and S4.11 (ownership) port them. The watcher commits the Rust writes. Write this down in 4.1 as a known exception.
+- The daemon's own `addExecution` (`tasks.ts:291`) writes today with no lock, a plain `writeFileSync` and no revision. It moves under `withTaskMutation` and `writeAtomic` first, before any transition is ported.
 
 **Tests.** Conformance from the 53 `execution_tests.rs` cases (state in, transition, state and files out). An interop test: a Rust `reserve_execution` and a TypeScript transition on one task, interleaved, end in a valid state. vitest: approving moves the card once the delta arrives.
+
+**Accept.**
+- One conformance case per `execution_tests.rs` test (53), or a line in the PR naming the test and why it has no case.
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/domain/executions)`: the interop case provisions a task through `alinery_provision_task` (the FFI that stays until S4.3) and interleaves 100 TypeScript transitions with it in a seeded order. Every round ends in a state the fold accepts.
+- With the task flock held by another process (`docs/thick-daemon-spikes/lock-rs`), `addExecution` waits, and returns within 100 ms of the release.
+- `rg -n 'observe_task_executions|observe_remote_task_execution|allow_execution_completion|SavedExecution' alinery-app/src alinery-app/src-tauri/src`: nothing.
+- 4.1 has the multi-writer note with one owning session per Rust writer.
 
 **Exit.** `SavedExecution` and the observe and allow commands are gone. R2 is closed if O14 picked one truth; the multi-writer note in 4.1 lists which sessions remove each Rust writer.
 
@@ -1774,14 +1891,21 @@ Status: not started. Needs: S4.2, S3.5.
 - `domain/tasks.ts`: create (slug, `task.md`, worktree, execution reservation from S4.2), rename, duplicate, archive, restore, auto-approve, related tasks.
 - `platform/git.ts` gets `worktreeAdd`. It is the only git spawn site (invariant 3).
 - Drop `alinery_provision_task` from `tasks.ts`; `provision_ffi.rs:58` and its export go. `alinery_create_subtask` and `alinery_set_session_name` stay until S4.8 and S4.4.
-- The pre-archive backup becomes a job the daemon starts before it archives (S2.6). It waits for the job and refuses to archive if the backup fails, as `:670` does today.
-- Attachments: the shell reads a picked or dropped file and uploads it through `BlobService`; `CommitUpload` writes it under `artifacts/attachments/`. `attachment_path` becomes a shell reveal of a `BlobRef` on a local repo and is hidden for a remote one.
+- **Pre-archive backup (WA, breaks a cycle).** The backup job is built in S4.9, which needs this session. Until then the shell keeps the Rust pre-archive backup (`task.rs:670` and `:685`): it runs it and calls `TaskService.ArchiveTask` only when it succeeds, as today. S4.9 moves the backup into the archive command as a job and deletes the shell half.
+- `open_session`'s meta preflight (app `session.rs:505`, the meta read at `:529`) moves into the daemon's attach (2.3.4). The hosted refresh stays in the shell (S4.11).
+- Attachments: this session builds the upload half of `BlobService` (`BeginUpload`, `UploadChunk`, `CommitUpload`; 2.1.5). The shell reads a picked or dropped file and uploads it; `CommitUpload` writes it under `artifacts/attachments/`. `copy_chat_attachments` (`task.rs:282`) becomes this upload, and S4.4 reuses it for chat. `attachment_path` becomes a shell reveal of a `BlobRef` on a local repo and is hidden for a remote one.
 - Drafts are entities (`draft/*`); the draft commands become `DraftService` writes.
 - MIXED halves from S0.7 that create a session after a task (rule "builds a domain request, then creates a session") become one daemon command.
 - `alinery-mcp` `create_task` (`main.rs:1196`) stays on core under the flock until S5.1.
 - Telemetry: `TaskArchive` (`task.rs:692`).
 
 **Tests.** Conformance from the `task_creation.rs`, `task_drafts.rs` and `attachments.rs` tests, with `after/` trees (the slug and timestamps may differ). An archive whose backup job fails leaves the task unarchived. vitest: create shows the card at once through the overlay.
+
+**Accept.**
+- `rg -n alinery_provision_task alinery-app/src-tauri`: nothing.
+- Through connect-node: a 5 MB file uploaded in 64 KiB chunks lands under `artifacts/attachments/` with the same sha256. A `BeginUpload` whose name holds `..` or `/` is INVALID_ARGUMENT, and nothing is written.
+- Archive with the backup destination set to a plain file: the backup fails, the task stays unarchived, and the error reaches the UI (vitest).
+- vitest: a created task shows its card before the delta arrives, and exactly once after.
 
 **Exit.** The 14 variants in 2.3.3, the task commands and `provision_task` FFI are gone.
 
@@ -1795,6 +1919,8 @@ Status: not started. Needs: S4.3.
 
 **Build.**
 - `domain/sessions.ts`: rename, archive stamp, notification read and clear, message actions (finalize, prepare review approval), history and the OMP window.
+- `SessionService` unary writes (2.1.5): `CreateSession`, `StartSession`, `RenameSession`, `ArchiveSession`, `KillSession`, `ResumeSession`, each with `MutationMeta` first. They replace the JSON-lines ops of the same job and the Rust proxies. `ArchiveSession` writes the stamp, then kills, in that order (2.3.4 rule 2; `archive_session` :321 and `_for_repo` :369). Kill needs ACT.
+- `close_all_repos`'s exited-session acks (2.3.4) become `ArchiveSession` calls.
 - Session naming moves into TypeScript; `suggestSessionName` and `alinery_set_session_name` go.
 - Chat threads are entities in the chat scope: list, create, start, pin, archive, worktree add and remove, branch label, attachments (through `BlobService`), images (through `BlobService.Read`).
 - The Session entity gets the attention body. `notify_session_attention` keeps the OS notification in the shell; the text comes from the entity, so the shell reads no meta file.
@@ -1802,6 +1928,12 @@ Status: not started. Needs: S4.3.
 - Telemetry: `SessionArchive` (`session.rs:310`), `SessionKill` (`session.rs:1321`).
 
 **Tests.** Conformance from the `session_name.rs`, `history.rs` and `chat.rs` tests. vitest: a new chat thread appears in the rail with no poll; a renamed session updates everywhere it shows.
+
+**Accept.**
+- `rg -n 'alinery_set_session_name|suggestSessionName' alinery-app/src-tauri`: nothing.
+- `rg -n 'setInterval|setTimeout' alinery-app/src/views/ChatView.tsx alinery-app/src/views/QuickChat.tsx`: no timer that calls a chat command (the pollers at `ChatView.tsx:300` and `QuickChat.tsx:227`).
+- Against a running daemon: `ArchiveSession` on a live Terminal session leaves the meta stamped and the process gone, and a subscriber sees the stamp put before the exit put.
+- vitest: a chat attachment dropped in the composer goes through the S4.3 upload (the mock sees `BeginUpload`, not a path).
 
 **Exit.** The 10 session variants and 12 chat variants in 2.3.3 are gone, with their commands, both pollers and the naming FFI.
 
@@ -1816,12 +1948,17 @@ Status: not started. Needs: S4.3.
 **Build.**
 - `sync/parsers/artifacts.ts`: the artifact scan, which never sees `artifacts/attachments/`.
 - Artifact metadata and comments are entities in the task scope. Comments write with `expected_revision` (2.2.7); drafts of comments too.
-- Bodies and images: `BlobService.Read`. `artifact_node_path` and `artifact_comment_markdown_path_for` become a shell reveal of a `BlobRef`, hidden for remote repos.
+- Bodies and images: this session builds `BlobService.ReadBlob` (S4.3 built the upload half). `artifact_node_path` and `artifact_comment_markdown_path_for` become a shell reveal of a `BlobRef`, hidden for remote repos.
 - Review handoff and send become one daemon command each.
 - The three pollers read the task scope.
 - Telemetry: the three events above.
 
 **Tests.** Conformance from `artifact_tree.rs`, `artifact_comments.rs` and the `shared.rs` artifact tests. An agent writing `artifacts/03-plan.md` straight to disk shows up through the watcher. vitest: a comment from another client appears with no poll.
+
+**Accept.**
+- `ReadBlob` of a 20 MB artifact through connect-node: frames of at most 64 KiB (WA), and the sha256 of the joined bytes equals the file's. A `BlobRef` that resolves outside `.alinery/tasks/<slug>/artifacts/` (a symlink planted by the test) is PERMISSION_DENIED.
+- An agent-style write (`cp` into `artifacts/03-plan.md` from a shell) reaches a task-scope subscriber within 1 s.
+- The pollers at `alinery-app/src/views/SessionView.tsx:719`, `:736` and `views/TaskDetail.tsx:580` are gone (`git show` of the session's diff).
 
 **Exit.** The 17 artifact and comment variants, the 25 commands and three pollers are gone.
 
@@ -1831,7 +1968,7 @@ Status: not started. Needs: S4.1, S0.6.
 
 **Goal.** Playbook read, validate, render, save and delete in TypeScript; one playbook parser (R3).
 
-**Read first.** App `playbook.rs` (9 commands: `list_playbook_catalog`, `read_playbook`, `validate_playbook_source`, `render_playbook_source`, `save_playbook_source`, `delete_playbook_source`, `read_playbook_picker_preferences`, `save_playbook_picker_preferences`, `list_kanban_columns`). Core `playbook_library.rs` (`save_playbook_if_unchanged` :596), `playbook.rs` (`deny_unknown_fields` at :31, :138, :146), `playbook_tree.rs`. `playbook-engine/` (its own parser). MCP `call_playbook_library` (`main.rs:528`).
+**Read first.** App `playbook.rs` (9 commands: `list_playbook_catalog`, `read_playbook`, `validate_playbook_source`, `render_playbook_source`, `save_playbook_source`, `delete_playbook_source`, `read_playbook_picker_preferences`, `save_playbook_picker_preferences`, `list_kanban_columns`). Core `playbook_library.rs` (`save_playbook_if_unchanged` :596), `playbook.rs` (`deny_unknown_fields` at :15, :30, :37, :47, :62, :183, :195), `playbook_library.rs` (and at :31, :138, :146, :155), `playbook_tree.rs`. `playbook-engine/` (its own parser). MCP `call_playbook_library` (`main.rs:528`).
 
 **Build.**
 - One parser in `playbook-engine/` for both the engine and the library. It rejects unknown fields as `deny_unknown_fields` does.
@@ -1842,6 +1979,11 @@ Status: not started. Needs: S4.1, S0.6.
 - MCP `call_playbook_library` keeps the core path under the flock until S5.1.
 
 **Tests.** Conformance from the `playbook.rs`, `playbook_library.rs` and `playbook_tree.rs` tests, including every unknown-field rejection. A save with a stale revision is ABORTED.
+
+**Accept.**
+- One unknown-field conformance case per `deny_unknown_fields` struct (11 today: `rg -c deny_unknown_fields alinery-app/src-tauri/alinery-core/src/playbook.rs alinery-app/src-tauri/alinery-core/src/playbook_library.rs`). Each is rejected on both sides, and the TypeScript error names the field.
+- `(cd playbook-engine && bun test)`: passes with the one parser; `rg -n 'smol-toml|parseToml' playbook-engine/src` shows one parse site.
+- `cargo test -p alinery-mcp`: passes (MCP still saves through the core library).
 
 **Exit.** `ReadPlaybookTree`, `ApplyPlaybookTree`, the 9 commands and the Rust playbook parser are gone (the core library stays for MCP until S5.1).
 
@@ -1864,6 +2006,11 @@ Status: not started. Needs: S4.3.
 
 **Tests.** Conformance from the `git_actions.rs` tests against a temp repo. The scrub test: a `GIT_DIR` in the daemon's env does not reach the child.
 
+**Accept.**
+- The new gate (`scripts/tests/check-daemon-git-spawn.sh`): exit 0; with a `Bun.spawn(["git"` added to any other daemon file, exit 1.
+- `bun test src/platform/git`: the lookup order (PATH, then the alongside tree with `GIT_EXEC_PATH`) with the PATH and "Command Line Tools installed" checks injected, including the case where `/usr/bin/git` is the stub; and the scrub case (`GIT_DIR` in the daemon's env, absent in the child's).
+- On the remote-sshd container (`scripts/tests/remote-sshd/run.sh start`): a daemon started with `setsid` runs `git --version` through `platform/git.ts`. `systemd-run --user` needs a VM (VERIFY.md); the container has no user systemd (UNCONFIRMED, 4.2).
+
 **Exit.** The 8 git variants and 11 commands are gone; the daemon has one git spawn site with a gate.
 
 ### S4.8 Subtasks
@@ -1882,6 +2029,10 @@ Status: not started. Needs: S4.2, S4.3, S4.4.
 
 **Tests.** Conformance from the core `subtask.rs` tests. Discarding a subtask leaves the parent's execution valid.
 
+**Accept.**
+- `test ! -e alinery-app/src-tauri/alinery-core/src/provision_ffi.rs`, and `rg -n dlopen alinery-app/src-tauri/vinculum-daemon/src/tasks.ts` finds nothing.
+- Discarding a subtask in a conformance case leaves the parent's execution in a state the fold accepts.
+
 **Exit.** The 4 subtask variants and commands are gone, and so is `provision_ffi.rs`.
 
 ### S4.9 Storage and backup as jobs
@@ -1893,7 +2044,8 @@ Status: not started. Needs: S2.6, S4.3.
 **Read first.** App `backup.rs` (`pick_backup_destination_dialog`, `backup_now`, `backup_busy`, `list_backups`, `check_backup_destination`, `restore_backup`; telemetry at :152, :233, :332, :367), `backup.rs:43-61` (the debounce), `backup_queue.rs`; app `settings.rs` `storage_info` :326 and `delete_all_archived_storage` :354 (`StoragePurge` at :391). Core `storage.rs`, `backup.rs`. `src/views/Settings.tsx:518`. 2.3.5.
 
 **Build.**
-- Decide O11 (zip). Spike first: a Rust-made `-v1.zip` verifies and restores through the TypeScript code, and a TypeScript one through Rust. If `fflate` fails either way, put (b) to the user; under (b), `zip` joins the host probe list (D6).
+- O11 (zip) is the user's. **Found in the plan review:** `fflate` 0.8.3 reads zip64, but its writer emits none: 32-bit sizes and offsets in the headers and only the classic end record (`wzh` and `wzf` in `fflate/lib/index.cjs`). A TypeScript-made backup therefore fails past 4 GiB of archive or 65,535 entries. Rust's `zip` 8.6 writes zip64 offsets and counts when needed (core `backup.rs:275`; a single entry over 4 GiB fails there too, since `large_file` is not set). This repo's backup set today: 289 MB in 43 tasks, largest scrollback 53 MB. Whatever the user picks, the compatibility test runs both ways first. Under (b), `zip` joins the host probe list (D6).
+- The pre-archive backup moves into `TaskService.ArchiveTask` as a job (the S4.3 WA ends): the daemon waits for it and refuses to archive if it fails. The shell half at `task.rs:670` and `:685` goes.
 - `jobs/backup.ts` (create and verify) and `jobs/purge.ts`; `jobs/storage.ts` exists from S2.6.
 - Automatic triggers: the daemon owns the 2 s debounce and starts backup jobs itself. `backup_queue.rs` and `backup.rs:43-61` go.
 - `pick_backup_destination_dialog` stays in the shell; the picked path goes to a settings write (S4.1).
@@ -1902,6 +2054,12 @@ Status: not started. Needs: S2.6, S4.3.
 - Telemetry: `BackupCreate`, `BackupRestore`, `StoragePurge`.
 
 **Tests.** The zip compatibility test both ways. A purge job's progress reaches a subscriber; cancel leaves no half-deleted task (each task is removed atomically or not at all).
+
+**Accept.**
+- Zip compatibility through fixtures, as conformance: a Rust test writes `conformance/backup/rust-made-v1.zip` and a `bun test` verifies and restores it into a temp repo whose tree equals the source; a `bun test` writes `ts-made-v1.zip` and a Rust test verifies and restores it. `UPDATE_FIXTURES=1` regenerates both.
+- `test ! -e alinery-app/src-tauri/src/backup_queue.rs`; the 1 s poll at `alinery-app/src/views/Settings.tsx:518` is gone.
+- A purge job cancelled half way: every archived task is either fully present or fully gone (`bun test src/jobs/purge`).
+- Archive with a failing backup job: the task stays unarchived (the S4.3 case, now on the daemon side).
 
 **Exit.** The 7 storage and backup variants, `backup_queue.rs`, `storage_info`, `delete_all_archived_storage` and the `Settings.tsx:518` poll are gone.
 
@@ -1915,11 +2073,16 @@ Status: not started. Needs: S4.3, S4.6.
 
 **Build.**
 - Linear and GitHub (2.3.4, "needs this Mac's secrets"): the shell fetches the issues with its tokens and passes them to `TaskService.Import`, which creates the tasks. `GitOriginUrl` becomes a unary RPC the shell calls first.
-- Community: the five repo-scoped commands become daemon writes (the shell downloads the package and uploads it through `BlobService`). The catalog, preview and mine commands stay in the shell.
+- Community: the five repo-scoped commands become daemon writes (the shell downloads the package and uploads it through `BlobService` as `PlaybookPackageBlob`, 2.1.5). The catalog, preview and mine commands stay in the shell.
 - Put O12 to the user: (a) the agent dir lives per host, the daemon owns it and the shell mirrors the Mac's copy; (b) it lives on the Mac only, the shell owns it and pushes it. Then move the model-role and skill commands to the chosen side. The dialogs (`pick_vinculum_skill_dialog`, `open_vinculum_agent_dir`) stay in the shell either way.
 - Telemetry: `ImportFetch` (stays in the shell, which does the fetch).
 
 **Tests.** Conformance for import: a fixed issue list in, task trees out. A community import into a remote repo writes on the host.
+
+**Accept.**
+- Conformance: a fixed GitHub issue list and a fixed Linear list in, task trees out (the slug and timestamps may differ).
+- On the remote-sshd container: a community import into a remote repo writes the playbook on the host (`ssh … test -f <repo>/.alinery/…`), and nothing under the Mac's copy of the repo key changes.
+- 4.1 records O12's answer, and `rg -n 'read_omp_model_roles|install_vinculum_skill' alinery-app/src-tauri/src` matches the side O12 chose.
 
 **Exit.** The import and community commands are split as above; O12 is Decided.
 
@@ -1935,28 +2098,38 @@ Status: not started. Needs: S4.2, S4.8, S2.2.
 - Decide O9 with a test on both platforms: (a) keep the IOKit FFI; (b) `caffeinate -w <pid>` on macOS, `systemd-inhibit` on Linux, as a child the daemon holds.
 - `domain/ownership.ts`: `repo_ownership.rs` ported onto `platform/lock.ts`, under `withTaskMutation`. It is the last Rust writer of execution state (S4.2 caveat).
 - `main.ts:224-233` and `:254-259` stop calling FFI; `ownership_ffi.rs` and (if O9 b) `idle_inhibit.rs` go.
-- The hosted refresh (`session.rs:458`) stays in the shell, which holds the account; it sends the token as a settings write instead of a file the daemon reads. `open_session`'s preflight is the daemon's (2.3.4).
+- The hosted refresh (`session.rs:458`) stays in the shell, which holds the account; it sends the token as a settings write instead of a file the daemon reads. (`open_session`'s preflight moved in S4.3.)
 - Takeover keeps its app-only prepare, confirm and cancel; confirm sends `Shutdown(CONFIRMED_TAKEOVER)`.
 
 **Tests.** Ownership conformance from the `repo_ownership.rs` tests. Two daemons on one repo: the second gets `repo_busy`. Keep-awake: the inhibitor child exits when the daemon exits.
+
+**Accept.**
+- `rg -n 'dlopen|libalinery_core' alinery-app/src-tauri/vinculum-daemon/src`: nothing.
+- Two daemons on one scratch repo: the second exits with `repo_busy`, and the first's sessions are untouched.
+- Keep-awake under O9 (b): with a session running, `pmset -g assertions` (macOS) or `systemd-inhibit --list` (Linux) shows the daemon's inhibitor; `kill -9` of the daemon removes it within 1 s.
 
 **Exit.** No `libalinery_core` dlopen is left in the daemon (`tasks.ts:15-47` and the FFI in `main.ts` are gone).
 
 ### S4.12 Providers and models
 
-Status: not started. Needs: S1.1.
+Status: not started. Needs: S1.1, S1.2, S1.3.
 
 **Goal.** Provider login, the catalog and model lists are a typed service instead of raw JSON-lines ops.
 
-**Read first.** Daemon `main.ts:965-1002` (the `provider_*` and `custom_provider_*` ops); app `session.rs` provider commands (:1215, :1221, :1233, :1239, :1251, all through `active_daemon`); app `settings.rs` `grok_key_ready` :58, `list_harness_models` :74, `list_harness_models_for_repo` :85; `credentials.ts`.
+**Read first.** Daemon `main.ts:964-1021` (the seven `provider_*` and `custom_provider_*` ops: catalog, logout, login start, login poll, login reply, custom save, custom delete); app `session.rs` provider commands (:1215, :1221, :1233, :1239, :1251, all through `active_daemon`); app `settings.rs` `grok_key_ready` :58, `list_harness_models` :74, `list_harness_models_for_repo` :85; `credentials.ts`.
 
 **Build.**
-- `ProviderService`: `Catalog`, `LoginStart`, `LoginPoll`, `Logout`, `SaveCustom`, `DeleteCustom`, and `ListModels`, which replaces `list_harness_models(_for_repo)`.
+- `ProviderService`: `Catalog`, `LoginStart`, `LoginPoll`, `LoginReply`, `Logout`, `SaveCustom`, `DeleteCustom`, and `ListModels`, which replaces `list_harness_models(_for_repo)`.
 - Login and logout need ADMIN: they touch credentials.
 - The browser sign-in stays in the shell (it opens the Mac's browser); the daemon holds the device-code poll.
 - Credentials sharing with a remote host is unchanged (`RemoteSharing`); this session moves the wire only.
 
 **Tests.** `bun test` with a fake provider: login start, poll, logout. vitest: the model picker reads `ListModels`.
+
+**Accept.**
+- `rg -n '"provider_|"custom_provider_' alinery-app/src-tauri/vinculum-daemon/src/main.ts`: nothing.
+- `bun test src/rpc/providers` with the fake provider: start, poll, reply, logout. The shell token from a peer that isn't the shell (VIEW and ACT, 2.1.10) gets PERMISSION_DENIED on `LoginStart`.
+- On the remote-sshd container: `ListModels` through the forward returns the host's list.
 
 **Exit.** The provider ops leave the JSON-lines wire; the five session commands and the two model-list commands are gone.
 
@@ -1966,27 +2139,37 @@ MCP and the host bootstrap go first, because both still reach the daemon or the 
 
 ### S5.1 MCP as a daemon client (O10)
 
-Status: not started. Needs: S4.3, S4.6, S4.8, S4.9 (the domains MCP writes), S1.1.
+Status: not started. Needs: S1.1, S1.3, S3.2, S3.5, S4.1, S4.2, S4.3, S4.4, S4.5, S4.6, S4.8, S4.9 (each tool's RPC comes from one of them; the map below), and S1.4 if O10 picks (a). O20 Decided (S0.7).
 
 **Goal.** Every `alinery-mcp` tool goes through the daemon's RPC, and MCP writes no `.alinery/` file itself. This ends the standing exception to rule 2 (P4 intro).
 
-**Read first.** MCP `main.rs` (2,552 lines): the 25 tools at :416-441; `create_pre_archive_backup` :397; `call_playbook_library` :528; `task_client` :588 (its `start_daemon` flag); `connect_compatible` :688; `write_toml_file` :1154; `create_task` :1196. App `mcp.rs` (the managed MCP child). 2.1.10 (the AGENT capability). AGENTS.md: MCP never exposes attach, write, resize, detach, kill, resume, takeover or bulk operations, and a mismatch never triggers teardown.
+**Read first.** MCP `main.rs` (2,552 lines): the 26 tools at :416-441; `create_pre_archive_backup` :397; `call_playbook_library` :528; `task_client` :588 (its `start_daemon` flag); `connect_compatible` :688; `write_toml_file` :1154; `create_task` :1196. App `mcp.rs` (the managed MCP child). 2.1.10 (the AGENT capability). AGENTS.md: MCP never exposes attach, write, resize, detach, kill, resume, takeover or bulk operations, and a mismatch never triggers teardown.
 
 **Build.**
 - Put O10 to the user: (a) Rust `alinery-mcp` stays, and each tool becomes an RPC call (prost messages generated from `proto/`, over HTTP/1.1 on the socket, extending the S1.4 helper); (b) the Bun binary gains an `--mcp` stdio mode that calls the daemon socket with the generated TypeScript client, and the Rust crate keeps only what S5.2 decides. Record the answer in 4.1.
-- **MCP is a headless, AI-first client (O18 b).** Every tool is an RPC call, and MCP connects the way the desktop does: the local socket (T1) on the daemon's host, or an ssh-forwarded socket (T2) from any other machine. It carries a token, from whoever starts it: the daemon, for the MCP a harness launches; the shell, for the managed MCP in `mcp.rs`; a pairing (O13) anywhere else.
+- **MCP is a headless, AI-first client (O18 b).** Every tool is an RPC call, and MCP connects the way the desktop does: the local socket (T1) on the daemon's host, or an ssh-forwarded socket (T2) from any other machine. How it gets AGENT is O20: (a) socket access is the credential; (b) minted tokens; (c) as (b), with MCP only on the daemon's host or managed by the shell.
 - **AGENT becomes exactly MCP's tools.** After the tool map above, AGENT is the set of RPCs those tools call, storage scan and purge included (`alinery_storage_info` and `alinery_delete_archived_storage`, `main.rs:439-440`), so no tool changes. It never includes `Shutdown`, the rest of ADMIN, or anything that needs APPROVE. An agent that can run MCP can read its token and call those RPCs directly, so this list is what every agent on that machine may do; the user accepted that for purge.
-- WA: the daemon mints AGENT tokens. It puts one in the environment of each harness it launches, and the shell asks for one (ADMIN) for the managed MCP. The no-token row of 2.1.10 goes: every request now carries a token (R8).
+- Under O20 (b) or (c): the daemon mints AGENT tokens (`AdminService.MintToken`, ADMIN). It puts one in the environment of each harness it launches, and the shell asks for one for the managed MCP. The no-token row of 2.1.10 goes: every request now carries a token (R8). Under O20 (a) the no-token row stays and nothing is minted.
+- **`alinery_send_review_handoff` reaches two daemons** (`:906`): it copies an artifact from one local repo into another and creates a session there. Under O20 (a) MCP opens both sockets. Under (b) or (c) MCP holds a token for its own daemon only; the user decides how it gets the second (raised with O20).
+- **Reads are one-shot subscriptions (WA).** A read tool opens `Subscribe` on its scope, keeps the `Snapshot` frames until one has `complete`, and cancels. No unary read RPC is added for MCP (2.1.6).
+- `alinery_get_task` and `alinery_read_config` return file text today (`:779`, `:994`). Through the daemon they return `Bun.TOML.stringify` of the entity: the same text for a file Rust wrote (S4.1), and a hand-edited file comes back normalized, comments dropped. Tell the user, with the playbook save change below.
 - MCP's own telemetry calls (`TaskArchive` :1084, `StoragePurge` :1117, `BackupCreate` :1133, `SettingsChange` :1177) go: the daemon commands they now call emit those events (O17).
-- Map each of the 25 tools to the daemon RPC that replaced its code in P3 and P4. Write the table into this session before coding. `alinery_list_repos` keeps reading `app.toml`, which is app config, not repo state.
+- Map each of the 26 tools to the daemon RPC that replaced its code in P3 and P4. Write the table into this session before coding. `alinery_list_repos` keeps reading `app.toml`, which is app config, not repo state.
 - `alinery_save_playbook` behaviour change, tell the user: today a repo save fails `repo_busy` while a desktop window owns the repo. Through the daemon it goes through `PlaybookService.Save` with `expected_revision` and succeeds.
 - MCP starts a daemon only where it does today (`task_client` with `start_daemon`), and never calls `Shutdown`; `check-no-auto-session-kill.sh` scans the MCP code (Rust, or the `--mcp` module).
-- Delete `write_toml_file`, `create_pre_archive_backup`, the MCP halves of `create_task` and `call_playbook_library`, and the core functions P4 kept alive for them (the settings TOML writer, `task_creation.rs`, `playbook_library.rs`, the core backup create).
+- Delete `write_toml_file`, `create_pre_archive_backup`, the MCP halves of `create_task`, `call_playbook_library` and the five writes the P4 exception lists last, and the core functions P4 kept alive for them (the settings TOML writer, `task_creation.rs`, `playbook_library.rs`, the core backup create, `archive_task_guarded`, `finalize_subtask`, `purge_archived_storage`, `send_review_handoff_for_repos`).
 - Update the P4 exception paragraph and 1.8 rule 2: the exception is closed.
 
 **Tests.** Before the change, record each tool's reply on a temp repo as a fixture; after it, the same calls against a real daemon give the same replies, except where this session names a change (the playbook save above). A tool call with a daemon of another protocol fails with the same message as today and starts no teardown. `bun test`: the AGENT set equals the RPCs in the tool map; with an AGENT token, `Shutdown` and every APPROVE call are PERMISSION_DENIED; a request with no token is UNAUTHENTICATED.
 
-**Exit.** MCP writes nothing under `.alinery/` and reaches a daemon over T1 or T2 with an AGENT token; a request with no token is refused; O10 is in 4.1; the core functions kept for MCP are gone.
+**Accept.**
+- `rg -n 'std::fs::write|fs::write|write_bytes_durable|create_dir_all' alinery-app/src-tauri/mcp/src` (or the `--mcp` module under O10 b): no hit that writes under `.alinery/`.
+- The fixture replay: every one of the 26 tools gives the recorded reply, except the changes this session names.
+- `bun test src/rpc/auth`: the AGENT set equals the RPCs in the tool map, and `Shutdown` and every APPROVE RPC are PERMISSION_DENIED for AGENT. Under O20 (b) or (c): no token gives UNAUTHENTICATED.
+- `scripts/tests/check-no-auto-session-kill.sh`: exit 0, and it scans the MCP code.
+- A tool call against a daemon of another protocol: the same error text as today, and the daemon's PID is unchanged.
+
+**Exit.** MCP writes nothing under `.alinery/` and reaches a daemon over T1 or T2 with AGENT; O10 is in 4.1; the core functions kept for MCP are gone.
 
 ### S5.2 Host bootstrap (O15)
 
@@ -2007,24 +2190,36 @@ Status: not started. Needs: S5.1, S4.9 (restore).
 
 **Tests.** The live remote test (`cargo test -p alinery-app --lib -- tests::remote::live` with `remote-sshd/run.sh`): connect, ListDir, Classify, Init, ClaimRepo, SpawnDaemon, WaitDaemonGone, and a second claimant gets `repo_busy`. A remote restore while the daemon is down.
 
+**Accept.**
+- `rg -o 'RepoOp::[A-Za-z]+' alinery-app/src-tauri/src alinery-app/src-tauri/alinery-core/src | sort -u`: only the 11 host variants, or nothing.
+- `scripts/tests/remote-sshd/run.sh start`, export the printed `ALINERY_TEST_SSH_ARGS`, `cargo test -p alinery-app --lib -- tests::remote::live`: all pass, the restore-while-down case included; then `run.sh stop`.
+- A unit test feeds the probe parser a canned probe with no git and no tar: the refusal names both tools.
+- Under O15 (b): `scripts/build-remote-runtimes.sh --check` asks for no zig and no cargo-zigbuild, and `tar tzf` of each runtime lists one executable.
+
 **Exit.** `RepoOp` is gone or holds only host variants; O15 is in 4.1; under (b), `build-remote-runtimes.sh` no longer needs zig.
 
 ### S5.3 Retire the JSON-lines wire
 
-Status: not started. Needs: S5.1, S5.2, S1.4, and S4.1 to S4.12.
+Status: not started. Needs: S5.1, S5.2, S1.4, S3.2, S3.3, S3.4, and S4.1 to S4.12.
 
 **Goal.** Each daemon has one listener, speaking `alinery.v1`. The shell reaches it only through the bridge and the `Shutdown` helper.
 
-**Read first.** `main.ts:738-1050` (the op dispatch) and `:1075` (`createServer`); `alinery-core/src/daemon_client.rs` (2,182; `daemon_command` :1470 stays); `alinery-core/src/rpc_chunk.rs` (290; its base64 helpers are used by `task_creation.rs:47`, app `imports.rs:36` and `telemetry.rs:558`); app `daemon.rs` (`ensure_daemon`, the poller :1432); `pi_durable.rs` (99; the supervisor :77); `main.ts:80-97` and `ui_control` (the ui secret); gates `check-wire-parsing-boundary.sh`, `protocol_gate_test.sh`, `check-protocol-version-bump.sh`, `check-no-auto-session-kill.sh`.
+**Read first.** `main.ts:734-1073` (`handle`, the op dispatch) and `:1075` (`createServer`); `alinery-core/src/daemon_client.rs` (2,182; `daemon_command` :1470 stays); `alinery-core/src/rpc_chunk.rs` (290; its base64 helpers are used by core `task_creation.rs:47`, app `imports.rs:36` and core `telemetry.rs:558`); app `daemon.rs` (`ensure_daemon`, the poller :1432); `pi_durable.rs` (99; the supervisor :77); `main.ts:80-97` and `ui_control` (the ui secret); gates `check-wire-parsing-boundary.sh`, `protocol_gate_test.sh`, `check-protocol-version-bump.sh`, `check-no-auto-session-kill.sh`.
 
 **Build.**
-1. **Inventory.** Every op in `main.ts:738-1050` with its last caller. An op with a caller left goes back to the session that owns its domain; this session ports nothing.
+1. **Inventory.** Every op in `main.ts:734-1073` with its last caller. An op with a caller left goes back to the session that owns its domain; this session ports nothing.
 2. **Lifecycle on `Hello`.** `ensure_daemon`, the poller and the remote supervisor read protocol, build id and app-config identity from `Hello`. The reuse rule is unchanged: both must match. `spawn_pi_supervisor` folds into the poller (it duplicates the spawn path, 1.4).
 3. **Delete.** The dispatch and `createServer`; `daemon_client.rs` except `daemon_command`, which moves next to its remaining callers; `RpcChunkAssembler` (the base64 helpers stay); the old `shutdown` op; `--ui-secret-file`, `ui_control` and `ui-secrets.json` (the RPC token replaced them, 2.1.10).
 4. **Gates.** `check-no-auto-session-kill.sh` keeps only the `ShutdownOrigin` check from S1.4. `check-wire-parsing-boundary.sh` checks that the shell decodes daemon replies only through generated types, or goes if the shell decodes none. `protocol_gate_test.sh` reads the protocol from `Hello`.
 5. **Measure** the shell (commands left per class) and update 1.4 and 2.4.
 
 **Tests.** `cargo test --workspace`, `bun test`, the protocol gates, the live remote test end to end. A relaunched app reattaches to a daemon that outlived it, using the stored token.
+
+**Accept.**
+- With a daemon running on a scratch repo, `ls <repo>/.alinery/*.sock` lists only `rpc[-ns].sock`.
+- `test ! -e alinery-app/src-tauri/alinery-core/src/daemon_client.rs`, and `rg -n 'ui_control|ui-secret|ui_secret|RpcChunkAssembler' alinery-app` finds nothing.
+- `scripts/tests/protocol_gate_test.sh`, `check-protocol-version-bump.sh`, `check-wire-parsing-boundary.sh` (if kept) and `check-no-auto-session-kill.sh`: exit 0.
+- The live remote test passes end to end, and so does the relaunch case: a daemon started by one app process is reattached by the next with the stored token, PID unchanged.
 
 **Exit.** One listener per daemon; no JSON-lines client in Rust; 2.4 matches the code.
 
@@ -2042,75 +2237,65 @@ Status: not started. Needs: S5.3.
 - Mark the superseded items in `docs/remote-repos-performance.md` and `docs/remote-repos-todo.md`.
 - README is human-edited: put the suggestions in 4.4 and the handoff.
 
+**Accept.**
+- `for g in $(rg -o 'check-[a-z-]+\.sh' AGENTS.md | sort -u); do test -e scripts/tests/$g || echo "missing $g"; done` prints nothing, and every `scripts/tests/check-*.sh` is named in AGENTS.md.
+- Every module in the app crate table exists under `alinery-app/src-tauri/src/`, and every top-level `.rs` file there except `lib.rs` and `main.rs` is in the table.
+- `git diff --stat main -- README.md`: empty.
+
 **Exit.** AGENTS.md matches the code; 4.4 has the README suggestions.
 
-## P6: Remote, web, iOS
+## P6: Setup screen
 
-P6 has the least evidence behind it. Each session starts with a spike, and the user decides before product code changes.
+The Tauri UI is the only client (D8). P6 decides O4, then gives the UI one place to set up a daemon: a local repo, or an ssh remote and then a repo on it.
 
-### S6.1 The door: TLS, pairing, capabilities (O13)
-
-Status: not started. Needs: S5.3.
-
-**Goal.** A client that is not this Mac's webview reaches a daemon over TLS, with a credential that carries capabilities.
-
-**Read first.** 2.1.8 (T4, T5, T6), 2.1.10; app `account.rs` (account pairing, 9 SHELL commands); `remote.rs` (how a host is reached today).
-
-**Research (UNCONFIRMED).** connect-node over `node:https` under Bun. Whether Citadel supports ssh `direct-tcpip` channels (it has no streamlocal, O13). Whether common hosts can accept an inbound TLS port at all, or need a relay.
-
-**Build.**
-- Put O13 to the user, with two parts. Who issues the credential: (a) the desktop shell asks the daemon to mint a pairing token (ADMIN) and shows a QR with host, port, certificate fingerprint and token; (b) the account pairing (`account.rs`), so a device signed in to the same account finds hosts through the accounts service. How bytes get there: (i) the daemon listens on TLS with a self-signed certificate pinned by fingerprint; (ii) the client opens an ssh `direct-tcpip` channel to a loopback listener (T5); (iii) a relay.
-- Whatever is picked: the host stores pairing tokens hashed, never in plain text, so host agents can't read one (2.1.10). Each pairing is a `pairing/*` entity with its capabilities, listed and revocable in Settings. APPROVE is granted only when chosen explicitly at pairing time.
-- The TLS listener is off until a pairing exists.
-
-**Tests.** `bun test`: a paired token gets exactly its capabilities; revoking it ends its open streams; the test client refuses a wrong certificate fingerprint.
-
-**Exit.** O13 is in 4.1; `Hello` answers over the door with a paired token.
-
-### S6.2 Web build of the UI
-
-Status: not started. Needs: S6.1.
-
-**Goal.** The same React app, built for a browser, works against a daemon through the door.
-
-**Read first.** `alinery-app/vite.config.ts`; `ipc.ts` (the shell wrappers left after P5); `src/daemon/transport.ts` (S1.2); 2.5.
-
-**Build.**
-- A web build where `daemonTransport` uses the browser's `fetch` against the door. The bridge is a `fetch` (2.1.9), so nothing else in the client changes.
-- `ipc.ts` gets a web twin, `ipc.web.ts`, swapped in by a Vite alias. Each shell wrapper either has a browser form (`<input type=file>` for a picker, the Notification API, `window.open`) or its view is hidden. `check-ipc-boundary.sh` covers both files.
-- The repo list on the web comes from the pairings, not from `app.toml`. Shell-only views (updates, account, remote host setup, browser sign-in) are hidden.
-- Put the hosting to the user: (a) the daemon serves the built UI on the door (same origin, no CORS); (b) a hosted site calls daemons cross-origin (CORS on the daemon, and the browser's mixed-content and private-network rules apply).
-
-**Tests.** vitest for `ipc.web.ts`; `tsc` on the web build. By hand: from a second machine, the board loads, a terminal echoes, and a comment made there appears on the desktop.
-
-**Exit.** The P6 exit check passes.
-
-### S6.3 iOS spike
-
-Status: not started. Needs: S6.1; S6.2 for variant (b).
-
-**Goal.** Decide between a native client and the web build in a shell, with a read-only board working in the iOS Simulator.
-
-**Research (UNCONFIRMED).** connect-swift server streaming (for `Subscribe`) over URLSession; protoc-gen-swift output from the same `proto/`; whether a WKWebView can reach a self-signed door with fingerprint pinning (a trust-challenge delegate).
-
-**Build.** A throwaway project under `spike/ios/`, deleted at the end: (a) SwiftUI with generated Swift types, `Subscribe` on the repo scope, a task list; (b) a WKWebView around the S6.2 build. Measure time to first board and reconnect after the app returns from the background. Put the choice to the user.
-
-**Exit.** The choice and numbers are in 4.1; nothing merges into the product.
-
-### S6.4 Daemon per repo or per host (O4, todo B2)
+### S6.1 Daemon per repo or per host (O4, todo B2)
 
 Status: not started. Needs: S5.3.
 
-**Goal.** Decide O4 with numbers, and give provider sign-in a place on a host before any repo exists (`docs/remote-repos-todo.md` B2).
+**Goal.** Decide O4 with numbers, and give provider sign-in a place on a host before any repo exists (`docs/remote-repos-todo.md` B2). The setup screen's flow depends on the answer, so it comes first.
 
-**Read first.** Todo B2; invariant 2; 2.1.8 (lane naming); `credentials.ts` (credentials already live per host, in the host config dir).
+**Read first.** Todo B2; invariant 2; 2.1.8 (lane naming); `credentials.ts` (credentials already live per host, in the host config dir); S4.12 (`ProviderService` needs a running daemon, and today a daemon needs a repo).
 
 **Build.**
-- Measure an idle daemon's RSS and start time with no sessions and with five.
-- Put O4 to the user: (a) per repo as today, plus a small per-host daemon that only holds sign-in and provider state (B2); (b) one daemon per host serving many repos: one door and one pairing per host, but it holds `.alinery/.repo-owner.lock` for every repo it serves, and one crash ends the sessions of every repo on the host (O5 matters more).
+- Measure an idle daemon's RSS and its time from spawn to the first `Hello` answer, with no sessions and with five, on macOS and on the remote-sshd container. The S0.2 spike measured about 47 MB idle RSS for the RPC host alone.
+- Put O4 to the user: (a) per repo as today, plus a small per-host daemon that only holds sign-in and provider state (B2); (b) one daemon per host serving many repos: it holds `.alinery/.repo-owner.lock` for every repo it serves, and one crash ends the sessions of every repo on the host (O5 matters more). Under (a) without the small daemon, a browser sign-in on a host waits for its first repo.
 - If (b), write the migration as new sessions in this doc before any code.
 
+**Accept.** The numbers are in 4.1 next to O4's answer, with the commands that produced them; under (b), the new sessions exist in this doc, each with Needs and Accept.
+
 **Exit.** O4 is in 4.1.
+
+### S6.2 The daemon setup screen (D8)
+
+Status: not started. Needs: S6.1, S5.2 (the host bootstrap and the missing-tool refusal), S4.1 (`EnsureReady`).
+
+**Goal.** When the UI has no daemon to connect to, it shows one setup screen with two choices: set up a local repository, or add an ssh remote. Both end with the user picking a repo and the UI on that repo's live board. The ssh choice only adds the remote set-up in front.
+
+**Read first.**
+- Today's empty state: `App.tsx:1518-1539` shows `OnboardingFlow` at its "workspace" step (`OnboardingFlow.tsx:388-457`: known repos, "Add a repository" :444, "Add a repository over SSH" :449-454). The onboarding modal at `App.tsx:1570-1588` passes no `onAddRemoteRepo`, so it has no ssh choice. The models and launch steps wait for an active repo (`OnboardingFlow.tsx:175`, `:358`).
+- Local flow: `App.tsx:807-835` (`pick_repo_dialog` `app_config.rs:571`, classify `:580`, init `:585`), then `setRepo` (`App.tsx:607-627`) and `set_active_repo` (`app_config.rs:411`), which is where the daemon starts.
+- Remote flow: `RemoteModal.tsx` views hosts, setup, connecting, access, pick (:11; wizard steps :16). Connect phases are polled from `remoteHosts` every 500 ms (`SETUP_PHASES`, `remoteRepo.ts:10`). Pick ends in `remoteAddRepo` and `setRepo`, and the remote daemon starts only then (`activate_remote_repo`, `remote.rs:1417`).
+- Probe refusals (`remote.rs:414-460`): not Linux, unknown CPU, no glibc, glibc below the floor, arm64 with 64 KiB pages, missing tools (:429-434), no bundled runtime (:440), and the linger refusal in `choose_launcher` (:459-460). Each is a plain string today.
+- The two classify and init paths: `App.tsx:807-835` and `RemoteModal.tsx:239-270`.
+
+**Build.**
+- **When it shows (WA).** No known repo; or every known repo is remote and its host is unreachable. A local known repo always counts as a daemon to connect to, because the shell can start one. The screen is also what "Add repository" opens from the repo menu and the onboarding modal, so the modal gains the ssh choice.
+- The screen replaces the "workspace" step of `OnboardingFlow` and the hosts view of `RemoteModal`. The models and launch steps stay as they are.
+- **Local flow.** Folder dialog, classify, confirm and init when the folder is not a repo (`askConfirm`, as today), then the shell starts the daemon, waits for `Hello`, calls `EnsureReady`, and opens the board. The screen shows each step by name: "Starting the daemon", "Preparing the repository".
+- **SSH flow.** The remote set-up from `RemoteModal` (alias or destination, connect, host-key trust, probe, install, access), then the folder picker on the host, the same classify and init, then the host bootstrap starts the daemon (O15), the shell waits for `Hello` over the forward, calls `EnsureReady`, and opens the board. "Starting the repo service" is no longer the last step shown: the daemon start is.
+- **One classify-and-init helper** in TypeScript, used by both flows; the two copies go.
+- **Structured refusals.** The probe returns a typed refusal in `host.proto` (S5.2): a kind, the missing tools, the command to run (`loginctl enable-linger <user>`). The screen shows the fix for each kind, before anything is installed.
+- A failure during first set-up still discards the half-made host (`remoteDiscardHost`, as `RemoteModal.tsx:185-188` does).
+
+**Tests.** vitest with `mockIpc`: the show rule (empty, one local repo, only offline remote repos); the local flow's calls in order; the ssh flow's phases in order; each refusal kind renders its fix; the onboarding modal offers both choices.
+
+**Accept.**
+- `(cd alinery-app && npx vitest run src/views/SetupScreen src/views/OnboardingFlow src/RemoteModal)`: all pass.
+- `rg -n 'classifyPickedFolder|remoteClassify' alinery-app/src --glob '!*.test.*'`: both reached only through the one helper.
+- The live remote test (S5.2) passes with a host missing git: the refusal reaches the UI as a kind with the tool list.
+- **User-run** (the app must be launched, which the user allows): with an empty app config dir, the app opens on the setup screen; the local flow ends on the picked repo's board; the ssh flow against the remote-sshd container ends on the remote repo's board. This is the P6 exit check.
+
+**Exit.** The P6 exit check passes.
 
 ## P7: Hardening
 
@@ -2131,6 +2316,10 @@ Status: not started. Needs: S5.3.
 
 **Tests (if b).** End the brain mid-session: the terminal keeps running, a new brain lists the keeper's sessions, and clients reattach with scrollback after one `MustRefetch` (new epoch).
 
+**Accept.**
+- 4.1 has one row per measured case (Terminal; pi-durable turn with bash running; idle pi): what survived, with the commands.
+- Under (b): `bun test src/keeper`: the brain-kill case passes; `check-no-auto-session-kill.sh` scans the keeper and exits 0.
+
 **Exit.** O5 is in 4.1; under (b) the split ships, and clients see only a new epoch.
 
 ### S7.2 Memory
@@ -2142,9 +2331,13 @@ Status: not started. Needs: S5.3.
 **Read first.** 2.2.3 (the ring), 2.2.5 (subscriber queues), 2.2.7 (the dedupe map), `terminal.ts` (replay buffers), the transcript watchers (S3.3).
 
 **Build.**
-- A soak script in `vinculum-daemon/soak/`, not in `check.sh`: 24 hours of synthetic commits, subscribe and unsubscribe churn, and a chatty terminal. It samples `process.memoryUsage()` and the JSC heap stats (`bun:jsc`, UNCONFIRMED) every minute.
+- A soak script in `vinculum-daemon/soak/`, not in `check.sh`: 24 hours of synthetic commits, subscribe and unsubscribe churn, and a chatty terminal. It samples `process.memoryUsage()` and `heapStats()` from `bun:jsc` every minute (checked in the plan review: it works under `bun run` and in the compiled binary on Bun 1.4.3).
 - Every in-memory map keyed by client or session gets a bound. WA: the dedupe entries of a client idle for an hour are dropped.
 - Fix what grows.
+
+**Accept.**
+- `bun alinery-app/src-tauri/vinculum-daemon/soak/run.ts --minutes 5`: exits 0 and prints one sample a minute (the smoke run).
+- The 24-hour run's samples are committed beside the script, and 4.1 has the 1-hour and 24-hour RSS.
 
 **Exit.** WA threshold: RSS after 24 hours is within 20% of RSS after one hour. The numbers are in 4.1.
 
@@ -2157,6 +2350,10 @@ Status: not started. Needs: S7.2.
 **Build.** Counters: uptime, epoch, seq, ring size, subscribers per scope, queue drops (`MustRefetch` sent), watcher events, reconcile duration, jobs by state, RSS and heap, live sessions. `Stats` needs VIEW. It is shown, never sent anywhere: telemetry stays opt-in (invariant 6).
 
 **Tests.** `bun test`: a forced queue overflow increments the drop counter.
+
+**Accept.**
+- `(cd alinery-app/src-tauri/vinculum-daemon && bun test src/rpc/admin)`: the overflow case passes, and `Stats` answers the shell token from a peer that isn't the shell (VIEW).
+- `scripts/tests/check-telemetry-privacy.sh`: exit 0 (no `Stats` field reaches the telemetry sender).
 
 **Exit.** Settings shows `Stats` for each open repo.
 
@@ -2175,6 +2372,10 @@ Status: not started. Needs: S7.1, S7.3.
 - Under O5 (a): an upgrade still ends Terminal sessions. The flow stays today's explicit restart, and 4.1 records that the P7 exit check can't pass for Terminal sessions.
 
 **Tests.** `bun test` with two brain builds (an env flag changes `build_id`): upgrade mid-session; the terminal survives; clients resubscribe once.
+
+**Accept.**
+- Under O5 (b): `bun test src/upgrade` with two builds: the terminal's PID is unchanged across the upgrade, and each client gets exactly one new epoch.
+- Under O5 (a): 4.1 records that the P7 exit check can't pass for Terminal sessions.
 
 **Exit.** The P7 exit check passes, or 4.1 records why it can't under O5 (a).
 
@@ -2198,66 +2399,70 @@ Status: not started. Needs: S7.1, S7.3.
 | O18 | 2026-10-27 | (b): MCP is a headless client of the daemon over T1 or T2, from any machine; its token grants AGENT, exactly the RPCs behind its tools, storage scan and purge included, never `Shutdown` or approvals (S5.1) | User |
 | O19 | 2026-10-27 | (a), recorded as D7 (S3.5) | User |
 
+**Results from the plan review, 2026-10-27.** Bun 1.4.3 on darwin-arm64 unless a row says otherwise. Code and rerun commands: `docs/thick-daemon-spikes/` and its README. These are evidence for the Open items, not decisions.
+
+| Slot | Result |
+|---|---|
+| S0.1 | protoc-gen-es 2.16.0 with `target=ts` and no import extension resolves under `bun run`, `bun build --compile`, `tsc --noEmit` (`moduleResolution: "bundler"`) and Vite 7.3.6. `@bufbuild/buf` 1.75.0 as a devDependency runs from `node_modules/.bin` with no network. Left: the `exports` mapping (4.2). |
+| S0.2 (O1) | Connect-ES 2.2.0 `connectNodeAdapter` on `node:http` over a unix socket, under `bun run` and compiled (71 MB). Unary 100-byte echo p50 0.078 to 0.081 ms, p99 0.27 to 0.35 ms (JSON lines today: p50 0.035 ms); about 34,500 calls/s at 16 in flight. Server stream of 16 KiB frames: 356 to 362 MB/s. Idle RSS about 47 MB; an idle stream costs about 143 KB at 100 open, 55 KB at 1,000. `node:http2` serves gRPC. An interceptor sees headers only; the peer check needs the `node:net` listener (2.1.7). |
+| S0.3 (O2) | connect-web with `bridgeFetch`: unary, error codes, a 100-frame stream and mid-stream cancel pass (6 tests). Bun stand-in for the shell: p50 0.095 ms, p99 0.45 ms. Rust hyper 1 over a unix socket: p50 0.076 ms, and its frames match the TypeScript encoder byte for byte. Unbatched, a busy stream sent about 116,000 channel messages/s (batching rule, 2.1.9). UI bundle with two services: 176,382 bytes, 41,886 gzipped. Left: the live webview (S1.2). |
+| S0.4 | macOS only. 3,000 ops on 1,000 paths beside a 10 MB/s scrollback: Bun `fs.watch` recursive and `@parcel/watcher` 2.6.0 both missed none, paced or burst. Bun: 1 to 5 extra events, p50 31 ms, 0.9% CPU. Parcel: no extras, p50 about 260 ms, 2.7 to 4.4% CPU. Idle on 200 tasks: 0.1% CPU for both. Bun #44780's trigger caused no misses but stray paths; #34160 is superlinear per non-recursive watch. The parcel addon embeds in a compiled binary when required by a literal path. WA: Bun `fs.watch` (S0.4); Linux in S2.3. |
+| S0.5 (O6) | flock between Bun FFI and Rust: 60 of 60 runs each on macOS arm64, Linux arm64 and Linux x64 (emulated), both directions. errno right in 10,000 of 10,000 when read straight after the call. `F_FULLFSYNC` from Bun: about 9.8 ms p50 per 1 KiB replace, same as Rust; plain `fsync` 0.12 ms. Hardened runtime: ad-hoc signature only; the release-signed run is the user's (4.2). |
+| O3 scan | Real tasks copied N times, large files emptied (`scan-bench.ts`). 43 tasks: full scan 7.2 ms. 1,075 tasks: scan 165 ms, index 4.5 MB, async reconcile 42 ms with a 3.3 ms longest loop gap. 4,300 tasks: 745 ms, 24 MB, 167 ms, 5.4 ms. |
+| S2.1 (store) | `store.ts` property test: 20 seeds of 400 commits with drops, resumes, queue overflow and ring rollover; every replica equals the store in its scope with the same cursor. One commit costs 0.8 µs at 1 subscriber, 2.4 µs at 10, 9.1 µs at 100; a one-task delta is 93 bytes. |
+| S3.3 | pi-durable 1.4.0 exports `watchEvents` (marked experimental). WA in S3.3 with two fallbacks. |
+| S4.1 | `Bun.TOML.stringify` reproduces Rust's bytes for 43 of 43 `task.md` files; smol-toml for 5 of 44 files. WA: write with `Bun.TOML.stringify`. |
+| S4.9 (O11) | fflate 0.8.3 reads zip64 and writes none, so a TypeScript-made archive stops at 4 GiB or 65,535 entries. This repo's backup set: 289 MB, 43 tasks. |
+| S7.2 | `heapStats()` from `bun:jsc` works under `bun run` and compiled. |
+
+**O14 trace** (a note, not a decision; done in the plan review).
+- Writers of `execution.json`: core `execution.rs:319`, `:325`; core `task_creation.rs:354`, `:358`, `:414`, `:443`; core `task.rs:378` (`auto_approve_all`); core `repo_ownership.rs:290`, reached from the daemon (`main.ts:117`, then `ownership_ffi.rs:35`); core `subtask.rs:436`, through `task_creation`. The daemon's `addExecution` (`tasks.ts:291`, called from `:325` and `:385`) writes with no lock, a plain `writeFileSync` and no revision. `session_name.rs` only reads in production. The `execution.rs` transitions and `reconcile_graph` (:692) have no production caller.
+- Readers of `execution.json`: Rust `board.rs:114`, `:295`; app `daemon.rs:78`, `:239`; `repo_service.rs:711`; `shared.rs:711-750`; MCP `main.rs:594`, `:1033`; `subtask.rs:395`, `:443`; `session_name.rs:123`; `task_creation.rs:470`; `repo_ownership.rs:157`. TypeScript `tasks.ts:146`, `:156`; `graph.ts:209` (and `:268`, `:284`, `:286`, `:289`, `:306`); `main.ts:639`.
+- `engine.jsonl`: one writer, `engine.ts:312` through `appendLog` (`state.ts:196`), which syncs with a plain `fsyncSync` (`state.ts:200`). Readers: `state.ts:175` and `graph.ts:107`.
+- Where the two disagree today: (1) step completions exist only in the fold; (2) the record holds placeholder UUIDs where the fold uses `eN`; (3) the overlay is partial (`outputs: []`); (4) there are two restart rules; (5) the fold checks no `owning_lane`; (6) engine sessions carry no `execution_id`.
+- The board's current step comes from the last non-archived session file with an `execution_id`; `Grid.tsx:557` reads the lifecycle.
+- Under (a): about 12 reader sites move to the fold; records written by the old runner fold to empty (O21); the log holds absolute paths (`engine.ts:112`, `:205`, `accept.ts:21`), so a repo moved on disk needs them rewritten or made relative.
+- Under (b): `execution.json` has no field for the output directory, the origin, ambiguities or history, so the fold's richer state would need new fields.
+
 Slots the sessions fill (empty until then):
 
 | Session | Records |
 |---|---|
-| S0.1 | buf and protoc-gen-es results (`import_extension`, offline buf) |
-| S0.2 | O1, with the RPC spike numbers |
-| S0.3 | O2 |
-| S0.4 | The watcher choice |
-| S0.5 | O6, the durability results |
-| S0.6 | The O14 trace (a note, not a decision) |
-| S0.7 | O3, O7; O1, O2 confirmed or left WA |
+| S0.1 | The `exports` mapping, if it needed a change |
+| S2.3 | The Linux watcher run; a switch to `@parcel/watcher` if it happens |
+| S0.7 | O1, O2, O3, O6, O7, O14, O20, O21 |
 | S2.1 | The Subscribe measurements |
 | S3.4 | The O8 measurement |
-| S4.1 | The TOML writer |
-| S4.2 | O14; the multi-writer exception and which session removes each Rust writer |
+| S4.2 | The multi-writer exception and which session removes each Rust writer |
 | S4.9 | O11 |
 | S4.10 | O12 |
 | S4.11 | O9 |
 | S5.1 | O10; the AGENT RPC list |
 | S5.2 | O15 |
-| S6.1 | O13 |
-| S6.2 | Web hosting |
-| S6.3 | Native or web shell on iOS |
-| S6.4 | O4 |
+| S6.1 | O4, with the RSS and start-time numbers |
 | S7.1 | What a restart loses; O5 |
 | S7.2 | Soak numbers |
 | S7.4 | The upgrade trigger |
 
 ## 4.2 UNCONFIRMED
 
+Resolved by the plan review and removed in v0.4: buf and protoc-gen-es, Connect on `node:http` and `node:http2`, interceptors and `socketPath`, a custom `fetch` under connect-web, flock interop, errno, `F_FULLFSYNC`, `bun:jsc`, `Bun.TOML.stringify`, `watchEvents`, the parcel addon inside `bun build --compile`, and Bun #44780 and #34160 on macOS. Withdrawn with D8: `node:https`, swift-nio-ssh and Citadel, connect-swift, WKWebView pinning.
+
 | Claim | Resolved in |
 |---|---|
-| protoc-gen-es 2.16.0's default `import_extension` suits both Bun and Vite | S0.1 |
-| `npx @bufbuild/buf` works offline after the first fetch | S0.1 |
-| Connect-ES `connectNodeAdapter` serves on `node:http` over a unix socket, under `bun run` and in the compiled binary | S0.2 |
-| `node:http2` works under Bun (needed only for gRPC proper) | S0.2 |
-| A server interceptor rejects with UNAUTHENTICATED before the handler runs, and can reach the socket (or a wrapper must) | S0.2 |
-| connect-node's `createConnectTransport` accepts `nodeOptions.socketPath` | S0.2 |
-| One Tauri invoke can carry a raw `ipc::Request` body and a `Channel` | S0.3 |
-| `createConnectTransport` works with a custom `fetch` returning a `ReadableStream` body | S0.3 |
-| `@parcel/watcher`'s `.node` addon loads inside `bun build --compile` | S0.4 |
-| Bun issues #44780 and #34160 affect our watch paths | S0.4 |
-| `flock(2)` through `bun:ffi` interoperates with Rust's flock on the same file | S0.5 |
-| The errno read after a failed FFI call | S0.5 |
-| `F_FULLFSYNC` from Bun matches Rust's durability on macOS | S0.5 |
-| `bun:ffi` dlopen works under the hardened runtime | S0.5 (may stay with the user) |
+| A `file:` package with `"exports": { "./*": "./gen/*.ts" }` resolves extensionless subpaths in Bun, Vite and `tsc` | S0.1 |
+| One Tauri invoke carries a raw `ipc::Request` body and a `Channel` (read in Tauri 2.11.3's source, not yet run in a webview) | S1.2 (user-run: needs the app launched) |
+| Bun `fs.watch` recursive misses no event on Linux (inotify) under the S0.4 workload, and Bun #44780 and #34160 don't bite there either (macOS: no misses) | S2.3 |
+| `bun:ffi` dlopen works under the hardened runtime with the release identity | S0.5 (the user runs the probe; 4.4) |
 | Bun `Worker` is still experimental (O7) | S0.7 |
-| pi-durable notifies on a conversation change | S3.3 |
-| The pinned Bun's `Bun.TOML` only parses | S4.1 |
-| Which git the daemon finds on a Mac without Command Line Tools; whether its PATH on a remote host (under `systemd-run --user` or `setsid`) finds the git the setup probe found | S4.7 |
-| connect-node over `node:https` under Bun | S6.1 |
-| swift-nio-ssh and Citadel have no streamlocal; Citadel supports `direct-tcpip` | S6.1 |
-| connect-swift server streaming over URLSession | S6.3 |
-| A WKWebView can pin a self-signed certificate by fingerprint | S6.3 |
+| `Bun.TOML.stringify` stays in Bun's API (it is missing from the docs; the S4.1 golden test guards it) | S4.1 |
+| Which git the daemon finds on a Mac without Command Line Tools; whether its PATH on a remote host (under `systemd-run --user` or `setsid`) finds the git the setup probe found. The remote-sshd container has no user systemd | S4.7 |
 | What a pi-durable session loses on restart; Bun can pass an fd (SCM_RIGHTS) | S7.1 |
-| `bun:jsc` exposes heap stats | S7.2 |
 
 ## 4.3 References
 
 In this repo:
+- `docs/thick-daemon-spikes/`: the plan review's spike code, results and rerun commands (README).
 - `docs/remote-daemon-architectures.md`: the brainstorm; architecture B was chosen.
 - `docs/remote-repos-performance.md`, `docs/remote-repos-todo.md`: the SSH work this plan builds on.
 - `AGENTS.md`: the invariants in 1.3.
@@ -2272,31 +2477,33 @@ External:
 - Bun issues: https://github.com/oven-sh/bun/issues/44780 and https://github.com/oven-sh/bun/issues/34160
 - Bun FFI and workers: https://bun.sh/docs/api/ffi and https://bun.sh/docs/api/workers
 - pi-durable: the `@earendil-works/pi-durable` package (1.4.0)
-- connect-swift: https://github.com/connectrpc/connect-swift
-- swift-nio-ssh: https://github.com/apple/swift-nio-ssh; Citadel: https://github.com/orlandos-nl/Citadel
 - fflate: https://github.com/101arrowz/fflate; smol-toml: https://github.com/squirrelchat/smol-toml
 
 ## 4.4 Handoff
 
 For the user:
-- **R5**: telemetry ingest credentials are hardcoded at `telemetry.rs:21-22`. Out of this plan's scope. After S4.1 the daemon holds a copy too (O17 c), and a remote host gets it with the runtime, so a fix changes both.
+- **R5**: telemetry ingest credentials are hardcoded at `alinery-core/src/telemetry.rs:21-22`. Out of this plan's scope. After S4.1 the daemon holds a copy too (O17 c), and a remote host gets it with the runtime, so a fix changes both.
 - **`check.sh` runs no daemon `bun test`.** S0.1 adds the step.
+- **Hardened-runtime probe (S0.5).** Needs the release signing identity: build `docs/thick-daemon-spikes/src/hardened-probe.ts` with `bun build --compile`, sign it with `codesign --force --timestamp --options runtime --entitlements <the release plist> --sign "Developer ID Application: <team>"`, run it, and expect `"ok":true`. Commands in the spikes README.
+- **Live webview check (S1.2).** Needs the app launched: in devtools, `admin(<repo>).hello({})` answers through the bridge.
+- **On this Mac after the review:** the `debian:12` Docker image (389 MB, created 6 days before the review) ran the Linux flock runs. The review may not have pulled it; check before removing it with `docker rmi debian:12`.
 
 AGENTS.md lines that are stale today (S5.4 rewrites them):
 - Engineering rules: "the three origins above"; the Daemon section lists five.
 - Gates list: "`shutdown` senders stay on the four-name allowlist"; the gate allows five.
 - "The daemon's in-memory `vt100` emulator is reattach truth": `terminal.ts:2` says reattach sends the scrollback tail and there is no vt100 frame.
 
-S5.4 also rewrites lines that become stale during the plan, such as the `libalinery_core` ownership library (gone in S4.11), the module table (`daemon_rpc.rs`, from S0.3 and S1.2), and "A daemon this app cannot use", whose repo "still opens and its board reads through the repo service" (no longer true after S3.5, D7).
+S5.4 also rewrites lines that become stale during the plan, such as the `libalinery_core` ownership library (gone in S4.11), the module table (`daemon_rpc.rs`, from S1.2), and "A daemon this app cannot use", whose repo "still opens and its board reads through the repo service" (no longer true after S3.5, D7).
 
 README suggestions (README is human-edited; nothing here edits it):
 - `README.md:77` names the daemon `alineryd`; it is Vinculum (`alinery-vinculum-daemon`) on this branch.
 - `README.md:87` says task, session and board browsing, and artifact listings, work while the daemon is offline, incompatible, or owned by another app instance, without starting one. After S3.5 that is no longer true (D7): a repo without a connected, compatible daemon shows only its banner until the daemon is connected or restarted. The paragraph needs rewriting then.
 - After P5, the architecture description could say that the per-repo daemon is the application and the desktop app is one of its clients.
-- After S6.2, a section on the web client and pairing.
+- After S6.2, the getting-started text could describe the setup screen: a local repository, or an ssh remote and then a repository on it.
 
 ## 4.5 Changelog
 
 - v0.1, 2026-10-26: first draft (Parts 1 to 4).
 - v0.2, 2026-10-27: O16, O17 and O19 decided, O18 decided in part; D6 (host tools probed, not shipped) and D7 (no repo without a daemon). S3.5, S4.1, S4.7, S5.1 and S5.2 updated to match.
 - v0.3, 2026-10-27: O18 decided (b): AGENT becomes exactly the RPCs behind MCP's tools (2.1.10, S4.9, S5.1).
+- v0.4, 2026-10-27: plan review. D8 (the Tauri UI is the only client; P6 becomes the setup screen; O13 and T4 to T6 withdrawn). Spikes for S0.1 to S0.5, the O3 scan, the store, TOML and zip, with code in `docs/thick-daemon-spikes/`; their results in 2.x and 4.1. The bridge (2.1.9), auth (2.1.10, O20), durability (2.3.2) and the 30 MIXED commands (2.3.4) rewritten from them. Every session gets an Accept list; Needs corrected across P1 to P5. New Open items O20 and O21; the O14 trace in 4.1.
