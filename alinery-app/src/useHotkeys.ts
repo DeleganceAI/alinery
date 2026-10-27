@@ -109,6 +109,7 @@ export function useHotkeys(handlers: Handlers) {
         return;
       }
       // 6. Bare nav on board views.
+      if (k === "Enter" && t?.closest("button,a[href],select,summary")) return;
       if (!NAV_REQUIRES_CMD && H.board && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) navKey(e, k, H);
     };
     window.addEventListener("keydown", onKey);
