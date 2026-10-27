@@ -316,6 +316,12 @@ fn text_result(s: impl Into<String>) -> Value {
     json!({"content": [{"type": "text", "text": s.into()}]})
 }
 
+fn error_result(s: impl Into<String>) -> Value {
+    let mut response = text_result(s);
+    response["isError"] = json!(true);
+    response
+}
+
 fn load_public_app_config(app_config: Option<&Path>) -> Option<alinery_core::AppConfig> {
     app_config
         .and_then(|path| std::fs::read_to_string(path).ok())
@@ -440,7 +446,7 @@ fn optional_argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) ->
 fn json_result<T: serde::Serialize>(result: Result<T, String>) -> Value {
     match result.and_then(|value| serde_json::to_string(&value).map_err(|error| error.to_string())) {
         Ok(value) => text_result(value),
-        Err(error) => text_result(format!("error: {error}")),
+        Err(error) => error_result(format!("error: {error}")),
     }
 }
 
@@ -469,9 +475,7 @@ struct SavePlaybookArguments {
 }
 
 fn playbook_error(error: impl serde::Serialize) -> Value {
-    let mut response = text_result(serde_json::to_string(&error).expect("playbook errors are JSON serializable"));
-    response["isError"] = json!(true);
-    response
+    error_result(serde_json::to_string(&error).expect("playbook errors are JSON serializable"))
 }
 
 fn playbook_result<T: serde::Serialize, E: serde::Serialize>(result: Result<T, E>) -> Value {
@@ -594,13 +598,13 @@ fn task_client(repo: &Path, app_config: Option<&Path>, task_slug: &str, start_da
 
 fn validate_exact_arguments(args: &Value, allowed: &[&str], required: &[&str]) -> Result<(), Value> {
     let Some(object) = args.as_object() else {
-        return Err(text_result("error: arguments must be an object"));
+        return Err(error_result("error: arguments must be an object"));
     };
     if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
-        return Err(text_result(format!("error: unknown argument '{key}'")));
+        return Err(error_result(format!("error: unknown argument '{key}'")));
     }
     if let Some(key) = required.iter().find(|key| !object.get(**key).is_some_and(|value| value.is_string())) {
-        return Err(text_result(format!("error: missing required argument '{key}'")));
+        return Err(error_result(format!("error: missing required argument '{key}'")));
     }
     Ok(())
 }
@@ -709,7 +713,7 @@ fn is_registered_repo_entry(requested: &str, process_repo: Option<&Path>, known_
 fn resolve_call_repo(tool_name: &str, args: &Value, process_repo: Option<&Path>, app_config: Option<&Path>) -> Result<PathBuf, Value> {
     let requested = args.get("repo").and_then(Value::as_str).unwrap_or("").trim().to_string();
     if requested.is_empty() {
-        return Err(text_result("error: repo is required"));
+        return Err(error_result("error: repo is required"));
     }
     let known = known_repos(app_config);
     if is_registered_repo_entry(&requested, process_repo, &known) {
@@ -719,11 +723,11 @@ fn resolve_call_repo(tool_name: &str, args: &Value, process_repo: Option<&Path>,
             return if matches!(tool_name, "alinery_list_tasks" | "alinery_get_task") {
                 Ok(candidate)
             } else {
-                Err(text_result(discovery_only_msg))
+                Err(error_result(discovery_only_msg))
             };
         }
     }
-    alinery_core::resolve_target_repo(&requested, process_repo, &known).map_err(|error| text_result(format!("error: {error}")))
+    alinery_core::resolve_target_repo(&requested, process_repo, &known).map_err(|error| error_result(format!("error: {error}")))
 }
 
 fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: Option<&Path>, daemon_namespace: &str) -> Value {
@@ -751,7 +755,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
         let raw = args.get(key).and_then(|v| v.as_str()).unwrap_or("");
         match safe_component(raw) {
             Some(s) => Ok(s.to_string()),
-            None => Err(text_result(format!("error: invalid {} '{}'", key, raw))),
+            None => Err(error_result(format!("error: invalid {} '{}'", key, raw))),
         }
     };
 
@@ -766,7 +770,10 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 Err(e) => return e,
             };
             let p = repo.join(".alinery/tasks").join(&slug).join("task.md");
-            text_result(std::fs::read_to_string(p).unwrap_or_default())
+            match std::fs::read_to_string(p) {
+                Ok(content) => text_result(content),
+                Err(error) => error_result(format!("error: {error}")),
+            }
         }
         "alinery_create_task" => create_task(repo, app_config, daemon_namespace, &args),
         "alinery_list_sessions" => {
@@ -856,7 +863,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             };
             match start_task_session(repo, app_config, &task_slug, &session_id) {
                 Ok(result) => text_result(serde_json::to_string(&result).unwrap_or_default()),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_send_review_handoff" => {
@@ -914,16 +921,16 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             let raw_task_slug = args.get("task_slug").and_then(Value::as_str).unwrap_or("");
             let task_slug = match safe_component(raw_task_slug) {
                 Some(value) => value.to_string(),
-                None => return text_result(format!("error: invalid task slug '{raw_task_slug}'")),
+                None => return error_result(format!("error: invalid task slug '{raw_task_slug}'")),
             };
             let raw_session_id = args.get("session_id").and_then(Value::as_str).unwrap_or("");
             let session_id = match safe_component(raw_session_id) {
                 Some(value) => value.to_string(),
-                None => return text_result(format!("error: invalid session id '{raw_session_id}'")),
+                None => return error_result(format!("error: invalid session id '{raw_session_id}'")),
             };
             match observe_task_session(repo, app_config, &task_slug, &session_id) {
                 Ok(result) => text_result(serde_json::to_string(&result).unwrap_or_default()),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_read_session_history" => {
@@ -938,7 +945,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             let number = |key: &str| -> Result<Option<u64>, Value> {
                 match args.get(key) {
                     None => Ok(None),
-                    Some(value) => value.as_u64().map(Some).ok_or_else(|| text_result(format!("error: {key} must be a non-negative integer"))),
+                    Some(value) => value.as_u64().map(Some).ok_or_else(|| error_result(format!("error: {key} must be a non-negative integer"))),
                 }
             };
             let offset = match number("offset") {
@@ -951,7 +958,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             };
             match alinery_core::read_session_history(repo, &task_slug, &session_id, offset, limit) {
                 Ok(result) => text_result(serde_json::to_string(&result).unwrap_or_default()),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_list_artifacts" => {
@@ -977,7 +984,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             let filename = args.get("filename").and_then(Value::as_str).unwrap_or("");
             match alinery_core::artifact_file_path(repo, &slug, filename).and_then(|path| std::fs::read_to_string(path).map_err(|error| error.to_string())) {
                 Ok(content) => text_result(content),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_read_config" => text_result(std::fs::read_to_string(repo.join(".alinery/config.toml")).unwrap_or_default()),
@@ -1034,7 +1041,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             let observed = observed_parent_sessions(repo, app_config, manager_session_id);
             match alinery_core::inspect_subtask_finish(repo, manager_session_id, observed) {
                 Ok(result) => text_result(serde_json::to_string(&result).unwrap_or_default()),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_finalize_subtask" => {
@@ -1045,12 +1052,12 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 "artifacts_only" => alinery_core::FinalizeMode::ArtifactsOnly,
                 "integrated_code" => alinery_core::FinalizeMode::IntegratedCode,
                 "archive_without_code" => alinery_core::FinalizeMode::ArchiveWithoutCode,
-                other => return text_result(format!("error: unknown finalize mode '{other}'")),
+                other => return error_result(format!("error: unknown finalize mode '{other}'")),
             };
             create_pre_archive_backup(repo, app_config);
             match alinery_core::finalize_subtask(repo, args["manager_session_id"].as_str().unwrap_or_default(), mode) {
                 Ok(result) => text_result(serde_json::to_string(&result).unwrap_or_default()),
-                Err(error) => text_result(format!("error: {error}")),
+                Err(error) => error_result(format!("error: {error}")),
             }
         }
         "alinery_archive_task" => {
@@ -1059,10 +1066,10 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 Err(e) => return e,
             };
             if alinery_core::read_task(repo, &slug).is_none() {
-                return text_result("error: no such task");
+                return error_result("error: no such task");
             }
             if let Err(error) = alinery_core::ensure_task_can_archive(repo, &slug) {
-                return text_result(format!("error: {error}"));
+                return error_result(format!("error: {error}"));
             }
             create_pre_archive_backup(repo, app_config);
             match alinery_core::archive_task_guarded(repo, &slug) {
@@ -1078,7 +1085,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                     }
                     text_result("archived")
                 }
-                Err(e) => text_result(format!("error: {e}")),
+                Err(e) => error_result(format!("error: {e}")),
             }
         }
         "alinery_storage_info" => {
@@ -1110,7 +1117,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                 }
                 text_result(serde_json::to_string(&res).unwrap_or_default())
             }
-            Err(error) => text_result(format!("error: {error}")),
+            Err(error) => error_result(format!("error: {error}")),
         },
         "alinery_backup_now" => {
             let settings = effective_backup_settings(repo, app_config);
@@ -1127,10 +1134,10 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
                     }
                     text_result(serde_json::to_string(&meta).unwrap_or_else(|_| "{}".into()))
                 }
-                Err(e) => text_result(format!("error: {e}")),
+                Err(e) => error_result(format!("error: {e}")),
             }
         }
-        _ => text_result(format!("unknown tool {}", name)),
+        _ => error_result(format!("unknown tool {}", name)),
     }
 }
 
@@ -1143,7 +1150,7 @@ fn handle_tool_call(params: Value, repo: &str, app_config: Option<&Path>) -> Val
 fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&Path>, repo: &Path, scope: alinery_core::SettingsChangeScope) -> Value {
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
     if let Err(e) = content.parse::<toml::Value>() {
-        return text_result(format!("error: not valid TOML ({}); not written", e));
+        return error_result(format!("error: not valid TOML ({}); not written", e));
     }
     let is_config = path.file_name().is_some_and(|n| n == "config.toml");
     let prior_text = if is_config && app_config.is_some() { std::fs::read_to_string(&path).ok() } else { None };
@@ -1177,7 +1184,7 @@ fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&P
                     alinery_core::log_repo_settings_event(cfg, repo, alinery_core::RepoSettingsEvent::WriteFailed { error: &e.to_string() });
                 }
             }
-            text_result(format!("write error: {}", e))
+            error_result(format!("write error: {}", e))
         }
     }
 }
@@ -1320,6 +1327,62 @@ mod tests {
 
     fn text_content(v: &Value) -> &str {
         v["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[test]
+    fn tool_read_failures_are_marked_as_errors() {
+        let repo = unique_repo("read-errors");
+        write_task(&repo, "task", "superdevelop", "");
+        for (name, mut arguments) in [
+            ("alinery_read_artifact", json!({"slug":"task","filename":"01-missing.md"})),
+            ("alinery_read_artifact", json!({"slug":"task","filename":"../task.md"})),
+            ("alinery_get_task", json!({})),
+            ("alinery_get_task", json!({"slug":"missing"})),
+            ("alinery_list_tasks", json!({"repo":repo.join("missing")})),
+            ("alinery_get_task_execution", json!({"task_slug":"missing"})),
+            ("alinery_get_task_execution", json!({"task_slug":1})),
+            ("alinery_read_session_history", json!({"task_slug":"task","session_id":"session","offset":-1})),
+        ] {
+            if arguments.get("repo").is_none() {
+                arguments["repo"] = json!(repo);
+            }
+            let request = json!({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":name,"arguments":arguments}});
+            let response = handle_request_in(&request, Some(&repo), None, "").unwrap();
+            assert_eq!(response["id"], 20);
+            assert_eq!(response["result"]["isError"], true, "{name}: {response}");
+            assert!(text_content(&response["result"]).starts_with("error:"), "{name}: {response}");
+        }
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn successful_reads_preserve_content_without_error_flag() {
+        let repo = unique_repo("read-success");
+        write_task(&repo, "task", "superdevelop", "");
+        let artifact = repo.join(".alinery/tasks/task/artifacts/01-content.md");
+        for content in ["saved content\n", "error: this is valid artifact content\n", ""] {
+            std::fs::write(&artifact, content).unwrap();
+            let response = handle_tool_call(
+                json!({"name":"alinery_read_artifact","arguments":{"slug":"task","filename":"01-content.md"}}),
+                repo.to_str().unwrap(),
+                None,
+            );
+            assert!(!response["isError"].as_bool().unwrap_or(false), "{response}");
+            assert_eq!(text_content(&response), content);
+        }
+        for (name, arguments, expected) in [
+            ("alinery_list_tasks", json!({}), "[\"task\"]".to_string()),
+            (
+                "alinery_get_task",
+                json!({"slug":"task"}),
+                std::fs::read_to_string(repo.join(".alinery/tasks/task/task.md")).unwrap(),
+            ),
+        ] {
+            let response = handle_tool_call(json!({"name":name,"arguments":arguments}), repo.to_str().unwrap(), None);
+            assert!(!response["isError"].as_bool().unwrap_or(false), "{name}: {response}");
+            assert_eq!(text_content(&response), expected);
+        }
+        std::fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]
