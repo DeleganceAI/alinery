@@ -2,6 +2,7 @@
 version = 2
 key = "one-shot"
 title = "One-shot"
+tagline = "Implement and verify a well-defined change in one session."
 description = "Implement, verify, and prepare a PR note for a clear bounded request in one session."
 default_model = ""
 default_harness = "omp"

@@ -98,6 +98,22 @@ The approved v2 file is one `playbook.md`: TOML `+++` frontmatter, required meta
 - Unknown fields and unescaped unknown prompt tokens are errors. Do not invent a token in prompt code without updating the shared parser/runtime contract.
 - No YAML/v1 runtime fallback, step-kind enum, `human_approval`, retry/attempts or `on_failure` policy fields.
 
+### Tagline: the outcome a Playbook helps achieve
+
+The optional top-level `tagline` string answers **“What will this Playbook help me accomplish?”** Write one short, concrete sentence about the use or outcome, rather than a list of steps. For example:
+
+```toml
+title = "PRIMED Feature Development"
+tagline = "Turn a feature idea into a verified implementation."
+description = "..."
+```
+
+When present, a tagline must be nonblank, at most 120 Unicode scalar values, and contain no control characters or Unicode line/paragraph separators (U+2028/U+2029). Validation preserves the supplied text; it does not trim or truncate it. Omit the field when no tagline has been authored. The required `description` still holds the fuller explanation.
+
+The tagline belongs to the Playbook's `playbook.md` and survives parsing, editing, copying and saving. A library row can use it for a compact preview while keeping the full description in the detail pane. Do not generate a tagline by listing steps or truncating the description.
+
+This is an optional v2 field: the updated parser still reads documents without it. Older parsers reject it as an unknown field, so files containing it require an updated app. The normalized definition also crosses the daemon wire; protocol 20 gates this change against older clients/daemons. The sharing API must accept this field before tagged files can be published; its catalog summary does not gain a new field automatically.
+
 ### Exact roles may be shared; wildcard ownership is unique
 
 Different steps may declare the same exact logical output role, including directory-qualified paths. Every distinct eligible accepted occurrence enables its own continuation with separate physical assignments, even when the bytes are identical. Same-step duplicate declarations remain invalid.

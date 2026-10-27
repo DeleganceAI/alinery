@@ -2,6 +2,7 @@
 version = 2
 key = "systematic-naming"
 title = "Systematic Naming"
+tagline = "Find a fitting name and understand its tradeoffs before committing."
 description = "Frame a naming brief, generate diverse batches, analyze every candidate, rank complete groups, research a human-approved shortlist and record the human decision."
 default_model = ""
 default_harness = "omp"

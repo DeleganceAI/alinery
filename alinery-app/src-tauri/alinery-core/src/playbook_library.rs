@@ -849,6 +849,35 @@ mod tests {
     }
 
     #[test]
+    fn bundled_taglines_survive_copy_edit_save_and_reload() {
+        let sandbox = Sandbox::new();
+        for (key, source) in BUNDLED_PLAYBOOKS {
+            let mut definition = parse_playbook_md(source).unwrap();
+            let tagline = definition.tagline.clone().expect("each bundled playbook has a tagline");
+            definition.key = format!("copy-{key}");
+            definition.title = format!("Copy of {}", definition.title);
+            let target = PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: definition.key.clone(),
+            };
+            let saved = save_playbook(
+                &sandbox.roots,
+                SavePlaybookRequest {
+                    target: target.clone(),
+                    source: render_playbook_md(&definition),
+                    overwrite: false,
+                },
+            )
+            .unwrap();
+            let reloaded = resolve_playbook(&sandbox.roots, &target).unwrap();
+            assert_eq!(saved.definition, definition);
+            assert_eq!(reloaded.definition, definition);
+            assert_eq!(reloaded.definition.tagline.as_deref(), Some(tagline.as_str()));
+            assert_eq!(parse_playbook_md(&fs::read_to_string(saved.source.path.unwrap()).unwrap()).unwrap(), definition);
+        }
+    }
+
+    #[test]
     fn save_if_unchanged_refuses_a_local_edit_and_a_new_file() {
         let sandbox = Sandbox::new();
         let target = reference(PlaybookScope::Repo);

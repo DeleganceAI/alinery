@@ -2,6 +2,7 @@
 version = 2
 key = "generic-session"
 title = "Generic Session"
+tagline = "Complete a request and keep a clear record of the result."
 description = "Carry out one user-described request and preserve its result, evidence, decisions and limitations."
 default_model = ""
 default_harness = "omp"

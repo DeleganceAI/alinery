@@ -2,6 +2,7 @@
 version = 2
 key = "systematic-evidence-review"
 title = "Systematic Evidence Review"
+tagline = "Answer a research question with a reproducible, traceable evidence review."
 description = "Approve a reproducible protocol, search and screen through independent lanes, audit a corpus with the human, extract and synthesize traceable evidence, and audit the reporting package."
 default_model = ""
 default_harness = "omp"
