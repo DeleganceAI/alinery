@@ -1,7 +1,9 @@
 import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmHost, confirmStopAndSwitch } from "./confirm";
+import { TaskRunGraph } from "./TaskRunGraph";
 import type * as IpcFixtures from "./test/mockIpc";
+import type { SessionDisplayMeta } from "./types";
 import { type Handlers, useHotkeys } from "./useHotkeys";
 
 vi.mock("./ipc", async () => {
@@ -81,6 +83,39 @@ function commandCallbacks(value: Handlers) {
 }
 
 describe("useHotkeys", () => {
+  it("leaves the run graph open when Escape returns keyboard pan focus", () => {
+    const active = handlers({ board: null });
+    const worker: SessionDisplayMeta = {
+      id: "worker",
+      name: "worker",
+      worktree: "/work",
+      created: 1,
+      archived: false,
+      phase: "worker",
+      harness: "omp",
+      model: "",
+      playbook: "retained",
+      generic: false,
+      harness_resume_token: "",
+    };
+    render(
+      <>
+        <Probe handlers={active} />
+        <TaskRunGraph sessions={[worker]} state={null} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />
+      </>,
+    );
+    const pan = screen.getByRole("button", { name: "Pan run graph" });
+    const canvas = screen.getByRole("region", { name: "Run graph canvas" });
+    fireEvent.click(pan);
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.keyDown(canvas, { key: "ArrowRight" });
+    fireEvent.keyDown(canvas, { key: "Escape" });
+    expect(document.activeElement).toBe(pan);
+    expect(active.back).not.toHaveBeenCalled();
+    fireEvent.keyDown(pan, { key: "Escape" });
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
   it("cancels Switch to Terminal with Escape without navigating back", async () => {
     const active = handlers({ board: null });
     render(
