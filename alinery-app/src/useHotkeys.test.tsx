@@ -83,6 +83,46 @@ function commandCallbacks(value: Handlers) {
 }
 
 describe("useHotkeys", () => {
+  it("leaves Enter on native controls to the focused control while keeping board shortcuts", () => {
+    const active = handlers();
+    render(
+      <>
+        <Probe handlers={active} />
+        <button type="button">
+          <span>Sort by Name</span>
+        </button>
+        <a href="#task">Task link</a>
+        <select aria-label="Sort order">
+          <option>Name</option>
+        </select>
+        <details>
+          <summary>Filters</summary>
+        </details>
+      </>,
+    );
+    for (const target of [
+      screen.getByRole("button", { name: "Sort by Name" }),
+      screen.getByText("Sort by Name"),
+      screen.getByRole("link"),
+      screen.getByRole("combobox"),
+      screen.getByText("Filters"),
+    ]) {
+      target.focus();
+      const event = createEvent.keyDown(target, { key: "Enter", cancelable: true });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(active.openSelected).not.toHaveBeenCalled();
+    }
+
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    expect(active.openSelected).toHaveBeenCalledOnce();
+    const sort = screen.getByRole("button", { name: "Sort by Name" });
+    fireEvent.keyDown(sort, { key: "Enter", metaKey: true });
+    expect(active.openSelected).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(sort, { key: "Escape" });
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
   it("leaves the run graph open when Escape returns keyboard pan focus", () => {
     const active = handlers({ board: null });
     const worker: SessionDisplayMeta = {
