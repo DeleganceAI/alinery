@@ -222,26 +222,28 @@ export function PlaybookGraph({
           <div className="playbook-definition-map">
             {steps.length > 0 ? (
               <>
-                <div className="playbook-canvas-toolbar" role="group" aria-label="Graph zoom controls">
-                  <button type="button" className="btn ghost small" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
-                    −
-                  </button>
-                  <output ref={zoomLabelRef} aria-label="Graph zoom">
-                    100%
-                  </output>
-                  <button type="button" className="btn ghost small" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
-                    +
-                  </button>
-                  <button type="button" className="btn ghost small" onClick={fitGraph}>
-                    Fit graph
-                  </button>
-                  <button type="button" className="btn ghost small" onClick={resetZoom}>
-                    Reset zoom
-                  </button>
-                  <button ref={panButtonRef} type="button" className="btn ghost small" aria-label="Pan graph" onClick={() => viewportRef.current?.focus({ preventScroll: true })}>
-                    Pan
-                  </button>
-                </div>
+                {!hideToolbar && (
+                  <div className="playbook-canvas-toolbar" role="group" aria-label="Graph zoom controls">
+                    <button type="button" className="btn ghost small" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
+                      −
+                    </button>
+                    <output ref={zoomLabelRef} aria-label="Graph zoom">
+                      100%
+                    </output>
+                    <button type="button" className="btn ghost small" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+                      +
+                    </button>
+                    <button type="button" className="btn ghost small" onClick={fitGraph}>
+                      Fit graph
+                    </button>
+                    <button type="button" className="btn ghost small" onClick={resetZoom}>
+                      Reset zoom
+                    </button>
+                    <button ref={panButtonRef} type="button" className="btn ghost small" aria-label="Pan graph" onClick={() => viewportRef.current?.focus({ preventScroll: true })}>
+                      Pan
+                    </button>
+                  </div>
+                )}
                 <div
                   ref={viewportRef}
                   id={`${inspectorId}-graph`}

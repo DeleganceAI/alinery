@@ -1020,33 +1020,25 @@
   }
 }
 
-/* Reserve both columns from the first frame; reveal whole surfaces, not individual cards. */
+/* Keep the preview visible while the local demo runs. */
 .onboarding-body-playbooks { animation: none; }
-.onboarding-body-playbooks .onboarding-archetype-list,
-.onboarding-body-playbooks .onboarding-playbook-stage {
-  opacity: 1;
-  transform: none;
-  transition: opacity var(--dur-view) var(--ease-out), transform var(--dur-view) var(--ease-out);
+.onboarding-build-playbook {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
 }
-.onboarding-body-playbooks[data-intro="explain"] .onboarding-archetype-list {
-  opacity: 0;
-  transform: translateY(6px);
-  pointer-events: none;
+.onboarding-build-playbook h3 {
+  margin: 0 0 6px;
+  font-size: calc(14px * var(--ui-scale));
 }
-.onboarding-body-playbooks[data-intro="explain"] .onboarding-playbook-stage,
-.onboarding-body-playbooks[data-intro="cards"] .onboarding-playbook-stage {
-  opacity: 0;
-  transform: translateX(12px);
-  pointer-events: none;
+.onboarding-build-playbook p {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
 }
-.onboarding-sim-cue {
-  animation: onboarding-invitation 1s var(--ease-out) 2;
-}
-@keyframes onboarding-invitation {
-  0%, 100% { box-shadow: 0 0 0 0 var(--accent-subtle); }
-  50% { box-shadow: 0 0 0 5px var(--accent-subtle); }
-}
-.onboarding-demo-label,
 .onboarding-step-count {
   font-size: calc(12px * var(--ui-scale));
   color: var(--text-muted);
@@ -1114,11 +1106,5 @@
   visibility: visible;
 }
 @media (prefers-reduced-motion: reduce) {
-  .onboarding-body-playbooks .onboarding-archetype-list,
-  .onboarding-body-playbooks .onboarding-playbook-stage {
-    transition: none;
-    transform: none;
-  }
-  .onboarding-sim-cue { animation: none !important; }
   .onboarding-card-detail { transition: none; }
 }

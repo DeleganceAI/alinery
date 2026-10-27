@@ -499,6 +499,17 @@ function camera(viewport: HTMLElement) {
   return { tx, ty, scale: Number(canvas.style.zoom) };
 }
 
+it("hides every graph toolbar in the onboarding preview while keeping steps inspectable", () => {
+  mockCanvasDimensions();
+  const onSelectStep = vi.fn();
+  render(<PlaybookGraph variant="definition" title="Review" steps={denseSteps} hideToolbar onSelectStep={onSelectStep} />);
+  expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect build" }));
+  expect(onSelectStep).toHaveBeenCalledWith("build");
+  expect(screen.getByRole("region", { name: "build definition" })).toBeTruthy();
+});
+
 it("anchors wheel zoom under the pointer and fits using unzoomed dimensions", () => {
   mockCanvasDimensions();
   render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);

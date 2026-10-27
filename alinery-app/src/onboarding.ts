@@ -7,8 +7,8 @@ export type OnboardingStepId = "workspace" | "playbooks" | "models" | "launch";
 
 export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
   { id: "workspace", number: "01", label: "Repository", title: "Connect a repository" },
-  { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
-  { id: "models", number: "03", label: "Models", title: "Verify your agent & model provider" },
+  { id: "models", number: "02", label: "Models", title: "Verify your agent & model provider" },
+  { id: "playbooks", number: "03", label: "Playbooks", title: "How playbooks coordinate agents" },
   { id: "launch", number: "04", label: "First task", title: "Launch your first playbook task" },
 ];
 
@@ -39,7 +39,7 @@ export function readSavedOnboardingStep(hasActiveRepo: boolean): OnboardingStepI
   } catch {
     // Fall through to default.
   }
-  return "playbooks";
+  return "models";
 }
 
 export function writeSavedOnboardingStep(step: OnboardingStepId): void {
