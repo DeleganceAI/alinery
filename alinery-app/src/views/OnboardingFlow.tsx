@@ -182,7 +182,7 @@ export function OnboardingFlow({
     const to = ONBOARDING_STEPS.findIndex((item) => item.id === next);
     setDirection(to < from ? "back" : "forward");
     setStep(next);
-    writeSavedOnboardingStep(next);
+    if (hasActiveRepo) writeSavedOnboardingStep(next);
   };
 
   const handleSelectRepo = async (path: string) => {
@@ -322,7 +322,7 @@ export function OnboardingFlow({
           <div className="onboarding-steps" role="tablist" aria-label="Onboarding steps">
             {ONBOARDING_STEPS.map((item, idx) => {
               const active = item.id === step;
-              const completed = idx < stepIndex || (item.id === "workspace" && hasActiveRepo);
+              const completed = hasActiveRepo && (idx < stepIndex || item.id === "workspace");
               const disabled = (item.id === "models" || item.id === "launch") && !hasActiveRepo;
               return (
                 <button
@@ -434,7 +434,7 @@ export function OnboardingFlow({
                   event.preventDefault();
                   const currentIdx = EXAMPLE_ARCHETYPES.findIndex((item) => item.reference.key === selectedArchetypeKey);
                   const delta = event.key === "ArrowDown" ? 1 : -1;
-                  const nextIdx = (currentIdx + delta + EXAMPLE_ARCHETYPES.length) % EXAMPLE_ARCHETYPES.length;
+                  const nextIdx = currentIdx < 0 ? (delta === 1 ? 0 : EXAMPLE_ARCHETYPES.length - 1) : (currentIdx + delta + EXAMPLE_ARCHETYPES.length) % EXAMPLE_ARCHETYPES.length;
                   handleSelectArchetype(EXAMPLE_ARCHETYPES[nextIdx].reference.key);
                 }}
               >
@@ -548,7 +548,10 @@ export function OnboardingFlow({
                     hideToolbar={true}
                     minScale={0.72}
                     selectedStepKey={selectedStep?.key ?? null}
-                    onSelectStep={(key) => setSelectedStepKey(key)}
+                    onSelectStep={(key) => {
+                      setPlaying(false);
+                      setSelectedStepKey(key);
+                    }}
                     simulatedStatuses={simulatedStatuses}
                   />
                 </div>
@@ -826,7 +829,7 @@ export function OnboardingFlow({
         {step !== "workspace" && (
           <footer className="onboarding-footer">
             <div className="onboarding-footer-left">
-              <button type="button" className="btn ghost" onClick={() => goToStep(ONBOARDING_STEPS[stepIndex - 1].id)}>
+              <button type="button" className="btn ghost" onClick={() => goToStep(hasActiveRepo ? ONBOARDING_STEPS[stepIndex - 1].id : "workspace")}>
                 Back
               </button>
             </div>
@@ -835,6 +838,7 @@ export function OnboardingFlow({
                 <button
                   type="button"
                   className="btn"
+                  disabled={!hasActiveRepo}
                   onClick={() => {
                     const next = ONBOARDING_STEPS[stepIndex + 1];
                     if (next) goToStep(next.id);

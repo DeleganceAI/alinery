@@ -280,6 +280,49 @@ describe("OnboardingFlow wizard", () => {
     });
   };
 
+  it("returns a repository-free preview to repository selection without offering a blocked launch", async () => {
+    render(<OnboardingFlow {...flowProps()} appConfig={{ ...baseConfig, active_repo: "", known_repos: [] }} initialStep="workspace" />);
+    fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
+    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("tab", { name: /Models/ }).classList.contains("completed")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
+    await act(async () => {});
+  });
+
+  it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
+    vi.useFakeTimers();
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    await advanceDemo(1400);
+    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
+    await advanceDemo(6000);
+    expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
+    expect(screen.getByText("Wave 2 of 7")).toBeTruthy();
+  });
+
+  it.each([
+    ["ArrowUp", /Academic Survey/],
+    ["ArrowDown", /SuperDevelop/],
+  ] as const)("preserves the custom starter on Back and enters the example list with %s", async (key, example) => {
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Build a new playbook" }));
+    fireEvent.change(screen.getByLabelText("Starter task title"), { target: { value: "My custom workflow" } });
+    fireEvent.change(screen.getByLabelText("Starter task description"), { target: { value: "Keep my edited instructions." } });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect((screen.getByLabelText("Starter task title") as HTMLInputElement).value).toBe("My custom workflow");
+    expect((screen.getByLabelText("Starter task description") as HTMLTextAreaElement).value).toBe("Keep my edited instructions.");
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    const examples = screen.getByRole("radiogroup", { name: "Explore starter playbooks" });
+    fireEvent.keyDown(examples, { key });
+    expect(within(examples).getByRole("radio", { name: example }).getAttribute("aria-checked")).toBe("true");
+  });
+
   it("continues from repository through models, playbooks, and first task", async () => {
     render(<OnboardingFlow {...flowProps()} initialStep="workspace" />);
     for (const next of ["models", "playbooks", "launch"]) {
