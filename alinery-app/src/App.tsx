@@ -1097,45 +1097,6 @@ export default function App() {
     void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook, initialPreset }));
   };
 
-  const handleLaunchStarterTask = async (playbookRef: PlaybookRef, preset: StarterTaskPreset) => {
-    if (!appConfig?.active_repo) return;
-    if (!taskMutationGuard.claim("create")) return;
-    const repoPath = appConfig.active_repo;
-    flushSync(() => setBusy("create"));
-    await afterPaint();
-    try {
-      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), ipc.readConfigForRepo(repoPath)]);
-      const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
-      const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
-      const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
-      const result = await ipc.createTaskForRepo({
-        repoPath,
-        request: {
-          name: preset.name,
-          description: preset.description,
-          evidence: preset.evidence,
-          playbook: { reference: scoped.source.reference, source: scoped.source_text },
-          launch_defaults: { harness, model },
-          auto_advance_steps,
-          start: true,
-        },
-      });
-      if (result.creation !== "ready" || result.start === "failed" || result.errors.length) {
-        toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Open the task to inspect its status."}`);
-      }
-      completeOnboarding();
-      refreshBoards();
-      if (result.task) {
-        const fromView: View = { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
-        const taskView: View = { kind: "task", slug: result.task.slug, repoPath, from: fromView, initialTask: result.task };
-        setView(taskView);
-      }
-    } finally {
-      taskMutationGuard.release();
-      setBusy(null);
-    }
-  };
-
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
     if (!appConfigRef.current) return;
     if (!taskMutationGuard.claim("duplicate")) return;
@@ -1504,7 +1465,6 @@ export default function App() {
             completeOnboarding();
             openCreate(playbook, preset);
           }}
-          onLaunchStarterTask={handleLaunchStarterTask}
         />
       </div>,
       minimalHeader,
@@ -1554,7 +1514,6 @@ export default function App() {
           completeOnboarding();
           openCreate(playbook, preset);
         }}
-        onLaunchStarterTask={handleLaunchStarterTask}
       />
     </Dialog>
   );

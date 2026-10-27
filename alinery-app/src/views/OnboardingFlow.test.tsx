@@ -126,11 +126,14 @@ describe("onboarding persistence helpers", () => {
     expect(readSavedOnboardingStep(false)).toBe("workspace");
     expect(readSavedOnboardingStep(true)).toBe("models");
 
-    for (const step of ["workspace", "models", "playbooks", "launch"] as const) {
+    for (const step of ["workspace", "models", "playbooks"] as const) {
       writeSavedOnboardingStep(step);
       expect(readSavedOnboardingStep(true)).toBe(step);
     }
-    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["workspace", "models", "playbooks", "launch"]);
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["workspace", "models", "playbooks"]);
+    window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
+    expect(readSavedOnboardingStep(true)).toBe("playbooks");
+    expect(readSavedOnboardingStep(false)).toBe("workspace");
 
     window.localStorage.setItem("alinery.onboardingStep.v1", "toString");
     expect(readSavedOnboardingStep(true)).toBe("models");
@@ -175,7 +178,6 @@ describe("OnboardingFlow wizard", () => {
         }}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
-        onLaunchStarterTask={vi.fn(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByLabelText("Default repository model")).toHaveProperty("value", effective.defaults.model));
@@ -204,7 +206,6 @@ describe("OnboardingFlow wizard", () => {
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
-        onLaunchStarterTask={vi.fn(async () => {})}
       />,
     );
     await act(async () => {});
@@ -226,7 +227,6 @@ describe("OnboardingFlow wizard", () => {
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
-        onLaunchStarterTask={vi.fn(async () => {})}
       />,
     );
     const retry = await screen.findByRole("button", { name: "Retry preview" });
@@ -250,7 +250,6 @@ describe("OnboardingFlow wizard", () => {
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
-        onLaunchStarterTask={vi.fn(async () => {})}
       />,
     );
 
@@ -272,7 +271,6 @@ describe("OnboardingFlow wizard", () => {
     onOpenProviderSetup: vi.fn(),
     onCompleteToWorkspace: vi.fn(),
     onOpenCreateWithPlaybook: vi.fn(),
-    onLaunchStarterTask: vi.fn(async () => {}),
   });
   const advanceDemo = async (milliseconds: number) => {
     await act(async () => {
@@ -280,12 +278,12 @@ describe("OnboardingFlow wizard", () => {
     });
   };
 
-  it("returns a repository-free preview to repository selection without offering a blocked launch", async () => {
+  it("returns a repository-free preview to repository selection without offering blocked completion", async () => {
     render(<OnboardingFlow {...flowProps()} appConfig={{ ...baseConfig, active_repo: "", known_repos: [] }} initialStep="workspace" />);
     fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
     expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
     expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
-    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Finish onboarding" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("tab", { name: /Models/ }).classList.contains("completed")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
@@ -304,35 +302,28 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Wave 2 of 7")).toBeTruthy();
   });
 
-  it.each([
-    ["ArrowUp", /Academic Survey/],
-    ["ArrowDown", /SuperDevelop/],
-  ] as const)("preserves the custom starter on Back and enters the example list with %s", async (key, example) => {
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
-    await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "Build a new playbook" }));
-    fireEvent.change(screen.getByLabelText("Starter task title"), { target: { value: "My custom workflow" } });
-    fireEvent.change(screen.getByLabelText("Starter task description"), { target: { value: "Keep my edited instructions." } });
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect((screen.getByLabelText("Starter task title") as HTMLInputElement).value).toBe("My custom workflow");
-    expect((screen.getByLabelText("Starter task description") as HTMLTextAreaElement).value).toBe("Keep my edited instructions.");
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    const examples = screen.getByRole("radiogroup", { name: "Explore starter playbooks" });
-    fireEvent.keyDown(examples, { key });
-    expect(within(examples).getByRole("radio", { name: example }).getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("continues from repository through models, playbooks, and first task", async () => {
-    render(<OnboardingFlow {...flowProps()} initialStep="workspace" />);
-    for (const next of ["models", "playbooks", "launch"]) {
+  it("continues through exactly three steps and finishes without creating a task", async () => {
+    const props = flowProps();
+    const createTask = vi.spyOn(ipc, "createTaskForRepo");
+    const createSession = vi.spyOn(ipc, "createSession");
+    const createSessionForRepo = vi.spyOn(ipc, "createSessionForRepo");
+    render(<OnboardingFlow {...props} initialStep="workspace" />);
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.queryByText("First task")).toBeNull();
+    for (const next of ["models", "playbooks"]) {
       fireEvent.click(screen.getByRole("button", { name: "Continue" }));
       expect(screen.getByTestId(`onboarding-step-${next}`)).toBeTruthy();
       expect(readSavedOnboardingStep(true)).toBe(next);
       await act(async () => {});
     }
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    expect(props.onCompleteToWorkspace).toHaveBeenCalledOnce();
+    expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect(createSessionForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
   });
 
   it("makes provider subscriptions and API-key setup visible before the model choice", async () => {
@@ -381,7 +372,6 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Finished")).toBeTruthy();
     await advanceDemo(1);
     expect(screen.getByText("Wave 1 of 7")).toBeTruthy();
-    expect(props.onLaunchStarterTask).not.toHaveBeenCalled();
     expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
@@ -440,7 +430,7 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Wave 2 of 7")).toBeTruthy();
   });
 
-  it("offers building a new playbook separately and prepares the existing editable starter", async () => {
+  it("offers building a new playbook separately through the existing creation form", async () => {
     const props = flowProps();
     render(<OnboardingFlow {...props} initialStep="playbooks" />);
     await act(async () => {});
@@ -448,53 +438,11 @@ describe("OnboardingFlow wizard", () => {
     expect(within(examples).queryByText("Build a New Playbook")).toBeNull();
     expect(within(examples).getAllByRole("radio")).toHaveLength(4);
     fireEvent.click(screen.getByRole("button", { name: "Build a new playbook" }));
-    expect(screen.getByTestId("onboarding-step-launch")).toBeTruthy();
-    expect((screen.getByLabelText("Starter task title") as HTMLInputElement).value).toBe("Design a custom playbook for this repository");
-    expect(props.onLaunchStarterTask).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Build a custom playbook" }));
-    await waitFor(() =>
-      expect(props.onLaunchStarterTask).toHaveBeenCalledWith(
-        { scope: "bundled", key: "build-playbook" },
-        expect.objectContaining({ name: "Design a custom playbook for this repository" }),
-      ),
-    );
-  });
-
-  it("launches a 1-click starter task or opens the full Create Task form in Step 04", async () => {
-    const onLaunchStarterTask = vi.fn(async () => {});
-    const onOpenCreateWithPlaybook = vi.fn();
-
-    render(
-      <OnboardingFlow
-        appConfig={baseConfig}
-        repoError=""
-        initialStep="launch"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
-        onOpenProviderSetup={vi.fn()}
-        onCompleteToWorkspace={vi.fn()}
-        onOpenCreateWithPlaybook={onOpenCreateWithPlaybook}
-        onLaunchStarterTask={onLaunchStarterTask}
-      />,
-    );
-
-    expect(screen.getByTestId("onboarding-step-launch")).toBeTruthy();
-    const titleInput = screen.getByLabelText("Starter task title") as HTMLInputElement;
-    expect(titleInput.value).toBe("Map architecture and improvement opportunities");
-
-    fireEvent.click(screen.getByRole("button", { name: /Run SuperDevelop starter task/i }));
-    await waitFor(() =>
-      expect(onLaunchStarterTask).toHaveBeenCalledWith(
-        { scope: "bundled", key: "superdevelop" },
-        expect.objectContaining({
-          name: "Map architecture and improvement opportunities",
-        }),
-      ),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Open full Create Task form with SuperDevelop/i }));
-    expect(onOpenCreateWithPlaybook).toHaveBeenCalledWith({ scope: "bundled", key: "superdevelop" });
+    const builder = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === "build-playbook");
+    expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledWith({ scope: "bundled", key: "build-playbook" }, builder?.starterPreset);
+    expect(props.onCompleteToWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.queryByLabelText("Starter task title")).toBeNull();
   });
 });
 

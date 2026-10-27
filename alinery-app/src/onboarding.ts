@@ -3,13 +3,12 @@ import type { PlaybookRef } from "./types";
 export const ONBOARDING_COMPLETED_KEY = "alinery.onboardingCompleted.v1";
 export const ONBOARDING_STEP_KEY = "alinery.onboardingStep.v1";
 
-export type OnboardingStepId = "workspace" | "playbooks" | "models" | "launch";
+export type OnboardingStepId = "workspace" | "playbooks" | "models";
 
 export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
   { id: "workspace", number: "01", label: "Repository", title: "Connect a repository" },
   { id: "models", number: "02", label: "Models", title: "Verify your agent & model provider" },
   { id: "playbooks", number: "03", label: "Playbooks", title: "How playbooks coordinate agents" },
-  { id: "launch", number: "04", label: "First task", title: "Launch your first playbook task" },
 ];
 
 export function isOnboardingCompleted(): boolean {
@@ -33,6 +32,7 @@ export function readSavedOnboardingStep(hasActiveRepo: boolean): OnboardingStepI
   if (!hasActiveRepo) return "workspace";
   try {
     const raw = localStorage.getItem(ONBOARDING_STEP_KEY);
+    if (raw === "launch") return "playbooks";
     if (raw && ONBOARDING_STEPS.some((step) => step.id === raw)) {
       return raw as OnboardingStepId;
     }

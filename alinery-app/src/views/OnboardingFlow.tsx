@@ -1,5 +1,5 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Cpu, FolderOpen, FolderPlus, Layers, Play, X } from "lucide-react";
+import { ArrowRight, Check, Cpu, FolderPlus, Layers, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
@@ -17,6 +17,7 @@ const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
 };
 const EMPTY_STEPS: NormalizedPlaybook["step"] = [];
 const EXAMPLE_ARCHETYPES = CURATED_PLAYBOOK_ARCHETYPES.filter((item) => item.reference.key !== "build-playbook");
+const BUILD_ARCHETYPE = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === "build-playbook");
 
 export function OnboardingFlow({
   appConfig,
@@ -28,7 +29,6 @@ export function OnboardingFlow({
   onOpenProviderSetup,
   onCompleteToWorkspace,
   onOpenCreateWithPlaybook,
-  onLaunchStarterTask,
 }: {
   appConfig: AppConfig;
   repoError: string;
@@ -39,7 +39,6 @@ export function OnboardingFlow({
   onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void) => void;
   onCompleteToWorkspace: () => void;
   onOpenCreateWithPlaybook: (playbook: PlaybookRef, preset?: StarterTaskPreset) => void;
-  onLaunchStarterTask: (playbook: PlaybookRef, preset: StarterTaskPreset) => Promise<void>;
 }) {
   const hasActiveRepo = Boolean(appConfig.active_repo);
   const [step, setStep] = useState<OnboardingStepId>(() => initialStep ?? readSavedOnboardingStep(Boolean(appConfig.active_repo)));
@@ -68,16 +67,10 @@ export function OnboardingFlow({
   const [modelError, setModelError] = useState("");
   const [probeTick, setProbeTick] = useState<number>(0);
 
-  // Step 04: Starter task editable fields
   const selectedArchetype = useMemo(
     () => CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === selectedArchetypeKey) ?? CURATED_PLAYBOOK_ARCHETYPES[0],
     [selectedArchetypeKey],
   );
-  const [starterName, setStarterName] = useState<string>(selectedArchetype.starterPreset.name);
-  const [starterDescription, setStarterDescription] = useState<string>(selectedArchetype.starterPreset.description);
-  const [launching, setLaunching] = useState<boolean>(false);
-  const [launchError, setLaunchError] = useState<string>("");
-
   useEffect(() => {
     if (initialStep) {
       setStep(initialStep);
@@ -85,17 +78,10 @@ export function OnboardingFlow({
   }, [initialStep]);
 
   useEffect(() => {
-    if (!hasActiveRepo && (step === "models" || step === "launch")) {
+    if (!hasActiveRepo && step === "models") {
       setStep("workspace");
     }
   }, [hasActiveRepo, step]);
-
-  // Sync starter task preset fields when selected archetype changes
-  useEffect(() => {
-    setStarterName(selectedArchetype.starterPreset.name);
-    setStarterDescription(selectedArchetype.starterPreset.description);
-    setLaunchError("");
-  }, [selectedArchetype]);
 
   // The bundled catalog is readable before repository selection; previews use its actual definitions.
   useEffect(() => {
@@ -177,7 +163,7 @@ export function OnboardingFlow({
 
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const goToStep = (next: OnboardingStepId) => {
-    if ((next === "models" || next === "launch") && !hasActiveRepo) return;
+    if (next === "models" && !hasActiveRepo) return;
     const from = ONBOARDING_STEPS.findIndex((item) => item.id === step);
     const to = ONBOARDING_STEPS.findIndex((item) => item.id === next);
     setDirection(to < from ? "back" : "forward");
@@ -262,23 +248,6 @@ export function OnboardingFlow({
       .catch((error) => setModelError(String(error)));
   };
 
-  const handleLaunchStarter = async () => {
-    if (launching || !starterName.trim()) return;
-    setLaunching(true);
-    setLaunchError("");
-    try {
-      await onLaunchStarterTask(selectedArchetype.reference, {
-        ...selectedArchetype.starterPreset,
-        name: starterName.trim(),
-        description: starterDescription.trim(),
-      });
-    } catch (error) {
-      setLaunchError(String(error));
-    } finally {
-      setLaunching(false);
-    }
-  };
-
   const stepIndex = ONBOARDING_STEPS.findIndex((item) => item.id === step);
   const currentStepMeta = ONBOARDING_STEPS[stepIndex] ?? ONBOARDING_STEPS[0];
   const selectedStepIndex = Math.max(
@@ -323,7 +292,7 @@ export function OnboardingFlow({
             {ONBOARDING_STEPS.map((item, idx) => {
               const active = item.id === step;
               const completed = hasActiveRepo && (idx < stepIndex || item.id === "workspace");
-              const disabled = (item.id === "models" || item.id === "launch") && !hasActiveRepo;
+              const disabled = item.id === "models" && !hasActiveRepo;
               return (
                 <button
                   key={item.id}
@@ -480,10 +449,9 @@ export function OnboardingFlow({
                   type="button"
                   className="btn small"
                   onClick={() => {
-                    handleSelectArchetype("build-playbook");
-                    goToStep("launch");
+                    if (BUILD_ARCHETYPE) onOpenCreateWithPlaybook(BUILD_ARCHETYPE.reference, BUILD_ARCHETYPE.starterPreset);
                   }}
-                  disabled={!hasActiveRepo}
+                  disabled={!hasActiveRepo || !BUILD_ARCHETYPE}
                 >
                   Build a new playbook
                   <ArrowRight size={14} aria-hidden="true" />
@@ -736,96 +704,6 @@ export function OnboardingFlow({
           </div>
         )}
 
-        {step === "launch" && (
-          <div className="onboarding-body onboarding-body-launch" data-dir={direction} data-testid="onboarding-step-launch">
-            <div className="onboarding-launch-header">
-              <div>
-                <h2>Start your first task</h2>
-                <p className="onboarding-lede">Start from a suggested task, or edit it to fit your project.</p>
-                <div className="onboarding-target-repo">
-                  <FolderOpen size={20} aria-hidden="true" />
-                  <div>
-                    <span className="onboarding-target-label">Repository</span>
-                    <strong>{repoName(appConfig.active_repo)}</strong>
-                    <code>{appConfig.active_repo}</code>
-                  </div>
-                  <button type="button" className="btn ghost small" onClick={() => goToStep("workspace")}>
-                    Change
-                  </button>
-                </div>
-              </div>
-              <div className="onboarding-launch-archetypes" role="radiogroup" aria-label="Starting playbook">
-                {CURATED_PLAYBOOK_ARCHETYPES.map((archetype) => {
-                  const selected = samePlaybookRef(archetype.reference, selectedArchetype.reference);
-                  const def = liveDefinitions[archetype.reference.key];
-                  return (
-                    <button
-                      key={archetype.reference.key}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`onboarding-step-pill${selected ? " active" : ""}`}
-                      onClick={() => handleSelectArchetype(archetype.reference.key)}
-                    >
-                      <span>{def?.title ?? archetype.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="onboarding-launch-grid">
-              <div className="onboarding-launch-card">
-                <div className="onboarding-launch-card-top">
-                  <h3>{activePlaybook?.title ?? selectedArchetype.title}</h3>
-                  {activePlaybook && <span className="onboarding-readiness-detail">{playbookSteps.length} steps</span>}
-                </div>
-                <p className="onboarding-launch-checkpoint">{selectedArchetype.checkpointNote}</p>
-
-                <div className="onboarding-preset-fields">
-                  <label className="onboarding-field">
-                    <span>Task title</span>
-                    <input type="text" value={starterName} onChange={(event) => setStarterName(event.target.value)} aria-label="Starter task title" className="field-input" />
-                  </label>
-                  <label className="onboarding-field">
-                    <span>What should the agents do?</span>
-                    <textarea
-                      rows={3}
-                      value={starterDescription}
-                      onChange={(event) => setStarterDescription(event.target.value)}
-                      aria-label="Starter task description"
-                      className="field-input"
-                    />
-                  </label>
-                </div>
-
-                {launchError && (
-                  <InlineStatus tone="error" detail={launchError}>
-                    Couldn't launch starter task.
-                  </InlineStatus>
-                )}
-
-                <div className="onboarding-launch-actions">
-                  <button type="button" className="btn" disabled={launching || !starterName.trim()} onClick={() => void handleLaunchStarter()}>
-                    <Play size={14} aria-hidden="true" />
-                    {launching ? "Starting task…" : selectedArchetype.starterPreset.ctaLabel}
-                  </button>
-                </div>
-              </div>
-
-              <div className="onboarding-launch-alternatives">
-                <span>Prefer to start another way?</span>
-                <button type="button" className="btn ghost small" onClick={() => onOpenCreateWithPlaybook(selectedArchetype.reference)}>
-                  Open full Create Task form with {selectedArchetype.title}
-                </button>
-                <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
-                  Go to Canvas workspace
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {step !== "workspace" && (
           <footer className="onboarding-footer">
             <div className="onboarding-footer-left">
@@ -834,20 +712,19 @@ export function OnboardingFlow({
               </button>
             </div>
             <div className="onboarding-footer-right">
-              {step !== "launch" && (
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!hasActiveRepo}
-                  onClick={() => {
-                    const next = ONBOARDING_STEPS[stepIndex + 1];
-                    if (next) goToStep(next.id);
-                  }}
-                >
-                  Continue
-                  <ArrowRight size={15} aria-hidden="true" />
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn"
+                disabled={!hasActiveRepo}
+                onClick={() => {
+                  const next = ONBOARDING_STEPS[stepIndex + 1];
+                  if (next) goToStep(next.id);
+                  else onCompleteToWorkspace();
+                }}
+              >
+                {step === "playbooks" ? "Finish onboarding" : "Continue"}
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
             </div>
           </footer>
         )}
