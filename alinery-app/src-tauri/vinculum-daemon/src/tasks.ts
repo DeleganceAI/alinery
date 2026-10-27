@@ -3,10 +3,10 @@
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { engineExecutions, runTask } from "./graph.ts";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { engineExecutions, engineSnapshot, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import type { Execution } from "playbook-engine/src/state.ts";
+import { type Execution, occurrences, type State } from "playbook-engine/src/state.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
 
 type Request = Record<string, unknown>;
@@ -105,7 +105,14 @@ function lifecycle(execution: Execution): string {
   return "running";
 }
 
-function projectExecution(execution: Execution): Record<string, unknown> {
+/** A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot. */
+export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean): Record<string, unknown> {
+  if (execution.permitted) return { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" };
+  if (execution.automatic === false && !autoApproveAll) return { kind: "locked" };
+  return { kind: "automatic" };
+}
+
+function projectExecution(execution: Execution, autoApproveAll = false, project?: { steps: Step[]; artifactsDir: string }): Record<string, unknown> {
   return {
     id: execution.id,
     binding_key: execution.id,
@@ -118,7 +125,7 @@ function projectExecution(execution: Execution): Record<string, unknown> {
       each_member_id: null,
       manual: false,
     },
-    outputs: [],
+    outputs: project ? projectOutputs(execution, project.steps, project.artifactsDir) : [],
     parent_execution_ids: [],
     depth: execution.depth,
     owner_session_id: execution.sessionId ?? "",
@@ -127,7 +134,7 @@ function projectExecution(execution: Execution): Record<string, unknown> {
     is_coding_step: false,
     start_requested: true,
     lifecycle: lifecycle(execution),
-    permission: execution.permitted ? { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" } : { kind: "automatic" },
+    permission: completionPermission(execution, autoApproveAll),
     receipt_id: execution.receipt ? execution.id : null,
     exit_code: null,
     shutdown_confirmed: execution.status === "done" || execution.status === "failed",
@@ -135,13 +142,82 @@ function projectExecution(execution: Execution): Record<string, unknown> {
   };
 }
 
+/** Path under the task artifacts directory, or undefined when the file lives elsewhere. The graph opens this string. */
+function artifactRelative(artifactsDir: string, filePath: string): string | undefined {
+  if (!artifactsDir || !filePath) return undefined;
+  const rel = relative(artifactsDir, filePath);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return undefined;
+  return rel.split("\\").join("/");
+}
+
+function projectOutputs(execution: Execution, steps: Step[], artifactsDir: string): Record<string, unknown>[] {
+  const step = steps.find((item) => item.key === execution.step);
+  if (!step) return [];
+  const dir = artifactRelative(artifactsDir, execution.outDir) ?? "";
+  return step.outputs.map((output) => {
+    const row: Record<string, unknown> = {
+      selector: output.path,
+      relative_path: dir ? `${dir}/${output.path}` : output.path,
+      discriminator: 0,
+    };
+    if (output.required) row.required = true;
+    return row;
+  });
+}
+
+function projectOccurrences(state: State, artifactsDir: string): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const occurrence of occurrences(state)) {
+    const producer = occurrence.producer ? state.executions.get(occurrence.producer) : undefined;
+    projected[occurrence.id] = {
+      id: occurrence.id,
+      producer_execution_id: occurrence.producer,
+      selector: occurrence.role,
+      logical_path: occurrence.role,
+      relative_path: artifactRelative(artifactsDir, occurrence.path) ?? occurrence.role,
+      depth: producer?.depth ?? 0,
+      discriminator: 0,
+      context_id: "root",
+      collection_ids: [],
+    };
+  }
+  return projected;
+}
+
+function projectionContext(repo: string, slug: string): { steps: Step[]; artifactsDir: string } {
+  const artifactsDir = join(repo, ".alinery", "tasks", slug, "artifacts");
+  try {
+    const parsed = parsePlaybookMd(readFileSync(join(repo, ".alinery", "tasks", slug, "playbook.md"), "utf8"));
+    return { steps: parsed.playbook?.steps ?? [], artifactsDir };
+  } catch {
+    return { steps: [], artifactsDir };
+  }
+}
+
+function taskAutoApproveAll(repo: string, slug: string): boolean {
+  const path = join(repo, ".alinery", "tasks", slug, "execution.json");
+  try {
+    const state = JSON.parse(readFileSync(path, "utf8")) as { auto_approve_all?: unknown };
+    return state.auto_approve_all === true;
+  } catch {
+    return false;
+  }
+}
+
 function executionState(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> | undefined {
   const path = join(repo, ".alinery", "tasks", slug, "execution.json");
   if (!existsSync(path)) return undefined;
   const state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  const executions: Record<string, unknown> = {};
-  for (const execution of engineExecutions(slug)) executions[execution.id] = projectExecution(execution);
-  if (Object.keys(executions).length) state.executions = executions;
+  const autoApproveAll = state.auto_approve_all === true;
+  const snapshot = engineSnapshot(repo, slug);
+  // The file keeps Rust uuid occurrences. The graph joins engine ids, so a log replaces both maps. No log leaves the file alone.
+  if (snapshot && (snapshot.seeds.length > 0 || snapshot.executions.size > 0)) {
+    const project = projectionContext(repo, slug);
+    const executions: Record<string, unknown> = {};
+    for (const execution of snapshot.executions.values()) executions[execution.id] = projectExecution(execution, autoApproveAll, project);
+    state.executions = executions;
+    state.occurrences = projectOccurrences(snapshot, project.artifactsDir);
+  }
   state.owning_lane = typeof state.owning_lane === "string" ? state.owning_lane : lane;
   state.owning_app_config_identity = typeof state.owning_app_config_identity === "string" ? state.owning_app_config_identity : appIdentity;
   return state;
@@ -154,7 +230,7 @@ function readMeta(repo: string, slug: string, id: string): Record<string, unknow
 }
 
 function sessionReply(meta: Record<string, unknown>, worktree: string): Record<string, unknown> {
-  return { worktree, created: Math.floor(Date.now() / 1000), harness: "omp", model: "", ...meta };
+  return { worktree, created: Math.floor(Date.now() / 1000), model: "", ...meta, harness: recordedHarness(meta.harness) };
 }
 
 export function getTaskExecution(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> {
@@ -179,7 +255,8 @@ async function overlayStart(repo: string, reply: Request, requested: boolean): P
       errors: [{ stage: "launch", code: "launch_failed", message: String(error) }],
     };
   }
-  const executions = engineExecutions(slug).map(projectExecution);
+  const project = projectionContext(repo, slug);
+  const executions = engineExecutions(slug).map((execution) => projectExecution(execution, false, project));
   const worktree = String(task?.worktree ?? repo);
   const sessions = executions
     .map((execution) => readMeta(repo, slug, String(execution.owner_session_id ?? "")))
@@ -222,10 +299,21 @@ export function taskWorktree(repo: string, slug: string): string {
 
 // SessionMeta requires worktree and created. A patch keeps values already on the file.
 // A file that does not have them, including one this daemon is creating, gets them now.
+/** Session meta records the Vinculum agent as `vinculum`. `omp` is the old key and the registry key. */
+export function recordedHarness(key: unknown): string {
+  const value = typeof key === "string" ? key.trim() : "";
+  if (!value || value === "omp") return "vinculum";
+  return value;
+}
+
 export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
   const next: Record<string, unknown> = { ...current, ...patch, id };
+  // Reopening a stopped session clears the exit. Null is the clear; a later stamp sets the number again.
+  if ("ended_at" in patch && patch.ended_at == null) delete next.ended_at;
+  if ("exit_code" in patch && patch.exit_code == null) delete next.exit_code;
   if (typeof next.worktree !== "string" || next.worktree === "") next.worktree = worktree;
   if (typeof next.created !== "number" || !Number.isFinite(next.created)) next.created = now;
+  if (next.harness === "omp") next.harness = "vinculum";
   return next;
 }
 
@@ -288,7 +376,7 @@ function materializeSessions(repo: string, reply: Request): Request {
       worktree,
       created: Math.floor(Date.now() / 1000),
       phase: step.key,
-      harness,
+      harness: recordedHarness(harness),
       model,
       execution_id: executionId,
     };
@@ -323,7 +411,7 @@ export async function createExecutionSession(
       id,
       worktree: taskWorktree(repo, slug),
       created: Math.floor(Date.now() / 1000),
-      harness: target.harness || "omp",
+      harness: recordedHarness(target.harness),
       model: target.model ?? "",
       subtask_manager: true,
     };
@@ -343,7 +431,7 @@ export async function createExecutionSession(
       worktree: taskWorktree(repo, slug),
       created: Math.floor(Date.now() / 1000),
       phase: target.step_key ?? "",
-      harness,
+      harness: recordedHarness(harness),
       model,
       execution_id: executionId,
       prompt_extra: String(request.prompt_extra ?? ""),
@@ -362,12 +450,12 @@ export async function createExecutionSession(
     if (!match?.sessionId) return { error: "that step is not reserved yet" };
     const session = readMeta(repo, slug, match.sessionId);
     if (!session) return { error: "missing session" };
-    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match), start: "started", errors: [] };
+    return { session: sessionReply(session, String(session.worktree ?? repo)), execution: projectExecution(match, taskAutoApproveAll(repo, slug), projectionContext(repo, slug)), start: "started", errors: [] };
   }
   const id = randomUUID();
   const model = target.model ?? "";
   const prompt = target.prompt ?? "";
-  const meta = { id, worktree: repo, created: Math.floor(Date.now() / 1000), harness: target.harness || "omp", model, generic: true, prompt };
+  const meta = { id, worktree: repo, created: Math.floor(Date.now() / 1000), harness: recordedHarness(target.harness), model, generic: true, prompt };
   const dir = slug ? join(repo, ".alinery", "tasks", slug, "sessions") : join(repo, ".alinery", "sessions");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
@@ -385,15 +473,30 @@ export async function startSession(
   const session = readMeta(repo, slug, id);
   if (!session) return { error: "missing session" };
   if (slug) {
+    let resumed = false;
     try {
-      await runTask(slug);
-    } catch {
-      /* a terminal still starts when the playbook has no model */
+      resumed = await resumeFailedSession(slug, id);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+    if (!resumed) {
+      const existing = engineExecutions(slug).find((item) => item.sessionId === id);
+      if (existing && (existing.status === "done" || existing.status === "finishing")) return { error: "this execution already completed" };
+      try {
+        await runTask(slug);
+      } catch {
+        /* a terminal still starts when the playbook has no model */
+      }
     }
   }
   const execution = engineExecutions(slug).find((item) => item.sessionId === id);
   if (!execution) await openSession(id, slug, String(session.model ?? ""), String(session.prompt ?? ""));
-  return { session: sessionReply(session, String(session.worktree ?? repo)), execution: execution ? projectExecution(execution) : null, start: "started", errors: [] };
+  return {
+    session: sessionReply(session, String(session.worktree ?? repo)),
+    execution: execution ? projectExecution(execution, taskAutoApproveAll(repo, slug), projectionContext(repo, slug)) : null,
+    start: "started",
+    errors: [],
+  };
 }
 
 export async function createSubtask(repo: string, lane: string, appIdentity: string, request: Request): Promise<Record<string, unknown>> {

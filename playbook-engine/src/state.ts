@@ -56,6 +56,12 @@ export interface Execution {
   origin: string | null;
   status: ExecutionStatus;
   sessionId: string | null;
+  /**
+   * Whether this execution may finish without a person, snapshotted when it was reserved.
+   * Absent on a log written before the snapshot: the playbook default still applies.
+   * A later edit of the task set does not change it.
+   */
+  automatic?: boolean;
   /** Human granted permission to finish this particular execution. Reset on resume. */
   permitted: boolean;
   /** Immutable publication set. Set once on acceptance; later files never join it. */
@@ -82,7 +88,7 @@ export interface State {
 
 export type Event =
   | { t: 'seeded'; occurrences: Occurrence[] }
-  | { t: 'reserved'; execution: Pick<Execution, 'id' | 'step' | 'depth' | 'inputs' | 'outDir' | 'origin'> }
+  | { t: 'reserved'; execution: Pick<Execution, 'id' | 'step' | 'depth' | 'inputs' | 'outDir' | 'origin' | 'automatic'> }
   | { t: 'started'; execId: string; sessionId: string }
   | { t: 'resumed'; execId: string; sessionId: string }
   | { t: 'permitted'; execId: string }

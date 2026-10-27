@@ -59,6 +59,37 @@ export function vinculumAuthContext(): AuthContext {
 }
 
 /**
+ * Pi's Azure catalog has DeepSeek V4 Pro and no Grok. Foundry also serves
+ * DeepSeek V4 Flash and Grok 4.7 on that same chat-completions path. The id
+ * is the deployment name the request sends.
+ */
+function installAzureFoundryModels(models: MutableModels) {
+  const azure = models.getProvider("azure");
+  const pro = models.getModel("azure", "deepseek-v4-pro");
+  if (!azure || !pro || pro.api !== "openai-completions") return;
+  const grok = models.getModel("xai", "grok-4.7");
+  const additions = [
+    { ...structuredClone(pro), id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+    {
+      ...structuredClone(pro),
+      id: "grok-4.7",
+      name: "Grok 4.7",
+      input: [...(grok?.input ?? ["text", "image"])],
+      contextWindow: grok?.contextWindow ?? 500_000,
+      maxTokens: grok?.maxTokens ?? 500_000,
+      thinkingLevelMap: grok?.thinkingLevelMap ? { ...grok.thinkingLevelMap } : pro.thinkingLevelMap,
+      cost: grok?.cost ? structuredClone(grok.cost) : pro.cost,
+      inputLimits: grok?.inputLimits ? structuredClone(grok.inputLimits) : pro.inputLimits,
+    },
+  ].filter((model) => !azure.getModels().some((existing) => existing.id === model.id));
+  if (additions.length === 0) return;
+  const chat = azure.getModels.bind(azure);
+  const all = azure.getAllModels?.bind(azure) ?? chat;
+  azure.getModels = () => [...chat(), ...additions];
+  azure.getAllModels = () => [...all(), ...additions];
+}
+
+/**
  * Pi's Azure login asks for the key and nothing else. The endpoint is provider
  * config, not the key, so it has to ride along on the credential or the next
  * request throws "base URL is required".
@@ -108,6 +139,7 @@ function deviceId(appConfig: string): string {
 export function openProviderRuntime(appConfig: string) {
   const credentials = openCredentialStore(credentialPath(appConfig));
   const models = builtinModels({ credentials, authContext: vinculumAuthContext() });
+  installAzureFoundryModels(models);
   installAzureEndpointPrompt(models);
   installAlineryProvider(models, appConfig);
   const custom = openCustomProviders(customProviderPath(appConfig));

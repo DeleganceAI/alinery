@@ -52,7 +52,7 @@ describe("ProviderSetupDialog", () => {
   it("lists hosted models without opening an OMP session", async () => {
     settleIpc(readyHosted);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    expect(await screen.findByText("alinery/Qwen3.6-35B-A3B")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
     expect(screen.queryByText(/OMP process sessions are not available/)).toBeNull();
     expect(mocks.ompSetupSession).not.toHaveBeenCalled();
     expect(mocks.rpcAttachSession).not.toHaveBeenCalled();
@@ -62,8 +62,8 @@ describe("ProviderSetupDialog", () => {
   it("adds Grok models when a key is saved", async () => {
     settleIpc(readyHosted, true);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    expect(await screen.findByText("xai/grok-4.7")).toBeTruthy();
-    expect(screen.getByText("alinery/Qwen3.6-35B-A3B")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "xai/grok-4.7" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
   });
 
   it("shows Connecting… until the hosted catalog returns", async () => {

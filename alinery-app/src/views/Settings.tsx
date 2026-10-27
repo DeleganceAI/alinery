@@ -1176,48 +1176,75 @@ export function Settings({
           )}
           {!isGlobal && <div className="hint">Blank can be a repository override; use the button above to inherit.</div>}
         </div>
-        <div className="field">
-          <label htmlFor={`${key}-thinking`}>
-            {title} thinking level
-            {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
-          </label>
-          <select
-            id={`${key}-thinking`}
-            className="field-input"
-            value={effectiveThinking(value.thinking)}
-            onChange={(event) => {
-              const thinking = event.target.value;
-              if (isGlobal) updateGlobalChoice(key, { thinking });
-              else {
-                setRepoChoice(key, { thinking });
-                saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
-              }
+        <details className="harness-disclosure">
+          <summary>Session preferences</summary>
+          <div className="field">
+            <label htmlFor={`${key}-thinking`}>
+              {title} thinking level
+              {!isGlobal && sourceBadge(provenance.thinking, `${key}.thinking`)}
+            </label>
+            <select
+              id={`${key}-thinking`}
+              className="field-input"
+              value={effectiveThinking(value.thinking)}
+              onChange={(event) => {
+                const thinking = event.target.value;
+                if (isGlobal) updateGlobalChoice(key, { thinking });
+                else {
+                  setRepoChoice(key, { thinking });
+                  saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], thinking } });
+                }
+              }}
+            >
+              {THINKING_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+            <div className="hint">New sessions start at this level; resumed sessions keep theirs.</div>
+          </div>
+          <Checkbox
+            checked={value.draft_autosave}
+            onChange={(v) => {
+              if (isGlobal) updateGlobalChoice(key, { draft_autosave: v });
+              else setRepoChoiceBool(key, "draft_autosave", v);
             }}
-          >
-            {THINKING_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-          <div className="hint">New sessions start at this level; resumed sessions keep theirs.</div>
-        </div>
-        <Checkbox
-          checked={value.draft_autosave}
-          onChange={(v) => {
-            if (isGlobal) updateGlobalChoice(key, { draft_autosave: v });
-            else setRepoChoiceBool(key, "draft_autosave", v);
-          }}
-          label={
-            <div>
+            label={
               <div>
-                Autosave drafts
-                {!isGlobal && sourceBadge(provenance.draft_autosave, `${key}.draft_autosave`)}
+                <div>
+                  Autosave drafts
+                  {!isGlobal && sourceBadge(provenance.draft_autosave, `${key}.draft_autosave`)}
+                </div>
+                <div className="hint">Save Create Task fields as draft tasks while typing (default on)</div>
               </div>
-              <div className="hint">Save Create Task fields as draft tasks while typing (default on)</div>
+            }
+          />
+          <div className="field" style={{ marginTop: 16 }}>
+            <label id="session-default-view-label">Default session view</label>
+            {!isGlobal && globalOnly("Default session view")}
+            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
+              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
+                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    className={`theme-card ${active ? "active" : ""}`}
+                    disabled={!isGlobal}
+                    aria-pressed={active}
+                    onClick={() => {
+                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
+                    }}
+                  >
+                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
+                  </button>
+                );
+              })}
             </div>
-          }
-        />
+            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
+          </div>
+        </details>
       </>
     );
   };
@@ -1615,7 +1642,21 @@ export function Settings({
     const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
     const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
-      <>
+      <div className="harness-settings-layout">
+        <section className="harness-settings-section" aria-labelledby="session-defaults-title">
+          <h3 id="session-defaults-title">Session defaults</h3>
+          <p className="hint">
+            Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. Playbooks and individual steps can override it.
+          </p>
+          {choiceSection("defaults", "Default")}
+          <details className="harness-disclosure">
+            <summary>How model defaults work</summary>
+            <p className="hint">
+              A step’s model takes priority, followed by the playbook’s default, then the repository default. Repositories inherit global settings unless overridden. An empty model
+              uses the harness default.
+            </p>
+          </details>
+        </section>
         <section className="omp-settings" aria-labelledby="providers-settings-title">
           <div className="omp-settings-heading">
             <h3 id="providers-settings-title">Providers</h3>
@@ -1625,38 +1666,18 @@ export function Settings({
             Providers &amp; accounts
           </button>
           {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-          <VinculumCustomizations />
+          <details className="harness-disclosure harness-customizations">
+            <summary>Customizations</summary>
+            <VinculumCustomizations />
+          </details>
         </section>
-        <section className="harness-settings-section" aria-labelledby="session-defaults-title">
-          <h3 id="session-defaults-title">Session defaults</h3>
-          {choiceSection("defaults", "Default")}
-          <div className="field" style={{ marginTop: 16 }}>
-            <label id="session-default-view-label">Default session view</label>
-            {!isGlobal && globalOnly("Default session view")}
-            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
-              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
-                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
-                return (
-                  <button
-                    key={view}
-                    type="button"
-                    className={`theme-card ${active ? "active" : ""}`}
-                    disabled={!isGlobal}
-                    aria-pressed={active}
-                    onClick={() => {
-                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
-                    }}
-                  >
-                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
-          </div>
-        </section>
-        <section className="harness-settings-section" aria-labelledby="session-daemon-title">
-          <h3 id="session-daemon-title">Session daemon</h3>
+        <details className="harness-disclosure harness-session-service">
+          <summary>
+            Session service{" "}
+            <span className="dim">
+              {live} live session{plural(live)}
+            </span>
+          </summary>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
             Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
             {isGlobal ? "" : " only"}
@@ -1714,8 +1735,8 @@ export function Settings({
           >
             Stop all sessions in {scopeName || "this repo"}
           </button>
-        </section>
-      </>
+        </details>
+      </div>
     );
   };
 

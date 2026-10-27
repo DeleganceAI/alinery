@@ -39,6 +39,8 @@ const ipcSpies = vi.hoisted(() => ({
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
+  rpcWriteSession: vi.fn(),
+  sessionAbort: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
   setAutoApproveAllForRepo: vi.fn(),
@@ -93,6 +95,8 @@ vi.mock("../ipc", () =>
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
+    rpcWriteSession: ipcSpies.rpcWriteSession,
+    sessionAbort: ipcSpies.sessionAbort,
     renameSession: ipcSpies.renameSession,
     renameTask: ipcSpies.renameTask,
     setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
@@ -268,6 +272,8 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
+  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
+  ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
     return { name, source: "user" };
@@ -823,6 +829,59 @@ describe("task session archive pending feedback", () => {
   });
 });
 
+describe("task session row Stop", () => {
+  it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
+    scenario.sessions = [session({ id: "stop-me", harness: "vinculum" })];
+    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
+    const pending = deferred<void>();
+    ipcSpies.sessionAbort.mockReturnValueOnce(pending.promise);
+    const { onOpenSession } = await renderDetail();
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
+    act(() => {
+      fireEvent.click(stop);
+      fireEvent.click(stop);
+    });
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("stop-me");
+    expect(onOpenSession).not.toHaveBeenCalled();
+    expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => pending.reject(new Error("abort delivery failed")));
+    expect(screen.getByText(/abort delivery failed/)).toBeDefined();
+    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByRole("button", { name: "Kill" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeDefined();
+  });
+
+  it("matches chat availability for input, approval, idle, exited, and terminal sessions", async () => {
+    const rows = [
+      { id: "input", agent: "waiting_for_input", transport: "rpc", live: true },
+      { id: "approval", agent: "waiting_for_approval", transport: "rpc", live: true },
+      { id: "idle", agent: "idle", transport: "rpc", live: true },
+      { id: "exited", agent: "busy", transport: "rpc", live: false },
+      { id: "terminal", agent: "busy", transport: "pty", live: true },
+    ] as const;
+    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
+    mocks.sessionStatuses.mockResolvedValue(
+      Object.fromEntries(
+        rows.map(({ id, agent, transport, live }) => {
+          const obs = observation("busy");
+          return [id, { ...obs, transport, lifecycle: live ? obs.lifecycle : { state: "exited", code: 0 }, state: { ...obs.state, agent: { state: agent } } }];
+        }),
+      ),
+    );
+    await renderDetail();
+    for (const { id } of rows) {
+      const row = (await screen.findByText(id)).closest("tr") as HTMLTableRowElement;
+      await waitFor(() => expect((within(row).getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(id !== "input"));
+    }
+  });
+});
+
 it("switches the saved task playbook between its list and graph-only canvas while the owner is offline", async () => {
   const retained = executionReply();
   retained.live = { status: "offline", detail: "Owner socket unavailable" };
@@ -882,9 +941,24 @@ describe("Task Detail sub-task manager projection", () => {
     const start = screen.getByRole("button", { name: "Start sub-task" });
     expect((start as HTMLButtonElement).disabled).toBe(true);
     expect(start.getAttribute("title")).toBe("Finish the active sub-task before starting another");
-    expect(screen.getByText("Finish the active sub-task before starting another")).toBeDefined();
+    const reason = screen.getByText("Finish the active sub-task before starting another");
+    expect(start.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(reason.closest(".task-session-controls")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New session" }));
     expect(onNewSession).toHaveBeenCalledOnce();
+  });
+
+  it("labels running ordinary and manager sessions without requiring hover", async () => {
+    scenario.state = state({ manager_session: manager });
+    scenario.sessions = [manager, { ...session({ id: "ordinary" }), name: "Review changes" }];
+    scenario.managerObservation = observation("busy");
+
+    await renderDetail();
+
+    const managerRow = screen.getByRole("button", { name: "Open manager session" }).closest("tr") as HTMLTableRowElement;
+    const ordinaryRow = screen.getByRole("row", { name: "Open session superdevelop · research" });
+    expect(within(managerRow).getByText("Running")).toBeDefined();
+    expect(within(ordinaryRow).getByText("Running")).toBeDefined();
   });
 
   it("starts exactly one parent-owned manager and attaches without spawning it again", async () => {
@@ -1703,7 +1777,7 @@ describe("Task Detail duplicate action", () => {
 });
 
 const renderedSessionSteps = (container: HTMLElement) =>
-  [...container.querySelectorAll(".task-session-table tbody .session-step-cell > .pill:first-child")].map((node) => node.textContent);
+  [...container.querySelectorAll(".task-session-table tbody .session-step-cell > :first-child")].map((node) => node.textContent);
 
 describe("session list without identifiers", () => {
   it("keeps same-step sessions independently openable and preserves archived history and resumed state", async () => {
@@ -1854,7 +1928,7 @@ describe("attention-first session order", () => {
     await waitFor(() => expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/r", "a-task", "stopped-generic"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge exited sessions" })).toBeNull());
     expect(within(stoppedRow).queryByRole("img", { name: /Failed/ })).toBeNull();
-    expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("");
+    expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("Exited");
   });
 });
 
@@ -1950,7 +2024,7 @@ describe("session time columns and sorting", () => {
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
-    expect(screen.getByLabelText("Stale")).toBeDefined();
+    expect(screen.getByText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
     await act(async () => {
@@ -1966,7 +2040,7 @@ describe("session time columns and sorting", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-    await vi.waitFor(() => expect(screen.getByLabelText("Stale")).toBeDefined());
+    await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
     expect(screen.queryByText("Failed")).toBeNull();
     expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]);
     expect(updated.closest("th")?.getAttribute("aria-sort")).toBe("descending");

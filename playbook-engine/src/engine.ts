@@ -42,10 +42,26 @@ export interface EngineOptions {
   artifactsDir: string;
   /** Agent working directory: the task's repo checkout or worktree. */
   cwd: string;
-  /** Task-level live-session cap. Starting, running, idle and finishing sessions all count. Default 10. */
-  maxLiveSessions?: number;
-  /** Task-level human gate per step key. true = the agent may complete on its own. Defaults to each step's autoAdvanceDefault. */
+  /**
+   * Task-level live-session cap. Starting, running, idle and finishing sessions all count.
+   * A function is read again each time a session would launch. `0` launches nothing. Default 10.
+   */
+  maxLiveSessions?: number | (() => number);
+  /**
+   * Task set, read when an execution is reserved and stored on that execution.
+   * A step in the list may finish on its own. A step that is absent is locked, even when the
+   * playbook default is true. Omit it and the playbook default is what gets snapshotted.
+   */
+  enabledSteps?: () => readonly string[];
+  /** Task-level human gate per step key, used only when `enabledSteps` is omitted. */
   autoAdvance?: Record<string, boolean>;
+  /** Read on every completion. True lets a locked execution finish. It does not change the snapshot. */
+  autoApproveAll?: () => boolean;
+  /**
+   * Prompt tokens that belong to one launch. Called while rendering that step.
+   * When set, it replaces `PROMPT_EXTRA` and `REVIEW_HANDOFF_FILE` for that launch, including with empty strings.
+   */
+  stepTokens?: (step: string) => { PROMPT_EXTRA?: string; REVIEW_HANDOFF_FILE?: string } | undefined;
   /** Values for prompt tokens that are not derived from the execution. `{{ARTIFACTS_DIR}}` is each execution's own output directory. */
   tokens?: {
     TICKET_FILE?: string;
@@ -62,7 +78,6 @@ const WRAP_UP = 'Permission to finish granted. Complete your writes, give a brie
 
 export class Engine {
   readonly #opts: EngineOptions;
-  readonly #cap: number;
   #state: State;
   /** Executions whose shutdown this process has already requested. Rebuilt lazily after restart; stop() is idempotent. */
   readonly #stopping = new Set<string>();
@@ -71,7 +86,6 @@ export class Engine {
 
   private constructor(opts: EngineOptions, state: State) {
     this.#opts = opts;
-    this.#cap = opts.maxLiveSessions ?? 10;
     this.#state = state;
   }
 
@@ -141,7 +155,7 @@ export class Engine {
     if (e.status !== 'failed') throw new Error(`${execId} is ${e.status}; only a failed execution can be resumed`);
     if (e.receipt) throw new Error(`${execId} already published; use confirmExited once its process has stopped`);
     const step = this.#step(e.step);
-    if (this.#live().length >= this.#cap) throw new Error('task is at its live-session cap');
+    if (this.#live().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
     if (step.isCodingStep && this.#codingHeld()) throw new Error('another coding execution holds the worktree');
     const launch = this.#launchFor(e, step);
     const sessionId = e.sessionId ? await this.#opts.harness.resume(e.sessionId, launch) : await this.#opts.harness.start(launch);
@@ -189,14 +203,15 @@ export class Engine {
       const id = `e${this.#state.executions.size + 1}`;
       const siblings = [...this.#state.executions.values()].filter((e) => e.step === r.step && e.depth === r.depth).length;
       const outDir = join(this.#opts.artifactsDir, `${r.depth}-${r.step}-${siblings + 1}`);
-      this.#append({ t: 'reserved', execution: { id, ...r, outDir } });
+      const step = this.#step(r.step);
+      this.#append({ t: 'reserved', execution: { id, ...r, outDir, automatic: this.#gateAtReserve(step) } });
     }
   }
 
   async #launch(): Promise<void> {
     for (const e of [...this.#state.executions.values()]) {
       if (e.status !== 'reserved') continue;
-      if (this.#live().length >= this.#cap) break;
+      if (this.#live().length >= this.#liveCap()) break;
       const step = this.#step(e.step);
       if (step.isCodingStep && this.#codingHeld()) continue;
       mkdirSync(e.outDir, { recursive: true });
@@ -229,10 +244,13 @@ export class Engine {
 
   #render(step: Step, e: Execution, inputs: Record<string, string[]>, outputs: Record<string, string>): string {
     const exact = step.outputs.find((output) => !output.path.includes('*'));
+    const launchTokens = this.#opts.stepTokens?.(step.key);
+    const extra = launchTokens ? (launchTokens.PROMPT_EXTRA ?? '') : (this.#opts.tokens?.PROMPT_EXTRA ?? '');
+    const handoff = launchTokens ? (launchTokens.REVIEW_HANDOFF_FILE ?? '') : (this.#opts.tokens?.REVIEW_HANDOFF_FILE ?? '');
     const tokens: Record<string, string> = {
       ARTIFACTS_DIR: e.outDir,
       ARTIFACT_FILE: exact ? join(e.outDir, exact.path) : '',
-      REVIEW_HANDOFF_FILE: this.#opts.tokens?.REVIEW_HANDOFF_FILE ?? '',
+      REVIEW_HANDOFF_FILE: handoff,
       SESSION_HISTORY_DIR: this.#opts.tokens?.SESSION_HISTORY_DIR ?? '',
       TASK_NAME: this.#opts.tokens?.TASK_NAME ?? '',
       TASK_SLUG: this.#opts.tokens?.TASK_SLUG ?? '',
@@ -241,7 +259,7 @@ export class Engine {
       PHASE_KEY: step.key,
       PHASE_TITLE: step.title,
       TICKET_FILE: this.#opts.tokens?.TICKET_FILE ?? '',
-      PROMPT_EXTRA: this.#opts.tokens?.PROMPT_EXTRA ?? '',
+      PROMPT_EXTRA: extra,
     };
     const lines = [step.prompt.replace(/(?<!\\)\{\{(\w+)\}\}/g, (_, k: string) => tokens[k] ?? ''), '', '## Engine assignment', `Execution ${e.id} of step "${step.key}".`, '', 'Read exactly these inputs:'];
     const bound = Object.entries(inputs).flatMap(([slot, paths]) => paths.map((p) => `  ${slot} -> ${p}`));
@@ -252,8 +270,22 @@ export class Engine {
     return lines.join('\n');
   }
 
+  /** Cap for the launch about to happen. `0` is not a cap of "unlimited"; it reserves and does not start. */
+  #liveCap(): number {
+    const raw = this.#opts.maxLiveSessions;
+    const value = typeof raw === 'function' ? raw() : (raw ?? 10);
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }
+
+  /** The gate stored on the reserved event. A provided task set wins over the playbook default. */
+  #gateAtReserve(step: Step): boolean {
+    if (this.#opts.enabledSteps) return this.#opts.enabledSteps().includes(step.key);
+    return this.#opts.autoAdvance?.[step.key] ?? step.autoAdvanceDefault;
+  }
+
   #permitted(e: Execution): boolean {
-    return (this.#opts.autoAdvance?.[e.step] ?? this.#step(e.step).autoAdvanceDefault) || e.permitted;
+    const gate = typeof e.automatic === 'boolean' ? e.automatic : (this.#opts.autoAdvance?.[e.step] ?? this.#step(e.step).autoAdvanceDefault);
+    return gate || (this.#opts.autoApproveAll?.() ?? false) || e.permitted;
   }
 
   /** Sessions occupying capacity: anything with a process that has not confirmed exit. */

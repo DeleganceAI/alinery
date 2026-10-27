@@ -6,6 +6,7 @@ export type ObservationDisplayKind =
   | "completed"
   | "ready_to_advance"
   | "exited"
+  | "never_started"
   | "loading"
   | "unsupported"
   | "starting"
@@ -37,6 +38,7 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   const { lifecycle, state } = observation;
   if (!state) {
     if (observation.checkpoint.phase_completed_at != null) return "completed";
+    if (lifecycle.state === "never_started") return "never_started";
     if (lifecycle.state === "live" || lifecycle.state === "live_exited") return "unknown";
     return "exited";
   }
@@ -61,6 +63,23 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   if (agent.state === "unknown") return "loading";
   if (agent.state === "idle") return "idle";
   return "unknown";
+}
+
+// Shared by the session marker and list filters so exit acknowledgments and
+// superseded attempts cannot disagree with the status used to find a row.
+export function sessionDisplayKind(
+  observation: SessionObservation | null | undefined,
+  superseded = false,
+  exitCode: number | null = null,
+  exitAcknowledged = false,
+): ObservationDisplayKind {
+  const observed = observation ? observationDisplayKind(observation) : "loading";
+  const acknowledgedExit = exitAcknowledged && (!observation?.state || observation.state.process.state === "exited");
+  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "exited") ? "stale" : observed;
+  if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+    return "failed";
+  }
+  return kind;
 }
 
 export function sameSessionObservationMaps(left: Record<string, SessionObservation>, right: Record<string, SessionObservation>): boolean {
