@@ -378,7 +378,24 @@ pub fn provision_task_with_reservation(
     let mut reservation_error = None;
     let task = crate::with_task_mutation_lock_waiting(repo, "reserve task provisioning", crate::TASK_MUTATION_CONTENTION_WAIT, || {
         before_reserve()?;
-        let reserved_tasks = crate::list_tasks_for_repo(repo);
+        let draft = match request.draft_slug.as_deref().filter(|s| !s.is_empty()) {
+            Some(slug) => {
+                if crate::safe_component(slug) != Some(slug) {
+                    return Err("invalid draft slug".into());
+                }
+                match crate::read_task(repo, slug) {
+                    Some(task) if task.draft && !task.archived => Some(task),
+                    Some(task) if task.draft => None,
+                    Some(_) => return Err("draft was already created".into()),
+                    None => return Err("draft is missing or has already been promoted".into()),
+                }
+            }
+            None => None,
+        };
+        let mut reserved_tasks = crate::list_tasks_for_repo(repo);
+        if let Some(draft) = &draft {
+            reserved_tasks.retain(|task| task.slug != draft.slug);
+        }
         let refs = crate::git_cmd(repo)
             .args(["for-each-ref", "--format=%(refname:strip=2)", "refs/heads"])
             .output()
@@ -403,20 +420,6 @@ pub fn provision_task_with_reservation(
         }
         let branch = unique_name(branch_occupied, &branch_base);
         ensure_task_data_ignored(repo)?;
-        let draft = match request.draft_slug.as_deref().filter(|s| !s.is_empty()) {
-            Some(slug) => {
-                if crate::safe_component(slug) != Some(slug) {
-                    return Err("invalid draft slug".into());
-                }
-                match crate::read_task(repo, slug) {
-                    Some(task) if task.draft && !task.archived => Some(task),
-                    Some(task) if task.draft => None,
-                    Some(_) => return Err("draft was already created".into()),
-                    None => return Err("draft is missing or has already been promoted".into()),
-                }
-            }
-            None => None,
-        };
         let slug = unique_name(|s| crate::task_dir(repo, s).exists() && draft.as_ref().is_none_or(|d| d.slug != s), &requested);
         if let Some(draft) = &draft {
             if draft.slug != slug {
@@ -702,6 +705,74 @@ mod tests {
         assert_eq!(exact.creation, "ready");
         assert_eq!(exact.task.unwrap().branch, "feat-1");
         fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn draft_promotion_keeps_available_explicit_names() {
+        let fixture = AttachmentRepo(repo());
+        let repo = &fixture.0;
+        let draft = Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            branch: "explicit-branch".into(),
+            worktree: "explicit-tree".into(),
+            draft: true,
+            created: 123,
+            ..Task::default()
+        };
+        crate::task::write_task_unlocked(repo, &draft).unwrap();
+        let mut request = request(&draft.branch);
+        request.draft_slug = Some(draft.slug.clone());
+        request.requested_slug = Some(draft.slug.clone());
+        request.worktree_name = Some("explicit-tree".into());
+        let reply = provision_task(repo, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        let task = reply.task.unwrap();
+        assert_eq!((&task.slug, &task.branch, task.created), (&draft.slug, &draft.branch, draft.created));
+        assert_eq!(Path::new(&task.worktree), crate::worktrees_dir(repo).join(&draft.worktree));
+        assert!(!task.draft);
+        assert_eq!(git(Path::new(&task.worktree), &["branch", "--show-current"]).trim(), draft.branch);
+        assert_eq!(crate::list_tasks_for_repo(repo).len(), 1);
+    }
+
+    #[test]
+    fn draft_promotion_preserves_other_task_name_reservations() {
+        for other_is_draft in [false, true] {
+            let fixture = AttachmentRepo(repo());
+            let repo = &fixture.0;
+            let draft = Task {
+                name: "Draft".into(),
+                slug: "draft".into(),
+                branch: "explicit-branch".into(),
+                worktree: "explicit-tree".into(),
+                draft: true,
+                ..Task::default()
+            };
+            let other = Task {
+                slug: "other".into(),
+                draft: other_is_draft,
+                worktree: if other_is_draft {
+                    draft.worktree.clone()
+                } else {
+                    crate::worktrees_dir(repo).join(&draft.worktree).to_string_lossy().into_owned()
+                },
+                ..draft.clone()
+            };
+            crate::task::write_task_unlocked(repo, &draft).unwrap();
+            crate::task::write_task_unlocked(repo, &other).unwrap();
+            let other_path = crate::task_dir(repo, &other.slug).join("task.md");
+            let before = fs::read(&other_path).unwrap();
+            let mut request = request(&draft.branch);
+            request.draft_slug = Some(draft.slug.clone());
+            request.worktree_name = Some("explicit-tree".into());
+            let reply = provision_task(repo, "", "fixture", &request).unwrap();
+            assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+            let task = reply.task.unwrap();
+            assert_eq!(task.branch, "explicit-branch-1");
+            assert_eq!(Path::new(&task.worktree).file_name().unwrap(), "explicit-tree-1");
+            assert_eq!(fs::read(other_path).unwrap(), before);
+            assert!(!crate::task_dir(repo, &draft.slug).exists());
+        }
     }
 
     #[test]
@@ -1308,11 +1379,23 @@ mod tests {
             .iter()
             .any(|p| p.file_name().unwrap() == "explicit trees"));
 
-        let mut request = request("new-feat");
+        let draft = Task {
+            name: "Draft".into(),
+            slug: "draft".into(),
+            branch: "old-feat".into(),
+            worktree: "explicit trees".into(),
+            draft: true,
+            ..Task::default()
+        };
+        crate::task::write_task_unlocked(&repo, &draft).unwrap();
+        let mut request = request("old-feat");
+        request.draft_slug = Some(draft.slug);
         request.worktree_name = Some("explicit trees".into());
         let reply = provision_task(&repo, "", "fixture", &request).unwrap();
         assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
         let task = reply.task.unwrap();
+        assert_eq!(task.branch, "old-feat-1");
+        assert_eq!(Path::new(&task.worktree).file_name().unwrap(), "explicit trees-1");
         assert!(Path::new(&task.worktree).exists());
         // The stale registration and its branch stay untouched.
         assert!(crate::git::registered_worktree_paths(&repo)
