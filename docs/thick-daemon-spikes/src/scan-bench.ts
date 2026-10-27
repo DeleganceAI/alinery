@@ -8,11 +8,9 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFi
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-const [realAlinery, scratch, ...copyArgs] = process.argv.slice(2);
-const copies = copyArgs.length ? copyArgs.map(Number) : [1, 5, 25, 100];
 const SKIP = /\.(omp|scrollback|log)$/;
 
-function build(n: number): string {
+export function build(realAlinery: string, scratch: string, n: number): string {
   const root = join(scratch, `x${n}`, ".alinery", "tasks");
   rmSync(join(scratch, `x${n}`), { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
@@ -29,7 +27,7 @@ function build(n: number): string {
 }
 
 type Tracked = { path: string; mtimeMs: number; size: number };
-function scan(root: string) {
+export function scan(root: string) {
   const index = new Map<string, unknown>();
   const tracked: Tracked[] = [];
   const track = (path: string) => { const s = statSync(path); tracked.push({ path, mtimeMs: s.mtimeMs, size: s.size }); };
@@ -65,9 +63,12 @@ async function reconcileAsync(root: string, tracked: Tracked[]) {
   return { changed, maxGap };
 }
 
-const time = <T>(f: () => T): [T, number] => { const t0 = performance.now(); const r = f(); return [r, performance.now() - t0]; };
+export const time = <T>(f: () => T): [T, number] => { const t0 = performance.now(); const r = f(); return [r, performance.now() - t0]; };
+if (import.meta.main) {
+const [realAlinery, scratch, ...copyArgs] = process.argv.slice(2);
+const copies = copyArgs.length ? copyArgs.map(Number) : [1, 5, 25, 100];
 for (const n of copies) {
-  const root = build(n);
+  const root = build(realAlinery, scratch, n);
   Bun.gc(true);
   const rss0 = process.memoryUsage().rss;
   const [{ index, tracked }, scanMs] = time(() => scan(root));
@@ -83,3 +84,4 @@ for (const n of copies) {
     reconcileAsyncMs: +asyncMs.toFixed(1), reconcileAsyncMaxLoopGapMs: +maxGap.toFixed(1) }));
 }
 rmSync(scratch, { recursive: true, force: true });
+}

@@ -1,4 +1,5 @@
-# S0.3 sample: the shell half of the bridge. Versions match alinery-app/src-tauri/Cargo.lock.
+# S0.3 sample: the shell half of the bridge. Versions match alinery-app/src-tauri/Cargo.lock,
+# except h2 0.4.20 (from hyper's http2 feature, src/bin/h2.rs), which the app's lockfile lacks.
 # Build with --locked; the first build downloads hyper and friends, which the app doesn't build today.
 [package]
 name = "bridge-rs"
@@ -12,7 +13,7 @@ publish = false
 bytes = "1.12.0"
 http = "1.4.2"
 http-body-util = "0.1.3"
-hyper = { version = "1.10.1", features = ["client", "http1"] }
+hyper = { version = "1.10.1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 serde_json = "1.0.150"
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "time"] }

@@ -4,6 +4,9 @@
 // side will do (HTTP/1.1 to the unix socket, frame and pad each chunk) with Bun's fetch.
 
 export const HEAD = 1, BODY = 2, END = 3;
+// O1 (b): HTTP/2 trailers, as a JSON array of [name, value]. The webview turns them into a
+// gRPC-web trailer frame (grpc-bridge.ts), so the shell stays a plain HTTP/2 forwarder.
+export const TRAILERS = 4;
 export const PAD_TO = 1024; // Tauri 2.11 MAX_RAW_DIRECT_EXECUTE_THRESHOLD (tauri/src/ipc/channel.rs:39)
 
 // One channel message holds one or more frames: [u32 LE len][u8 kind][payload], then zero padding
@@ -44,6 +47,16 @@ export type DaemonRpcCancel = (callId: string) => void;
 const text = new TextDecoder();
 const enc = new TextEncoder();
 
+// gRPC-web carries trailers in the body: flag 0x80, u32 BE length, then "name: value\r\n" lines.
+export function grpcWebTrailer(pairs: [string, string][]): Uint8Array {
+  const block = enc.encode(pairs.map(([k, v]) => `${k}: ${v}\r\n`).join(""));
+  const out = new Uint8Array(5 + block.length);
+  out[0] = 0x80;
+  new DataView(out.buffer).setUint32(1, block.length, false);
+  out.set(block, 5);
+  return out;
+}
+
 export function bridgeFetch(daemonRpc: DaemonRpc, cancelRpc: DaemonRpcCancel): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -72,6 +85,7 @@ export function bridgeFetch(daemonRpc: DaemonRpc, cancelRpc: DaemonRpcCancel): t
           for (const f of splitFrames(msg)) {
             if (f.kind === HEAD) gotHead(JSON.parse(text.decode(f.payload)));
             else if (f.kind === BODY) ctrl.enqueue(f.payload.slice());
+            else if (f.kind === TRAILERS) ctrl.enqueue(grpcWebTrailer(JSON.parse(text.decode(f.payload))));
             else {
               done = true;
               const err = text.decode(f.payload);
