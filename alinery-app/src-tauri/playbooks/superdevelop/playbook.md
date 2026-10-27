@@ -2,7 +2,7 @@
 version = 2
 key = "superdevelop"
 title = "SuperDevelop"
-tagline = "Take a software change from open questions to code ready for review."
+tagline = "Superpowers inspired code development process"
 description = "Develop a change through Clarify, Investigate, Decide, Plan, Define Tests, Build, and Prepare Review."
 default_model = ""
 default_harness = "omp"
