@@ -743,7 +743,7 @@ describe("onboarding gate", () => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^API keys/ }));
     const provider = await screen.findByRole("dialog", { name: /providers/i });
     const accounts = within(provider).getByRole("tab", { name: "Accounts" });
     accounts.focus();

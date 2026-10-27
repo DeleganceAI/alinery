@@ -1,6 +1,6 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Cpu, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Check, Coffee, FolderOpen, FolderPlus, Layers, Play, RotateCcw, ShieldCheck, Workflow, X, Zap } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
@@ -8,7 +8,8 @@ import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
-import type { AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
+import { toast } from "../toast";
+import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
 
 const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   single: "single",
@@ -16,6 +17,14 @@ const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   complete: "complete — waits for all upstream outputs",
 };
 const EMPTY_STEPS: NormalizedPlaybook["step"] = [];
+const OMP_REPO_URL = "https://github.com/can1357/oh-my-pi";
+// `needle` pre-fills the accounts dialog search; it matches OMP's login row ids (`anthropic`, `openai-codex`, `xai-oauth`).
+const PROVIDER_CARDS = [
+  { name: "Claude", plan: "Claude Pro or Max", needle: "anthropic" },
+  { name: "ChatGPT", plan: "Plus or Pro, via Codex", needle: "codex" },
+  { name: "Grok", plan: "SuperGrok, via xAI", needle: "xai" },
+  { name: "API keys", plan: "Any other provider", needle: "" },
+] as const;
 
 export function OnboardingFlow({
   appConfig,
@@ -35,7 +44,7 @@ export function OnboardingFlow({
   onSelectRepo: (path: string) => Promise<boolean>;
   onAddRepo: () => Promise<boolean>;
   onRemoveRepo: (path: string) => void;
-  onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void) => void;
+  onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void, preselect?: string) => void;
   onCompleteToWorkspace: () => void;
   onOpenCreateWithPlaybook: (playbook: PlaybookRef, preset?: StarterTaskPreset) => void;
   onLaunchStarterTask: (playbook: PlaybookRef, preset: StarterTaskPreset) => Promise<void>;
@@ -72,13 +81,58 @@ export function OnboardingFlow({
     return () => window.clearTimeout(timer);
   }, [step, reducedMotion, intro]);
 
-  // Step 03: Agent & model readiness state
-  const [agentStatus, setAgentStatus] = useState<"checking" | "ready" | "attention">("checking");
-  const [agentDetail, setAgentDetail] = useState<string>("Checking OMP installation…");
+  // Step 03: model readiness state
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [modelError, setModelError] = useState("");
   const [probeTick, setProbeTick] = useState<number>(0);
+
+  // Founder plan card. Window focus re-asks the server so a subscription completed in the
+  // browser flips the card to Active without a relaunch. Not while a pairing is in flight:
+  // the sign-in reply is the authoritative status then, and a refresh racing it would read
+  // the not-yet-written credentials as signed out.
+  const [account, setAccount] = useState<AccountStatus | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const planBusyRef = useRef(false);
+  const [planError, setPlanError] = useState("");
+  useEffect(() => {
+    if (step !== "models") return;
+    let cancelled = false;
+    const load = (fetch: () => Promise<AccountStatus>) =>
+      void fetch().then(
+        (status) => {
+          if (!cancelled) setAccount(status);
+        },
+        () => {},
+      );
+    load(ipc.accountStatus);
+    const onFocus = () => {
+      if (!planBusyRef.current) load(ipc.accountRefresh);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [step]);
+
+  // One click from nothing to billing: pair the desktop with a new or existing account in the
+  // browser, then send that same signed-in browser to the plans page for checkout.
+  const startFounderPlan = async () => {
+    planBusyRef.current = true;
+    setPlanBusy(true);
+    setPlanError("");
+    try {
+      const status = account?.signedIn ? account : await ipc.accountSignIn();
+      setAccount(status);
+      if (!status.paid) await ipc.accountOpenPlans();
+    } catch (error) {
+      if (!/cancelled/i.test(String(error))) setPlanError(String(error));
+    } finally {
+      planBusyRef.current = false;
+      setPlanBusy(false);
+    }
+  };
 
   // Step 04: Starter task editable fields
   const selectedArchetype = useMemo(
@@ -148,12 +202,10 @@ export function OnboardingFlow({
     }
   }, [playbookSteps, selectedStepKey]);
 
-  // Check installation without creating a reserved setup process with no attached client.
+  // Read the repository model without creating a reserved setup process with no attached client.
   useEffect(() => {
     if (step !== "models" || !appConfig.active_repo) return;
     let cancelled = false;
-    setAgentStatus("checking");
-    setAgentDetail("Checking OMP installation…");
     setModelError("");
     setRepoConfig(null);
 
@@ -166,20 +218,6 @@ export function OnboardingFlow({
       })
       .catch((error) => {
         if (!cancelled) setModelError(String(error));
-      });
-
-    void ipc
-      .checkOmpUpdate()
-      .then((status) => {
-        if (cancelled) return;
-        setAgentStatus(status.installed ? "ready" : "attention");
-        setAgentDetail(status.installed ? `Installed: ${status.installed}` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const msg = String(error);
-        setAgentStatus("attention");
-        setAgentDetail(msg || "Could not check the OMP installation.");
       });
 
     return () => {
@@ -684,17 +722,113 @@ export function OnboardingFlow({
           <div className="onboarding-body onboarding-body-models" data-dir={direction} data-testid="onboarding-step-models">
             <div className="onboarding-model-setup">
               <h2>Choose your default model</h2>
-              <p className="onboarding-lede">Pick the model your agents will use in {repoName(appConfig.active_repo)}. You can change it later.</p>
+
+              <section className="onboarding-plan-card" aria-labelledby="onboarding-plan-title" data-testid="onboarding-founder-plan">
+                <div className="onboarding-plan-head">
+                  <div className="onboarding-plan-title">
+                    <span className="pill onboarding-pill-success">
+                      <Check size={12} aria-hidden="true" />
+                      Recommended
+                    </span>
+                    <h3 id="onboarding-plan-title">Alinery Founder plan</h3>
+                    <p className="onboarding-readiness-detail">
+                      Support the open source devs behind the project and get $5 of AI credits every month, worth ~30M tokens of DeepSeek V4.1 Flash (~360M / year).
+                    </p>
+                  </div>
+                  <div className="onboarding-plan-price">
+                    $7.99
+                    <small>
+                      <Coffee size={12} aria-hidden="true" />a coffee a month
+                    </small>
+                  </div>
+                </div>
+                <ul className="onboarding-plan-features">
+                  <li>
+                    <Zap size={15} aria-hidden="true" />
+                    <span>
+                      <strong>~30M tokens a month</strong>
+                      of DeepSeek V4.1 Flash. Kimi, GLM, and more available too
+                    </span>
+                  </li>
+                  <li>
+                    <ShieldCheck size={15} aria-hidden="true" />
+                    <span>
+                      <strong>Zero Data Retention</strong>
+                      Alinery-hosted models never store your prompts or outputs
+                    </span>
+                  </li>
+                  <li>
+                    <Workflow size={15} aria-hidden="true" />
+                    <span>
+                      <strong>Made for playbooks</strong>
+                      Fast and cheap enough to run most steps
+                    </span>
+                  </li>
+                </ul>
+                <div className="onboarding-plan-actions">
+                  {account?.paid ? (
+                    <>
+                      <span className="pill onboarding-pill-success">
+                        <Check size={12} aria-hidden="true" />
+                        Active
+                      </span>
+                      <span className="onboarding-readiness-detail">Signed in as {account.email ?? "your Alinery account"}.</span>
+                      <button type="button" className="btn ghost small" onClick={() => void ipc.accountOpen().catch((error) => setPlanError(String(error)))}>
+                        Manage billing
+                      </button>
+                    </>
+                  ) : planBusy ? (
+                    <>
+                      <span className="pill">
+                        <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
+                        Waiting for the browser…
+                      </span>
+                      <button type="button" className="btn ghost small" onClick={() => void ipc.accountCancelSignIn().catch(() => {})}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="btn onboarding-plan-cta" onClick={() => void startFounderPlan()}>
+                        {account?.signedIn ? "Subscribe" : "Get the Founder plan"}
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                      <span className="onboarding-readiness-detail">
+                        {account?.signedIn ? `Opens billing for ${account.email ?? "your account"}.` : "Create your account in the browser; checkout opens right after."}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {planError && (
+                  <InlineStatus tone="error" detail={planError}>
+                    Couldn't finish setting up the plan.
+                  </InlineStatus>
+                )}
+              </section>
+
+              <div className="onboarding-provider-section">
+                <p>Already paying for AI subscriptions? Connect every one you have and use them all here.</p>
+                <div className="onboarding-provider-grid">
+                  {PROVIDER_CARDS.map((card) => (
+                    <button key={card.name} type="button" className="onboarding-provider-card" onClick={() => onOpenProviderSetup("accounts", undefined, card.needle)}>
+                      <strong>{card.name}</strong>
+                      <span>{card.plan}</span>
+                      <span className="onboarding-provider-connect">
+                        Connect
+                        <ArrowRight size={13} aria-hidden="true" />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="onboarding-readiness-stack">
                 <div className="onboarding-readiness-card">
-                  <div className="onboarding-readiness-row">
+                  <div className="onboarding-readiness-row onboarding-model-row">
                     <div className="onboarding-readiness-title">
                       <Layers size={16} aria-hidden="true" />
                       <strong>Default model</strong>
                     </div>
-                  </div>
-                  <div className="onboarding-model-control">
                     <ModelInput
                       harness="omp"
                       repoPath={appConfig.active_repo}
@@ -708,6 +842,7 @@ export function OnboardingFlow({
                         })
                       }
                       ariaLabel="Default repository model"
+                      placeholder="Default model"
                     />
                   </div>
                   {modelError && (
@@ -720,57 +855,22 @@ export function OnboardingFlow({
                       </button>
                     </div>
                   )}
-                  <div className="onboarding-readiness-foot">
-                    <p className="onboarding-readiness-detail">Used by every playbook step in {repoName(appConfig.active_repo)} unless a step overrides it.</p>
-                    <button type="button" className="btn ghost small" onClick={() => onOpenProviderSetup("accounts")}>
-                      Manage accounts…
-                    </button>
-                  </div>
-                </div>
-                <div className="onboarding-readiness-card">
-                  <div className="onboarding-readiness-row">
-                    <div className="onboarding-readiness-title">
-                      <Cpu size={16} aria-hidden="true" />
-                      <strong>Agent installation</strong>
-                    </div>
-                    {agentStatus === "checking" && (
-                      <span className="pill">
-                        <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
-                        Checking…
-                      </span>
-                    )}
-                    {agentStatus === "ready" && (
-                      <span className="pill onboarding-pill-success">
-                        <Check size={12} aria-hidden="true" />
-                        Ready
-                      </span>
-                    )}
-                    {agentStatus === "attention" && <span className="pill onboarding-pill-warning">Needs attention</span>}
-                  </div>
                   <p className="onboarding-readiness-detail">
-                    {agentStatus === "attention" ? "OMP isn't available. Review the details below, resolve the issue, then retry." : agentDetail}
+                    Used by every playbook step in {repoName(appConfig.active_repo)} unless a step overrides it. Alinery ships with{" "}
+                    <button
+                      type="button"
+                      className="onboarding-omp-mark"
+                      title="OMP (oh-my-pi) on GitHub"
+                      onClick={() => void ipc.openUrl(OMP_REPO_URL).catch((error: unknown) => toast.error(String(error)))}
+                    >
+                      <span aria-hidden="true">π</span>
+                      OMP
+                    </button>{" "}
+                    harness included. Easily mix and match models when running playbooks.
                   </p>
-                  {agentStatus === "attention" && (
-                    <details className="onboarding-prompt-preview">
-                      <summary>Technical details</summary>
-                      <pre>{agentDetail}</pre>
-                    </details>
-                  )}
-                  {agentStatus === "attention" && (
-                    <div className="onboarding-readiness-actions">
-                      <button type="button" className="btn ghost small" onClick={() => setProbeTick((n) => n + 1)}>
-                        Retry check
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
-
-            <details className="onboarding-model-help">
-              <summary>Can different steps use different models?</summary>
-              <p>Yes. A step’s model takes priority, followed by the playbook’s default, then this repository’s default. Leave the selection empty to use the harness default.</p>
-            </details>
           </div>
         )}
 

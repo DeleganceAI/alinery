@@ -220,7 +220,7 @@ export default function App() {
   // starting at Playbooks. Finish, Skip and Esc mark completion; replay never clears it.
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStepId | undefined>(undefined);
-  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void } | null>(null);
+  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void; preselect?: string } | null>(null);
   // The usage-sharing question never sits on top of the wizard; when it is still owed it is
   // asked shortly after onboarding finishes, and the auto provider offer waits for its answer
   // so the two dialogs never stack.
@@ -1363,6 +1363,7 @@ export default function App() {
           <ProviderSetupDialog
             mode="manual"
             initialTab={manualProviderSetup.tab}
+            preselect={manualProviderSetup.preselect}
             unsignedOpensAccounts={manualProviderSetup.tab === "models"}
             onPick={manualProviderSetup.onPick}
             onClose={() => setManualProviderSetup(null)}
@@ -1498,7 +1499,7 @@ export default function App() {
           onSelectRepo={setRepo}
           onAddRepo={addRepo}
           onRemoveRepo={removeRepo}
-          onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+          onOpenProviderSetup={(tab, onPick, preselect) => setManualProviderSetup({ tab, onPick, preselect })}
           onCompleteToWorkspace={completeOnboarding}
           onOpenCreateWithPlaybook={(playbook, preset) => {
             completeOnboarding();
@@ -1548,7 +1549,7 @@ export default function App() {
         onSelectRepo={setRepo}
         onAddRepo={addRepo}
         onRemoveRepo={removeRepo}
-        onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+        onOpenProviderSetup={(tab, onPick, preselect) => setManualProviderSetup({ tab, onPick, preselect })}
         onCompleteToWorkspace={completeOnboarding}
         onOpenCreateWithPlaybook={(playbook, preset) => {
           completeOnboarding();

@@ -108,7 +108,7 @@ beforeEach(() => {
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
   vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
   vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
-  vi.spyOn(ipc, "checkOmpUpdate").mockResolvedValue({ installed: "18.11.1", available: null, checked_at: 1, binary_path: "/omp", config_dir: "/config" });
+  vi.spyOn(ipc, "accountStatus").mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
 });
 
 afterEach(() => {
@@ -181,6 +181,35 @@ describe("OnboardingFlow wizard", () => {
     expect(persisted.github).toEqual(original.github);
     expect(persisted.backup).toEqual(original.backup);
     expect(persisted.defaults).toEqual({ ...original.defaults, model: model || null });
+  });
+
+  it("takes a signed-out user from the Founder plan card to sign-in and then billing", async () => {
+    const signIn = vi.spyOn(ipc, "accountSignIn").mockResolvedValue({ signedIn: true, email: "dev@example.com", plan: "free", paid: false, unavailable: false });
+    const openPlans = vi.spyOn(ipc, "accountOpenPlans").mockResolvedValue(undefined);
+    const onOpenProviderSetup = vi.fn();
+    render(
+      <OnboardingFlow
+        appConfig={baseConfig}
+        repoError=""
+        initialStep="models"
+        onSelectRepo={vi.fn(async () => true)}
+        onAddRepo={vi.fn(async () => true)}
+        onRemoveRepo={vi.fn()}
+        onOpenProviderSetup={onOpenProviderSetup}
+        onCompleteToWorkspace={vi.fn()}
+        onOpenCreateWithPlaybook={vi.fn()}
+        onLaunchStarterTask={vi.fn(async () => {})}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Get the Founder plan" }));
+    await waitFor(() => expect(openPlans).toHaveBeenCalledTimes(1));
+    expect(signIn).toHaveBeenCalledTimes(1);
+    // Paired but unpaid: the card now offers checkout directly, no second sign-in.
+    expect(await screen.findByRole("button", { name: "Subscribe" })).toBeTruthy();
+    expect(screen.getByText("Opens billing for dev@example.com.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Claude/ }));
+    expect(onOpenProviderSetup).toHaveBeenLastCalledWith("accounts", undefined, "anthropic");
   });
 
   it("leaves no unattached setup runtime after visiting model setup without opening accounts", async () => {
