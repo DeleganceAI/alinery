@@ -12,7 +12,7 @@
 ///
 /// A protocol bump means every user with live sessions has to stop them deliberately
 /// before installing, so treat it as a real cost.
-pub const PROTOCOL_VERSION: u32 = 23;
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// How a running daemon relates to this build of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn create_task_step_models_bumps_protocol() {
-        assert_eq!(PROTOCOL_VERSION, 23, "session meta records the Vinculum harness as vinculum");
+    fn ui_control_secret_bumps_protocol() {
+        assert_eq!(
+            PROTOCOL_VERSION, 24,
+            "ui_control accepts a per-daemon secret, so a daemon behind an ssh forward can authorize approvals"
+        );
     }
 }

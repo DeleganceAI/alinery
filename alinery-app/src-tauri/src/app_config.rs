@@ -147,12 +147,55 @@ impl Default for AppearancePrefs {
     }
 }
 
+/// An SSH host that remote repos (`alinery+ssh://<host-id>/…`) live on. `ssh_args` is the
+/// already-validated destination (host plus allowlisted flags); the probed fields are filled on
+/// connect.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub(crate) struct RemoteHost {
+    #[serde(default)]
+    pub(crate) label: String,
+    #[serde(default)]
+    pub(crate) ssh_args: Vec<String>,
+    #[serde(default)]
+    pub(crate) home: Option<String>,
+    #[serde(default)]
+    pub(crate) platform: Option<String>,
+    #[serde(default)]
+    pub(crate) glibc: Option<String>,
+    /// What this host may receive. `None` is a host from before this was a choice; its first
+    /// connect keeps what it had, minus browser sign-ins, and records it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sharing: Option<RemoteSharing>,
+}
+
+/// What the user chose to put on a host, and what this app has put there. Nothing that is a
+/// credential is copied until `reviewed`. Items are `hosted-models`, `custom-providers`, `grok`
+/// and `key:<provider>` (an API key).
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub(crate) struct RemoteSharing {
+    #[serde(default)]
+    pub(crate) reviewed: bool,
+    #[serde(default)]
+    pub(crate) shared: Vec<String>,
+    /// Items this app has written to the host, so that taking one off `shared` removes exactly
+    /// what it put there and never something the host made for itself.
+    #[serde(default)]
+    pub(crate) placed: Vec<String>,
+    /// Sign-ins removed from the host when it moved to this scheme. Shown until the user has
+    /// seen them and confirmed the choices again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) erased_sign_ins: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct AppConfig {
     #[serde(default)]
     pub(crate) active_repo: String,
     #[serde(default)]
     pub(crate) known_repos: Vec<String>,
+    /// Keyed by host id. Core's `AppConfig` has no such key and ignores it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) remote_hosts: BTreeMap<String, RemoteHost>,
     #[serde(default = "default_true")]
     pub(crate) mcp_enabled: bool,
     #[serde(default)]
@@ -172,6 +215,7 @@ impl Default for AppConfig {
         Self {
             active_repo: String::new(),
             known_repos: vec![],
+            remote_hosts: BTreeMap::new(),
             mcp_enabled: true,
             appearance: AppearancePrefs::default(),
             settings_version: 1,
@@ -328,7 +372,7 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
             // Claim every repository this window has open before the daemon poller can manage
             // it. Active goes first so a startup collision preserves the selected repo's
             // existing repo_busy recovery path; inactive busy repos simply remain unattached.
-            if let Some(repo) = active.as_ref().filter(|repo| repo.is_dir()) {
+            if let Some(repo) = active.as_ref().filter(|repo| is_local_repo_dir(repo)) {
                 let lifecycle = state.repo_lifecycle(repo);
                 let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
                 if !state.is_quitting() && !state.is_closing(repo) && load_app_config(&app).known_repos.iter().any(|known| Path::new(known) == repo) {
@@ -337,7 +381,7 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
             }
             for known in &cfg.known_repos {
                 let repo = PathBuf::from(known);
-                if active.as_ref() == Some(&repo) || !repo.is_dir() {
+                if active.as_ref() == Some(&repo) || !is_local_repo_dir(&repo) {
                     continue;
                 }
                 let lifecycle = state.repo_lifecycle(&repo);
@@ -376,6 +420,9 @@ pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session
 }
 
 pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+    if is_remote_repo_key(path.trim()) {
+        return activate_remote_repo(&app, &state, path.trim());
+    }
     let repo = alinery_core::require_working_tree(Path::new(path.trim()))?;
     let lifecycle = state.repo_lifecycle(&repo);
     let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
@@ -456,6 +503,9 @@ pub(crate) fn remove_repo_from_config(mut cfg: AppConfig, target: &str) -> Resul
 #[tauri::command]
 pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if is_remote_repo_key(path.trim()) {
+            return Err("stopping a remote repository's sessions is not available yet; remove it and leave its sessions running".to_string());
+        }
         let target = PathBuf::from(path.trim());
         // Bound once so the closing guard below can borrow from it for the whole function.
         // `None` only in unit tests, which drive `AppState` directly.

@@ -1384,15 +1384,36 @@ fn rename_task_uses_owned_explicit_repo_and_returns_committed_record() {
     .unwrap();
     set_active_repo_global(Some(repo_b.clone())).unwrap();
     let name = "A manually corrected child name longer than forty characters";
-    let saved = crate::rename_task(app.handle().clone(), app.state(), repo_a.display().to_string(), "child".into(), format!("  {name}  ")).unwrap();
+    let saved = tauri::async_runtime::block_on(crate::rename_task(
+        app.handle().clone(),
+        app.state(),
+        repo_a.display().to_string(),
+        "child".into(),
+        format!("  {name}  "),
+    ))
+    .unwrap();
     assert_eq!(saved.name, name);
     assert_eq!(read_task(&repo_a, "child").unwrap().name, name);
     assert_ne!(read_task(&repo_b, "child").unwrap().name, name);
-    assert!(crate::rename_task(app.handle().clone(), app.state(), repo_a.display().to_string(), "missing".into(), name.into()).is_err());
-    assert!(crate::rename_task(app.handle().clone(), app.state(), "/unknown".into(), "child".into(), name.into()).is_err());
+    assert!(tauri::async_runtime::block_on(crate::rename_task(
+        app.handle().clone(),
+        app.state(),
+        repo_a.display().to_string(),
+        "missing".into(),
+        name.into()
+    ))
+    .is_err());
+    assert!(tauri::async_runtime::block_on(crate::rename_task(app.handle().clone(), app.state(), "/unknown".into(), "child".into(), name.into())).is_err());
     let owner = AppState::default();
     assert!(owner.claim_repo(&repo_b));
-    assert!(crate::rename_task(app.handle().clone(), app.state(), repo_b.display().to_string(), "child".into(), name.into()).is_err());
+    assert!(tauri::async_runtime::block_on(crate::rename_task(
+        app.handle().clone(),
+        app.state(),
+        repo_b.display().to_string(),
+        "child".into(),
+        name.into()
+    ))
+    .is_err());
     assert!(!alinery_core::alineryd_socket_path(&repo_a, None).exists());
     set_active_repo_global(None).unwrap();
     drop(app);
@@ -2354,6 +2375,15 @@ fn set_related_tasks_writes_tags_and_task_dir_symlinks() {
     fs::create_dir_all(crate::artifacts_dir(&other, "there")).unwrap();
     fs::write(crate::artifacts_dir(&other, "there").join("01.md"), "from-there").unwrap();
     write_task(
+        &other,
+        &Task {
+            name: "There".into(),
+            slug: "there".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    write_task(
         &repo,
         &Task {
             name: "Here".into(),
@@ -2451,7 +2481,7 @@ fn targeted_restore_changes_only_selected_repository() {
     let _ = fs::remove_dir_all(repo_b);
 }
 
-fn retained_duplicate_fixture(repo: &Path) -> Task {
+pub(super) fn retained_duplicate_fixture(repo: &Path) -> Task {
     let source = include_str!("../../playbooks/one-shot/playbook.md");
     let reference = alinery_core::playbook::PlaybookRef {
         scope: alinery_core::playbook::PlaybookScope::Repo,

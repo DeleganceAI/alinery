@@ -1,0 +1,12 @@
+# Commands that reach a remote call and are not async commands that offload it. See scripts/tests/check-remote-offload.sh.
+#
+# The frontend fires terminal input without awaiting (SessionTerminal.tsx), so these rely on the main thread
+# for ordering. A remote session's call goes onto its own ordered queue and worker thread
+# (queue_terminal_op), which returns at once; a local session's call is a local socket and stays direct.
+#
+# command          why it stays synchronous
+write_session      keystrokes: a remote session enqueues to its ordered worker; a pool would reorder them
+resize_session     a remote session enqueues to its ordered worker; local is a unix socket
+detach_session     a remote session enqueues to its ordered worker; local is a unix socket
+chat_pty_write     keystrokes: a remote thread enqueues to its ordered worker; a pool would reorder them
+chat_pty_resize    a remote thread enqueues to its ordered worker; local is a unix socket

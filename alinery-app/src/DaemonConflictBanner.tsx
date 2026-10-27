@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { copyTextToClipboard } from "./chat/CopyMessage";
 import { confirmDanger } from "./confirm";
 import * as ipc from "./ipc";
+import { isRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
 import { toast } from "./toast";
 import type { DaemonConflict, DaemonOwnerConflict } from "./types";
@@ -140,7 +141,61 @@ export function resetTakeoverPrompts() {
 }
 
 export function DaemonConflictBanner({ conflict, onRefresh }: { conflict: DaemonConflict | null; onRefresh: () => void }) {
-  return conflict ? <SelectedRepoConflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} /> : null;
+  if (!conflict) return null;
+  const Conflict = isRemoteRepo(conflict.repo) ? RemoteDaemonConflict : SelectedRepoConflict;
+  return <Conflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} />;
+}
+
+/** A remote repo's daemon that this app cannot use (another Alinery version started it). There is
+ *  no other window to take over from; only restarting it replaces it, and that ends its sessions. */
+function RemoteDaemonConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
+  const [pending, setPending] = useState(false);
+  const name = repoName(conflict.repo);
+  const impact = conflict.owners[0]?.impact;
+  const live = impact?.status === "known" ? impact.sessions.length : null;
+  const restart = async () => {
+    const accepted = await confirmDanger(
+      `Restart the daemon for ${name}?`,
+      <>
+        <p>
+          {live === null
+            ? "Its sessions could not be counted. Restarting stops all of them."
+            : live === 0
+              ? "No live sessions. The daemon is replaced with this app's version."
+              : `Restarting stops ${live} live session${live === 1 ? "" : "s"}.`}
+        </p>
+        <details className="takeover-details">
+          <summary>Details</summary>
+          <EvidenceBlock text={evidenceText(conflict)} />
+        </details>
+      </>,
+      live === null ? "Stop all sessions and restart" : live === 0 ? "Restart daemon" : `Stop ${live} session${live === 1 ? "" : "s"} and restart`,
+    );
+    if (!accepted) return;
+    setPending(true);
+    try {
+      await ipc.stopDaemon(conflict.repo);
+      toast.success(`Restarted the daemon for ${name}`);
+    } catch (cause) {
+      toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
+    } finally {
+      setPending(false);
+      onRefresh();
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      details={<EvidenceBlock text={evidenceText(conflict)} />}
+      action={
+        <button type="button" className="btn small" disabled={pending} onClick={() => void restart()}>
+          Restart daemon…
+        </button>
+      }
+    >
+      {name}'s daemon on the host was started by another Alinery version · showing saved progress
+    </RepoStatusStrip>
+  );
 }
 
 function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {

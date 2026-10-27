@@ -1,6 +1,6 @@
 # Alinery — Agent Context
 
-Playbook IDE: a local macOS (and Linux) Tauri v2 + React/TS desktop app for task-centric agent work. Playbooks are reusable graphs; each task keeps sessions, decisions, and artifacts together. Filesystem is the database. Local-first. Optional anonymized product-usage telemetry (asked on first launch, off until answered; Settings → General → Misc). A detached per-repo daemon (`alineryd`) owns the PTYs so sessions survive app quit.
+Playbook IDE: a local macOS (and Linux) Tauri v2 + React/TS desktop app for task-centric agent work. Playbooks are reusable graphs; each task keeps sessions, decisions, and artifacts together. Filesystem is the database. Local-first. Optional anonymized product-usage telemetry (asked on first launch, off until answered; Settings → General → Misc). A detached per-repo daemon (Vinculum, the `alinery-vinculum-daemon` sidecar) owns the PTYs so sessions survive app quit. A repository can also live on another Linux machine over SSH (see Remote repositories).
 
 This repository is the **public product source**. Release signing, CDN publish, Linux builder droplets, and `scripts/install.sh` live elsewhere. Do not assume those scripts exist here.
 
@@ -38,7 +38,7 @@ Never launch, build-and-open, or `open` the desktop app (`npm run tauri dev` or 
   worktrees/<slug>/
 ```
 
-The app is not locked to a single hardcoded target repo. Global process log (not per-repo): `<app_config_dir>/logs/alinery.log` (1 MB × 5 files; written by the app, alineryd, and alinery-mcp). No UI.
+The app is not locked to a single hardcoded target repo. Global process log (not per-repo): `<app_config_dir>/logs/alinery.log` (1 MB × 5 files; written by the app, the daemon, and alinery-mcp). No UI.
 
 ## Harness Registry (`harnesses.toml`)
 
@@ -48,20 +48,37 @@ Packaged OMP is **not** a Tauri sidecar and is **not** found on PATH. `scripts/o
 
 The daemon launches from the product launch list (Terminal + bundled/overlaid `omp`). Extra overlay keys are not launchable.
 
-## Daemon (`alineryd`) — persistent sessions
+## Daemon (Vinculum) — persistent sessions
 
+- **What it is.** `alinery-vinculum-daemon` is a Bun/TypeScript program (`alinery-app/src-tauri/vinculum-daemon/`, agent runtime pi-durable) and the only daemon sidecar (`check-experimental-daemon-names.sh`). There is no `alineryd` or `runner` crate. The old name survives in the socket file, `<repo>/.alinery/alineryd[-ns].sock`, and in the Rust helpers that build its path. The Rust workspace is the app, `alinery-core` and `mcp`.
 - Separate binary, spawned detached per active repo. Socket and lane-lock identities remain build-specific, but `.alinery/.repo-owner.lock` permits only one daemon owner across all lanes. Startup retains every discovered historical lane lock too; lock markers are permanent and never unlinked.
 - **Automatic project adoption.** `alinery-core::repo_ownership` checks every previous daemon owner and all retained task records under the repository mutation lock before updating task ownership. A live owner, missing socket with held process lock, or unknown/unreadable ownership evidence blocks the whole project. Once all owners are stopped, opening the project adopts all retained tasks, including archived tasks, automatically. History, artifacts, output reservations, and completed work remain intact; interrupted execution ownership is not recovered and child shutdown is not inferred. There is no per-task transfer or simultaneous task-owning dev/prod coexistence.
 - **Confirmed takeover.** Each reachable incompatible owner has an individual **Take over {repo}** action. App-only prepare/confirm/cancel commands bind a 120-second, single-use confirmation to native peer process incarnation and observed session impact; zero and unknown impact still require confirmation. Checked shutdown uses that exact bound stream; replacement waits for the selected socket and permanent lane lease to be released, then normal all-owner acquisition. Another owner requires separate confirmation. No forced kill or lock deletion. Per-repository lifecycle ordering covers attachment, polling, teardown, and takeover.
-- **Owns every PTY.** The app proxies over the socket. Quit tears down nothing *unless the user says so*; relaunch reconnects and replays scrollback. **No code path automatically kills a live session** — exactly four deliberate teardown origins send `shutdown`, each behind explicit user action: `stop_daemon` (Settings), `close_repo_daemon` (close repo — called by `remove_repo` and `close_all_repos`), `restore_backup`, and `confirm_repo_takeover_blocking` (only through the consumed confirmation command). Enforced by `scripts/tests/check-no-auto-session-kill.sh`.
-- **Quit asks.** Closing the window raises a three-way dialog (`App.tsx` `onCloseRequested`): *leave sessions running* (default), *close all repos*, or *cancel*. `close_all_repos` latches `AppState.quitting` first so the poller cannot resurrect a daemon. Cmd+Q is not covered — macOS `applicationWillTerminate` keeps the leave-running behaviour.
-- **`alinery-core`** holds Tauri-free pty/fs/parse/lifecycle logic, consumed by the app, `alineryd`, and `alinery-mcp`. Keep shared daemon request builders/reply parsing here so neither app nor MCP grows a second wire.
+- **Owns every PTY.** The app proxies over the socket. Quit tears down nothing *unless the user says so*; relaunch reconnects and replays scrollback. **No code path automatically kills a live session** — exactly five deliberate teardown origins send `shutdown`, each behind explicit user action: `stop_daemon` (Settings), `stop_remote_daemon` (the remote form of `stop_daemon`, reached through it and the conflict banner's Restart daemon; it waits for the host to release the socket, then starts the daemon from the runtime this app installed), `close_repo_daemon` (close repo — called by `remove_repo` and `close_all_repos`), `restore_backup` (for a remote repo it runs the host's restore inside `stop_remote_daemon`, which takes a `while_down` closure and restarts the daemon afterwards), and `confirm_repo_takeover_blocking` (only through the consumed confirmation command). Enforced by `scripts/tests/check-no-auto-session-kill.sh`.
+- **Quit asks.** Closing the window raises a three-way dialog (`App.tsx` `onCloseRequested`): *leave sessions running* (default), *close all repos*, or *cancel*. Close-all never stops a remote repo: it disconnects its host (ssh ends) and the host's daemon and sessions keep running. `close_all_repos` latches `AppState.quitting` first so the poller cannot resurrect a daemon. Cmd+Q is not covered — macOS `applicationWillTerminate` keeps the leave-running behaviour.
+- **`alinery-core`** holds Tauri-free pty/fs/parse/lifecycle logic, consumed by the app and `alinery-mcp`, and by the daemon through the ownership library (`libalinery_core`). Keep shared daemon request builders/reply parsing here so neither app nor MCP grows a second wire.
 - **Wire protocol gate.** `alinery-core::PROTOCOL_VERSION` (`protocol.rs`) is the single source of truth, bumped **only** on op-set/wire changes — never for app releases. `ensure_daemon` reuses a daemon only when **protocol and app-config identity both match**. `scripts/tests/check-protocol-version-bump.sh` and `check-wire-parsing-boundary.sh` enforce this. A genuinely wire-neutral refactor uses a commit-scoped `Protocol-Neutral: <why>` trailer.
-- **OMP host guard.** `alineryd` refuses fresh/resumed/auto-advanced OMP launches when the captured GUI executable is invalid. Terminal remains available. A missing packaged OMP binary is a separate fail-closed spawn error (`bundled OMP not found`).
+- **Missing OMP.** A missing packaged OMP binary is a fail-closed spawn error (`bundled OMP not found`). Terminal remains available.
 - **GUI ownership locks** (`.alinery/.alinery-app.lock`). Dev and production are mutually exclusive on one folder. Product ownership is flock-only: never a pid file.
 - **Activity sidecar**: every session byte is appended to `sessions/<id>.scrollback`. The daemon's in-memory `vt100` emulator is reattach truth.
 
 In-app self-update embeds `scripts/lib/preflight.sh` (compile-time `include_str!`) and runs the same quiet-machine gate as the public CDN installer. That installer script itself is not in this repo.
+
+## Remote repositories (SSH)
+
+A repo can live on another Linux machine. Its key is `alinery+ssh://<host-id>/<absolute path>` (`RepoRef` in `paths.rs`; `src/remoteRepo.ts` mirrors the parser), so `known_repos` and every frontend repo key keep working. Hosts are in `AppConfig.remote_hosts`.
+
+- **Transport.** `src/remote.rs` is the only place that spawns `ssh` (`check-ssh-spawn.sh`): one OpenSSH ControlMaster per host (sockets in `/tmp/alinery-<uid>/`), a unix-socket forward to each repo's daemon socket, and one stdio channel to the host's repo service. Disconnecting ends ssh processes only. It never sends `shutdown`, and removing a remote repo leaves its sessions running on the host. A host the user connected and did not disconnect is brought back when it drops, by `spawn_remote_supervisor` (waits 5, 10, 30, then 60 s; it only connects, and gives up on an unknown or changed host key or a refused login). `connect_and_attach` and `disconnect_host` take a per-host lock, and a successful connect emits `remote_host_connected` so a terminal that lost its stream rejoins.
+- **Runtime.** The app bundles Linux runtimes (`alinery-app/src-tauri/resources/remote/<triple>.tar.gz` plus `manifest.json`; glibc, x64 and arm64) and installs one on connect to `~/.local/share/alinery-remote/runtime/<content-hash>/` on the host. A directory named by hash is never overwritten, so a daemon from an older app keeps its own runtime. `scripts/build-remote-runtimes.sh` builds them (needs zig, cargo-zigbuild and the two rustup targets; `--check` lists what is missing). `scripts/tauri.mjs` warns on an empty manifest and fails with `ALINERY_REQUIRE_REMOTE_RUNTIMES=1`. Rebuild after a change to `alinery-core`, `mcp/` or `vinculum-daemon/`, or the live tests run stale code.
+- **Host layout.** `~/.local/share/alinery-remote/config/<app-config identity>/` holds the host's `app.toml`, `provider-credentials.json`, `custom-providers.json`, `inference.json`, `ui-secrets/` and `logs/`, owner-only. The `app.toml` is an allowlist rendered by `render_remote_app_toml`; add a field only when a host process reads it, and never copy a Mac-private setting into it.
+- **Repo service.** File and git work on a remote repo goes through `alinery-mcp --repo-service`: a typed `RepoOp` and `run()` in `alinery-core/src/repo_service.rs`, JSON lines, one channel per host. These are not daemon ops, so they need no `PROTOCOL_VERSION` bump (the installed runtime is the app's exact build). No op field may be named `id`. Add every new op to the round-trip test.
+- **Moving a command to remote.** Put the file and git logic in `alinery-core` as `*_in(repo, …)`, add a `RepoOp` and its `run()` arm, and have the command route `RepoRef::Local` in-process and `Remote` through `remote_call`/`repo_client` (async, off the main thread). `check-remote-routing.sh` fails when a command resolves its repo with a local-only helper and neither routes a remote repo nor is listed, with a reason, in `scripts/tests/remote-local-only.txt`. `check-remote-offload.sh` fails when such a command is not async or never offloads: a remote call waits on ssh, so on the main thread it freezes the window, and on a runtime worker it ties one up. Resolve the target first (`active_repo_ref()`, `owned_target`, `require_active_target`), then do the local I/O and `remote_call(&app.state::<AppState>(), …)` inside `off_main_thread(…)`. Terminal input (`write_session`, `resize_session`, `detach_session`, `chat_pty_write`, `chat_pty_resize`) is the exception: the frontend fires it without awaiting, so a remote session enqueues to its own ordered worker (`queue_terminal_op`) instead of a pool that could reorder keystrokes.
+- **Approvals.** Over a forward the daemon's peer is sshd, so the app gives the daemon a secret (`--ui-secret-file`, deleted when read) and keeps its copy in `<app_config_dir>/remote/<host-id>/ui-secrets.json`. A daemon this app did not start has none, and approvals fail closed.
+- **Remote storage and backups.** Both are repo-service ops (`StorageInfo`, `PurgeArchived`, `BackupCreate`/`List`/`CheckDestination`/`Verify`/`Restore`), so they work while the daemon is down and need no protocol bump. The host applies its own settings and writes to its own disk; the app gets `StorageInfo` / `BackupMeta` / `BackupListItem` back. A remote repo's backup destination is a host path typed in Settings and checked by the host (`check_backup_destination`). Automatic triggers queue on the repo's URI through `publish_remote_backup`; the host gates them by its own trigger flags.
+- **A daemon this app cannot use.** If the host's daemon speaks another protocol or was started with other settings, `attach_remote_repo` records a `DaemonConflict` instead of failing, so the repo still opens and its board reads through the repo service. Daemon-backed commands answer "restart it from the banner" (`remote_daemon`), and `DaemonConflictBanner` offers *Restart daemon…* (confirmed, names the live sessions), which runs `stop_daemon` → `stop_remote_daemon`. A remote daemon is never taken over, only restarted.
+- **Credentials are chosen, never implied.** Each host has a `RemoteSharing` record: what it may receive, and what the app has placed there. A new host receives nothing until the user has chosen. Browser sign-ins (`oauth`) are never copied, because their refresh tokens rotate and two copies sign each other out; the host signs in for itself, and a sync never touches a sign-in made there. Do not send a credential-like value to a host without an item for it in the sharing list.
+- **UI.** The remote button beside Add repository opens `RemoteModal` (hosts, set up a remote, credentials, folder picker). `RemoteCredentials.tsx` holds the credentials choices.
+- **Testing.** Unit tests are in `src/tests/remote.rs`. The `live_*` tests need an sshd and skip without one: `scripts/tests/remote-sshd/run.sh start` builds a throwaway Debian sshd in Docker and prints the `ALINERY_TEST_SSH_ARGS` line to export; then `cargo test -p alinery-app --lib -- tests::remote::live`; then `run.sh stop`.
 
 ## Playbooks
 
@@ -83,6 +100,12 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `session.rs` | `SessionMeta`, session CRUD, message actions, open/write/resize/kill, history |
 | `subtask.rs` | parent/child sub-task lifecycle |
 | `daemon.rs` | `DaemonClient`, `ensure_daemon`, lane routing, teardown origins, the 5s poller |
+| `pi_durable.rs` | Vinculum process supervision |
+| `remote.rs` | SSH hosts: destination parsing, probe, runtime install, ControlMaster, repo-service channel, credential sharing, `~/.ssh/config` aliases |
+| `chat.rs` | taskless chat threads (rail, create/pin/archive, attachments); file and git half in `alinery_core::chat` |
+| `hosted.rs` | hosted Alinery models: catalog, credits, mint/revoke against the accounts service |
+| `vinculum_customizations.rs` | read-only inventory of the Vinculum agent directory |
+| `community_playbooks.rs` | community playbook catalog, import registry, publish |
 | `mcp.rs` | managed MCP child lifecycle and status |
 | `notify.rs` | notification sound + attention notifications |
 | `backup.rs` / `backup_queue.rs` | auto-backup queue, backup/restore |
@@ -105,6 +128,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 - Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear`, `import_github`
 - Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only
 - Storage: `storage_info`, `delete_all_archived_storage`
+- Remote: `remote_hosts`, `remote_add_host`, `remote_ssh_aliases`, `remote_describe_destination`, `remote_discard_host`, `remote_sharing`, `remote_set_sharing`, `remote_connect`, `remote_disconnect`, `remote_list_dir`, `remote_classify`, `remote_init`, `remote_add_repo`, `remove_remote_repo_keep_running`
 
 MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery_session_status` / `alinery_read_session_history`. MCP never exposes attach/write/resize/detach/kill/resume/takeover/bulk operations, and a mismatch never triggers teardown.
 
@@ -120,29 +144,29 @@ MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery
 - Git = `alinery_core::git_cmd` only. Never `Command::new("git")`. `git_cmd` uses a real git on this process's PATH when there is one (macOS `/usr/bin/git` does not count until the Command Line Tools are installed — that binary is a stub and running it raises a dialog). Otherwise it uses the alongside tree (`/Applications/Alinery.git/bin/git`, or `~/.local/share/alinery/git/bin/git` on Linux) and sets `GIT_EXEC_PATH` so HTTPS push can find `git-remote-https`. `scripts/git-pin.txt` pins the official tarball the release build compiles; `install.sh` copies that tree only when the app would not already see a git. `tauri dev` keeps using the system git. `ALINERY_GIT_PATH` is a dev/test override, not a PATH search.
 - `time` is pinned to `0.3.51` in `Cargo.lock` — never un-pin (`cargo update` breaks the Tauri v2 build).
 - Do not infer correctness from editor state or partial compiles. See "Build & Compile Verification". Do not launch the app to verify unless the user asks.
-- Quit must never kill harnesses **on its own** — `alineryd` outlives the app on purpose. Teardown inside the app is explicit only (the three origins above).
+- Quit must never kill harnesses **on its own** — the daemon outlives the app on purpose. Teardown inside the app is explicit only (the three origins above).
 - **DRY: one behaviour, one home — and the comment lives with it.** Second copy = extract. Extract from *observed* repetition, never anticipated repetition. Comments explain *why*, and only in the canonical place.
 
 ## Build & Compile Verification (mandatory)
 
-After **any** Rust change in `alinery-app/src-tauri/src/`, `alineryd/`, `alinery-core/`, `mcp/`, or `runner/`:
+After **any** Rust change in `alinery-app/src-tauri/src/`, `alinery-core/`, or `mcp/`:
 
 ```bash
 cd alinery-app/src-tauri
 cargo check -p alinery-app
 ```
 
-Do **not** consider the change done until this passes. For sidecar/bundler work (`copy-sidecar.sh`, `tauri.conf.json`, `externalBin`), also run the copy script.
+Do **not** consider the change done until this passes. For sidecar/bundler work (`copy-sidecar.sh`, `tauri.conf.json`, `externalBin`), also run the copy script. A change in `vinculum-daemon/src` is TypeScript: run `bun test` in `alinery-app/src-tauri/vinculum-daemon/` (the tests sit beside the source as `*.test.ts`).
 
 Live GUI verify is opt-in only, when the user asks to see the app. For a local `tauri dev` OMP session, run `scripts/dev-fetch-omp.sh` once so `/Applications/Alinery.omp/omp` exists. The resolver never falls back to PATH.
 
-`npm run tauri dev` and `npm run tauri build` also compile the experimental `alinery-vinculum-daemon` beside the app executable they are about to run, by invoking `scripts/dev-fetch-bun.sh --no-download` for the launch's cargo profile. Its agent runtime is pi-durable. It stays out of `externalBin` and out of every bundle, the launch never reaches the network for a toolchain, and a missing Bun or a failed compile only prints a line. Run the script bare to fetch the pinned Bun and compile by hand; it short-circuits an up-to-date output.
+`npm run tauri dev` and `npm run tauri build` also compile `alinery-vinculum-daemon` beside the app executable they are about to run, by invoking `scripts/dev-fetch-bun.sh --no-download` for the launch's cargo profile. Its agent runtime is pi-durable. The launch never reaches the network for a toolchain, and a missing Bun or a failed compile only prints a line. Run the script bare to fetch the pinned Bun and compile by hand; it short-circuits an up-to-date output.
 
 ## App version bump (marketing semver)
 
 There is no bump script in this repo. Bump first, commit, push. This is **not** `alinery-core::PROTOCOL_VERSION` — that integer moves only on wire/op-set changes. Cutting the GitHub Release and publishing `cdn.alinery.ai` is done from `alinery-deploy`, which **reads** these versions and will not write them.
 
-Edit **all nine** of these, to the same `X.Y.Z`:
+Edit **all seven** of these, to the same `X.Y.Z`:
 
 | File | What to change |
 |---|---|
@@ -151,10 +175,8 @@ Edit **all nine** of these, to the same `X.Y.Z`:
 | `alinery-app/src-tauri/tauri.conf.json` | `"version"` |
 | `alinery-app/src-tauri/Cargo.toml` | `[package] version` |
 | `alinery-app/src-tauri/alinery-core/Cargo.toml` | `[package] version` |
-| `alinery-app/src-tauri/alineryd/Cargo.toml` | `[package] version` |
 | `alinery-app/src-tauri/mcp/Cargo.toml` | `[package] version` |
-| `alinery-app/src-tauri/runner/Cargo.toml` | `[package] version` |
-| `alinery-app/src-tauri/Cargo.lock` | `version` on the **five workspace packages only**: `alinery-app`, `alinery-core`, `alinery-mcp`, `alinery-runner`, `alineryd` |
+| `alinery-app/src-tauri/Cargo.lock` | `version` on the **three workspace packages only**: `alinery-app`, `alinery-core`, `alinery-mcp` |
 
 **Gotchas:** TOML has no trailing commas. Do not `replace_all` the old semver inside `Cargo.lock` (third-party crates can share that string). After the edit, run `cargo metadata --manifest-path alinery-app/src-tauri/Cargo.toml --format-version 1 --no-deps` (or `cargo check -p alinery-app`) so the lockfile still parses.
 
@@ -172,7 +194,7 @@ It covers biome, both typecheck passes, vitest, the omp-extension suite, `cargo 
 **Two traps that will hand you a false green:**
 
 - **`cargo test` alone runs a third of the suite.** `default-members = ["."]` in `src-tauri/Cargo.toml` means a bare `cargo test` builds only the app crate. Always `cargo test --workspace`.
-- **`cargo test`/`clippy` need the sidecars.** On a fresh clone the tauri build script fails with `resource path alineryd-<triple> doesn't exist`. Run `src-tauri/scripts/copy-sidecar.sh debug` first — `check.sh` does.
+- **`cargo test`/`clippy` need the sidecars.** On a fresh clone the tauri build script fails with `resource path alinery-vinculum-daemon-<triple> doesn't exist`. Run `src-tauri/scripts/copy-sidecar.sh debug` first — `check.sh` does.
 
 **TypeScript:** Biome is the formatter *and* the linter (`alinery-app/biome.jsonc`). There is no Prettier and no ESLint. Warnings do not fail the gate.
 
@@ -194,6 +216,12 @@ It covers biome, both typecheck passes, vitest, the omp-extension suite, `cargo 
 These run from `scripts/check.sh`. Source guards also run under `--quick`; the behavioural suites do not.
 
 - `check-git-env-scrub.sh` — no raw `Command::new("git")` outside `alinery-core/src/git.rs`
+- `check-ssh-spawn.sh` — `ssh` is spawned only from `src/remote.rs`, and the remote path kills no process by name or signal
+- `check-remote-routing.sh` — every repo-resolving command routes remote repos or is listed in `remote-local-only.txt`
+- `check-remote-offload.sh` — every command that reaches a remote call is async and reaches `off_main_thread`/`spawn_blocking`, or is listed with a reason in `remote-offload-ok.txt`
+- `check-blocking-commands.sh` — blocking user commands are async and reach `spawn_blocking`
+- `check-experimental-daemon-names.sh` — `externalBin` is Vinculum plus MCP; no `alineryd` or runner
+- `check-no-curl.sh` — HTTP is `alinery_core::http`, never a `curl` child
 - `check-no-auto-session-kill.sh` — `shutdown` senders stay on the four-name allowlist
 - `check-no-window-confirm.sh` — no `window.confirm|alert|prompt` in `alinery-app/src`
 - `check-protocol-version-bump.sh` / `check-wire-parsing-boundary.sh` / `protocol_gate_test.sh` — wire protocol
@@ -202,6 +230,8 @@ These run from `scripts/check.sh`. Source guards also run under `--quick`; the b
 - `check-telemetry-privacy.sh` / `check-connection-status-never-decrypts.sh`
 - `preflight_test.sh` / `preflight_live_test.sh` — installer/updater quiet-machine helpers in `scripts/lib/preflight.sh`
 - `updater_swap_test.sh` — in-app swap helper
+
+`remote-sshd/` is not a gate: it is the Docker sshd the live remote tests run against (see Remote repositories).
 
 Signing, CDN, droplet, and `install.sh` prompt tests are **not** in this repo.
 

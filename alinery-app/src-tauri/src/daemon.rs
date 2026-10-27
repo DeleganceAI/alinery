@@ -36,11 +36,7 @@ pub(crate) struct AppTaskExecutionReply {
     pub live: ExecutionAvailability,
 }
 
-pub(crate) fn saved_task_execution_for(repo: &Path, task_slug: &str) -> Result<alinery_core::task_creation::TaskExecutionReply, String> {
-    let state = alinery_core::execution::read_execution_state(repo, task_slug)?;
-    let definition = alinery_core::execution::read_task_playbook(repo, task_slug, &state)?;
-    Ok(alinery_core::task_creation::TaskExecutionReply { state, definition })
-}
+pub(crate) use alinery_core::board::saved_task_execution as saved_task_execution_for;
 
 fn availability_from_client_error(error: daemon_client::DaemonClientError) -> ExecutionAvailability {
     let detail = error.to_string();
@@ -338,10 +334,83 @@ pub(crate) async fn observe_task_executions<R: tauri::Runtime>(app: AppHandle<R>
         enter_observe_worker();
         let config_path = app_config_path(&app)?;
         let known = load_app_config(&app).known_repos;
-        observe_task_executions_in(&config_path, &known, tasks)
+        if !tasks.iter().any(|task| is_remote_repo_key(&task.repo_path)) {
+            return observe_task_executions_in(&config_path, &known, tasks);
+        }
+        // Remote refs are answered from their host; the rest take the in-process path.
+        let mut seen = HashSet::new();
+        let order: Vec<(String, String)> = tasks
+            .iter()
+            .map(|task| (task.repo_path.clone(), task.task_slug.clone()))
+            .filter(|key| seen.insert(key.clone()))
+            .collect();
+        let (remote, local): (Vec<_>, Vec<_>) = tasks.into_iter().partition(|task| is_remote_repo_key(&task.repo_path));
+        let mut outcomes: HashMap<(String, String), TaskExecutionOutcome> = HashMap::new();
+        for outcome in observe_task_executions_in(&config_path, &known, local)? {
+            outcomes.insert((outcome.repo_path.clone(), outcome.task_slug.clone()), outcome);
+        }
+        let state = app.state::<AppState>();
+        for task in remote {
+            let outcome = observe_remote_task_execution(&state, &known, &task.repo_path, &task.task_slug);
+            outcomes.insert((task.repo_path, task.task_slug), outcome);
+        }
+        Ok(order.into_iter().filter_map(|key| outcomes.remove(&key)).collect())
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// A remote task's retained execution plus whatever its daemon says live, through the forward.
+fn observe_remote_task_execution(state: &AppState, known: &[String], repo_path: &str, task_slug: &str) -> TaskExecutionOutcome {
+    let outcome = |execution: Option<AppTaskExecutionReply>, error: Option<String>| TaskExecutionOutcome {
+        repo_path: repo_path.to_string(),
+        task_slug: task_slug.to_string(),
+        execution,
+        error,
+    };
+    let (host_id, path) = match RepoRef::parse(repo_path) {
+        Ok(RepoRef::Remote { host_id, path }) if known.iter().any(|repo| repo == repo_path) => (host_id, path),
+        _ => return outcome(None, Some(format!("unknown repository: {repo_path}"))),
+    };
+    let saved: alinery_core::task_creation::TaskExecutionReply = match remote_call(
+        state,
+        &host_id,
+        RepoOp::SavedExecution {
+            repo: path.into(),
+            slug: task_slug.to_string(),
+        },
+    ) {
+        Ok(saved) => saved,
+        Err(error) => return outcome(None, Some(error)),
+    };
+    let request = alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task_slug.to_string() };
+    match state.daemon_for(Path::new(repo_path)) {
+        None => outcome(
+            Some(AppTaskExecutionReply {
+                execution: saved,
+                live: ExecutionAvailability::Offline {
+                    detail: "this remote repository's daemon is not connected".into(),
+                },
+            }),
+            None,
+        ),
+        Some(client) => match client.get_task_execution(&request) {
+            Ok(execution) => outcome(
+                Some(AppTaskExecutionReply {
+                    execution,
+                    live: ExecutionAvailability::Available,
+                }),
+                None,
+            ),
+            Err(detail) => outcome(
+                Some(AppTaskExecutionReply {
+                    execution: saved,
+                    live: ExecutionAvailability::Unavailable { detail },
+                }),
+                None,
+            ),
+        },
+    }
 }
 
 #[tauri::command]
@@ -353,16 +422,21 @@ pub(crate) async fn allow_execution_completion(
     execution_id: String,
     session_id: String,
 ) -> Result<(), String> {
-    let repo = match repo_path {
-        Some(path) => target_repo_for_app(&app, &path)?,
-        None => require_owned_active_repo(&state)?,
+    let target = match repo_path {
+        Some(path) => owned_target(&app, &state, &path)?,
+        None => owned_active_target(&state)?,
     };
-    require_repo_owned(&state, &repo)?;
     let app_config = app_config_path(&app)?;
     // Daemon control waits up to DAEMON_CONTROL_TIMEOUT. Keep that off the main thread.
     tauri::async_runtime::spawn_blocking(move || {
-        let daemon = task_daemon_for(&repo, &task_slug, &app_config)?;
-        daemon_client::UiControlConnection::connect(&daemon)?.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
+        let daemon = task_client(&app.state::<AppState>(), &app_config, &target, &task_slug)?;
+        let mut control = match &target {
+            RepoRef::Local(_) => daemon_client::UiControlConnection::connect(&daemon)?,
+            // Over the forward the daemon cannot see who is asking, so this Mac proves it with the
+            // secret it gave the daemon when it started it.
+            RepoRef::Remote { host_id, path } => daemon_client::UiControlConnection::connect_with_secret(&daemon, &remote_ui_secret(&app_config, host_id, path)?)?,
+        };
+        control.allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
             task_slug,
             execution_id,
             session_id,
@@ -424,184 +498,8 @@ pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity
     client.session_statuses_observed()
 }
 
-fn task_activity_session(repo: &Path, task: &Task, session: &SessionMeta) -> TaskActivitySession {
-    let playbook = task
-        .playbook_ref
-        .as_ref()
-        .map(|reference| reference.key.clone())
-        .unwrap_or_else(|| session.playbook.clone());
-    let step_title = if session.generic {
-        "Generic".to_string()
-    } else {
-        match retained_task_definition(repo, task) {
-            Ok(Some(definition)) => definition
-                .step
-                .iter()
-                .find(|step| step.key == session.phase)
-                .map(|step| step.title.clone())
-                .unwrap_or_else(|| session.phase.clone()),
-            Ok(None) => session.phase.clone(),
-            Err(error) => format!("Execution unavailable: {error}"),
-        }
-    };
-    TaskActivitySession {
-        id: session.id.clone(),
-        worktree: session.worktree.clone(),
-        phase: session.phase.clone(),
-        harness: session.harness.clone(),
-        model: session.model.clone(),
-        playbook,
-        generic: session.generic,
-        step_title,
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct TaskSessionActivityProjection {
-    status: Option<(u8, TaskActivityStatus)>,
-    active_tier: Option<u8>,
-}
-
-fn has_unacknowledged_terminal_failure(session: &SessionMeta) -> bool {
-    session.exit_code.is_some_and(|code| code != 0)
-        && session
-            .ended_at
-            .is_none_or(|ended_at| session.exit_notification_read_at.is_none_or(|read_at| ended_at > read_at))
-}
-
-fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
-    let durable_status = if has_unacknowledged_terminal_failure(session) {
-        Some((2, TaskActivityStatus::Failed))
-    } else if is_primary_playbook_session(repo, task, session)
-        && session
-            .semantic
-            .phase_completed_at
-            .is_some_and(|completed_at| session.notification_read_at.is_none_or(|read_at| completed_at > read_at))
-    {
-        Some((2, TaskActivityStatus::Completed))
-    } else {
-        None
-    };
-    let Some(state) = daemon_state else {
-        return TaskSessionActivityProjection {
-            status: durable_status,
-            active_tier: None,
-        };
-    };
-    let supported = !matches!(state.adapter, alinery_core::HarnessAdapter::Unsupported);
-    if supported {
-        if let alinery_core::PlaybookState::Failed { reason } = &state.playbook {
-            let acknowledged_terminal_failure = matches!(state.process, alinery_core::ProcessState::Exited { .. })
-                && session.exit_code.is_some_and(|code| code != 0)
-                && !has_unacknowledged_terminal_failure(session);
-            return TaskSessionActivityProjection {
-                status: if reason == "StaleSource" || acknowledged_terminal_failure {
-                    durable_status
-                } else {
-                    Some((2, TaskActivityStatus::Failed))
-                },
-                active_tier: None,
-            };
-        }
-    }
-    let process_live = matches!(state.process, alinery_core::ProcessState::Starting | alinery_core::ProcessState::Alive);
-    let waiting_for_input = supported && process_live && matches!(state.agent, alinery_core::AgentState::WaitingForInput { .. });
-    let waiting_for_approval = supported && process_live && matches!(state.agent, alinery_core::AgentState::WaitingForApproval { .. });
-    let busy_or_starting = matches!(state.process, alinery_core::ProcessState::Starting) || (supported && process_live && matches!(state.agent, alinery_core::AgentState::Busy));
-    let status = if waiting_for_input {
-        Some((0, TaskActivityStatus::WaitingForInput))
-    } else if waiting_for_approval {
-        Some((0, TaskActivityStatus::WaitingForApproval))
-    } else if busy_or_starting {
-        Some((1, TaskActivityStatus::Running))
-    } else {
-        durable_status
-    };
-    let active_tier = if busy_or_starting {
-        Some(0)
-    } else if waiting_for_input || waiting_for_approval {
-        Some(1)
-    } else {
-        None
-    };
-    TaskSessionActivityProjection { status, active_tier }
-}
-
-fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
-    sessions.iter().filter(|session| !session.archived).any(|session| {
-        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied())
-            .active_tier
-            .is_some()
-    })
-}
-
 pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus]) -> HashMap<String, TaskActivitySummary> {
-    let repo_path = repo.display().to_string();
-    let statuses_by_id = statuses.iter().map(|status| (status.id.as_str(), &status.state)).collect::<HashMap<_, _>>();
-    let mut activity = slugs
-        .iter()
-        .map(|slug| (task_activity_key(&repo_path, slug), TaskActivitySummary::default()))
-        .collect::<HashMap<_, _>>();
-
-    for slug in slugs {
-        let Ok(task) = read_task(repo, slug) else {
-            continue;
-        };
-        let Ok(mut sessions) = list_sessions_for_repo(repo, slug) else {
-            continue;
-        };
-        let key = task_activity_key(&repo_path, slug);
-        let mut activity_task = task;
-        let mut visited = HashSet::from([activity_task.slug.clone()]);
-        loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) {
-                break;
-            }
-            let child_slug = activity_task.active_subtask.clone();
-            if !visited.insert(child_slug.clone()) {
-                break;
-            }
-            let Ok(child) = read_task(repo, &child_slug) else {
-                break;
-            };
-            let Ok(child_sessions) = list_sessions_for_repo(repo, &child.slug) else {
-                break;
-            };
-            activity_task = child;
-            sessions = child_sessions;
-        }
-        let mut summary = TaskActivitySummary::default();
-        let mut status_choice: Option<(u8, u64, String, TaskActivityStatus)> = None;
-        let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
-
-        for session in sessions.iter().filter(|session| !session.archived) {
-            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
-
-            if let Some((tier, status)) = projection.status {
-                let replace = status_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
-                    tier < *current_tier || (tier == *current_tier && (session.created > *current_created || (session.created == *current_created && session.id > *current_id)))
-                });
-                if replace {
-                    status_choice = Some((tier, session.created, session.id.clone(), status));
-                }
-            }
-
-            let Some(active_tier) = projection.active_tier else {
-                continue;
-            };
-            let replace = active_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {
-                active_tier < *current_tier
-                    || (active_tier == *current_tier && (session.created > *current_created || (session.created == *current_created && session.id > *current_id)))
-            });
-            if replace {
-                active_choice = Some((active_tier, session.created, session.id.clone(), session));
-            }
-        }
-        summary.status = status_choice.map(|(_, _, _, status)| status);
-        summary.active_session = active_choice.map(|(_, _, _, session)| task_activity_session(repo, &activity_task, session));
-        activity.insert(key, summary);
-    }
-    activity
+    alinery_core::task_activity::resolve_task_activity_for_repo(repo, &repo.display().to_string(), slugs, statuses)
 }
 
 pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_identity: Option<&str>) -> HashMap<String, TaskActivitySummary> {
@@ -647,6 +545,42 @@ pub(crate) fn list_task_activity_for_refs(refs: &[TaskActivityRef], app_config_i
     for resolved in result_rx {
         activity.extend(resolved);
     }
+    activity
+}
+
+/// Activity for tasks of remote repos: the host reads its own files, this side supplies the live session states.
+pub(crate) fn remote_task_activity(state: &AppState, refs: &[TaskActivityRef]) -> HashMap<String, TaskActivitySummary> {
+    let mut activity = HashMap::new();
+    let mut grouped = BTreeMap::<&str, BTreeSet<String>>::new();
+    for reference in refs {
+        activity.insert(task_activity_key(&reference.repo_path, &reference.task_slug), TaskActivitySummary::default());
+        grouped.entry(&reference.repo_path).or_default().insert(reference.task_slug.clone());
+    }
+    for (key, slugs) in grouped {
+        let Ok(target @ RepoRef::Remote { .. }) = RepoRef::parse(key) else {
+            continue;
+        };
+        let RepoRef::Remote { host_id, path } = &target else {
+            continue;
+        };
+        let statuses = repo_client(state, &target).and_then(|client| client.session_statuses_observed()).unwrap_or_default();
+        let op = RepoOp::TaskActivity {
+            repo: path.into(),
+            repo_path: key.to_string(),
+            slugs: slugs.into_iter().collect(),
+            statuses,
+        };
+        if let Ok(resolved) = remote_call::<HashMap<String, TaskActivitySummary>>(state, host_id, op) {
+            activity.extend(resolved);
+        }
+    }
+    activity
+}
+
+pub(crate) fn list_task_activity_for_all(state: &AppState, refs: Vec<TaskActivityRef>, app_config_identity: Option<&str>) -> HashMap<String, TaskActivitySummary> {
+    let (remote, local): (Vec<_>, Vec<_>) = refs.into_iter().partition(|reference| is_remote_repo_key(&reference.repo_path));
+    let mut activity = list_task_activity_for_refs(&local, app_config_identity);
+    activity.extend(remote_task_activity(state, &remote));
     activity
 }
 
@@ -1134,6 +1068,7 @@ pub(crate) fn connect_current_daemon(repo: &Path) -> Result<DaemonClient, String
     DaemonClient::connect_path_checked(current_alineryd_socket_path(repo))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn current_alineryd_lock_path(repo: &Path) -> PathBuf {
     alineryd_lock_path(repo, alineryd_socket_namespace().as_deref())
 }
@@ -1261,9 +1196,22 @@ pub(crate) fn spawn_daemon_detached(repo: &Path, app_config: &Path) -> Result<()
 pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let repo = match path.as_deref().map(str::trim) {
-            Some(p) if !p.is_empty() => PathBuf::from(p),
-            _ => active_repo()?,
+        let target = match path.as_deref().map(str::trim) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => active_repo_ref()?.uri(),
+        };
+        let repo = match RepoRef::parse(&target)? {
+            RepoRef::Remote { host_id, path } => {
+                crate::stop_remote_daemon(&app, &host_id, &path, |_, _| Ok(()))?;
+                emit(
+                    &app,
+                    alinery_core::TelemetryEvent::DaemonStop {
+                        source: alinery_core::TelemetrySource::App,
+                    },
+                );
+                return Ok(());
+            }
+            RepoRef::Local(repo) => repo,
         };
         takeover_allowed(&state, &repo)?;
         let lifecycle = state.repo_lifecycle(&repo);
@@ -1306,10 +1254,34 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
     .map_err(|error| format!("stop daemon task: {error}"))?
 }
 
-/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof.
+/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof. A remote
+/// repo is counted through its forwarded daemon (or, when that daemon is a conflict, from what the
+/// conflict saw), and reads 0 while its host is not connected.
+pub(crate) fn live_sessions_in(state: &AppState, path: &str) -> u32 {
+    let path = path.trim();
+    if is_remote_repo_key(path) {
+        let key = Path::new(path);
+        return match (state.daemon_for(key), state.daemon_conflict(key)) {
+            (Some(client), _) => client.live_session_count(),
+            (None, Some(conflict)) => conflict
+                .owners
+                .iter()
+                .map(|owner| match &owner.impact {
+                    TakeoverImpact::Known { sessions } => sessions.len() as u32,
+                    TakeoverImpact::Unknown { .. } => 0,
+                })
+                .sum(),
+            (None, None) => 0,
+        };
+    }
+    connect_current_daemon(Path::new(path)).map_or(0, |client| client.live_session_count())
+}
+
 #[tauri::command]
-pub(crate) fn repo_live_sessions(path: String) -> u32 {
-    connect_current_daemon(Path::new(path.trim())).map(|client| client.live_session_count()).unwrap_or(0)
+pub(crate) async fn repo_live_sessions(app: AppHandle, path: String) -> u32 {
+    tauri::async_runtime::spawn_blocking(move || live_sessions_in(&app.state::<AppState>(), &path))
+        .await
+        .unwrap_or(0)
 }
 
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding
@@ -1372,56 +1344,67 @@ pub(crate) fn execute_close_repo_acknowledgment_plan(
 #[tauri::command]
 pub(crate) async fn close_all_repos(app: AppHandle) -> Result<u32, String> {
     app.state::<AppState>().begin_quit();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
-        // spawn a daemon for a repo that has none. Tearing down before shutting those off
-        // would race them into resurrecting the processes the user just asked us to stop.
-        // Stop the app-managed session producer before freezing the plan. The quit latch
-        // already prevents the GUI pollers and commands from starting replacement work.
-        state.kill_mcp();
-        // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
-        // list is the complete set of repos this app has open.
-        let repos = load_app_config(&app)
-            .known_repos
-            .into_iter()
-            .filter_map(|repo| {
-                let repo = PathBuf::from(repo.trim());
-                if repo.as_os_str().is_empty() {
-                    return None;
-                }
-                // B6: quitting closes *our* repos. A repo another alinery holds is that window's
-                // to tear down — skipping it is correct, not a failure.
-                if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
-                    return None;
-                }
-                Some(repo)
-            })
-            .collect::<Vec<_>>();
-        // Freeze every repository's session references before the first blocking shutdown.
-        // Repository order and teardown duration therefore cannot change acknowledgment.
-        let plan = close_repo_acknowledgment_plan(&repos);
-        let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| {
-            let lifecycle = state.repo_lifecycle(repo);
-            let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-            let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
-            close_repo_daemon(&state, repo, &guard)?;
-            state.release_repo(repo);
-            drop(reservation);
-            Ok(())
-        });
-        let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
-        if !errors.is_empty() {
-            // The latch stays set. Quitting is still the user's stated intent and the dialog
-            // asks them to confirm it; only their choosing to come back clears it, via
-            // `cancel_quit`. Clearing it here would let the poller start respawning daemons
-            // underneath a dialog that is still on its way to `destroy()`.
-            return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
-        }
-        Ok(closed)
-    })
-    .await
-    .map_err(|error| format!("close repositories task: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || close_all_repos_blocking(&app))
+        .await
+        .map_err(|error| format!("close repositories task: {error}"))?
+}
+
+pub(crate) fn close_all_repos_blocking<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<u32, String> {
+    let state = app.state::<AppState>();
+    // Latch FIRST: the poller ticks every 5s and the footer polls every 1.5s, and both
+    // spawn a daemon for a repo that has none. Tearing down before shutting those off
+    // would race them into resurrecting the processes the user just asked us to stop.
+    // Stop the app-managed session producer before freezing the plan. The quit latch
+    // already prevents the GUI pollers and commands from starting replacement work.
+    state.kill_mcp();
+    // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
+    // list is the complete set of repos this app has open.
+    let known = load_app_config(&app).known_repos;
+    // Remote repositories are not torn down here. Their daemons and sessions belong to the
+    // host, and stopping those is a separate, confirmed action; "close all" only lets go of
+    // the hosts, once the local repos have closed.
+    let remote_hosts = remote_host_ids(&known);
+    let repos = known
+        .into_iter()
+        .filter(|repo| !is_remote_repo_key(repo))
+        .filter_map(|repo| {
+            let repo = PathBuf::from(repo.trim());
+            if repo.as_os_str().is_empty() {
+                return None;
+            }
+            // B6: quitting closes *our* repos. A repo another alinery holds is that window's
+            // to tear down — skipping it is correct, not a failure.
+            if !state.owns_repo(&repo) && gui_lock_held_elsewhere(&repo) {
+                return None;
+            }
+            Some(repo)
+        })
+        .collect::<Vec<_>>();
+    // Freeze every repository's session references before the first blocking shutdown.
+    // Repository order and teardown duration therefore cannot change acknowledgment.
+    let plan = close_repo_acknowledgment_plan(&repos);
+    let (closed_repos, errors) = execute_close_repo_acknowledgment_plan(&plan, |repo| {
+        let lifecycle = state.repo_lifecycle(repo);
+        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
+        close_repo_daemon(&state, repo, &guard)?;
+        state.release_repo(repo);
+        drop(reservation);
+        Ok(())
+    });
+    let closed = u32::try_from(closed_repos.len()).map_err(|_| "closed repository count overflow".to_string())?;
+    if !errors.is_empty() {
+        // The latch stays set. Quitting is still the user's stated intent and the dialog
+        // asks them to confirm it; only their choosing to come back clears it, via
+        // `cancel_quit`. Clearing it here would let the poller start respawning daemons
+        // underneath a dialog that is still on its way to `destroy()`.
+        return Err(format!("closed {closed} repo(s); failed: {}", errors.join("; ")));
+    }
+    // Ends ssh only. After a failure above the hosts stay connected, for the user who comes back.
+    for host_id in &remote_hosts {
+        disconnect_host(app, host_id);
+    }
+    Ok(closed)
 }
 
 /// Abandon a quit that did not complete: `close_all_repos` failed on some repo and the
@@ -1469,7 +1452,7 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
         for repo in load_app_config(&app).known_repos.iter().map(PathBuf::from) {
             // A repo that no longer exists on disk cannot host a daemon; spawning for it
             // would burn the full connect-retry window (~2s) on every tick.
-            if !repo.is_dir() {
+            if !is_local_repo_dir(&repo) {
                 continue;
             }
             // Deliberate teardown in flight. Skipped before the probe, not just before the
@@ -1565,16 +1548,21 @@ pub(crate) struct DaemonStatus {
 #[tauri::command]
 pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
     let (extra_lanes, stale_lanes) = count_foreign_lanes();
-    let active = active_repo().ok();
-    let repo = active.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
-    let conflict = active.as_ref().and_then(|r| state.daemon_conflict(r));
+    // A remote repo is looked up by its stored key; the lock probe below is for local folders.
+    let active_ref = active_repo_ref().ok();
+    let remote = matches!(active_ref, Some(RepoRef::Remote { .. }));
+    let key = active_ref.map(|r| PathBuf::from(r.uri()));
+    let local = key.as_ref().filter(|_| !remote);
+    let repo = key.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
+    let conflict = key.as_ref().and_then(|r| state.daemon_conflict(r));
     // Status is observational. The ordered lifecycle poller owns GUI claims.
-    let repo_busy = !state.is_quitting() && conflict.is_none() && active.as_ref().is_some_and(|repo| !state.owns_repo(repo) && gui_lock_held_elsewhere(repo));
-    let build_drift = active.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
-    let host_guard_warning = active.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
+    let repo_busy = !state.is_quitting() && conflict.is_none() && local.is_some_and(|repo| !state.owns_repo(repo) && gui_lock_held_elsewhere(repo));
+    let build_drift = key.as_ref().and_then(|r| state.daemon_compat(r)) == Some(DaemonCompat::BuildDrift);
+    let host_guard_warning = key.as_ref().is_some_and(|repo| state.daemon_host_guard_warning(repo));
+    let mode = if remote { "remote" } else { "local" };
     let offline = || DaemonStatus {
         reachable: false,
-        mode: "local".into(),
+        mode: mode.into(),
         alive: 0,
         busy: 0,
         waiting_for_input: 0,
@@ -1594,7 +1582,8 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
     let Some(daemon) = state.daemon() else {
         return Ok(offline());
     };
-    match daemon.session_statuses_observed() {
+    // The observation waits on the daemon: up to 3 s over a remote forward.
+    match off_main_thread("daemon status", move || daemon.session_statuses_observed()).await {
         Ok(statuses) => {
             let total = statuses.len() as u32;
             let mut alive = 0u32;
@@ -1623,7 +1612,7 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
             }
             Ok(DaemonStatus {
                 reachable: true,
-                mode: "local".into(),
+                mode: mode.into(),
                 alive,
                 busy,
                 waiting_for_input,

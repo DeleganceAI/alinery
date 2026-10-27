@@ -339,17 +339,17 @@ fn worktree_exists_flags_missing_dir() {
     set_active_repo_global(Some(repo.clone())).unwrap();
 
     let task = create_task_for_test(&repo, "Worktree Exists Task", true, "", "");
-    assert!(worktree_exists(task.slug.clone()).expect("worktree_exists ok"));
+    assert!(worktree_exists_for(&AppState::default(), task.slug.clone()).expect("worktree_exists ok"));
 
     fs::remove_dir_all(&task.worktree).unwrap();
-    assert!(!worktree_exists(task.slug.clone()).expect("worktree_exists ok after removal"));
+    assert!(!worktree_exists_for(&AppState::default(), task.slug.clone()).expect("worktree_exists ok after removal"));
 
     // A task whose `worktree` field is already "" (e.g. after remove_worktree) is never
     // reported as existing, regardless of what's on disk.
     let mut bare = task.clone();
     bare.worktree.clear();
     write_task(&repo, &bare).unwrap();
-    assert!(!worktree_exists(bare.slug.clone()).expect("worktree_exists ok for empty path"));
+    assert!(!worktree_exists_for(&AppState::default(), bare.slug.clone()).expect("worktree_exists ok for empty path"));
 
     set_active_repo_global(None).unwrap();
     let _ = fs::remove_dir_all(&repo);

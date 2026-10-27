@@ -70,6 +70,9 @@ import type {
   PullRequestSnapshot,
   PurgeArchivedResult,
   RelatedTaskRef,
+  RemoteDirListing,
+  RemoteHostView,
+  RemoteSharingView,
   RepoOverrides,
   ReviewHandoffResult,
   SavePlaybookRequest,
@@ -85,6 +88,7 @@ import type {
   SessionObservation,
   SessionStatusRef,
   SkillInstall,
+  SshTarget,
   StagedUpdate,
   StorageInfo,
   SubtaskManagerState,
@@ -128,6 +132,24 @@ export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
 export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
+
+// ── remote.rs ─────────────────────────────────────────────────────────
+// A failed connect whose message starts with HOST_KEY_UNKNOWN (remoteRepo.ts) means first
+// contact with the host: confirm with the user, then connect again with trust = true.
+export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
+export const remoteAddHost = (destination: string, label?: string) => invoke<RemoteHostView>("remote_add_host", { destination, label: label ?? null });
+export const remoteSshAliases = () => invoke<string[]>("remote_ssh_aliases");
+export const remoteDescribeDestination = (destination: string) => invoke<SshTarget>("remote_describe_destination", { destination });
+export const remoteDiscardHost = (hostId: string) => invoke<void>("remote_discard_host", { hostId });
+export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
+export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
+export const remoteSharing = (hostId: string) => invoke<RemoteSharingView>("remote_sharing", { hostId });
+export const remoteSetSharing = (hostId: string, shared: string[]) => invoke<RemoteSharingView>("remote_set_sharing", { hostId, shared });
+export const remoteListDir = (hostId: string, path: string, showHidden: boolean) => invoke<RemoteDirListing>("remote_list_dir", { hostId, path, showHidden });
+export const remoteClassify = (hostId: string, path: string) => invoke<PickedFolder>("remote_classify", { hostId, path });
+export const remoteInit = (hostId: string, path: string) => invoke<InitializedFolder>("remote_init", { hostId, path });
+export const remoteAddRepo = (hostId: string, path: string) => invoke<string>("remote_add_repo", { hostId, path });
+export const removeRemoteRepoKeepRunning = (path: string) => invoke<AppConfig>("remove_remote_repo_keep_running", { path });
 
 // ── artifacts.rs ──────────────────────────────────────────────────────
 export const addArtifactComment = (a: {
@@ -218,6 +240,7 @@ export const backupBusy = (repoPath: string | null) => invoke<boolean>("backup_b
 export const backupNow = (repoPath: string | null) => invoke<BackupMeta>("backup_now", { repoPath });
 export const listBackups = (repoPath: string | null) => invoke<BackupListItem[]>("list_backups", { repoPath });
 export const pickBackupDestinationDialog = (repoPath: string) => invoke<string | null>("pick_backup_destination_dialog", { repoPath });
+export const checkBackupDestination = (repoPath: string | null, destination: string) => invoke<string>("check_backup_destination", { repoPath, destination });
 export const restoreBackup = (repoPath: string | null, backupPath: string) => invoke<void>("restore_backup", { repoPath, backupPath });
 
 // ── daemon.rs ─────────────────────────────────────────────────────────
@@ -500,6 +523,25 @@ export const nextAttachId = () => attachIdSeq++;
 const STREAM_RECOVERY_WINDOW_MS = 30_000;
 const STREAM_RECOVERY_MAX = 6;
 const streamCloses = new Map<string, number[]>();
+
+/**
+ * A remote host was connected (the first time, or brought back after it dropped). A pane that lost
+ * its stream while the host was away rejoins here. Returns the unlisten.
+ */
+export function onRemoteHostConnected(handler: () => void): () => void {
+  let disposed = false;
+  let stop: (() => void) | null = null;
+  void listen("remote_host_connected", () => {
+    if (!disposed) handler();
+  }).then((unlisten) => {
+    if (disposed) unlisten();
+    else stop = unlisten;
+  });
+  return () => {
+    disposed = true;
+    stop?.();
+  };
+}
 
 /**
  * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client

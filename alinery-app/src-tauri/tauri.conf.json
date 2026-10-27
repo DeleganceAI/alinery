@@ -34,7 +34,8 @@
       "../../LICENSE": "LICENSE",
       "../../NOTICE": "NOTICE",
       "../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
-      "resources/ownership/": "ownership/"
+      "resources/ownership/": "ownership/",
+      "resources/remote/": "remote/"
     },
     "externalBin": ["alinery-vinculum-daemon", "alinery-mcp"],
     "icon": [

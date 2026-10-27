@@ -16,6 +16,8 @@ import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
+import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
+import { revealPath } from "../revealPath";
 import {
   classifySessionNotice,
   DEFAULT_TASK_SESSION_SORT,
@@ -54,7 +56,6 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -79,6 +80,7 @@ import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { readTaskExecution } from "../useExecutionObservation";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
+import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -958,10 +960,12 @@ export function TaskDetail({
   };
 
   const relatedTags = task?.related_tasks ?? [];
+  // Related tasks are linked, not copied, so only tasks on this task's machine can be tagged.
   const relatedCandidates = boardTasks.filter((candidate) => {
     if (candidate.archived || candidate.draft) return false;
+    if (!sameMachine(candidate.repo_path, repoPath)) return false;
     if (candidate.repo_path === repoPath && candidate.slug === slug) return false;
-    return !relatedTags.some((tag) => tag.repo_path === candidate.repo_path && tag.slug === candidate.slug);
+    return !relatedTags.some((tag) => relatedRepoKey(repoPath, tag.repo_path) === candidate.repo_path && tag.slug === candidate.slug);
   });
   const saveRelated = (next: RelatedTaskRef[]) => {
     setBusy("related");
@@ -1103,7 +1107,7 @@ export function TaskDetail({
                   const key = event.target.value;
                   const candidate = relatedCandidates.find((item) => taskKey(item) === key);
                   if (!candidate) return;
-                  saveRelated([...relatedTags, { repo_path: candidate.repo_path, slug: candidate.slug, name: candidate.name }]);
+                  saveRelated([...relatedTags, { repo_path: relatedStoredPath(repoPath, candidate.repo_path) ?? candidate.repo_path, slug: candidate.slug, name: candidate.name }]);
                 }}
               >
                 <option value="">{relatedCandidates.length ? "Tag a related task…" : "No other open tasks"}</option>
@@ -1118,8 +1122,9 @@ export function TaskDetail({
             {relatedTags.length > 0 && (
               <div className="task-related-tags">
                 {relatedTags.map((tag) => {
-                  const open = !knownRepos || knownRepos.includes(tag.repo_path);
-                  const label = boardTasks.find((candidate) => candidate.repo_path === tag.repo_path && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
+                  const tagRepo = relatedRepoKey(repoPath, tag.repo_path);
+                  const open = !knownRepos || knownRepos.includes(tagRepo);
+                  const label = boardTasks.find((candidate) => candidate.repo_path === tagRepo && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
                   return (
                     <span key={`${tag.repo_path}:${tag.slug}`} className={`task-related-tag${open ? "" : " closed"}`}>
                       <button
@@ -1128,10 +1133,10 @@ export function TaskDetail({
                         aria-label={open ? `Open ${label}` : `${label} (repository closed)`}
                         disabled={!open}
                         title={open ? `Open ${label}` : "Repository is closed"}
-                        onClick={() => open && onOpenRelatedTask(tag.slug, tag.repo_path)}
+                        onClick={() => open && onOpenRelatedTask(tag.slug, tagRepo)}
                       >
                         {label}
-                        {tag.repo_path !== repoPath ? <span className="dim"> · {repoName(tag.repo_path)}</span> : null}
+                        {tagRepo !== repoPath ? <span className="dim"> · {repoName(tagRepo)}</span> : null}
                       </button>
                       <button
                         type="button"
@@ -1954,7 +1959,7 @@ export function TaskDetail({
                           if (item.attachment) {
                             ipc
                               .attachmentPath(slug, item.name)
-                              .then(ipc.revealItemInDir)
+                              .then(revealPath)
                               .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
                             return;
                           }

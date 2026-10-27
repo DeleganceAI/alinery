@@ -598,6 +598,11 @@ nav.tabs .tab:hover:not(.on) {
   border-bottom-left-radius: 0;
   margin-left: -1px;
 }
+/* Add repo and add remote repo sit together as one joined control. */
+.repo-switcher .repo-add:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .repo-select {
   position: relative;
   display: flex;
@@ -5284,6 +5289,271 @@ dialog.modal::backdrop {
 }
 .chat-new-foot {
   justify-content: flex-end;
+}
+
+/* Remote (SSH) repository dialog: the shared .modal frame with a destination field and a
+   folder browser. */
+.remote-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+.remote-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.remote-body .dsc {
+  margin: 0;
+}
+.remote-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(13px * var(--ui-scale));
+}
+.remote-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.remote-saved,
+.remote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.remote-list:empty {
+  display: none;
+}
+.remote-saved > li + li,
+.remote-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.remote-saved-host,
+.remote-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.remote-saved-host {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.remote-saved-host:hover,
+.remote-entry:hover:not(:disabled) {
+  background: var(--accent-subtle);
+}
+.remote-entry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.remote-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-cwd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text-muted);
+}
+.remote-hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-field-label {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.remote-saved-host.on {
+  background: var(--accent-subtle);
+}
+.remote-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.remote-empty .dsc {
+  margin: 0;
+}
+.remote-host-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.remote-host-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.remote-host-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.remote-state.connected::before {
+  background: var(--success);
+}
+.remote-host-warn {
+  color: var(--warning);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps,
+.remote-progress {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 0 16px 8px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps li,
+.remote-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-steps li.on,
+.remote-progress li.on {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.remote-steps li.done,
+.remote-progress li.done {
+  color: var(--text);
+}
+.remote-progress {
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+/* Credentials step: what a host may use. */
+.remote-share {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.remote-share legend {
+  padding: 0 4px;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+}
+.remote-share-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--accent);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.remote-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.remote-share-list label,
+.remote-share-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.remote-share .btn {
+  align-self: flex-start;
+}
+.remote-hosts {
+  margin-top: 16px;
+}
+.sign-in-target {
+  margin: 0 0 8px;
+}
+/* A remote repo whose host is not connected. */
+.repo-opt.offline .repo-opt-name {
+  opacity: 0.6;
+}
+.repo-host-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted);
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.04em;
 }
 /* Native select without the OS chrome: appearance:none drops the system bezel and arrow,
    and the lucide chevron stands in so it matches every other icon in the app. */

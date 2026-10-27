@@ -353,6 +353,65 @@ pub fn enforce_retention(repo: &Path, settings: &BackupDefaults) -> Result<(), S
     Ok(())
 }
 
+/// The backup settings in force for `repo`: the global defaults in `app_config` under the repo's own
+/// overrides. Read where the repo lives, so a remote repo uses its host's settings, not this Mac's.
+pub fn backup_settings_in(app_config: &Path, repo: &Path) -> BackupDefaults {
+    let overrides = crate::load_repo_overrides(repo);
+    crate::resolve_effective_config(&crate::load_global_settings(app_config), &overrides).backup
+}
+
+/// Should this trigger enqueue a backup?
+///
+/// Only the three automatic triggers are gated here. `Manual` (BACKUP NOW) and `Mcp` never
+/// consult this gate: they are explicit user/agent requests that call `create_backup` directly
+/// and report their real result, rather than disappearing into a debounce window.
+pub fn should_publish(settings: &BackupDefaults, repo: &Path, trigger: BackupTrigger) -> bool {
+    if !backup_feature_ready(settings, repo) {
+        return false;
+    }
+    match trigger {
+        BackupTrigger::PreArchive => settings.trigger_pre_archive,
+        BackupTrigger::PostArtifactChange => settings.trigger_post_artifact_change,
+        BackupTrigger::PostPushCommit => settings.trigger_post_push_commit,
+        BackupTrigger::Manual | BackupTrigger::Mcp => false,
+    }
+}
+
+/// Remove exactly what `create_backup` archives — no more. Anything cleared here but not
+/// archived there is data the user loses on restore, so both read `CURATED_ALINERY_PATHS`.
+/// Missing paths are not an error: a repo may never have had a `playbooks.toml`.
+pub fn clear_curated_alinery_data(repo: &Path) -> Result<(), String> {
+    let alinery = alinery_dir(repo);
+    for name in CURATED_ALINERY_PATHS {
+        let path = alinery.join(name);
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let removed = if meta.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+        removed.map_err(|e| format!("clear {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// A backup may only be restored into the repo it was taken from.
+pub fn require_backup_matches_repo(repo: &Path, backup_path: &Path) -> Result<(), String> {
+    let meta = read_backup_meta(backup_path)?;
+    let expected = canonical_string(repo)?;
+    if meta.repo_path != expected {
+        return Err(format!("this backup belongs to {}, not {expected}", meta.repo_path));
+    }
+    Ok(())
+}
+
+/// Validate → clear → extract. Stopping the daemon is the caller's job (it owns the sessions that
+/// hold this data); keeping that out of here is what makes the destructive half testable.
+pub fn restore_backup_into(repo: &Path, backup_path: &Path) -> Result<(), String> {
+    // Identity first. A mismatched archive must cost the user nothing.
+    require_backup_matches_repo(repo, backup_path)?;
+    clear_curated_alinery_data(repo)?;
+    extract_backup_into(backup_path, &alinery_dir(repo), Some(repo)).map(|_| ())
+}
+
 /// Reject archive entry names that would escape the extraction root: absolute paths, `..`,
 /// and anything the zip crate cannot resolve to a contained relative path. An archive is
 /// untrusted input — a user can be handed a `.zip` and restore it.

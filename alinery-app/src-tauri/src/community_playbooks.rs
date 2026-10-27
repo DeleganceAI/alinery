@@ -409,13 +409,15 @@ pub(crate) fn community_download_status_with(http: &mut dyn CommunityHttp, base:
     Ok(records.into_iter().map(|record| status_row(http, base, repo_dir, &record)).collect())
 }
 
-fn owned_repo(app: &AppHandle, repo_path: &str) -> Result<PlaybookRoots, String> {
-    let roots = library_roots(app, Some(repo_path))?;
-    if roots.repo_dir.as_os_str().is_empty() {
-        return Err("select a repository before saving a repo playbook".into());
-    }
-    require_repo_owned(&app.state::<AppState>(), &roots.repo_dir)?;
-    Ok(roots)
+/// Run `work` on the playbook files of a repo this window owns (or a connected remote one).
+fn owned_library<T>(app: &AppHandle, repo_path: &str, work: impl FnOnce(&Library) -> T) -> Result<T, String> {
+    with_library(app, Some(repo_path), |lib| {
+        if !lib.has_repo() {
+            return Err("select a repository before saving a repo playbook".to_string());
+        }
+        lib.require_owned(&app.state::<AppState>())?;
+        Ok(work(lib))
+    })?
 }
 
 #[tauri::command]
@@ -430,29 +432,33 @@ pub(crate) async fn list_community_playbooks(q: Option<String>, cursor: Option<S
 }
 
 #[tauri::command]
-pub(crate) fn list_community_imports(app: AppHandle, repo_path: String) -> Result<CommunityImportList, String> {
-    let roots = owned_repo(&app, &repo_path)?;
-    let imports = read_community_imports(&roots.repo_dir)?
-        .into_iter()
-        .map(|record| CommunityImportRow {
-            id: record.id,
-            label: record.label,
-            playbook_key: record.playbook_key,
-            local_key: record.local_key,
-            imported_version: record.imported_version,
-        })
-        .collect();
-    Ok(CommunityImportList { imports })
+pub(crate) async fn list_community_imports(app: AppHandle, repo_path: String) -> Result<CommunityImportList, String> {
+    off_main_thread("list community imports", move || {
+        owned_library(&app, &repo_path, |lib| {
+            let imports = read_community_imports(&lib.roots.repo_dir)?
+                .into_iter()
+                .map(|record| CommunityImportRow {
+                    id: record.id,
+                    label: record.label,
+                    playbook_key: record.playbook_key,
+                    local_key: record.local_key,
+                    imported_version: record.imported_version,
+                })
+                .collect();
+            Ok(CommunityImportList { imports })
+        })?
+    })
+    .await
 }
 
 #[tauri::command]
 pub(crate) async fn community_download_status(app: AppHandle, repo_path: String) -> Result<DownloadStatusList, String> {
-    let roots = owned_repo(&app, &repo_path)?;
     let base = accounts_url();
-    let repo_dir = roots.repo_dir;
     let rows = tauri::async_runtime::spawn_blocking(move || {
-        let mut http = CurlCommunityHttp;
-        community_download_status_with(&mut http, &base, &repo_dir)
+        owned_library(&app, &repo_path, |lib| {
+            let mut http = CurlCommunityHttp;
+            community_download_status_with(&mut http, &base, &lib.roots.repo_dir)
+        })?
     })
     .await
     .map_err(|_| UNREACHABLE.to_string())??;
@@ -925,18 +931,17 @@ fn refresh_for(auth_path: PathBuf) -> impl FnOnce(&AccountTokens) -> Result<Acco
 
 #[tauri::command]
 pub(crate) async fn import_community_playbook(app: AppHandle, id: String, repo_path: String, overwrite: bool) -> ImportResult {
-    let roots = match owned_repo(&app, &repo_path) {
-        Ok(roots) => roots,
-        Err(message) => return ImportResult::Failed { message },
-    };
     let auth_path = match account_auth_path_for(&app) {
         Ok(path) => path,
         Err(message) => return ImportResult::Failed { message },
     };
     let base = accounts_url();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut http = CurlCommunityHttp;
-        import_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &roots, &id, overwrite)
+        let imported = owned_library(&app, &repo_path, |lib| {
+            let mut http = CurlCommunityHttp;
+            import_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &lib.roots, &id, overwrite)
+        });
+        imported.unwrap_or_else(|message| ImportResult::Failed { message })
     })
     .await
     .unwrap_or(ImportResult::Failed { message: UNREACHABLE.into() })
@@ -944,18 +949,17 @@ pub(crate) async fn import_community_playbook(app: AppHandle, id: String, repo_p
 
 #[tauri::command]
 pub(crate) async fn update_community_import(app: AppHandle, id: String, repo_path: String, overwrite_edited: bool) -> UpdateResult {
-    let roots = match owned_repo(&app, &repo_path) {
-        Ok(roots) => roots,
-        Err(message) => return UpdateResult::Failed { message },
-    };
     let auth_path = match account_auth_path_for(&app) {
         Ok(path) => path,
         Err(message) => return UpdateResult::Failed { message },
     };
     let base = accounts_url();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut http = CurlCommunityHttp;
-        update_community_import_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &roots, &id, overwrite_edited)
+        let updated = owned_library(&app, &repo_path, |lib| {
+            let mut http = CurlCommunityHttp;
+            update_community_import_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &lib.roots, &id, overwrite_edited)
+        });
+        updated.unwrap_or_else(|message| UpdateResult::Failed { message })
     })
     .await
     .unwrap_or(UpdateResult::Failed { message: UNREACHABLE.into() })
@@ -1337,18 +1341,18 @@ where
 
 #[tauri::command]
 pub(crate) async fn publish_community_playbook(app: AppHandle, reference: PlaybookRef, repo_path: String, label: Option<String>) -> PublishResult {
-    let roots = match library_roots(&app, Some(&repo_path)) {
-        Ok(roots) => roots,
-        Err(message) => return PublishResult::Failed { message, code: String::new() },
-    };
     let auth_path = match account_auth_path_for(&app) {
         Ok(path) => path,
         Err(message) => return PublishResult::Failed { message, code: String::new() },
     };
     let base = accounts_url();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut http = CurlCommunityHttp;
-        publish_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &roots, &reference, label.as_deref())
+        // Publishing only reads the playbook, so it needs no ownership of the repo.
+        let published = with_library(&app, Some(&repo_path), |lib| {
+            let mut http = CurlCommunityHttp;
+            publish_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &lib.roots, &reference, label.as_deref())
+        });
+        published.unwrap_or_else(|message| PublishResult::Failed { message, code: String::new() })
     })
     .await
     .unwrap_or(PublishResult::Failed {

@@ -1,0 +1,14 @@
+{
+  // Same resolution settings as alinery-app/tsconfig.json, so `tsc` here answers S0.1 for the UI.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["gen/**/*.ts", "src/bridge-fetch.ts"]
+}

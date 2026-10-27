@@ -3,6 +3,7 @@
 //! Every app and MCP request is built and every daemon-only reply field is parsed here.
 
 use crate::{alineryd_socket_path, app_config_identity, daemon_compat, login_shell_path, DaemonCompat, ProcessState, SessionState, SessionTransport, PROTOCOL_VERSION};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{Read, Write};
@@ -33,7 +34,21 @@ pub struct UiControlConnection {
 }
 impl UiControlConnection {
     pub fn connect(client: &DaemonClient) -> Result<Self, String> {
-        let mut stream = client.send(&json!({"op":"ui_control"}))?;
+        Self::open(client, None)
+    }
+
+    /// For a daemon reached through a forward, whose peer is not this process: the secret the app
+    /// gave the daemon when it started it.
+    pub fn connect_with_secret(client: &DaemonClient, secret: &str) -> Result<Self, String> {
+        Self::open(client, Some(secret))
+    }
+
+    fn open(client: &DaemonClient, secret: Option<&str>) -> Result<Self, String> {
+        let request = match secret {
+            Some(secret) => json!({"op":"ui_control","secret":secret}),
+            None => json!({"op":"ui_control"}),
+        };
+        let mut stream = client.send(&request)?;
         let value: Value = serde_json::from_str(&read_reply_line(&mut stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
         expect_ok(value)?;
         Ok(Self { stream })
@@ -722,7 +737,7 @@ pub struct LiveSessionStatus {
     pub transport: SessionTransport,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonSessionStatus {
     pub id: String,
     pub state: SessionState,
@@ -1028,6 +1043,9 @@ fn format_socket_write_error(error: std::io::Error) -> String {
 #[derive(Clone, Debug)]
 pub struct DaemonClient {
     pub socket_path: PathBuf,
+    /// Budget for the `*_observed` reads. A local socket answers in microseconds; a socket
+    /// forwarded over ssh costs round trips, so remote clients raise it via `with_observe_timeout`.
+    pub observe_timeout: Duration,
 }
 
 impl DaemonClient {
@@ -1057,12 +1075,20 @@ impl DaemonClient {
     }
 
     pub fn connect_path(socket_path: PathBuf) -> Result<Self, String> {
-        Ok(Self { socket_path })
+        Ok(Self {
+            socket_path,
+            observe_timeout: DAEMON_OBSERVATION_TIMEOUT,
+        })
     }
 
     pub fn connect_path_checked(socket_path: PathBuf) -> Result<Self, String> {
         UnixStream::connect(&socket_path).map_err(|error| format!("daemon not running: {error}"))?;
-        Ok(Self { socket_path })
+        Self::connect_path(socket_path)
+    }
+
+    pub fn with_observe_timeout(mut self, timeout: Duration) -> Self {
+        self.observe_timeout = timeout;
+        self
     }
 
     // Timeouts are set before write_all so a wedged daemon can't hang the write side either.
@@ -1097,8 +1123,7 @@ impl DaemonClient {
     }
 
     pub fn version_checked(&self) -> Result<DaemonVersionReply, String> {
-        self.call_with_timeout(&version_request(), DAEMON_OBSERVATION_TIMEOUT)
-            .map(|value| parse_version_reply(&value))
+        self.call_with_timeout(&version_request(), self.observe_timeout).map(|value| parse_version_reply(&value))
     }
 
     pub fn version(&self) -> DaemonVersionReply {
@@ -1141,7 +1166,7 @@ impl DaemonClient {
     }
 
     pub fn session_status_observed(&self, id: &str) -> Result<Option<LiveSessionStatus>, String> {
-        let response = self.call_with_timeout(&status_request(id), DAEMON_OBSERVATION_TIMEOUT)?;
+        let response = self.call_with_timeout(&status_request(id), self.observe_timeout)?;
         parse_status_reply(&response)
     }
 
@@ -1235,7 +1260,7 @@ impl DaemonClient {
     }
 
     pub fn session_statuses_observed(&self) -> Result<Vec<DaemonSessionStatus>, String> {
-        parse_list_reply(&self.call_with_timeout(&list_request(), DAEMON_OBSERVATION_TIMEOUT)?)
+        parse_list_reply(&self.call_with_timeout(&list_request(), self.observe_timeout)?)
     }
 }
 
@@ -1439,16 +1464,18 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
     }
 }
 
-pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
-    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
-    let mut command = Command::new(daemon);
+/// The one recipe for launching the daemon, locally or (through the repo service) on a remote
+/// host: arguments, login-shell PATH, the Grok key, detachment and null stdio. Callers add
+/// anything host-specific (such as the ownership library) and spawn it.
+pub fn daemon_command(binary: &Path, repo: &Path, app_config: &Path, build_id: &std::ffi::OsStr, namespace: Option<&str>, host_executable: Option<&Path>) -> Command {
+    let mut command = Command::new(binary);
     command
         .arg("--repo")
         .arg(repo)
         .arg("--app-config")
         .arg(app_config)
         .arg("--build-id")
-        .arg(daemon_binary_build_id())
+        .arg(build_id)
         .env("PATH", login_shell_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1457,8 +1484,20 @@ pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&
     if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
         command.arg("--socket-namespace").arg(namespace);
     }
+    let grok_key = crate::load_global_settings(app_config).experiments.grok_api_key;
+    if !grok_key.trim().is_empty() {
+        command.env("XAI_API_KEY", grok_key.trim());
+    }
     configure_detached_process(&mut command);
-    command.spawn().map(|_| ()).map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
+    command
+}
+
+pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
+    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
+    daemon_command(&daemon, repo, app_config, daemon_binary_build_id().as_ref(), namespace, host_executable)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
 }
 
 #[cfg(test)]
@@ -1468,6 +1507,14 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn observe_timeout_defaults_to_local_budget_and_can_be_raised_for_remote() {
+        let client = DaemonClient::connect_path(PathBuf::from("/tmp/ai-none.sock")).unwrap();
+        assert_eq!(client.observe_timeout, DAEMON_OBSERVATION_TIMEOUT);
+        let remote = client.with_observe_timeout(Duration::from_secs(3));
+        assert_eq!(remote.observe_timeout, Duration::from_secs(3));
+    }
 
     #[test]
     fn bound_connection_rejects_same_pid_with_different_start() {

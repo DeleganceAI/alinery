@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::lockfile::with_task_mutation_lock_waiting;
-use crate::paths::{alinery_dir, tasks_dir, worktrees_dir};
+use crate::paths::{alinery_dir, alineryd_lock_path, alineryd_socket_path, config_toml_path, mcp_socket_path, mcp_status_path, tasks_dir, worktrees_dir};
 use crate::shared::read_session_meta_full;
 use crate::task::{read_task, task_dir};
 
@@ -47,6 +47,53 @@ pub struct PurgeArchivedResult {
 /// Single classification walk of `<repo>/.alinery`. Missing `.alinery` → all zeros.
 pub fn storage_stats(repo: &Path) -> StorageStats {
     scan(repo).stats
+}
+
+/// What Settings → Storage shows for one repo: where its data lives and what it weighs. Built where
+/// the repo lives, so a remote repo reports its host's paths and its host's disk.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StorageInfo {
+    pub app_config_path: String,
+    pub repo_path: String,
+    pub alinery_dir: String,
+    pub repo_config_path: String,
+    pub harnesses_path: String,
+    pub tasks_dir: String,
+    pub worktrees_dir: String,
+    pub alineryd_socket_path: String,
+    pub alineryd_lock_path: String,
+    pub mcp_socket_path: String,
+    pub mcp_status_path: String,
+    // Disk accounting (issue #91). `archived_bytes` is exactly what `purge_archived_storage`
+    // frees; `active_bytes` is the read-only remainder. Both come from one walk.
+    pub archived_task_count: u32,
+    pub archived_session_count: u32,
+    pub archived_bytes: u64,
+    pub active_bytes: u64,
+}
+
+/// `namespace` is the daemon lane whose socket, lock and MCP paths are reported.
+pub fn storage_info_in(repo: &Path, app_config: &Path, namespace: Option<&str>) -> StorageInfo {
+    let stats = storage_stats(repo);
+    let alinery = alinery_dir(repo);
+    let text = |path: PathBuf| path.to_string_lossy().into_owned();
+    StorageInfo {
+        app_config_path: text(app_config.to_path_buf()),
+        repo_path: text(repo.to_path_buf()),
+        alinery_dir: text(alinery.clone()),
+        repo_config_path: text(config_toml_path(repo)),
+        harnesses_path: text(alinery.join("harnesses.toml")),
+        tasks_dir: text(tasks_dir(repo)),
+        worktrees_dir: text(worktrees_dir(repo)),
+        alineryd_socket_path: text(alineryd_socket_path(repo, namespace)),
+        alineryd_lock_path: text(alineryd_lock_path(repo, namespace)),
+        mcp_socket_path: text(mcp_socket_path(repo, namespace)),
+        mcp_status_path: text(mcp_status_path(repo, namespace)),
+        archived_task_count: stats.archived_task_count,
+        archived_session_count: stats.archived_session_count,
+        archived_bytes: stats.archived_bytes,
+        active_bytes: stats.active_bytes,
+    }
 }
 
 /// Delete the archived bucket. `kill(task_slug, session_id)` is invoked once per session id that

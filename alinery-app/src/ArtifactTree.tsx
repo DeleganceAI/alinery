@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { classifyAttachment } from "./chat/attachments";
 import * as ipc from "./ipc";
+import { revealPath } from "./revealPath";
 import type { ArtifactTreeNode } from "./types";
 
 export function isDirectOwnedArtifactNode(node: ArtifactTreeNode): boolean {
@@ -58,7 +59,7 @@ function ArtifactTreeRow({
           } else if (node.kind === "attachment") {
             ipc
               .artifactNodePath(taskSlug, node.id)
-              .then(ipc.revealItemInDir)
+              .then(revealPath)
               .catch((error) => onError(String(error)));
           } else {
             onSelect(node);

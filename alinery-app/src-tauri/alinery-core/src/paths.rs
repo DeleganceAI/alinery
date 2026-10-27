@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
 
+/// The uid this process runs as; keys per-user scratch directories such as `/tmp/alinery-<uid>`.
+pub fn effective_uid() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
 /// Stable application configuration root, including development instance paths.
 pub fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
     let dir = app_config.parent()?;
