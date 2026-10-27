@@ -1,3 +1,4 @@
+import { normalizeStartupView } from "./startupView";
 import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
 
 export const DEFAULT_ACCENT_COLOR = "#315bff";
@@ -37,11 +38,12 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   chat_max_width: "900",
   chat_show_date: true,
   chat_show_time: true,
-  chat_show_actor_labels: false,
-  chat_show_agent_bubbles: false,
-  chat_show_block_copy_buttons: false,
+  chat_show_actor_labels: true,
+  chat_show_agent_bubbles: true,
+  chat_show_block_copy_buttons: true,
   chat_show_copy_buttons: true,
   session_default_view: "chat",
+  startup_view: "list",
   mode: "system",
 };
 
@@ -117,9 +119,9 @@ export function normalizeChatView(raw: Partial<ChatViewPrefs>): ChatViewPrefs {
     chat_max_width: normalizeChatMaxWidth(raw.chat_max_width),
     chat_show_date: raw.chat_show_date !== false,
     chat_show_time: raw.chat_show_time !== false,
-    chat_show_actor_labels: raw.chat_show_actor_labels === true,
-    chat_show_agent_bubbles: raw.chat_show_agent_bubbles === true,
-    chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons === true,
+    chat_show_actor_labels: raw.chat_show_actor_labels !== false,
+    chat_show_agent_bubbles: raw.chat_show_agent_bubbles !== false,
+    chat_show_block_copy_buttons: raw.chat_show_block_copy_buttons !== false,
     chat_show_copy_buttons: raw.chat_show_copy_buttons !== false,
   };
 }
@@ -146,6 +148,7 @@ export function normalizeAppearance(input: AppearancePrefs): AppearancePrefs {
     artifact_viewer_width: normalizeArtifactViewerWidth(raw.artifact_viewer_width),
     ...normalizeChatView(raw),
     session_default_view: normalizeSessionDefaultView(raw.session_default_view),
+    startup_view: normalizeStartupView(raw.startup_view),
     mode,
     ava_chat: normalizeChatView(raw.ava_chat ?? {}),
   };

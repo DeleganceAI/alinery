@@ -349,6 +349,22 @@ describe("Sessions view and Chat tabs", () => {
   const avaChat = normalizeChatView({ chat_max_width: "600", chat_font_size: 18, chat_show_copy_buttons: true });
   const split: AppearancePrefs = { ...DEFAULT_APPEARANCE, chat_max_width: "1200", chat_font_size: 12, chat_show_copy_buttons: true, ava_chat: avaChat };
 
+  it.each(["sessionsView", "chat"] as const)("%s checks labels, reply bubbles, and block copying when preferences are absent", async (section) => {
+    const missing = { chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined, chat_show_block_copy_buttons: undefined };
+    renderSection(section, { ...DEFAULT_APPEARANCE, ...missing, ava_chat: missing });
+    for (const label of [/Show You \/ Agent labels/, /Show agent reply bubbles/, /Show block copy buttons/]) {
+      expect(((await screen.findByLabelText(label)) as HTMLInputElement).checked).toBe(true);
+    }
+  });
+
+  it.each(["sessionsView", "chat"] as const)("%s preserves unchecked labels, reply bubbles, and block copying", async (section) => {
+    const disabled = { chat_show_actor_labels: false, chat_show_agent_bubbles: false, chat_show_block_copy_buttons: false };
+    renderSection(section, { ...DEFAULT_APPEARANCE, ...disabled, ava_chat: disabled });
+    for (const label of [/Show You \/ Agent labels/, /Show agent reply bubbles/, /Show block copy buttons/]) {
+      expect(((await screen.findByLabelText(label)) as HTMLInputElement).checked).toBe(false);
+    }
+  });
+
   it("Sessions view persists the copy button toggle into the flat chat_* fields and leaves ava_chat untouched", async () => {
     renderSection("sessionsView", split);
     const toggle = await screen.findByLabelText(/Show copy buttons/);

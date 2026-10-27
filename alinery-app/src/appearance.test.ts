@@ -26,6 +26,13 @@ import type { AppearancePrefs } from "./types";
 const prefs = (over: Partial<AppearancePrefs> = {}): AppearancePrefs => ({ ...DEFAULT_APPEARANCE, ...over });
 
 describe("normalizeAppearance", () => {
+  it("defaults older startup preferences to Task List and preserves valid choices", () => {
+    expect(normalizeAppearance(prefs({ startup_view: undefined })).startup_view).toBe("list");
+    expect(normalizeAppearance(prefs({ startup_view: "sessions" })).startup_view).toBe("sessions");
+    expect(normalizeAppearance(prefs({ startup_view: "grid:custom" })).startup_view).toBe("grid:custom");
+    expect(normalizeAppearance({ ...prefs(), startup_view: "invalid" } as unknown as AppearancePrefs).startup_view).toBe("list");
+  });
+
   it("snaps ui_scale to the nearest allowed step", () => {
     expect(normalizeAppearance(prefs({ ui_scale: 1.1 })).ui_scale).toBe(1.125);
     expect(normalizeAppearance(prefs({ ui_scale: 0.9 })).ui_scale).toBe(0.875);
@@ -249,7 +256,7 @@ describe("applyAppearance", () => {
       chat_show_agent_bubbles: true,
       chat_show_copy_buttons: true,
     });
-    // Absent keys: labels, reply bubbles and block copy buttons start off; the per-message copy icon starts on.
+    // Missing preferences use the defaults without overriding saved false values.
     expect(
       normalizeAppearance({
         ...prefs(),
@@ -259,9 +266,9 @@ describe("applyAppearance", () => {
         chat_show_copy_buttons: undefined,
       }),
     ).toMatchObject({
-      chat_show_actor_labels: false,
-      chat_show_agent_bubbles: false,
-      chat_show_block_copy_buttons: false,
+      chat_show_actor_labels: true,
+      chat_show_agent_bubbles: true,
+      chat_show_block_copy_buttons: true,
       chat_show_copy_buttons: true,
     });
   });

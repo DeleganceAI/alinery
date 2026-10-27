@@ -820,7 +820,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             <OpenReposNotice repos={openRepos} error={reposError} className="dsc" />
             <label className="chat-dialog-field">
               <span>Repository</span>
-              <span className="chat-select">
+              <span className="field-select">
                 <select value={repoPath} onChange={(event) => setRepoPath(event.target.value)}>
                   {pickClosed ? (
                     <option value={pickedRepo} disabled>

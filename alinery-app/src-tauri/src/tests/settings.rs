@@ -167,11 +167,12 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert_eq!(empty.appearance.chat_max_width, "900");
     assert!(empty.appearance.chat_show_date);
     assert!(empty.appearance.chat_show_time);
-    assert!(!empty.appearance.chat_show_actor_labels);
-    assert!(!empty.appearance.chat_show_agent_bubbles);
-    assert!(!empty.appearance.chat_show_block_copy_buttons);
+    assert!(empty.appearance.chat_show_actor_labels);
+    assert!(empty.appearance.chat_show_agent_bubbles);
+    assert!(empty.appearance.chat_show_block_copy_buttons);
     assert!(empty.appearance.chat_show_copy_buttons);
     assert_eq!(empty.appearance.session_default_view, "chat");
+    assert_eq!(empty.appearance.startup_view, "list");
 
     let old_default = AppearancePrefs {
         accent_color: "#38459D".into(),
@@ -208,11 +209,12 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_max_width: "1200".into(),
         chat_show_date: false,
         chat_show_time: true,
-        chat_show_actor_labels: true,
-        chat_show_agent_bubbles: true,
+        chat_show_actor_labels: false,
+        chat_show_agent_bubbles: false,
         chat_show_block_copy_buttons: false,
         chat_show_copy_buttons: false,
         session_default_view: "terminal".into(),
+        startup_view: "grid:custom-board".into(),
         mode: "light".into(),
         ava_chat: std::collections::BTreeMap::from([
             ("chat_show_tools".into(), toml::Value::Boolean(true)),
@@ -230,8 +232,8 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert_eq!(back.chat_max_width, "1200");
     assert!(!back.chat_show_date);
     assert!(back.chat_show_time);
-    assert!(back.chat_show_actor_labels);
-    assert!(back.chat_show_agent_bubbles);
+    assert!(!sanitize_appearance(back.clone()).chat_show_actor_labels);
+    assert!(!sanitize_appearance(back.clone()).chat_show_agent_bubbles);
     assert!(!sanitize_appearance(back.clone()).chat_show_block_copy_buttons);
     assert!(!back.chat_show_copy_buttons);
     let ava = sanitize_appearance(back.clone()).ava_chat;
@@ -240,6 +242,7 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(!ava.contains_key("not_a_chat_key"));
     assert_eq!(back.chat_rail_font_size, 13);
     assert_eq!(back.session_default_view, "terminal");
+    assert_eq!(back.startup_view, "grid:custom-board");
 
     // Legacy compact sanitizes to dense.
     assert_eq!(
@@ -265,6 +268,10 @@ primary = "#ff00ff"
     .expect("legacy appearance parses");
     assert_eq!(legacy.accent_color, "#315bff");
     assert_eq!(legacy.mode, "dark");
+    assert_eq!(legacy.startup_view, "list");
+    assert!(legacy.chat_show_actor_labels);
+    assert!(legacy.chat_show_agent_bubbles);
+    assert!(legacy.chat_show_block_copy_buttons);
     let serialized = toml::to_string(&legacy).expect("legacy appearance serializes");
     assert!(!serialized.contains("colors"));
 
@@ -328,6 +335,24 @@ primary = "#ff00ff"
         ..AppearancePrefs::default()
     };
     assert_eq!(sanitize_appearance(weird_view).session_default_view, "chat");
+}
+
+#[test]
+fn startup_view_sanitization() {
+    for view in ["list", "sessions", "kanban", "chat", "notifications", "playbooks", "settings", "grid:custom-board"] {
+        let prefs = AppearancePrefs {
+            startup_view: format!(" {view} "),
+            ..AppearancePrefs::default()
+        };
+        assert_eq!(sanitize_appearance(prefs).startup_view, view);
+    }
+    for view in ["", " ", "task", "terminal", "grid", "grid:", "grid: "] {
+        let prefs = AppearancePrefs {
+            startup_view: view.into(),
+            ..AppearancePrefs::default()
+        };
+        assert_eq!(sanitize_appearance(prefs).startup_view, "list");
+    }
 }
 
 #[test]

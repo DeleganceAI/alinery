@@ -1,4 +1,21 @@
-import { AlertCircle, ArrowDown, ArrowUp, Check, ChevronRight, Circle, Copy, EllipsisVertical, ExternalLink, Minus, Monitor, Moon, Plus, Sun, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Copy,
+  EllipsisVertical,
+  ExternalLink,
+  Minus,
+  Monitor,
+  Moon,
+  Plus,
+  Sun,
+  Trash2,
+} from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import {
@@ -29,6 +46,7 @@ import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, n
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { startupViewOptions } from "../startupView";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -160,7 +178,7 @@ type SettingsScope = { kind: "global" } | { kind: "repo"; repoPath: string };
 type ChoiceKey = "defaults";
 type ChoiceBoolField = "draft_autosave";
 
-const SETTINGS_SCOPE_EMPTY_TITLE = "Select a settings scope to see these settings";
+const SETTINGS_SCOPE_EMPTY_TITLE = "Select a repo to see these settings";
 const GLOBAL_SOURCE: SettingSource = "global";
 const REPO_SOURCE: SettingSource = "repository";
 
@@ -833,6 +851,7 @@ export function Settings({
   const selectedScopeLabel = isGlobal ? "All repositories" : repoName(selectedRepo || "Repository");
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
+  const startupOptions = startupViewOptions(global);
   // Chat settings belong to the experimental Chat tab: hidden with it. An open Chat section falls
   // back to General when the flag is turned off (the effect above moves the state; this covers the
   // render before it lands).
@@ -1097,39 +1116,44 @@ export function Settings({
     const unavailable = playbookCatalog && (!selected || selected.diagnostics.length > 0);
     return (
       <>
-        <div className="field">
+        <div className="field settings-select-field default-playbook-field">
           <label htmlFor="default-playbook">Default playbook</label>
           {!isGlobal && sourceBadge(effective.provenance.defaults.playbook, "defaults.playbook")}
-          <select
-            id="default-playbook"
-            className="field-input"
-            value={playbookRefKey(configured)}
-            disabled={!playbookCatalog}
-            onChange={(event) => {
-              const candidate = candidates.find((item) => playbookRefKey(item.source.reference) === event.target.value);
-              if (!candidate || candidate.diagnostics.length) return;
-              const playbook = candidate.source.reference;
-              if (isGlobal) updateGlobalChoice("defaults", { playbook });
-              else saveRepoOverrides({ ...overrides, defaults: { ...overrides.defaults, playbook } });
-            }}
-          >
-            {!selected && (
-              <option value={playbookRefKey(configured)} disabled>
-                {playbookRefKey(configured)} — unavailable
-              </option>
-            )}
-            {candidates.map((candidate) => (
-              <option key={playbookRefKey(candidate.source.reference)} value={playbookRefKey(candidate.source.reference)} disabled={candidate.diagnostics.length > 0}>
-                {candidate.title || candidate.source.reference.key} — {playbookRefKey(candidate.source.reference)}
-                {candidate.diagnostics.length ? " — invalid" : ""}
-              </option>
-            ))}
-          </select>
+          <div className="field-select">
+            <select
+              id="default-playbook"
+              value={playbookRefKey(configured)}
+              disabled={!playbookCatalog}
+              aria-describedby="default-playbook-hint"
+              onChange={(event) => {
+                const candidate = candidates.find((item) => playbookRefKey(item.source.reference) === event.target.value);
+                if (!candidate || candidate.diagnostics.length) return;
+                const playbook = candidate.source.reference;
+                if (isGlobal) updateGlobalChoice("defaults", { playbook });
+                else saveRepoOverrides({ ...overrides, defaults: { ...overrides.defaults, playbook } });
+              }}
+            >
+              {!selected && (
+                <option value={playbookRefKey(configured)} disabled>
+                  {playbookRefKey(configured)} — unavailable
+                </option>
+              )}
+              {candidates.map((candidate) => (
+                <option key={playbookRefKey(candidate.source.reference)} value={playbookRefKey(candidate.source.reference)} disabled={candidate.diagnostics.length > 0}>
+                  {candidate.title || candidate.source.reference.key} — {playbookRefKey(candidate.source.reference)}
+                  {candidate.diagnostics.length ? " — invalid" : ""}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+          </div>
+          <p id="default-playbook-hint" className="dsc">
+            Manage preferred playbooks for each repository in Playbooks. Preferences do not change this default.
+          </p>
           {unavailable && (
             <InlineStatus tone="warning">The configured default is unavailable. Choose a valid scoped playbook explicitly; no replacement is selected automatically.</InlineStatus>
           )}
         </div>
-        <p className="hint">Manage preferred playbooks for each repository in Playbooks. Preferences do not change this default.</p>
         {playbookError && (
           <InlineStatus tone="error" detail={playbookError}>
             Could not load playbooks.
@@ -1462,7 +1486,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_actor_labels === true}
+          checked={view.chat_show_actor_labels !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_actor_labels: enabled });
@@ -1474,7 +1498,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_agent_bubbles === true}
+          checked={view.chat_show_agent_bubbles !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_agent_bubbles: enabled });
@@ -1486,7 +1510,7 @@ export function Settings({
           }
         />
         <Checkbox
-          checked={view.chat_show_block_copy_buttons === true}
+          checked={view.chat_show_block_copy_buttons !== false}
           disabled={!isGlobal}
           onChange={(enabled) => {
             if (isGlobal) saveView({ ...view, chat_show_block_copy_buttons: enabled });
@@ -1833,6 +1857,31 @@ export function Settings({
 
   const renderAppearance = () => (
     <>
+      <div className="field settings-select-field">
+        <label htmlFor="startup-view">Default starting view</label>
+        <div className="field-select">
+          <select
+            id="startup-view"
+            value={startupOptions.some((option) => option.value === appearance.startup_view) ? appearance.startup_view : "list"}
+            disabled={!isGlobal}
+            aria-describedby="startup-view-hint"
+            onChange={(event) => {
+              const selected = startupOptions.find((option) => option.value === event.target.value);
+              if (isGlobal && selected) saveAppearance({ ...appearance, startup_view: selected.value });
+            }}
+          >
+            {startupOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+        </div>
+        <p id="startup-view-hint" className="dsc">
+          Choose the view Alinery opens on launch.
+        </p>
+      </div>
       <div className="field">
         <label id="appearance-theme-label">Theme</label>
         <div className="theme-cards" role="group" aria-labelledby="appearance-theme-label" aria-describedby="appearance-theme-hint">

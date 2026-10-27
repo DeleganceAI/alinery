@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_APPEARANCE } from "../appearance";
+import { DEFAULT_APPEARANCE, normalizeAppearance } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import type { GlobalSettings } from "../types";
+import type { AppearancePrefs, GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
 // No `power` key: the shape of an app config written before keep-awake existed.
@@ -39,8 +39,9 @@ const repoGlobal: GlobalSettings = { ...globalSettings, power: { keep_awake: tru
 
 vi.mock("../ipc", () =>
   mockIpc({
-    readGlobalSettings: async () => globalSettings,
+    readGlobalSettings: vi.fn(async () => globalSettings),
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
+    writeAppearance: vi.fn(async (appearance: AppearancePrefs) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance })),
     readScopedSettingsForRepo: async () => ({
       global: repoGlobal,
       overrides: { github: {}, defaults: {}, backup: {} },
@@ -81,8 +82,10 @@ const NOTE =
   "This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while at least one session is not Idle.";
 
 // No initialSection: General is also the tab Settings opens on.
-function renderGeneral() {
-  render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+function renderGeneral(appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
+  const onAppearanceChange = vi.fn();
+  render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={appearance} onAppearanceChange={onAppearanceChange} onNotificationsChange={() => {}} />);
+  return onAppearanceChange;
 }
 
 const keepAwake = () => screen.findByRole("checkbox", { name: /Keep this computer awake/ }) as Promise<HTMLInputElement>;
@@ -92,9 +95,51 @@ const lastWrite = () => vi.mocked(ipc.writeGlobalSettings).mock.lastCall?.[0] as
 afterEach(() => {
   cleanup();
   vi.mocked(ipc.writeGlobalSettings).mockClear();
+  vi.mocked(ipc.writeAppearance).mockClear();
 });
 
 describe("Settings General", () => {
+  it("defaults the starting view to the task list", async () => {
+    renderGeneral();
+    const select = (await screen.findByRole("combobox", { name: "Default starting view" })) as HTMLSelectElement;
+    expect(select.value).toBe("list");
+    expect(select.disabled).toBe(false);
+    expect(screen.getByText("Choose the view Alinery opens on launch.")).toBeTruthy();
+  });
+
+  it("saves another starting view without changing the rest of the appearance", async () => {
+    const appearance = normalizeAppearance({ ...DEFAULT_APPEARANCE, mode: "dark", terminal_font_size: 18 });
+    const onAppearanceChange = renderGeneral(appearance);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Default starting view" }), { target: { value: "sessions" } });
+    await waitFor(() => expect(ipc.writeAppearance).toHaveBeenCalledTimes(1));
+    expect(ipc.writeAppearance).toHaveBeenCalledWith({ ...appearance, startup_view: "sessions" });
+    expect(onAppearanceChange).toHaveBeenCalledWith({ ...appearance, startup_view: "sessions" });
+    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(true);
+  });
+
+  it("offers configured grid views and enabled tabs", async () => {
+    vi.mocked(ipc.readGlobalSettings).mockResolvedValueOnce({
+      ...globalSettings,
+      experiments: { show_original_kanban: false, show_chat: true },
+      grid_views: [{ id: "planning", name: "Planning", slot: 1 }],
+    });
+    renderGeneral({ ...DEFAULT_APPEARANCE, startup_view: "grid:planning" });
+    const select = (await screen.findByRole("combobox", { name: "Default starting view" })) as HTMLSelectElement;
+    expect(select.value).toBe("grid:planning");
+    const options = Array.from(select.options);
+    expect(options.find((option) => option.value === "grid:planning")?.textContent).toBe("Planning");
+    expect(options.map((option) => option.value)).toEqual(expect.arrayContaining(["list", "sessions", "chat", "notifications", "playbooks", "settings"]));
+    expect(options.map((option) => option.value)).not.toContain("kanban");
+  });
+
+  it("shows the task list when the saved starting view is unavailable", async () => {
+    renderGeneral({ ...DEFAULT_APPEARANCE, startup_view: "grid:deleted" });
+    const select = (await screen.findByRole("combobox", { name: "Default starting view" })) as HTMLSelectElement;
+    expect(select.value).toBe("list");
+    expect(Array.from(select.options, (option) => option.value)).not.toContain("chat");
+    expect(ipc.writeAppearance).not.toHaveBeenCalled();
+  });
+
   it("is the first tab and absorbs the pages folded into it", () => {
     const labels = SECTIONS.map((section) => section.label);
     expect(labels[0]).toBe("General");
@@ -161,6 +206,8 @@ describe("Settings General", () => {
     expect(telemetry().disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Light" }) as HTMLButtonElement).disabled).toBe(true);
+    const startingView = screen.getByRole("combobox", { name: "Default starting view" }) as HTMLSelectElement;
+    expect(startingView.disabled).toBe(true);
     expect(screen.getAllByText(/are global-only\./)).toHaveLength(1);
     expect(screen.getByText(/Appearance, notifications, updates, and misc are global-only\./)).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: /Check for updates/ }) as HTMLInputElement).disabled).toBe(true);
@@ -170,6 +217,8 @@ describe("Settings General", () => {
     expect(screen.getByText(NOTE)).toBeTruthy();
     fireEvent.click(box);
     fireEvent.click(telemetry());
+    fireEvent.change(startingView, { target: { value: "sessions" } });
     expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
+    expect(ipc.writeAppearance).not.toHaveBeenCalled();
   });
 });

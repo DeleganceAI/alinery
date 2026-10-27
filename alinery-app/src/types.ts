@@ -6,6 +6,7 @@ export type ChatRailDensity = "dense" | "normal" | "comfortable";
 export type ChatMaxWidth = "600" | "900" | "1200" | "none";
 /** Preferred OMP hatch when starting a session. Absent → "chat". */
 export type SessionDefaultView = "chat" | "terminal";
+export type StartupView = Exclude<Tab, "grid"> | `grid:${string}`;
 export type AppearancePrefs = {
   accent_color: string;
   ui_scale: number;
@@ -53,16 +54,18 @@ export type AppearancePrefs = {
   chat_show_date?: boolean;
   /** Journal stamps: clock time (e.g. 12:11). Absent → true. */
   chat_show_time?: boolean;
-  /** You / Agent name + kind icon above message bubbles. Absent → false. */
+  /** You / Agent name + kind icon above message bubbles. Absent → true. */
   chat_show_actor_labels?: boolean;
-  /** Filled bubble around agent text replies only. Absent → false. */
+  /** Filled bubble around agent text replies only. Absent → true. */
   chat_show_agent_bubbles?: boolean;
-  /** Copy buttons on individual code blocks and blockquotes. Absent → false. */
+  /** Copy buttons on individual code blocks and blockquotes. Absent → true. */
   chat_show_block_copy_buttons?: boolean;
   /** Per-message copy icon inside chat bubbles. Absent → true. */
   chat_show_copy_buttons?: boolean;
   /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
+  /** View to open on launch. Absent in older configs defaults to the task list. */
+  startup_view?: StartupView;
   /** Absent in pre-reskin configs; normalizers default it to "system". */
   mode?: AppearanceMode;
   /** The Chat view's own copy of the chat_* settings above (those drive the Sessions view). Absent → defaults. */
