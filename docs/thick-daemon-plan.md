@@ -1,6 +1,6 @@
 # Thick daemon plan: the Bun daemon becomes the application
 
-Status: living draft v0.1, 2026-10-26. Nothing in this plan is built yet. Written on branch `remote-daemon` ([PR #154](https://github.com/DeleganceAI/alinery/pull/154), base `experimental-pi-durable-as-a-harness`).
+Status: living draft v0.3, 2026-10-27. Nothing in this plan is built yet. The work lands on branch `remote-daemon` and grows [PR #154](https://github.com/DeleganceAI/alinery/pull/154), which stacks on [PR #135](https://github.com/DeleganceAI/alinery/pull/135) (`experimental-pi-durable-as-a-harness`) (O16).
 
 Supersedes: the repo-service `RepoOp` channel as the long-term wire, and items P2 to P7 of `docs/remote-repos-performance.md` (subscriptions replace every poller those items tuned). What already shipped on this branch stays and is reused: A1 to A6, P1 and B1 in `docs/remote-repos-todo.md` (ssh master and forwards, runtime install, credential sync, the ui secret, the repo-service). The repo-service is the bridge this plan retires one domain at a time.
 
@@ -32,6 +32,8 @@ One application, the Bun daemon, owns every business rule and all repo state on 
 | D3 | All business logic that can move to the daemon moves. | User, 2026-10-26 |
 | D4 | Protocol bumps are free for this work; no shipped users depend on the wire. | User, earlier in this branch |
 | D5 | The UI talks only to the daemon, except for daemon setup and OS-only jobs. | User, 2026-10-26 |
+| D6 | Host tools the daemon spawns (git today) are not shipped to a remote host. The setup wizard probes for them and, when one is missing, stops and tells the user to install it on that host first. | User, 2026-10-27 |
+| D7 | A client needs a connected, compatible daemon to work on a repo. There is no browsing from files without one (O19). | User, 2026-10-27 |
 
 ## 1.3 Invariants that survive the move
 
@@ -169,10 +171,10 @@ Order: transport and sync come before domain ports, so each port lands straight 
 | O13 | Pairing and the door for web and iOS | (a) shell-issued token by QR with capabilities; (b) through the existing account pairing (`account.rs`); iOS cannot forward unix sockets over ssh (no streamlocal in swift-nio-ssh or Citadel), so it needs TLS or an ssh `direct-tcpip` channel to a loopback port | Open | S6.1 |
 | O14 | One execution state machine | (a) `engine.jsonl` fold is the truth, `execution.json` goes; (b) `execution.json` is the truth, the fold feeds it | Open, traced in S0.6 | S4.2 |
 | O15 | Host bootstrap without a daemon | (a) keep `alinery-mcp --repo-service` for host-only ops (ListDir, Classify, Init, ClaimRepo, SpawnDaemon, WriteConfigFiles, MergeCredentials, WaitDaemonGone); (b) a `--host-service` stdio mode of the Bun binary, so the host runtime carries no Rust (no zig cross-build) | Open | S5.2 |
-| O16 | What happens to PR #154 | (a) merge as is: remote repos work now through the repo-service, and this plan replaces it later; (b) keep it open and land the thick daemon on top | Open | User |
-| O17 | Telemetry for ported commands (consent and ingest credentials live in the shell) | (a) the shell emits after `Applied`, with ids read from the replica entity, through one new allowlisted shell command; (b) the daemon returns a telemetry hint in `Applied` and the shell records it under its consent; (c) the daemon sends directly, with consent passed at spawn (a remote host would then hold the ingest credentials, R5) | Open | S4.1, with the user |
-| O18 | Capabilities for MCP's 21 tools beyond the four session tools, once they go through the daemon | (a) MCP holds a token passed at spawn and gets VIEW and ACT, like any local peer that isn't the shell (2.1.10); tools that need ADMIN (`alinery_storage_info`, `alinery_delete_archived_storage`) leave MCP; (b) a new capability that lists exactly the tools MCP exposes today, so no tool changes; (c) MCP keeps AGENT only and drops the other 21 tools | Open | S5.1, with the user |
-| O19 | Reading a repo whose daemon is down, incompatible, or owned by another app instance (today the board reads files directly, `README.md:87`) | (a) the board needs a compatible daemon; such a repo shows only the conflict banner and its explicit restart; (b) the shell starts this app's daemon binary in a read-only mode beside the owner: it takes no ownership lock, runs no sessions, serves VIEW only from the files; (c) keep the Rust board reads for this case only | Open | S3.5, with the user |
+| O16 | What happens to PR #154 | (a) merge as is: remote repos work now through the repo-service, and this plan replaces it later; (b) keep it open and land the thick daemon on top | **Decided (b)**: the plan lands on `remote-daemon` and becomes PR #154, stacked on PR #135 | User, 2026-10-27 |
+| O17 | Telemetry for ported commands (consent and ingest credentials live in the shell) | (a) the shell emits after `Applied`, with ids read from the replica entity, through one new allowlisted shell command; (b) the daemon returns a telemetry hint in `Applied` and the shell records it under its consent; (c) the daemon sends directly, with consent passed at spawn (a remote host would then hold the ingest credentials, R5) | **Decided (c)**: the daemon sends its own events when it can reach the ingest URL, best effort, and drops a failed send silently. Consent reaches it through `app.toml`. Events with no repo stay in the shell (S4.1) | User, 2026-10-27 |
+| O18 | Capabilities for MCP's 21 tools beyond the four session tools, once they go through the daemon | (a) MCP holds a token passed at spawn and gets VIEW and ACT, like any local peer that isn't the shell (2.1.10); tools that need ADMIN (`alinery_storage_info`, `alinery_delete_archived_storage`) leave MCP; (b) a new capability that lists exactly the tools MCP exposes today, so no tool changes; (c) MCP keeps AGENT only and drops the other 21 tools | **Decided (b)**: MCP is a headless, AI-first client of the daemon, connecting like the desktop (T1 or T2) from any machine. Its token grants AGENT, exactly the RPCs behind its tools, storage scan and purge included; never `Shutdown` or approvals | User, 2026-10-27 |
+| O19 | Reading a repo whose daemon is down, incompatible, or owned by another app instance (today the board reads files directly, `README.md:87`) | (a) the board needs a compatible daemon; such a repo shows only the conflict banner and its explicit restart; (b) the shell starts this app's daemon binary in a read-only mode beside the owner: it takes no ownership lock, runs no sessions, serves VIEW only from the files; (c) keep the Rust board reads for this case only | **Decided (a)** (D7) | User, 2026-10-27 |
 
 ## 1.8 Migration rules (strangler)
 
@@ -302,7 +304,7 @@ enum Capability {
   CAPABILITY_ACT = 2;      // commands, terminal input
   CAPABILITY_APPROVE = 3;  // approvals, auto-approve
   CAPABILITY_ADMIN = 4;    // Shutdown, daemon-wide settings
-  CAPABILITY_AGENT = 5;    // the four MCP session tools only
+  CAPABILITY_AGENT = 5;    // MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
 }
 
 // Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
@@ -611,8 +613,8 @@ A Bun or Node client reaches the socket with connect-node's `createConnectTransp
 
 | Id | Transport | Who uses it | Notes |
 |---|---|---|---|
-| T1 | UDS `<repo>/.alinery/rpc[-ns].sock` | shell bridge for local repos, MCP, tests | Same lane naming as `alineryd[-ns].sock`; 0600 |
-| T2 | ssh `-O forward -L <local sock>:<remote rpc sock>` on the existing ControlMaster | shell bridge for remote repos | Reuses `remote.rs` masters and forward naming. Needs sshd `AllowStreamLocalForwarding`, which the probe already checks |
+| T1 | UDS `<repo>/.alinery/rpc[-ns].sock` | shell bridge for local repos, MCP on the daemon's host, tests | Same lane naming as `alineryd[-ns].sock`; 0600 |
+| T2 | ssh `-O forward -L <local sock>:<remote rpc sock>` on the existing ControlMaster | shell bridge for remote repos, MCP on another machine (O18) | Reuses `remote.rs` masters and forward naming. Needs sshd `AllowStreamLocalForwarding`, which the probe already checks |
 | T3 | Tauri bridge (O2) | desktop webview | The webview never opens a socket. The shell forwards HTTP/1.1 bytes to T1 or T2 |
 | T4 | HTTPS (Connect), optional WebSocket | web and iOS (P6) | TLS listener on the daemon or a relay; pairing tokens (O13) |
 | T5 | loopback TCP | only if O2 (b) wins, or iOS `direct-tcpip` | token required |
@@ -655,7 +657,8 @@ webview: bridgeFetch builds a Response with a ReadableStream body from the frame
 | Shell token, local, and the peer executable is the shell | VIEW, ACT, APPROVE, ADMIN |
 | Shell token over ssh (peer is sshd) | VIEW, ACT, APPROVE, ADMIN. The token is stored on the Mac only, never on the host, so host agents can't read it |
 | Shell token, local, peer is something else | VIEW, ACT. On this Mac agents run as the same user and can read `<app_config_dir>`, so APPROVE and ADMIN keep today's peer-executable check |
-| No token | AGENT: the four MCP session tools, matching today's exposure (MCP's other tools: O18) |
+| No token | AGENT, limited to the four MCP session tools (today's exposure). S5.1 deletes this row: MCP then carries a token |
+| MCP token (from S5.1) | AGENT: exactly the RPCs behind MCP's tools, storage scan and purge included. Never `Shutdown`, the rest of ADMIN, or APPROVE (O18 b) |
 | Pairing token (P6) | what the pairing granted (O13) |
 
 APPROVE is never reachable from anything an agent on the host can read, so an agent can't approve its own step.
@@ -789,7 +792,8 @@ export function useEntity(replica: Replica, key: string) {
 
 - `useEntities(replica, filter)` caches its array per replica version, because `useSyncExternalStore` needs a stable snapshot.
 - A run loop resubscribes with backoff (0.5, 1, 2, 5 s) and passes the last cursor.
-- While disconnected the replica keeps its last state and sets `stale`; views show a banner instead of an empty board.
+- While a connected repo's link drops, the replica keeps its last state, read-only, and sets `stale`; views show a banner over it (WA).
+- A repo with no connected, compatible daemon has no replica. It shows only its banner: connect, or the explicit restart for a conflict (D7).
 - No persistence on desktop.
 
 ### 2.2.11 Pollers that become subscriptions
@@ -932,7 +936,9 @@ export async function withTaskMutation<T>(repo: string, op: string, fn: () => T)
 - `waitForLock` retries `tryLockExclusive` with a short timer backoff (10, 20, 40 ms, capped at 100 ms) until the deadline.
 - While Rust still writes a domain (migration rule 3), every TypeScript write to the same files goes through `withTaskMutation`. After S5.1 no Rust code writes `.alinery/` files, but the flock stays: job children (O7 a) and the host bootstrap (S5.2) are separate processes that touch the same files, and the process queue can't see them.
 
-**`platform/git.ts`** is the only `Bun.spawn(["git", ...])` site. It resolves git like `alinery_core::git_cmd` (PATH, skipping the macOS `/usr/bin/git` stub until the Command Line Tools are installed; then the alongside tree with `GIT_EXEC_PATH`; `ALINERY_GIT_PATH` for tests) and scrubs the same environment variables. A gate like `check-git-env-scrub.sh` covers `vinculum-daemon/src`.
+**`platform/git.ts`** is the only `Bun.spawn(["git", ...])` site. It resolves git like `alinery_core::git_cmd` (PATH, skipping the macOS `/usr/bin/git` stub until the Command Line Tools are installed; then the alongside tree with `GIT_EXEC_PATH`; `ALINERY_GIT_PATH` for tests) and scrubs the same environment variables. A gate like `check-git-env-scrub.sh` covers `vinculum-daemon/src`. A remote host has no alongside tree: git comes from its PATH, and the setup probe refuses a host without it (D6).
+
+**Host tools (D6).** Every program the daemon spawns on a remote host must be on the setup probe's list (`remote.rs:326` collects, `:429` refuses). Today that is git, plus tar, gzip and sha256sum for the runtime install itself. The daemon makes HTTP calls with Bun's `fetch`, so curl is not on the list; a session that adds a spawned tool (for example `zip` under O11 b) adds it to the probe in the same PR.
 
 **`platform/process.ts`** holds detached spawns (`setsid` on Linux, as core `configure_detached_process` does) and the one place that sends signals to children, so the no-auto-kill gate has one file to scan.
 
@@ -1678,12 +1684,12 @@ Status: not started. Needs: S3.1, S2.3, S2.4.
 - `sync/parsers/task.ts`: `task.md` TOML frontmatter with `Bun.TOML.parse` (built in, no dependency), with conformance cases from the Rust parse tests.
 - The current step is derived in the daemon (R3): a field of the Task entity, ported from `board.rs:166-171`, recomputed when a session or execution of that task commits. The Rust copy goes in this session.
 - Every caller of the 8 board reads (ListBoardTasks, ListTasks, GetTask, TaskActivity, ListSessions, ListSessionItems, ReadSessionMetas, GetSessionDisplay) moves to a subscription, including the non-board callers of `get_task`, `list_sessions` and `list_session_items`. The 8 variants, their `run()` arms, their round-trip test entries, the commands and the pollers in 2.2.11 go.
-- Put O19 to the user before deleting anything. Today a repo whose daemon is down, speaks another protocol, or belongs to another app instance still shows its board, read from files (`README.md:87`; `DaemonConflict` in AGENTS.md). After this session the board comes from a daemon, and the desktop replica keeps nothing across an app restart (2.2.10).
+- O19 is decided (a), D7: a client needs a connected, compatible daemon to work on a repo. Today a repo whose daemon is down, speaks another protocol, or belongs to another app instance still shows its board, read from files (`README.md:87`; `DaemonConflict` in AGENTS.md). After this session such a repo shows only its banner: connect for a host that is down, and the explicit restart (`DaemonConflictBanner`) for a conflict. `attach_remote_repo` keeps recording the conflict but no longer opens a board through the repo service.
 - The all-repos board becomes one subscription per repo. Today a local repo that fails to read fails the whole board (`task.rs:625`, `?` on the local arm) while a remote one is skipped; after this each repo shows its own stale banner.
 
-**Tests.** Task conformance cases and current-step cases (from `board.rs` tests) in cargo and bun. vitest: a Kanban card moves when an execution delta arrives; with one repo's daemon down, the other repo's board stays live and the down one shows stale.
+**Tests.** Task conformance cases and current-step cases (from `board.rs` tests) in cargo and bun. vitest: a Kanban card moves when an execution delta arrives; with one repo's daemon down, the other repo's board stays live and the down one shows stale; a repo opened with a conflicted daemon shows the banner and no tasks.
 
-**Exit.** O19 is in 4.1. No board poller is left; the 8 variants are gone (under O19 (c), they stay for that case only); `remote-local-only.txt` and `remote-offload-ok.txt` lose their entries for the deleted commands.
+**Exit.** No board poller is left; the 8 variants are gone; `remote-local-only.txt` and `remote-offload-ok.txt` lose their entries for the deleted commands.
 
 ## P4: Domain ports
 
@@ -1695,7 +1701,7 @@ Every P4 session follows the same recipe. Its **Build** lists only what the reci
 3. **Write path.** `domain/<domain>.ts` writes through `platform/fs` inside `withTaskMutation`, then calls `store.commit`. The fixtures now run against TypeScript too.
 4. **Service.** `proto/alinery/v1/<domain>.proto` in the 2.1.6 shape, and `rpc/<domain>.ts` with the capability each call needs.
 5. **Flip every caller in one PR** (rule 2): the views, and the MIXED halves this session owns (S0.7 list).
-6. **Telemetry** per O17, for the events the session names.
+6. **Telemetry** (O17): the events the session names move to the daemon's sender (`platform/telemetry.ts`, S4.1), and their Rust `emit` calls go with the commands.
 7. **Delete**: the Tauri commands and their `generate_handler!` names; the `ipc.ts` wrappers and their `mockIpc` entries; the `RepoOp` variants with their `run()` arms and round-trip entries; core functions left with no caller; the entries in `remote-local-only.txt` and `remote-offload-ok.txt`.
 8. **Bump `PROTOCOL`** (`protocol.rs:15` and `main.ts:26`).
 9. **Records.** Status line, the 1.4 counts, 4.1 for any decision, 4.5.
@@ -1728,9 +1734,12 @@ export function pick<T>(repo: T | undefined, global: T): Scoped<T> {
 - `src/sync/overlay.ts` (2.2.7): the Settings view applies its write locally and drops the overlay at `Applied.cursor.seq`. An ABORTED reply refetches and shows the newer values.
 - Global settings stay in the shell: `read_global_settings`, `write_global_settings`, the model favorites. When they change the shell re-renders the remote `app.toml` and pushes it, as today.
 - `alinery-mcp` `write_toml_file` (`main.rs:1154`) takes the flock (see the exception above).
-- Decide O17 with the user, using `SettingsChange` (`settings.rs:275`) as the worked example.
+- **Telemetry sender (O17 c).** `platform/telemetry.ts` ports core `telemetry.rs`: the consent rule (`consented` :563: enabled, prompted, and an install id), the record shape (`event_record` :506), the allowlists, the ingest URL and the basic auth. A send is one `fetch` with a 2 s `AbortSignal.timeout`, not awaited by the caller; any failure, an unreachable URL included, is dropped. No queue and no retry, as in Rust today (the comment above `send`, :530).
+- Consent is read from `app.toml`, which is on the watch list above, so a change applies without a restart. `render_remote_app_toml` (`remote.rs:490`) stops blanking `telemetry` and copies `enabled`, `prompted`, `install_id` and `endpoint`, so a remote daemon sends under the Mac's install id; its doc comment ("the host records no events under this install") changes with it.
+- `check-telemetry-privacy.sh` also scans `vinculum-daemon/src`: only `platform/telemetry.ts` builds an ingest request, and the banned fields apply there too.
+- Worked example: `SettingsChange` for repo settings (`emit_repo_settings_change`, `settings.rs:272`) moves to the daemon. Global settings stay in the shell, and so does their `SettingsChange` (`settings.rs:251`). Events with no repo stay in the shell for good: `AppOpen`, `SettingsTelemetry`, `RepoActivate`, `RepoRemove`, `DaemonStop`, `McpToggle`, and `ImportFetch` (S4.10).
 
-**Tests.** Conformance from the core `settings.rs` tests and `shared.rs` precedence cases: absent inherits, blank wins, a clear restores the global value. `after/` trees for write and clear. vitest: the overlay shows the new value at once, keeps it until the cursor passes, and rolls back on an error.
+**Tests.** Conformance from the core `settings.rs` tests and `shared.rs` precedence cases: absent inherits, blank wins, a clear restores the global value. `after/` trees for write and clear. vitest: the overlay shows the new value at once, keeps it until the cursor passes, and rolls back on an error. Telemetry: one fixture event gives the same JSON record from Rust's `event_record` and the TypeScript port; with consent off nothing is sent; an unreachable endpoint neither throws nor delays the command.
 
 **Exit.** The settings commands above, `ReadRepoOverrides` and `WriteRepoOverrides`, and the TS precedence copy are gone. `read_config` callers read `settings/_/repo`.
 
@@ -1851,7 +1860,7 @@ Status: not started. Needs: S4.3.
 - `set_pr_url` writes `task.md` through the task domain (S4.3).
 - Telemetry: `GitWorktreeRemove`, `GitPush`, `GitCommit`.
 
-**Research (UNCONFIRMED).** Which git does the daemon find on a remote host and on a Mac without Command Line Tools? Port the `git_cmd` lookup order (PATH, then the alongside tree with `GIT_EXEC_PATH`) and test it on both.
+**Research (UNCONFIRMED).** Which git does the daemon find on a Mac without Command Line Tools? Port the `git_cmd` lookup order (PATH, then the alongside tree with `GIT_EXEC_PATH`) and test it there. On a remote host git comes from PATH (D6); check that the daemon's PATH under `systemd-run --user` and under `setsid` finds the git the setup probe found over ssh exec.
 
 **Tests.** Conformance from the `git_actions.rs` tests against a temp repo. The scrub test: a `GIT_DIR` in the daemon's env does not reach the child.
 
@@ -1884,11 +1893,11 @@ Status: not started. Needs: S2.6, S4.3.
 **Read first.** App `backup.rs` (`pick_backup_destination_dialog`, `backup_now`, `backup_busy`, `list_backups`, `check_backup_destination`, `restore_backup`; telemetry at :152, :233, :332, :367), `backup.rs:43-61` (the debounce), `backup_queue.rs`; app `settings.rs` `storage_info` :326 and `delete_all_archived_storage` :354 (`StoragePurge` at :391). Core `storage.rs`, `backup.rs`. `src/views/Settings.tsx:518`. 2.3.5.
 
 **Build.**
-- Decide O11 (zip). Spike first: a Rust-made `-v1.zip` verifies and restores through the TypeScript code, and a TypeScript one through Rust. If `fflate` fails either way, put (b) to the user.
+- Decide O11 (zip). Spike first: a Rust-made `-v1.zip` verifies and restores through the TypeScript code, and a TypeScript one through Rust. If `fflate` fails either way, put (b) to the user; under (b), `zip` joins the host probe list (D6).
 - `jobs/backup.ts` (create and verify) and `jobs/purge.ts`; `jobs/storage.ts` exists from S2.6.
 - Automatic triggers: the daemon owns the 2 s debounce and starts backup jobs itself. `backup_queue.rs` and `backup.rs:43-61` go.
 - `pick_backup_destination_dialog` stays in the shell; the picked path goes to a settings write (S4.1).
-- Storage scan and purge need ADMIN.
+- Storage scan and purge need ADMIN. From S5.1 AGENT reaches them too (O18 b).
 - Restore stays `Shutdown(RESTORE_BACKUP)` then a one-shot restore (2.3.5); the shell still runs it locally, and the host bootstrap runs it remotely (O15).
 - Telemetry: `BackupCreate`, `BackupRestore`, `StoragePurge`.
 
@@ -1965,16 +1974,19 @@ Status: not started. Needs: S4.3, S4.6, S4.8, S4.9 (the domains MCP writes), S1.
 
 **Build.**
 - Put O10 to the user: (a) Rust `alinery-mcp` stays, and each tool becomes an RPC call (prost messages generated from `proto/`, over HTTP/1.1 on the socket, extending the S1.4 helper); (b) the Bun binary gains an `--mcp` stdio mode that calls the daemon socket with the generated TypeScript client, and the Rust crate keeps only what S5.2 decides. Record the answer in 4.1.
-- Put O18 to the user. Today four tools reach the daemon (AGENT), and the other 21 work on files directly as the user. Once they go through the daemon they need a capability, and S4.9 made storage scan and purge ADMIN, which `alinery_storage_info` and `alinery_delete_archived_storage` call today.
+- **MCP is a headless, AI-first client (O18 b).** Every tool is an RPC call, and MCP connects the way the desktop does: the local socket (T1) on the daemon's host, or an ssh-forwarded socket (T2) from any other machine. It carries a token, from whoever starts it: the daemon, for the MCP a harness launches; the shell, for the managed MCP in `mcp.rs`; a pairing (O13) anywhere else.
+- **AGENT becomes exactly MCP's tools.** After the tool map above, AGENT is the set of RPCs those tools call, storage scan and purge included (`alinery_storage_info` and `alinery_delete_archived_storage`, `main.rs:439-440`), so no tool changes. It never includes `Shutdown`, the rest of ADMIN, or anything that needs APPROVE. An agent that can run MCP can read its token and call those RPCs directly, so this list is what every agent on that machine may do; the user accepted that for purge.
+- WA: the daemon mints AGENT tokens. It puts one in the environment of each harness it launches, and the shell asks for one (ADMIN) for the managed MCP. The no-token row of 2.1.10 goes: every request now carries a token (R8).
+- MCP's own telemetry calls (`TaskArchive` :1084, `StoragePurge` :1117, `BackupCreate` :1133, `SettingsChange` :1177) go: the daemon commands they now call emit those events (O17).
 - Map each of the 25 tools to the daemon RPC that replaced its code in P3 and P4. Write the table into this session before coding. `alinery_list_repos` keeps reading `app.toml`, which is app config, not repo state.
 - `alinery_save_playbook` behaviour change, tell the user: today a repo save fails `repo_busy` while a desktop window owns the repo. Through the daemon it goes through `PlaybookService.Save` with `expected_revision` and succeeds.
 - MCP starts a daemon only where it does today (`task_client` with `start_daemon`), and never calls `Shutdown`; `check-no-auto-session-kill.sh` scans the MCP code (Rust, or the `--mcp` module).
 - Delete `write_toml_file`, `create_pre_archive_backup`, the MCP halves of `create_task` and `call_playbook_library`, and the core functions P4 kept alive for them (the settings TOML writer, `task_creation.rs`, `playbook_library.rs`, the core backup create).
 - Update the P4 exception paragraph and 1.8 rule 2: the exception is closed.
 
-**Tests.** Before the change, record each tool's reply on a temp repo as a fixture; after it, the same calls against a real daemon give the same replies, except where this session names a change (the playbook save above). A tool call with a daemon of another protocol fails with the same message as today and starts no teardown.
+**Tests.** Before the change, record each tool's reply on a temp repo as a fixture; after it, the same calls against a real daemon give the same replies, except where this session names a change (the playbook save above). A tool call with a daemon of another protocol fails with the same message as today and starts no teardown. `bun test`: the AGENT set equals the RPCs in the tool map; with an AGENT token, `Shutdown` and every APPROVE call are PERMISSION_DENIED; a request with no token is UNAUTHENTICATED.
 
-**Exit.** MCP writes nothing under `.alinery/`; O10 and O18 are in 4.1; the core functions kept for MCP are gone.
+**Exit.** MCP writes nothing under `.alinery/` and reaches a daemon over T1 or T2 with an AGENT token; a request with no token is refused; O10 is in 4.1; the core functions kept for MCP are gone.
 
 ### S5.2 Host bootstrap (O15)
 
@@ -1990,6 +2002,7 @@ Status: not started. Needs: S5.1, S4.9 (restore).
 - ClaimRepo holds `.alinery/.alinery-app.lock` for the life of the channel, so the bootstrap is a long-lived stdio loop either way, not a one-shot command. Under (b) the Bun binary gets that loop (`--host-service`) on `platform/lock.ts`; the credential merge reuses the `.lock` protocol in `credentials.ts`.
 - WA: the host messages move into `proto/alinery/v1/host.proto` (D2) and are framed as `[u32 len][message]` on stdio. A Connect service needs HTTP, which a stdio pipe doesn't have.
 - The remote restore (S4.9) runs on this channel while the daemon is down.
+- D6 in the setup wizard: today a host without git fails with "the host is missing git" (`remote.rs:433`). Make the refusal name each missing tool and say to install it on that host and run setup again, and show it in `RemoteModal` before anything is installed.
 - With the domain commands gone, `check-remote-routing.sh` and `check-remote-offload.sh` only see PROVISION commands. Keep them on those, or delete them with their two `.txt` lists if nothing is listed. Decide from the count.
 
 **Tests.** The live remote test (`cargo test -p alinery-app --lib -- tests::remote::live` with `remote-sshd/run.sh`): connect, ListDir, Classify, Init, ClaimRepo, SpawnDaemon, WaitDaemonGone, and a second claimant gets `repo_busy`. A remote restore while the daemon is down.
@@ -2178,6 +2191,12 @@ Status: not started. Needs: S7.1, S7.3.
 | D3 | 2026-10-26 | All business logic that can move to the daemon moves | User |
 | D4 | earlier on this branch | Protocol bumps are free | User |
 | D5 | 2026-10-26 | The UI talks only to the daemon, except setup and OS jobs | User |
+| D6 | 2026-10-27 | Host tools are probed at setup and the user installs missing ones; none are shipped to a remote host (2.3.2, S5.2) | User |
+| D7 | 2026-10-27 | A client needs a connected, compatible daemon to work on a repo (O19) | User |
+| O16 | 2026-10-27 | (b): this plan lands on `remote-daemon` and becomes PR #154, stacked on PR #135 | User |
+| O17 | 2026-10-27 | (c): the daemon sends its own events, best effort, failures dropped silently; consent through `app.toml`; events with no repo stay in the shell (S4.1) | User |
+| O18 | 2026-10-27 | (b): MCP is a headless client of the daemon over T1 or T2, from any machine; its token grants AGENT, exactly the RPCs behind its tools, storage scan and purge included, never `Shutdown` or approvals (S5.1) | User |
+| O19 | 2026-10-27 | (a), recorded as D7 (S3.5) | User |
 
 Slots the sessions fill (empty until then):
 
@@ -2192,13 +2211,12 @@ Slots the sessions fill (empty until then):
 | S0.7 | O3, O7; O1, O2 confirmed or left WA |
 | S2.1 | The Subscribe measurements |
 | S3.4 | The O8 measurement |
-| S3.5 | O19 |
-| S4.1 | O17; the TOML writer |
+| S4.1 | The TOML writer |
 | S4.2 | O14; the multi-writer exception and which session removes each Rust writer |
 | S4.9 | O11 |
 | S4.10 | O12 |
 | S4.11 | O9 |
-| S5.1 | O10, O18 |
+| S5.1 | O10; the AGENT RPC list |
 | S5.2 | O15 |
 | S6.1 | O13 |
 | S6.2 | Web hosting |
@@ -2229,7 +2247,7 @@ Slots the sessions fill (empty until then):
 | Bun `Worker` is still experimental (O7) | S0.7 |
 | pi-durable notifies on a conversation change | S3.3 |
 | The pinned Bun's `Bun.TOML` only parses | S4.1 |
-| Which git the daemon finds on a remote host and on a Mac without Command Line Tools | S4.7 |
+| Which git the daemon finds on a Mac without Command Line Tools; whether its PATH on a remote host (under `systemd-run --user` or `setsid`) finds the git the setup probe found | S4.7 |
 | connect-node over `node:https` under Bun | S6.1 |
 | swift-nio-ssh and Citadel have no streamlocal; Citadel supports `direct-tcpip` | S6.1 |
 | connect-swift server streaming over URLSession | S6.3 |
@@ -2261,9 +2279,7 @@ External:
 ## 4.4 Handoff
 
 For the user:
-- **O16**: merge PR #154 as is, or land this plan on top of it.
-- **O17, O18, O19**: user decisions, in S4.1, S5.1 and S3.5.
-- **R5**: telemetry ingest credentials are hardcoded at `telemetry.rs:21-22`. Out of this plan's scope.
+- **R5**: telemetry ingest credentials are hardcoded at `telemetry.rs:21-22`. Out of this plan's scope. After S4.1 the daemon holds a copy too (O17 c), and a remote host gets it with the runtime, so a fix changes both.
 - **`check.sh` runs no daemon `bun test`.** S0.1 adds the step.
 
 AGENTS.md lines that are stale today (S5.4 rewrites them):
@@ -2271,14 +2287,16 @@ AGENTS.md lines that are stale today (S5.4 rewrites them):
 - Gates list: "`shutdown` senders stay on the four-name allowlist"; the gate allows five.
 - "The daemon's in-memory `vt100` emulator is reattach truth": `terminal.ts:2` says reattach sends the scrollback tail and there is no vt100 frame.
 
-S5.4 also rewrites lines that become stale during the plan, such as the `libalinery_core` ownership library (gone in S4.11) and the module table (`daemon_rpc.rs`, from S0.3 and S1.2).
+S5.4 also rewrites lines that become stale during the plan, such as the `libalinery_core` ownership library (gone in S4.11), the module table (`daemon_rpc.rs`, from S0.3 and S1.2), and "A daemon this app cannot use", whose repo "still opens and its board reads through the repo service" (no longer true after S3.5, D7).
 
 README suggestions (README is human-edited; nothing here edits it):
 - `README.md:77` names the daemon `alineryd`; it is Vinculum (`alinery-vinculum-daemon`) on this branch.
-- `README.md:87` says the board, task and session browsing work while the daemon is offline, incompatible, or owned by another app instance, without starting one. O19 decides whether that stays true; update the paragraph to match.
+- `README.md:87` says task, session and board browsing, and artifact listings, work while the daemon is offline, incompatible, or owned by another app instance, without starting one. After S3.5 that is no longer true (D7): a repo without a connected, compatible daemon shows only its banner until the daemon is connected or restarted. The paragraph needs rewriting then.
 - After P5, the architecture description could say that the per-repo daemon is the application and the desktop app is one of its clients.
 - After S6.2, a section on the web client and pairing.
 
 ## 4.5 Changelog
 
 - v0.1, 2026-10-26: first draft (Parts 1 to 4).
+- v0.2, 2026-10-27: O16, O17 and O19 decided, O18 decided in part; D6 (host tools probed, not shipped) and D7 (no repo without a daemon). S3.5, S4.1, S4.7, S5.1 and S5.2 updated to match.
+- v0.3, 2026-10-27: O18 decided (b): AGENT becomes exactly the RPCs behind MCP's tools (2.1.10, S4.9, S5.1).
