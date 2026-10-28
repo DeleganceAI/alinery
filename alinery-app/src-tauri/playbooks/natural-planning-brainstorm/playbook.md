@@ -2,7 +2,7 @@
 version = 2
 key = "natural-planning-brainstorm"
 title = "Natural Planning Brainstorm"
-tagline = "Explore diverse ideas and turn the strongest options into next actions."
+tagline = "Generate and expand ideas through ten distinct brainstorming perspectives."
 description = "Frame purpose and outcome, harvest seven independent and three shared-wall perspectives losslessly, evaluate options and define human-steered next actions."
 default_model = ""
 default_harness = "omp"
