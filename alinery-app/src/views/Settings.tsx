@@ -295,6 +295,8 @@ export function Settings({
   const [backupsErr, setBackupsErr] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
   const [connections, setConnections] = useState<ConnectionStatus[] | null>(null);
+  const [connectionsError, setConnectionsError] = useState("");
+  const [connectionsReload, setConnectionsReload] = useState(0);
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
   // Local while dragging so the slider does not write config.toml on every step.
   const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
@@ -501,19 +503,20 @@ export function Settings({
     if (activeSection !== "connections") return;
     let alive = true;
     setConnections(null);
+    setConnectionsError("");
     ipc
       .connectionStatuses()
       .then((loaded) => {
         if (alive) setConnections(loaded);
       })
       .catch((e) => {
-        if (alive) reportError(e, "Couldn't load connections");
+        if (alive) setConnectionsError(String(e));
       });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection]);
+  }, [activeSection, connectionsReload]);
 
   // The list needs a valid destination, so load it lazily when the section is opened
   // rather than on every settings mount.
@@ -1011,6 +1014,8 @@ export function Settings({
     </div>
   );
 
+  const retryConnections = () => setConnectionsReload((n) => n + 1);
+
   const connect = (provider: ConnectionStatus["provider"]) => {
     setConnecting(provider);
     const request = provider === "github" ? ipc.connectGithub() : ipc.connectLinear();
@@ -1050,7 +1055,19 @@ export function Settings({
         <span>Type</span>
         <span>Status</span>
       </div>
-      {connections === null ? (
+      {connectionsError ? (
+        <InlineStatus
+          tone="error"
+          detail={connectionsError}
+          action={
+            <button className="btn ghost" type="button" onClick={retryConnections}>
+              Retry
+            </button>
+          }
+        >
+          Couldn't load connections
+        </InlineStatus>
+      ) : connections === null ? (
         <LoadingState label="Loading connections…" state="connecting" />
       ) : (
         <ul className="connections-list">
@@ -1083,9 +1100,18 @@ export function Settings({
                     />
                   </>
                 ) : !connection.available ? (
-                  <span className="connection-unavailable" title={connection.detail}>
-                    <AlertCircle size={16} strokeWidth={2} aria-hidden="true" /> <span>{connection.detail}</span>
-                  </span>
+                  <>
+                    <span className="connection-unavailable" title={connection.detail}>
+                      <AlertCircle size={16} strokeWidth={2} aria-hidden="true" /> <span>{connection.detail}</span>
+                    </span>
+                    {/* Only the GitHub row's unavailable state is transient (git missing or the credential
+                        helper timing out); Linear's is fixed by the platform. */}
+                    {connection.provider === "github" && (
+                      <button className="btn small" type="button" disabled={!!connecting} aria-label={`Retry ${connection.name}`} onClick={retryConnections}>
+                        Retry
+                      </button>
+                    )}
+                  </>
                 ) : (
                   <button
                     className="btn small"

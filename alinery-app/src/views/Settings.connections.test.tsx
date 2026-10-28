@@ -151,6 +151,45 @@ describe("provider connections", () => {
     expect(await screen.findByRole("button", { name: "Connect Linear" })).toBeTruthy();
   });
 
+  // Issue #158: a rejected status call must not leave "Loading connections…" up forever. The
+  // section needs a bounded error state with a way to retry.
+  it("replaces the spinner with an error and Retry when the status call fails", async () => {
+    vi.mocked(ipc.connectionStatuses).mockRejectedValueOnce(new Error("git credential fill timed out"));
+
+    render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("Loading connections…")).toBeNull();
+    fireEvent.click(retry);
+    await waitFor(() => expect(ipc.connectionStatuses).toHaveBeenCalledTimes(2));
+  });
+
+  // Issue #158: the backend reports a timed-out credential lookup as an unavailable GitHub row.
+  // That row must carry a retry control, not just the detail text.
+  it("offers Retry on a GitHub row whose credential lookup timed out", async () => {
+    vi.mocked(ipc.connectionStatuses).mockResolvedValueOnce([
+      {
+        provider: "github",
+        name: "GitHub",
+        kind: "Web",
+        connected: false,
+        reconnect: false,
+        available: false,
+        removable: false,
+        account: "",
+        detail: "git credential fill timed out",
+      },
+    ]);
+
+    render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} onNotificationsChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connections" }));
+
+    expect(await screen.findByText("git credential fill timed out")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry GitHub" }));
+    await waitFor(() => expect(ipc.connectionStatuses).toHaveBeenCalledTimes(2));
+  });
+
   // Alinery holds no GitHub credential — gh does — so the only removal it could perform is
   // `gh auth logout`, which reaches into the user's terminal. That item must not exist at all.
   it("offers GitHub reconnect but never a remove", async () => {
