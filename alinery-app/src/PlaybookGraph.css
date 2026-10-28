@@ -128,6 +128,8 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .playbook-definition-connection-hit {
@@ -178,9 +180,18 @@
   overflow-wrap: anywhere;
   cursor: pointer;
   transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+    border-color 180ms ease-in-out,
+    background-color 180ms ease-in-out,
+    color 180ms ease-in-out,
+    box-shadow 180ms ease-in-out;
+}
+
+.playbook-definition-node[data-sim-status] {
+  padding: calc(24px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(6px * var(--ui-scale));
+}
+
+.playbook-definition-node[data-sim-status] .playbook-definition-node-title {
+  -webkit-line-clamp: 2;
 }
 
 .playbook-definition-node[data-sim-status="running"] {
@@ -200,8 +211,8 @@
 
 .playbook-node-sim-badge {
   position: absolute;
-  top: calc(-9px * var(--ui-scale));
-  right: calc(-6px * var(--ui-scale));
+  top: calc(4px * var(--ui-scale));
+  right: calc(6px * var(--ui-scale));
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -278,6 +289,7 @@
 }
 .playbook-definition-edge-label {
   box-sizing: border-box;
+  pointer-events: auto;
   width: 100%;
   height: 100%;
   padding: 6px;
@@ -444,4 +456,91 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* The guided preview follows one step; the full graph viewer keeps its own controls. */
+.playbook-simulation-graph .playbook-definition-viewport {
+  cursor: default;
+  touch-action: pan-y;
+}
+
+.playbook-simulation-graph .playbook-definition-viewport:focus-visible {
+  outline: none;
+}
+
+.playbook-simulation-graph .playbook-definition-node[aria-pressed="true"] {
+  box-shadow: none;
+  border-width: 2px;
+}
+
+.playbook-simulation-graph .playbook-definition-node[data-sim-status="running"][aria-pressed="true"] {
+  background: var(--accent-subtle);
+
+}
+
+.playbook-simulation-graph .playbook-definition-node[data-sim-status="waiting_for_approval"][aria-pressed="true"] {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
+}
+
+.playbook-simulation-graph .playbook-definition-connection {
+  opacity: 0.4;
+  transition: stroke 180ms ease-out, opacity 180ms ease-out;
+}
+
+.playbook-simulation-graph .playbook-definition-connection.selected {
+  opacity: 1;
+  stroke-dasharray: 6 4;
+
+}
+
+.playbook-simulation-graph[data-simulation-playing="true"] .playbook-definition-node[data-sim-status="running"][aria-pressed="true"] {
+  animation: playbook-step-arrive 360ms ease-out;
+}
+
+.playbook-simulation-graph[data-simulation-playing="true"] .playbook-definition-connection.selected {
+  animation: playbook-artifact-transfer 420ms ease-out;
+}
+
+.playbook-simulation-graph[data-simulation-playing="true"] .playbook-node-sim-badge {
+  animation: playbook-badge-arrive 140ms ease-out;
+}
+
+@keyframes playbook-step-arrive {
+  from { border-color: var(--border-strong); }
+  to { border-color: var(--accent); }
+}
+
+@keyframes playbook-artifact-transfer {
+  from { stroke-dashoffset: 20; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes playbook-badge-arrive {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playbook-simulation-graph .playbook-definition-stage {
+    transition: none !important;
+  }
+  .playbook-simulation-graph .playbook-definition-node,
+  .playbook-simulation-graph .playbook-definition-connection,
+  .playbook-simulation-graph .playbook-node-sim-badge {
+    animation: none !important;
+    transition: none;
+  }
+}
+
+.playbook-simulation-graph .playbook-definition-node:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-strong) 8%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playbook-definition-node {
+    transition: none;
+  }
 }

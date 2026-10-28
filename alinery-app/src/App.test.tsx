@@ -653,7 +653,11 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
 });
 
 describe("onboarding gate", () => {
-  it("finishes at Playbooks when resuming the removed First task step without executing a task", async () => {
+  it.each([
+    { repository: "with existing tasks", tasks: [task] },
+    { repository: "without tasks", tasks: [] },
+  ])("opens the new-task form after finishing resumed onboarding $repository without executing a task", async ({ tasks }) => {
+    ipcMocks.listBoardTasks.mockResolvedValue(tasks);
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
     render(<App />);
@@ -661,9 +665,22 @@ describe("onboarding gate", () => {
     expect(screen.queryByRole("tab", { name: /First task/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
-    await screen.findByRole("button", { name: "open list task" });
+    await screen.findByText("create playbook:superdevelop");
+    expect(screen.getByText("create preset:")).toBeTruthy();
     expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
     expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("carries the selected playbook into the new-task form after onboarding", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "playbooks");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Bug Hunting/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    await screen.findByText("create playbook:bug-hunting");
+    expect(screen.getByText("create preset:")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
   });
 

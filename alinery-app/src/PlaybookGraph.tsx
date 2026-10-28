@@ -42,6 +42,8 @@ export function PlaybookGraph({
   simulatedStatuses,
   hideToolbar = false,
   minScale,
+  simulationPlaying = false,
+  onPauseSimulation,
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -57,6 +59,8 @@ export function PlaybookGraph({
   onSelectStep?: (key: string) => void;
   simulatedStatuses?: Record<string, SimulatedStepStatus>;
   hideToolbar?: boolean;
+  simulationPlaying?: boolean;
+  onPauseSimulation?: () => void;
   /** Lower zoom bound; also floors auto-fit so compact embeds stay legible and pan instead. */
   minScale?: number;
 }) {
@@ -73,16 +77,26 @@ export function PlaybookGraph({
   const zoomLabelRef = useRef<HTMLOutputElement>(null);
   const panButtonRef = useRef<HTMLButtonElement>(null);
   const initializedViewRef = useRef(false);
+  const isSimulation = simulatedStatuses !== undefined;
+  const animateCameraRef = useRef(false);
+  const previousSimulationKey = useRef<string | null>(null);
+  const simulationTargetRef = useRef<{ key: string; id?: string } | null>(null);
+  const manualSimulationTargetRef = useRef<{ key: string; id: string } | null>(null);
+  const simulationKeyRef = useRef(activeKey);
+  simulationKeyRef.current = activeKey;
   const canvasEnabled = variant === "definition" && steps.length > 0;
   const paintView = useCallback(({ scale, tx, ty }: PanZoomView) => {
-    if (stageRef.current) stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
+    if (stageRef.current) {
+      stageRef.current.style.transition = animateCameraRef.current ? "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
+      stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
+    }
     if (canvasRef.current) canvasRef.current.style.zoom = String(scale);
     if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
   const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture } = usePanZoom({
     viewportRef,
     paint: paintView,
-    enabled: canvasEnabled,
+    enabled: canvasEnabled && !isSimulation,
     minScale,
   });
   const fitGraph = () => {
@@ -134,6 +148,28 @@ export function PlaybookGraph({
     [variant, steps, displayMode, flowConnections, connections],
   );
 
+  const revealSimulationNode = useCallback(
+    (key: string, animate: boolean, instanceId?: string) => {
+      const viewport = viewportRef.current;
+      const canvas = canvasRef.current;
+      const node = layout?.nodes.find((node) => (instanceId ? node.id === instanceId : node.key === key));
+      if (!viewport || !canvas || !node || !layout || !viewport.clientWidth || !viewport.clientHeight || !canvas.offsetWidth) return;
+      // Layout coordinates stay stable while the stage is transitioning between steps.
+      const unit = canvas.offsetWidth / layout.width;
+      const scale = viewRef.current.scale;
+      const width = GRAPH_NODE_WIDTH * unit * scale;
+      const height = GRAPH_NODE_HEIGHT * unit * scale;
+      const left = Math.max(32, (viewport.clientWidth - width) / 2);
+      const top = Math.max(32, (viewport.clientHeight - height) / 2);
+      simulationTargetRef.current = { key, id: instanceId };
+      animateCameraRef.current = animate;
+      setView({ scale, tx: left - node.x * unit * scale, ty: top - node.y * unit * scale });
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    },
+    [layout, setView, viewRef],
+  );
+
   useLayoutEffect(() => {
     if (!canvasEnabled) {
       initializedViewRef.current = false;
@@ -145,15 +181,23 @@ export function PlaybookGraph({
     const canvas = canvasRef.current;
     if (!canvas) return;
     paintView(viewRef.current);
+    let measuredSize = "";
     const measure = () => {
       const width = split.clientWidth - (dividerRef.current?.offsetWidth ?? 0);
       if (width > 0) setAvailableWidth(width);
+      const size = `${viewport.clientWidth}:${viewport.clientHeight}:${canvas.offsetWidth}:${canvas.offsetHeight}`;
+      if (size === measuredSize) return;
+      measuredSize = size;
       // Skip transient collapsed layouts: fitting into a sliver would pin the camera at the
       // min scale; the observer retries once the viewport has real room.
       const viewportReady = viewport.clientWidth > 2 * FIT_PADDING && viewport.clientHeight > 2 * FIT_PADDING;
       if (!initializedViewRef.current && viewportReady && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
         fit(canvas.offsetWidth, canvas.offsetHeight);
         initializedViewRef.current = true;
+      }
+      if (isSimulation) {
+        const target = simulationTargetRef.current ?? (simulationKeyRef.current ? { key: simulationKeyRef.current } : null);
+        if (target) revealSimulationNode(target.key, false, target.id);
       }
     };
     measure();
@@ -163,22 +207,24 @@ export function PlaybookGraph({
     observer.observe(viewport);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef]);
+  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef, isSimulation, revealSimulationNode]);
 
   useLayoutEffect(() => {
-    if (!selectedStepKey || !simulatedStatuses?.[selectedStepKey]) return;
-    const viewport = viewportRef.current;
-    const node = canvasRef.current?.querySelector<HTMLElement>('.playbook-definition-node[aria-pressed="true"]');
-    if (!viewport || !node) return;
-    const frame = viewport.getBoundingClientRect();
-    const bounds = node.getBoundingClientRect();
-    const dx = bounds.left < frame.left + 24 ? frame.left + 24 - bounds.left : bounds.right > frame.right - 24 ? frame.right - 24 - bounds.right : 0;
-    const dy = bounds.top < frame.top + 24 ? frame.top + 24 - bounds.top : bounds.bottom > frame.bottom - 24 ? frame.bottom - 24 - bounds.bottom : 0;
-    if (dx || dy) {
-      const view = viewRef.current;
-      setView({ ...view, tx: view.tx + dx, ty: view.ty + dy });
+    if (!isSimulation || !activeKey) return;
+    const previous = previousSimulationKey.current;
+    if (previous === activeKey && !simulationPlaying) {
+      animateCameraRef.current = false;
+      if (stageRef.current) stageRef.current.style.transition = "none";
+      return;
     }
-  }, [selectedStepKey, simulatedStatuses, setView, viewRef]);
+    const restarting = previous !== null && previous !== activeKey && activeKey === steps[0]?.key;
+    const animate = simulationPlaying && previous !== null && !restarting;
+    const manual = !simulationPlaying && manualSimulationTargetRef.current?.key === activeKey ? manualSimulationTargetRef.current : null;
+    if (simulationPlaying) manualSimulationTargetRef.current = null;
+    revealSimulationNode(activeKey, animate, manual?.id);
+    if (restarting && simulationPlaying) stageRef.current?.animate?.([{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: "ease-out" });
+    previousSimulationKey.current = activeKey;
+  }, [activeKey, isSimulation, simulationPlaying, steps, revealSimulationNode]);
 
   if (variant === "definition" && layout) {
     const selectedEdges = showInspector ? edges.filter(({ from, to }) => from.key === selectedStep?.key || to.key === selectedStep?.key) : [];
@@ -191,7 +237,11 @@ export function PlaybookGraph({
         ? layout.edges.filter(({ from, to }) => from === selectedStep.key || to === selectedStep.key)
         : layout.edges;
     return (
-      <section className="playbook-graph-view playbook-definition-graph" aria-label={`${title} graph`}>
+      <section
+        className={`playbook-graph-view playbook-definition-graph${isSimulation ? " playbook-simulation-graph" : ""}`}
+        aria-label={`${title} graph`}
+        data-simulation-playing={isSimulation && simulationPlaying ? "true" : undefined}
+      >
         {!hideToolbar && (
           <div className="playbook-canvas-toolbar" role="group" aria-label="Graph display mode">
             <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
@@ -251,9 +301,9 @@ export function PlaybookGraph({
                   role="region"
                   aria-label="Dependency graph canvas"
                   tabIndex={-1}
-                  onPointerDown={onPointerDown}
+                  onPointerDown={isSimulation ? undefined : onPointerDown}
                   onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
+                    if (isSimulation || event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
                     const view = viewRef.current;
                     switch (event.key) {
                       case "Escape":
@@ -283,7 +333,20 @@ export function PlaybookGraph({
                     }
                     event.preventDefault();
                   }}
-                  onFocusCapture={onFocusCapture}
+                  onFocusCapture={(event) => {
+                    if (!isSimulation) {
+                      onFocusCapture(event);
+                      return;
+                    }
+                    const target = event.target.closest<HTMLElement>("[data-step-key]");
+                    const key = target?.dataset.stepKey;
+                    const id = target?.dataset.stepId;
+                    if (key && id) {
+                      manualSimulationTargetRef.current = { key, id };
+                      onPauseSimulation?.();
+                      revealSimulationNode(key, false, id);
+                    }
+                  }}
                 >
                   <div ref={stageRef} className="playbook-definition-stage">
                     <div
@@ -298,15 +361,15 @@ export function PlaybookGraph({
                         aria-label={displayMode === "flow" ? "Flow ordering connections" : "Artifact dependency connections"}
                       >
                         <defs>
-                          <marker id={arrowId} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                          <marker id={arrowId} markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto">
                             <path d="M 0 0 L 7 3.5 L 0 7 Z" className="playbook-definition-arrow" />
                           </marker>
-                          <marker id={selectedArrowId} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                          <marker id={selectedArrowId} markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto">
                             <path d="M 0 0 L 7 3.5 L 0 7 Z" className="playbook-definition-arrow selected" />
                           </marker>
                         </defs>
                         {visibleEdges.map(({ from, to, paths, feedback }) => {
-                          const selected = from === selectedStep?.key || to === selectedStep?.key;
+                          const selected = isSimulation ? to === activeKey : from === selectedStep?.key || to === selectedStep?.key;
                           const description =
                             displayMode === "flow"
                               ? "ordering"
@@ -366,6 +429,8 @@ export function PlaybookGraph({
                               className={`playbook-definition-node${instance === null ? "" : " illustrative"}`}
                               key={id}
                               data-sim-status={activeSimStatus}
+                              data-step-key={key}
+                              data-step-id={id}
                               style={{
                                 left: `calc(${x}px * var(--ui-scale))`,
                                 top: `calc(${y}px * var(--ui-scale))`,
@@ -377,6 +442,11 @@ export function PlaybookGraph({
                               aria-controls={showInspector ? inspectorId : undefined}
                               title={`${step.title}${instance === null ? "" : " — illustrative instance, not a fixed count"}`}
                               onClick={() => {
+                                if (isSimulation) {
+                                  manualSimulationTargetRef.current = { key, id };
+                                  onPauseSimulation?.();
+                                  revealSimulationNode(key, false, id);
+                                }
                                 setSelectedKey(key);
                                 onSelectStep?.(key);
                               }}

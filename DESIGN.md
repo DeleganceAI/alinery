@@ -298,6 +298,8 @@ Rules:
 - Respect `prefers-reduced-motion` and preserve the same information without movement.
 - Never use `transition: all`.
 
+Onboarding's playbook demo is a guided explanation: use a constant zoom and an interruptible `320ms` camera transition to center the next step, followed by a restrained `180ms` detail entrance. This is an explicit exception to routine transition timing. Dwell for `2600ms` on automatic steps, `3800ms` at checkpoints, and `2800ms` on completion. Highlight only the incoming connection; keep badges opaque and clear of its arrow. Pause for manual inspection, reveal keyboard-selected content immediately, and suppress movement for reduced motion. Hover feedback must ease in and out over `180ms`, without moving cards. Finish onboarding opens New Task with the chosen playbook for both new and existing repositories; it never starts execution automatically.
+
 ### Iconography and imagery
 
 - Use `lucide-react` as Alinery's canonical interface icon library. Its restrained outline style and shadcn/ui alignment fit Alinery's quiet desktop direction.
