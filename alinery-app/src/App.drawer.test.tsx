@@ -103,7 +103,6 @@ vi.mock("./DaemonConflictBanner", () => ({
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
-vi.mock("./views/Kanban", () => ({ Kanban: () => null }));
 vi.mock("./views/Grid", () => ({ Grid: () => null }));
 
 function meta(id: string, worktree = "/repo"): SessionMeta {

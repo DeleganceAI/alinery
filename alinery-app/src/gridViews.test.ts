@@ -72,19 +72,17 @@ describe("Grid view definitions", () => {
     expect(nextGridViewName(views)).toBe("Grid view 2");
   });
 
-  it("numbers Grid views ⌘1 / ⌘2 / ⌘3, then Tasks, Sessions, and Kanban", () => {
+  it("numbers Grid views ⌘1 / ⌘2 / ⌘3, then Tasks, Sessions, and Chat", () => {
     expect([0, 1, 2].map(gridViewShortcut)).toEqual(["⌘1", "⌘2", "⌘3"]);
     expect(trailingTabDigit(1, "tasks")).toBe(2);
     expect(trailingTabDigit(3, "tasks")).toBe(4);
     expect(trailingTabDigit(3, "sessions")).toBe(5);
-    expect(trailingTabDigit(3, "kanban")).toBe(6);
+    expect(trailingTabDigit(3, "chat")).toBe(6);
   });
 
-  it("falls back safely for hidden classic Kanban and stale Grid IDs", () => {
+  it("falls back safely for stale Grid IDs", () => {
     const views = [{ id: "first", name: "First", slot: 1 }];
-    expect(resolveGridTopLevelRoute({ kind: "kanban" }, false, views)).toEqual({ kind: "grid", gridViewId: "first" });
-    expect(resolveGridTopLevelRoute({ kind: "grid", gridViewId: "deleted" }, true, views)).toEqual({ kind: "grid", gridViewId: "first" });
-    expect(resolveGridTopLevelRoute({ kind: "grid", gridViewId: "first" }, false, views)).toEqual({ kind: "grid", gridViewId: "first" });
-    expect(resolveGridTopLevelRoute({ kind: "kanban" }, true, views)).toEqual({ kind: "kanban" });
+    expect(resolveGridTopLevelRoute({ kind: "grid", gridViewId: "deleted" }, views)).toEqual({ kind: "grid", gridViewId: "first" });
+    expect(resolveGridTopLevelRoute({ kind: "grid", gridViewId: "first" }, views)).toEqual({ kind: "grid", gridViewId: "first" });
   });
 });

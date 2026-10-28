@@ -632,9 +632,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
       expect(onCreate.mock.calls).toEqual([[archetype.reference], [archetype.reference, archetype.starterPreset]]);
     }
 
-    onCreate.mockClear();
-    fireEvent.click(within(gate).getByRole("button", { name: "New task" }));
-    expect(onCreate.mock.calls).toEqual([[]]);
+    expect(within(gate).queryByRole("button", { name: "New task" })).toBeNull();
     expect(within(gate).getByRole("link", { name: "Browse the Playbook Library" }).getAttribute("href")).toBe("https://alinery.ai/playbooks");
     expect(within(gate).queryByRole("button", { name: "How playbooks work" })).toBeNull();
   });
@@ -646,7 +644,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
     render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} onReplayOnboarding={onReplayOnboarding} />);
 
     const gate = await screen.findByTestId("grid-starter-gate");
-    for (const name of [/Use playbook/, "Try starter preset", "New task"]) {
+    for (const name of [/Use playbook/, "Try starter preset"]) {
       expect((within(gate).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
     }
     const libraryLink = within(gate).getByRole("link", { name: "Browse the Playbook Library" });

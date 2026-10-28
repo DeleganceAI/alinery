@@ -5,16 +5,6 @@ type Hint = [string, string];
 
 // Context-sensitive hint sets, declarative and kept in sync with the real hotkey map (§6.2).
 const HINTS: Record<string, Hint[]> = {
-  kanban: [
-    ["⌘K", "Search"],
-    ["⌘N", "Create"],
-    ["⌘E", "Archive"],
-    ["⌘D", "Duplicate"],
-    ["j / k", "Down/up"],
-    ["h / l", "Columns"],
-    ["↵", "Open"],
-    ["⌘G", "Appearance"],
-  ],
   grid: [
     ["⌘K", "Search"],
     ["⌘N", "Create"],
@@ -73,9 +63,9 @@ export function HotkeyBar({
   gridViewName?: string;
   gridViewShortcut?: string;
 }) {
-  const baseHints = HINTS[view] ?? HINTS.kanban;
+  const baseHints = HINTS[view] ?? HINTS.list;
   const hints = view === "grid" && gridViewName && gridViewShortcut ? [...baseHints, [gridViewShortcut, gridViewName] satisfies Hint] : baseHints;
-  const duplicateHint = view === "kanban" || view === "list" || view === "task";
+  const duplicateHint = view === "list" || view === "task";
   // Dot severity mirrors the visible text: accent while work runs, calm green when
   // idle-but-alive, red if unreachable (§6.2a). The label always carries the state.
   const dotClass = !daemon.reachable ? "down" : daemon.busy > 0 || daemon.waiting_for_input > 0 || daemon.waiting_for_approval > 0 ? "busy" : "ok";

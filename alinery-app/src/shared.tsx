@@ -364,7 +364,7 @@ export function sameTaskActivityMaps(left: TaskActivityMap, right: TaskActivityM
   );
 }
 
-// Shared age formatters (T0-6): used by TaskList's Updated/Created columns and Kanban's
+// Shared age formatters (T0-6): used by TaskList's Updated/Created columns and Canvas's
 // card age slot. No seconds unit — anything under a minute reads "now".
 export function formatAge(epochSeconds: number | null | undefined, nowSeconds = Math.floor(Date.now() / 1000)) {
   if (!epochSeconds) return "—";
@@ -640,7 +640,6 @@ export function TopBar({
   scope,
   appConfig,
   gridViews = [],
-  showOriginalKanban = false,
   showChat = false,
   onSwitch,
   onSwitchGrid,
@@ -663,7 +662,6 @@ export function TopBar({
   scope: RepoScope;
   appConfig: AppConfig;
   gridViews?: GridViewDefinition[];
-  showOriginalKanban?: boolean;
   showChat?: boolean;
   instant?: boolean;
   onSwitch: (k: Tab) => void;
@@ -756,8 +754,7 @@ export function TopBar({
         {gridViews.map((gridView, index) => gridTab(gridView, index))}
         {tab("list", "Tasks", String(trailingTabDigit(gridViews.length, "tasks")))}
         {tab("sessions", "Sessions", String(trailingTabDigit(gridViews.length, "sessions")))}
-        {showOriginalKanban && tab("kanban", "Kanban", String(trailingTabDigit(gridViews.length, "kanban")))}
-        {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat", showOriginalKanban)))}
+        {showChat && tab("chat", "Chat", String(trailingTabDigit(gridViews.length, "chat")))}
         {tab("playbooks", "Playbooks")}
       </nav>
       <div className="spacer" />

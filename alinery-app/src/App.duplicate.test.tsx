@@ -148,7 +148,6 @@ const boardStub = ({ onDuplicate }: { onDuplicate: (task: BoardTask) => void }) 
     duplicate-source
   </button>
 );
-vi.mock("./views/Kanban", () => ({ Kanban: boardStub }));
 vi.mock("./views/Grid", () => ({ Grid: boardStub }));
 vi.mock("./views/TaskDetail", () => ({
   TaskDetail: ({ slug, onDuplicate }: { slug: string; onDuplicate: (task: Task) => void }) => (

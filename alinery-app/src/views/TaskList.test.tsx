@@ -282,7 +282,7 @@ describe("Task List relationship projection", () => {
 });
 
 describe("TaskList empty", () => {
-  it("creates from the selected playbook or preset and offers a generic task and guide", async () => {
+  it("creates from the selected playbook or preset and offers the guide", async () => {
     const onCreate = vi.fn();
     const onReplayOnboarding = vi.fn();
     render(
@@ -304,8 +304,7 @@ describe("TaskList empty", () => {
     expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" });
     fireEvent.click(deck.getByRole("button", { name: "Try starter preset" }));
     expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" }, CURATED_PLAYBOOK_ARCHETYPES[1].starterPreset);
-    fireEvent.click(deck.getByRole("button", { name: "New task" }));
-    expect(onCreate).toHaveBeenLastCalledWith();
+    expect(deck.queryByRole("button", { name: "New task" })).toBeNull();
     expect(deck.getByRole("link", { name: "Browse the Playbook Library" })).toBeDefined();
     fireEvent.click(deck.getByRole("button", { name: "How playbooks work" }));
     expect(onReplayOnboarding).toHaveBeenCalledTimes(1);

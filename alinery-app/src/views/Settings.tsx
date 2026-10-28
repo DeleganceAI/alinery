@@ -702,11 +702,6 @@ export function Settings({
     saveGlobal({ ...global, power: { ...global.power, keep_awake: value } });
   };
 
-  const setShowOriginalKanban = (value: boolean) => {
-    if (!global) return;
-    saveGlobal({ ...global, experiments: { ...global.experiments, show_original_kanban: value } }, value ? "Original Kanban tab shown" : "Original Kanban tab hidden");
-  };
-
   const setShowChat = (value: boolean) => {
     if (!global) return;
     saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
@@ -2253,24 +2248,13 @@ export function Settings({
               <section className="settings-nested" aria-labelledby="experimental-options-title">
                 <h3 id="experimental-options-title">Experimental options</h3>
                 <Checkbox
-                  checked={global.experiments?.show_original_kanban ?? true}
-                  disabled={!isGlobal}
-                  onChange={setShowOriginalKanban}
-                  label={
-                    <div>
-                      <div>Original Kanban</div>
-                      <div className="hint">Show the classic Kanban board in the top bar, after Sessions.</div>
-                    </div>
-                  }
-                />
-                <Checkbox
                   checked={global.experiments?.show_chat ?? false}
                   disabled={!isGlobal}
                   onChange={setShowChat}
                   label={
                     <div>
                       <div>Chat</div>
-                      <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Kanban.</div>
+                      <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Sessions.</div>
                     </div>
                   }
                 />
@@ -2357,7 +2341,7 @@ export function Settings({
             {isGlobal === false && globalOnly("Grid-based views")}
             <div className="grid-view-settings-intro">
               <h2>Grid-based views</h2>
-              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and classic Kanban take the numbers after them.</p>
+              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and Chat take the numbers after them.</p>
             </div>
             <ol className="grid-view-settings-list">
               {gridViews.map((view, index) => {

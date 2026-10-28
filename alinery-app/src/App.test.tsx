@@ -239,7 +239,7 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
 
 vi.mock("./ipc", () => ipcModule);
 vi.mock("./tabMotion", () => {
-  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
+  const isPrimaryTab = (kind: string) => ["list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
   return {
     isPrimaryTab,
     primaryTabOf: (view: { kind: string; from?: unknown }) => {
@@ -315,24 +315,6 @@ vi.mock("./TerminalDrawer", () => ({
   DRAWER_DEFAULT_WIDTH: 400,
   clampDrawerWidth: (value: number) => value,
   TerminalDrawer: () => null,
-}));
-vi.mock("./views/Kanban", () => ({
-  Kanban: ({ onOpen, onOpenActiveSession }: { onOpen: (value: BoardTask) => void; onOpenActiveSession: (value: BoardTask, session: TaskActivitySession) => void }) => (
-    <div>
-      <button type="button" onClick={() => onOpen(task)}>
-        open task
-      </button>
-      <button type="button" onClick={() => onOpen(activeDraft)}>
-        open active draft
-      </button>
-      <button type="button" onClick={() => onOpen(archivedDraft)}>
-        open archived draft
-      </button>
-      <button type="button" onClick={() => onOpenActiveSession(task, activeSession)}>
-        open active card session
-      </button>
-    </div>
-  ),
 }));
 
 vi.mock("./views/Grid", () => ({
@@ -1121,18 +1103,7 @@ describe("session navigation acknowledgment", () => {
     expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
-  it("acknowledges task-card and global-list sessions before navigation", async () => {
-    ipcMocks.readAppConfig.mockResolvedValue({
-      ...appConfig,
-      global: { ...appConfig.global, experiments: { show_original_kanban: true } },
-    });
-    await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
-    await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
-
-    cleanup();
+  it("acknowledges task-list and global-list sessions before navigation", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open active list session" }));
@@ -1266,35 +1237,25 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    // One Grid view by default, so the bar reads ⌘1 Canvas, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+    // One Grid view by default, so the bar reads ⌘1 Canvas, ⌘2 Tasks, ⌘3 Sessions.
     expect(screen.getByText("Go to Canvas").closest(".pitem")?.textContent).toContain("⌘1");
     expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘2");
     expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘3");
-    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘4");
+    expect(screen.queryByText("Go to Kanban")).toBeNull();
     expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
     expect(screen.queryByText("Go to Wiki")).toBeNull();
     expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
   });
 
-  it("exposes both boards by default and opens classic Kanban", async () => {
-    await renderApp();
-
-    expect(screen.getByRole("button", { name: /Canvas/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Canvas")).toBeTruthy();
-    expect(screen.getByText("Go to Kanban")).toBeTruthy();
-  });
-
-  it("omits classic Kanban from navigation and the palette when disabled", async () => {
+  it.each([undefined, false, true])("opens Tasks for legacy Kanban startup with flag %s", async (show_original_kanban) => {
     ipcMocks.readAppConfig.mockResolvedValue({
       ...appConfig,
-      global: { ...appConfig.global, experiments: { show_original_kanban: false } },
+      appearance: { ...DEFAULT_APPEARANCE, startup_view: "kanban" },
+      global: { ...appConfig.global, experiments: { show_original_kanban } },
     });
     await renderApp();
-
-    expect(screen.queryByRole("button", { name: "Kanban4" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Kanban/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Canvas")).toBeTruthy();
     expect(screen.queryByText("Go to Kanban")).toBeNull();
@@ -1304,7 +1265,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     expect(screen.queryByRole("button", { name: /^Chat\d/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await screen.findByText("Go to Kanban");
+    await screen.findByText("Go to Canvas");
     expect(screen.queryByText("Go to Chat")).toBeNull();
     cleanup();
 
@@ -1315,7 +1276,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     expect(screen.getByRole("button", { name: /^Chat\d/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Chat")).toBeTruthy();
+    expect((await screen.findByText("Go to Chat")).closest(".pitem")?.textContent).toContain("⌘4");
   });
 
   it("keeps the Chat view mounted, and paused, while another tab is open", async () => {
@@ -1652,16 +1613,16 @@ describe("repository switch keeps the current page", () => {
     expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
   });
 
-  it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
+  it("stays on canvas, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
+    expect(await screen.findByRole("button", { name: "open task" })).toBeTruthy();
     await chooseRepo("/other");
-    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open task" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
     await chooseAllRepos();
-    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open task" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));

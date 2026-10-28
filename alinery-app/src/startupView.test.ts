@@ -22,7 +22,9 @@ describe("startup view", () => {
   it("only opens experimental tabs while enabled", () => {
     expect(resolveStartupView("chat")).toEqual({ kind: "list" });
     expect(resolveStartupView("chat", { experiments: { show_chat: true } })).toEqual({ kind: "chat" });
-    expect(resolveStartupView("kanban")).toEqual({ kind: "kanban" });
+    expect(resolveStartupView("kanban")).toEqual({ kind: "list" });
+    expect(resolveStartupView("kanban", { experiments: { show_original_kanban: true } })).toEqual({ kind: "list" });
+    expect(startupViewOptions({ experiments: { show_original_kanban: true } }).map((option) => option.value)).not.toContain("kanban");
     expect(resolveStartupView("kanban", { experiments: { show_original_kanban: false } })).toEqual({ kind: "list" });
   });
 

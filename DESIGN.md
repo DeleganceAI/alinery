@@ -133,16 +133,15 @@ The intended quality bar is the restraint of Apple, the tool clarity of Codex, t
 
 ### Primary navigation
 
-- Tasks: list and kanban projections of durable work. Kanban is the day-one default. Experimental grid, canvas, and graph views may ship behind a flag or hotkey as alternate representations of the same cards. They must not change task, session, or Playbooks behavior.
+- Tasks: the default list projection of durable work. Canvas offers configurable board and grid layouts of the same tasks, preserving task, session, and Playbooks behavior.
 - Sessions: live and historical agent activity.
 - Wiki: durable project knowledge.
 - Settings: repositories, connections, harnesses, appearance, notifications, storage, sessions, MCP, backup, and related system controls.
 
 ### Core screens
 
-- Task list.
-- Kanban board (default task projection).
-- Experimental task views (grid, canvas, graph), flag-gated.
+- Task list (default startup view).
+- Canvas with configurable board and grid layouts.
 - Task detail and task session management.
 - Plan and document review with inline comments.
 - First-run onboarding.
@@ -604,7 +603,7 @@ Rules:
 
 Reference this file directly in every app design or frontend prompt. A useful starting prompt is:
 
-> Read `DESIGN.md` completely before making UI decisions. Treat it as the canonical design contract for the Alinery desktop app. Use `../alinery-website/DESIGN.md` and its implemented artwork only for shared brand palette and identity. Use shadcn/ui for general component anatomy and state coverage, AI Elements for AI-native task/tool/approval/artifact patterns, Thinking Orbs for indeterminate loading and AI activity, Lucide React for interface icons, and Base UI only when an accessible behavioral primitive is needed. Do not introduce another spinner or icon family. Apply Alinery's own tokens and visual language rather than stock shadcn styling. Preserve existing product behavior, Tauri boundaries, keyboard access, safe confirmations, session continuity, and repository context. Do not turn the product into a chat app. Keep kanban as the day-one default; experimental views stay flag-gated. Do not auto-start child work before the human accepts the plan. Before editing, name the DESIGN.md sections and existing shared components that govern the change. After editing, run the required checks and verify the result in the native app in light and dark modes.
+> Read `DESIGN.md` completely before making UI decisions. Treat it as the canonical design contract for the Alinery desktop app. Use `../alinery-website/DESIGN.md` and its implemented artwork only for shared brand palette and identity. Use shadcn/ui for general component anatomy and state coverage, AI Elements for AI-native task/tool/approval/artifact patterns, Thinking Orbs for indeterminate loading and AI activity, Lucide React for interface icons, and Base UI only when an accessible behavioral primitive is needed. Do not introduce another spinner or icon family. Apply Alinery's own tokens and visual language rather than stock shadcn styling. Preserve existing product behavior, Tauri boundaries, keyboard access, safe confirmations, session continuity, and repository context. Do not turn the product into a chat app. Keep Tasks as the day-one default and preserve the configurable Canvas views. Do not auto-start child work before the human accepts the plan. Before editing, name the DESIGN.md sections and existing shared components that govern the change. After editing, run the required checks and verify the result in the native app in light and dark modes.
 
 For a bounded component task, append:
 
@@ -620,7 +619,7 @@ Before approving app UI work, confirm:
 - [ ] The component uses shared Alinery tokens and shared component patterns.
 - [ ] The result is not stock shadcn and does not revive the TRON/cyberpunk treatment.
 - [ ] Chat was not treated as the primary loop; plan/doc comments remain the default collaboration surface.
-- [ ] Experimental views, if touched, stayed flag-gated and did not replace the kanban default.
+- [ ] Tasks remains the default startup view, and Canvas layouts preserve existing task behavior.
 - [ ] Child or nested work still requires an explicit human accept of the parent plan.
 - [ ] Interface icons use Lucide or a product-specific SVG that follows Lucide's geometry; no competing icon family was introduced.
 - [ ] State is understandable without color or motion.

@@ -21,9 +21,6 @@ export function PlaybookStarterDeck({
           <h3>Start your first task with a playbook</h3>
           <p className="grid-starter-subtitle">Choose a workflow for your task. You'll review the details before starting.</p>
         </div>
-        <button type="button" className="btn ghost small grid-starter-utility" disabled={!onCreate} onClick={() => onCreate?.()}>
-          New task
-        </button>
       </div>
       <fieldset className="grid-starter-cards">
         <legend className="sr-only">Choose a playbook</legend>

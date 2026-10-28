@@ -4,7 +4,6 @@ import type { GlobalSettings, StartupView, View } from "./types";
 const TABS = [
   { value: "list", label: "Task List" },
   { value: "sessions", label: "Sessions" },
-  { value: "kanban", label: "Kanban" },
   { value: "chat", label: "Chat" },
   { value: "notifications", label: "Notifications" },
   { value: "playbooks", label: "Playbooks" },
@@ -21,9 +20,7 @@ export function normalizeStartupView(value: string | undefined): StartupView {
 
 export function startupViewOptions(global?: Pick<GlobalSettings, "experiments" | "grid_views">): { value: StartupView; label: string; view: View }[] {
   return [
-    ...TABS.filter(
-      (tab) => (tab.value !== "kanban" || global?.experiments?.show_original_kanban !== false) && (tab.value !== "chat" || global?.experiments?.show_chat === true),
-    ).map((tab) => ({ ...tab, view: { kind: tab.value } })),
+    ...TABS.filter((tab) => tab.value !== "chat" || global?.experiments?.show_chat === true).map((tab) => ({ ...tab, view: { kind: tab.value } })),
     ...normalizeGridViews(global?.grid_views).map((grid) => ({ value: `grid:${grid.id}` as const, label: grid.name, view: { kind: "grid" as const, gridViewId: grid.id } })),
   ];
 }
