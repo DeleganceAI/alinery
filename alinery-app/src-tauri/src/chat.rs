@@ -515,6 +515,7 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
             lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
             state: live.as_ref().map(|live| live.state.clone()),
             checkpoint: meta.semantic,
+            accepted_handoff: false,
             transport: live.map(|live| live.transport),
         })
     })

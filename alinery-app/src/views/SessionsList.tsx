@@ -64,7 +64,7 @@ const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string 
 // absence of evidence is never reported as Not started.
 function sessionStatusGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
   if (item.archived) return "archived";
-  const kind = sessionDisplayKind(observation, superseded, item.exit_code, hasAcknowledgedExit(item));
+  const kind = sessionDisplayKind(observation, superseded, item.exit_code, hasAcknowledgedExit(item, observation));
   switch (kind) {
     case "waiting_for_input":
     case "waiting_for_approval":
@@ -577,7 +577,7 @@ export function SessionsList({
                       observation={obs ?? null}
                       superseded={isSuperseded(item)}
                       exitCode={item.exit_code}
-                      exitAcknowledged={hasAcknowledgedExit(item)}
+                      exitAcknowledged={hasAcknowledgedExit(item, obs)}
                       notifyTransitions={false}
                     />
                   )}

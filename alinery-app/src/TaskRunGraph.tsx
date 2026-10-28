@@ -321,7 +321,7 @@ export function TaskRunGraph({
                   const observation = observations[session.id];
                   const previousAttempt = Boolean(execution && execution.owner_session_id !== session.id);
                   const unreadCompletion = classifySessionNotice(session, observation) === "unread_completion";
-                  const exitAcknowledged = hasAcknowledgedExit(session);
+                  const exitAcknowledged = hasAcknowledgedExit(session, observation);
                   const savedStatus = previousAttempt
                     ? "Previous attempt"
                     : (execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));
@@ -343,7 +343,7 @@ export function TaskRunGraph({
                         <span className="task-run-node-status">
                           {!previousAttempt && execution?.lifecycle === "queued" ? (
                             savedStatus
-                          ) : observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                          ) : observation || unreadCompletion || hasUnacknowledgedExit(session, observation) || exitAcknowledged ? (
                             <StatusDot
                               id={session.id}
                               observation={observation ?? null}

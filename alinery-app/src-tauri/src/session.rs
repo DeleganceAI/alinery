@@ -120,16 +120,60 @@ pub(crate) struct SessionNotificationClearRef {
 }
 
 // Structured observation returned to the frontend for a single session.
-// `state` is Some only when the daemon owns the session id; `checkpoint` is always
-// read from meta so accepted completion remains visible while the daemon is offline.
+// `state` is Some only when the daemon owns the session id. Completion is projected
+// from durable evidence so accepted handoffs remain visible while the daemon is offline.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub(crate) struct SessionObservation {
     pub(crate) lifecycle: LifecycleState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) state: Option<alinery_core::SessionState>,
     pub(crate) checkpoint: alinery_core::SemanticCheckpoint,
+    pub(crate) accepted_handoff: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) transport: Option<alinery_core::SessionTransport>,
+}
+
+pub(crate) fn session_has_accepted_handoff(task_slug: &str, id: &str, session: &SessionMeta, execution: Option<&alinery_core::execution::TaskExecutionState>) -> bool {
+    session.id == id
+        && session.ended_at.is_some()
+        && execution.and_then(|state| state.executions.get(&session.execution_id)).is_some_and(|record| {
+            record.owner_session_id == session.id
+                && record.exit_code == session.exit_code
+                && record.lifecycle == alinery_core::execution::ExecutionLifecycle::Completed
+                && record.human_end.as_ref().is_some_and(|request| request.task_slug == task_slug)
+                && record.receipt_id.is_some()
+                && record.shutdown_confirmed
+        })
+}
+
+pub(crate) fn accepted_handoff_is_terminal(accepted_handoff: bool, exit_code: Option<i32>, state: Option<&alinery_core::SessionState>) -> bool {
+    accepted_handoff && state.is_none_or(|state| matches!(state.process, alinery_core::ProcessState::Exited { code } if code == exit_code))
+}
+
+pub(crate) fn session_completion_checkpoint(session: &SessionMeta, accepted_handoff: bool) -> alinery_core::SemanticCheckpoint {
+    let mut checkpoint = session.semantic.clone();
+    if accepted_handoff && checkpoint.phase_completed_at.is_none() {
+        // Human handoff records acceptance in the engine, without a native completion event.
+        checkpoint.phase_completed_at = session.ended_at;
+    }
+    checkpoint
+}
+
+fn project_session_observation(
+    meta: Option<&SessionMeta>,
+    state: Option<alinery_core::SessionState>,
+    transport: Option<alinery_core::SessionTransport>,
+    accepted_handoff: bool,
+) -> SessionObservation {
+    let (started, ended, exit) = meta.map(|meta| (meta.started_at, meta.ended_at, meta.exit_code)).unwrap_or_default();
+    let accepted_handoff = accepted_handoff_is_terminal(accepted_handoff, exit, state.as_ref());
+    SessionObservation {
+        lifecycle: lifecycle_from_structured(started, ended, exit, state.as_ref()),
+        state,
+        checkpoint: meta.map(|meta| session_completion_checkpoint(meta, accepted_handoff)).unwrap_or_default(),
+        accepted_handoff,
+        transport,
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -325,7 +369,11 @@ fn session_notification_path(repo: &Path, task_slug: &str, id: &str) -> Result<P
 pub(crate) fn mark_session_notification_read_in(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
     let path = session_notification_path(repo, task_slug, id)?;
     let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let completion = completion_notification_checkpoint(&persisted);
+    let completion = completion_notification_checkpoint(&persisted).or_else(|| {
+        let meta = serde_json::from_value::<SessionMeta>(persisted.clone()).ok()?;
+        let execution = alinery_core::execution::read_execution_state(repo, task_slug).ok();
+        session_completion_checkpoint(&meta, session_has_accepted_handoff(task_slug, id, &meta, execution.as_ref())).phase_completed_at
+    });
     let exit = exit_notification_checkpoint(&persisted);
     if !notification_checkpoint_advances(&persisted, "notification_read_at", completion) && !notification_checkpoint_advances(&persisted, "exit_notification_read_at", exit) {
         return Ok(());
@@ -802,30 +850,29 @@ pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, 
 }
 
 // Structured observation for a single session: lifecycle from process state or meta fallback,
-// structured state axes when the daemon owns the id, checkpoint always from meta.
+// structured state axes when the daemon owns the id, completion from durable evidence.
 #[tauri::command]
 pub(crate) async fn session_status(app: AppHandle, id: String, task_slug: Option<String>) -> SessionObservation {
     let app_state = app.state::<AppState>();
     let slug = task_slug.as_deref().unwrap_or("");
-    let meta = active_repo()
-        .ok()
-        .map(|repo| session_meta_path(&repo, slug, &id))
+    let repo = active_repo().ok();
+    let meta = repo
+        .as_ref()
+        .map(|repo| session_meta_path(repo, slug, &id))
         .and_then(|p| fs::read_to_string(&p).ok())
         .and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok());
 
-    let (started, ended, exit) = meta.as_ref().map(|m| (m.started_at, m.ended_at, m.exit_code)).unwrap_or((None, None, None));
-    let checkpoint = meta.as_ref().map(|m| m.semantic.clone()).unwrap_or_default();
-    let live = active_repo()
-        .ok()
-        .and_then(|repo| with_session_client(&app_state, &repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
-
-    let lifecycle = lifecycle_from_structured(started, ended, exit, live.as_ref().map(|live| &live.state));
-    SessionObservation {
-        lifecycle,
-        state: live.as_ref().map(|live| live.state.clone()),
-        checkpoint,
-        transport: live.map(|live| live.transport),
-    }
+    let execution = repo.as_ref().and_then(|repo| alinery_core::execution::read_execution_state(repo, slug).ok());
+    let accepted_handoff = meta.as_ref().is_some_and(|meta| session_has_accepted_handoff(slug, &id, meta, execution.as_ref()));
+    let live = repo
+        .as_ref()
+        .and_then(|repo| with_session_client(&app_state, repo, slug, &id, |d| d.session_status_observed(&id)).ok().flatten());
+    project_session_observation(
+        meta.as_ref(),
+        live.as_ref().map(|live| live.state.clone()),
+        live.map(|live| live.transport),
+        accepted_handoff,
+    )
 }
 
 // Thin helper: extract process axis from optional structured state and call classify.
@@ -844,22 +891,19 @@ pub(crate) struct SessionStatusLaneRow {
     pub(crate) key: String,
     pub(crate) id: String,
     pub(crate) meta: SessionMeta,
+    pub(crate) accepted_handoff: bool,
 }
 
 pub(crate) fn unknown_session_observation(key: String) -> SessionObservation {
     let _ = key; // key is used by the caller, not stored in the observation itself
-    SessionObservation {
-        lifecycle: LifecycleState::NeverStarted,
-        state: None,
-        checkpoint: alinery_core::SemanticCheckpoint::default(),
-        transport: None,
-    }
+    project_session_observation(None, None, None, false)
 }
 
 pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef], resolve_repo: impl Fn(&str) -> Result<PathBuf, String>) -> HashMap<String, SessionObservation> {
     let mut result: HashMap<String, SessionObservation> = HashMap::new();
     let mut grouped = BTreeMap::<PathBuf, Vec<SessionStatusLaneRow>>::new();
     let mut resolved_repos = HashMap::<String, Option<PathBuf>>::new();
+    let mut executions = HashMap::new();
     let own_namespace = alineryd_socket_namespace().unwrap_or_default();
 
     for reference in refs {
@@ -884,21 +928,17 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
         };
         // Replace the NeverStarted placeholder with the meta-derived observation.
         // When a daemon lane fails or is offline, callers see the correct historical lifecycle.
-        let meta_lifecycle = lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, None);
-        result.insert(
-            key.clone(),
-            SessionObservation {
-                lifecycle: meta_lifecycle,
-                state: None,
-                checkpoint: meta.semantic.clone(),
-                transport: None,
-            },
-        );
+        let execution = executions
+            .entry((repo.clone(), reference.task_slug.clone()))
+            .or_insert_with(|| alinery_core::execution::read_execution_state(&repo, &reference.task_slug).ok());
+        let accepted_handoff = session_has_accepted_handoff(&reference.task_slug, &reference.id, &meta, execution.as_ref());
+        result.insert(key.clone(), project_session_observation(Some(&meta), None, None, accepted_handoff));
         let socket_path = route_socket_path(&repo, &own_namespace, &meta.daemon_namespace).unwrap_or_else(|| current_alineryd_socket_path(&repo));
         grouped.entry(socket_path).or_default().push(SessionStatusLaneRow {
             key,
             id: reference.id.clone(),
             meta,
+            accepted_handoff,
         });
     }
 
@@ -930,14 +970,7 @@ pub(crate) fn session_list_statuses_with_repo_resolver(refs: &[SessionStatusRef]
                 for row in rows {
                     let live = daemon_live.get(&row.id).cloned();
                     let daemon_state = live.as_ref().map(|(state, _)| state.clone());
-                    let lifecycle = lifecycle_from_structured(row.meta.started_at, row.meta.ended_at, row.meta.exit_code, daemon_state.as_ref());
-                    let checkpoint = row.meta.semantic.clone();
-                    let observation = SessionObservation {
-                        lifecycle,
-                        state: daemon_state,
-                        checkpoint,
-                        transport: live.map(|(_, transport)| transport),
-                    };
+                    let observation = project_session_observation(Some(&row.meta), daemon_state, live.map(|(_, transport)| transport), row.accepted_handoff);
                     let _ = result_tx.send((row.key, observation));
                 }
             });
@@ -968,6 +1001,7 @@ pub(crate) async fn session_list_statuses(app: AppHandle, refs: Vec<SessionStatu
 pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug: String) -> HashMap<String, SessionObservation> {
     let app_state = app.state::<AppState>();
     let repo = active_repo().ok();
+    let execution = repo.as_ref().and_then(|repo| alinery_core::execution::read_execution_state(repo, &task_slug).ok());
     let mut metadata: HashMap<String, Option<SessionMeta>> = HashMap::new();
     let mut clients = BTreeMap::<PathBuf, DaemonClient>::new();
 
@@ -998,19 +1032,12 @@ pub(crate) async fn session_statuses(app: AppHandle, ids: Vec<String>, task_slug
     ids.into_iter()
         .map(|id| {
             let meta = metadata.remove(&id).flatten();
-            let (started, ended, exit) = meta.as_ref().map(|m| (m.started_at, m.ended_at, m.exit_code)).unwrap_or((None, None, None));
-            let checkpoint = meta.as_ref().map(|m| m.semantic.clone()).unwrap_or_default();
+            let accepted_handoff = meta.as_ref().is_some_and(|meta| session_has_accepted_handoff(&task_slug, &id, meta, execution.as_ref()));
             let live = daemon_live.get(&id).cloned();
             let daemon_state = live.as_ref().map(|(state, _)| state.clone());
-            let lifecycle = lifecycle_from_structured(started, ended, exit, daemon_state.as_ref());
             (
                 id,
-                SessionObservation {
-                    lifecycle,
-                    state: daemon_state,
-                    checkpoint,
-                    transport: live.map(|(_, transport)| transport),
-                },
+                project_session_observation(meta.as_ref(), daemon_state, live.map(|(_, transport)| transport), accepted_handoff),
             )
         })
         .collect()

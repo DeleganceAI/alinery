@@ -276,6 +276,152 @@ fn durable_session_discovery_preserves_offline_history_without_live_state() {
 }
 
 #[test]
+fn accepted_handoff_observation_survives_offline_read_and_acknowledgment() {
+    let repo = activity_repo("accepted-handoff-offline");
+    let meta = write_accepted_handoff(&repo, "task");
+    let path = session_meta_path(&repo, "task", &meta.id);
+    let state_path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+    let before = fs::read(&path).unwrap();
+    let state_before = fs::read(&state_path).unwrap();
+    let reference = status_ref(&repo, "task", &meta.id);
+    let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+    let observations = crate::session_list_statuses_for_refs(std::slice::from_ref(&reference));
+    let observation = &observations[&key];
+    assert_eq!(serde_json::to_value(observation).unwrap()["accepted_handoff"], true);
+    assert!(observation.state.is_none());
+    assert_eq!(observation.checkpoint.phase_completed_at, Some(100));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(fs::read(&state_path).unwrap(), state_before);
+
+    crate::mark_session_notification_read_in(&repo, "task", &meta.id).unwrap();
+    let acknowledged: SessionMeta = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(acknowledged.notification_read_at, Some(100));
+    assert_eq!(acknowledged.exit_notification_read_at, Some(100));
+    assert_eq!(acknowledged.exit_code, Some(143));
+    assert_eq!(
+        acknowledged.semantic.phase_completed_at, None,
+        "derived completion must not be persisted as native completion"
+    );
+    let refreshed = crate::session_list_statuses_for_refs(&[reference]);
+    assert_eq!(serde_json::to_value(&refreshed[&key]).unwrap()["accepted_handoff"], true);
+    assert_eq!(refreshed[&key].checkpoint.phase_completed_at, Some(100));
+    assert_eq!(fs::read(state_path).unwrap(), state_before);
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
+fn accepted_handoff_requires_current_owner_and_valid_terminal_evidence() {
+    for case in [
+        "crash after publication",
+        "stopped without acceptance",
+        "missing receipt",
+        "shutdown not confirmed",
+        "previous owner",
+        "other task",
+        "other execution",
+        "different exit",
+        "missing end timestamp",
+        "malformed state",
+        "missing state",
+    ] {
+        let repo = activity_repo("accepted-handoff-evidence");
+        let mut meta = write_accepted_handoff(&repo, "task");
+        let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let record = &mut value["executions"][&meta.execution_id];
+        match case {
+            "crash after publication" => {
+                record["lifecycle"] = serde_json::json!("failed");
+                record["human_end"] = serde_json::Value::Null;
+                meta.semantic.phase_completed_at = Some(80);
+            }
+            "stopped without acceptance" => {
+                record["lifecycle"] = serde_json::json!("failed");
+                record["receipt_id"] = serde_json::Value::Null;
+            }
+            "missing receipt" => record["receipt_id"] = serde_json::Value::Null,
+            "shutdown not confirmed" => {
+                record["lifecycle"] = serde_json::json!("finishing");
+                record["shutdown_confirmed"] = serde_json::json!(false);
+                record["exit_code"] = serde_json::Value::Null;
+            }
+            "previous owner" => {
+                record["owner_session_id"] = serde_json::json!("replacement");
+                record["human_end"]["session_id"] = serde_json::json!("replacement");
+            }
+            "other task" => record["human_end"]["task_slug"] = serde_json::json!("different-task"),
+            "other execution" => meta.execution_id = "different-execution".into(),
+            "different exit" => meta.exit_code = Some(23),
+            "missing end timestamp" => meta.ended_at = None,
+            "malformed state" | "missing state" => {}
+            _ => unreachable!(),
+        }
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        if case == "malformed state" {
+            fs::write(&path, "not json").unwrap();
+        } else if case == "missing state" {
+            fs::remove_file(&path).unwrap();
+        }
+        fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+        let reference = status_ref(&repo, "task", &meta.id);
+        let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+        let observations = crate::session_list_statuses_for_refs(&[reference]);
+        assert!(!observations[&key].accepted_handoff, "{case}");
+        assert_eq!(observations[&key].checkpoint.phase_completed_at, meta.semantic.phase_completed_at, "{case}");
+        let activity = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
+        assert_eq!(activity[&format!("{}:task", repo.display())].status, Some(crate::TaskActivityStatus::Failed), "{case}");
+        fs::remove_dir_all(repo).unwrap();
+    }
+}
+
+#[test]
+fn accepted_handoff_projection_preserves_live_evidence_and_native_checkpoint() {
+    for (process, code) in [("alive", 143), ("exited", 143), ("exited", 1)] {
+        let repo = activity_repo("accepted-handoff-live");
+        let mut meta = write_accepted_handoff(&repo, "task");
+        if process == "exited" && code == 143 {
+            meta.semantic.phase_completed_at = Some(90);
+            fs::write(session_meta_path(&repo, "task", &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+        }
+        let live = serde_json::json!({"sessions": [{
+            "id": meta.id,
+            "process": {"state": process, "code": code},
+            "agent": {"state": "busy"},
+            "playbook": {"state": "in_progress"},
+            "adapter": "omp", "message_adapter": "omp_bracketed_paste", "transport": "pty"
+        }]});
+        let reply = format!("{live}\n");
+        let socket = status_list_socket(alinery_core::alineryd_socket_path(&repo, None), Some(&reply));
+        let reference = status_ref(&repo, "task", &meta.id);
+        let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+        let observations = crate::session_list_statuses_for_refs(&[reference]);
+        assert!(observations[&key].state.is_some(), "fixture must reach the stored owning lane");
+        assert_eq!(observations[&key].accepted_handoff, process == "exited" && code == 143);
+        assert_eq!(observations[&key].checkpoint.phase_completed_at, meta.semantic.phase_completed_at);
+        assert_eq!(socket.calls(), 1);
+        fs::remove_dir_all(repo).unwrap();
+    }
+}
+
+#[test]
+fn accepted_handoff_does_not_certify_a_different_requested_session() {
+    let repo = activity_repo("accepted-handoff-mismatched-id");
+    let meta = write_accepted_handoff(&repo, "task");
+    let copied = session_meta_path(&repo, "task", "copied-session");
+    fs::copy(session_meta_path(&repo, "task", &meta.id), &copied).unwrap();
+    let reference = status_ref(&repo, "task", "copied-session");
+    let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
+    let observations = crate::session_list_statuses_for_refs(&[reference]);
+    assert!(!observations[&key].accepted_handoff);
+    assert_eq!(observations[&key].checkpoint.phase_completed_at, None);
+    crate::mark_session_notification_read_in(&repo, "task", "copied-session").unwrap();
+    let acknowledged: SessionMeta = serde_json::from_slice(&fs::read(copied).unwrap()).unwrap();
+    assert_eq!(acknowledged.notification_read_at, None);
+    assert_eq!(acknowledged.exit_notification_read_at, Some(100));
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
 fn session_stream_coalesces_consecutive_reads() {
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
@@ -1149,6 +1295,7 @@ fn observation_omits_transport_when_daemon_does_not_own_id() {
         lifecycle: alinery_core::LifecycleState::NeverStarted,
         state: None,
         checkpoint: alinery_core::SemanticCheckpoint::default(),
+        accepted_handoff: false,
         transport: None,
     };
     let value = serde_json::to_value(&observation).unwrap();
@@ -1162,6 +1309,7 @@ fn observation_includes_rpc_when_live() {
         lifecycle: alinery_core::LifecycleState::Live,
         state: None,
         checkpoint: alinery_core::SemanticCheckpoint::default(),
+        accepted_handoff: false,
         transport: Some(alinery_core::SessionTransport::Rpc),
     };
     let value = serde_json::to_value(&observation).unwrap();

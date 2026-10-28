@@ -11,6 +11,7 @@ import {
   ompDefaultModel,
   repoName,
   SessionTimestamp,
+  StatusDot,
   sameBoardTasks,
   sameKanbanColumns,
   sameLifecycleMaps,
@@ -20,12 +21,32 @@ import {
   taskKey,
   useMinuteNow,
 } from "./shared";
-import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, SessionObservation, Task, TaskActivityMap, TaskActivitySummary } from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
 vi.mock("./ipc");
 vi.mock("./WindowChrome", () => ({ WindowControls: () => null, useWindowFullscreen: () => false, ResizeHandles: () => null }));
+
+it.each([true, false])("renders a nonzero exit badge using accepted handoff evidence: %s", (accepted) => {
+  const observation: SessionObservation = {
+    accepted_handoff: accepted,
+    lifecycle: { state: "exited", code: 143 },
+    state: null,
+    checkpoint: { phase_completed_at: 100 },
+  };
+  const view = render(createElement(StatusDot, { id: "completed", observation, exitCode: 143 }));
+  try {
+    if (accepted) {
+      expect(view.getByText("Completed")).toBeDefined();
+      expect(view.queryByRole("img", { name: /Failed/ })).toBeNull();
+    } else {
+      expect(view.getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();
+    }
+  } finally {
+    view.unmount();
+  }
+});
 
 it("resolves nested owned artifact paths without confusing same-name references or attachments", () => {
   const leaf: ArtifactTreeNode = { id: "opaque-owned", kind: "owned", label: "2-findings-10.md", owner_task_slug: "task", source: "owned", children: [] };
