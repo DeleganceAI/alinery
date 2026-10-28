@@ -115,7 +115,7 @@ export const CURATED_PLAYBOOK_ARCHETYPES: CuratedPlaybookArchetype[] = [
   },
   {
     reference: { scope: "bundled", key: "academic-survey" },
-    badge: "Parallel swarm (each → complete)",
+    badge: "Parallel swarm",
     tagline: "Frame Review → Plan Wave → Gather Sources (×N) → Assess Each Source (×N) → Consolidate",
     patternSummary:
       "Demonstrates dynamic swarm generation: Plan Wave emits search-request-*.md files, spawning one parallel agent session per request (mode = 'each') and waiting for all of them to finish (mode = 'complete') before consolidating.",
