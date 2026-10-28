@@ -123,6 +123,9 @@ type ArtifactReviewPendingStatus = {
 const WRAP_UP_MESSAGE =
   "Wrap up the current step, including my latest message requests. Preserve completed work; do not repeat completed actions unnecessarily. Verify the assigned artifacts. If the work is ready and no substantive approval or question remains, call `alinery_phase_complete` to report readiness again. Otherwise explain the blocker.";
 
+// Retry after OMP gave up on a turn: the model keeps its context, so a short continue is enough.
+const RETRY_MESSAGE = "The previous response was cut off by a connection error. Continue from where you left off.";
+
 export type SessionSendRecovery = {
   commandId: string;
   draft: string;
@@ -2037,6 +2040,7 @@ export function SessionView({
   const modeBlocker = controlBlocker || (modeChanging ? "Updating continuation mode." : "");
   const pendingSendItems = [...pendingSends.values()];
   const visibleSendRecovery = pendingSendItems.filter((item) => item.status === "refused" || item.status === "unknown");
+  const turnError = observation && observationDisplayKind(observation) === "errored" && observation.state?.agent.state === "errored" ? observation.state.agent.message : null;
   const pendingNudge = pendingSendItems.find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
   const nudgeBlocker =
     controlBlocker ||
@@ -2705,6 +2709,21 @@ export function SessionView({
         )}
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
+      {turnError && (
+        <InlineStatus
+          tone="error"
+          action={
+            // Sending is RPC-only; in Terminal mode the PTY composer is the retry path.
+            liveRpc && terminalConnection === "open" && !turnActive ? (
+              <button type="button" className="btn small" disabled={messageSending} onClick={() => void sendCurrentMessage(RETRY_MESSAGE, "nudge")}>
+                Retry
+              </button>
+            ) : undefined
+          }
+        >
+          {turnError}
+        </InlineStatus>
+      )}
       {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
       {sessionActionsOpen && (
         <Dialog ariaLabel="Session actions" className="session-actions-dialog" onClose={() => setSessionActionsOpen(false)}>

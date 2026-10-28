@@ -503,6 +503,7 @@ Use these canonical labels unless product behavior requires a more specific term
 - Idle.
 - Completed.
 - Failed.
+- Error.
 - Interrupted.
 - Stopped.
 - Unavailable.
@@ -519,7 +520,7 @@ Weight is the design: it tracks what the state asks of the user, from an animati
 | Activity — warming up | Starting, Loading | Activity orb at `ORB_SPEED`, with label | Inherits text |
 | Blocked on a person | Waiting for input | Chip: glyph, label, tint, border | Accent border and glyph, `text-strong` label |
 | Blocked on a person | Waiting for approval | Chip: glyph, label, tint, border | Warning |
-| Outcome | Failed | Glyph with label, no chip | Danger |
+| Outcome | Failed, Error | Glyph with label, no chip | Danger |
 | Missing information | Unknown | Glyph with label, no chip, regular weight | Text faint |
 | Ended | Completed, Ready to advance, Idle | 8px dot with label | Success |
 | Ended | Stale, Exited | 8px dot with label | Text faint |

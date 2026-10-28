@@ -2564,6 +2564,26 @@ describe("review continuation", () => {
     await waitFor(() => expect(setStepContinuationForRepo).toHaveBeenCalledTimes(2));
   });
 
+  // Issue #128: OMP gave up on a turn (provider socket closed); the session read as Idle with no
+  // error and no way to resume short of typing a message.
+  it("shows why OMP gave up on a turn and retries it without consuming the draft", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    renderSession({ messageDraft: { body: "My unfinished request", pendingActions: [], attachments: [] } });
+    expect(await screen.findByText("The socket connection was closed unexpectedly")).toBeDefined();
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+    expect(nudgeSends()[0]).toMatchObject({ type: "prompt", message: "The previous response was cut off by a connection error. Continue from where you left off." });
+    expect(screen.getByRole("textbox")).toHaveProperty("value", "My unfinished request");
+  });
+
+  it("shows the error without Retry on the PTY transport, where the terminal is the retry path", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("pty", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    renderSession();
+    expect(await screen.findByText("The socket connection was closed unexpectedly")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(nudgeSends()).toHaveLength(0);
+  });
+
   it("nudges visibly without consuming the existing draft or attachment", async () => {
     const onDraftChange = vi.fn();
     const draft: SessionMessageDraft = {

@@ -536,6 +536,7 @@ fn validate_event(event: &RunnerEvent) -> Result<(), ()> {
         RunnerEvent::Busy { .. }
         | RunnerEvent::Idle { .. }
         | RunnerEvent::AdapterError { .. }
+        | RunnerEvent::TurnError { .. }
         | RunnerEvent::SessionNameSuggested { .. }
         | RunnerEvent::ContinuationPoll { .. }
         | RunnerEvent::NativeWorkEntered { .. }
@@ -1092,5 +1093,6 @@ mod tests {
         })
         .is_ok());
         assert!(validate_event(&RunnerEvent::AdapterError { detail: "oops".into() }).is_ok());
+        assert!(validate_event(&RunnerEvent::TurnError { detail: "socket closed".into() }).is_ok());
     }
 }

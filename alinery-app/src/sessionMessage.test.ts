@@ -132,6 +132,10 @@ describe("sessionMessageDisabledReason", () => {
   ])("explains a blocked readiness state", (overrides, text) => {
     expect(sessionMessageDisabledReason(ready(overrides))).toContain(text);
   });
+
+  it("accepts a message after OMP gave up on a turn, so Retry can continue it", () => {
+    expect(sessionMessageDisabledReason(ready({ agent: { state: "errored", message: "socket closed" } }))).toBeNull();
+  });
 });
 
 describe("chatMessageDisabledReason", () => {

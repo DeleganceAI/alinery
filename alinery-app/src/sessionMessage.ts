@@ -99,7 +99,7 @@ export function sessionMessageDisabledReason(readiness: SessionMessageReadiness,
   if (readiness.connection === "recovering") return "The terminal is recovering its session connection.";
   if (readiness.connection === "failed") return "The terminal connection failed. Use the terminal after reconnecting.";
   if (readiness.connection === "opening") return "The terminal is opening.";
-  if (!readiness.agent || readiness.agent.state !== "idle") {
+  if (!readiness.agent || (readiness.agent.state !== "idle" && readiness.agent.state !== "errored")) {
     return readiness.agent?.state === "unknown" ? "Session readiness is unknown." : "The session is running. Wait until it is Idle.";
   }
   if (!readiness.process || readiness.process.state === "starting") return "The session process is starting.";

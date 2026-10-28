@@ -8230,7 +8230,8 @@ dialog.modal::backdrop {
 }
 
 /* Tier 2 — an outcome to notice, not an action to take. */
-.statusdot-failed {
+.statusdot-failed,
+.statusdot-errored {
   color: var(--danger);
 }
 .statusdot-completed {

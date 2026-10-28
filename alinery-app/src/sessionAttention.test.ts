@@ -12,12 +12,13 @@ import {
   PRIORITY_SESSION_SORT,
   selectSessionSort,
   sessionAttentionTier,
+  sessionDisplayKind,
   sessionNoticeRows,
   sessionSortArrow,
   sessionStartedAt,
   sessionUpdatedAt,
 } from "./sessionAttention";
-import type { SessionListItem, SessionMeta, SessionObservation, TaskPanelRow, TaskSummary } from "./types";
+import type { SessionListItem, SessionMeta, SessionObservation, SessionState, TaskPanelRow, TaskSummary } from "./types";
 
 const session = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   id: "s-a",
@@ -114,6 +115,24 @@ describe("session attention classification", () => {
     expect(sessionAttentionTier(session({ exit_code: 2 }), undefined)).toBe(2);
     expect(sessionAttentionTier(session(), undefined)).toBe(3);
     expect(sessionAttentionTier(session({ archived: true }), live("waiting_for_input"))).toBe(4);
+  });
+
+  // Issue #128: OMP ends a turn whose provider stream died with `stopReason: "error"`; reading it
+  // as a clean Idle hid the failure and nothing asked for a human while the playbook stalled.
+  it("flags a turn OMP gave up on as errored and treats it as a failure needing attention", () => {
+    const erroredState: SessionState = {
+      process: { state: "alive" },
+      agent: { state: "errored", message: "The socket connection was closed unexpectedly" },
+      playbook: { state: "in_progress" },
+      adapter: "omp",
+      message_adapter: "unsupported",
+    };
+    const errored = observation({ state: erroredState });
+    expect(observationDisplayKind(errored)).toBe("errored");
+    expect(classifySessionNotice(session(), errored)).toBe("failure");
+    expect(sessionAttentionTier(session(), errored)).toBe(2);
+    expect(sessionDisplayKind(errored, true)).toBe("stale");
+    expect(observationDisplayKind(observation({ state: { ...erroredState, playbook: { state: "completed" } } }))).toBe("completed");
   });
 
   it("requires a strict unread completion boundary and never treats artifacts as completion", () => {
