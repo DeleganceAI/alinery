@@ -96,7 +96,7 @@ impl Fixture {
             let omp = required("OMP_BIN");
             let version = Command::new(&omp).arg("--version").output().expect("stock OMP must run");
             assert!(version.status.success(), "stock OMP --version failed");
-            assert!(String::from_utf8_lossy(&version.stdout).contains("18.1.13"), "stock OMP pin changed");
+            assert!(String::from_utf8_lossy(&version.stdout).contains("18.13.3"), "stock OMP pin changed");
             for binary in [&runner, &omp] {
                 let hash = Command::new("shasum")
                     .args(["-a", "256"])
@@ -708,7 +708,7 @@ fn stock_definition() -> String {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_manual_revision() {
     let fixture = Fixture::stock("manual_revision");
     let created = fixture.create_with(&stock_definition(), 1, &[], true);
@@ -807,7 +807,7 @@ fn stock_continuation_manual_revision() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_native_tools_and_nested_completion() {
     let fixture = Fixture::stock("native_tools_and_nested_completion");
     let created = fixture.create_with(&stock_definition(), 1, &[], true);
@@ -1002,7 +1002,7 @@ fn stock_continuation_native_tools_and_nested_completion() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_automatic_and_terminal() {
     for (terminal, auto_approve_all) in [(false, false), (true, false), (true, true)] {
         let fixture = Fixture::stock("automatic_and_terminal");
@@ -1114,7 +1114,7 @@ fn held_dispatch_flush_does_not_hold_registry_and_makes_old_continue_stale() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_missing_or_partial_capability() {
     let fixture = Fixture::stock("missing_or_partial_capability");
     let created = fixture.create_with(&stock_definition(), 1, &[], true);
@@ -1218,7 +1218,7 @@ fn stock_continuation_missing_or_partial_capability() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_queue_and_send_now() {
     let fixture = Fixture::stock("queue_and_send_now");
     let created = fixture.create_with(&stock_definition(), 1, &[], true);
@@ -1249,7 +1249,7 @@ fn stock_continuation_queue_and_send_now() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_cancellation_unwind() {
     let fixture = Fixture::stock("cancellation_unwind");
     let created = fixture.create_with(&stock_definition(), 1, &[], true);
@@ -1299,7 +1299,7 @@ fn stock_continuation_cancellation_unwind() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_nonchat_and_pty() {
     let fixture = Fixture::stock("nonchat_and_pty");
     let created = fixture.create_with(&stock_definition(), 1, &[], false);
@@ -1365,36 +1365,40 @@ fn stock_continuation_nonchat_and_pty() {
     let mut ui = UiControlConnection::connect(&fixture.client).unwrap();
     assert!(matches!(ui.continue_execution(&old_request).unwrap(), CompletionOutcome::Stale { .. }));
     let mut request_index = 7;
-    let mut title_seen = false;
-    let primary_request = |index: &mut usize, title_seen: &mut bool| {
+    let mut title_requests = 0;
+    let primary_request = |index: &mut usize, title_requests: &mut usize| {
         loop {
             let request = fixture.stock_request(*index);
             if request["body"]["tools"].as_array().is_some() {
                 return request;
             }
             // Native TUI title generation is real normal behavior, not part of
-            // the primary tool turn. Answer its observed protocol without
-            // disabling the feature or treating arbitrary requests as titles.
-            assert!(!*title_seen, "unexpected additional tool-less provider request: {request}");
+            // the primary tool turn: stock OMP names the session from the PTY
+            // input, then heads that title with an emoji card. Answer each
+            // observed protocol without disabling the feature or treating
+            // arbitrary requests as titles.
+            let (system, user, reply) = match *title_requests {
+                0 => ("<title>", "Revise the output using this PTY review.", "<title>Review assigned PTY output</title>"),
+                1 => ("small card", "Review assigned PTY output", "<title>📝 REVIEW</title>"),
+                _ => panic!("unexpected additional tool-less provider request: {request}"),
+            };
             let messages = request["body"]["messages"].as_array().expect("native title messages");
             assert!(
                 messages
                     .iter()
-                    .any(|message| message["role"] == "system" && message["content"].to_string().contains("<title>")),
+                    .any(|message| message["role"] == "system" && message["content"].to_string().contains(system)),
                 "unexpected tool-less native request: {request}"
             );
             assert!(
-                messages
-                    .iter()
-                    .any(|message| message["role"] == "user" && message["content"].to_string().contains("Revise the output using this PTY review.")),
-                "title request must name this actual PTY input"
+                messages.iter().any(|message| message["role"] == "user" && message["content"].to_string().contains(user)),
+                "title request must name this actual PTY input: {request}"
             );
-            fixture.stock_respond(*index, json!({"content":"<title>Review assigned PTY output</title>"}));
-            *title_seen = true;
+            fixture.stock_respond(*index, json!({"content":reply}));
+            *title_requests += 1;
             *index += 1;
         }
     };
-    let primary = primary_request(&mut request_index, &mut title_seen);
+    let primary = primary_request(&mut request_index, &mut title_requests);
     assert!(primary["body"]["messages"].to_string().contains("Revise the output using this PTY review."));
     fixture.stock_tool(
         request_index,
@@ -1405,10 +1409,10 @@ fn stock_continuation_nonchat_and_pty() {
         }),
     );
     request_index += 1;
-    primary_request(&mut request_index, &mut title_seen);
+    primary_request(&mut request_index, &mut title_requests);
     fixture.stock_completion(request_index, false);
     request_index += 1;
-    primary_request(&mut request_index, &mut title_seen);
+    primary_request(&mut request_index, &mut title_requests);
     assert!(fixture.persisted().executions[&first.id].receipt_id.is_none());
     fixture.stock_respond(request_index, json!({"content":"The PTY revision is ready for review."}));
     let snapshot = fixture.state();
@@ -1439,7 +1443,7 @@ fn stock_continuation_nonchat_and_pty() {
 }
 
 #[test]
-#[ignore = "requires OMP_BIN stock v18.1.13 and ALINERY_TEST_RUNNER compiled production runner"]
+#[ignore = "requires OMP_BIN stock v18.13.3 and ALINERY_TEST_RUNNER compiled production runner"]
 fn stock_continuation_graph_release_and_failure() {
     let fixture = Fixture::stock("graph_release_and_failure");
     let source = definition()

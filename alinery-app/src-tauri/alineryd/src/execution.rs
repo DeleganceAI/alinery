@@ -1192,9 +1192,12 @@ pub(super) fn query(repo: &Path, slug: &str, lane: &str, reg: &Registry) -> Resu
     Ok(reply)
 }
 
-/// Pinned stock `/skill:name` enters its selected public scope synchronously
-/// before this response; `compact` and `set_model` await their public methods,
-/// and `set_thinking_level` invokes its public method synchronously before ACK.
+/// Pinned stock `/skill:name` enters its selected public scope before this
+/// response: OMP v18.1.13 answered `agentInvoked: true` synchronously after
+/// entering it, v18.5.0+ answers a bare success once the submission is admitted,
+/// and only a local-only result (`agentInvoked: false`) never invoked the agent.
+/// `compact` and `set_model` await their public methods, and `set_thinking_level`
+/// invokes its public method synchronously before ACK.
 /// Discharge successful exact intake only, never native descendants or UI queue items.
 pub(super) fn rpc_intake_response(reg: &Registry, session_id: &str, expected_inner: &Arc<Mutex<Inner>>, line: &[u8]) {
     let Ok(response) = serde_json::from_slice::<Value>(line) else { return };
@@ -1202,7 +1205,7 @@ pub(super) fn rpc_intake_response(reg: &Registry, session_id: &str, expected_inn
         return;
     }
     let Some(command) = response["command"].as_str() else { return };
-    if !(matches!(command, "compact" | "set_model" | "set_thinking_level" | "set_auto_compaction") || command == "prompt" && response["data"]["agentInvoked"] == true) {
+    if !(matches!(command, "compact" | "set_model" | "set_thinking_level" | "set_auto_compaction") || command == "prompt" && response["data"]["agentInvoked"] != false) {
         return;
     }
     let Some(id) = response["id"].as_str() else { return };
@@ -1729,6 +1732,69 @@ mod bookkeeping_tests {
             pending_exits().lock().unwrap().retain(|path, _| !path.starts_with(&self.repo));
             let _ = fs::remove_dir_all(&self.repo);
         }
+    }
+
+    #[test]
+    fn prompt_intake_discharges_on_an_admitted_ack_but_never_a_local_only_one() {
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let inner = Arc::new(Mutex::new(Inner {
+            parser: None,
+            clients: Vec::new(),
+            rpc_pending: VecDeque::new(),
+            rpc_pending_bytes: 0,
+            rpc_ready: None,
+            state: SessionState {
+                process: ProcessState::Alive,
+                adapter: HarnessAdapter::Omp,
+                ..SessionState::default()
+            },
+            activity_at: None,
+            reaped_and_drained: false,
+        }));
+        let gate = Arc::new(Mutex::new(ContinuationGate {
+            available: true,
+            ..ContinuationGate::default()
+        }));
+        let reg: Registry = Arc::new(Mutex::new(HashMap::from([(
+            "s1".to_string(),
+            Sess {
+                io: SessionIo::Pty {
+                    writer: Arc::new(Mutex::new(pair.master.take_writer().unwrap())),
+                    master: pair.master,
+                    scrollback_path: PathBuf::from("/unused"),
+                },
+                inner: inner.clone(),
+                continuation: gate.clone(),
+                pid: None,
+                meta_path: PathBuf::from("/unused"),
+                event_token: "fixture".into(),
+                task_slug: "task".into(),
+                replacing: Arc::new(AtomicBool::new(false)),
+                pending_pty_seed: false,
+            },
+        )])));
+        let still_pending = |ack: &str| {
+            {
+                let mut gate = gate.lock().unwrap();
+                gate.register_rpc_intake("skill", "prompt");
+                gate.pending_dispatches.insert("skill".into());
+            }
+            rpc_intake_response(&reg, "s1", &inner, ack.as_bytes());
+            gate.lock().unwrap().pending_dispatches.contains("skill")
+        };
+        // OMP v18.1.13 answered a stock `/skill:name` with agentInvoked:true; v18.5.0+ acks
+        // the admitted submission with a bare success.
+        assert!(!still_pending(
+            r#"{"type":"response","id":"skill","command":"prompt","success":true,"data":{"agentInvoked":true}}"#
+        ));
+        assert!(!still_pending(r#"{"type":"response","id":"skill","command":"prompt","success":true}"#));
+        assert!(still_pending(
+            r#"{"type":"response","id":"skill","command":"prompt","success":true,"data":{"agentInvoked":false}}"#
+        ));
+        assert!(still_pending(
+            r#"{"type":"response","id":"skill","command":"prompt","success":false,"error":"unknown skill"}"#
+        ));
+        assert!(still_pending(r#"{"type":"response","id":"other","command":"prompt","success":true}"#));
     }
 
     #[test]
