@@ -190,7 +190,8 @@ describe("OnboardingFlow wizard", () => {
   });
 
   it("takes a signed-out user from the Founder plan card to sign-in and then billing", async () => {
-    const signIn = vi.spyOn(ipc, "accountSignIn").mockResolvedValue({ signedIn: true, email: "dev@example.com", plan: "free", paid: false, unavailable: false });
+    const signIn = vi.spyOn(ipc, "accountSignIn").mockResolvedValue({ signedIn: true, email: "dev@example.com", plan: null, paid: false, unavailable: false });
+    const refresh = vi.spyOn(ipc, "accountRefresh").mockResolvedValue({ signedIn: true, email: "dev@example.com", plan: null, paid: false, unavailable: false });
     const openPlans = vi.spyOn(ipc, "accountOpenPlans").mockResolvedValue(undefined);
     const onOpenProviderSetup = vi.fn();
     render(
@@ -209,12 +210,66 @@ describe("OnboardingFlow wizard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Get the Founder plan" }));
     await waitFor(() => expect(openPlans).toHaveBeenCalledTimes(1));
     expect(signIn).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
     // Paired but unpaid: the card now offers checkout directly, no second sign-in.
     expect(await screen.findByRole("button", { name: "Subscribe" })).toBeTruthy();
     expect(screen.getByText("Opens billing for dev@example.com.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^Claude/ }));
     expect(onOpenProviderSetup).toHaveBeenLastCalledWith("accounts", undefined, "anthropic");
+  });
+
+  it.each([false, true])("refreshes a paid subscriber before offering billing (already signed in: %s)", async (signedIn) => {
+    const paired = { signedIn: true, email: "subscriber@example.com", plan: null, paid: false, unavailable: false };
+    if (signedIn) vi.mocked(ipc.accountStatus).mockResolvedValue(paired);
+    const signIn = vi.spyOn(ipc, "accountSignIn").mockResolvedValue(paired);
+    const paid = { ...paired, plan: "founder", paid: true };
+    let finishRefresh!: (status: typeof paid) => void;
+    const refresh = vi.spyOn(ipc, "accountRefresh").mockReturnValue(new Promise((resolve) => (finishRefresh = resolve)));
+    const openPlans = vi.spyOn(ipc, "accountOpenPlans").mockResolvedValue(undefined);
+    render(<OnboardingFlow {...flowProps()} initialStep="models" />);
+    fireEvent.click(await screen.findByRole("button", { name: signedIn ? "Subscribe" : "Get the Founder plan" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(openPlans).not.toHaveBeenCalled();
+    expect(screen.getByText("Checking your plan…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await act(async () => finishRefresh(paid));
+    expect(await screen.findByText("Active")).toBeTruthy();
+    expect(signIn).toHaveBeenCalledTimes(signedIn ? 0 : 1);
+    expect(openPlans).not.toHaveBeenCalled();
+  });
+
+  it("still lets users cancel browser pairing before checking their plan", async () => {
+    let cancel!: (error: Error) => void;
+    vi.spyOn(ipc, "accountSignIn").mockReturnValue(new Promise((_resolve, reject) => (cancel = reject)));
+    const cancelSignIn = vi.spyOn(ipc, "accountCancelSignIn").mockImplementation(async () => cancel(new Error("Sign-in cancelled")));
+    const refresh = vi.spyOn(ipc, "accountRefresh");
+    const openPlans = vi.spyOn(ipc, "accountOpenPlans");
+    render(<OnboardingFlow {...flowProps()} initialStep="models" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Get the Founder plan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("button", { name: "Get the Founder plan" })).toBeTruthy();
+    expect(cancelSignIn).toHaveBeenCalledTimes(1);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(openPlans).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "signed out", "request failed"])("keeps billing closed when the plan refresh is %s", async (outcome) => {
+    const paired = { signedIn: true, email: "subscriber@example.com", plan: null, paid: false, unavailable: false };
+    vi.spyOn(ipc, "accountSignIn").mockResolvedValue(paired);
+    const refresh = vi.spyOn(ipc, "accountRefresh").mockImplementation(async () => {
+      if (outcome === "request failed") throw new Error("Plan service offline");
+      return { ...paired, signedIn: outcome !== "signed out", unavailable: outcome === "unavailable" };
+    });
+    const openPlans = vi.spyOn(ipc, "accountOpenPlans").mockResolvedValue(undefined);
+    render(<OnboardingFlow {...flowProps()} initialStep="models" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Get the Founder plan" }));
+    expect(await screen.findByText(outcome === "request failed" ? /Plan service offline/ : /Couldn't check your plan/)).toBeTruthy();
+    expect(openPlans).not.toHaveBeenCalled();
+    refresh.mockResolvedValue({ ...paired, plan: "founder", paid: true });
+    fireEvent.click(screen.getByRole("button", { name: outcome === "signed out" ? "Get the Founder plan" : "Subscribe" }));
+    expect(await screen.findByText("Active")).toBeTruthy();
+    expect(openPlans).not.toHaveBeenCalled();
   });
 
   it("leaves no unattached setup runtime after visiting model setup without opening accounts", async () => {

@@ -77,12 +77,9 @@ export function OnboardingFlow({
   const [modelError, setModelError] = useState("");
   const [probeTick, setProbeTick] = useState<number>(0);
 
-  // Founder plan card. Window focus re-asks the server so a subscription completed in the
-  // browser flips the card to Active without a relaunch. Not while a pairing is in flight:
-  // the sign-in reply is the authoritative status then, and a refresh racing it would read
-  // the not-yet-written credentials as signed out.
+  // Browser checkout refreshes on focus; the explicit flow owns refresh while pairing.
   const [account, setAccount] = useState<AccountStatus | null>(null);
-  const [planBusy, setPlanBusy] = useState(false);
+  const [planStage, setPlanStage] = useState<"pairing" | "checking" | null>(null);
   const planBusyRef = useRef(false);
   const [planError, setPlanError] = useState("");
   useEffect(() => {
@@ -110,17 +107,21 @@ export function OnboardingFlow({
   // browser, then send that same signed-in browser to the plans page for checkout.
   const startFounderPlan = async () => {
     planBusyRef.current = true;
-    setPlanBusy(true);
+    setPlanStage(account?.signedIn ? "checking" : "pairing");
     setPlanError("");
     try {
-      const status = account?.signedIn ? account : await ipc.accountSignIn();
+      if (!account?.signedIn) setAccount(await ipc.accountSignIn());
+      setPlanStage("checking");
+      // Pairing saves credentials before billing status is known.
+      const status = await ipc.accountRefresh();
       setAccount(status);
+      if (!status.signedIn || status.unavailable) throw new Error("Couldn't check your plan. Please try again.");
       if (!status.paid) await ipc.accountOpenPlans();
     } catch (error) {
       if (!/cancelled/i.test(String(error))) setPlanError(String(error));
     } finally {
       planBusyRef.current = false;
-      setPlanBusy(false);
+      setPlanStage(null);
     }
   };
 
@@ -735,15 +736,17 @@ export function OnboardingFlow({
                         Manage billing
                       </button>
                     </>
-                  ) : planBusy ? (
+                  ) : planStage ? (
                     <>
                       <span className="pill">
                         <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
-                        Waiting for the browser…
+                        {planStage === "pairing" ? "Waiting for the browser…" : "Checking your plan…"}
                       </span>
-                      <button type="button" className="btn ghost small" onClick={() => void ipc.accountCancelSignIn().catch(() => {})}>
-                        Cancel
-                      </button>
+                      {planStage === "pairing" && (
+                        <button type="button" className="btn ghost small" onClick={() => void ipc.accountCancelSignIn().catch(() => {})}>
+                          Cancel
+                        </button>
+                      )}
                     </>
                   ) : (
                     <>
