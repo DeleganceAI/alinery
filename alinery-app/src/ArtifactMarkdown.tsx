@@ -4,6 +4,7 @@ import type { ComponentProps, MouseEvent, KeyboardEvent as ReactKeyboardEvent, R
 import { createElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useAttachmentImageSrc } from "./AttachmentPreview";
 import { APPEARANCE_EVENT } from "./appearance";
 import { DiagramZoomOverlay } from "./DiagramZoomOverlay";
 import { buildRenderedDiff, diffStatusForNode, hashText, isDiffCodeBlock, type MarkdownPositionNode, type RenderedDiff, type RenderedDiffStatus, takeChars } from "./diff";
@@ -649,8 +650,45 @@ function MarkdownPre({ children, comments, draftAnchorIds, onAddComment, onOpenZ
   );
 }
 
+/**
+ * Attachment name an image `src` points at from inside artifact `artifactPath` (relative to artifacts/),
+ * or null when it is absolute, has a scheme, escapes the root, or is not exactly attachments/<name>.
+ * Decodes percent-escapes because mdast normalizes `a b.png` to `a%20b.png`; Rust re-validates the name.
+ */
+export function attachmentNameFor(artifactPath: string | undefined, src: string | undefined): string | null {
+  if (!src || src.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;
+  const segments: string[] = [];
+  for (const segment of [...(artifactPath ?? "").split("/").slice(0, -1), ...src.split("/")]) {
+    if (segment === "..") {
+      if (segments.pop() === undefined) return null;
+    } else if (segment && segment !== ".") {
+      segments.push(segment);
+    }
+  }
+  if (segments.length !== 2 || segments[0] !== "attachments") return null;
+  try {
+    return decodeURIComponent(segments[1]);
+  } catch {
+    return null;
+  }
+}
+
+type ArtifactImageProps = ComponentProps<"img"> & { taskSlug?: string; artifactPath?: string };
+
+// shortcut: only attachments/<name> resolves (the one place task images live, see AGENTS.md); add a Rust
+// read_artifact_image under artifacts/ if harnesses start writing images elsewhere.
+function ArtifactImage({ taskSlug, artifactPath, alt, ...props }: ArtifactImageProps) {
+  const name = taskSlug ? attachmentNameFor(artifactPath, props.src) : null;
+  const { src, error } = useAttachmentImageSrc(taskSlug ?? "", name ?? "");
+  if (name == null) return <img alt={alt} {...props} />;
+  return <img alt={alt} {...props} src={src || undefined} title={error || props.title} />;
+}
+
 type ArtifactMarkdownProps = {
   text: string;
+  /** Owner of the attachments dir plus the artifact's name relative to artifacts/, so relative images resolve (#159). */
+  taskSlug?: string;
+  artifactPath?: string;
   comments?: ArtifactComment[];
   draftAnchorIds?: string[];
   onAddComment?: (anchor: ArtifactCommentAnchor) => void;
@@ -669,6 +707,8 @@ function sameDraftAnchorIds(previous: string[] | undefined, next: string[] | und
 function sameArtifactMarkdownProps(previous: ArtifactMarkdownProps, next: ArtifactMarkdownProps): boolean {
   return (
     previous.text === next.text &&
+    previous.taskSlug === next.taskSlug &&
+    previous.artifactPath === next.artifactPath &&
     previous.comments === next.comments &&
     sameDraftAnchorIds(previous.draftAnchorIds, next.draftAnchorIds) &&
     previous.onAddComment === next.onAddComment &&
@@ -676,7 +716,15 @@ function sameArtifactMarkdownProps(previous: ArtifactMarkdownProps, next: Artifa
   );
 }
 
-export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, comments = [], draftAnchorIds = [], onAddComment, onDiagramZoomOpenChange }: ArtifactMarkdownProps) {
+export const ArtifactMarkdown = memo(function ArtifactMarkdown({
+  text,
+  taskSlug,
+  artifactPath,
+  comments = [],
+  draftAnchorIds = [],
+  onAddComment,
+  onDiagramZoomOpenChange,
+}: ArtifactMarkdownProps) {
   const body = useMemo(() => stripFrontmatter(text), [text]);
   const [zoomSvgHtml, setZoomSvgHtml] = useState<string | null>(null);
 
@@ -796,8 +844,9 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, comments 
           {...props}
         />
       ),
+      img: ({ node, ...props }) => <ArtifactImage taskSlug={taskSlug} artifactPath={artifactPath} {...props} />,
     }),
-    [comments, draftAnchorIds, onAddComment, openDiagramZoom],
+    [comments, draftAnchorIds, onAddComment, openDiagramZoom, taskSlug, artifactPath],
   );
   return (
     <>

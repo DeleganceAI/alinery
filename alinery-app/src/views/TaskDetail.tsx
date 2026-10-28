@@ -1726,6 +1726,8 @@ export function TaskDetail({
                 <article className="md artifactmd">
                   <ArtifactMarkdown
                     text={artifactText}
+                    taskSlug={selectedArtifactNode?.owner_task_slug ?? slug}
+                    artifactPath={selectedArtifact}
                     comments={artifactComments}
                     draftAnchorIds={recoverableArtifactDraftAnchorIds}
                     onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}
