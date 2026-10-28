@@ -1931,6 +1931,34 @@ describe("attention-first session order", () => {
     expect(within(stoppedRow).queryByRole("img", { name: /Failed/ })).toBeNull();
     expect(stoppedRow.querySelector(".status-col")?.textContent).toBe("Exited");
   });
+
+  it("keeps accepted handoffs completed and acknowledges only genuine failed exits", async () => {
+    const fixture = task();
+    const accepted = session({ id: "accepted-design", phase: "design", ended_at: 100, exit_code: 143 });
+    let crashed = session({ id: "crashed-build", phase: "build", ended_at: 100, exit_code: 143 });
+    mocks.getTask.mockResolvedValue(fixture);
+    mocks.listSessions.mockImplementation(async () => [accepted, crashed]);
+    mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
+      if (id === crashed.id) crashed = { ...crashed, exit_notification_read_at: 100 };
+    });
+    mocks.sessionStatuses.mockResolvedValue({
+      [accepted.id]: { accepted_handoff: true, lifecycle: { state: "exited", code: 143 }, state: null, checkpoint: { phase_completed_at: 100 } },
+      [crashed.id]: { lifecycle: { state: "exited", code: 143 }, state: null, checkpoint: {} },
+    });
+    renderSeededDetail({ initialTask: fixture });
+    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
+    const acceptedRow = await screen.findByRole("row", { name: /design$/ });
+    await waitFor(() => expect(within(acceptedRow).getByText("Completed")).toBeDefined());
+    expect(within(acceptedRow).queryByRole("img", { name: /Failed/ })).toBeNull();
+    expect(within(acceptedRow).getByRole("img", { name: "Unread completion" })).toBeDefined();
+    expect(screen.getAllByRole("img", { name: "Failed: process exited with code 143" })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Acknowledge exited sessions" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Acknowledge exited sessions" })).toBeNull());
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledTimes(1);
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/r", "a-task", crashed.id);
+    expect(within(acceptedRow).getByRole("img", { name: "Unread completion" })).toBeDefined();
+  });
 });
 
 describe("session time columns and sorting", () => {

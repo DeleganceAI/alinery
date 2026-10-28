@@ -600,19 +600,27 @@ struct TaskSessionActivityProjection {
     active_tier: Option<u8>,
 }
 
-fn has_unacknowledged_terminal_failure(session: &SessionMeta) -> bool {
-    session.exit_code.is_some_and(|code| code != 0)
+fn has_unacknowledged_terminal_failure(session: &SessionMeta, accepted_handoff: bool) -> bool {
+    !accepted_handoff
+        && session.exit_code.is_some_and(|code| code != 0)
         && session
             .ended_at
             .is_none_or(|ended_at| session.exit_notification_read_at.is_none_or(|read_at| ended_at > read_at))
 }
 
-fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta, daemon_state: Option<&alinery_core::SessionState>) -> TaskSessionActivityProjection {
-    let durable_status = if has_unacknowledged_terminal_failure(session) {
+fn project_task_session_activity(
+    repo: &Path,
+    task: &Task,
+    session: &SessionMeta,
+    daemon_state: Option<&alinery_core::SessionState>,
+    execution: Option<&alinery_core::execution::TaskExecutionState>,
+) -> TaskSessionActivityProjection {
+    let accepted_handoff = accepted_handoff_is_terminal(session_has_accepted_handoff(&task.slug, &session.id, session, execution), session.exit_code, daemon_state);
+    let checkpoint = session_completion_checkpoint(session, accepted_handoff);
+    let durable_status = if has_unacknowledged_terminal_failure(session, accepted_handoff) {
         Some((2, TaskActivityStatus::Failed))
     } else if is_primary_playbook_session(repo, task, session)
-        && session
-            .semantic
+        && checkpoint
             .phase_completed_at
             .is_some_and(|completed_at| session.notification_read_at.is_none_or(|read_at| completed_at > read_at))
     {
@@ -620,7 +628,7 @@ fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta
     } else {
         None
     };
-    let Some(state) = daemon_state else {
+    let Some(state) = daemon_state.filter(|_| !accepted_handoff) else {
         return TaskSessionActivityProjection {
             status: durable_status,
             active_tier: None,
@@ -631,7 +639,7 @@ fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta
         if let alinery_core::PlaybookState::Failed { reason } = &state.playbook {
             let acknowledged_terminal_failure = matches!(state.process, alinery_core::ProcessState::Exited { .. })
                 && session.exit_code.is_some_and(|code| code != 0)
-                && !has_unacknowledged_terminal_failure(session);
+                && !has_unacknowledged_terminal_failure(session, accepted_handoff);
             return TaskSessionActivityProjection {
                 status: if reason == "StaleSource" || acknowledged_terminal_failure {
                     durable_status
@@ -665,9 +673,15 @@ fn project_task_session_activity(repo: &Path, task: &Task, session: &SessionMeta
     TaskSessionActivityProjection { status, active_tier }
 }
 
-fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta], statuses_by_id: &HashMap<&str, &alinery_core::SessionState>) -> bool {
+fn task_has_actionable_session(
+    repo: &Path,
+    task: &Task,
+    sessions: &[SessionMeta],
+    statuses_by_id: &HashMap<&str, &alinery_core::SessionState>,
+    execution: Option<&alinery_core::execution::TaskExecutionState>,
+) -> bool {
     sessions.iter().filter(|session| !session.archived).any(|session| {
-        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied())
+        project_task_session_activity(repo, task, session, statuses_by_id.get(session.id.as_str()).copied(), execution)
             .active_tier
             .is_some()
     })
@@ -676,6 +690,7 @@ fn task_has_actionable_session(repo: &Path, task: &Task, sessions: &[SessionMeta
 pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], statuses: &[DaemonSessionStatus]) -> HashMap<String, TaskActivitySummary> {
     let repo_path = repo.display().to_string();
     let statuses_by_id = statuses.iter().map(|status| (status.id.as_str(), &status.state)).collect::<HashMap<_, _>>();
+    let mut executions = HashMap::new();
     let mut activity = slugs
         .iter()
         .map(|slug| (task_activity_key(&repo_path, slug), TaskActivitySummary::default()))
@@ -692,7 +707,10 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut activity_task = task;
         let mut visited = HashSet::from([activity_task.slug.clone()]);
         loop {
-            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id) {
+            let execution = executions
+                .entry(activity_task.slug.clone())
+                .or_insert_with(|| alinery_core::execution::read_execution_state(repo, &activity_task.slug).ok());
+            if activity_task.active_subtask.is_empty() || task_has_actionable_session(repo, &activity_task, &sessions, &statuses_by_id, execution.as_ref()) {
                 break;
             }
             let child_slug = activity_task.active_subtask.clone();
@@ -711,9 +729,10 @@ pub(crate) fn resolve_task_activity_for_repo(repo: &Path, slugs: &[String], stat
         let mut summary = TaskActivitySummary::default();
         let mut status_choice: Option<(u8, u64, String, TaskActivityStatus)> = None;
         let mut active_choice: Option<(u8, u64, String, &SessionMeta)> = None;
+        let execution = executions.get(&activity_task.slug).and_then(Option::as_ref);
 
         for session in sessions.iter().filter(|session| !session.archived) {
-            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied());
+            let projection = project_task_session_activity(repo, &activity_task, session, statuses_by_id.get(session.id.as_str()).copied(), execution);
 
             if let Some((tier, status)) = projection.status {
                 let replace = status_choice.as_ref().is_none_or(|(current_tier, current_created, current_id, _)| {

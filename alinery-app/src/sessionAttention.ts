@@ -35,6 +35,7 @@ export function sessionSortArrow(sort: SessionSort, field: "started" | "updated"
 }
 
 export function observationDisplayKind(observation: SessionObservation): ObservationDisplayKind {
+  if (observation.accepted_handoff) return "completed";
   const { lifecycle, state } = observation;
   if (!state) {
     if (observation.checkpoint.phase_completed_at != null) return "completed";
@@ -74,6 +75,7 @@ export function sessionDisplayKind(
   exitAcknowledged = false,
 ): ObservationDisplayKind {
   const observed = observation ? observationDisplayKind(observation) : "loading";
+  if (observation?.accepted_handoff) return observed;
   const acknowledgedExit = exitAcknowledged && (!observation?.state || observation.state.process.state === "exited");
   const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "exited") ? "stale" : observed;
   if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
@@ -91,6 +93,7 @@ export function sameSessionObservationMaps(left: Record<string, SessionObservati
     if (!r) return false;
     if (l.lifecycle.state !== r.lifecycle.state) return false;
     if (l.checkpoint.phase_completed_at !== r.checkpoint.phase_completed_at) return false;
+    if (Boolean(l.accepted_handoff) !== Boolean(r.accepted_handoff)) return false;
     if (observationDisplayKind(l) !== observationDisplayKind(r)) return false;
     const ls = l.state;
     const rs = r.state;
@@ -114,19 +117,21 @@ function hasUnreadCompletion(session: SessionMeta, observation?: SessionObservat
   return completedAt !== null && completedAt > (session.notification_read_at ?? -1);
 }
 
-export function hasUnacknowledgedExit(session: SessionMeta): boolean {
+export function hasUnacknowledgedExit(session: SessionMeta, observation?: SessionObservation | null): boolean {
+  if (observation?.accepted_handoff) return false;
   if (session.exit_code == null || session.exit_code === 0) return false;
   return session.ended_at == null || session.ended_at > (session.exit_notification_read_at ?? -1);
 }
 
-export function hasAcknowledgedExit(session: SessionMeta): boolean {
+export function hasAcknowledgedExit(session: SessionMeta, observation?: SessionObservation | null): boolean {
+  if (observation?.accepted_handoff) return false;
   return session.exit_code != null && session.exit_code !== 0 && session.ended_at != null && session.ended_at <= (session.exit_notification_read_at ?? -1);
 }
 
 export function sessionFailureNeedsAttention(session: SessionMeta, observation?: SessionObservation): boolean {
-  if (hasUnacknowledgedExit(session)) return true;
+  if (hasUnacknowledgedExit(session, observation)) return true;
   if (!observation || observationDisplayKind(observation) !== "failed") return false;
-  return observation.state?.process.state !== "exited" || !hasAcknowledgedExit(session);
+  return observation.state?.process.state !== "exited" || !hasAcknowledgedExit(session, observation);
 }
 
 export function classifySessionNotice(session: SessionMeta, observation?: SessionObservation): SessionNotice | null {
@@ -281,7 +286,7 @@ export function liveNoticeSuppression(item: SessionListItem, notice: SessionNoti
 }
 
 export function isSessionNoticeSuppressed(row: SessionNoticeRow, observation?: SessionObservation): boolean {
-  if (hasUnreadCompletion(row.item, observation) || hasUnacknowledgedExit(row.item)) return false;
+  if (hasUnreadCompletion(row.item, observation) || hasUnacknowledgedExit(row.item, observation)) return false;
   const current = liveNoticeSuppression(row.item, row.notice, observation);
   const persisted = row.item.notification_suppression;
   return current !== null && persisted?.notice === current.notice && persisted.occurrence === current.occurrence;

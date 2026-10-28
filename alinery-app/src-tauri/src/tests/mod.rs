@@ -142,6 +142,55 @@ fn write_retained_discovery_task(repo: &Path, slug: &str, lane: &str, archived: 
     task
 }
 
+fn write_accepted_handoff(repo: &Path, slug: &str) -> SessionMeta {
+    use alinery_core::execution::{accept_human_end, confirm_execution_exit, install_seed, reserve_execution, write_execution_state_unlocked, ExecutionCandidate};
+    write_retained_discovery_task(repo, slug, "", false);
+    let mut saved = crate::saved_task_execution_for(repo, slug).unwrap();
+    let seed = install_seed(&mut saved.state, "ticket.md", "0-ticket-1.md").unwrap();
+    let candidate = ExecutionCandidate {
+        step_key: "implementation".into(),
+        context_id: "root".into(),
+        inputs: std::collections::BTreeMap::from([("ticket.md".into(), vec![seed])]),
+        complete_collection_id: None,
+        each_collection_id: None,
+        each_member_id: None,
+        manual: false,
+    };
+    let execution_id = reserve_execution(repo, slug, &saved.definition, &mut saved.state, candidate, &Default::default(), None, false).unwrap();
+    let record = saved.state.executions.get_mut(&execution_id).unwrap();
+    for output in &record.outputs {
+        let path = artifacts_dir(repo, slug).join(&output.relative_path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "# Accepted work\n").unwrap();
+    }
+    let request = alinery_core::EndExecutionRequest {
+        task_slug: slug.into(),
+        execution_id: execution_id.clone(),
+        session_id: record.owner_session_id.clone(),
+        process_incarnation: "fixture-process".into(),
+        work_revision: record.work_revision,
+    };
+    record.human_end = Some(request.clone());
+    confirm_execution_exit(&mut saved.state, &execution_id, &request.session_id, Some(143)).unwrap();
+    assert!(matches!(
+        accept_human_end(repo, slug, &saved.definition, &mut saved.state, &request).unwrap(),
+        alinery_core::execution::CompletionOutcome::Accepted { .. }
+    ));
+    write_execution_state_unlocked(repo, slug, &mut saved.state).unwrap();
+    let meta = SessionMeta {
+        id: request.session_id,
+        execution_id,
+        phase: "implementation".into(),
+        created: 1,
+        started_at: Some(10),
+        ended_at: Some(100),
+        exit_code: Some(143),
+        ..Default::default()
+    };
+    fs::write(session_meta_path(repo, slug, &meta.id), serde_json::to_vec(&meta).unwrap()).unwrap();
+    meta
+}
+
 // --- Task attachments & evidence (Phases 3-4) ---------------------------------------
 
 // A plain temp dir with no git HEAD: the copier and attachment_path_in never shell out.

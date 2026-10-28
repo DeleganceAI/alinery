@@ -10,8 +10,10 @@ import {
   orderSessionListItems,
   orderTaskPanelRows,
   PRIORITY_SESSION_SORT,
+  sameSessionObservationMaps,
   selectSessionSort,
   sessionAttentionTier,
+  sessionDisplayKind,
   sessionNoticeRows,
   sessionSortArrow,
   sessionStartedAt,
@@ -138,6 +140,50 @@ describe("session attention classification", () => {
     const acknowledged = { ...exited, exit_notification_read_at: 100 };
     expect(sessionAttentionTier(acknowledged, undefined)).toBe(3);
     expect(classifySessionNotice(acknowledged, undefined)).toBeNull();
+  });
+
+  it.each(["retained", "offline"] as const)("completes an accepted handoff with a nonzero exit and %s state", (source) => {
+    const completed = session({ ended_at: 100, exit_code: 143 });
+    const accepted = observation({
+      accepted_handoff: true,
+      lifecycle: { state: "exited", code: 143 },
+      state:
+        source === "offline"
+          ? null
+          : {
+              process: { state: "exited", code: 143 },
+              agent: { state: "idle" },
+              playbook: { state: "in_progress" },
+              adapter: "omp",
+              message_adapter: "unsupported",
+            },
+      checkpoint: { phase_completed_at: 100 },
+    });
+    expect(observationDisplayKind(accepted)).toBe("completed");
+    expect(sessionDisplayKind(accepted, false, 143)).toBe("completed");
+    expect(classifySessionNotice(completed, accepted)).toBe("unread_completion");
+    expect(classifySessionNotice({ ...completed, notification_read_at: 99 }, accepted)).toBe("unread_completion");
+    expect(sessionAttentionTier(completed, accepted)).toBe(2);
+
+    const read = { ...completed, notification_read_at: 100 };
+    expect(classifySessionNotice(read, accepted)).toBeNull();
+    expect(sessionAttentionTier(read, accepted)).toBe(3);
+    expect(sessionDisplayKind(accepted, false, 143, true)).toBe("completed");
+  });
+
+  it("keeps an unaccepted nonzero exit failed despite an old completion checkpoint", () => {
+    const crashed = session({ ended_at: 100, exit_code: 143, semantic: { phase_completed_at: 90 }, notification_read_at: 90 });
+    const exited = observation({ accepted_handoff: false, lifecycle: { state: "exited", code: 143 }, state: null, checkpoint: { phase_completed_at: 90 } });
+    expect(sessionDisplayKind(exited, false, 143)).toBe("failed");
+    expect(classifySessionNotice(crashed, exited)).toBe("failure");
+    expect(classifySessionNotice(crashed, undefined)).toBe("failure");
+    expect(sessionDisplayKind(exited, false, 143, true)).toBe("exited");
+    expect(classifySessionNotice({ ...crashed, exit_notification_read_at: 100 }, exited)).toBeNull();
+  });
+
+  it("refreshes observations when accepted handoff evidence changes without changing the completion checkpoint", () => {
+    const exited = observation({ lifecycle: { state: "exited", code: 143 }, state: null, checkpoint: { phase_completed_at: 100 } });
+    expect(sameSessionObservationMaps({ "s-a": exited }, { "s-a": { ...exited, accepted_handoff: true } })).toBe(false);
   });
 
   it("does not fabricate live attention without an observation", () => {

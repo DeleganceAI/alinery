@@ -1936,6 +1936,24 @@ fn task_activity_missing_observation_keeps_only_durable_facts() {
 }
 
 #[test]
+fn accepted_handoff_task_activity_is_completion_until_acknowledged() {
+    let repo = activity_repo("accepted-handoff-activity");
+    let meta = write_accepted_handoff(&repo, "task");
+    let offline = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[]);
+    assert_eq!(activity_summary(&offline, &repo, "task").status, Some(crate::TaskActivityStatus::Completed));
+    let mut exited = activity_status_idle(&meta.id);
+    exited.state.process = alinery_core::ProcessState::Exited { code: Some(143) };
+    exited.state.playbook = alinery_core::PlaybookState::Failed { reason: "process stopped".into() };
+    let online = crate::resolve_task_activity_for_repo(&repo, &["task".into()], std::slice::from_ref(&exited));
+    assert_eq!(activity_summary(&online, &repo, "task").status, Some(crate::TaskActivityStatus::Completed));
+    assert!(activity_summary(&online, &repo, "task").active_session.is_none());
+    crate::mark_session_notification_read_in(&repo, "task", &meta.id).unwrap();
+    let acknowledged = crate::resolve_task_activity_for_repo(&repo, &["task".into()], &[exited]);
+    assert_eq!(activity_summary(&acknowledged, &repo, "task"), &crate::TaskActivitySummary::default());
+    fs::remove_dir_all(repo).unwrap();
+}
+
+#[test]
 fn task_activity_starting_process_is_running_without_agent_semantics() {
     let repo = activity_repo("starting");
     write_activity_task(&repo, "task", "tdd", false);

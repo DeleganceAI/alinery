@@ -246,7 +246,7 @@ export function TaskDetail({
   const artifactNames = artifactItems.map((a) => a.name);
   const filteredSessions = showArchived ? sessions : sessions.filter((session) => !session.archived);
   const hasExpectedArtifact = (session: SessionMeta) => Boolean(executionForSession(session)?.receipt_id);
-  const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
+  const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session, sessionStatuses[session.id]));
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
     sessionStatuses,
@@ -1416,7 +1416,7 @@ export function TaskDetail({
                               repoPath={repoPath}
                               observation={obs ?? undefined}
                               exitCode={s.exit_code}
-                              exitAcknowledged={hasAcknowledgedExit(s)}
+                              exitAcknowledged={hasAcknowledgedExit(s, obs)}
                             />
                           </td>
                           <td className="session-name-cell editable-name">
@@ -1549,7 +1549,7 @@ export function TaskDetail({
                             superseded={superseded}
                             unreadCompletion={unreadCompletion}
                             exitCode={s.exit_code}
-                            exitAcknowledged={hasAcknowledgedExit(s)}
+                            exitAcknowledged={hasAcknowledgedExit(s, obs)}
                           />
                         </td>
                         <td className="session-name-cell editable-name">

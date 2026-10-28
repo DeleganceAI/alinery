@@ -562,13 +562,14 @@ export type SemanticCheckpoint = {
 
 // The normalized app-facing observation returned by session_status / session_list_statuses
 // after Phase 3. `state` is present only when the owning daemon holds the id;
-// `checkpoint` comes from meta and survives daemon restarts.
+// `checkpoint` comes from persisted session and accepted handoff state.
 export type SessionTransport = "pty" | "rpc";
 
 export type SessionObservation = {
   lifecycle: LifecycleState;
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
+  accepted_handoff?: boolean;
   transport?: SessionTransport | null;
 };
 
