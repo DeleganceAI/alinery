@@ -120,6 +120,7 @@
 .playbook-definition-canvas {
   position: relative;
   margin: 0;
+  transform-origin: 0 0;
 }
 
 .playbook-definition-connections {

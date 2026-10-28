@@ -90,7 +90,8 @@ export function PlaybookGraph({
       stageRef.current.style.transition = animateCameraRef.current ? "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" : "none";
       stageRef.current.style.transform = `translate(${tx}px, ${ty}px)`;
     }
-    if (canvasRef.current) canvasRef.current.style.zoom = String(scale);
+    // Scale glyphs with their line boxes; CSS zoom clips clamped text in the native WebKit view.
+    if (canvasRef.current) canvasRef.current.style.transform = `scale(${scale})`;
     if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${Math.round(scale * 100)}%`;
   }, []);
   const { viewRef, panning, setView, zoomBy, center, fit, onPointerDown, onFocusCapture } = usePanZoom({
