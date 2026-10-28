@@ -71,24 +71,97 @@
 }
 
 .playbook-canvas-toolbar {
+  --graph-control-size: 26px;
+  container: playbook-tools / inline-size;
   display: flex;
   flex-wrap: wrap;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px 12px;
   margin-bottom: 8px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
 }
-.playbook-canvas-toolbar output {
-  min-width: 4ch;
-  color: var(--text-muted);
+.playbook-mode-controls,
+.playbook-camera-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.chat-hatch.playbook-display-mode {
+  height: var(--graph-control-size);
+  background: var(--surface);
+}
+.playbook-display-mode button {
+  padding-inline: 8px;
   font-size: calc(12px * var(--ui-scale));
-  text-align: center;
 }
-
-.playbook-canvas-toolbar button[aria-pressed="true"] {
-  color: var(--accent);
+.stepper.playbook-zoom-stepper {
+  grid-template-columns: var(--graph-control-size) minmax(4ch, auto) var(--graph-control-size);
+  height: var(--graph-control-size);
+  background: var(--surface);
+  border-color: var(--border);
+}
+.playbook-zoom-stepper output {
+  padding-inline: 6px;
+  font-size: calc(12px * var(--ui-scale));
+}
+.playbook-toolbar-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: var(--graph-control-size);
+  height: var(--graph-control-size);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  cursor: pointer;
+}
+.playbook-fit-button {
+  width: auto;
+  padding-inline: 7px;
+}
+.playbook-toolbar-action:hover:not(:disabled) {
   background: var(--surface-raised);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text-strong);
+}
+.playbook-toolbar-action[aria-pressed="true"],
+.playbook-definition-graph:has(.playbook-definition-viewport:focus) .playbook-pan-button,
+.playbook-definition-graph:has(.playbook-definition-viewport.is-panning) .playbook-pan-button {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.playbook-toolbar-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.playbook-toolbar-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.playbook-toolbar-action,
+.playbook-display-mode button,
+.playbook-zoom-stepper button {
+  transition: background-color 180ms ease-in-out, color 180ms ease-in-out, border-color 180ms ease-in-out;
+}
+@container playbook-tools (max-width: 270px) {
+  .playbook-fit-button { width: var(--graph-control-size); padding: 0; }
+  .playbook-fit-button span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .playbook-toolbar-action,
+  .playbook-display-mode button,
+  .playbook-zoom-stepper button { transition: none; }
 }
 
 .playbook-definition-viewport {

@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Focus, Hand, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph, reduceFlowConnections } from "./playbookGraphLayout";
 import type { NormalizedStep } from "./types";
@@ -244,24 +244,68 @@ export function PlaybookGraph({
         data-simulation-playing={isSimulation && simulationPlaying ? "true" : undefined}
       >
         {!hideToolbar && (
-          <div className="playbook-canvas-toolbar" role="group" aria-label="Graph display mode">
-            <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
-              Flow
-            </button>
-            <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
-              Artifact dependencies
-            </button>
-            {displayMode === "dependencies" && (
-              <button
-                type="button"
-                className="btn ghost small"
-                aria-pressed={focusConnections}
-                disabled={!selectedStep}
-                title={selectedStep ? `Show only connections entering or leaving ${selectedStep.title}` : "Select a step first"}
-                onClick={() => setFocusConnections((focused) => !focused)}
-              >
-                Focus connections
-              </button>
+          <div className="playbook-canvas-toolbar">
+            <div className="playbook-mode-controls" role="group" aria-label="Graph display mode">
+              <div className="chat-hatch playbook-display-mode">
+                <button type="button" className={displayMode === "flow" ? "active" : undefined} aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
+                  Flow
+                </button>
+                <button
+                  type="button"
+                  className={displayMode === "dependencies" ? "active" : undefined}
+                  aria-label="Artifact dependencies"
+                  aria-pressed={displayMode === "dependencies"}
+                  title="Show artifact dependencies"
+                  onClick={() => setDisplayMode("dependencies")}
+                >
+                  Dependencies
+                </button>
+              </div>
+              {displayMode === "dependencies" && (
+                <button
+                  type="button"
+                  className="playbook-toolbar-action"
+                  aria-label="Focus connections"
+                  aria-pressed={focusConnections}
+                  disabled={!selectedStep}
+                  title={selectedStep ? `Show only connections entering or leaving ${selectedStep.title}` : "Select a step first"}
+                  onClick={() => setFocusConnections((focused) => !focused)}
+                >
+                  <Focus size={15} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            {steps.length > 0 && (
+              <div className="playbook-camera-controls" role="group" aria-label="Graph zoom controls">
+                <div className="stepper playbook-zoom-stepper">
+                  <button type="button" className="stepper-btn" aria-label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
+                    <Minus size={14} strokeWidth={1.5} aria-hidden="true" />
+                  </button>
+                  <output ref={zoomLabelRef} className="stepper-value" aria-label="Graph zoom">
+                    100%
+                  </output>
+                  <button type="button" className="stepper-btn" aria-label="Zoom in" title="Zoom in" onClick={() => zoomBy(1.25)}>
+                    <Plus size={14} strokeWidth={1.5} aria-hidden="true" />
+                  </button>
+                </div>
+                <button type="button" className="playbook-toolbar-action playbook-fit-button" aria-label="Fit graph" title="Fit entire graph" onClick={fitGraph}>
+                  <Maximize2 size={14} strokeWidth={1.5} aria-hidden="true" />
+                  <span>Fit</span>
+                </button>
+                <button type="button" className="playbook-toolbar-action" aria-label="Reset zoom" title="Reset zoom to 100%" onClick={resetZoom}>
+                  <RotateCcw size={14} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+                <button
+                  ref={panButtonRef}
+                  type="button"
+                  className="playbook-toolbar-action playbook-pan-button"
+                  aria-label="Pan graph"
+                  title="Pan with arrow keys; press Escape to return"
+                  onClick={() => viewportRef.current?.focus({ preventScroll: true })}
+                >
+                  <Hand size={15} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -273,28 +317,6 @@ export function PlaybookGraph({
           <div className="playbook-definition-map">
             {steps.length > 0 ? (
               <>
-                {!hideToolbar && (
-                  <div className="playbook-canvas-toolbar" role="group" aria-label="Graph zoom controls">
-                    <button type="button" className="btn ghost small" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
-                      −
-                    </button>
-                    <output ref={zoomLabelRef} aria-label="Graph zoom">
-                      100%
-                    </output>
-                    <button type="button" className="btn ghost small" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
-                      +
-                    </button>
-                    <button type="button" className="btn ghost small" onClick={fitGraph}>
-                      Fit graph
-                    </button>
-                    <button type="button" className="btn ghost small" onClick={resetZoom}>
-                      Reset zoom
-                    </button>
-                    <button ref={panButtonRef} type="button" className="btn ghost small" aria-label="Pan graph" onClick={() => viewportRef.current?.focus({ preventScroll: true })}>
-                      Pan
-                    </button>
-                  </div>
-                )}
                 <div
                   ref={viewportRef}
                   id={`${inspectorId}-graph`}
