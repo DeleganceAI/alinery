@@ -2007,7 +2007,7 @@ main {
   padding-right: 8px;
 }
 .create-preview-panel {
-  width: min(360px, 34vw);
+  width: min(420px, 36vw);
   min-width: 280px;
   max-height: calc(100% - 56px);
   margin: 32px 0 24px;
@@ -2025,20 +2025,26 @@ main {
 }
 .playbook-panel-controls {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 12px;
+  padding: 16px;
   min-width: 0;
 }
-.playbook-panel-label {
-  color: var(--text-muted);
-  font-size: calc(11px * var(--ui-scale));
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.playbook-library-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.playbook-library-link svg {
+  flex-shrink: 0;
+}
+.playbook-browse-action {
+  width: 100%;
 }
 .playbook-picker {
   display: grid;
-  gap: 6px;
+  gap: 12px;
 }
 /* Publish dialog (Playbooks.tsx): a long local library scrolls inside the modal
    instead of growing it past the window. */
@@ -2048,17 +2054,63 @@ main {
   margin-bottom: 8px;
 }
 .playbook-picker-card {
+  position: relative;
   min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.playbook-picker-card > .playbook-star-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+}
+.playbook-star-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.playbook-star-button[aria-pressed="true"] {
+  color: var(--accent);
+}
+.playbook-star-button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+.playbook-star-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.playbook-star-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.playbook-option .playbook-option-meta {
+  padding-right: 28px;
+  flex-wrap: wrap;
 }
 .playbook-picker-card.selected {
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-color: var(--accent);
 }
-.playbook-picker-card .playbook-definition-graph {
-  padding: 12px 6px;
+.playbook-picker-card:has(.playbook-option-input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
-.playbook-picker-card .playbook-definition-viewport {
-  flex: 0 0 360px;
+.playbook-picker-card:has(.playbook-option:hover):not(.invalid) {
+  border-color: var(--border-strong);
+}
+.playbook-picker-card.selected:has(.playbook-option:hover) {
+  border-color: var(--accent);
+}
+.playbook-picker-card.invalid {
+  background: var(--surface);
 }
 .playbook-option {
   position: relative;
@@ -2066,25 +2118,13 @@ main {
   align-items: stretch;
   gap: 10px;
   min-width: 0;
-  padding: 10px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-subtle);
+  padding: 16px;
+  border-radius: var(--radius-md);
   color: var(--text);
   cursor: pointer;
-  transition: border-color var(--dur-fast) ease, background var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
-.playbook-option:hover {
-  border-color: var(--border-strong);
-}
-.playbook-option:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.playbook-option.selected {
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-  box-shadow: inset 3px 0 var(--accent);
+.playbook-option:has(input:disabled) {
+  cursor: default;
 }
 .playbook-option-input {
   position: absolute;
@@ -2099,42 +2139,134 @@ main {
   display: grid;
   flex: 1;
   min-width: 0;
-  gap: 2px;
+  gap: 8px;
+}
+.playbook-option-meta {
+  display: flex;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+}
+.playbook-option-selected {
+  color: var(--accent);
 }
 .playbook-option-topline {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 .playbook-option-title {
   color: var(--text-strong);
-  font-size: calc(14px * var(--ui-scale));
+  font-size: calc(16px * var(--ui-scale));
   font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 .playbook-option-description {
-  overflow: hidden;
   color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .playbook-option.selected .playbook-option-description {
-  color: var(--text-strong);
+  color: var(--text);
 }
 .playbook-option-indicator {
   align-self: center;
   flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
+  width: 16px;
+  height: 16px;
   border: 1px solid var(--border-strong);
   border-radius: 50%;
 }
 .playbook-option.selected .playbook-option-indicator {
-  border: 3px solid var(--accent);
+  border: 5px solid var(--accent);
   background: var(--surface);
+}
+.playbook-card-overview {
+  margin: 0 16px 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.playbook-process-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: calc(12px * var(--ui-scale));
+}
+.playbook-process-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  line-height: 1.4;
+}
+.playbook-process-list li::before {
+  content: "";
+  align-self: flex-start;
+  flex: 0 0 6px;
+  height: 6px;
+  margin-top: 5px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+}
+.playbook-process-list li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.playbook-process-parallel,
+.playbook-process-more {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+}
+.playbook-process-more {
+  margin: 10px 0 0 18px;
+}
+.playbook-card-process {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 16px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.modal.create-playbook-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, calc(100vw - 48px));
+  max-width: none;
+  height: calc(100dvh - 64px);
+  max-height: calc(100dvh - 64px);
+  padding: 24px;
+}
+.create-playbook-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.create-playbook-dialog-header > .btn {
+  flex-shrink: 0;
+}
+.create-playbook-dialog-header h2 {
+  margin: 0 0 8px;
+  font-size: calc(20px * var(--ui-scale));
+}
+.create-playbook-dialog-header p {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+}
+.create-playbook-dialog > .playbook-definition-graph {
+  flex: 1;
 }
 .playbook-empty {
   padding: 12px;
@@ -2142,9 +2274,6 @@ main {
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-scale));
-}
-.create-preview-panel .playbook-graph-title {
-  display: none;
 }
 .createform-page .modes {
   gap: 12px;
@@ -2350,13 +2479,15 @@ main {
   .create-repository-source {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+@media (max-width: 760px) {
   .createpage-with-preview {
     flex-direction: column;
     align-items: stretch;
     padding: 0;
   }
   .create-form-panel {
-    padding: 32px 32px 16px;
+    padding: 24px 16px 16px;
   }
   .createform-page {
     width: 100%;
@@ -2365,8 +2496,9 @@ main {
   .create-preview-panel {
     max-height: 45%;
     min-height: 180px;
+    min-width: 0;
     width: auto;
-    margin: 0 32px 24px;
+    margin: 0 16px 24px;
   }
 }
 /* inset inputs (shared) */

@@ -499,6 +499,44 @@ function camera(viewport: HTMLElement) {
   return { tx, ty, scale: Number(canvas.style.zoom) };
 }
 
+it("keeps compact controls inside the canvas frame without starting pan gestures", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" showInspector={false} title="Compact" steps={denseSteps} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const frame = viewport.parentElement;
+  const modes = screen.getByRole("group", { name: "Graph display mode" });
+  const navigation = screen.getByRole("group", { name: "Graph zoom controls" });
+  expect(modes.parentElement).toBe(frame);
+  expect(navigation.parentElement).toBe(frame);
+  expect(frame?.classList.contains("playbook-canvas-frame")).toBe(true);
+  expect(viewport.contains(navigation)).toBe(false);
+  const before = camera(viewport);
+  for (const target of [modes, screen.getByRole("button", { name: "Zoom in" }), screen.getByLabelText("Graph zoom")]) {
+    fireEvent.pointerDown(target, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 130, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 130, pointerId: 1 });
+    expect(camera(viewport)).toEqual(before);
+    expect(viewport.classList.contains("is-panning")).toBe(false);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  expect(camera(viewport).scale).toBeCloseTo(before.scale * 1.25);
+  fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+  expect(camera(viewport).scale).toBeCloseTo(before.scale);
+  for (const name of ["Fit graph", "Reset zoom", "Pan graph"]) {
+    expect(screen.getByRole("button", { name }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name }).getAttribute("title")).toContain(name);
+  }
+});
+
+it.each([false, true])("hides both canvas docks with hideToolbar (inspector: %s)", (showInspector) => {
+  render(<PlaybookGraph variant="definition" showInspector={showInspector} hideToolbar title="Embedded" steps={denseSteps} />);
+  expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  expect(viewport.parentElement?.classList.contains("without-toolbar")).toBe(true);
+  expect(screen.getByRole("button", { name: `${showInspector ? "Inspect" : "Highlight"} seed` })).toBeTruthy();
+});
+
 it("anchors wheel zoom under the pointer and fits using unzoomed dimensions", () => {
   mockCanvasDimensions();
   render(<PlaybookGraph variant="definition" title="Review" steps={[step("inspect", [], ["result.md"])]} />);

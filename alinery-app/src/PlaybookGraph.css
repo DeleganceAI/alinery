@@ -70,38 +70,88 @@
   min-width: 0;
 }
 
-.playbook-canvas-toolbar {
+.playbook-canvas-frame {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 320px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.playbook-canvas-toolbar {
+  position: absolute;
+  z-index: 1;
+  left: 12px;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 2px;
+  max-width: calc(100% - 24px);
+  padding: 3px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: default;
+}
+.playbook-canvas-modes {
+  top: 12px;
+}
+.playbook-canvas-navigation {
+  bottom: 12px;
+}
+.playbook-canvas-toolbar .btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.playbook-canvas-navigation .btn,
+.playbook-canvas-modes .btn:has(svg) {
+  width: 30px;
+  padding: 4px;
 }
 .playbook-canvas-toolbar output {
   min-width: 4ch;
+  padding-inline: 4px;
   color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: calc(11px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
-
 .playbook-canvas-toolbar button[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--surface-raised);
+  color: var(--text-strong);
+  background: var(--accent-subtle);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-
 .playbook-definition-viewport {
   position: relative;
   flex: 1;
-  min-height: 240px;
+  min-width: 0;
+  min-height: 216px;
+  margin-block: 52px;
   overflow: hidden;
   overscroll-behavior: contain;
   cursor: grab;
   touch-action: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+}
+.playbook-canvas-frame.without-toolbar {
+  min-height: 240px;
+}
+.playbook-canvas-frame.without-toolbar .playbook-definition-viewport {
+  min-height: 240px;
+  margin-block: 0;
 }
 .playbook-definition-viewport:focus-visible {
   outline: 2px solid var(--accent);

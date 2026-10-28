@@ -3,6 +3,7 @@ import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPoint
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { CURATED_PLAYBOOK_ARCHETYPES, type StarterTaskPreset } from "../onboarding";
+import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
@@ -801,7 +802,6 @@ type GridProps = {
   storageKey?: string;
   initialPreset?: PresetKey;
   onCreate?: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
-  onOpenPlaybooks?: () => void;
   onReplayOnboarding?: () => void;
   /** Repository whose missing live status the shell's conflict strip already reports. */
   liveStatusExplainedFor?: string;
@@ -822,7 +822,6 @@ function ScopedGrid({
   storageKey,
   initialPreset = "kanban",
   onCreate,
-  onOpenPlaybooks,
   onReplayOnboarding,
   liveStatusExplainedFor,
 }: GridProps & { scopeKey: string }) {
@@ -1854,15 +1853,16 @@ function ScopedGrid({
             <div className="grid-starter-cards">
               {CURATED_PLAYBOOK_ARCHETYPES.slice(0, 4).map((archetype) => (
                 <article key={archetype.reference.key} className="grid-starter-card">
-                  <div className="grid-starter-card-top">
-                    <strong>{archetype.title}</strong>
-                    <span className="pill">{archetype.badge}</span>
-                  </div>
-                  <p className="grid-starter-card-tagline">{archetype.tagline}</p>
+                  <span className="playbook-option-meta">{archetype.badge}</span>
+                  <h4 className="playbook-option-title">{archetype.title}</h4>
                   <p className="grid-starter-card-summary">{archetype.patternSummary}</p>
+                  <div className="grid-starter-card-outline">
+                    <span>Workflow outline</span>
+                    <p className="grid-starter-card-tagline">{archetype.tagline}</p>
+                  </div>
                   <div className="grid-starter-card-actions">
-                    <button type="button" className="btn small" onClick={() => onCreate?.(archetype.reference)}>
-                      New task with {archetype.title}
+                    <button type="button" className="btn ghost small" aria-label={`New task with ${archetype.title}`} onClick={() => onCreate?.(archetype.reference)}>
+                      New task
                     </button>
                     <button type="button" className="btn ghost small" onClick={() => onCreate?.(archetype.reference, archetype.starterPreset)}>
                       Try starter preset
@@ -1875,11 +1875,7 @@ function ScopedGrid({
               <button type="button" className="btn" onClick={() => onCreate?.()}>
                 New task
               </button>
-              {onOpenPlaybooks && (
-                <button type="button" className="btn ghost" onClick={onOpenPlaybooks}>
-                  Browse playbooks library
-                </button>
-              )}
+              <PlaybookLibraryLink />
               {onReplayOnboarding && (
                 <button type="button" className="btn ghost" onClick={onReplayOnboarding}>
                   How playbooks work

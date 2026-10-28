@@ -1842,7 +1842,6 @@ export default function App() {
               storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
               onCreate={(playbook, preset) => openCreate(playbook, preset)}
-              onOpenPlaybooks={() => switchTop("playbooks")}
               onReplayOnboarding={() => {
                 setOnboardingStep("playbooks");
                 setOnboardingOpen(true);

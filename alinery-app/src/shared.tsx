@@ -58,12 +58,43 @@ export const playbookRefKey = (reference: PlaybookRef) => `${reference.scope}/${
 export const samePlaybookRef = (left: PlaybookRef | null | undefined, right: PlaybookRef | null | undefined) =>
   left === right || (!!left && !!right && left.scope === right.scope && left.key === right.key);
 
-export function orderPlaybookCandidates(candidates: PlaybookCandidate[], preferences: PickerPreferences): PlaybookCandidate[] {
-  const ranks = new Map(preferences.order.map((reference, index) => [playbookRefKey(reference), index]));
+export const RECOMMENDED_PLAYBOOK: PlaybookRef = { scope: "bundled", key: "superdevelop" };
+
+export function starredPlaybookKeys(preferences: PickerPreferences | undefined): Set<string> {
+  if (!preferences) return new Set();
+  if (preferences.order.length === 0 && preferences.entries.length === 0) return new Set([playbookRefKey(RECOMMENDED_PLAYBOOK)]);
+  return new Set(preferences.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)));
+}
+
+export function withPlaybookStar(preferences: PickerPreferences, reference: PlaybookRef, starred: boolean): PickerPreferences {
+  const entryFor = (ref: PlaybookRef, value: boolean) => ({
+    reference: ref,
+    hidden: false,
+    collapsed: false,
+    badge: null,
+    color: null,
+    last_imported_at_ms: null,
+    ...preferences.entries.find((entry) => samePlaybookRef(entry.reference, ref)),
+    preferred: value,
+  });
+  // Persist the initial star on first edit, including an explicit false when it is removed.
+  const entries = preferences.order.length === 0 && preferences.entries.length === 0 ? [entryFor(RECOMMENDED_PLAYBOOK, true)] : preferences.entries;
+  const entry = entryFor(reference, starred);
+  return {
+    ...preferences,
+    entries: entries.some((item) => samePlaybookRef(item.reference, reference))
+      ? entries.map((item) => (samePlaybookRef(item.reference, reference) ? entry : item))
+      : [...entries, entry],
+  };
+}
+
+export function orderPlaybookCandidates(candidates: PlaybookCandidate[], preferences?: PickerPreferences): PlaybookCandidate[] {
+  const ranks = new Map(preferences?.order.map((reference, index) => [playbookRefKey(reference), index]));
+  const starred = starredPlaybookKeys(preferences);
   return [...candidates].sort((left, right) => {
     const a = playbookRefKey(left.source.reference);
     const b = playbookRefKey(right.source.reference);
-    return (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
+    return Number(starred.has(b)) - Number(starred.has(a)) || (ranks.get(a) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b);
   });
 }
 

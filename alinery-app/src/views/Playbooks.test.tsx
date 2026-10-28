@@ -236,8 +236,8 @@ describe("playbook library", () => {
       ["Source", "descending", ["repo/review", "repo/zulu", "global/review", "global/omega", "bundled/review"]],
       ["Last modified", "descending", ["global/omega", "global/review", "repo/review", "bundled/review", "repo/zulu"]],
       ["Last modified", "ascending", ["bundled/review", "repo/zulu", "global/review", "repo/review", "global/omega"]],
-      ["Preferred for this repo", "descending", ["global/review", "repo/review", "bundled/review", "global/omega", "repo/zulu"]],
-      ["Preferred for this repo", "ascending", ["bundled/review", "global/omega", "repo/zulu", "global/review", "repo/review"]],
+      ["Starred", "descending", ["global/review", "repo/review", "bundled/review", "global/omega", "repo/zulu"]],
+      ["Starred", "ascending", ["bundled/review", "global/omega", "repo/zulu", "global/review", "repo/review"]],
     ] as const;
     for (const [column, direction, expected] of orders) {
       const header = screen.getByRole("button", { name: `Sort by ${column}` });
@@ -258,19 +258,19 @@ describe("playbook library", () => {
     preferencesByRepo.set("/repo", { order: [], entries: [preference("global")] });
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
     await screen.findByRole("button", { name: "Review Repository" });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Starred only" }));
     expect(libraryOrder()).toEqual(["global/review"]);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Star playbook: global/review" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Review Global" })).toBeNull());
     expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
     expect(screen.getByLabelText("Search playbooks")).toBeTruthy();
     expect(mocks.readPlaybook).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Starred only" }));
     expect(libraryOrder()).toEqual(["bundled/review", "global/review", "repo/review"]);
-    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("checked", false);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" }));
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("checked", true));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    expect(screen.getByRole("button", { name: "Star playbook: global/review" }).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Star playbook: repo/review" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Star playbook: repo/review" }).getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Starred only" }));
     expect(libraryOrder()).toEqual(["repo/review"]);
     expect(mocks.readPlaybook).not.toHaveBeenCalled();
   });
@@ -281,7 +281,7 @@ describe("playbook library", () => {
     await screen.findByRole("button", { name: "Review Repository" });
     fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "review" } });
     fireEvent.click(screen.getByRole("button", { name: "Sort by Last modified" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Preferred only" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Starred only" }));
     const library = screen.getByRole("region", { name: "Playbook library" });
     library.scrollTop = 312;
     fireEvent.scroll(library);
@@ -301,7 +301,7 @@ describe("playbook library", () => {
     expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
     expect(screen.getByLabelText("Search playbooks")).toHaveProperty("value", "review");
     expect(screen.getByRole("button", { name: "Sort by Last modified" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
-    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("checked", true);
+    expect(screen.getByRole("checkbox", { name: "Starred only" })).toHaveProperty("checked", true);
     expect(libraryOrder()).toEqual(["global/review", "repo/review"]);
   });
 });
@@ -1024,7 +1024,21 @@ Read {{TICKET_FILE}}.
   });
 });
 
-describe("repository preferred playbooks", () => {
+describe("repository starred playbooks", () => {
+  it("shows SuperDevelop starred on a fresh repository and remembers an explicit unstar", async () => {
+    stored.push(entry("bundled", { key: "superdevelop", title: "SuperDevelop" }));
+    const view = render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    const star = await screen.findByRole("button", { name: "Star playbook: bundled/superdevelop" });
+    expect(star.getAttribute("aria-pressed")).toBe("true");
+    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    fireEvent.click(star);
+    await waitFor(() => expect(star.getAttribute("aria-pressed")).toBe("false"));
+    expect(preferencesByRepo.get("/repo")?.entries).toEqual([expect.objectContaining({ reference: { scope: "bundled", key: "superdevelop" }, preferred: false })]);
+    view.unmount();
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    expect((await screen.findByRole("button", { name: "Star playbook: bundled/superdevelop" })).getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("preserves unreadable preferences until a successful reload, then retains unrelated metadata on change", async () => {
     const saved: PickerPreferences = {
       order: [{ scope: "global", key: "review" }],
@@ -1038,7 +1052,7 @@ describe("repository preferred playbooks", () => {
       diagnostics: [{ code: "picker_preferences", message: "Cannot parse picker.toml", severity: "error" }],
     });
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    const checkbox = await screen.findByRole("button", { name: "Star playbook: repo/review" });
     fireEvent.click(checkbox);
     expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     expect(preferencesByRepo.get("/repo")).toEqual(saved);
@@ -1050,7 +1064,7 @@ describe("repository preferred playbooks", () => {
     await waitFor(() => expect(checkbox).toHaveProperty("disabled", false));
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.click(checkbox);
-    await waitFor(() => expect(checkbox).toHaveProperty("checked", true));
+    await waitFor(() => expect(checkbox.getAttribute("aria-pressed")).toBe("true"));
     expect(preferencesByRepo.get("/repo")).toEqual({ ...saved, entries: [...saved.entries, preference("repo")] });
   });
 
@@ -1062,9 +1076,9 @@ describe("repository preferred playbooks", () => {
     ];
     preferencesByRepo.set("/repo", { order, entries: [legacy] });
     const view = render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
-    const initialCheckbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" });
+    const initialCheckbox = await screen.findByRole("button", { name: "Star playbook: global/review" });
     fireEvent.click(initialCheckbox);
-    await waitFor(() => expect(initialCheckbox).toHaveProperty("checked", true));
+    await waitFor(() => expect(initialCheckbox.getAttribute("aria-pressed")).toBe("true"));
     expect(preferencesByRepo.get("/repo")?.entries).toEqual([{ ...legacy, preferred: true }]);
     expect(mocks.savePlaybookPickerPreferences).toHaveBeenCalledWith(expect.anything(), "/repo");
     fireEvent.change(screen.getByLabelText("Search playbooks"), { target: { value: "repo/review" } });
@@ -1072,10 +1086,10 @@ describe("repository preferred playbooks", () => {
     expect(preferencesByRepo.get("/repo")?.order).toEqual(order);
     view.unmount();
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" });
-    expect(checkbox).toHaveProperty("checked", true);
+    const checkbox = await screen.findByRole("button", { name: "Star playbook: global/review" });
+    expect(checkbox.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(checkbox);
-    await waitFor(() => expect(checkbox).toHaveProperty("checked", false));
+    await waitFor(() => expect(checkbox.getAttribute("aria-pressed")).toBe("false"));
     expect(screen.getByRole("button", { name: "Review Global" })).toBeTruthy();
     expect(preferencesByRepo.get("/repo")?.entries).toEqual([legacy]);
     expect(preferencesByRepo.get("/repo")?.order).toEqual(order);
@@ -1093,15 +1107,15 @@ describe("repository preferred playbooks", () => {
         }),
     );
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    const checkbox = await screen.findByRole("button", { name: "Star playbook: repo/review" });
     fireEvent.click(checkbox);
     expect(checkbox).toHaveProperty("disabled", true);
-    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Star playbook: global/review" })).toHaveProperty("disabled", true);
     await act(async () => rejectSave("Read-only repository"));
     await screen.findByText("Read-only repository");
-    expect(checkbox).toHaveProperty("checked", false);
+    expect(checkbox.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(checkbox);
-    await waitFor(() => expect(checkbox).toHaveProperty("checked", true));
+    await waitFor(() => expect(checkbox.getAttribute("aria-pressed")).toBe("true"));
     expect(screen.queryByText("Read-only repository")).toBeNull();
   });
 
@@ -1116,26 +1130,26 @@ describe("repository preferred playbooks", () => {
         }),
     );
     const view = render(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Star playbook: repo/review" }));
     view.rerender(<Playbooks repoPath="/repo-b" onCreateTask={onCreateTask} />);
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Preferred for this repo: global/review" }));
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Preferred for this repo: global/review" })).toHaveProperty("checked", true));
+    fireEvent.click(await screen.findByRole("button", { name: "Star playbook: global/review" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Star playbook: global/review" }).getAttribute("aria-pressed")).toBe("true"));
     expect(mocks.savePlaybookPickerPreferences).toHaveBeenLastCalledWith(expect.anything(), "/repo-b");
     view.rerender(<Playbooks repoPath="/repo-a" onCreateTask={onCreateTask} />);
-    await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    await screen.findByRole("button", { name: "Star playbook: repo/review" });
     await act(async () => (outcome === "resolve" ? resolveSave() : rejectSave("Stale repository failure")));
-    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("checked", false);
+    expect(screen.getByRole("button", { name: "Star playbook: repo/review" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByText("Stale repository failure")).toBeNull();
-    expect(screen.getByRole("checkbox", { name: "Preferred for this repo: repo/review" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Star playbook: repo/review" })).toHaveProperty("disabled", false);
   });
 
   it("does not allow preferences to mutate without an explicit repository", async () => {
     render(<Playbooks onCreateTask={onCreateTask} />);
-    const checkbox = await screen.findByRole("checkbox", { name: "Preferred for this repo: repo/review" });
+    const checkbox = await screen.findByRole("button", { name: "Star playbook: repo/review" });
     expect(checkbox).toHaveProperty("disabled", true);
-    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("checkbox", { name: "Preferred only" })).toHaveProperty("checked", false);
-    expect(checkbox).toHaveProperty("checked", false);
+    expect(screen.getByRole("checkbox", { name: "Starred only" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("checkbox", { name: "Starred only" })).toHaveProperty("checked", false);
+    expect(checkbox.getAttribute("aria-pressed")).toBe("false");
     expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 });

@@ -1,18 +1,17 @@
-import { ArrowLeft, BookOpen, Check, Download, Eye, Share2, Upload, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, Download, Eye, Share2, Star, Upload, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { askConfirm } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
-import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef, starredPlaybookKeys, withPlaybookStar } from "../shared";
 import { toast } from "../toast";
 import type {
   CommunityImportRow,
   CommunitySummary,
   DownloadStatusRow,
   NormalizedPlaybook,
-  PickerPreference,
   PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
@@ -74,7 +73,7 @@ const libraryColumns = [
   { field: "name", label: "Playbook Name", initialDirection: "asc" },
   { field: "source", label: "Source", initialDirection: "asc" },
   { field: "modified", label: "Last modified", initialDirection: "desc" },
-  { field: "preferred", label: "Preferred for this repo", initialDirection: "desc" },
+  { field: "starred", label: "Starred", initialDirection: "desc" },
 ];
 
 function PlaybookIdentity({ playbookKey, name }: { playbookKey: string; name: string }) {
@@ -173,7 +172,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [graphFraction, setGraphFraction] = useState(2 / 3);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("name-asc");
-  const [preferredOnly, setPreferredOnly] = useState(false);
+  const [starredOnly, setStarredOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [diagnostics, setDiagnostics] = useState<PlaybookValidationError[]>([]);
   const [error, setError] = useState("");
@@ -856,30 +855,15 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       }
     }
   };
-  const setPreferred = (reference: PlaybookRef, preferred: boolean) => {
-    if (!preferences) return;
-    const existing = preferences.entries.find((entry) => samePlaybookRef(entry.reference, reference));
-    const entry: PickerPreference = {
-      reference,
-      hidden: false,
-      collapsed: false,
-      badge: null,
-      color: null,
-      last_imported_at_ms: null,
-      ...existing,
-      preferred,
-    };
-    void savePreferences({
-      ...preferences,
-      entries: existing ? preferences.entries.map((item) => (samePlaybookRef(item.reference, reference) ? entry : item)) : [...preferences.entries, entry],
-    });
+  const setStarred = (reference: PlaybookRef, starred: boolean) => {
+    if (preferences) void savePreferences(withPlaybookStar(preferences, reference, starred));
   };
-  const preferredKeys = new Set(repoPath ? preferences?.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)) : []);
+  const starredKeys = starredPlaybookKeys(repoPath ? preferences : undefined);
   const candidates = catalog?.candidates
     .filter(
       (candidate) =>
         `${candidate.title || ""} ${candidate.description || ""} ${playbookRefKey(candidate.source.reference)}`.toLowerCase().includes(query.trim().toLowerCase()) &&
-        (!preferredOnly || !repoPath || !preferences || preferredKeys.has(playbookRefKey(candidate.source.reference))),
+        (!starredOnly || !repoPath || !preferences || starredKeys.has(playbookRefKey(candidate.source.reference))),
     )
     .sort((left, right) => {
       const identityOrder = playbookRefKey(left.source.reference).localeCompare(playbookRefKey(right.source.reference));
@@ -894,9 +878,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         const sourceDifference = scopeLabels[left.source.reference.scope].localeCompare(scopeLabels[right.source.reference.scope]);
         return (sort === "source-desc" ? -sourceDifference : sourceDifference) || difference || identityOrder;
       }
-      if (sort.startsWith("preferred")) {
-        const preferredDifference = Number(preferredKeys.has(playbookRefKey(left.source.reference))) - Number(preferredKeys.has(playbookRefKey(right.source.reference)));
-        return (sort === "preferred-desc" ? -preferredDifference : preferredDifference) || difference || identityOrder;
+      if (sort.startsWith("starred")) {
+        const starredDifference = Number(starredKeys.has(playbookRefKey(left.source.reference))) - Number(starredKeys.has(playbookRefKey(right.source.reference)));
+        return (sort === "starred-desc" ? -starredDifference : starredDifference) || difference || identityOrder;
       }
       return (sort === "name-desc" ? -difference : difference) || identityOrder;
     });
@@ -1098,18 +1082,18 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               libraryScrollTop.current = event.currentTarget.scrollTop;
             }}
           >
-            <section aria-label={repoPath ? `Preferred for ${repoName(repoPath)}` : "Preferred playbooks"}>
-              <h2>{repoPath ? `Preferred for ${repoName(repoPath)}` : "Preferred playbooks"}</h2>
+            <section aria-label={repoPath ? `Playbooks for ${repoName(repoPath)}` : "Installed playbooks"}>
+              <h2>{repoPath ? `Playbooks for ${repoName(repoPath)}` : "Installed playbooks"}</h2>
               <div className="playbooks-library-controls">
                 <label className="playbooks-search">
                   Search playbooks
                   <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, description or key…" />
                 </label>
-                <Checkbox label="Preferred only" checked={!!repoPath && !!preferences && preferredOnly} disabled={!repoPath || !preferences} onChange={setPreferredOnly} />
+                <Checkbox label="Starred only" checked={!!repoPath && !!preferences && starredOnly} disabled={!repoPath || !preferences} onChange={setStarredOnly} />
               </div>
-              {!repoPath && <p className="hint">Select a repository to manage its preferred playbooks.</p>}
+              {!repoPath && <p className="hint">Select a repository to manage its starred playbooks.</p>}
               {preferenceError && <InlineStatus tone="error">{preferenceError}</InlineStatus>}
-              {preferenceSaving && <p role="status">Saving preferred playbooks…</p>}
+              {preferenceSaving && <p role="status">Saving starred playbooks…</p>}
             </section>
             {catalogError && (
               <InlineStatus tone="error">
@@ -1148,7 +1132,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 <tbody>
                   {candidates?.map((candidate) => {
                     const identity = playbookRefKey(candidate.source.reference);
-                    const isPreferred = preferredKeys.has(identity);
+                    const isStarred = starredKeys.has(identity);
                     return (
                       <tr key={identity} aria-label={identity}>
                         <td>
@@ -1198,12 +1182,17 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                           )}
                         </td>
                         <td>
-                          <Checkbox
-                            label={<span className="sr-only">Preferred for this repo: {identity}</span>}
-                            checked={isPreferred}
+                          <button
+                            type="button"
+                            className="playbook-star-button"
+                            aria-label={`Star playbook: ${identity}`}
+                            title={`${isStarred ? "Unstar" : "Star"} ${candidate.title || candidate.source.reference.key}`}
+                            aria-pressed={isStarred}
                             disabled={!repoPath || !preferences || preferenceSaving}
-                            onChange={(checked) => setPreferred(candidate.source.reference, checked)}
-                          />
+                            onClick={() => setStarred(candidate.source.reference, !isStarred)}
+                          >
+                            <Star size={16} strokeWidth={1.5} fill={isStarred ? "currentColor" : "none"} aria-hidden="true" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -1211,7 +1200,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                 </tbody>
               </table>
             </div>
-            {catalog && candidates?.length === 0 && <p>{query || preferredOnly ? "No matching playbooks." : "No playbooks yet. Create or import a definition."}</p>}
+            {catalog && candidates?.length === 0 && <p>{query || starredOnly ? "No matching playbooks." : "No playbooks yet. Create or import a definition."}</p>}
             {catalog?.diagnostics.map((item) => (
               <InlineStatus key={`${item.code}:${item.message}`} tone="error">
                 {item.code === "picker_preferences" && (

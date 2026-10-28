@@ -1148,7 +1148,7 @@ export function Settings({
             <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
           </div>
           <p id="default-playbook-hint" className="dsc">
-            Manage preferred playbooks for each repository in Playbooks. Preferences do not change this default.
+            Star playbooks in Playbooks to move them to the top. The first starred playbook opens for new tasks; this default is used when none are starred.
           </p>
           {unavailable && (
             <InlineStatus tone="warning">The configured default is unavailable. Choose a valid scoped playbook explicitly; no replacement is selected automatically.</InlineStatus>

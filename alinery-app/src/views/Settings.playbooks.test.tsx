@@ -129,7 +129,7 @@ describe("Scoped playbook settings", () => {
     expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
   });
 
-  it("keeps default choices independent of preferred membership, ordering and legacy visibility", async () => {
+  it("keeps default choices independent of starred membership, ordering and legacy visibility", async () => {
     preferences.order = [
       { scope: "repo", key: "shared" },
       { scope: "global", key: "shared" },
@@ -150,6 +150,7 @@ describe("Scoped playbook settings", () => {
     const select = (await screen.findByLabelText("Default playbook")) as HTMLSelectElement;
     await screen.findByRole("option", { name: "Shared — repo/shared" });
     expect(select.value).toBe("bundled/shared");
+    expect(screen.getByText(/The first starred playbook opens for new tasks/)).toBeTruthy();
     expect(screen.queryByRole("list", { name: "Personal playbook picker" })).toBeNull();
     expect(screen.queryByRole("checkbox", { name: /Hide .* in picker/ })).toBeNull();
     fireEvent.change(select, { target: { value: "repo/shared" } });

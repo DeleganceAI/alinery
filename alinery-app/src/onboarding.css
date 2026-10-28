@@ -914,13 +914,16 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
   margin: 8px 0 18px;
-  padding: 20px 22px;
+  padding: 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
+  background: var(--surface);
+}
+.grid-starter-gate::before,
+.grid-starter-gate::after {
+  content: none;
 }
 
 .grid-starter-header h3 {
@@ -940,62 +943,59 @@
 
 .grid-starter-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 12px;
 }
 
 .grid-starter-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  gap: 12px;
+  padding: 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--surface-raised);
 }
-
-.grid-starter-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.grid-starter-card-top strong {
-  color: var(--text-strong);
-  font-size: calc(13.5px * var(--ui-scale));
-  font-weight: 600;
-}
-
-.grid-starter-card-tagline {
+.grid-starter-card h4 {
   margin: 0;
-  color: var(--accent);
-  font-family: var(--font-mono);
+}
+.grid-starter-card-outline {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
   font-size: calc(11px * var(--ui-scale));
-  line-height: 1.4;
+}
+.grid-starter-card-tagline {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .grid-starter-card-summary {
   margin: 0;
   color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.45;
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
   flex: 1;
 }
 
 .grid-starter-card-actions {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   margin-top: 4px;
 }
-
 .grid-starter-card-actions .btn {
   justify-content: center;
   white-space: normal;
   text-align: center;
+}
+.grid-starter-card-actions .btn + .btn {
+  border-color: transparent;
 }
 
 .grid-starter-footer {
