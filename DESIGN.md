@@ -298,7 +298,7 @@ Rules:
 - Respect `prefers-reduced-motion` and preserve the same information without movement.
 - Never use `transition: all`.
 
-Onboarding's playbook demo is a guided explanation: use a constant zoom and an interruptible `320ms` camera transition to center the next step, followed by a restrained `180ms` detail entrance. This is an explicit exception to routine transition timing. Dwell for `2600ms` on automatic steps, `3800ms` at checkpoints, and `2800ms` on completion. The current progress segment fills linearly over its dwell time; pausing preserves both the fill and remaining time. Completed segments stay filled, and reduced motion uses static progress. Highlight only the incoming connection; keep badges opaque and clear of its arrow. Pause for manual inspection, reveal keyboard-selected content immediately, and suppress movement for reduced motion. Hover feedback must ease in and out over `180ms`, without moving cards. Finish onboarding opens New Task with the chosen playbook for both new and existing repositories; it never starts execution automatically.
+Onboarding's playbook demo is a guided explanation: use a constant zoom and an interruptible `320ms` camera transition to center the next step, followed by a restrained `180ms` detail entrance. This is an explicit exception to routine transition timing. Dwell for `2600ms` on automatic steps, `3800ms` at checkpoints, and `2800ms` on completion. The current progress segment fills linearly over its dwell time; pausing preserves both the fill and remaining time. Completed segments stay filled, and reduced motion uses static progress. Highlight only the incoming connection. Graph nodes put the title above a quiet icon-and-status row, combining example numbers into that row when needed; avoid floating status pills and keep the incoming arrow clear. Pause for manual inspection, reveal keyboard-selected content immediately, and suppress movement for reduced motion. Hover feedback must ease in and out over `180ms`, without moving cards. Finish onboarding opens New Task with the chosen playbook for both new and existing repositories; it never starts execution automatically.
 
 ### Iconography and imagery
 
@@ -399,6 +399,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 - Hover-only actions must also appear on keyboard focus.
 - Menus and dialogs support Escape, correct focus trapping, and focus restoration.
 - The onboarding overlay uses the shared native dialog. Background workspace shortcuts stay inactive, and Escape dismisses only the topmost nested dialog.
+- On the final onboarding step, place secondary Build a new playbook beside primary Finish onboarding and omit Skip. Keep the optional mechanics explanation in the How work moves disclosure.
 - Destructive confirmations default focus to the safe choice.
 - Lists and tables preserve selection during refresh when the selected object still exists.
 - Streaming content should not steal scroll position or cause avoidable layout shift.

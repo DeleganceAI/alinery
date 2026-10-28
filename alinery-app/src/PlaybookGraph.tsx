@@ -1,4 +1,4 @@
-import { ArrowRight, Focus, Hand, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
+import { ArrowRight, Check, Focus, Hand, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph, reduceFlowConnections } from "./playbookGraphLayout";
 import type { NormalizedStep } from "./types";
@@ -462,6 +462,7 @@ export function PlaybookGraph({
                               }}
                               aria-label={`${showInspector ? "Inspect" : "Highlight"} ${step.title}${instance === null ? "" : ` — example ${instance}`}`}
                               aria-pressed={selectedStep?.key === key}
+                              aria-describedby={activeSimStatus ? `${inspectorId}-${id}-status` : undefined}
                               aria-controls={showInspector ? inspectorId : undefined}
                               title={`${step.title}${instance === null ? "" : " — illustrative instance, not a fixed count"}`}
                               onClick={() => {
@@ -477,10 +478,28 @@ export function PlaybookGraph({
                               onMouseLeave={() => setHoveredKey(null)}
                             >
                               <span className="playbook-definition-node-title">{step.title}</span>
-                              {instance !== null && <span className="playbook-definition-instance">Example {instance}</span>}
-                              {activeSimStatus === "running" && <span className="playbook-node-sim-badge running">Running</span>}
-                              {activeSimStatus === "waiting_for_approval" && <span className="playbook-node-sim-badge gate">Checkpoint · Needs review</span>}
-                              {activeSimStatus === "completed" && <span className="playbook-node-sim-badge completed">Artifact sealed</span>}
+                              {activeSimStatus ? (
+                                <span className="playbook-definition-node-meta">
+                                  {instance !== null && <span className="playbook-definition-instance">Example {instance}</span>}
+                                  {instance !== null && (
+                                    <span className="playbook-node-meta-separator" aria-hidden="true">
+                                      ·
+                                    </span>
+                                  )}
+                                  <span id={`${inspectorId}-${id}-status`} className={`playbook-node-status ${activeSimStatus}`}>
+                                    {activeSimStatus === "running" ? (
+                                      <span className="playbook-node-status-dot" aria-hidden="true" />
+                                    ) : activeSimStatus === "waiting_for_approval" ? (
+                                      <Hand size={12} strokeWidth={1.5} aria-hidden="true" />
+                                    ) : (
+                                      <Check size={12} strokeWidth={1.5} aria-hidden="true" />
+                                    )}
+                                    {activeSimStatus === "running" ? "Running" : activeSimStatus === "waiting_for_approval" ? "Needs review" : "Complete"}
+                                  </span>
+                                </span>
+                              ) : instance !== null ? (
+                                <span className="playbook-definition-instance">Example {instance}</span>
+                              ) : null}
                             </button>
                           );
                         })}

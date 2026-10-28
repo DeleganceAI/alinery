@@ -261,7 +261,8 @@
 }
 
 .playbook-definition-node[data-sim-status] {
-  padding: calc(24px * var(--ui-scale)) calc(8px * var(--ui-scale)) calc(6px * var(--ui-scale));
+  gap: calc(2px * var(--ui-scale));
+  padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale));
 }
 
 .playbook-definition-node[data-sim-status] .playbook-definition-node-title {
@@ -283,41 +284,41 @@
   background: var(--success-subtle);
 }
 
-.playbook-node-sim-badge {
-  position: absolute;
-  top: calc(4px * var(--ui-scale));
-  right: calc(6px * var(--ui-scale));
+.playbook-definition-node-meta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: calc(5px * var(--ui-scale));
+  max-width: 100%;
+  font-size: calc(10.5px * var(--ui-scale));
+  line-height: calc(14px * var(--ui-scale));
+  white-space: nowrap;
+}
+.playbook-definition-node-meta .playbook-definition-instance {
+  font-size: inherit;
+  line-height: inherit;
+}
+.playbook-node-meta-separator { color: var(--text-faint); }
+.playbook-node-status {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-raised);
-  font-size: calc(11px * var(--ui-scale));
-  font-weight: 500;
-  line-height: 1.3;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  gap: calc(4px * var(--ui-scale));
+  color: var(--text-muted);
+  font-weight: 400;
 }
-
-.playbook-node-sim-badge.running {
-  border-color: var(--accent);
-  color: var(--accent);
+.playbook-node-status.waiting_for_approval { color: var(--warning); }
+.playbook-node-status.completed { color: var(--success); }
+.playbook-node-status svg {
+  flex: none;
+  width: calc(12px * var(--ui-scale));
+  height: calc(12px * var(--ui-scale));
 }
-
-.playbook-node-sim-badge.gate {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
-.playbook-node-sim-badge.completed {
-  border-color: var(--success);
-  color: var(--success);
+.playbook-node-status-dot {
+  width: calc(5px * var(--ui-scale));
+  height: calc(5px * var(--ui-scale));
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .playbook-definition-node:hover {
@@ -576,10 +577,6 @@
   animation: playbook-artifact-transfer 420ms ease-out;
 }
 
-.playbook-simulation-graph[data-simulation-playing="true"] .playbook-node-sim-badge {
-  animation: playbook-badge-arrive 140ms ease-out;
-}
-
 @keyframes playbook-step-arrive {
   from { border-color: var(--border-strong); }
   to { border-color: var(--accent); }
@@ -590,18 +587,12 @@
   to { stroke-dashoffset: 0; }
 }
 
-@keyframes playbook-badge-arrive {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .playbook-simulation-graph .playbook-definition-stage {
     transition: none !important;
   }
   .playbook-simulation-graph .playbook-definition-node,
-  .playbook-simulation-graph .playbook-definition-connection,
-  .playbook-simulation-graph .playbook-node-sim-badge {
+  .playbook-simulation-graph .playbook-definition-connection {
     animation: none !important;
     transition: none;
   }

@@ -115,9 +115,10 @@
 }
 
 .onboarding-header {
-  display: flex;
+  height: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 16px 28px;
   border-bottom: 1px solid var(--border);
@@ -214,6 +215,7 @@
 }
 
 .onboarding-header-actions {
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -677,24 +679,61 @@
 }
 
 
-.onboarding-mechanics-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: auto;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-subtle);
+.onboarding-mechanics {
+  padding: 18px 4px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.onboarding-mechanics summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.onboarding-mechanics summary::marker {
+  color: var(--text-muted);
+}
+
+.onboarding-mechanics-list {
+  display: grid;
+  gap: 16px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .onboarding-mechanic-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.onboarding-mechanic-icon {
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.onboarding-mechanic-checkpoint {
+  color: var(--warning);
+}
+
+.onboarding-mechanic-item h4 {
+  margin: 0 0 3px;
+  color: var(--text-strong);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.onboarding-mechanic-item p {
+  margin: 0;
   color: var(--text-muted);
   font-size: calc(11.5px * var(--ui-scale));
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .onboarding-pill-accent {
@@ -1167,23 +1206,6 @@
 
 /* Keep the preview visible while the local demo runs. */
 .onboarding-body-playbooks { animation: none; }
-.onboarding-build-playbook {
-  margin-top: 16px;
-  padding: 16px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-subtle);
-}
-.onboarding-build-playbook h3 {
-  margin: 0 0 6px;
-  font-size: calc(14px * var(--ui-scale));
-}
-.onboarding-build-playbook p {
-  margin: 0 0 12px;
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.5;
-}
 .onboarding-step-count {
   font-size: calc(12px * var(--ui-scale));
   color: var(--text-muted);

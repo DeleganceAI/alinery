@@ -1,5 +1,5 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Coffee, FolderPlus, Layers, Pause, Play, ShieldCheck, Workflow, X, Zap } from "lucide-react";
+import { ArrowRight, Check, Coffee, FolderPlus, GitFork, Hand, Layers, Pause, Play, ShieldCheck, Workflow, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
@@ -360,13 +360,12 @@ export function OnboardingFlow({
           </div>
 
           <div className="onboarding-header-actions">
-            {hasActiveRepo ? (
+            {hasActiveRepo && step !== "playbooks" && (
               <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
                 Skip Onboarding
               </button>
-            ) : (
-              <span className="onboarding-header-caption">Pick a repository to continue</span>
             )}
+            {!hasActiveRepo && <span className="onboarding-header-caption">Pick a repository to continue</span>}
           </div>
         </header>
 
@@ -505,38 +504,32 @@ export function OnboardingFlow({
                 })}
               </div>
 
-              <div className="onboarding-build-playbook">
-                <h3>Make it your own</h3>
-                <p>Design steps, artifacts, and checkpoints for your team's workflow.</p>
-                <button
-                  type="button"
-                  className="btn small"
-                  onClick={() => {
-                    if (BUILD_ARCHETYPE) onOpenCreateWithPlaybook(BUILD_ARCHETYPE.reference, BUILD_ARCHETYPE.starterPreset);
-                  }}
-                  disabled={!hasActiveRepo || !BUILD_ARCHETYPE}
-                >
-                  Build a new playbook
-                  <ArrowRight size={14} aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="onboarding-mechanics-strip" aria-label="Core playbook mechanics">
-                <div className="onboarding-mechanic-item">
-                  <span className="pill onboarding-pill-accent">Auto-advance</span>
-                  <span>Agent moves to the next step automatically once its output artifact is validated.</span>
-                </div>
-                <div className="onboarding-mechanic-item">
-                  <span className="pill onboarding-pill-warning">Human checkpoint</span>
-                  <span>Execution pauses so you can read or comment on the markdown artifact before continuing.</span>
-                </div>
-                <div className="onboarding-mechanic-item">
-                  <span className="pill">Swarm fan-out (each)</span>
-                  <span>
-                    One step emits wildcard files (<code>request-*.md</code>), spawning a parallel agent per file and joining on <code>complete</code>.
-                  </span>
-                </div>
-              </div>
+              <details className="onboarding-mechanics" aria-label="Core playbook mechanics">
+                <summary>How work moves</summary>
+                <ul className="onboarding-mechanics-list">
+                  <li className="onboarding-mechanic-item">
+                    <ArrowRight className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Auto-advance</h4>
+                      <p>Moves on when the step’s output is validated.</p>
+                    </div>
+                  </li>
+                  <li className="onboarding-mechanic-item">
+                    <Hand className="onboarding-mechanic-icon onboarding-mechanic-checkpoint" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Human checkpoint</h4>
+                      <p>Pauses for you to review or comment before continuing.</p>
+                    </div>
+                  </li>
+                  <li className="onboarding-mechanic-item">
+                    <GitFork className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Parallel agents</h4>
+                      <p>Runs an agent per artifact, then brings their results together.</p>
+                    </div>
+                  </li>
+                </ul>
+              </details>
             </div>
 
             {activePlaybook ? (
@@ -847,6 +840,18 @@ export function OnboardingFlow({
               </button>
             </div>
             <div className="onboarding-footer-right">
+              {step === "playbooks" && (
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    if (BUILD_ARCHETYPE) onOpenCreateWithPlaybook(BUILD_ARCHETYPE.reference, BUILD_ARCHETYPE.starterPreset);
+                  }}
+                  disabled={!hasActiveRepo || !BUILD_ARCHETYPE}
+                >
+                  Build a new playbook
+                </button>
+              )}
               <button
                 type="button"
                 className="btn"

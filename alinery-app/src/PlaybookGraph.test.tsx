@@ -697,6 +697,50 @@ it("anchors both arrow tips exactly at the destination node's top edge", () => {
   }
 });
 
+it("describes simulated node statuses without changing their action names", () => {
+  const steps = [step("build", [], ["result.md"])];
+  const props = { variant: "definition" as const, title: "Demo", steps, showInspector: false };
+  const { rerender } = render(<PlaybookGraph {...props} simulatedStatuses={{ build: "running" }} />);
+
+  for (const [status, description] of [
+    ["running", "Running"],
+    ["waiting_for_approval", "Needs review"],
+    ["completed", "Complete"],
+  ] as const) {
+    rerender(<PlaybookGraph {...props} simulatedStatuses={{ build: status }} />);
+    const node = screen.getByRole("button", { name: "Highlight build", description });
+    expect(within(node).getByText("build")).toBeTruthy();
+    expect(within(node).getByText(description)).toBeTruthy();
+    expect(within(node).getByText(description).querySelector('[aria-hidden="true"]')).not.toBeNull();
+  }
+
+  rerender(<PlaybookGraph {...props} simulatedStatuses={{ build: "idle" }} />);
+  expect(screen.getByRole("button", { name: "Highlight build" }).hasAttribute("aria-describedby")).toBe(false);
+  rerender(<PlaybookGraph {...props} showInspector />);
+  expect(screen.getByRole("button", { name: "Inspect build" }).hasAttribute("aria-describedby")).toBe(false);
+});
+
+it("gives repeated examples unique status descriptions across graph instances", () => {
+  const steps = [step("seed", [], ["requests/*.md"]), { ...step("gather", ["requests/*.md"], []), inputs: [{ path: "requests/*.md", mode: "each" as const }] }];
+  const props = { variant: "definition" as const, steps, simulatedStatuses: { gather: "running" as const } };
+  render(
+    <>
+      <PlaybookGraph {...props} title="First" />
+      <PlaybookGraph {...props} title="Second" />
+    </>,
+  );
+  const examples = screen.getAllByRole("button", { name: /^Inspect gather — example/, description: "Running" });
+  expect(examples).toHaveLength(6);
+  const descriptionIds = examples.map((node) => node.getAttribute("aria-describedby"));
+  expect(new Set(descriptionIds).size).toBe(examples.length);
+  for (const [index, node] of examples.entries()) {
+    expect(within(node).getByText(`Example ${(index % 3) + 1}`)).toBeTruthy();
+    const description = document.getElementById(descriptionIds[index] ?? "");
+    expect(description?.textContent).toBe("Running");
+    expect(node.contains(description)).toBe(true);
+  }
+});
+
 it("reveals the actual repeated example on keyboard focus and click, including after pausing", () => {
   mockCanvasDimensions();
   const steps = [step("seed", [], ["requests/*.md"]), { ...step("gather", ["requests/*.md"], []), inputs: [{ path: "requests/*.md", mode: "each" as const }] }];

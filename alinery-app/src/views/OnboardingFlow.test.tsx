@@ -427,6 +427,7 @@ describe("OnboardingFlow wizard", () => {
       expect(readSavedOnboardingStep(true)).toBe(next);
       await act(async () => {});
     }
+    expect(screen.queryByRole("button", { name: "Skip Onboarding" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
     expect(props.onCompleteToWorkspace).not.toHaveBeenCalled();
     expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledWith({ scope: "bundled", key: "superdevelop" });
@@ -435,6 +436,7 @@ describe("OnboardingFlow wizard", () => {
     expect(createSessionForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Skip Onboarding" })).toBeTruthy();
   });
 
   it("makes provider subscriptions and API-key setup visible before the model choice", async () => {
@@ -552,6 +554,19 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
+  it("keeps the mechanics guide collapsed until requested", async () => {
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    const guide = screen.getByLabelText("Core playbook mechanics") as HTMLDetailsElement;
+    expect(guide.open).toBe(false);
+    fireEvent.click(within(guide).getByText("How work moves"));
+    expect(guide.open).toBe(true);
+    expect(within(guide).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(guide).getByRole("heading", { name: "Auto-advance" })).toBeTruthy();
+    expect(within(guide).getByRole("heading", { name: "Human checkpoint" })).toBeTruthy();
+    expect(within(guide).getByRole("heading", { name: "Parallel agents" })).toBeTruthy();
+  });
+
   it("offers building a new playbook separately through the existing creation form", async () => {
     const props = flowProps();
     render(<OnboardingFlow {...props} initialStep="playbooks" />);
@@ -559,7 +574,15 @@ describe("OnboardingFlow wizard", () => {
     const examples = screen.getByRole("radiogroup", { name: "Explore starter playbooks" });
     expect(within(examples).queryByText("Build a New Playbook")).toBeNull();
     expect(within(examples).getAllByRole("radio")).toHaveLength(4);
-    fireEvent.click(screen.getByRole("button", { name: "Build a new playbook" }));
+    expect(screen.queryByText("Make it your own")).toBeNull();
+    const footer = screen.getByRole("contentinfo");
+    const builderButton = within(footer).getByRole("button", { name: "Build a new playbook" });
+    expect(
+      within(footer)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Back", "Build a new playbook", "Finish onboarding"]);
+    fireEvent.click(builderButton);
     const builder = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === "build-playbook");
     expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledWith({ scope: "bundled", key: "build-playbook" }, builder?.starterPreset);
     expect(props.onCompleteToWorkspace).not.toHaveBeenCalled();
