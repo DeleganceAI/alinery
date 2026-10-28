@@ -4,7 +4,8 @@
 // Protocol: one bounded JSON request header per connection; create_task and send_message
 // carry exactly body_bytes raw bytes after the header newline.
 //   open/attach → reply {"ok":true}\n, then the connection becomes a raw PTY byte pipe:
-//                 a reconstructed screen frame (not a raw tail — see #96) followed by live pty bytes.
+//                 the raw scrollback tail (normal buffer) or a reconstructed screen frame
+//                 (alt screen, or no tail — see #96, #150) followed by live pty bytes.
 //   rpc_attach → reply {"ok":true}\n, then the connection becomes a JSON-line pipe:
 //                each child-stdout line, verbatim, including the trailing newline.
 //   write/resize/detach/status/list/shutdown/restate/rpc_write → one JSON request, one JSON response line, close.
@@ -4478,9 +4479,10 @@ fn attach_client(
     // Match the emulator (and the pty) to the client BEFORE rendering the frame: a frame
     // built at 40x120 written into a differently-sized xterm wraps into garbage, and an
     // idle claude will not repaint to save us.
-    // Caveat: set_size on a SHRINK is destructive (vt100 drops the off-screen cells, and we
-    // run with scrollback_len 0). That is acceptable because a real size change also resizes
-    // the pty, delivering SIGWINCH and a harness repaint; a same-size attach is a no-op.
+    // Caveat: set_size on a SHRINK is destructive (vt100 drops the BOTTOM rows, and we run
+    // with scrollback_len 0), and a shell's SIGWINCH redraws only its prompt, never history.
+    // Tolerable only because a normal-buffer reattach replays the raw tail, not this frame
+    // (#150); an alt-screen TUI repaints on SIGWINCH, and a same-size attach is a no-op.
     if let Some((cols, rows)) = size {
         if cols > 0 && rows > 0 {
             let _ = master.resize(PtySize {
@@ -4497,9 +4499,9 @@ fn attach_client(
 
     let scrollback_path = scrollback_path.clone();
     let mut inner = sess.inner.lock().unwrap_or_else(|e| e.into_inner());
-    let (alt, frame) = {
+    let (alt, frame, input_modes) = {
         let parser = inner.parser.as_ref().ok_or_else(|| WRONG_TRANSPORT.to_string())?;
-        (parser.screen().alternate_screen(), replay_frame(parser))
+        (parser.screen().alternate_screen(), replay_frame(parser), parser.screen().input_mode_formatted())
     };
     // A normal-buffer harness builds real terminal scrollback. Replay its durable byte history so
     // closing and reopening alinery does not collapse that history to the final few hundred lines.
@@ -4510,7 +4512,15 @@ fn attach_client(
     } else {
         strip_terminal_queries(&tail_bytes(&scrollback_path, ATTACH_REPLAY_BYTES))
     };
-    replay.extend_from_slice(&frame);
+    if replay.is_empty() {
+        replay = frame;
+    } else {
+        // Never the frame after a raw tail: state_formatted() opens with ESC[H ESC[J, which wipes
+        // the viewport the tail just drew and repaints it from an emulator that keeps no scrollback
+        // and truncates from the bottom on a shrink (#150). Only the input modes are worth
+        // restoring: the 8 MiB tail may start after the harness enabled them.
+        replay.extend_from_slice(&input_modes);
+    }
 
     // Hand the socket and initial ack/replay directly to a dedicated writer thread while holding
     // the inner lock, so no live byte can slip ahead of replay. Initial history is not charged to
