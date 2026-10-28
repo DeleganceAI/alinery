@@ -2987,6 +2987,22 @@ describe("review continuation", () => {
       expect(continueExecution).not.toHaveBeenCalled();
     });
 
+    it("states the dead-owner attestation before ending a session whose daemon died (#129)", async () => {
+      sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
+      const dead = readyReply(null);
+      dead.state.executions["execution-a"].lifecycle = "interrupted";
+      dead.state.executions["execution-a"].error = "previous process disposition is unknown; ownership retained";
+      getTaskExecution.mockResolvedValue(dead);
+      renderSession({ intent: undefined });
+      fireEvent.click(await openSessionAction("End session…"));
+      await waitFor(() => expect(stopExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
+      expect(confirmDanger).toHaveBeenCalledTimes(1);
+      const body = render(<>{confirmDanger.mock.calls[0][1]}</>).container.textContent;
+      expect(body).toMatch(/No process will be stopped.*previous process is gone/);
+      expect(endExecution).not.toHaveBeenCalled();
+      expect(restartExecution).not.toHaveBeenCalled();
+    });
+
     it("routes unusable saved artifacts to entry without stopping the session", async () => {
       prepareEndExecution.mockResolvedValue({ request, artifacts: [], diagnostics: ["No valid output"] });
       renderSession();

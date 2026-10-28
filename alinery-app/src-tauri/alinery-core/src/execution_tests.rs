@@ -2057,3 +2057,58 @@ fn step_model_missing_field_parses_as_empty_map() {
     let state: TaskExecutionState = serde_json::from_value(value).unwrap();
     assert!(state.step_models.is_empty());
 }
+
+// Issue #129: a daemon killed mid-step leaves its owner Interrupted with no exit proof.
+// Nothing can ever confirm that exit, so the record holds capacity and its collection
+// never closes. Only an explicit human attestation may release it; release is not
+// acceptance, and it reopens both existing recovery paths (fresh owner, human handoff).
+// Does not compile until `release_interrupted_owner(state, id, session_id)` exists.
+#[test]
+fn interrupted_owner_without_exit_proof_is_released_only_by_explicit_human_attestation() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 1);
+    let id = f.reserve(false);
+    let owner = f.run(&id);
+    f.write_output(&id, 0, None);
+    interrupt_unproven_owners(&mut f.state, &BTreeSet::new());
+    assert_eq!(f.state.executions[&id].lifecycle, ExecutionLifecycle::Interrupted);
+    assert!(!f.state.executions[&id].shutdown_confirmed);
+    assert!(f.state.executions[&id].lifecycle.holds_capacity(), "the dead owner still counts as active");
+    assert!(recover_execution_owner(&mut f.state, &id).is_err(), "today's dead end: no proof, no recovery");
+
+    assert!(release_interrupted_owner(&mut f.state, &id, "not-the-owner").is_err());
+    release_interrupted_owner(&mut f.state, &id, &owner).unwrap();
+    let record = &f.state.executions[&id];
+    assert_eq!(record.lifecycle, ExecutionLifecycle::Failed);
+    assert!(record.shutdown_confirmed);
+    assert_eq!(record.exit_code, None);
+    assert!(record.receipt_id.is_none(), "release is not acceptance");
+    assert!(!record.lifecycle.holds_capacity());
+    assert!(f.state.occurrences.values().all(|o| o.producer_execution_id.as_deref() != Some(id.as_str())));
+    assert!(release_interrupted_owner(&mut f.state, &id, &owner).is_err(), "release is single-shot");
+    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
+    read_execution_state(&f.repo, "task").expect("released record satisfies the decode invariants");
+
+    // Path 1: the already-written output can be handed off by the human (End & continue).
+    let mut handoff = f.state.clone();
+    let request = crate::EndExecutionRequest {
+        task_slug: "task".into(),
+        execution_id: id.clone(),
+        session_id: owner.clone(),
+        process_incarnation: "incarnation".into(),
+        work_revision: handoff.executions[&id].work_revision,
+    };
+    handoff.executions.get_mut(&id).unwrap().human_end = Some(request.clone());
+    assert!(matches!(
+        accept_human_end(&f.repo, "task", &f.definition, &mut handoff, &request).unwrap(),
+        CompletionOutcome::Accepted { .. }
+    ));
+    assert_eq!(handoff.executions[&id].lifecycle, ExecutionLifecycle::Completed);
+    assert!(handoff.occurrences.values().any(|o| o.producer_execution_id.as_deref() == Some(id.as_str())));
+
+    // Path 2: a fresh owner can take the same binding (Recover / Restart this step).
+    let replacement = recover_execution_owner(&mut f.state, &id).unwrap();
+    assert_ne!(replacement, owner);
+    assert_eq!(f.state.executions[&id].previous_session_ids, vec![owner]);
+    request_execution_start(&mut f.state, &id).unwrap();
+    assert!(claim_execution_launch(&mut f.state, &id).unwrap());
+}

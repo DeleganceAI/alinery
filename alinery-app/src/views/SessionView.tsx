@@ -2124,6 +2124,14 @@ export function SessionView({
   const canEnd = unacceptedOwner && executionAvailable && Boolean(continuationReason);
   const canRecover = unacceptedOwner && executionAvailable;
   const canRestart = canRecover && Boolean(onOpenReplacement || onOpenSession);
+  // Issue #129: this session's daemon died without recording an exit, so no process can be
+  // stopped. The confirmed request is the user's attestation that releases the dead owner.
+  const releaseNotice = effectiveLifecycleState === "interrupted" && (
+    <p>
+      <strong>No process will be stopped.</strong> This session's daemon was killed and no exit was recorded. Confirming attests that the previous process is gone (for example the
+      machine or WSL was shut down) and releases this step. A process that is somehow still running could keep writing this step's outputs. The release itself publishes nothing.
+    </p>
+  );
   const openArtifactEntry = () => {
     if (!canRecover || completionBusy) return;
     artifactAuthorization.current = null;
@@ -2172,6 +2180,7 @@ export function SessionView({
               ))}
             </ul>
             <p>The artifacts will be checked again after the session stops. If they cannot be used, the next step will not start.</p>
+            {releaseNotice}
           </div>,
           "End & continue",
         ))
@@ -2230,9 +2239,16 @@ export function SessionView({
                 <strong>Warning:</strong> The restarted agent may overwrite existing artifacts, including downstream artifacts, and worktree files. Previous artifact contents may
                 not be recoverable.
               </p>
+              {releaseNotice}
             </>
           ) : (
-            "Stop this agent without starting another session or advancing the playbook. Saved files and session history are kept. Any work still in progress will be interrupted."
+            <>
+              <p>
+                Stop this agent without starting another session or advancing the playbook. Saved files and session history are kept. Any work still in progress will be
+                interrupted.
+              </p>
+              {releaseNotice}
+            </>
           ),
           restart ? "Restart step" : "End session",
         ))
@@ -2306,6 +2322,7 @@ export function SessionView({
               ))}
             </ul>
             <p>The artifacts will be checked again before the handoff. Session history and worktree changes are kept.</p>
+            {releaseNotice}
           </div>,
           "End & continue",
         ))
