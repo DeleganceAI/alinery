@@ -13,6 +13,7 @@ import type {
   CreateTaskResult,
   NotificationPrefs,
   PlaybookCatalog,
+  PlaybookRef,
   ReviewHandoffResult,
   ScopedPlaybook,
   SessionListItem,
@@ -477,10 +478,14 @@ vi.mock("./views/CreateTaskPage", async (importOriginal) => {
   const actual = await importOriginal<typeof CreateTaskModule>();
   const MockCreateTaskPage = ({
     initialDraft,
+    initialPlaybook,
+    initialPreset,
     onCreated,
     onOpened = () => {},
   }: {
     initialDraft?: BoardTask;
+    initialPlaybook?: PlaybookRef;
+    initialPreset?: Parameters<typeof actual.CreateTaskPage>[0]["initialPreset"];
     onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void;
     onOpened?: () => void;
   }) => {
@@ -497,6 +502,8 @@ vi.mock("./views/CreateTaskPage", async (importOriginal) => {
     return (
       <div>
         <span>create task:{initialDraft?.slug}</span>
+        <span>create playbook:{initialPlaybook?.key}</span>
+        <span>create preset:{initialPreset?.name}</span>
         <button type="button" onClick={() => onCreated(result)}>
           open created task
         </button>
@@ -647,62 +654,52 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
 
 describe("onboarding gate", () => {
   it.each([
-    { creation: "ready" as const, error: null },
-    { creation: "partial" as const, error: "Worktree could not be created" },
-  ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
+    { repository: "with existing tasks", tasks: [task] },
+    { repository: "without tasks", tasks: [] },
+  ])("opens the new-task form after finishing resumed onboarding $repository without executing a task", async ({ tasks }) => {
+    ipcMocks.listBoardTasks.mockResolvedValue(tasks);
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => ({
-      source: { reference, path: null },
-      source_text: `+++\nversion = 2\nkey = "${reference.key}"\ntitle = "${reference.key}"\ndefault_harness = "omp"\n[[step]]\nkey = "inspect"\ntitle = "Inspect"\noutputs = [{ path = "result.md" }]\nauto_advance_default = false\n+++\n# Inspect\nInspect the work.`,
-      modified_at_ms: null,
-      definition: {
-        version: 2,
-        key: reference.key,
-        title: reference.key,
-        description: "",
-        default_model: "",
-        default_harness: "omp",
-        preamble: "",
-        section_order: ["inspect"],
-        step: [
-          {
-            key: "inspect",
-            title: "Inspect",
-            short: "",
-            inputs: [],
-            outputs: [{ path: "result.md" }],
-            model: "",
-            harness: "",
-            prompt: "Inspect the work.",
-            is_coding_step: false,
-            auto_advance_default: false,
-          },
-        ],
-      },
-    }));
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
-      task,
-      sessions: [],
-      executions: [],
-      creation,
-      start: creation === "ready" ? "queued" : "not_requested",
-      errors: error ? [{ stage: "git_worktree", code: "provisioning_failed", message: error }] : [],
-    });
-    render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Run SuperDevelop starter task" }));
-    await waitFor(() => expect(screen.queryByTestId("onboarding-flow")).toBeNull());
-    const notifications = screen.getByRole("status", { name: "Notifications" });
-    if (error) expect(notifications.textContent).toContain(error);
-    else expect(notifications.textContent).toBe("");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
-  });
-
-  it("offers a configured install the guide once at Playbooks, then lands on the task list after Skip", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
+    expect(screen.queryByRole("tab", { name: /First task/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    await screen.findByText("create playbook:superdevelop");
+    expect(screen.getByText("create preset:")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("carries the selected playbook into the new-task form after onboarding", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "playbooks");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Bug Hunting/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    await screen.findByText("create playbook:bug-hunting");
+    expect(screen.getByText("create preset:")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("opens the existing task form for a custom playbook without executing it", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "playbooks");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Build a new playbook" }));
+    await screen.findByText("create playbook:build-playbook");
+    expect(screen.getByText("create preset:Design a custom playbook for this repository")).toBeTruthy();
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("offers a configured install the guide once at Models, then lands on the task list after Skip", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-models");
     // With a repository the guide is a modal over the board, not a replacement for it.
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
@@ -720,7 +717,7 @@ describe("onboarding gate", () => {
   it("keeps workspace shortcuts and focus inside the open guide", async () => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     render(<App />);
-    await screen.findByTestId("onboarding-step-playbooks");
+    await screen.findByTestId("onboarding-step-models");
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
     const skip = within(guide).getByRole("button", { name: "Skip Onboarding" });
     vi.useFakeTimers();
@@ -743,7 +740,7 @@ describe("onboarding gate", () => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^API keys/ }));
     const provider = await screen.findByRole("dialog", { name: /providers/i });
     const accounts = within(provider).getByRole("tab", { name: "Accounts" });
     accounts.focus();
@@ -775,7 +772,7 @@ describe("onboarding gate", () => {
     expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
     expect(screen.queryByTestId("onboarding-step-playbooks")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByTestId("onboarding-step-playbooks");
+    await screen.findByTestId("onboarding-step-models");
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
@@ -789,7 +786,7 @@ describe("onboarding gate", () => {
     try {
       window.localStorage.removeItem("alinery.onboardingCompleted.v1");
       render(<App />);
-      await screen.findByTestId("onboarding-step-playbooks");
+      await screen.findByTestId("onboarding-step-models");
       expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
       expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
 
@@ -861,7 +858,7 @@ describe("startup view", () => {
     render(<App />);
 
     expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
-    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
   });
 

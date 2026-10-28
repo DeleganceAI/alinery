@@ -1,6 +1,6 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Cpu, FolderOpen, FolderPlus, Layers, Play, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Check, Coffee, FolderPlus, GitFork, Hand, Layers, Pause, Play, ShieldCheck, Workflow, X, Zap } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
@@ -8,7 +8,8 @@ import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
-import type { AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
+import { toast } from "../toast";
+import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
 
 const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   single: "single",
@@ -16,6 +17,16 @@ const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
   complete: "complete — waits for all upstream outputs",
 };
 const EMPTY_STEPS: NormalizedPlaybook["step"] = [];
+const EXAMPLE_ARCHETYPES = CURATED_PLAYBOOK_ARCHETYPES.filter((item) => item.reference.key !== "build-playbook");
+const BUILD_ARCHETYPE = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === "build-playbook");
+const OMP_REPO_URL = "https://github.com/can1357/oh-my-pi";
+// `needle` pre-fills the accounts dialog search; it matches OMP's login row ids (`anthropic`, `openai-codex`, `xai-oauth`).
+const PROVIDER_CARDS = [
+  { name: "Claude", plan: "Claude Pro or Max", needle: "anthropic" },
+  { name: "ChatGPT", plan: "Plus or Pro, via Codex", needle: "codex" },
+  { name: "Grok", plan: "SuperGrok, via xAI", needle: "xai" },
+  { name: "API keys", plan: "Any other provider", needle: "" },
+] as const;
 
 export function OnboardingFlow({
   appConfig,
@@ -27,7 +38,6 @@ export function OnboardingFlow({
   onOpenProviderSetup,
   onCompleteToWorkspace,
   onOpenCreateWithPlaybook,
-  onLaunchStarterTask,
 }: {
   appConfig: AppConfig;
   repoError: string;
@@ -35,10 +45,9 @@ export function OnboardingFlow({
   onSelectRepo: (path: string) => Promise<boolean>;
   onAddRepo: () => Promise<boolean>;
   onRemoveRepo: (path: string) => void;
-  onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void) => void;
+  onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void, preselect?: string) => void;
   onCompleteToWorkspace: () => void;
   onOpenCreateWithPlaybook: (playbook: PlaybookRef, preset?: StarterTaskPreset) => void;
-  onLaunchStarterTask: (playbook: PlaybookRef, preset: StarterTaskPreset) => Promise<void>;
 }) {
   const hasActiveRepo = Boolean(appConfig.active_repo);
   const [step, setStep] = useState<OnboardingStepId>(() => initialStep ?? readSavedOnboardingStep(Boolean(appConfig.active_repo)));
@@ -48,8 +57,10 @@ export function OnboardingFlow({
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
   const [simStepIndex, setSimStepIndex] = useState<number | null>(null);
-  const [intro, setIntro] = useState<"explain" | "cards" | "cue" | "ready">("explain");
   const [playing, setPlaying] = useState(false);
+  const [demoRevision, setDemoRevision] = useState(0);
+  const demoClock = useRef({ key: "", elapsed: 0 });
+  const selectionFromKeyboard = useRef(false);
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
 
   useEffect(() => {
@@ -60,36 +71,63 @@ export function OnboardingFlow({
     return () => media.removeEventListener("change", update);
   }, []);
 
-  useEffect(() => {
-    setPlaying(false);
-    if (step !== "playbooks") return;
-    setIntro(reducedMotion ? "ready" : "explain");
-  }, [step, reducedMotion]);
-
-  useEffect(() => {
-    if (step !== "playbooks" || reducedMotion || (intro !== "explain" && intro !== "cards")) return;
-    const timer = window.setTimeout(() => setIntro(intro === "explain" ? "cards" : "cue"), intro === "explain" ? 700 : 900);
-    return () => window.clearTimeout(timer);
-  }, [step, reducedMotion, intro]);
-
-  // Step 03: Agent & model readiness state
-  const [agentStatus, setAgentStatus] = useState<"checking" | "ready" | "attention">("checking");
-  const [agentDetail, setAgentDetail] = useState<string>("Checking OMP installation…");
+  // Step 02: model readiness state
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [modelError, setModelError] = useState("");
   const [probeTick, setProbeTick] = useState<number>(0);
 
-  // Step 04: Starter task editable fields
+  // Founder plan card. Window focus re-asks the server so a subscription completed in the
+  // browser flips the card to Active without a relaunch. Not while a pairing is in flight:
+  // the sign-in reply is the authoritative status then, and a refresh racing it would read
+  // the not-yet-written credentials as signed out.
+  const [account, setAccount] = useState<AccountStatus | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
+  const planBusyRef = useRef(false);
+  const [planError, setPlanError] = useState("");
+  useEffect(() => {
+    if (step !== "models") return;
+    let cancelled = false;
+    const load = (fetch: () => Promise<AccountStatus>) =>
+      void fetch().then(
+        (status) => {
+          if (!cancelled) setAccount(status);
+        },
+        () => {},
+      );
+    load(ipc.accountStatus);
+    const onFocus = () => {
+      if (!planBusyRef.current) load(ipc.accountRefresh);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [step]);
+
+  // One click from nothing to billing: pair the desktop with a new or existing account in the
+  // browser, then send that same signed-in browser to the plans page for checkout.
+  const startFounderPlan = async () => {
+    planBusyRef.current = true;
+    setPlanBusy(true);
+    setPlanError("");
+    try {
+      const status = account?.signedIn ? account : await ipc.accountSignIn();
+      setAccount(status);
+      if (!status.paid) await ipc.accountOpenPlans();
+    } catch (error) {
+      if (!/cancelled/i.test(String(error))) setPlanError(String(error));
+    } finally {
+      planBusyRef.current = false;
+      setPlanBusy(false);
+    }
+  };
+
   const selectedArchetype = useMemo(
     () => CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === selectedArchetypeKey) ?? CURATED_PLAYBOOK_ARCHETYPES[0],
     [selectedArchetypeKey],
   );
-  const [starterName, setStarterName] = useState<string>(selectedArchetype.starterPreset.name);
-  const [starterDescription, setStarterDescription] = useState<string>(selectedArchetype.starterPreset.description);
-  const [launching, setLaunching] = useState<boolean>(false);
-  const [launchError, setLaunchError] = useState<string>("");
-
   useEffect(() => {
     if (initialStep) {
       setStep(initialStep);
@@ -97,17 +135,10 @@ export function OnboardingFlow({
   }, [initialStep]);
 
   useEffect(() => {
-    if (!hasActiveRepo && (step === "models" || step === "launch")) {
+    if (!hasActiveRepo && step === "models") {
       setStep("workspace");
     }
   }, [hasActiveRepo, step]);
-
-  // Sync starter task preset fields when selected archetype changes
-  useEffect(() => {
-    setStarterName(selectedArchetype.starterPreset.name);
-    setStarterDescription(selectedArchetype.starterPreset.description);
-    setLaunchError("");
-  }, [selectedArchetype]);
 
   // The bundled catalog is readable before repository selection; previews use its actual definitions.
   useEffect(() => {
@@ -148,12 +179,10 @@ export function OnboardingFlow({
     }
   }, [playbookSteps, selectedStepKey]);
 
-  // Check installation without creating a reserved setup process with no attached client.
+  // Read the repository model without creating a reserved setup process with no attached client.
   useEffect(() => {
     if (step !== "models" || !appConfig.active_repo) return;
     let cancelled = false;
-    setAgentStatus("checking");
-    setAgentDetail("Checking OMP installation…");
     setModelError("");
     setRepoConfig(null);
 
@@ -168,20 +197,6 @@ export function OnboardingFlow({
         if (!cancelled) setModelError(String(error));
       });
 
-    void ipc
-      .checkOmpUpdate()
-      .then((status) => {
-        if (cancelled) return;
-        setAgentStatus(status.installed ? "ready" : "attention");
-        setAgentDetail(status.installed ? `Installed: ${status.installed}` : `OMP could not be started at ${status.binary_path || "the configured location"}.`);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const msg = String(error);
-        setAgentStatus("attention");
-        setAgentDetail(msg || "Could not check the OMP installation.");
-      });
-
     return () => {
       cancelled = true;
     };
@@ -189,12 +204,12 @@ export function OnboardingFlow({
 
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const goToStep = (next: OnboardingStepId) => {
-    if ((next === "models" || next === "launch") && !hasActiveRepo) return;
+    if (next === "models" && !hasActiveRepo) return;
     const from = ONBOARDING_STEPS.findIndex((item) => item.id === step);
     const to = ONBOARDING_STEPS.findIndex((item) => item.id === next);
     setDirection(to < from ? "back" : "forward");
     setStep(next);
-    writeSavedOnboardingStep(next);
+    if (hasActiveRepo) writeSavedOnboardingStep(next);
   };
 
   const handleSelectRepo = async (path: string) => {
@@ -207,13 +222,14 @@ export function OnboardingFlow({
     await onAddRepo();
   };
 
-  const handleSelectArchetype = (key: string) => {
-    setIntro("ready");
-    setPlaying(false);
+  const handleSelectArchetype = (key: string, fromKeyboard = false) => {
+    selectionFromKeyboard.current = fromKeyboard;
     setSelectedArchetypeKey(key);
     const nextDef = liveDefinitions[key];
     setSelectedStepKey(nextDef?.step[0]?.key ?? null);
-    setSimStepIndex(null);
+    setSimStepIndex(0);
+    if (key === selectedArchetypeKey) setDemoRevision((value) => value + 1);
+    setPlaying(!reducedMotion && !fromKeyboard);
   };
 
   const simulatedStatuses = useMemo<Record<string, SimulatedStepStatus>>(() => {
@@ -232,50 +248,36 @@ export function OnboardingFlow({
   }, [playbookSteps, simStepIndex]);
 
   const currentSimStep = simStepIndex !== null && simStepIndex < playbookSteps.length ? playbookSteps[simStepIndex] : null;
-  const nextSimStep = simStepIndex !== null && simStepIndex + 1 < playbookSteps.length ? playbookSteps[simStepIndex + 1] : null;
-
-  // A finite invitation, followed by a local demonstration only: no task/session IPC.
+  const simDuration = simStepIndex !== null && simStepIndex >= playbookSteps.length ? 2800 : currentSimStep?.auto_advance_default ? 2600 : 3800;
+  // This preview only changes local state; real checkpoint approval remains explicit.
   useEffect(() => {
-    if (step !== "playbooks" || intro !== "cue" || playbookSteps.length === 0) return;
-    const timer = window.setTimeout(() => {
-      setIntro("ready");
-      setSimStepIndex(0);
-      setSelectedStepKey(playbookSteps[0]?.key ?? null);
-      setPlaying(true);
-    }, 2000);
-    return () => window.clearTimeout(timer);
-  }, [step, intro, playbookSteps]);
-
-  useEffect(() => {
-    if (step !== "playbooks" || !playing || simStepIndex === null) return;
-    if (!currentSimStep || !currentSimStep.auto_advance_default) {
-      setPlaying(false);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      const next = simStepIndex + 1;
-      setSimStepIndex(next);
-      if (playbookSteps[next]) setSelectedStepKey(playbookSteps[next].key);
-    }, 1400);
-    return () => window.clearTimeout(timer);
-  }, [step, playing, simStepIndex, currentSimStep, playbookSteps]);
-
-  const handleAdvanceSimulation = () => {
-    setIntro("ready");
-    const steps = playbookSteps;
-    if (steps.length === 0) return;
-    const nextIndex = simStepIndex === null || simStepIndex >= steps.length ? 0 : simStepIndex + 1;
-    setSimStepIndex(nextIndex);
-    setPlaying(!reducedMotion);
-    if (nextIndex < steps.length) setSelectedStepKey(steps[nextIndex].key);
-  };
-
-  const handleResetSimulation = () => {
-    setIntro("ready");
-    setPlaying(false);
-    setSimStepIndex(null);
+    setDemoRevision((value) => value + 1);
+    setSimStepIndex(playbookSteps.length ? 0 : null);
     setSelectedStepKey(playbookSteps[0]?.key ?? null);
-  };
+    setPlaying(step === "playbooks" && !reducedMotion && !selectionFromKeyboard.current);
+    selectionFromKeyboard.current = false;
+  }, [step, appConfig.active_repo, selectedArchetypeKey, playbookSteps, reducedMotion]);
+
+  useEffect(() => {
+    if (step !== "playbooks" || !playing || simStepIndex === null || playbookSteps.length === 0) return;
+    const complete = simStepIndex >= playbookSteps.length;
+    const key = `${demoRevision}:${simStepIndex}`;
+    if (demoClock.current.key !== key) demoClock.current = { key, elapsed: 0 };
+    const clock = demoClock.current;
+    const startedAt = performance.now();
+    const timer = window.setTimeout(
+      () => {
+        const next = complete ? 0 : simStepIndex + 1;
+        setSimStepIndex(next);
+        if (playbookSteps[next]) setSelectedStepKey(playbookSteps[next].key);
+      },
+      Math.max(0, simDuration - clock.elapsed),
+    );
+    return () => {
+      window.clearTimeout(timer);
+      clock.elapsed = Math.min(simDuration, clock.elapsed + performance.now() - startedAt);
+    };
+  }, [step, appConfig.active_repo, selectedArchetypeKey, playing, simStepIndex, simDuration, playbookSteps, demoRevision]);
 
   const handleCommitDefaultModel = (nextModel: string) => {
     setModelError("");
@@ -301,23 +303,6 @@ export function OnboardingFlow({
       .catch((error) => setModelError(String(error)));
   };
 
-  const handleLaunchStarter = async () => {
-    if (launching || !starterName.trim()) return;
-    setLaunching(true);
-    setLaunchError("");
-    try {
-      await onLaunchStarterTask(selectedArchetype.reference, {
-        ...selectedArchetype.starterPreset,
-        name: starterName.trim(),
-        description: starterDescription.trim(),
-      });
-    } catch (error) {
-      setLaunchError(String(error));
-    } finally {
-      setLaunching(false);
-    }
-  };
-
   const stepIndex = ONBOARDING_STEPS.findIndex((item) => item.id === step);
   const currentStepMeta = ONBOARDING_STEPS[stepIndex] ?? ONBOARDING_STEPS[0];
   const selectedStepIndex = Math.max(
@@ -326,31 +311,14 @@ export function OnboardingFlow({
   );
   const selectedStep = playbookSteps[selectedStepIndex] ?? playbookSteps[0];
 
-  const simPrimaryLabel = (() => {
-    if (simStepIndex === null) return "Simulate run";
-    if (simStepIndex >= playbookSteps.length) return "Simulate again";
-    if (currentSimStep && !currentSimStep.auto_advance_default) {
-      const outputLabel = currentSimStep.outputs.map((o) => o.path).join(" / ") || "artifact";
-      return nextSimStep ? `Approve ${outputLabel} & continue to ${nextSimStep.title}` : `Approve ${outputLabel} & finish run`;
-    }
-    return nextSimStep ? `Advance step to ${nextSimStep.title}` : "Complete final step";
-  })();
-
+  const demoComplete = simStepIndex !== null && simStepIndex >= playbookSteps.length;
   const simStatusCopy = (() => {
-    if (simStepIndex === null) {
-      return "Click a node to inspect its artifact contract, or simulate how execution waves and human gates work.";
-    }
-    if (simStepIndex >= playbookSteps.length) {
-      return "Run complete · All playbook artifacts sealed";
-    }
-    if (!currentSimStep) return "";
-    if (currentSimStep.inputs.some((input) => input.mode === "each")) {
-      return "Fan-out wave · 1 session per matching artifact (mode: each)";
-    }
-    if (!currentSimStep.auto_advance_default) {
-      return "Paused at human checkpoint · Inspect & comment on artifact before continuing";
-    }
-    return "Auto-advances on non-empty output artifact";
+    if (demoComplete && playing) return "Every step is complete. The preview will loop again.";
+    if (!selectedStep) return "Select a step to see how work moves through the playbook.";
+    if (!selectedStep.auto_advance_default) return "Real runs wait for your approval. This preview continues automatically.";
+    if (selectedStep.inputs.some((input) => input.mode === "each")) return "Each matching artifact starts a parallel session. Their results feed the next step.";
+    if (selectedStep.inputs.some((input) => input.mode === "complete")) return "This step waits for every upstream result before bringing the work together.";
+    return "The agent creates an artifact, then hands the work to the next step.";
   })();
 
   return (
@@ -371,8 +339,8 @@ export function OnboardingFlow({
           <div className="onboarding-steps" role="tablist" aria-label="Onboarding steps">
             {ONBOARDING_STEPS.map((item, idx) => {
               const active = item.id === step;
-              const completed = idx < stepIndex || (item.id === "workspace" && hasActiveRepo);
-              const disabled = (item.id === "models" || item.id === "launch") && !hasActiveRepo;
+              const completed = hasActiveRepo && (idx < stepIndex || item.id === "workspace");
+              const disabled = item.id === "models" && !hasActiveRepo;
               return (
                 <button
                   key={item.id}
@@ -392,13 +360,12 @@ export function OnboardingFlow({
           </div>
 
           <div className="onboarding-header-actions">
-            {hasActiveRepo ? (
+            {hasActiveRepo && step !== "playbooks" && (
               <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
                 Skip Onboarding
               </button>
-            ) : (
-              <span className="onboarding-header-caption">Pick a repository to continue</span>
             )}
+            {!hasActiveRepo && <span className="onboarding-header-caption">Pick a repository to continue</span>}
           </div>
         </header>
 
@@ -408,7 +375,7 @@ export function OnboardingFlow({
               <h2>{hasActiveRepo ? "Repository connected" : "Select a repository"}</h2>
               <p className="onboarding-lede">
                 {hasActiveRepo
-                  ? "Add another repository now or continue to see how playbooks run your tasks."
+                  ? "Add another repository now or continue to connect your model provider."
                   : "Alinery keeps tasks, artifacts, and playbook state in .alinery/ inside the repository you choose."}
               </p>
 
@@ -452,7 +419,7 @@ export function OnboardingFlow({
                       <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
                       Add another repository
                     </button>
-                    <button type="button" className="btn onboarding-add-repo" data-autofocus onClick={() => goToStep("playbooks")}>
+                    <button type="button" className="btn onboarding-add-repo" data-autofocus onClick={() => goToStep("models")}>
                       Continue
                       <ArrowRight size={15} aria-hidden="true" />
                     </button>
@@ -469,27 +436,35 @@ export function OnboardingFlow({
         )}
 
         {step === "playbooks" && (
-          <div className="onboarding-body onboarding-body-playbooks" data-intro={intro} data-dir={direction} data-testid="onboarding-step-playbooks">
+          <div className="onboarding-body onboarding-body-playbooks" data-dir={direction} data-testid="onboarding-step-playbooks">
             <div className="onboarding-playbook-rail">
               <h2>How playbooks work</h2>
               <p className="onboarding-lede">A playbook is a fixed sequence of steps. Each step reads and writes named markdown files, and some steps wait for you.</p>
 
               <div
                 className="onboarding-archetype-list"
-                aria-hidden={intro === "explain"}
-                inert={intro === "explain"}
                 role="radiogroup"
                 aria-label="Explore starter playbooks"
                 onKeyDown={(event) => {
-                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
                   event.preventDefault();
-                  const currentIdx = CURATED_PLAYBOOK_ARCHETYPES.findIndex((item) => item.reference.key === selectedArchetypeKey);
+                  const currentIdx = EXAMPLE_ARCHETYPES.findIndex((item) => item.reference.key === selectedArchetypeKey);
                   const delta = event.key === "ArrowDown" ? 1 : -1;
-                  const nextIdx = (currentIdx + delta + CURATED_PLAYBOOK_ARCHETYPES.length) % CURATED_PLAYBOOK_ARCHETYPES.length;
-                  handleSelectArchetype(CURATED_PLAYBOOK_ARCHETYPES[nextIdx].reference.key);
+                  const nextIdx =
+                    event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? EXAMPLE_ARCHETYPES.length - 1
+                        : currentIdx < 0
+                          ? delta === 1
+                            ? 0
+                            : EXAMPLE_ARCHETYPES.length - 1
+                          : (currentIdx + delta + EXAMPLE_ARCHETYPES.length) % EXAMPLE_ARCHETYPES.length;
+                  handleSelectArchetype(EXAMPLE_ARCHETYPES[nextIdx].reference.key, true);
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[nextIdx]?.focus();
                 }}
               >
-                {CURATED_PLAYBOOK_ARCHETYPES.map((archetype) => {
+                {EXAMPLE_ARCHETYPES.map((archetype) => {
                   const selected = samePlaybookRef(archetype.reference, selectedArchetype.reference);
                   const def = liveDefinitions[archetype.reference.key];
                   return (
@@ -498,6 +473,7 @@ export function OnboardingFlow({
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      tabIndex={selected ? 0 : -1}
                       className={`onboarding-archetype-card${selected ? " selected" : ""}`}
                       onClick={() => handleSelectArchetype(archetype.reference.key)}
                     >
@@ -509,7 +485,11 @@ export function OnboardingFlow({
                         <span className="onboarding-mini-chain" aria-label={def.step.map((item, i) => `${i + 1}. ${item.title}`).join(", ")}>
                           {def.step.map((item, stepNumber) => (
                             <span className="onboarding-mini-step" key={item.key} title={`${stepNumber + 1}. ${item.title}${item.auto_advance_default ? "" : " — waits for you"}`}>
-                              <span className="onboarding-mini-number" data-checkpoint={!item.auto_advance_default || undefined}>
+                              <span
+                                className="onboarding-mini-number"
+                                data-checkpoint={!item.auto_advance_default || undefined}
+                                data-active={(selected && item.key === selectedStep?.key) || undefined}
+                              >
                                 {stepNumber + 1}
                               </span>
                             </span>
@@ -524,73 +504,83 @@ export function OnboardingFlow({
                 })}
               </div>
 
-              <div className="onboarding-mechanics-strip" aria-label="Core playbook mechanics">
-                <div className="onboarding-mechanic-item">
-                  <span className="pill onboarding-pill-accent">Auto-advance</span>
-                  <span>Agent moves to the next step automatically once its output artifact is validated.</span>
-                </div>
-                <div className="onboarding-mechanic-item">
-                  <span className="pill onboarding-pill-warning">Human checkpoint</span>
-                  <span>Execution pauses so you can read or comment on the markdown artifact before continuing.</span>
-                </div>
-                <div className="onboarding-mechanic-item">
-                  <span className="pill">Swarm fan-out (each)</span>
-                  <span>
-                    One step emits wildcard files (<code>request-*.md</code>), spawning a parallel agent per file and joining on <code>complete</code>.
-                  </span>
-                </div>
-              </div>
+              <details className="onboarding-mechanics" aria-label="Core playbook mechanics">
+                <summary>How work moves</summary>
+                <ul className="onboarding-mechanics-list">
+                  <li className="onboarding-mechanic-item">
+                    <ArrowRight className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Auto-advance</h4>
+                      <p>Moves on when the step’s output is validated.</p>
+                    </div>
+                  </li>
+                  <li className="onboarding-mechanic-item">
+                    <Hand className="onboarding-mechanic-icon onboarding-mechanic-checkpoint" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Human checkpoint</h4>
+                      <p>Pauses for you to review or comment before continuing.</p>
+                    </div>
+                  </li>
+                  <li className="onboarding-mechanic-item">
+                    <GitFork className="onboarding-mechanic-icon" size={16} aria-hidden="true" />
+                    <div>
+                      <h4>Parallel agents</h4>
+                      <p>Runs an agent per artifact, then brings their results together.</p>
+                    </div>
+                  </li>
+                </ul>
+              </details>
             </div>
 
             {activePlaybook ? (
-              <div className="onboarding-playbook-stage" aria-hidden={intro === "explain" || intro === "cards"} inert={intro === "explain" || intro === "cards"}>
+              <div className="onboarding-playbook-stage">
                 <div className="onboarding-sim-bar">
-                  <div className="onboarding-sim-status">
-                    <span
-                      className={`pill${
-                        currentSimStep && !currentSimStep.auto_advance_default
-                          ? " onboarding-pill-warning"
-                          : simStepIndex !== null && simStepIndex >= playbookSteps.length
-                            ? " onboarding-pill-success"
-                            : " onboarding-pill-accent"
-                      }`}
+                  <div className="onboarding-sim-title">
+                    <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
+                    <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
+                  </div>
+                  <p className="onboarding-sim-copy">{simStatusCopy}</p>
+                  {playbookSteps.length > 0 && (
+                    <div
+                      key={demoRevision}
+                      className="onboarding-demo-progress"
+                      data-reduced-motion={reducedMotion || undefined}
+                      role="progressbar"
+                      aria-label="Playbook demo"
+                      aria-valuemin={1}
+                      aria-valuemax={playbookSteps.length}
+                      aria-valuenow={demoComplete && playing ? playbookSteps.length : selectedStepIndex + 1}
+                      aria-valuetext={demoComplete && playing ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`}
                     >
-                      {simStepIndex === null
-                        ? "Interactive graph"
-                        : simStepIndex >= playbookSteps.length
-                          ? "Finished"
-                          : currentSimStep && !currentSimStep.auto_advance_default
-                            ? "Checkpoint gate"
-                            : `Wave ${simStepIndex + 1} of ${playbookSteps.length}`}
-                    </span>
-                    <span className="onboarding-sim-copy">{simStatusCopy}</span>
-                  </div>
-                  <div className="onboarding-sim-actions">
-                    <button type="button" className={`btn small${intro === "cue" ? " onboarding-sim-cue" : ""}`} onClick={handleAdvanceSimulation}>
-                      <Play size={13} aria-hidden="true" />
-                      {simPrimaryLabel}
-                    </button>
-                    {playing && currentSimStep?.auto_advance_default && (
-                      <button type="button" className="btn ghost small" onClick={() => setPlaying(false)}>
-                        Pause demo
-                      </button>
-                    )}
-                    {!playing && simStepIndex !== null && currentSimStep?.auto_advance_default && (
-                      <button type="button" className="btn ghost small" onClick={() => setPlaying(true)}>
-                        Resume demo
-                      </button>
-                    )}
-                    {intro === "cue" && <span className="onboarding-demo-label">Demo starts in 2 seconds</span>}
-                    {simStepIndex !== null && (
-                      <button type="button" className="btn ghost small" onClick={handleResetSimulation}>
-                        <RotateCcw size={13} aria-hidden="true" />
-                        Reset
-                      </button>
-                    )}
-                  </div>
+                      {playbookSteps.map((item) => (
+                        <span
+                          key={item.key}
+                          data-complete={simulatedStatuses[item.key] === "completed" || undefined}
+                          data-current={item.key === selectedStep?.key || undefined}
+                          data-running={item.key === currentSimStep?.key || undefined}
+                          aria-hidden="true"
+                        >
+                          <span className="onboarding-demo-progress-fill" style={{ animationDuration: `${simDuration}ms`, animationPlayState: playing ? "running" : "paused" }} />
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
                 </div>
 
                 <div className="onboarding-graph-frame">
+                  <button
+                    type="button"
+                    className="onboarding-demo-toggle"
+                    onClick={() => {
+                      if (!playing && currentSimStep) setSelectedStepKey(currentSimStep.key);
+                      setPlaying((value) => !value);
+                    }}
+                    disabled={!playbookSteps.length}
+                  >
+                    {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+                    {playing ? "Pause demo" : "Resume demo"}
+                  </button>
                   <PlaybookGraph
                     key={activePlaybook.key}
                     title={activePlaybook.title}
@@ -598,66 +588,72 @@ export function OnboardingFlow({
                     variant="definition"
                     showInspector={false}
                     hideToolbar={true}
-                    minScale={0.72}
+                    minScale={1}
                     selectedStepKey={selectedStep?.key ?? null}
-                    onSelectStep={(key) => setSelectedStepKey(key)}
+                    onSelectStep={(key) => {
+                      setPlaying(false);
+                      setSelectedStepKey(key);
+                    }}
                     simulatedStatuses={simulatedStatuses}
+                    simulationPlaying={playing && !reducedMotion}
+                    onPauseSimulation={() => setPlaying(false)}
                   />
                 </div>
 
                 {selectedStep && (
-                  <section className="onboarding-step-inspector" aria-label={`${selectedStep.title} step contract`}>
-                    <div className="onboarding-step-inspector-header">
-                      <div className="onboarding-step-inspector-title">
-                        <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
-                        <h3>{selectedStep.title}</h3>
-                        <code>{selectedStep.key}</code>
+                  <section className="onboarding-step-inspector" aria-label={`${selectedStep.title} step contract`} data-animated={(playing && !reducedMotion) || undefined}>
+                    <div className="onboarding-step-content" key={`${activePlaybook.key}:${selectedStep.key}`}>
+                      <div className="onboarding-step-inspector-header">
+                        <div className="onboarding-step-inspector-title">
+                          <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
+                          <h3>{selectedStep.title}</h3>
+                        </div>
+                        <div className="onboarding-step-badges">
+                          <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
+                            {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                          </span>
+                          <span className="onboarding-step-kind">{selectedStep.is_coding_step ? "Code changes" : "Artifact work"}</span>
+                        </div>
                       </div>
-                      <div className="onboarding-step-badges">
-                        <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
-                          {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
-                        </span>
-                        <span className="pill">{selectedStep.is_coding_step ? "Coding step" : "Read-only / artifact step"}</span>
-                      </div>
-                    </div>
 
-                    <div className="onboarding-contract-grid">
-                      <div className="onboarding-contract-col">
-                        <h4>Reads (inputs)</h4>
-                        {selectedStep.inputs.length > 0 ? (
-                          <ul className="onboarding-contract-list">
-                            {selectedStep.inputs.map((input) => (
-                              <li key={`${input.path}:${input.mode}`}>
-                                <code>{input.path}</code>
-                                <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
-                        )}
+                      <div className="onboarding-contract-grid">
+                        <div className="onboarding-contract-col">
+                          <h4>Reads (inputs)</h4>
+                          {selectedStep.inputs.length > 0 ? (
+                            <ul className="onboarding-contract-list">
+                              {selectedStep.inputs.map((input) => (
+                                <li key={`${input.path}:${input.mode}`}>
+                                  <code>{input.path}</code>
+                                  {input.mode !== "single" && <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
+                          )}
+                        </div>
+                        <div className="onboarding-contract-col">
+                          <h4>Writes (outputs)</h4>
+                          {selectedStep.outputs.length > 0 ? (
+                            <ul className="onboarding-contract-list">
+                              {selectedStep.outputs.map((output) => (
+                                <li key={output.path}>
+                                  <code>{output.path}</code>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="onboarding-contract-empty">No declared output artifacts</p>
+                          )}
+                        </div>
                       </div>
-                      <div className="onboarding-contract-col">
-                        <h4>Writes (outputs)</h4>
-                        {selectedStep.outputs.length > 0 ? (
-                          <ul className="onboarding-contract-list">
-                            {selectedStep.outputs.map((output) => (
-                              <li key={output.path}>
-                                <code>{output.path}</code>
-                                <span className="onboarding-artifact-path">.alinery/tasks/&lt;slug&gt;/artifacts/</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="onboarding-contract-empty">No declared output artifacts</p>
-                        )}
-                      </div>
-                    </div>
 
-                    <details className="onboarding-prompt-preview">
-                      <summary>View step prompt instructions</summary>
-                      <pre>{selectedStep.prompt}</pre>
-                    </details>
+                      <details className="onboarding-prompt-preview">
+                        <summary>View step prompt instructions</summary>
+                        <p className="onboarding-artifact-path">Step: {selectedStep.key} · Artifacts: .alinery/tasks/&lt;slug&gt;/artifacts/</p>
+                        <pre>{selectedStep.prompt}</pre>
+                      </details>
+                    </div>
                   </section>
                 )}
               </div>
@@ -684,17 +680,113 @@ export function OnboardingFlow({
           <div className="onboarding-body onboarding-body-models" data-dir={direction} data-testid="onboarding-step-models">
             <div className="onboarding-model-setup">
               <h2>Choose your default model</h2>
-              <p className="onboarding-lede">Pick the model your agents will use in {repoName(appConfig.active_repo)}. You can change it later.</p>
+
+              <section className="onboarding-plan-card" aria-labelledby="onboarding-plan-title" data-testid="onboarding-founder-plan">
+                <div className="onboarding-plan-head">
+                  <div className="onboarding-plan-title">
+                    <span className="pill onboarding-pill-success">
+                      <Check size={12} aria-hidden="true" />
+                      Recommended
+                    </span>
+                    <h3 id="onboarding-plan-title">Alinery Founder plan</h3>
+                    <p className="onboarding-readiness-detail">
+                      Support the open source devs behind the project and get $5 of AI credits every month, worth ~30M tokens of DeepSeek V4.1 Flash (~360M / year).
+                    </p>
+                  </div>
+                  <div className="onboarding-plan-price">
+                    $7.99
+                    <small>
+                      <Coffee size={12} aria-hidden="true" />a coffee a month
+                    </small>
+                  </div>
+                </div>
+                <ul className="onboarding-plan-features">
+                  <li>
+                    <Zap size={15} aria-hidden="true" />
+                    <span>
+                      <strong>~30M tokens a month</strong>
+                      of DeepSeek V4.1 Flash. Kimi, GLM, and more available too
+                    </span>
+                  </li>
+                  <li>
+                    <ShieldCheck size={15} aria-hidden="true" />
+                    <span>
+                      <strong>Zero Data Retention</strong>
+                      Alinery-hosted models never store your prompts or outputs
+                    </span>
+                  </li>
+                  <li>
+                    <Workflow size={15} aria-hidden="true" />
+                    <span>
+                      <strong>Made for playbooks</strong>
+                      Fast and cheap enough to run most steps
+                    </span>
+                  </li>
+                </ul>
+                <div className="onboarding-plan-actions">
+                  {account?.paid ? (
+                    <>
+                      <span className="pill onboarding-pill-success">
+                        <Check size={12} aria-hidden="true" />
+                        Active
+                      </span>
+                      <span className="onboarding-readiness-detail">Signed in as {account.email ?? "your Alinery account"}.</span>
+                      <button type="button" className="btn ghost small" onClick={() => void ipc.accountOpen().catch((error) => setPlanError(String(error)))}>
+                        Manage billing
+                      </button>
+                    </>
+                  ) : planBusy ? (
+                    <>
+                      <span className="pill">
+                        <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
+                        Waiting for the browser…
+                      </span>
+                      <button type="button" className="btn ghost small" onClick={() => void ipc.accountCancelSignIn().catch(() => {})}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="btn onboarding-plan-cta" onClick={() => void startFounderPlan()}>
+                        {account?.signedIn ? "Subscribe" : "Get the Founder plan"}
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                      <span className="onboarding-readiness-detail">
+                        {account?.signedIn ? `Opens billing for ${account.email ?? "your account"}.` : "Create your account in the browser; checkout opens right after."}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {planError && (
+                  <InlineStatus tone="error" detail={planError}>
+                    Couldn't finish setting up the plan.
+                  </InlineStatus>
+                )}
+              </section>
+
+              <div className="onboarding-provider-section">
+                <p>Already paying for AI subscriptions? Connect every one you have and use them all here.</p>
+                <div className="onboarding-provider-grid">
+                  {PROVIDER_CARDS.map((card) => (
+                    <button key={card.name} type="button" className="onboarding-provider-card" onClick={() => onOpenProviderSetup("accounts", undefined, card.needle)}>
+                      <strong>{card.name}</strong>
+                      <span>{card.plan}</span>
+                      <span className="onboarding-provider-connect">
+                        Connect
+                        <ArrowRight size={13} aria-hidden="true" />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div className="onboarding-readiness-stack">
                 <div className="onboarding-readiness-card">
-                  <div className="onboarding-readiness-row">
+                  <div className="onboarding-readiness-row onboarding-model-row">
                     <div className="onboarding-readiness-title">
                       <Layers size={16} aria-hidden="true" />
                       <strong>Default model</strong>
                     </div>
-                  </div>
-                  <div className="onboarding-model-control">
                     <ModelInput
                       harness="omp"
                       repoPath={appConfig.active_repo}
@@ -708,6 +800,7 @@ export function OnboardingFlow({
                         })
                       }
                       ariaLabel="Default repository model"
+                      placeholder="Default model"
                     />
                   </div>
                   {modelError && (
@@ -720,145 +813,20 @@ export function OnboardingFlow({
                       </button>
                     </div>
                   )}
-                  <div className="onboarding-readiness-foot">
-                    <p className="onboarding-readiness-detail">Used by every playbook step in {repoName(appConfig.active_repo)} unless a step overrides it.</p>
-                    <button type="button" className="btn ghost small" onClick={() => onOpenProviderSetup("accounts")}>
-                      Manage accounts…
-                    </button>
-                  </div>
-                </div>
-                <div className="onboarding-readiness-card">
-                  <div className="onboarding-readiness-row">
-                    <div className="onboarding-readiness-title">
-                      <Cpu size={16} aria-hidden="true" />
-                      <strong>Agent installation</strong>
-                    </div>
-                    {agentStatus === "checking" && (
-                      <span className="pill">
-                        <ThinkingOrb state="searching" size={20} speed={ORB_SPEED} />
-                        Checking…
-                      </span>
-                    )}
-                    {agentStatus === "ready" && (
-                      <span className="pill onboarding-pill-success">
-                        <Check size={12} aria-hidden="true" />
-                        Ready
-                      </span>
-                    )}
-                    {agentStatus === "attention" && <span className="pill onboarding-pill-warning">Needs attention</span>}
-                  </div>
                   <p className="onboarding-readiness-detail">
-                    {agentStatus === "attention" ? "OMP isn't available. Review the details below, resolve the issue, then retry." : agentDetail}
-                  </p>
-                  {agentStatus === "attention" && (
-                    <details className="onboarding-prompt-preview">
-                      <summary>Technical details</summary>
-                      <pre>{agentDetail}</pre>
-                    </details>
-                  )}
-                  {agentStatus === "attention" && (
-                    <div className="onboarding-readiness-actions">
-                      <button type="button" className="btn ghost small" onClick={() => setProbeTick((n) => n + 1)}>
-                        Retry check
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <details className="onboarding-model-help">
-              <summary>Can different steps use different models?</summary>
-              <p>Yes. A step’s model takes priority, followed by the playbook’s default, then this repository’s default. Leave the selection empty to use the harness default.</p>
-            </details>
-          </div>
-        )}
-
-        {step === "launch" && (
-          <div className="onboarding-body onboarding-body-launch" data-dir={direction} data-testid="onboarding-step-launch">
-            <div className="onboarding-launch-header">
-              <div>
-                <h2>Start your first task</h2>
-                <p className="onboarding-lede">Start from a suggested task, or edit it to fit your project.</p>
-                <div className="onboarding-target-repo">
-                  <FolderOpen size={20} aria-hidden="true" />
-                  <div>
-                    <span className="onboarding-target-label">Repository</span>
-                    <strong>{repoName(appConfig.active_repo)}</strong>
-                    <code>{appConfig.active_repo}</code>
-                  </div>
-                  <button type="button" className="btn ghost small" onClick={() => goToStep("workspace")}>
-                    Change
-                  </button>
-                </div>
-              </div>
-              <div className="onboarding-launch-archetypes" role="radiogroup" aria-label="Starting playbook">
-                {CURATED_PLAYBOOK_ARCHETYPES.map((archetype) => {
-                  const selected = samePlaybookRef(archetype.reference, selectedArchetype.reference);
-                  const def = liveDefinitions[archetype.reference.key];
-                  return (
+                    Used by every playbook step in {repoName(appConfig.active_repo)} unless a step overrides it. Alinery ships with{" "}
                     <button
-                      key={archetype.reference.key}
                       type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`onboarding-step-pill${selected ? " active" : ""}`}
-                      onClick={() => handleSelectArchetype(archetype.reference.key)}
+                      className="onboarding-omp-mark"
+                      title="OMP (oh-my-pi) on GitHub"
+                      onClick={() => void ipc.openUrl(OMP_REPO_URL).catch((error: unknown) => toast.error(String(error)))}
                     >
-                      <span>{def?.title ?? archetype.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="onboarding-launch-grid">
-              <div className="onboarding-launch-card">
-                <div className="onboarding-launch-card-top">
-                  <h3>{activePlaybook?.title ?? selectedArchetype.title}</h3>
-                  {activePlaybook && <span className="onboarding-readiness-detail">{playbookSteps.length} steps</span>}
+                      <span aria-hidden="true">π</span>
+                      OMP
+                    </button>{" "}
+                    harness included. Easily mix and match models when running playbooks.
+                  </p>
                 </div>
-                <p className="onboarding-launch-checkpoint">{selectedArchetype.checkpointNote}</p>
-
-                <div className="onboarding-preset-fields">
-                  <label className="onboarding-field">
-                    <span>Task title</span>
-                    <input type="text" value={starterName} onChange={(event) => setStarterName(event.target.value)} aria-label="Starter task title" className="field-input" />
-                  </label>
-                  <label className="onboarding-field">
-                    <span>What should the agents do?</span>
-                    <textarea
-                      rows={3}
-                      value={starterDescription}
-                      onChange={(event) => setStarterDescription(event.target.value)}
-                      aria-label="Starter task description"
-                      className="field-input"
-                    />
-                  </label>
-                </div>
-
-                {launchError && (
-                  <InlineStatus tone="error" detail={launchError}>
-                    Couldn't launch starter task.
-                  </InlineStatus>
-                )}
-
-                <div className="onboarding-launch-actions">
-                  <button type="button" className="btn" disabled={launching || !starterName.trim()} onClick={() => void handleLaunchStarter()}>
-                    <Play size={14} aria-hidden="true" />
-                    {launching ? "Starting task…" : selectedArchetype.starterPreset.ctaLabel}
-                  </button>
-                </div>
-              </div>
-
-              <div className="onboarding-launch-alternatives">
-                <span>Prefer to start another way?</span>
-                <button type="button" className="btn ghost small" onClick={() => onOpenCreateWithPlaybook(selectedArchetype.reference)}>
-                  Open full Create Task form with {selectedArchetype.title}
-                </button>
-                <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
-                  Go to Canvas workspace
-                </button>
               </div>
             </div>
           </div>
@@ -867,24 +835,36 @@ export function OnboardingFlow({
         {step !== "workspace" && (
           <footer className="onboarding-footer">
             <div className="onboarding-footer-left">
-              <button type="button" className="btn ghost" onClick={() => goToStep(ONBOARDING_STEPS[stepIndex - 1].id)}>
+              <button type="button" className="btn ghost" onClick={() => goToStep(hasActiveRepo ? ONBOARDING_STEPS[stepIndex - 1].id : "workspace")}>
                 Back
               </button>
             </div>
             <div className="onboarding-footer-right">
-              {step !== "launch" && (
+              {step === "playbooks" && (
                 <button
                   type="button"
-                  className="btn"
+                  className="btn ghost"
                   onClick={() => {
-                    const next = ONBOARDING_STEPS[stepIndex + 1];
-                    if (next) goToStep(next.id);
+                    if (BUILD_ARCHETYPE) onOpenCreateWithPlaybook(BUILD_ARCHETYPE.reference, BUILD_ARCHETYPE.starterPreset);
                   }}
+                  disabled={!hasActiveRepo || !BUILD_ARCHETYPE}
                 >
-                  Continue
-                  <ArrowRight size={15} aria-hidden="true" />
+                  Build a new playbook
                 </button>
               )}
+              <button
+                type="button"
+                className="btn"
+                disabled={!hasActiveRepo}
+                onClick={() => {
+                  const next = ONBOARDING_STEPS[stepIndex + 1];
+                  if (next) goToStep(next.id);
+                  else onOpenCreateWithPlaybook(selectedArchetype.reference);
+                }}
+              >
+                {step === "playbooks" ? "Finish onboarding" : "Continue"}
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
             </div>
           </footer>
         )}
