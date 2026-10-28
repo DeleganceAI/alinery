@@ -190,6 +190,7 @@ function libraryOrder() {
 
 describe("playbook library", () => {
   it("shows real library counts and opens starred and bundled shortcuts", async () => {
+    stored[0] = entry("bundled", { key: "superdevelop" });
     preferencesByRepo.set("/repo", { order: [], entries: [preference("repo")] });
     render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
     await screen.findByRole("button", { name: "Review Repository" });
@@ -200,9 +201,58 @@ describe("playbook library", () => {
     expect(libraryOrder()).toEqual(["repo/review"]);
     fireEvent.click(within(library).getByRole("button", { name: "Installed playbooks 3" }));
     expect(libraryOrder()).toHaveLength(3);
-    const bundled = screen.getByRole("complementary", { name: "Bundled with Alinery" });
+    const bundled = screen.getByRole("complementary", { name: "Featured Playbooks" });
     fireEvent.click(within(bundled).getByRole("button"));
     await screen.findByRole("region", { name: "Playbook details" });
+  });
+
+  it("features only the five canonical bundled playbooks in curated order", async () => {
+    const featured = ["superdevelop", "academic-survey", "bug-hunting", "systematic-evidence-review", "one-shot"];
+    stored = [
+      entry("repo", { key: "superdevelop", title: "Custom lookalike" }),
+      entry("bundled", { key: "other", title: "Other bundled" }),
+      ...[...featured].reverse().map((key) => entry("bundled", { key, title: key, description: `${key} description` })),
+    ];
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Custom lookalike Repository" });
+    const sidebar = screen.getByRole("complementary", { name: "Featured Playbooks" });
+    expect(
+      within(sidebar)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(featured.map((key) => `${key}${key} description`));
+    expect(libraryOrder()).toHaveLength(7);
+  });
+
+  it("omits missing featured definitions and disables repository shortcuts without a repository", async () => {
+    stored = [entry("bundled", { key: "one-shot", title: "One shot" }), entry("repo", { key: "superdevelop", title: "Custom lookalike" })];
+    render(<Playbooks onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "One shot Bundled" });
+    const sidebar = screen.getByRole("complementary", { name: "Featured Playbooks" });
+    expect(within(sidebar).getAllByRole("button")).toHaveLength(1);
+    expect(within(sidebar).getByRole("button", { name: /One shot/ })).toBeTruthy();
+    const library = screen.getByRole("complementary", { name: "Your library" });
+    expect(within(library).getByRole("button", { name: "Downloads —" })).toHaveProperty("disabled", true);
+    expect(within(library).getByRole("button", { name: "Starred playbooks —" })).toHaveProperty("disabled", true);
+    expect(within(library).getByRole("button", { name: "Installed playbooks 2" })).toHaveProperty("disabled", false);
+  });
+
+  it("counts only installed starred playbooks, excluding stale references", async () => {
+    preferencesByRepo.set("/repo", {
+      order: [],
+      entries: [preference("repo"), { ...preference("global"), reference: { scope: "global", key: "deleted" } }],
+    });
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    await screen.findByRole("button", { name: "Review Repository" });
+    const library = screen.getByRole("complementary", { name: "Your library" });
+    fireEvent.click(within(library).getByRole("button", { name: "Starred playbooks 1" }));
+    expect(libraryOrder()).toEqual(["repo/review"]);
+  });
+
+  it("shows zero starred playbooks when the default star is absent from an empty catalog", async () => {
+    stored = [];
+    render(<Playbooks repoPath="/repo" onCreateTask={onCreateTask} />);
+    expect(await screen.findByRole("button", { name: "Starred playbooks 0" })).toBeTruthy();
   });
 
   it("searches titles, descriptions, keys and scoped identities across every source", async () => {
@@ -1387,6 +1437,39 @@ describe("community playbooks", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Overwrite" }));
     await waitFor(() => expect(community.updateCommunityImport).toHaveBeenCalledTimes(2));
     expect(community.updateCommunityImport).toHaveBeenLastCalledWith({ id: NYX_ID, repoPath: "/repo", overwriteEdited: true });
+  });
+
+  it("shows a featured catalog failure on Community and retries successfully", async () => {
+    stored[0] = entry("bundled", { key: "superdevelop", title: "SuperDevelop" });
+    mocks.listPlaybookCatalog.mockRejectedValueOnce(new Error("Catalog unavailable"));
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByText("Catalog unavailable");
+    await openCommunity();
+    const sidebar = screen.getByRole("complementary", { name: "Featured Playbooks" });
+    expect(within(sidebar).getByText("Featured playbooks are unavailable.")).toBeTruthy();
+    expect(within(sidebar).queryByText(/Loading .*playbooks/)).toBeNull();
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Retry featured playbooks" }));
+    expect(await within(sidebar).findByRole("button", { name: /SuperDevelop/ })).toBeTruthy();
+    expect(within(sidebar).queryByRole("button", { name: "Retry featured playbooks" })).toBeNull();
+    expect(mocks.listPlaybookCatalog).toHaveBeenLastCalledWith("/repo");
+  });
+
+  it("opens a bundled Community shortcut in Local and restores navigation and search focus", async () => {
+    stored[0] = entry("bundled", { key: "superdevelop" });
+    community.listCommunityPlaybooks.mockResolvedValue({ playbooks: [], nextCursor: null });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Review Repository" });
+    await openCommunity();
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Featured Playbooks" })).getByRole("button"));
+    await screen.findByRole("region", { name: "Playbook details" });
+    expect(screen.getByRole("tab", { name: "Local" }).getAttribute("aria-selected")).toBe("true");
+    await openCommunity();
+    expect(screen.queryByRole("region", { name: "Playbook details" })).toBeNull();
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Featured Playbooks" })).getByRole("button"));
+    await screen.findByRole("region", { name: "Playbook details" });
+    fireEvent.click(screen.getByRole("button", { name: "Back to playbooks" }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Search playbooks")));
   });
 
   it("keeps a dirty local editor when discard is cancelled, then shows Community after discard", async () => {

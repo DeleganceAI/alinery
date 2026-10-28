@@ -101,6 +101,9 @@
 .playbooks-explore-panel > button:hover:not(:disabled) {
   background: var(--surface-subtle);
 }
+.playbooks-explore-panel > button:focus-visible {
+  outline-offset: -2px;
+}
 .playbooks-explore-panel > button:disabled {
   color: var(--text-muted);
   cursor: default;

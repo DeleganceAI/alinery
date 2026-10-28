@@ -44,6 +44,7 @@ const blankDefinition: NormalizedPlaybook = {
   preamble: "",
   section_order: ["work"],
 };
+const featuredPlaybookKeys = ["superdevelop", "academic-survey", "bug-hunting", "systematic-evidence-review", "one-shot"];
 const scopeLabels = { repo: "Repository", global: "Global", bundled: "Bundled" };
 const catalogContains = (catalog: PlaybookCatalog, reference: PlaybookRef) => catalog.candidates.some((candidate) => samePlaybookRef(candidate.source.reference, reference));
 // The accounts contract's label rule (^[a-z0-9][a-z0-9-]{1,31}$), one home for both
@@ -420,6 +421,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setNotice("");
     try {
       install(await ipc.readPlaybook(reference, owner), owner);
+      setLibraryTab("local");
       setMode("graph");
     } catch (e) {
       setError(errorText(e));
@@ -848,6 +850,11 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (preferences) void savePreferences(withPlaybookStar(preferences, reference, starred));
   };
   const starredKeys = starredPlaybookKeys(repoPath ? preferences : undefined);
+  const featuredPlaybooks = featuredPlaybookKeys.flatMap((key) => {
+    const candidate = catalog?.candidates.find((candidate) => candidate.source.reference.scope === "bundled" && candidate.source.reference.key === key);
+    return candidate ? [candidate] : [];
+  });
+  const starredCount = catalog?.candidates.filter((candidate) => starredKeys.has(playbookRefKey(candidate.source.reference))).length ?? 0;
   const candidates = catalog?.candidates
     .filter(
       (candidate) =>
@@ -1093,10 +1100,11 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                     setQuery("");
                   }}
                 >
-                  <span>Starred playbooks</span> <strong>{preferences && repoPath ? starredKeys.size : "—"}</strong>
+                  <span>Starred playbooks</span> <strong>{preferences && repoPath ? starredCount : "—"}</strong>
                 </button>
                 <button
                   type="button"
+                  disabled={!repoPath}
                   onClick={() => {
                     void showCommunity();
                     setCommunityFilter("downloaded");
@@ -1461,28 +1469,33 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             </section>
           )}
           {!open && (
-            <aside className="playbooks-explore-aside" aria-label="Bundled with Alinery">
+            <aside className="playbooks-explore-aside" aria-label="Featured Playbooks">
               <div className="playbooks-explore-panel">
                 <h2>
-                  <BookOpen size={16} aria-hidden="true" /> Bundled with Alinery
+                  <BookOpen size={16} aria-hidden="true" /> Featured Playbooks
                 </h2>
-                {catalog?.candidates
-                  .filter((candidate) => candidate.source.reference.scope === "bundled")
-                  .slice(0, 4)
-                  .map((candidate) => (
-                    <button
-                      key={playbookRefKey(candidate.source.reference)}
-                      type="button"
-                      disabled={busy || candidate.diagnostics.length > 0}
-                      onClick={() => void load(candidate.source.reference)}
-                    >
-                      <span>
-                        <strong>{candidate.title || candidate.source.reference.key}</strong>
-                        <small>{candidate.description || candidate.source.reference.key}</small>
-                      </span>
+                {featuredPlaybooks.map((candidate) => (
+                  <button
+                    key={playbookRefKey(candidate.source.reference)}
+                    type="button"
+                    disabled={busy || candidate.diagnostics.length > 0}
+                    onClick={() => void load(candidate.source.reference)}
+                  >
+                    <span>
+                      <strong>{candidate.title || candidate.source.reference.key}</strong>
+                      <small>{candidate.description || candidate.source.reference.key}</small>
+                    </span>
+                  </button>
+                ))}
+                {catalogError && (
+                  <>
+                    <p>Featured playbooks are unavailable.</p>
+                    <button type="button" onClick={() => void refresh(repoPath)}>
+                      Retry featured playbooks
                     </button>
-                  ))}
-                {!catalog && <p>Loading bundled playbooks…</p>}
+                  </>
+                )}
+                {!catalog && !catalogError && <p>Loading featured playbooks…</p>}
                 <p>Included with the app. Open a definition to explore its steps or make your own copy.</p>
               </div>
             </aside>
