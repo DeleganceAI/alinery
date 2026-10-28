@@ -542,23 +542,9 @@ export function OnboardingFlow({
             {activePlaybook ? (
               <div className="onboarding-playbook-stage">
                 <div className="onboarding-sim-bar">
-                  <div className="onboarding-sim-heading">
-                    <div className="onboarding-sim-title">
-                      <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
-                      <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn ghost small"
-                      onClick={() => {
-                        if (!playing && currentSimStep) setSelectedStepKey(currentSimStep.key);
-                        setPlaying((value) => !value);
-                      }}
-                      disabled={!playbookSteps.length}
-                    >
-                      {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
-                      {playing ? "Pause demo" : "Resume demo"}
-                    </button>
+                  <div className="onboarding-sim-title">
+                    <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
+                    <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
                   </div>
                   <p className="onboarding-sim-copy">{simStatusCopy}</p>
                   {playbookSteps.length > 0 && (
@@ -590,6 +576,18 @@ export function OnboardingFlow({
                 </div>
 
                 <div className="onboarding-graph-frame">
+                  <button
+                    type="button"
+                    className="onboarding-demo-toggle"
+                    onClick={() => {
+                      if (!playing && currentSimStep) setSelectedStepKey(currentSimStep.key);
+                      setPlaying((value) => !value);
+                    }}
+                    disabled={!playbookSteps.length}
+                  >
+                    {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+                    {playing ? "Pause demo" : "Resume demo"}
+                  </button>
                   <PlaybookGraph
                     key={activePlaybook.key}
                     title={activePlaybook.title}
