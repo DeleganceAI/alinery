@@ -84,6 +84,8 @@ export type ChatEntry =
       detail: string;
       /** Browser-opening approvals must display the destination literally, without clickable Markdown. */
       detailFormat?: "plain";
+      /** Extension text that travels with a link, e.g. the device code a sign-in needs typed into the browser. */
+      instructions?: string;
       scope?: string;
       options?: string[];
       disabled?: boolean;

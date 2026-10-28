@@ -477,3 +477,36 @@ describe("ProviderSetupDialog", () => {
     expect(screen.getByText(/setup exploded/)).toBeTruthy();
   });
 });
+
+// Repro for #130: OMP's device-code sign-in delivers the user code only as `open_url.instructions`
+// ("Enter code: XXXX"); the dialog must show it, with a copy control, for as long as the sign-in
+// is pending -- including on the auto-opened first link, which today is hidden and dismissed.
+describe("device-code sign-in (#130)", () => {
+  it("keeps the device code and a copy control visible while the sign-in is pending", async () => {
+    await startLogin();
+    await emit({
+      type: "extension_ui_request",
+      id: "device-url",
+      method: "open_url",
+      url: "https://auth.openai.com/codex/device",
+      instructions: "Enter code: ABCD-EFGH",
+    });
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device"));
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    await emit({ type: "response", id: "l1", command: "login", success: true, data: { providerId: "openai-codex" } });
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+  });
+
+  it("shows the code on a replayed sign-in link that still needs approval", async () => {
+    mountWith(
+      [
+        providersLine([{ id: "openai-codex-device", authenticated: false }]),
+        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" }),
+      ],
+      "manual",
+    );
+    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+  });
+});

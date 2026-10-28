@@ -17,7 +17,7 @@ import {
   setModelCommand,
 } from "../ompRpc";
 import type { HostedCatalogView } from "../types";
-import { ChatEntryRow } from "./ChatEntryRow";
+import { ChatEntryRow, SignInInstructions } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
 
@@ -96,6 +96,9 @@ export function ProviderSetupDialog({
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
+  // The device code a sign-in needs typed into the browser. It arrives only on the link's
+  // `instructions`, and that row is dismissed as soon as the browser opens.
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
   const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
@@ -146,6 +149,7 @@ export function ProviderSetupDialog({
             loginApplyRef.current = null;
             loginOpenUrlRef.current = false;
             setLoginBusy(null);
+            setLoginNotice(null);
             if (reply.ok) {
               setModelError(null);
               void ipc
@@ -292,6 +296,7 @@ export function ProviderSetupDialog({
         // Sign in authorizes only its first browser request; further links need approval.
         loginOpenUrlRef.current = false;
         handledUiRef.current.add(request.id);
+        setLoginNotice(request.instructions ?? null);
         void openBrowser(request);
       }
     }
@@ -345,6 +350,7 @@ export function ProviderSetupDialog({
       loginApplyRef.current = null;
       loginOpenUrlRef.current = false;
       setLoginBusy(null);
+      setLoginNotice(null);
       setModelError(String(error));
     }
   }, []);
@@ -456,6 +462,7 @@ export function ProviderSetupDialog({
       }}
       onClose={() => onClose("dismissed")}
     >
+      {loginNotice ? <SignInInstructions text={loginNotice} /> : null}
       {chat.entries
         .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))
         .map((entry) => (
