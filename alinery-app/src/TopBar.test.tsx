@@ -48,14 +48,13 @@ afterEach(() => {
 describe("TopBar navigation", () => {
   const tabLabels = () => Array.from(document.querySelectorAll("nav.tabs .tab")).map((tab) => tab.firstChild?.textContent);
 
-  it("leads with every custom grid, then Tasks, Sessions, Kanban and Chat, and has no Notifications tab", () => {
+  it("leads with every custom grid, then Tasks, Sessions and Chat, and has no Notifications tab", () => {
     render(
       <TopBar
         active="list"
         scope="active"
         appConfig={appConfig}
         isDev={false}
-        showOriginalKanban
         showChat
         gridViews={[
           { id: "planning", name: "Planning", slot: 1 },
@@ -64,17 +63,17 @@ describe("TopBar navigation", () => {
         {...callbacks}
       />,
     );
-    expect(tabLabels()).toEqual(["Planning", "Triage", "Tasks", "Sessions", "Kanban", "Chat", "Playbooks"]);
-    // Two Grid views push everything else right: ⌘1 and ⌘2 are the grids, ⌘5 is Kanban, ⌘6 is Chat.
-    expect(Array.from(document.querySelectorAll("nav.tabs .k")).map((badge) => badge.textContent)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    expect(tabLabels()).toEqual(["Planning", "Triage", "Tasks", "Sessions", "Chat", "Playbooks"]);
+    // Two Grid views push everything else right: ⌘1 and ⌘2 are the grids, ⌘5 is Chat.
+    expect(Array.from(document.querySelectorAll("nav.tabs .k")).map((badge) => badge.textContent)).toEqual(["1", "2", "3", "4", "5"]);
     expect(screen.queryByRole("button", { name: /^Notifications/ })).toBeNull();
   });
 
   it("hides the Chat tab unless the experimental flag is on", () => {
-    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showOriginalKanban {...callbacks} />);
+    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
     expect(tabLabels()).not.toContain("Chat");
     unmount();
-    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showOriginalKanban showChat {...callbacks} />);
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} showChat {...callbacks} />);
     expect(tabLabels()).toContain("Chat");
   });
 
@@ -140,7 +139,7 @@ describe("update actions", () => {
     const onOmpUpdateClick = vi.fn();
     render(
       <TopBar
-        active="kanban"
+        active="list"
         scope="active"
         appConfig={appConfig}
         isDev={false}

@@ -496,8 +496,57 @@ function camera(viewport: HTMLElement) {
   const canvas = viewport.querySelector<HTMLElement>(".playbook-definition-canvas");
   if (!stage || !canvas) throw new Error("Graph canvas is not mounted");
   const [tx, ty] = stage.style.transform.slice("translate(".length, -1).split(",").map(Number.parseFloat);
-  return { tx, ty, scale: Number(canvas.style.zoom) };
+  return { tx, ty, scale: Number(canvas.style.transform.slice("scale(".length, -1)) };
 }
+
+it("keeps compact controls inside the canvas frame without starting pan gestures", () => {
+  mockCanvasDimensions();
+  render(<PlaybookGraph variant="definition" showInspector={false} title="Compact" steps={denseSteps} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const frame = viewport.parentElement;
+  const modes = screen.getByRole("group", { name: "Graph display mode" });
+  const navigation = screen.getByRole("group", { name: "Graph zoom controls" });
+  expect(modes.parentElement).toBe(frame);
+  expect(navigation.parentElement).toBe(frame);
+  expect(frame?.classList.contains("playbook-canvas-frame")).toBe(true);
+  expect(viewport.contains(navigation)).toBe(false);
+  const before = camera(viewport);
+  for (const target of [modes, screen.getByRole("button", { name: "Zoom in" }), screen.getByLabelText("Graph zoom")]) {
+    fireEvent.pointerDown(target, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 160, clientY: 130, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 160, clientY: 130, pointerId: 1 });
+    expect(camera(viewport)).toEqual(before);
+    expect(viewport.classList.contains("is-panning")).toBe(false);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  expect(camera(viewport).scale).toBeCloseTo(before.scale * 1.25);
+  fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+  expect(camera(viewport).scale).toBeCloseTo(before.scale);
+  for (const name of ["Fit graph", "Reset zoom", "Pan graph"]) {
+    expect(screen.getByRole("button", { name }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name }).getAttribute("title")).toContain(name);
+  }
+});
+
+it.each([false, true])("hides both canvas docks with hideToolbar (inspector: %s)", (showInspector) => {
+  render(<PlaybookGraph variant="definition" showInspector={showInspector} hideToolbar title="Embedded" steps={denseSteps} />);
+  expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  expect(viewport.parentElement?.classList.contains("without-toolbar")).toBe(true);
+  expect(screen.getByRole("button", { name: `${showInspector ? "Inspect" : "Highlight"} seed` })).toBeTruthy();
+});
+
+it("hides every graph toolbar in the onboarding preview while keeping steps inspectable", () => {
+  mockCanvasDimensions();
+  const onSelectStep = vi.fn();
+  render(<PlaybookGraph variant="definition" title="Review" steps={denseSteps} hideToolbar onSelectStep={onSelectStep} />);
+  expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Graph zoom controls" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect build" }));
+  expect(onSelectStep).toHaveBeenCalledWith("build");
+  expect(screen.getByRole("region", { name: "build definition" })).toBeTruthy();
+});
 
 it("anchors wheel zoom under the pointer and fits using unzoomed dimensions", () => {
   mockCanvasDimensions();
@@ -601,4 +650,202 @@ it("attaches canvas gestures after empty and execution views", () => {
   expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);
   rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
   expect(fireEvent.wheel(screen.getByRole("region", { name: "Dependency graph canvas" }), { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);
+});
+
+it("centers guided steps from layout coordinates at a stable zoom, including a clean loop reset", () => {
+  mockCanvasDimensions();
+  const steps = [step("start", [], ["first.md"]), step("finish", ["first.md"], [])];
+  const graphLayout = layoutDefinitionGraph(["start", "finish"], [{ from: "start", to: "finish" }], new Set());
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-canvas") ? graphLayout.width : 0;
+  });
+  const props = { variant: "definition" as const, title: "Demo", steps, showInspector: false, hideToolbar: true, minScale: 0.85, simulationPlaying: true };
+  const { rerender } = render(<PlaybookGraph {...props} selectedStepKey="start" simulatedStatuses={{ start: "running", finish: "idle" }} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const stage = viewport.querySelector<HTMLElement>(".playbook-definition-stage");
+  if (!stage) throw new Error("Graph stage is not mounted");
+  const unit = 1;
+  const firstView = camera(viewport);
+  const assertCentered = (key: string) => {
+    const node = graphLayout.nodes.find((node) => node.key === key);
+    if (!node) throw new Error("Graph node is missing");
+    const view = camera(viewport);
+    expect(view.tx + (node.x + GRAPH_NODE_WIDTH / 2) * unit * view.scale).toBeCloseTo(300);
+    expect(view.ty + (node.y + GRAPH_NODE_HEIGHT / 2) * unit * view.scale).toBeCloseTo(200);
+    expect(view.ty + node.y * unit * view.scale).toBeGreaterThanOrEqual(32);
+  };
+  assertCentered("start");
+  expect(stage.style.transition).toBe("none");
+  rerender(<PlaybookGraph {...props} selectedStepKey="finish" simulatedStatuses={{ start: "completed", finish: "running" }} />);
+  assertCentered("finish");
+  expect(camera(viewport).scale).toBe(firstView.scale);
+  expect(stage.style.transition).toContain("320ms");
+  expect(viewport.querySelectorAll(".playbook-definition-connection.selected")).toHaveLength(1);
+  rerender(<PlaybookGraph {...props} selectedStepKey="start" simulatedStatuses={{ start: "running", finish: "idle" }} />);
+  expect(camera(viewport)).toEqual(firstView);
+  expect(stage.style.transition).toBe("none");
+  expect(viewport.querySelectorAll(".playbook-definition-connection.selected")).toHaveLength(0);
+});
+
+it("pauses guided playback on focus and reveals the focused step without canvas gestures", () => {
+  mockCanvasDimensions();
+  const onPauseSimulation = vi.fn();
+  const props = {
+    variant: "definition" as const,
+    title: "Demo",
+    steps: denseSteps,
+    showInspector: false,
+    hideToolbar: true,
+    selectedStepKey: "seed",
+    simulatedStatuses: { seed: "running" as const },
+    onPauseSimulation,
+  };
+  const { rerender } = render(<PlaybookGraph {...props} simulationPlaying />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const initial = camera(viewport);
+  fireEvent.pointerDown(viewport, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 200, clientY: 200, pointerId: 1 });
+  fireEvent.pointerUp(window, { clientX: 200, clientY: 200, pointerId: 1 });
+  fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 });
+  expect(camera(viewport)).toEqual(initial);
+  fireEvent.focus(screen.getByRole("button", { name: "Highlight review" }));
+  const revealed = camera(viewport);
+  expect(onPauseSimulation).toHaveBeenCalledOnce();
+  expect(revealed.ty).toBeLessThan(initial.ty);
+  expect(viewport.querySelector<HTMLElement>(".playbook-definition-stage")?.style.transition).toBe("none");
+  rerender(<PlaybookGraph {...props} simulationPlaying={false} />);
+  expect(camera(viewport)).toEqual(revealed);
+  fireEvent.click(screen.getByRole("button", { name: "Highlight build" }));
+  expect(onPauseSimulation).toHaveBeenCalledTimes(2);
+});
+
+it("anchors both arrow tips exactly at the destination node's top edge", () => {
+  const steps = [step("source", [], ["result.md"]), step("destination", ["result.md"], [])];
+  const { container } = render(<PlaybookGraph variant="definition" title="Arrows" steps={steps} />);
+  const layout = layoutDefinitionGraph(["source", "destination"], [{ from: "source", to: "destination" }], new Set());
+  const destination = layout.nodes.find((node) => node.key === "destination");
+  if (!destination) throw new Error("Destination node is missing");
+  const connection = container.querySelector<SVGPathElement>(".playbook-definition-connection");
+  expect(connection?.getAttribute("d")?.endsWith(`${destination.x + GRAPH_NODE_WIDTH / 2} ${destination.y}`)).toBe(true);
+  const markers = container.querySelectorAll("marker");
+  expect(markers).toHaveLength(2);
+  for (const marker of markers) {
+    expect(marker.getAttribute("refX")).toBe("7");
+    expect(marker.querySelector("path")?.getAttribute("d")).toContain("L 7 3.5");
+  }
+});
+
+it("describes simulated node statuses without changing their action names", () => {
+  const steps = [step("build", [], ["result.md"])];
+  const props = { variant: "definition" as const, title: "Demo", steps, showInspector: false };
+  const { rerender } = render(<PlaybookGraph {...props} simulatedStatuses={{ build: "running" }} />);
+
+  for (const [status, description] of [
+    ["running", "Running"],
+    ["waiting_for_approval", "Needs review"],
+    ["completed", "Complete"],
+  ] as const) {
+    rerender(<PlaybookGraph {...props} simulatedStatuses={{ build: status }} />);
+    const node = screen.getByRole("button", { name: "Highlight build", description });
+    expect(within(node).getByText("build")).toBeTruthy();
+    expect(within(node).getByText(description)).toBeTruthy();
+    expect(within(node).getByText(description).querySelector('[aria-hidden="true"]')).not.toBeNull();
+  }
+
+  rerender(<PlaybookGraph {...props} simulatedStatuses={{ build: "idle" }} />);
+  expect(screen.getByRole("button", { name: "Highlight build" }).hasAttribute("aria-describedby")).toBe(false);
+  rerender(<PlaybookGraph {...props} showInspector />);
+  expect(screen.getByRole("button", { name: "Inspect build" }).hasAttribute("aria-describedby")).toBe(false);
+});
+
+it("gives repeated examples unique status descriptions across graph instances", () => {
+  const steps = [step("seed", [], ["requests/*.md"]), { ...step("gather", ["requests/*.md"], []), inputs: [{ path: "requests/*.md", mode: "each" as const }] }];
+  const props = { variant: "definition" as const, steps, simulatedStatuses: { gather: "running" as const } };
+  render(
+    <>
+      <PlaybookGraph {...props} title="First" />
+      <PlaybookGraph {...props} title="Second" />
+    </>,
+  );
+  const examples = screen.getAllByRole("button", { name: /^Inspect gather — example/, description: "Running" });
+  expect(examples).toHaveLength(6);
+  const descriptionIds = examples.map((node) => node.getAttribute("aria-describedby"));
+  expect(new Set(descriptionIds).size).toBe(examples.length);
+  for (const [index, node] of examples.entries()) {
+    expect(within(node).getByText(`Example ${(index % 3) + 1}`)).toBeTruthy();
+    const description = document.getElementById(descriptionIds[index] ?? "");
+    expect(description?.textContent).toBe("Running");
+    expect(node.contains(description)).toBe(true);
+  }
+});
+
+it("reveals the actual repeated example on keyboard focus and click, including after pausing", () => {
+  mockCanvasDimensions();
+  const steps = [step("seed", [], ["requests/*.md"]), { ...step("gather", ["requests/*.md"], []), inputs: [{ path: "requests/*.md", mode: "each" as const }] }];
+  const layout = layoutDefinitionGraph(["seed", "gather"], [{ from: "seed", to: "gather" }], new Set(["gather"]));
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-canvas") ? layout.width : 0;
+  });
+  const onPauseSimulation = vi.fn();
+  const props = {
+    variant: "definition" as const,
+    title: "Examples",
+    steps,
+    showInspector: false,
+    hideToolbar: true,
+    minScale: 1,
+    onPauseSimulation,
+    simulatedStatuses: { seed: "completed" as const, gather: "running" as const },
+  };
+  const { rerender } = render(<PlaybookGraph {...props} selectedStepKey="seed" simulationPlaying />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const assertExampleCentered = (instance: number) => {
+    const node = layout.nodes.find((node) => node.key === "gather" && node.instance === instance);
+    if (!node) throw new Error("Repeated example is missing");
+    const view = camera(viewport);
+    expect(view.tx + (node.x + GRAPH_NODE_WIDTH / 2) * view.scale).toBeCloseTo(300);
+    expect(view.ty + (node.y + GRAPH_NODE_HEIGHT / 2) * view.scale).toBeCloseTo(200);
+  };
+  fireEvent.focus(screen.getByRole("button", { name: "Highlight gather — example 3" }));
+  assertExampleCentered(3);
+  fireEvent.click(screen.getByRole("button", { name: "Highlight gather — example 3" }));
+  rerender(<PlaybookGraph {...props} selectedStepKey="gather" simulationPlaying={false} />);
+  assertExampleCentered(3);
+  fireEvent.focus(screen.getByRole("button", { name: "Highlight gather — example 2" }));
+  assertExampleCentered(2);
+  expect(onPauseSimulation).toHaveBeenCalledTimes(3);
+  expect(screen.getByRole("region", { name: "Examples graph" }).hasAttribute("data-simulation-playing")).toBe(false);
+});
+
+it("keeps an autoplay camera transition when a resize observer reports unchanged dimensions", () => {
+  mockCanvasDimensions();
+  let notify = () => {};
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        notify = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const props = {
+    variant: "definition" as const,
+    title: "Demo",
+    steps: denseSteps,
+    showInspector: false,
+    hideToolbar: true,
+    simulationPlaying: true,
+    simulatedStatuses: { seed: "completed" as const, plan: "running" as const },
+  };
+  const { rerender } = render(<PlaybookGraph {...props} selectedStepKey="seed" />);
+  rerender(<PlaybookGraph {...props} selectedStepKey="plan" />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const stage = viewport.querySelector<HTMLElement>(".playbook-definition-stage");
+  expect(stage?.style.transition).toContain("320ms");
+  const view = camera(viewport);
+  notify();
+  expect(stage?.style.transition).toContain("320ms");
+  expect(camera(viewport)).toEqual(view);
 });

@@ -5,6 +5,15 @@
   container: task-list / inline-size;
 }
 
+.task-list-view .task-list-starter {
+  padding: 24px;
+}
+
+.task-list-starter > .grid-starter-gate {
+  flex-shrink: 0;
+  margin: auto;
+}
+
 .task-list-view .task-table {
   min-width: 0;
 }

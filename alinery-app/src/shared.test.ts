@@ -9,6 +9,9 @@ import {
   harnessDisplayName,
   isAllowedLaunchHarness,
   ompDefaultModel,
+  orderPlaybookCandidates,
+  playbookRefKey,
+  RECOMMENDED_PLAYBOOK,
   repoName,
   SessionTimestamp,
   sameBoardTasks,
@@ -17,10 +20,24 @@ import {
   sameSessionMetas,
   sameTask,
   sameTaskActivityMaps,
+  starredPlaybookKeys,
   taskKey,
   useMinuteNow,
+  withPlaybookStar,
 } from "./shared";
-import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type {
+  ArtifactTreeNode,
+  BoardTask,
+  KanbanColumn,
+  LifecycleState,
+  PickerPreferences,
+  PlaybookCandidate,
+  PlaybookRef,
+  SessionMeta,
+  Task,
+  TaskActivityMap,
+  TaskActivitySummary,
+} from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
@@ -391,5 +408,54 @@ describe("re-render comparators", () => {
       expect(sameTaskActivityMaps(map(summary()), map(summary({ active_session: { ...active, [field]: value } })))).toBe(false);
     }
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
+  });
+});
+
+describe("playbook stars", () => {
+  const fresh: PickerPreferences = { order: [], entries: [] };
+  const custom: PlaybookRef = { scope: "repo", key: "custom" };
+  const candidate = (reference: PlaybookRef): PlaybookCandidate => ({
+    source: { reference, path: null },
+    title: reference.key,
+    description: null,
+    modified_at_ms: null,
+    diagnostics: [],
+  });
+
+  it("defaults only fresh, readable preferences to the recommended playbook", () => {
+    expect([...starredPlaybookKeys(fresh)]).toEqual(["bundled/superdevelop"]);
+    expect([...starredPlaybookKeys(undefined)]).toEqual([]);
+    expect([...starredPlaybookKeys({ order: [custom], entries: [] })]).toEqual([]);
+  });
+
+  it("materializes the initial star on first edit and keeps an explicit unstar across reloads", () => {
+    const saved = withPlaybookStar(fresh, custom, true);
+    expect([...starredPlaybookKeys(saved)]).toEqual(["bundled/superdevelop", "repo/custom"]);
+    const unstarred = withPlaybookStar(fresh, RECOMMENDED_PLAYBOOK, false);
+    expect(unstarred.entries[0].preferred).toBe(false);
+    expect([...starredPlaybookKeys(structuredClone(unstarred))]).toEqual([]);
+    expect([...starredPlaybookKeys(withPlaybookStar(unstarred, custom, true))]).toEqual(["repo/custom"]);
+    expect(fresh).toEqual({ order: [], entries: [] });
+  });
+
+  it("preserves legacy metadata, scope identity and saved ordering", () => {
+    const initial = withPlaybookStar(fresh, custom, false);
+    initial.order = [custom, RECOMMENDED_PLAYBOOK];
+    initial.entries[1] = { ...initial.entries[1], hidden: true, collapsed: true, badge: "Keep", color: "#123456", last_imported_at_ms: 123 };
+    const next = withPlaybookStar(initial, custom, true);
+    expect(next.order).toEqual(initial.order);
+    expect(next.entries).toEqual([initial.entries[0], { ...initial.entries[1], preferred: true }]);
+    expect(starredPlaybookKeys(next).has("global/custom")).toBe(false);
+  });
+
+  it("puts stars first, then saved order and stable scope/key order without mutating candidates", () => {
+    const a: PlaybookRef = { scope: "repo", key: "alpha" };
+    const candidates = [candidate(custom), candidate(a), candidate(RECOMMENDED_PLAYBOOK)];
+    const saved = withPlaybookStar(fresh, a, true);
+    saved.order = [custom, a, RECOMMENDED_PLAYBOOK];
+    expect(orderPlaybookCandidates(candidates, saved).map((item) => playbookRefKey(item.source.reference))).toEqual(["repo/alpha", "bundled/superdevelop", "repo/custom"]);
+    expect(orderPlaybookCandidates(candidates, fresh)[0].source.reference).toEqual(RECOMMENDED_PLAYBOOK);
+    expect(orderPlaybookCandidates(candidates, undefined).map((item) => playbookRefKey(item.source.reference))).toEqual(["bundled/superdevelop", "repo/alpha", "repo/custom"]);
+    expect(candidates[0].source.reference).toEqual(custom);
   });
 });

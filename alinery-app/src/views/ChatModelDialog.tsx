@@ -151,7 +151,8 @@ export function ChatModelDialog({
   onClose,
 }: ChatProvidersDialogProps) {
   const [query, setQuery] = useState(preselect ?? "");
-  const [providerQuery, setProviderQuery] = useState("");
+  // Opened straight onto Accounts for one provider (an onboarding card): start filtered to it.
+  const [providerQuery, setProviderQuery] = useState(tab === "accounts" ? (preselect ?? "") : "");
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const advancedRef = useRef<HTMLDivElement | null>(null);
