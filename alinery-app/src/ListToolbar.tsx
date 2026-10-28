@@ -2,6 +2,47 @@ import { Archive, Check, Search, X } from "lucide-react";
 import { type ReactNode, useRef } from "react";
 import "./listToolbar.css";
 
+export function CollectionSearch({ label, query, onQueryChange, className }: { label: string; query: string; onQueryChange: (value: string) => void; className?: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className={`collection-search${className ? ` ${className}` : ""}`}>
+      <Search size={16} strokeWidth={1.5} aria-hidden="true" />
+      <input
+        ref={input}
+        type="search"
+        aria-label={`Search ${label.toLowerCase()}`}
+        placeholder={`Search ${label.toLowerCase()}…`}
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && query) {
+            event.preventDefault();
+            event.stopPropagation();
+            onQueryChange("");
+          }
+        }}
+      />
+      {query && (
+        <button
+          type="button"
+          className="collection-search-clear"
+          aria-label={`Clear ${label.toLowerCase()} search`}
+          title="Clear search"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+          }}
+          onClick={() => {
+            onQueryChange("");
+            input.current?.focus();
+          }}
+        >
+          <X size={14} strokeWidth={1.5} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ListToolbar({
   label,
   heading,
@@ -23,7 +64,6 @@ export function ListToolbar({
   onReset: () => void;
   children?: ReactNode;
 }) {
-  const input = useRef<HTMLInputElement>(null);
   return (
     <search
       className="collection-toolbar"
@@ -35,38 +75,7 @@ export function ListToolbar({
       }}
     >
       {heading && <div className="collection-heading">{heading}</div>}
-      <div className="collection-search">
-        <Search size={16} strokeWidth={1.5} aria-hidden="true" />
-        <input
-          ref={input}
-          type="search"
-          aria-label={`Search ${label.toLowerCase()}`}
-          placeholder={`Search ${label.toLowerCase()}…`}
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && query) {
-              event.preventDefault();
-              event.stopPropagation();
-              onQueryChange("");
-            }
-          }}
-        />
-        {query && (
-          <button
-            type="button"
-            className="collection-search-clear"
-            aria-label={`Clear ${label.toLowerCase()} search`}
-            title="Clear search"
-            onClick={() => {
-              onQueryChange("");
-              input.current?.focus();
-            }}
-          >
-            <X size={14} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        )}
-      </div>
+      <CollectionSearch label={label} query={query} onQueryChange={onQueryChange} />
       <div className="collection-filters">{children}</div>
       <div className="collection-results">
         {filtered && (

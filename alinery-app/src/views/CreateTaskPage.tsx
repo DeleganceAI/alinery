@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
+import { CollectionSearch } from "../ListToolbar";
 import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
 import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
@@ -1474,18 +1475,15 @@ export function CreateTaskPage({
         </div>
       </div>
       <aside className="create-preview-panel" aria-labelledby="create-playbook-title">
-        <div className="artifacthead">
+        <div className="artifacthead playbook-picker-header">
           <div className="artifacttitle" id="create-playbook-title">
             Playbook
           </div>
           {draftSlug ? <span className="pill">Draft</span> : null}
+          <PlaybookLibraryLink className="small playbook-browse-action" />
         </div>
         <div className="playbook-panel-controls">
-          <PlaybookLibraryLink className="small playbook-browse-action" />
-          <label className="create-field">
-            <span>Search playbooks</span>
-            <input type="search" className="field-input" value={playbookQuery} onChange={(event) => setPlaybookQuery(event.target.value)} />
-          </label>
+          <CollectionSearch label="playbooks" query={playbookQuery} onQueryChange={setPlaybookQuery} className="playbook-search" />
           {starError && <InlineStatus tone="error">{starError}</InlineStatus>}
           <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
             {visiblePlaybooks.length > 0 ? (

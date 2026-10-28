@@ -2039,8 +2039,48 @@ main {
 .playbook-library-link svg {
   flex-shrink: 0;
 }
-.playbook-browse-action {
+.create-preview-panel .playbook-picker-header {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 12px 16px;
+}
+.playbook-picker-header .artifacttitle {
+  flex: 1 0 auto;
+}
+.playbook-picker-header .playbook-library-link.btn {
+  height: auto;
+  min-height: 28px;
+  max-width: 100%;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 400;
+  white-space: normal;
+  text-align: end;
+}
+.playbook-picker-header .playbook-library-link.btn:hover {
+  background: transparent;
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.playbook-picker-header .playbook-library-link.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.create-preview-panel .playbook-search {
+  flex: none;
   width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding-inline: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+.playbook-search > svg {
+  flex-shrink: 0;
 }
 .playbook-picker {
   display: grid;

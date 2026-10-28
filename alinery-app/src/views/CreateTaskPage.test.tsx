@@ -697,8 +697,10 @@ describe("scoped playbook selection", () => {
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
-    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const onCancel = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={onCancel} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText("New task name…")));
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
     const description = screen.getByPlaceholderText(/Describe the feature/);
     fireEvent.change(description, { target: { value: "Keep this task description" } });
@@ -708,7 +710,10 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("region", { name: "Global SuperDevelop workflow preview" });
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
     expect(screen.getAllByRole("radio")).toHaveLength(1);
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear playbooks search" }));
+    expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search playbooks" }));
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
+    expect(screen.queryByRole("button", { name: "Clear playbooks search" })).toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([
       "bundled/superdevelop",
       "bundled/one-shot",
@@ -721,9 +726,23 @@ describe("scoped playbook selection", () => {
     expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "no matching workflow" } });
     expect(screen.queryByRole("radio")).toBeNull();
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
+    fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search playbooks" }), { key: "Escape" });
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
+    expect(onCancel).not.toHaveBeenCalled();
     expect(screen.getAllByRole("radio")).toHaveLength(5);
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
+  });
+
+  it.each(["metaKey", "ctrlKey"])("does not create a task from the search clear button with %s+Enter", async (modifier) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Ready to create" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "superdevelop" } });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Clear playbooks search" }), { key: "Enter", [modifier]: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", [modifier]: true });
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1));
   });
 
   it("opens an unconfigured repository in the searchable library including legacy-hidden choices", async () => {
