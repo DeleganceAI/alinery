@@ -1,6 +1,6 @@
 import type { DraftAttachment } from "./chat/attachments";
 import type { SessionTerminalConnectionState } from "./SessionTerminal";
-import type { AgentState, LifecycleState, MessageAdapter, ProcessState, SessionMessageActionProvenance } from "./types";
+import type { AgentState, LifecycleState, MessageAdapter, ProcessState, SessionMessageActionProvenance, SessionObservation } from "./types";
 
 export const LARGE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_SESSION_MESSAGE_BYTES = 4 * 1024 * 1024;
@@ -150,12 +150,20 @@ export function canAbortChatSession(readiness: SessionMessageReadiness): boolean
 export type TurnActivity = {
   pendingTurn?: boolean;
   turnOpen?: boolean;
-  agentState?: AgentState["state"] | null;
+  observation?: SessionObservation | null;
 };
 
 export function isTurnActive(activity: TurnActivity): boolean {
+  const observation = activity.observation;
+  // An exited session can retain its last busy state or a replay without turn_end.
+  if (
+    observation &&
+    (observation.state ? observation.state.process.state === "exited" : observation.lifecycle.state !== "live" && observation.lifecycle.state !== "never_started")
+  ) {
+    return false;
+  }
   if (activity.pendingTurn || activity.turnOpen) return true;
-  const state = activity.agentState;
+  const state = observation?.state?.agent.state;
   return state === "busy" || state === "waiting_for_input" || state === "waiting_for_approval";
 }
 

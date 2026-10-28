@@ -2248,7 +2248,7 @@ describe("session chat attach handshake", () => {
     expect(types.indexOf("get_subagents")).toBeGreaterThan(types.indexOf("set_subagent_subscription"));
   });
 
-  const exitedRpc: SessionObservation = {
+  const exitedRpc = {
     ...liveObservation("rpc"),
     lifecycle: { state: "live_exited" },
     state: {
@@ -2258,7 +2258,7 @@ describe("session chat attach handshake", () => {
       adapter: "omp",
       message_adapter: "omp_bracketed_paste",
     },
-  };
+  } satisfies SessionObservation;
 
   it("replays a completed RPC session without issuing live commands or error toasts", async () => {
     sessionStatus.mockResolvedValue(exitedRpc);
@@ -2273,6 +2273,72 @@ describe("session chat attach handshake", () => {
     await flushPromises();
     expect(rpcWriteSession).not.toHaveBeenCalled();
     expect(within(screen.getByRole("status", { name: "Notifications" })).queryByText("session-exited")).toBeNull();
+  });
+
+  it.each(["busy agent", "unclosed replay"])("settles completed RPC chat with a retained %s", async (retained) => {
+    sessionStatus.mockResolvedValue({
+      ...exitedRpc,
+      state: {
+        ...exitedRpc.state,
+        agent: { state: retained === "busy agent" ? "busy" : "idle" },
+        playbook: { state: "completed" },
+      },
+      checkpoint: { phase_completed_at: 100 },
+    });
+    rpcAttachSession.mockImplementation(async (args) => {
+      const attach = args as Parameters<typeof Ipc.rpcAttachSession>[0];
+      if (retained === "unclosed replay") attach.onLine(JSON.stringify({ type: "turn_start" }));
+      attach.onLine(JSON.stringify({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "Completed implementation." }] } }));
+    });
+    const onDraftChange = vi.fn();
+    const onQueuedFollowUpsChange = vi.fn();
+    renderSession({
+      intent: "attach",
+      messageDraft: { body: "Keep this follow-up", pendingActions: [], attachments: [] },
+      onMessageDraftChange: onDraftChange,
+      onQueuedFollowUpsChange,
+    });
+    await screen.findByText("Completed implementation.");
+    await flushPromises();
+
+    expect(screen.getByText("Completed", { selector: ".statusdot" })).toBeDefined();
+    expect(screen.queryByText("Working…")).toBeNull();
+    expect(screen.queryByPlaceholderText("Send after this turn…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
+    expect(rpcWriteSession).not.toHaveBeenCalled();
+
+    // An ended process still refuses sends; the UI must not queue behind a nonexistent turn or lose the draft.
+    rpcWriteSession.mockResolvedValue({ status: "not_sent", reason: "session exited" });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(commands("prompt")).toHaveLength(1));
+    expect(commands("follow_up")).toEqual([]);
+    expect(onQueuedFollowUpsChange).not.toHaveBeenCalled();
+    expect(onDraftChange).not.toHaveBeenCalledWith({ body: "", pendingActions: [], attachments: [] });
+  });
+
+  it.each<AgentState>([{ state: "busy" }, { state: "waiting_for_approval", correlation_id: "approval" }])("keeps live $state turn activity", async (agent) => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", agent));
+    renderSession({ intent: "attach" });
+    expect(await screen.findByRole("button", { name: "Queue" })).toBeDefined();
+    expect(screen.getByPlaceholderText("Send after this turn…")).toBeDefined();
+  });
+
+  it("settles Chat activity when a live process exits without a closing turn event", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    const onLine = { current: undefined as ((line: string) => void) | undefined };
+    captureRpcOnLine(onLine);
+    renderSession({ intent: "attach" });
+    await flushPromises();
+    await act(async () => onLine.current?.(JSON.stringify({ type: "turn_start" })));
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDefined();
+
+    sessionStatus.mockResolvedValue({ ...exitedRpc, state: { ...exitedRpc.state, agent: { state: "busy" }, playbook: { state: "completed" } } });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.getByText("Completed", { selector: ".statusdot" })).toBeDefined();
+    expect(screen.queryByText("Working…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDefined();
   });
 
   it("reconciles a session that exits during the RPC handshake without showing an error", async () => {

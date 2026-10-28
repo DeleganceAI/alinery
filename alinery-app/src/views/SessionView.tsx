@@ -1267,7 +1267,7 @@ export function SessionView({
     const busy = isTurnActive({
       pendingTurn: chatRef.current.pendingTurn,
       turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
+      observation,
     });
     if (origin === "nudge" && busy) return sendNow(true);
     setMessageSending(true);
@@ -1912,7 +1912,7 @@ export function SessionView({
       busy: isTurnActive({
         pendingTurn: chat.pendingTurn,
         turnOpen: chat.turnOpen,
-        agentState: observation?.state?.agent?.state,
+        observation,
       }),
       providers: chat.sessionMeta.loginProviders ?? [],
       models: chat.sessionMeta.models ?? [],
@@ -1930,7 +1930,7 @@ export function SessionView({
     chat.sessionMeta.models,
     chat.pendingTurn,
     chat.turnOpen,
-    observation?.state?.agent?.state,
+    observation,
     modelDialog,
     hosted,
     hostedLoaded,
@@ -1970,7 +1970,7 @@ export function SessionView({
     const active = isTurnActive({
       pendingTurn: chatRef.current.pendingTurn,
       turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
+      observation,
     });
     if (active) {
       if (!(await confirmStopAndSwitch(target))) return false;
@@ -2454,7 +2454,7 @@ export function SessionView({
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
-    agentState: observedState?.agent?.state,
+    observation,
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
