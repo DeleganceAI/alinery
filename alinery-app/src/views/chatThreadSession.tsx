@@ -76,9 +76,7 @@ export function chatActivity(
   transcript: ChatTranscriptState,
 ): { status: SessionChatStatus; turnActive: boolean; kind: ObservationDisplayKind } {
   const raw = observation ? observationDisplayKind(observation) : null;
-  // OMP that died mid-turn never sends turn_end, and the daemon keeps its last agent state: neither is a running turn.
-  const exited = observation?.state ? observation.state.process.state === "exited" : raw === "exited";
-  const turnActive = !exited && isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, agentState: observation?.state?.agent?.state });
+  const turnActive = isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, observation });
   const status: SessionChatStatus = raw === "waiting_for_approval" ? "waiting_approval" : turnActive ? "running" : "idle";
   // Nothing observed yet is Loading, never Idle.
   if (raw === null) return { status, turnActive, kind: "loading" };
