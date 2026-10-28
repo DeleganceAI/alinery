@@ -461,9 +461,35 @@ pub(crate) fn list_session_items_with_repo_resolver(
     Ok(out)
 }
 
-#[allow(dead_code)]
-pub(crate) fn list_root_sessions_for_repo(repo: &Path) -> Result<Vec<SessionMeta>, String> {
-    list_sessions_in_dir(root_sessions_dir(repo))
+/// Root (task-less) metas: drawer shells and chat threads share `.alinery/sessions/`. Lenient
+/// on purpose — one unreadable or malformed file must not hide the others.
+pub(crate) fn list_root_sessions_for_repo(repo: &Path) -> Vec<SessionMeta> {
+    let Ok(entries) = fs::read_dir(root_sessions_dir(repo)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if !name.ends_with(".meta.json") {
+                return None;
+            }
+            let raw = fs::read_to_string(entry.path()).ok()?;
+            serde_json::from_str::<SessionMeta>(&raw).ok()
+        })
+        .collect()
+}
+
+/// Drawer shells the daemon still reports live, oldest first so restored ordinals follow
+/// creation order.
+pub(crate) fn live_drawer_terminals(metas: Vec<SessionMeta>, live_ids: &HashSet<String>) -> Vec<SessionMeta> {
+    let mut out: Vec<SessionMeta> = metas
+        .into_iter()
+        .filter(|meta| meta.harness == alinery_core::NO_HARNESS_KEY && !meta.archived && live_ids.contains(&meta.id))
+        .collect();
+    out.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+    out
 }
 
 pub(crate) fn list_sessions_for_repo(repo: &Path, task_slug: &str) -> Result<Vec<SessionMeta>, String> {
@@ -653,6 +679,24 @@ pub(crate) fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result<Sessi
             start: false,
         })?;
     Ok(reply.session)
+}
+
+// Drawer shells outlive a normal quit (alineryd keeps the pty) but their tabs were only React
+// state, so a relaunch rediscovers them here before it creates a new shell (issue #141).
+#[tauri::command]
+pub(crate) async fn list_drawer_terminals(state: State<'_, AppState>) -> Result<Vec<SessionMeta>, String> {
+    let repo = require_owned_active_repo(&state)?;
+    let daemon = state.daemon_for(&repo).ok_or("daemon not connected")?;
+    off_main_thread("list drawer terminals", move || {
+        let live: HashSet<String> = daemon
+            .session_statuses_observed()?
+            .into_iter()
+            .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
+            .map(|session| session.id)
+            .collect();
+        Ok(live_drawer_terminals(list_root_sessions_for_repo(&repo), &live))
+    })
+    .await
 }
 
 // Open a session: REATTACH if its pty is still running (replay scrollback, then go
