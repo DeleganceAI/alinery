@@ -399,7 +399,7 @@ AI components are not chat bubbles by default. Choose the structure that best ex
 - Hover-only actions must also appear on keyboard focus.
 - Menus and dialogs support Escape, correct focus trapping, and focus restoration.
 - The onboarding overlay uses the shared native dialog. Background workspace shortcuts stay inactive, and Escape dismisses only the topmost nested dialog.
-- On the final onboarding step, place secondary Build a new playbook beside primary Finish onboarding and omit Skip. Keep the optional mechanics explanation in the How work moves disclosure.
+- On the final onboarding step, place secondary Build a new playbook beside primary Finish onboarding and omit Skip. Keep the mechanics explanation in the How work moves disclosure, expanded by default and available to collapse.
 - Destructive confirmations default focus to the safe choice.
 - Lists and tables preserve selection during refresh when the selected object still exists.
 - Streaming content should not steal scroll position or cause avoidable layout shift.

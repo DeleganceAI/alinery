@@ -554,10 +554,12 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
-  it("keeps the mechanics guide collapsed until requested", async () => {
+  it("opens the mechanics guide by default and lets users collapse and reopen it", async () => {
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     const guide = screen.getByLabelText("Core playbook mechanics") as HTMLDetailsElement;
+    expect(guide.open).toBe(true);
+    fireEvent.click(within(guide).getByText("How work moves"));
     expect(guide.open).toBe(false);
     fireEvent.click(within(guide).getByText("How work moves"));
     expect(guide.open).toBe(true);

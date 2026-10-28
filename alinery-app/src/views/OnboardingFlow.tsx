@@ -504,7 +504,7 @@ export function OnboardingFlow({
                 })}
               </div>
 
-              <details className="onboarding-mechanics" aria-label="Core playbook mechanics">
+              <details className="onboarding-mechanics" aria-label="Core playbook mechanics" open>
                 <summary>How work moves</summary>
                 <ul className="onboarding-mechanics-list">
                   <li className="onboarding-mechanic-item">

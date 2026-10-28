@@ -108,7 +108,7 @@ export function stepModelDisplay(args: { stepModel: string; playbookDefaultModel
 }
 
 function persistedStepModels(source: ScopedPlaybook | null, stepModels: Record<string, string>, taskModel: string, productModel: string): Record<string, string> {
-  if (!source) return {};
+  if (!source) return stepModels;
   const next: Record<string, string> = {};
   for (const step of source.definition.step) {
     const raw = stepModels[step.key];
@@ -485,6 +485,10 @@ export function CreateTaskPage({
       alive = false;
     };
   }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
+
+  useEffect(() => {
+    if (!selectedSource) setWorkflowPreviewOpen(false);
+  }, [selectedSource]);
 
   useEffect(() => {
     if (!selectedSource) return;
