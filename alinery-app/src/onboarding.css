@@ -765,12 +765,35 @@
 }
 .onboarding-demo-progress > span {
   flex: 1;
+  overflow: hidden;
   border-radius: 2px;
   background: var(--border);
-  transition: background-color 180ms ease-in-out;
 }
-.onboarding-demo-progress > [data-complete] { background: var(--success); }
-.onboarding-demo-progress > [data-current] { background: var(--accent); }
+.onboarding-demo-progress > [data-current] { background: var(--accent-subtle); }
+.onboarding-demo-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
+  animation-name: onboarding-progress-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+.onboarding-demo-progress > [data-complete] > .onboarding-demo-progress-fill {
+  background: var(--success);
+  transform: scaleX(1);
+}
+@keyframes onboarding-progress-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.onboarding-demo-progress[data-reduced-motion] > [data-running] > .onboarding-demo-progress-fill {
+  animation: none;
+  transform: scaleX(1);
+}
 .onboarding-demo-caption,
 .onboarding-step-kind {
   color: var(--text-faint);
@@ -1214,8 +1237,11 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .onboarding-card-detail,
-  .onboarding-archetype-card,
-  .onboarding-demo-progress > span { transition: none; }
+  .onboarding-archetype-card { transition: none; }
+  .onboarding-demo-progress > [data-running] > .onboarding-demo-progress-fill {
+    animation: none;
+    transform: scaleX(1);
+  }
   .onboarding-card-detail { transform: none; }
   .onboarding-step-inspector[data-animated] .onboarding-step-content { animation: none; }
 }

@@ -333,6 +333,62 @@ describe("OnboardingFlow wizard", () => {
     expect(progress.getAttribute("aria-valuetext")).toBe("Plan, step 4 of 7");
   });
 
+  it.each([
+    { step: 1, precedingSteps: 0, duration: 2600 },
+    { step: 3, precedingSteps: 2, duration: 3800 },
+  ])("resumes step $step after only its remaining playback time", async ({ step, precedingSteps, duration }) => {
+    vi.useFakeTimers();
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    for (let index = 0; index < precedingSteps; index += 1) await advanceDemo(2600);
+    await advanceDemo(1000);
+    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
+    await advanceDemo(10000);
+    expect(screen.getByText(`Step ${step} of 7`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
+    await advanceDemo(500);
+    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
+    await advanceDemo(5000);
+    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
+    await advanceDemo(duration - 1501);
+    expect(screen.getByText(`Step ${step} of 7`)).toBeTruthy();
+    await advanceDemo(1);
+    expect(screen.getByText(`Step ${step + 1} of 7`)).toBeTruthy();
+  });
+
+  it("returns from manual inspection to the active step when resuming", async () => {
+    vi.useFakeTimers();
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    await advanceDemo(2600);
+    await advanceDemo(900);
+    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
+    await advanceDemo(5000);
+    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
+    expect(screen.getByRole("region", { name: "Investigate step contract" })).toBeTruthy();
+    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Playbook demo" }).getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
+    await advanceDemo(1699);
+    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
+    await advanceDemo(1);
+    expect(screen.getByRole("region", { name: "Decide step contract" })).toBeTruthy();
+  });
+
+  it("starts a fresh step duration when switching playbooks during a paused partial step", async () => {
+    vi.useFakeTimers();
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    await act(async () => {});
+    await advanceDemo(1000);
+    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
+    await act(async () => {});
+    await advanceDemo(2599);
+    expect(screen.getByText("Step 1 of 3")).toBeTruthy();
+    await advanceDemo(1);
+    expect(screen.getByText("Step 2 of 3")).toBeTruthy();
+  });
+
   it("moves playbook selection and focus with the keyboard without restarting a paused demo", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
@@ -469,8 +525,10 @@ describe("OnboardingFlow wizard", () => {
     await advanceDemo(1000);
     view.rerender(<OnboardingFlow {...props} appConfig={{ ...baseConfig, active_repo: "/other/repo" }} initialStep="playbooks" />);
     await act(async () => {});
-    await advanceDemo(400);
+    await advanceDemo(2599);
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
+    await advanceDemo(1);
+    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Models/ }));
     await advanceDemo(4000);
     fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
