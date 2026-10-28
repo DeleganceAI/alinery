@@ -51,4 +51,14 @@ describe("useTabPill", () => {
     observers[0].cb([] as unknown as ResizeObserverEntry[], observers[0] as unknown as ResizeObserver);
     expect(nav?.classList.contains("instant")).toBe(false);
   });
+
+  it("offsets the pill by the nav's scrollLeft so it stays on the tab once the nav has scrolled", () => {
+    mockBoxes();
+    const { container, rerender } = render(<Probe active="list" instant={false} />);
+    const nav = container.querySelector("nav") as HTMLElement;
+    expect(nav.style.getPropertyValue("--pill-x")).toBe("80px");
+    Object.defineProperty(nav, "scrollLeft", { value: 40 });
+    rerender(<Probe active="list" instant={true} />);
+    expect(nav.style.getPropertyValue("--pill-x")).toBe("120px");
+  });
 });
