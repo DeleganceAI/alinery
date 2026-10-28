@@ -16,7 +16,6 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("review", include_str!("../../playbooks/review/playbook.md")),
     ("bug-hunting", include_str!("../../playbooks/bug-hunting/playbook.md")),
     ("free-form", include_str!("../../playbooks/free-form/playbook.md")),
-    ("generic-session", include_str!("../../playbooks/generic-session/playbook.md")),
     ("natural-planning-brainstorm", include_str!("../../playbooks/natural-planning-brainstorm/playbook.md")),
     ("systematic-naming", include_str!("../../playbooks/systematic-naming/playbook.md")),
     ("primed-feature-development", include_str!("../../playbooks/primed-feature-development/playbook.md")),
