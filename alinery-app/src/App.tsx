@@ -1087,6 +1087,11 @@ export default function App() {
     }
   };
 
+  const replayPlaybookGuide = () => {
+    setOnboardingStep("playbooks");
+    setOnboardingOpen(true);
+  };
+
   const openCreate = (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
@@ -1265,10 +1270,7 @@ export default function App() {
         ]
       : []),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
-    action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", () => {
-      setOnboardingStep("playbooks");
-      setOnboardingOpen(true);
-    }),
+    action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", replayPlaybookGuide),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", addRepo),
   ];
@@ -1533,7 +1535,8 @@ export default function App() {
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
                 registerNav={registerNav}
-                onCreate={() => openCreate()}
+                onCreate={(playbook, preset) => openCreate(playbook, preset)}
+                onReplayOnboarding={replayPlaybookGuide}
               />
             </div>
           )}
@@ -1802,10 +1805,7 @@ export default function App() {
               storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
               onCreate={(playbook, preset) => openCreate(playbook, preset)}
-              onReplayOnboarding={() => {
-                setOnboardingStep("playbooks");
-                setOnboardingOpen(true);
-              }}
+              onReplayOnboarding={replayPlaybookGuide}
               liveStatusExplainedFor={daemon.conflict?.repo}
             />
           </div>

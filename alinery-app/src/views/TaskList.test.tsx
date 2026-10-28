@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_STATE_ART } from "../emptyStateArt";
 import * as ipc from "../ipc";
+import { CURATED_PLAYBOOK_ARCHETYPES } from "../onboarding";
 import { navReady, requireNav } from "../test/nav";
 import type { BoardNav, BoardTask, TaskActivityMap, TaskActivitySummary } from "../types";
 import { flattenTaskRows, TaskList } from "./TaskList";
@@ -106,6 +106,7 @@ describe("Task List polling", () => {
       await vi.advanceTimersByTimeAsync(9000);
     });
     expect(ipc.listBoardTasks).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("grid-starter-gate")).toBeNull();
     await act(async () => resolveLoad([task()]));
     expect(screen.getByText("A task")).toBeDefined();
     expect(view.container.querySelector(".loading-state")).toBeNull();
@@ -276,17 +277,38 @@ describe("Task List relationship projection", () => {
     await waitFor(() => expect(screen.getByText(/relationship corruption/)).toBeDefined());
     expect(document.querySelectorAll(".task-name-text")).toHaveLength(0);
     expect(document.querySelector(".loading-state")).toBeNull();
+    expect(screen.queryByTestId("grid-starter-gate")).toBeNull();
   });
 });
 
 describe("TaskList empty", () => {
-  it("renders a catalog plate on the major empty surface", async () => {
-    const { container } = render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
-    await screen.findByText("No tasks yet.");
-    const img = container.querySelector("img.empty-state-art");
-    expect(img).not.toBeNull();
-    expect(EMPTY_STATE_ART).toContain(img?.getAttribute("src"));
-    expect(container.querySelector(".list-empty")).not.toBeNull();
+  it("creates from the selected playbook or preset and offers a generic task and guide", async () => {
+    const onCreate = vi.fn();
+    const onReplayOnboarding = vi.fn();
+    render(
+      <TaskList
+        allRepos={false}
+        onOpen={() => {}}
+        onDuplicate={() => {}}
+        onOpenActiveSession={() => {}}
+        registerNav={() => {}}
+        onCreate={onCreate}
+        onReplayOnboarding={onReplayOnboarding}
+      />,
+    );
+    const deck = within(await screen.findByTestId("grid-starter-gate"));
+    expect(deck.getByRole("radio", { name: "SuperDevelop" })).toHaveProperty("checked", true);
+    expect(deck.getAllByRole("radio")).toHaveLength(4);
+    fireEvent.click(deck.getByRole("radio", { name: "Bug Hunting" }));
+    fireEvent.click(deck.getByRole("button", { name: "Use playbook: Bug Hunting" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" });
+    fireEvent.click(deck.getByRole("button", { name: "Try starter preset" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" }, CURATED_PLAYBOOK_ARCHETYPES[1].starterPreset);
+    fireEvent.click(deck.getByRole("button", { name: "New task" }));
+    expect(onCreate).toHaveBeenLastCalledWith();
+    expect(deck.getByRole("link", { name: "Browse the Playbook Library" })).toBeDefined();
+    fireEvent.click(deck.getByRole("button", { name: "How playbooks work" }));
+    expect(onReplayOnboarding).toHaveBeenCalledTimes(1);
   });
 
   it("shows only the highest-priority session status and opens the selected active session", async () => {
@@ -589,7 +611,8 @@ describe("Task List filters", () => {
 
     fireEvent.change(search, { target: { value: "no such task" } });
     expect(names()).toEqual([]);
-    expect(screen.queryByText("No tasks yet.")).toBeNull();
+    expect(screen.getByText("No tasks match these filters.")).toBeDefined();
+    expect(screen.queryByTestId("grid-starter-gate")).toBeNull();
     onOpen.mockClear();
     onDuplicate.mockClear();
     act(() => {

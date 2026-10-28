@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import * as ipc from "./ipc";
+import { CURATED_PLAYBOOK_ARCHETYPES } from "./onboarding";
 import type { SessionNoticeRow } from "./sessionAttention";
 import type {
   AppConfig,
@@ -26,6 +27,7 @@ import { executionReply } from "./views/executionTestFixture";
 import type * as ProviderSetupModule from "./views/ProviderSetupDialog";
 import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
 import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
+import type { TaskList as TaskListComponent } from "./views/TaskList";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -366,13 +368,22 @@ vi.mock("./views/ChatView", () => ({
   },
 }));
 vi.mock("./views/TaskList", () => ({
-  TaskList: ({ onOpen, onOpenActiveSession }: { onOpen: (value: BoardTask) => void; onOpenActiveSession: (value: BoardTask, session: TaskActivitySession) => void }) => (
+  TaskList: ({ onOpen, onOpenActiveSession, onCreate, onReplayOnboarding }: Parameters<typeof TaskListComponent>[0]) => (
     <div>
       <button type="button" onClick={() => onOpen(task)}>
         open list task
       </button>
       <button type="button" onClick={() => onOpenActiveSession(task, activeSession)}>
         open active list session
+      </button>
+      <button type="button" onClick={() => onCreate(CURATED_PLAYBOOK_ARCHETYPES[1].reference)}>
+        use list playbook
+      </button>
+      <button type="button" onClick={() => onCreate(CURATED_PLAYBOOK_ARCHETYPES[1].reference, CURATED_PLAYBOOK_ARCHETYPES[1].starterPreset)}>
+        use list preset
+      </button>
+      <button type="button" onClick={onReplayOnboarding}>
+        show list guide
       </button>
     </div>
   ),
@@ -650,6 +661,26 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
   fireEvent.click(screen.getByTitle(task.repo_path));
   fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
   await screen.findByRole("table", { name: "Playbook library" });
+});
+
+describe("task list starter actions", () => {
+  it.each([
+    ["use list playbook", "create preset:"],
+    ["use list preset", "create preset:Audit error handling and edge-case failure modes"],
+  ])("passes %s into the new-task form", async (action, preset) => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    await screen.findByText("create playbook:bug-hunting");
+    expect(screen.getByText(preset)).toBeTruthy();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("reopens the playbook guide from Tasks", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "show list guide" }));
+    expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+  });
 });
 
 describe("onboarding gate", () => {
