@@ -72,8 +72,7 @@ export const CURATED_PLAYBOOK_ARCHETYPES: CuratedPlaybookArchetype[] = [
     reference: { scope: "bundled", key: "superdevelop" },
     badge: "Feature workflow",
     tagline: "Clarify → Investigate → Decide → Plan → Define Tests → Build → Prepare Review",
-    patternSummary:
-      "7-stage engineering pipeline. Agents clarify and investigate automatically, then pause at Decide so you approve the design artifact before any code is written.",
+    patternSummary: "Build a change step by step, with your approval before coding.",
     checkpointNote: "Pauses at Decide (decide.md) before any code is written, and again at Prepare Review (review-package.md).",
     title: "SuperDevelop",
     starterPreset: {
@@ -88,7 +87,7 @@ export const CURATED_PLAYBOOK_ARCHETYPES: CuratedPlaybookArchetype[] = [
     reference: { scope: "bundled", key: "bug-hunting" },
     badge: "Root cause & fix",
     tagline: "Root Cause Analysis → Evaluate Resolutions → Design the Fix → Implement → PR",
-    patternSummary: "Separates root-cause proof from fix implementation. Proves the bug first, proposes resolution options, and waits for you to choose the fix.",
+    patternSummary: "Find the root cause, choose a fix, then implement and verify it.",
     checkpointNote: "Pauses at Evaluate Resolutions (selected-fix.md) and every step after it, including Design the Fix.",
     title: "Bug Hunting",
     starterPreset: {
@@ -103,7 +102,7 @@ export const CURATED_PLAYBOOK_ARCHETYPES: CuratedPlaybookArchetype[] = [
     reference: { scope: "bundled", key: "review" },
     badge: "Code review",
     tagline: "Confirm Scope → Run Review Checks → Inspect the Change → Prepare Response",
-    patternSummary: "Evidence-backed code review on the latest commit or branch diff. Collects verification evidence first, then surfaces findings for human sign-off.",
+    patternSummary: "Review a commit or branch with evidence and a final sign-off.",
     checkpointNote: "Pauses at Inspect the Change (review-findings.md) before drafting the review response.",
     title: "Code Review",
     starterPreset: {
@@ -117,8 +116,7 @@ export const CURATED_PLAYBOOK_ARCHETYPES: CuratedPlaybookArchetype[] = [
     reference: { scope: "bundled", key: "academic-survey" },
     badge: "Parallel swarm",
     tagline: "Frame Review → Plan Wave → Gather Sources (×N) → Assess Each Source (×N) → Consolidate",
-    patternSummary:
-      "Demonstrates dynamic swarm generation: Plan Wave emits search-request-*.md files, spawning one parallel agent session per request (mode = 'each') and waiting for all of them to finish (mode = 'complete') before consolidating.",
+    patternSummary: "Research a topic in parallel, then bring sources and citations into one survey.",
     checkpointNote: "Spawns parallel worker waves automatically; the final step checks stopping criteria with you before another wave.",
     title: "Academic Survey",
     starterPreset: {

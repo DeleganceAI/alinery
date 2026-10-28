@@ -826,6 +826,9 @@ function ScopedGrid({
   liveStatusExplainedFor,
 }: GridProps & { scopeKey: string }) {
   const settingsId = useId();
+  const starterId = useId();
+  const [selectedStarterKey, setSelectedStarterKey] = useState(CURATED_PLAYBOOK_ARCHETYPES[0].reference.key);
+  const selectedStarter = CURATED_PLAYBOOK_ARCHETYPES.find((archetype) => archetype.reference.key === selectedStarterKey) ?? CURATED_PLAYBOOK_ARCHETYPES[0];
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
   const cachedBoard = boardSnapshots.get(scopeKey);
   const [tasks, setTasks] = useState<BoardTask[]>(() => cachedBoard?.tasks ?? []);
@@ -1847,37 +1850,58 @@ function ScopedGrid({
             <div className="grid-starter-header">
               <div>
                 <h3>Start your first task with a playbook</h3>
-                <p className="grid-starter-subtitle">Choose a playbook below to launch a structured agent workflow in its own worktree, or open the interactive playbook guide.</p>
+                <p className="grid-starter-subtitle">Choose a workflow for your task. You'll review the details before starting.</p>
               </div>
-            </div>
-            <div className="grid-starter-cards">
-              {CURATED_PLAYBOOK_ARCHETYPES.slice(0, 4).map((archetype) => (
-                <article key={archetype.reference.key} className="grid-starter-card">
-                  <span className="playbook-option-meta">{archetype.badge}</span>
-                  <h4 className="playbook-option-title">{archetype.title}</h4>
-                  <p className="grid-starter-card-summary">{archetype.patternSummary}</p>
-                  <div className="grid-starter-card-outline">
-                    <span>Workflow outline</span>
-                    <p className="grid-starter-card-tagline">{archetype.tagline}</p>
-                  </div>
-                  <div className="grid-starter-card-actions">
-                    <button type="button" className="btn ghost small" aria-label={`New task with ${archetype.title}`} onClick={() => onCreate?.(archetype.reference)}>
-                      New task
-                    </button>
-                    <button type="button" className="btn ghost small" onClick={() => onCreate?.(archetype.reference, archetype.starterPreset)}>
-                      Try starter preset
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <div className="grid-starter-footer">
-              <button type="button" className="btn" onClick={() => onCreate?.()}>
+              <button type="button" className="btn ghost small grid-starter-utility" disabled={!onCreate} onClick={() => onCreate?.()}>
                 New task
               </button>
-              <PlaybookLibraryLink />
+            </div>
+            <fieldset className="grid-starter-cards">
+              <legend className="sr-only">Choose a playbook</legend>
+              {CURATED_PLAYBOOK_ARCHETYPES.slice(0, 4).map((archetype) => (
+                <label key={archetype.reference.key} className="grid-starter-card">
+                  <input
+                    type="radio"
+                    name={starterId}
+                    value={archetype.reference.key}
+                    checked={selectedStarterKey === archetype.reference.key}
+                    onChange={() => setSelectedStarterKey(archetype.reference.key)}
+                    aria-labelledby={`${starterId}-${archetype.reference.key}-title`}
+                    aria-describedby={`${starterId}-${archetype.reference.key}-summary`}
+                  />
+                  <strong id={`${starterId}-${archetype.reference.key}-title`}>{archetype.title}</strong>
+                  <p id={`${starterId}-${archetype.reference.key}-summary`} className="grid-starter-card-summary">
+                    {archetype.patternSummary}
+                  </p>
+                </label>
+              ))}
+            </fieldset>
+            <section className="grid-starter-selection" aria-label={`${selectedStarter.title} workflow details`}>
+              <div className="grid-starter-selection-heading">
+                <h4>{selectedStarter.title}</h4>
+                <span>{selectedStarter.badge}</span>
+              </div>
+              <p className="grid-starter-card-tagline">{selectedStarter.tagline}</p>
+              <p className="grid-starter-checkpoint">{selectedStarter.checkpointNote}</p>
+              <div className="grid-starter-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!onCreate}
+                  aria-label={`Use playbook: ${selectedStarter.title}`}
+                  onClick={() => onCreate?.(selectedStarter.reference)}
+                >
+                  Use playbook
+                </button>
+                <button type="button" className="btn ghost" disabled={!onCreate} onClick={() => onCreate?.(selectedStarter.reference, selectedStarter.starterPreset)}>
+                  Try starter preset
+                </button>
+              </div>
+            </section>
+            <div className="grid-starter-footer">
+              <PlaybookLibraryLink className="small grid-starter-utility" />
               {onReplayOnboarding && (
-                <button type="button" className="btn ghost" onClick={onReplayOnboarding}>
+                <button type="button" className="btn ghost small grid-starter-utility" onClick={onReplayOnboarding}>
                   How playbooks work
                 </button>
               )}
