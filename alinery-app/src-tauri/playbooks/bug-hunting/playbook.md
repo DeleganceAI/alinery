@@ -2,6 +2,7 @@
 version = 2
 key = "bug-hunting"
 title = "Bug Hunting"
+tagline = "Find a bug's root cause and verify the fix."
 description = "Prove a root cause, let the human choose a correction, approve its design, implement and verify it, then prepare a PR note."
 default_model = ""
 default_harness = "omp"

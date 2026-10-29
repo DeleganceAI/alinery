@@ -2,6 +2,7 @@
 version = 2
 key = "spec"
 title = "Kiro SDD"
+tagline = "Turn agreed requirements into working code, one reviewed slice at a time."
 description = "Specify a change, then implement and review one approved slice at a time."
 default_model = ""
 default_harness = "omp"

@@ -2,6 +2,7 @@
 version = 2
 key = "free-form"
 title = "Free-form"
+tagline = "A blank starting point you build on as you work"
 description = "Perform ad-hoc task work in one human-steered session with a required inspectable result."
 default_model = ""
 default_harness = "omp"

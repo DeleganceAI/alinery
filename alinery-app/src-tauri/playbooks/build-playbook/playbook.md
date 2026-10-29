@@ -2,6 +2,7 @@
 version = 2
 key = "build-playbook"
 title = "Build a New Playbook"
+tagline = "Turn your team's way of working into a reusable Playbook."
 description = "Define a useful playbook, draft its prompts with the human, then independently verify the process before saving it globally or in the user's repository."
 default_model = ""
 default_harness = "omp"
@@ -218,11 +219,14 @@ A v2 playbook is one Markdown document with TOML frontmatter between standalone 
 
 Choose a lowercase playbook key containing only letters, digits and hyphens. The key used when saving must match the key in the document. Give each step a unique key.
 
+Write an optional top-level `tagline` answering “What will this Playbook help me accomplish?” Use one concrete sentence about the outcome or use, not a list of steps. Keep it nonblank and at most 120 Unicode characters, with no control characters or line separators. Keep the fuller explanation in `description`; omit `tagline` if none has been authored. The example includes a tagline in addition to the required fields. Files with this field require an app and publishing API that support it; older parsers reject unknown fields.
+
 ```toml
 +++
 version = 2
 key = "brief"
 title = "Brief"
+tagline = "Make supplied material clear enough to act on."
 description = "Turn supplied material into a reviewed brief."
 default_model = ""
 default_harness = "omp"
@@ -453,6 +457,7 @@ The example contains the complete v2 definition and prompts. Its four step marke
 version = 2
 key = "review-proposal-loop"
 title = "Review a Proposal in Repeated Passes"
+tagline = "Strengthen a proposal through independent review and human direction."
 description = "Draft, independently analyze and assess a proposal before requesting another revision."
 default_model = ""
 default_harness = "omp"

@@ -64,6 +64,8 @@ pub struct NormalizedPlaybook {
     pub version: u32,
     pub key: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline: Option<String>,
     pub description: String,
     pub default_model: String,
     pub default_harness: String,
@@ -185,6 +187,8 @@ struct Metadata {
     version: u32,
     key: String,
     title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tagline: Option<String>,
     description: String,
     default_model: String,
     default_harness: String,
@@ -306,6 +310,7 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
             ("version", "integer"),
             ("key", "string"),
             ("title", "string"),
+            ("tagline", "string?"),
             ("description", "string"),
             ("default_model", "string"),
             ("default_harness", "string"),
@@ -462,6 +467,16 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
     if metadata.title.trim().is_empty() {
         errors.push(PlaybookValidationError::new("empty_title", "playbook title must not be empty", None, Some("title".into())));
     }
+    if metadata.tagline.as_ref().is_some_and(|tagline| {
+        tagline.trim().is_empty() || tagline.chars().count() > 120 || tagline.chars().any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+    }) {
+        errors.push(PlaybookValidationError::new(
+            "invalid_tagline",
+            "tagline must be nonblank, at most 120 Unicode characters, and contain no control characters or line separators",
+            None,
+            Some("tagline".into()),
+        ));
+    }
     let mut keys = HashSet::new();
     let mut outputs: Vec<(&str, &str, ArtifactSelector)> = Vec::new();
     for step in &metadata.step {
@@ -588,6 +603,7 @@ pub fn parse_playbook_md(source: &str) -> Result<NormalizedPlaybook, Vec<Playboo
         version: metadata.version,
         key: metadata.key,
         title: metadata.title,
+        tagline: metadata.tagline,
         description: metadata.description,
         default_model: metadata.default_model,
         default_harness: metadata.default_harness,
@@ -646,9 +662,12 @@ fn render_string_field(output: &mut String, key: &str, value: &str) {
 pub fn render_playbook_md(playbook: &NormalizedPlaybook) -> String {
     use std::fmt::Write;
     let mut result = format!("+++\nversion = {}\n", playbook.version);
+    render_string_field(&mut result, "key", &playbook.key);
+    render_string_field(&mut result, "title", &playbook.title);
+    if let Some(tagline) = &playbook.tagline {
+        render_string_field(&mut result, "tagline", tagline);
+    }
     for (key, value) in [
-        ("key", playbook.key.as_str()),
-        ("title", playbook.title.as_str()),
         ("description", playbook.description.as_str()),
         ("default_model", playbook.default_model.as_str()),
         ("default_harness", playbook.default_harness.as_str()),
@@ -751,6 +770,82 @@ mod tests {
         let parsed = parse_playbook_md(&crlf).unwrap();
         assert_eq!(parsed.step[0].prompt, "Read {{TICKET_FILE}}.\r\n");
         assert_eq!(parse_playbook_md(&render_playbook_md(&parsed)).unwrap(), parsed);
+    }
+
+    #[test]
+    fn optional_tagline_preserves_existing_documents_and_dtos() {
+        let definition = parse_playbook_md(&fixture()).unwrap();
+        assert_eq!(definition.tagline, None);
+        assert!(!render_playbook_md(&definition).contains("tagline ="));
+        let json = serde_json::to_value(&definition).unwrap();
+        assert!(json.get("tagline").is_none());
+        assert_eq!(serde_json::from_value::<NormalizedPlaybook>(json).unwrap(), definition);
+    }
+
+    #[test]
+    fn tagline_round_trip_preserves_text_and_canonical_position() {
+        let tagline = "  Turn a \"feature idea\" into verified code — café 🚀.  ";
+        let source = fixture().replacen("description =", &format!("tagline = {}\ndescription =", toml::Value::String(tagline.into())), 1);
+        let definition = parse_playbook_md(&source).unwrap();
+        assert_eq!(definition.tagline.as_deref(), Some(tagline));
+        let rendered = render_playbook_md(&definition);
+        assert!(rendered.contains("title = \"Test\"\ntagline = "));
+        assert_eq!(parse_playbook_md(&rendered).unwrap(), definition);
+        assert_eq!(render_playbook_md(&parse_playbook_md(&rendered).unwrap()), rendered);
+        let json = serde_json::to_value(&definition).unwrap();
+        assert_eq!(json["tagline"], tagline);
+        assert_eq!(serde_json::from_value::<NormalizedPlaybook>(json).unwrap(), definition);
+    }
+
+    #[test]
+    fn tagline_limit_counts_unicode_characters() {
+        let mut definition = parse_playbook_md(&fixture()).unwrap();
+        for character in ['a', 'é', '🚀'] {
+            for length in [1, 120] {
+                definition.tagline = Some(character.to_string().repeat(length));
+                assert_eq!(parse_playbook_md(&render_playbook_md(&definition)).unwrap(), definition);
+            }
+            definition.tagline = Some(character.to_string().repeat(121));
+            rejects(&render_playbook_md(&definition), "invalid_tagline");
+        }
+    }
+
+    #[test]
+    fn rejects_blank_multiline_or_control_character_taglines() {
+        let mut definition = parse_playbook_md(&fixture()).unwrap();
+        for tagline in [
+            "",
+            " ",
+            "\u{a0}\u{2003}",
+            "first\nsecond",
+            "first\rsecond",
+            "first\tsecond",
+            "first\0second",
+            "first\u{1f}second",
+            "first\u{7f}second",
+            "first\u{85}second",
+            "first\u{2028}second",
+            "first\u{2029}second",
+        ] {
+            definition.tagline = Some(tagline.into());
+            let errors = parse_playbook_md(&render_playbook_md(&definition)).unwrap_err();
+            assert!(
+                errors.iter().any(|error| error.code == "invalid_tagline" && error.field.as_deref() == Some("tagline")),
+                "{tagline:?}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_tagline_with_wrong_type() {
+        for value in ["true", "123", "[]", "{}"] {
+            let source = fixture().replacen("description =", &format!("tagline = {value}\ndescription ="), 1);
+            let errors = parse_playbook_md(&source).unwrap_err();
+            assert!(
+                errors.iter().any(|error| error.code == "invalid_field_type" && error.field.as_deref() == Some("tagline")),
+                "{errors:?}"
+            );
+        }
     }
 
     #[test]

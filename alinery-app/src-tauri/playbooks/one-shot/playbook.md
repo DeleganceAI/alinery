@@ -2,6 +2,7 @@
 version = 2
 key = "one-shot"
 title = "One-shot"
+tagline = "Single agent session for end-to-end code development"
 description = "Implement, verify, and prepare a PR note for a clear bounded request in one session."
 default_model = ""
 default_harness = "omp"
