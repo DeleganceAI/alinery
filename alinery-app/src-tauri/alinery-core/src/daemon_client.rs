@@ -209,12 +209,12 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15/16/19/20).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16/19/21).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
-/// Protocols 19 and 20 retain protocol 16's shutdown contract:
+/// Protocols 19 and 21 retain protocol 16's shutdown contract:
 /// `{"op":"shutdown"}` acknowledged by `{"ok":true}` after session teardown.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 19 | 20))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 19 | 21))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.

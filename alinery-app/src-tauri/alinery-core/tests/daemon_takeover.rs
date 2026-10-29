@@ -247,10 +247,10 @@ fn bound_shutdown_requires_checked_ack_without_retry() {
 
 #[test]
 fn legacy_dialect_and_unknown_impact_are_distinct() {
-    for protocol in [9, 10, 12, 15, 16, 19, 20] {
+    for protocol in [9, 10, 12, 15, 16, 19, 21] {
         assert!(audited_shutdown_protocol(Some(protocol)));
     }
-    for protocol in [None, Some(0), Some(11), Some(13), Some(14), Some(17), Some(18), Some(21), Some(u32::MAX)] {
+    for protocol in [None, Some(0), Some(11), Some(13), Some(14), Some(17), Some(18), Some(20), Some(22), Some(u32::MAX)] {
         assert!(!audited_shutdown_protocol(protocol));
     }
     for protocol in [12, 15, 19] {
