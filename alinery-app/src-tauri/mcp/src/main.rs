@@ -786,7 +786,8 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for e in rd.flatten() {
                     let p = e.path();
-                    if p.extension().and_then(|s| s.to_str()) == Some("json") {
+                    // Only `<id>.meta.json` is a session record; `.name.json` and `.execution-process.json` are sidecars.
+                    if p.to_string_lossy().ends_with(".meta.json") {
                         if let Ok(s) = std::fs::read_to_string(&p) {
                             if let Ok(v) = serde_json::from_str::<Value>(&s) {
                                 list.push(v);
