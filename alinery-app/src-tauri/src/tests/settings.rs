@@ -2,6 +2,7 @@
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
+use crate::appearance_settings_changes;
 use std::path::PathBuf;
 
 #[test]
@@ -703,6 +704,24 @@ fn write_global_settings_command_does_not_rewrite_app_config() {
     assert!(text.contains("foo = 1") || text.contains("foo=1"), "{text}");
     assert!(text.contains("[appearance]"), "{text}");
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn appearance_settings_changes_ignore_defaults_and_unknown_chat_keys() {
+    let previous = AppearancePrefs::default();
+    let mut next = previous.clone();
+    next.ava_chat.insert("chat_show_tools".into(), toml::Value::Boolean(false));
+    next.ava_chat.insert("chat_private_user_name".into(), toml::Value::String("private-value".into()));
+    next.ui_scale = 1.001; // Snaps back to the current value.
+    let mut next = sanitize_appearance(next);
+    assert!(appearance_settings_changes(&previous, &next).is_empty());
+
+    next.mode = "dark".into();
+    next.chat_show_tools = true;
+    next.ava_chat.insert("chat_show_tools".into(), toml::Value::Boolean(true));
+    assert_eq!(appearance_settings_changes(&previous, &next), ["mode", "chat_show_tools", "ava_chat.chat_show_tools"]);
+    assert!(appearance_settings_changes(&next, &next).is_empty());
+    assert_eq!(appearance_settings_changes(&next, &previous), ["mode", "chat_show_tools", "ava_chat.chat_show_tools"]);
 }
 
 #[test]

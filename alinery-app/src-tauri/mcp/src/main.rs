@@ -988,7 +988,7 @@ fn handle_tool_call_in(params: Value, process_repo: Option<&Path>, app_config: O
             }
         }
         "alinery_read_config" => text_result(std::fs::read_to_string(repo.join(".alinery/config.toml")).unwrap_or_default()),
-        "alinery_write_config" => write_toml_file(repo.join(".alinery/config.toml"), &args, app_config, repo, alinery_core::SettingsChangeScope::Repo),
+        "alinery_write_config" => write_toml_file(repo.join(".alinery/config.toml"), &args, app_config, repo),
         "alinery_list_playbook_steps" | "alinery_get_task_execution" => {
             if let Err(error) = validate_exact_arguments(&args, &["repo", "task_slug"], &["repo", "task_slug"]) {
                 return error;
@@ -1147,34 +1147,46 @@ fn handle_tool_call(params: Value, repo: &str, app_config: Option<&Path>) -> Val
 }
 
 /// Validate content parses as TOML before overwriting a settings file (#8).
-fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&Path>, repo: &Path, scope: alinery_core::SettingsChangeScope) -> Value {
+fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&Path>, repo: &Path) -> Value {
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
     if let Err(e) = content.parse::<toml::Value>() {
         return error_result(format!("error: not valid TOML ({}); not written", e));
     }
     let is_config = path.file_name().is_some_and(|n| n == "config.toml");
-    let prior_text = if is_config && app_config.is_some() { std::fs::read_to_string(&path).ok() } else { None };
+    let prior_text = if is_config && app_config.is_some() {
+        Some(std::fs::read_to_string(&path))
+    } else {
+        None
+    };
     match std::fs::write(&path, content) {
         Ok(_) => {
             if is_config {
                 if let Some(cfg) = app_config {
                     match toml::from_str::<alinery_core::RepoOverrides>(content) {
                         Ok(next) => {
-                            let prior = alinery_core::repo_overrides_prior_from_text(prior_text.as_deref());
+                            let prior = alinery_core::repo_overrides_prior_from_text(prior_text.as_ref().and_then(|result| result.as_deref().ok()));
                             alinery_core::log_repo_settings_event(cfg, repo, alinery_core::RepoSettingsEvent::Written { prior: &prior, next: &next });
+                            let previous = match &prior_text {
+                                Some(Ok(text)) => toml::from_str::<alinery_core::RepoOverrides>(text).ok(),
+                                Some(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Some(alinery_core::RepoOverrides::default()),
+                                _ => None,
+                            };
+                            if let Some(previous) = previous {
+                                for setting in alinery_core::repo_settings_changes(&previous, &next) {
+                                    alinery_core::record_event(
+                                        cfg,
+                                        alinery_core::TelemetryEvent::SettingsChange {
+                                            source: alinery_core::TelemetrySource::Mcp,
+                                            scope: alinery_core::SettingsChangeScope::Repo,
+                                            setting,
+                                        },
+                                    );
+                                }
+                            }
                         }
                         Err(e) => alinery_core::log_repo_settings_event(cfg, repo, alinery_core::RepoSettingsEvent::UnparseableOverlay { source: content, error: &e }),
                     }
                 }
-            }
-            if let Some(cfg) = app_config {
-                alinery_core::record_event(
-                    cfg,
-                    alinery_core::TelemetryEvent::SettingsChange {
-                        source: alinery_core::TelemetrySource::Mcp,
-                        scope,
-                    },
-                );
             }
             text_result(format!("wrote {}", path.display()))
         }
@@ -2523,6 +2535,87 @@ args = ["--token", "harness-secret"]
     }
 
     #[test]
+    fn write_config_telemetry_tracks_only_consented_typed_changes() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        let repo = unique_repo("write-config-telemetry");
+        std::fs::create_dir_all(repo.join(".alinery")).unwrap();
+        let path = repo.join(".alinery/config.toml");
+        let (app_dir, app_config) = unique_app_config("write-config-telemetry");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let sink = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut events = Vec::<Value>::new();
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+                        let request = alinery_core::http::read_http_request(&mut stream).unwrap();
+                        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+                        let request = String::from_utf8(request).unwrap();
+                        let body = request.split_once("\r\n\r\n").unwrap().1;
+                        events.extend(serde_json::from_str::<Vec<Value>>(body).unwrap());
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(10)),
+                    Err(error) => panic!("telemetry sink: {error}"),
+                }
+            }
+            events
+        });
+        let set_consent = |enabled: bool, prompted: bool| {
+            std::fs::write(
+                &app_config,
+                format!("[global.telemetry]\nenabled = {enabled}\nprompted = {prompted}\ninstall_id = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\nendpoint = \"{endpoint}\"\n"),
+            )
+            .unwrap();
+        };
+        let save = |content: &str| {
+            let result = write_toml_file(path.clone(), &json!({"content": content}), Some(&app_config), &repo);
+            assert!(text_content(&result).starts_with("wrote "), "{result}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        };
+
+        set_consent(true, true);
+        save(""); // A missing file is an empty override, not a settings change.
+        save("# formatting only\n[private-user-table]\nsecret = \"sk-private-value\"\n");
+        std::fs::write(&path, [0xff]).unwrap();
+        save("[backup]\nenabled = true\n"); // Unreadable prior cannot establish a change.
+        std::fs::write(&path, "github = \"sk-private-value\"\n").unwrap();
+        save("[backup]\nenabled = true\n"); // Neither can a malformed typed prior.
+        save("github = \"sk-private-value\"\n"); // Invalid typed next still writes, without telemetry.
+
+        for (enabled, prompted) in [(false, true), (true, false)] {
+            set_consent(enabled, prompted);
+            std::fs::write(&path, "").unwrap();
+            save("[backup]\nenabled = true\n");
+        }
+        set_consent(true, true);
+        std::fs::write(&path, "").unwrap();
+        let content = "[backup]\nenabled = true\ndestination = \"/private/sk-backup-secret\"\n";
+        save(content);
+        save(content); // Repeated saves must not duplicate the two changed fields.
+        save("# changed formatting\n[backup]\ndestination = \"/private/sk-backup-secret\"\nenabled = true\n");
+
+        let mut events = sink.join().unwrap();
+        events.sort_by_key(|event| event["props"]["setting"].as_str().unwrap_or_default().to_owned());
+        assert_eq!(events.len(), 2, "{events:?}");
+        for (event, setting) in events.iter().zip(["backup.destination", "backup.enabled"]) {
+            assert_eq!(event["event"], "settings.change");
+            assert_eq!(event["props"], json!({"source": "mcp", "scope": "repo", "setting": setting}));
+        }
+        let payload = serde_json::to_string(&events).unwrap();
+        for private in ["sk-private-value", "private-user-table", "/private/sk-backup-secret", repo.to_str().unwrap()] {
+            assert!(!payload.contains(private), "{payload}");
+        }
+        let _ = std::fs::remove_dir_all(app_dir);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
     fn write_config_preserves_comments_and_unknown_table_and_logs_diff() {
         let repo = unique_repo("write-config-log");
         std::fs::create_dir_all(repo.join(".alinery")).unwrap();
@@ -2530,13 +2623,7 @@ args = ["--token", "harness-secret"]
         std::fs::write(&path, "# keep me\n[backup]\nenabled = false\n\n[not_a_real_table]\nx = 1\n").unwrap();
         let (app_dir, app_config) = unique_app_config("write-config-log");
         let content = "# keep me\n[backup]\nenabled = true\n\n[not_a_real_table]\nx = 1\n";
-        let resp = write_toml_file(
-            path.clone(),
-            &json!({"content": content}),
-            Some(&app_config),
-            &repo,
-            alinery_core::SettingsChangeScope::Repo,
-        );
+        let resp = write_toml_file(path.clone(), &json!({"content": content}), Some(&app_config), &repo);
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(on_disk.contains("# keep me"), "{on_disk}");
@@ -2554,13 +2641,7 @@ args = ["--token", "harness-secret"]
         let path = repo.join(".alinery/config.toml");
         let (app_dir, app_config) = unique_app_config("write-config-shape");
         let content = "github = \"sk-overlay-secret\"\n";
-        let resp = write_toml_file(
-            path.clone(),
-            &json!({"content": content}),
-            Some(&app_config),
-            &repo,
-            alinery_core::SettingsChangeScope::Repo,
-        );
+        let resp = write_toml_file(path.clone(), &json!({"content": content}), Some(&app_config), &repo);
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
         let text = log_text(&app_config);
@@ -2578,13 +2659,7 @@ args = ["--token", "harness-secret"]
         std::fs::create_dir_all(repo.join(".alinery")).unwrap();
         let path = repo.join(".alinery/config.toml");
         let (app_dir, app_config) = unique_app_config("write-config-nolog");
-        let resp = write_toml_file(
-            path.clone(),
-            &json!({"content": "[backup]\nenabled = true\n"}),
-            Some(&app_config),
-            &repo,
-            alinery_core::SettingsChangeScope::Repo,
-        );
+        let resp = write_toml_file(path.clone(), &json!({"content": "[backup]\nenabled = true\n"}), Some(&app_config), &repo);
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         assert!(!log_text(&app_config).contains("harnesses.toml"));
         let _ = std::fs::remove_dir_all(app_dir);
@@ -2597,7 +2672,7 @@ args = ["--token", "harness-secret"]
         std::fs::create_dir_all(repo.join(".alinery")).unwrap();
         let path = repo.join(".alinery/config.toml");
         let content = "[backup]\nenabled = true\n";
-        let resp = write_toml_file(path.clone(), &json!({"content": content}), None, &repo, alinery_core::SettingsChangeScope::Repo);
+        let resp = write_toml_file(path.clone(), &json!({"content": content}), None, &repo);
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
         let _ = std::fs::remove_dir_all(repo);
