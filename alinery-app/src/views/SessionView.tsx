@@ -64,7 +64,7 @@ import {
 import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { observationDisplayKind } from "../sessionAttention";
-import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
+import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, RETRY_MESSAGE, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
 import {
   ArtifactProvenanceBadges,
@@ -122,9 +122,6 @@ type ArtifactReviewPendingStatus = {
 
 const WRAP_UP_MESSAGE =
   "Wrap up the current step, including my latest message requests. Preserve completed work; do not repeat completed actions unnecessarily. Verify the assigned artifacts. If the work is ready and no substantive approval or question remains, call `alinery_phase_complete` to report readiness again. Otherwise explain the blocker.";
-
-// Retry after OMP gave up on a turn: the model keeps its context, so a short continue is enough.
-const RETRY_MESSAGE = "The previous response was cut off by a connection error. Continue from where you left off.";
 
 export type SessionSendRecovery = {
   commandId: string;
@@ -2715,9 +2712,18 @@ export function SessionView({
           action={
             // Sending is RPC-only; in Terminal mode the PTY composer is the retry path.
             liveRpc && terminalConnection === "open" && !turnActive ? (
-              <button type="button" className="btn small" disabled={messageSending} onClick={() => void sendCurrentMessage(RETRY_MESSAGE, "nudge")}>
-                Retry
-              </button>
+              <span title={nudgeBlocker || "Ask the agent to continue the turn that stopped on an error."}>
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={Boolean(nudgeBlocker)}
+                  onClick={() => {
+                    if (!nudgeBlocker) void sendCurrentMessage(RETRY_MESSAGE, "nudge");
+                  }}
+                >
+                  Retry
+                </button>
+              </span>
             ) : undefined
           }
         >

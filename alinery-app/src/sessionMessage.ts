@@ -6,6 +6,8 @@ export const LARGE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_SESSION_MESSAGE_BYTES = 4 * 1024 * 1024;
 export const OMP_BRACKETED_PASTE_END = "\u001b[201~";
 export const OMP_INTERRUPT_DATA = "\u001b";
+// Retry after OMP gave up on a turn: the model keeps its context, so a short continue is enough.
+export const RETRY_MESSAGE = "The previous response was cut off by a connection error. Continue from where you left off.";
 
 export type SessionMessageDraft = {
   body: string;
