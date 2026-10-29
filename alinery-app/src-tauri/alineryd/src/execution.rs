@@ -578,6 +578,7 @@ fn stop_execution_boundary(repo: &Path, reg: &Registry, request: &EndExecutionRe
     if process.incarnation != request.process_incarnation {
         return Ok(stale("execution process incarnation changed".into()));
     }
+    // Outside the state lock (gate first): a session relaunched meanwhile gets a new incarnation from `spawned`, so the closure's read_process check makes this request stale.
     let owner = owner(reg, &request.session_id).ok();
     let gate = owner.as_ref().map(|owner| owner.gate.lock().unwrap_or_else(|e| e.into_inner()));
     let authorized = mutate_execution_state(repo, &request.task_slug, &meta.daemon_namespace, "authorize human stopped handoff", |_, state| {
