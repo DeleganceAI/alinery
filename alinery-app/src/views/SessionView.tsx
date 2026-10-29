@@ -1417,53 +1417,6 @@ export function SessionView({
     }
   };
 
-  const contextActions: ContextAction[] = [
-    ...(canSendCommentsToSession
-      ? [
-          {
-            key: "add-comments",
-            label: commentSendStatus ? "Comments added" : "Add comments",
-            title: commentSendTitle,
-            disabled: messageSending,
-            busy: commentSendBusy,
-            tone: commentSendStatus ? ("ok" as const) : ("normal" as const),
-            badge: commentSendBadge,
-            onClick: addCommentsToDraft,
-          },
-        ]
-      : []),
-
-    ...(effectivePlaybook === "review" && latestReviewFindings
-      ? [
-          {
-            key: "add-approve-pr",
-            label: approvalStatus ? "Approval prompt added" : "Add approval prompt",
-            title: approvalStatus || "Add an editable request for the harness to submit the GitHub approval/comment",
-            disabled: messageSending,
-            busy: approvalBusy,
-            tone: approvalStatus ? ("ok" as const) : ("normal" as const),
-            onClick: addApprovalPrompt,
-          },
-          {
-            key: "send-findings",
-            label: commentsNewerThanFindings ? "Send findings — pending comments" : "Send findings to task",
-            title: commentsNewerThanFindings
-              ? "Active comments were added after the findings artifact and may not be included in this handoff"
-              : "Choose an existing task to receive these review findings",
-            icon: commentsNewerThanFindings ? ("warning" as const) : undefined,
-            tone: "normal" as const,
-            onClick: () =>
-              onStartReviewHandoff({
-                source_repo_path: repoPath,
-                source_slug: taskSlug,
-                source_session: id,
-                source_artifact: latestReviewFindings.name,
-              }),
-          },
-        ]
-      : []),
-  ];
-
   // Pick the terminal intent from the classification (or the explicit navigation intent); a
   // null intent + non-null lifecycle means an orphaned/interrupted/exited row -> action panel.
   // explicitIntent is true only for spawn|resume (see above), so no non-null assert needed.
@@ -1499,6 +1452,58 @@ export function SessionView({
   const showPtyTerminal = Boolean(termIntent) && !showChat;
   const showHatch = ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
   const showChatComposer = showChat && composerEligible;
+
+  const contextActions: ContextAction[] = [
+    ...(showChatComposer && canSendCommentsToSession
+      ? [
+          {
+            key: "add-comments",
+            label: commentSendStatus ? "Comments added" : "Add comments",
+            title: commentSendTitle,
+            disabled: messageSending,
+            busy: commentSendBusy,
+            tone: commentSendStatus ? ("ok" as const) : ("normal" as const),
+            badge: commentSendBadge,
+            onClick: addCommentsToDraft,
+          },
+        ]
+      : []),
+
+    ...(effectivePlaybook === "review" && latestReviewFindings
+      ? [
+          ...(showChatComposer
+            ? [
+                {
+                  key: "add-approve-pr",
+                  label: approvalStatus ? "Approval prompt added" : "Add approval prompt",
+                  title: approvalStatus || "Add an editable request for the harness to submit the GitHub approval/comment",
+                  disabled: messageSending,
+                  busy: approvalBusy,
+                  tone: approvalStatus ? ("ok" as const) : ("normal" as const),
+                  onClick: addApprovalPrompt,
+                },
+              ]
+            : []),
+          {
+            key: "send-findings",
+            label: commentsNewerThanFindings ? "Send findings — pending comments" : "Send findings to task",
+            title: commentsNewerThanFindings
+              ? "Active comments were added after the findings artifact and may not be included in this handoff"
+              : "Choose an existing task to receive these review findings",
+            icon: commentsNewerThanFindings ? ("warning" as const) : undefined,
+            tone: "normal" as const,
+            onClick: () =>
+              onStartReviewHandoff({
+                source_repo_path: repoPath,
+                source_slug: taskSlug,
+                source_session: id,
+                source_artifact: latestReviewFindings.name,
+              }),
+          },
+        ]
+      : []),
+  ];
+
   useEffect(() => {
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
     if (ompStartRef.current === id) return;
