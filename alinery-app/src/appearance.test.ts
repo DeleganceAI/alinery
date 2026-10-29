@@ -215,7 +215,7 @@ describe("repo switcher floor (#144)", () => {
   const rule = css.slice(start, css.indexOf("}", start));
 
   it("grows with --ui-scale above 1x and holds its 1x value below", () => {
-    // The trigger chrome is fixed px, so a floor that shrank at 0.75x/0.875x would let the add button overlap it again.
+    // The trigger chrome is fixed px; a floor that shrank at 0.75x/0.875x would squeeze the trigger below it and collapse the status dot.
     expect(rule).toMatch(/min-width: calc\(var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
   });
 });
