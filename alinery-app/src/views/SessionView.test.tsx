@@ -586,6 +586,7 @@ describe("session lifecycle polling", () => {
     expect(screen.queryByTestId("terminal")).toBeNull();
     expect(screen.getByText("Interrupted")).toBeDefined();
     expect(screen.getByText(/daemon was killed mid-run.*expected artifact exists and work is preserved/)).toBeDefined();
+    expect(screen.queryByText(/Session actions → Restart this step/)).toBeNull();
   });
 
   it("explains an orphaned session without claiming an artifact was preserved", async () => {
@@ -2987,20 +2988,48 @@ describe("review continuation", () => {
       expect(continueExecution).not.toHaveBeenCalled();
     });
 
-    it("states the dead-owner attestation before ending a session whose daemon died (#129)", async () => {
-      sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
-      const dead = readyReply(null);
-      dead.state.executions["execution-a"].lifecycle = "interrupted";
-      dead.state.executions["execution-a"].error = "previous process disposition is unknown; ownership retained";
-      getTaskExecution.mockResolvedValue(dead);
-      renderSession({ intent: undefined });
-      fireEvent.click(await openSessionAction("End session…"));
-      await waitFor(() => expect(stopExecution).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
-      expect(confirmDanger).toHaveBeenCalledTimes(1);
-      const body = render(<>{confirmDanger.mock.calls[0][1]}</>).container.textContent;
-      expect(body).toMatch(/No process will be stopped.*previous process is gone/);
-      expect(endExecution).not.toHaveBeenCalled();
-      expect(restartExecution).not.toHaveBeenCalled();
+    describe("owner whose daemon died (#129)", () => {
+      const attestation = /No process will be stopped.*previous process is gone/;
+      beforeEach(() => {
+        sessionStatus.mockResolvedValue({ lifecycle: { state: "interrupted" }, state: null, checkpoint: {} });
+        const dead = readyReply(null);
+        dead.state.executions["execution-a"].lifecycle = "interrupted";
+        dead.state.executions["execution-a"].error = "previous process disposition is unknown; ownership retained";
+        getTaskExecution.mockResolvedValue(dead);
+        restartExecution.mockResolvedValue({ session: { id: "fresh-attempt", phase: "worker" }, execution: dead.state.executions["execution-a"], start: "started" });
+        previewExecutionArtifacts.mockResolvedValue({ assessment: readyReply().executions["execution-a"], diagnostics: [] });
+        submitExecutionArtifacts.mockResolvedValue({ status: "accepted", receipt_id: "supplied-receipt" });
+      });
+
+      it("points the Interrupted panel at the release path", async () => {
+        renderSession({ intent: undefined });
+        expect(await screen.findByText(/killed mid-run.*Session actions → Restart this step or End & continue releases this step after confirmation/)).toBeDefined();
+      });
+
+      it.each([
+        { action: "End session…", call: stopExecution },
+        { action: "Restart this step…", call: restartExecution },
+        { action: "End & continue…", call: endExecution },
+      ])("states the attestation in the $action dialog", async ({ action, call }) => {
+        renderSession({ intent: undefined, onOpenReplacement: vi.fn() });
+        fireEvent.click(await openSessionAction(action));
+        await waitFor(() => expect(call).toHaveBeenCalledExactlyOnceWith(request, "/repo"));
+        expect(confirmDanger).toHaveBeenCalledTimes(1);
+        expect(render(<>{confirmDanger.mock.calls[0][1]}</>).container.textContent).toMatch(attestation);
+      });
+
+      it("states the attestation in the Continue with these artifacts dialog", async () => {
+        renderSession({ intent: undefined });
+        fireEvent.click(await openSessionAction("Continue with an artifact…"));
+        fireEvent.change(await screen.findByLabelText("Content for research/2-result-10.md"), { target: { value: "# User supplied result" } });
+        fireEvent.click(screen.getByRole("button", { name: "Check artifacts" }));
+        const continueButton = screen.getByRole("button", { name: "Continue" });
+        await waitFor(() => expect(continueButton).toHaveProperty("disabled", false));
+        fireEvent.click(continueButton);
+        await waitFor(() => expect(submitExecutionArtifacts).toHaveBeenCalledTimes(1));
+        expect(confirmDanger).toHaveBeenCalledTimes(1);
+        expect(render(<>{confirmDanger.mock.calls[0][1]}</>).container.textContent).toMatch(attestation);
+      });
     });
 
     it("routes unusable saved artifacts to entry without stopping the session", async () => {

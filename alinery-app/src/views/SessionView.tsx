@@ -3137,6 +3137,7 @@ export function SessionView({
                 repoPath={repoPath}
                 taskSlug={taskSlug}
                 onStartFresh={leftover || execution ? undefined : onStartFresh}
+                canRelease={canRecover}
                 onArchive={handleArchive}
                 archiveBusy={archiveBusy}
                 onViewHistory={() => setShowHistory(true)}
