@@ -588,9 +588,9 @@ nav.tabs .tab:hover:not(.on) {
 .repo-switcher {
   display: flex;
   align-items: center;
-  /* Floor = add button + trigger chrome (border, padding, dot, gaps, caret), so only the label can yield (#144). */
+  /* Floor = add button + the trigger's fixed-px chrome (border, padding, dot, gaps, caret); grows above 1x so the scaled label keeps room (#144). */
   flex: 0 1000 auto;
-  min-width: 96px;
+  min-width: calc(var(--control-h) + 64px * max(1, var(--ui-scale)));
 }
 .repo-switcher .repo {
   border-top-right-radius: 0;
