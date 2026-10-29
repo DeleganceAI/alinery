@@ -4444,6 +4444,21 @@ fn replay_frame(parser: &vt100::Parser) -> Vec<u8> {
     out
 }
 
+// The initial bytes for a freshly-attached client: the raw scrollback tail, or the frame when
+// there is no tail (pre-#96 session, missing file, alt screen — attach_client passes none).
+fn compose_replay(parser: &vt100::Parser, tail: Vec<u8>) -> Vec<u8> {
+    if tail.is_empty() {
+        return replay_frame(parser);
+    }
+    // Never the frame after a raw tail: state_formatted() opens with ESC[H ESC[J, which wipes
+    // the viewport the tail just drew and repaints it from an emulator that keeps no scrollback
+    // and truncates from the bottom on a shrink (#150). Only the input modes are worth
+    // restoring: the 8 MiB tail may start after the harness enabled them.
+    let mut replay = tail;
+    replay.extend_from_slice(&parser.screen().input_mode_formatted());
+    replay
+}
+
 // Last `max` bytes of a file; empty on any error (missing file, pre-#96 session).
 fn tail_bytes(path: &Path, max: u64) -> Vec<u8> {
     let Ok(mut f) = std::fs::File::open(path) else {
@@ -4499,28 +4514,20 @@ fn attach_client(
 
     let scrollback_path = scrollback_path.clone();
     let mut inner = sess.inner.lock().unwrap_or_else(|e| e.into_inner());
-    let (alt, frame, input_modes) = {
-        let parser = inner.parser.as_ref().ok_or_else(|| WRONG_TRANSPORT.to_string())?;
-        (parser.screen().alternate_screen(), replay_frame(parser), parser.screen().input_mode_formatted())
-    };
+    let parser = inner.parser.as_ref().ok_or_else(|| WRONG_TRANSPORT.to_string())?;
     // A normal-buffer harness builds real terminal scrollback. Replay its durable byte history so
     // closing and reopening alinery does not collapse that history to the final few hundred lines.
     // Alt-screen TUIs still receive only a reconstructed frame: an arbitrary raw tail cannot
     // recreate an alternate screen and was the original frozen-frame failure in #96.
-    let mut replay = if alt {
+    // Caveat: the tail replays verbatim at the client's width. A normal-buffer harness that redraws
+    // in place with cursor-relative moves (OMP's differential renderer) recorded at another width
+    // can show stale lines until it repaints; the pty resize above delivers the SIGWINCH for that.
+    let tail = if parser.screen().alternate_screen() {
         Vec::new()
     } else {
         strip_terminal_queries(&tail_bytes(&scrollback_path, ATTACH_REPLAY_BYTES))
     };
-    if replay.is_empty() {
-        replay = frame;
-    } else {
-        // Never the frame after a raw tail: state_formatted() opens with ESC[H ESC[J, which wipes
-        // the viewport the tail just drew and repaints it from an emulator that keeps no scrollback
-        // and truncates from the bottom on a shrink (#150). Only the input modes are worth
-        // restoring: the 8 MiB tail may start after the harness enabled them.
-        replay.extend_from_slice(&input_modes);
-    }
+    let replay = compose_replay(parser, tail);
 
     // Hand the socket and initial ack/replay directly to a dedicated writer thread while holding
     // the inner lock, so no live byte can slip ahead of replay. Initial history is not charged to
@@ -4567,6 +4574,29 @@ mod replay {
         let mut p = vt100::Parser::new(40, 120, 0);
         p.process(b"$ echo hi\r\nhi\r\n");
         assert!(!replay_frame(&p).starts_with(b"\x1b[?1049h"));
+    }
+
+    #[test]
+    fn tail_replay_restores_input_modes_and_never_appends_the_frame() {
+        let mut p = vt100::Parser::new(40, 120, 0);
+        // A normal-buffer harness enabled bracketed paste, application cursor keys and mouse
+        // reporting before the point where the tail starts.
+        p.process(b"\x1b[?2004h\x1b[?1h\x1b[?1000h$ echo hi\r\nhi\r\n$ ");
+        let tail = b"$ echo hi\r\nhi\r\n$ ".to_vec();
+
+        let replay = compose_replay(&p, tail.clone());
+        let (head, after_tail) = replay.split_at(tail.len());
+        assert_eq!(head, &tail[..]);
+        // Only the input modes follow the tail, never frame bytes: the frame opens with
+        // ESC[H ESC[J, which would wipe what the tail just drew (#150).
+        assert_eq!(after_tail, &p.screen().input_mode_formatted()[..]);
+        let modes: [&[u8]; 3] = [b"\x1b[?2004h", b"\x1b[?1h", b"\x1b[?1000h"];
+        for mode in modes {
+            let found = after_tail.windows(mode.len()).any(|w| w == mode);
+            assert!(found, "missing {:?}", String::from_utf8_lossy(mode));
+        }
+        // No tail at all (pre-#96 session, missing file) still falls back to the frame.
+        assert_eq!(compose_replay(&p, Vec::new()), replay_frame(&p));
     }
 
     #[test]
