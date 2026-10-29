@@ -244,6 +244,12 @@ fn exact_body_framing_and_rejections_preserve_pty_bytes() {
     let expected = [BRACKETED_PASTE_START, body, BRACKETED_PASTE_END, MESSAGE_SUBMIT].concat();
     wait_until(Duration::from_secs(5), || fixture.captured("supported") == expected);
 
+    // Issue #128: a turn OMP gave up on is settled, so the human's retry message goes through.
+    fixture.event("supported", json!({"type": "turn_error", "detail": "socket closed"}));
+    assert_eq!(fixture.send_message("supported", b"retry")["ok"], true);
+    let expected = [expected.as_slice(), BRACKETED_PASTE_START, b"retry", BRACKETED_PASTE_END, MESSAGE_SUBMIT].concat();
+    wait_until(Duration::from_secs(5), || fixture.captured("supported") == expected);
+
     let before = fixture.captured("supported");
     fixture.event("supported", json!({"type": "busy"}));
     assert_eq!(fixture.send_message("supported", b"busy")["error"], "session-not-idle");

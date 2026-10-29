@@ -2564,6 +2564,55 @@ describe("review continuation", () => {
     await waitFor(() => expect(setStepContinuationForRepo).toHaveBeenCalledTimes(2));
   });
 
+  // Issue #128: OMP gave up on a turn (provider socket closed); the session read as Idle with no
+  // error and no way to resume short of typing a message.
+  it("shows why OMP gave up on a turn and retries it without consuming the draft", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    renderSession({ messageDraft: { body: "My unfinished request", pendingActions: [], attachments: [] } });
+    expect(await screen.findByText("The socket connection was closed unexpectedly")).toBeDefined();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+    expect(nudgeSends()[0]).toMatchObject({ type: "prompt", message: "The previous response was cut off by a connection error. Continue from where you left off." });
+    expect(screen.getByRole("textbox")).toHaveProperty("value", "My unfinished request");
+  });
+
+  it("blocks Retry with the same reason the wrap-up nudge gives", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    const reply = readyReply();
+    reply.state.executions["execution-a"].continuation_requested_revision = 7;
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    await waitFor(() => expect(retry.parentElement?.getAttribute("title")).toBe("A handoff has already been requested."));
+    expect(retry).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Nudge to wrap up" })).toHaveProperty("disabled", true);
+    fireEvent.click(retry);
+    expect(nudgeSends()).toHaveLength(0);
+  });
+
+  it("keeps Retry available on an errored session that owns no execution", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    const reply = readyReply();
+    reply.state.executions["execution-a"].owner_session_id = "someone-else";
+    reply.state.executions["execution-a"].previous_session_ids = [];
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+  });
+
+  it("shows the error without Retry on the PTY transport, where the terminal is the retry path", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("pty", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    renderSession();
+    expect(await screen.findByText("The socket connection was closed unexpectedly")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(nudgeSends()).toHaveLength(0);
+  });
+
   it("nudges visibly without consuming the existing draft or attachment", async () => {
     const onDraftChange = vi.fn();
     const draft: SessionMessageDraft = {

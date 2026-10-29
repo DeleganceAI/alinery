@@ -32,6 +32,7 @@ fn session_attention_body_maps_each_supported_reason() {
     let repo = init_git_test_repo("attention-reasons");
     for (reason, expected) in [
         ("idle", "idle, needs you"),
+        ("errored", "stopped on an error, needs you"),
         ("waiting_for_input", "waiting for your input"),
         ("waiting_for_approval", "waiting for your approval"),
     ] {

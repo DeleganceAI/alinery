@@ -127,6 +127,7 @@ describe("pending session name", () => {
     expect(awaitingSessionName({ harness: "omp" }, live)).toBe(true);
     expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, process: { state: "starting" } } })).toBe(true);
     expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, agent: { state: "idle" } } })).toBe(false);
+    expect(awaitingSessionName({ harness: "omp" }, { ...live, state: { ...live.state, agent: { state: "errored" } } })).toBe(false);
     expect(awaitingSessionName({ harness: "omp", name: "Repair cache" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "omp", name_error: "unreadable" }, live)).toBe(false);
     expect(awaitingSessionName({ harness: "omp", archived: true }, live)).toBe(false);

@@ -1446,7 +1446,7 @@ fn handle_conn(
                     Err("session-not-alive")
                 } else if inner.state.message_adapter == MessageAdapter::Unsupported {
                     Err("message-adapter-unsupported")
-                } else if inner.state.agent != alinery_core::AgentState::Idle {
+                } else if !matches!(inner.state.agent, alinery_core::AgentState::Idle | alinery_core::AgentState::Errored { .. }) {
                     Err("session-not-idle")
                 } else {
                     Ok(inner.state.message_adapter)
@@ -2560,7 +2560,7 @@ fn record_rpc_activity(inner: &mut Inner, meta_path: &Path, kind: RpcLineKind, n
 /// source, but it is fire-and-forget (a 250ms ack, no retry): one lost emit left the session Busy,
 /// and the UI on Running, until the next turn. A late `idle` then reduces to the same status.
 fn settle_idle_on_agent_end(inner: &mut Inner, meta_path: &Path) {
-    if inner.state.agent == alinery_core::AgentState::Idle || !process_accepts_runner_events(&inner.state.process) {
+    if matches!(inner.state.agent, alinery_core::AgentState::Idle | alinery_core::AgentState::Errored { .. }) || !process_accepts_runner_events(&inner.state.process) {
         return;
     }
     let reduced = reduce_runner_event(&inner.state, &RunnerEvent::Idle { omp_turn_id: None });
@@ -2721,6 +2721,12 @@ mod rpc_ring_tests {
         inner.state.agent = waiting.clone();
         settle_idle_on_agent_end(&mut inner, &meta_path);
         assert_eq!(inner.state.agent, waiting);
+
+        // An error the extension reported for this turn outlives OMP's own agent_end line.
+        let errored = alinery_core::AgentState::Errored { message: "socket closed".into() };
+        inner.state.agent = errored.clone();
+        settle_idle_on_agent_end(&mut inner, &meta_path);
+        assert_eq!(inner.state.agent, errored);
         let _ = fs::remove_file(meta_path);
     }
 

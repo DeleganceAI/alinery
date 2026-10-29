@@ -64,7 +64,7 @@ import {
 import { SessionLineage } from "../SessionLineage";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { observationDisplayKind } from "../sessionAttention";
-import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
+import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, RETRY_MESSAGE, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
 import {
   ArtifactProvenanceBadges,
@@ -2037,15 +2037,18 @@ export function SessionView({
   const modeBlocker = controlBlocker || (modeChanging ? "Updating continuation mode." : "");
   const pendingSendItems = [...pendingSends.values()];
   const visibleSendRecovery = pendingSendItems.filter((item) => item.status === "refused" || item.status === "unknown");
+  const turnError = observation && observationDisplayKind(observation) === "errored" && observation.state?.agent.state === "errored" ? observation.state.agent.message : null;
   const pendingNudge = pendingSendItems.find((pending) => pending.origin === "nudge" && pending.status !== "refused" && pending.status !== "settled");
-  const nudgeBlocker =
-    controlBlocker ||
+  const sendBlocker =
     (!liveRpc || terminalConnection !== "open" ? "Reconnect to the live chat session to nudge." : "") ||
     (pendingUiReply || observedState?.agent?.state === "waiting_for_approval" || observedState?.agent?.state === "waiting_for_input"
       ? "Resolve the pending approval or question first."
       : "") ||
     (pendingNudge ? (pendingNudge.status === "unknown" ? "Nudge delivery is unknown; check the session before resending." : "Waiting for the previous nudge to finish.") : "") ||
     (messageSending ? "A message is being sent." : "");
+  const nudgeBlocker = controlBlocker || sendBlocker;
+  // Execution-control reasons only apply where the controls are shown; any other errored session can still retry.
+  const retryBlocker = (controlsShown ? controlBlocker : "") || sendBlocker;
   const setContinuationMode = async (automatic: boolean) => {
     if (!execution || modeBlocker || modeChangingRef.current || automatic === automaticContinuation) return;
     if (!automatic && executionView?.state.auto_approve_all) return;
@@ -2705,6 +2708,30 @@ export function SessionView({
         )}
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
+      {turnError && (
+        <InlineStatus
+          tone="error"
+          action={
+            // Sending is RPC-only; in Terminal mode the PTY composer is the retry path.
+            liveRpc && terminalConnection === "open" && !turnActive ? (
+              <span title={retryBlocker || "Ask the agent to continue the turn that stopped on an error."}>
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={Boolean(retryBlocker)}
+                  onClick={() => {
+                    if (!retryBlocker) void sendCurrentMessage(RETRY_MESSAGE, "nudge");
+                  }}
+                >
+                  Retry
+                </button>
+              </span>
+            ) : undefined
+          }
+        >
+          {turnError}
+        </InlineStatus>
+      )}
       {executionView && <ExecutionAvailabilityNotice live={executionView.live} controls />}
       {sessionActionsOpen && (
         <Dialog ariaLabel="Session actions" className="session-actions-dialog" onClose={() => setSessionActionsOpen(false)}>

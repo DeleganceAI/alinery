@@ -445,6 +445,14 @@ describe("journal pages", () => {
     expect(state.entries[0]).toMatchObject({ type: "tool_result", tool: "bash", text: "ls output", status: "ok" });
   });
 
+  // Issue #128: the live path appends the error row on agent_end, but a reopened session dropped
+  // errorMessage on hydration, so the failure that stalled the step was invisible after reopening.
+  it("hydrates the error row of a turn OMP gave up on", () => {
+    const failed = mapHydratedMessage(msg("a1", "assistant", "partial", { stopReason: "error", errorMessage: "The socket connection was closed unexpectedly" }), "a1");
+    const state = applyFilePage(emptyTranscript(), { start: 0, messages: failed ? [failed] : [] }, "initial");
+    expect(state.entries[state.entries.length - 1]).toMatchObject({ id: "f:a1:error", type: "error", text: "The socket connection was closed unexpectedly" });
+  });
+
   it("marks a failed tool result", () => {
     const state = applyFilePage(emptyTranscript(), { start: 0, messages: [msg("t2", "toolResult", "boom", { toolName: "bash", isError: true })] }, "initial");
     expect(state.entries[0]).toMatchObject({ status: "error" });

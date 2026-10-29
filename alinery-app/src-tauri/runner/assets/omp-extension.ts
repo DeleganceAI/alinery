@@ -63,6 +63,8 @@ export interface OmpAgentStartPayload {
 export interface OmpAgentEndPayload {
   readonly type: "agent_end";
   readonly willContinue?: boolean;
+  // The turn's messages; the assistant tail carries stopReason/errorMessage when OMP gave up.
+  readonly messages?: readonly { readonly role?: string; readonly stopReason?: string; readonly errorMessage?: string }[];
 }
 
 export interface OmpSessionStopPayload {
@@ -191,6 +193,10 @@ type RunnerEventAdapterError = {
   readonly type: "adapter_error";
   readonly detail: string;
 };
+type RunnerEventTurnError = {
+  readonly type: "turn_error";
+  readonly detail: string;
+};
 type RunnerEventSessionName = {
   readonly type: "session_name_suggested";
   readonly name: string;
@@ -204,6 +210,7 @@ type RunnerEvent =
   | RunnerEventContinuation
   | RunnerEventCompletion
   | RunnerEventAdapterError
+  | RunnerEventTurnError
   | RunnerEventSessionName;
 
 // ---------- emitter ----------
@@ -1752,7 +1759,14 @@ export function registerCallbacks(
   });
 
   api.on("agent_end", async (payload: OmpAgentEndPayload, context: OmpExtensionContext) => {
-    await safeEmit(emit, { type: payload.willContinue ? "busy" : "idle" });
+    const assistant = payload.messages?.filter((message) => message.role === "assistant") ?? [];
+    const tail = assistant[assistant.length - 1];
+    if (!payload.willContinue && tail?.stopReason === "error") {
+      // OMP exhausted its own retries. Reporting idle here hides the failure and stalls the step (issue #128).
+      await safeEmit(emit, { type: "turn_error", detail: tail.errorMessage?.trim() || "Model request failed" });
+    } else {
+      await safeEmit(emit, { type: payload.willContinue ? "busy" : "idle" });
+    }
     // Not awaited: a title is a side request and must never hold up the next turn.
     if (!payload.willContinue) void chatTitles?.maybeTitle(context);
   });

@@ -14,6 +14,7 @@ export type ObservationDisplayKind =
   | "waiting_for_approval"
   | "busy"
   | "idle"
+  | "errored"
   | "unknown";
 
 export type SessionNotice = "waiting_for_input" | "waiting_for_approval" | "failure" | "unread_completion";
@@ -62,6 +63,7 @@ export function observationDisplayKind(observation: SessionObservation): Observa
   if (state.process.state === "exited") return "exited";
   if (agent.state === "unknown") return "loading";
   if (agent.state === "idle") return "idle";
+  if (agent.state === "errored") return "errored";
   return "unknown";
 }
 
@@ -75,7 +77,7 @@ export function sessionDisplayKind(
 ): ObservationDisplayKind {
   const observed = observation ? observationDisplayKind(observation) : "loading";
   const acknowledgedExit = exitAcknowledged && (!observation?.state || observation.state.process.state === "exited");
-  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "exited") ? "stale" : observed;
+  const kind = acknowledgedExit ? "exited" : superseded && (observed === "idle" || observed === "errored" || observed === "exited") ? "stale" : observed;
   if (!exitAcknowledged && exitCode != null && exitCode !== 0 && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
     return "failed";
   }
@@ -125,7 +127,11 @@ export function hasAcknowledgedExit(session: SessionMeta): boolean {
 
 export function sessionFailureNeedsAttention(session: SessionMeta, observation?: SessionObservation): boolean {
   if (hasUnacknowledgedExit(session)) return true;
-  if (!observation || observationDisplayKind(observation) !== "failed") return false;
+  if (!observation) return false;
+  const kind = observationDisplayKind(observation);
+  // OMP gave up on the turn: the step is stalled until someone retries.
+  if (kind === "errored") return true;
+  if (kind !== "failed") return false;
   return observation.state?.process.state !== "exited" || !hasAcknowledgedExit(session);
 }
 
