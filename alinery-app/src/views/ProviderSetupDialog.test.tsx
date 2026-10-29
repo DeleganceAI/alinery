@@ -509,4 +509,17 @@ describe("device-code sign-in (#130)", () => {
     expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
     expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
   });
+
+  it("falls back to the link's `message` when it carries no `instructions`", async () => {
+    mountWith(
+      [
+        providersLine([{ id: "openai-codex-device", authenticated: false }]),
+        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", message: "Enter code: ABCD-EFGH" }),
+      ],
+      "manual",
+    );
+    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+  });
 });
