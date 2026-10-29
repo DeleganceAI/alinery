@@ -1288,6 +1288,19 @@ pub fn recover_execution_owner(state: &mut TaskExecutionState, id: &str) -> Resu
     Ok(record.owner_session_id.clone())
 }
 
+/// Explicit human attestation that an Interrupted owner's process is gone and its exit
+/// will never be observed (daemon killed mid-step). Never inferred from pids or metas.
+/// Release is not acceptance: the record ends Failed with no receipt.
+pub fn release_interrupted_owner(state: &mut TaskExecutionState, id: &str, session_id: &str) -> Result<(), String> {
+    let record = owned_execution(state, id, session_id)?;
+    if record.lifecycle != ExecutionLifecycle::Interrupted || record.shutdown_confirmed || record.receipt_id.is_some() {
+        return Err("release requires an interrupted, unaccepted execution whose exit was never recorded".into());
+    }
+    confirm_execution_exit(state, id, session_id, None)?;
+    state.executions.get_mut(id).ok_or("unknown execution")?.error = Some("previous process released by user; no exit was recorded".into());
+    Ok(())
+}
+
 pub fn interrupt_unproven_owners(state: &mut TaskExecutionState, proven_live_sessions: &BTreeSet<String>) {
     for record in state.executions.values_mut() {
         if record.lifecycle.holds_capacity() && !proven_live_sessions.contains(&record.owner_session_id) {

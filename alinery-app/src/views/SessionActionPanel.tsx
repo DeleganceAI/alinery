@@ -46,6 +46,7 @@ export function SessionActionPanel({
   archiveBusy,
   onViewHistory,
   onKilled,
+  canRelease = false,
 }: {
   id: string;
   phase: string;
@@ -60,6 +61,7 @@ export function SessionActionPanel({
   archiveBusy: boolean;
   onViewHistory: () => void;
   onKilled: () => void;
+  canRelease?: boolean;
 }) {
   const unsupported = !isAllowedLaunchHarness(harness);
   const { label, hint } = stateLabel(state, artifactReady, unsupported);
@@ -72,7 +74,13 @@ export function SessionActionPanel({
         <span className="pill">{harnessName + (model ? ` · ${model}` : "")}</span>
         <span className="dim mono sap-id">{id}</span>
       </div>
-      {hint ? <p className="sap-hint dim">{hint}</p> : null}
+      {hint ? (
+        <p className="sap-hint dim">
+          {hint}
+          {/* Issue #129: the dead owner is released from Session actions, which this panel does not show. */}
+          {canRelease && state.state === "interrupted" ? " Session actions → Restart this step or End & continue releases this step after confirmation." : null}
+        </p>
+      ) : null}
       <div className="sap-actions">
         {!unsupported && onStartFresh && (
           <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>
