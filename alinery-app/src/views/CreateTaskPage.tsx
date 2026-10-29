@@ -1,10 +1,25 @@
+import { Star } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { afterPaint } from "../afterPaint";
 import * as ipc from "../ipc";
+import { CollectionSearch } from "../ListToolbar";
 import { PlaybookGraph, selectorsOverlap } from "../PlaybookGraph";
+import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
-import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
+import {
+  Checkbox,
+  Dialog,
+  InlineStatus,
+  ModelInput,
+  ompDefaultModel,
+  orderPlaybookCandidates,
+  playbookRefKey,
+  RECOMMENDED_PLAYBOOK,
+  samePlaybookRef,
+  starredPlaybookKeys,
+  withPlaybookStar,
+} from "../shared";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type {
@@ -93,7 +108,7 @@ export function stepModelDisplay(args: { stepModel: string; playbookDefaultModel
 }
 
 function persistedStepModels(source: ScopedPlaybook | null, stepModels: Record<string, string>, taskModel: string, productModel: string): Record<string, string> {
-  if (!source) return {};
+  if (!source) return stepModels;
   const next: Record<string, string> = {};
   for (const step of source.definition.step) {
     const raw = stepModels[step.key];
@@ -162,6 +177,7 @@ export function CreateTaskPage({
   const [dropping, setDropping] = useState(false);
   const [created, setCreated] = useState<TargetedCreateResult | null>(null);
   const [err, setErr] = useState<ErrState>(null);
+  const [catalogError, setCatalogError] = useState<ErrState>(null);
   const [mode, setMode] = useState<"inline" | "linear" | "github">(initialDraft?.linear_id ? "linear" : initialDraft?.github_issue ? "github" : "inline");
   const [ref, setRef] = useState(initialDraft?.linear_id || initialDraft?.github_issue || "");
   const [linearId, setLinearId] = useState(initialDraft?.linear_id ?? "");
@@ -172,14 +188,21 @@ export function CreateTaskPage({
   const [branchName, setBranchName] = useState(initialDraft?.branch ?? "");
   const [worktreeName, setWorktreeName] = useState(initialDraft?.has_worktree ? initialDraft.worktree : "");
   const [playbooks, setPlaybooks] = useState<PlaybookCandidate[]>([]);
-  const [pickerPreferences, setPickerPreferences] = useState<PickerPreferences>({ order: [], entries: [] });
-  const [browsePlaybooks, setBrowsePlaybooks] = useState(false);
+  const [pickerPreferences, setPickerPreferences] = useState<PickerPreferences>();
+  const [starSaving, setStarSaving] = useState(false);
+  const [starError, setStarError] = useState("");
+  const starSaveRequest = useRef(0);
+  const starSavePending = useRef(false);
+  const preferenceVersion = useRef(0);
   const [playbookQuery, setPlaybookQuery] = useState("");
   const [playbook, setPlaybook] = useState<PlaybookRef | null>((initialDraft ? initialDraft.playbook_ref : initialPlaybook) ?? null);
-  // Keep a one-off choice in the shortlist until the user changes views, not selections.
-  const [shortlistExtra, setShortlistExtra] = useState<PlaybookRef | null>(null);
+  const selectedPlaybookRef = useRef(playbook);
+  selectedPlaybookRef.current = playbook;
+  const catalogRepoRef = useRef<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<ScopedPlaybook | null>(null);
+  const [workflowPreviewOpen, setWorkflowPreviewOpen] = useState(false);
   const [sourceError, setSourceError] = useState("");
+  const [sourceLoading, setSourceLoading] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const resetAutoAdvance = useRef(!initialDraft);
@@ -290,6 +313,10 @@ export function CreateTaskPage({
 
   useEffect(() => {
     repoRef.current = repoPath;
+    starSaveRequest.current += 1;
+    starSavePending.current = false;
+    setStarSaving(false);
+    setStarError("");
   }, [repoPath]);
 
   useEffect(() => {
@@ -335,39 +362,61 @@ export function CreateTaskPage({
   };
 
   useEffect(() => {
+    const refresh = () => {
+      if (!creatingRef.current && !starSavePending.current) setCatalogRevision((revision) => revision + 1);
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  useEffect(() => {
     let alive = true;
     const request = ++targetRequest.current;
-    setErr(null);
+    const preferenceSnapshot = preferenceVersion.current;
+    const initializePicker = catalogRepoRef.current !== repoPath;
+    if (initializePicker) {
+      setErr(null);
+      setCatalogError(null);
+    }
     setCatalogLoading(true);
-    setSelectedSource(null);
+    if (initializePicker) setSelectedSource(null);
     Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
       .then(async ([c, catalog, account]) => {
         if (!alive || request !== targetRequest.current) return;
         setDraftAutosave(c.defaults.draft_autosave !== false);
-        setPlaybooks(orderPlaybookCandidates(catalog.candidates, catalog.picker_preferences));
-        setPickerPreferences(catalog.picker_preferences);
-        setBrowsePlaybooks(
-          !catalog.candidates.some((candidate) =>
-            catalog.picker_preferences.entries.some((entry) => entry.preferred && samePlaybookRef(entry.reference, candidate.source.reference)),
-          ),
-        );
-        setPlaybookQuery("");
+        const preferences = catalog.diagnostics.some((item) => item.code === "picker_preferences") ? undefined : catalog.picker_preferences;
+        const orderedPlaybooks = orderPlaybookCandidates(catalog.candidates, preferences);
+        setPlaybooks(catalog.candidates);
+        if (preferenceSnapshot === preferenceVersion.current) setPickerPreferences(preferences);
+        if (initializePicker) {
+          setPlaybookQuery("");
+        }
         const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
         setProductModel(ompDefaultModel(c.defaults));
         setDefaultModel(resolvedDefaultModel);
-        if (catalog.diagnostics.length) {
-          setErr({ msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") });
-        }
-        const choice = initialTargetLoaded.current ? playbook : initialDraft ? initialDraft.playbook_ref : (initialPlaybook ?? c.defaults.playbook);
+        setCatalogError(
+          catalog.diagnostics.length ? { msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") } : null,
+        );
+        const configured = catalog.candidates.find((item) => samePlaybookRef(item.source.reference, c.defaults.playbook));
+        const starred = starredPlaybookKeys(preferences);
+        const firstStarred =
+          configured && configured.diagnostics.length === 0
+            ? orderedPlaybooks.find((item) => item.diagnostics.length === 0 && starred.has(playbookRefKey(item.source.reference)))?.source.reference
+            : undefined;
+        const choice = initialTargetLoaded.current
+          ? selectedPlaybookRef.current
+          : initialDraft
+            ? initialDraft.playbook_ref
+            : (initialPlaybook ?? firstStarred ?? c.defaults.playbook);
         const candidate = catalog.candidates.find((item) => samePlaybookRef(item.source.reference, choice));
         setPlaybook(choice ?? null);
-        setShortlistExtra(choice ?? null);
         setPlaybookNeedsReselection(!candidate || candidate.diagnostics.length > 0);
         if (!initialTargetLoaded.current) {
           initialTargetLoaded.current = true;
           setModel(initialDraft?.launch_defaults?.model ?? resolvedDefaultModel);
           setModelNeedsReselection(false);
         }
+        catalogRepoRef.current = repoPath;
         setCatalogLoading(false);
         if (initialDraft && initialDraft.repo_path === repoPath && !ticketLoaded.current) {
           try {
@@ -392,7 +441,7 @@ export function CreateTaskPage({
         if (alive && request === targetRequest.current) {
           setCatalogLoading(false);
           setPlaybookNeedsReselection(true);
-          setErr({ msg: "Couldn't load repository settings.", detail: String(e) });
+          setCatalogError({ msg: "Couldn't load repository settings.", detail: String(e) });
         }
       });
     return () => {
@@ -402,14 +451,21 @@ export function CreateTaskPage({
 
   useEffect(() => {
     let alive = true;
-    setSelectedSource(null);
+    if (!playbook || playbookNeedsReselection) {
+      setSelectedSource(null);
+      setSourceLoading(false);
+      return;
+    }
+    if (catalogLoading) return;
+    setSelectedSource((current) => (current && samePlaybookRef(current.source.reference, playbook) ? current : null));
     setSourceError("");
-    if (!playbook || catalogLoading || playbookNeedsReselection) return;
+    setSourceLoading(true);
     ipc
       .readPlaybook(playbook, repoPath)
       .then((source) => {
         if (!alive || !samePlaybookRef(source.source.reference, playbook)) return;
         setSelectedSource(source);
+        setSourceLoading(false);
         if (resetAutoAdvance.current) {
           setAutoAdvance(source.definition.step.filter((step) => step.auto_advance_default).map((step) => step.key));
           resetAutoAdvance.current = false;
@@ -419,12 +475,20 @@ export function CreateTaskPage({
         }
       })
       .catch((error) => {
-        if (alive) setSourceError(String(error));
+        if (alive) {
+          setSelectedSource(null);
+          setSourceLoading(false);
+          setSourceError(String(error));
+        }
       });
     return () => {
       alive = false;
     };
   }, [repoPath, playbook, catalogLoading, playbookNeedsReselection, catalogRevision]);
+
+  useEffect(() => {
+    if (!selectedSource) setWorkflowPreviewOpen(false);
+  }, [selectedSource]);
 
   useEffect(() => {
     if (!selectedSource) return;
@@ -561,7 +625,7 @@ export function CreateTaskPage({
     };
   }, []);
 
-  const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !playbookNeedsReselection;
+  const sourceReady = selectedSource !== null && samePlaybookRef(selectedSource.source.reference, playbook) && !catalogLoading && !sourceLoading && !playbookNeedsReselection;
   const currentHead = startingBranches?.head;
   const branchOptions =
     startingBranches?.branches.map((branch) => ({
@@ -796,6 +860,29 @@ export function CreateTaskPage({
     setModelNeedsReselection(false);
   };
 
+  const togglePlaybookStar = async (reference: PlaybookRef) => {
+    if (!pickerPreferences || catalogLoading || starSavePending.current || creatingRef.current) return;
+    const owner = repoPath;
+    const request = ++starSaveRequest.current;
+    const next = withPlaybookStar(pickerPreferences, reference, !starredPlaybookKeys(pickerPreferences).has(playbookRefKey(reference)));
+    preferenceVersion.current += 1;
+    starSavePending.current = true;
+    setStarSaving(true);
+    setStarError("");
+    try {
+      await ipc.savePlaybookPickerPreferences(next, owner);
+      if (repoRef.current === owner && starSaveRequest.current === request) setPickerPreferences(next);
+    } catch (error) {
+      if (repoRef.current === owner && starSaveRequest.current === request) setStarError(`Couldn't save starred playbooks: ${String(error)}`);
+    } finally {
+      if (repoRef.current === owner && starSaveRequest.current === request) {
+        preferenceVersion.current += 1;
+        starSavePending.current = false;
+        setStarSaving(false);
+      }
+    }
+  };
+
   const selectRepo = (nextRepo: string) => {
     if (nextRepo === repoPath || clearingRef.current || creatingRef.current) return;
     importGeneration.current += 1;
@@ -876,10 +963,8 @@ export function CreateTaskPage({
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
+    if (!workflowPreviewOpen && e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
   };
-
-  const extraPlaybook = playbooks.find((item) => samePlaybookRef(item.source.reference, shortlistExtra));
 
   // Why the create button is unavailable — shown beside it, not hidden in a tooltip.
   const createBlockedReason = !name.trim()
@@ -894,23 +979,11 @@ export function CreateTaskPage({
             ? sourceError || "Select a playbook and wait for its validated source."
             : startingBranchProblem;
 
-  const preferredKeys = new Set(pickerPreferences.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)));
-  const visiblePlaybooks = browsePlaybooks
-    ? playbooks.filter((item) =>
-        `${item.title ?? ""} ${item.description ?? ""} ${playbookRefKey(item.source.reference)}`.toLowerCase().includes(playbookQuery.trim().toLowerCase()),
-      )
-    : playbooks.filter((item) => preferredKeys.has(playbookRefKey(item.source.reference)));
-  if (!browsePlaybooks && extraPlaybook && !preferredKeys.has(playbookRefKey(extraPlaybook.source.reference))) {
-    visiblePlaybooks.push(extraPlaybook);
-  }
-  // Pin the entrypoint's playbook, not the changing selection, so keyboard navigation stays stable.
-  if (!initialDraft && initialPlaybook) {
-    const seedIndex = visiblePlaybooks.findIndex((item) => samePlaybookRef(item.source.reference, initialPlaybook));
-    if (seedIndex > 0) {
-      const [seed] = visiblePlaybooks.splice(seedIndex, 1);
-      visiblePlaybooks.unshift(seed);
-    }
-  }
+  const starredKeys = starredPlaybookKeys(pickerPreferences);
+  const pageError = err ?? catalogError;
+  const visiblePlaybooks = orderPlaybookCandidates(playbooks, pickerPreferences).filter((item) =>
+    `${item.title ?? ""} ${item.description ?? ""} ${playbookRefKey(item.source.reference)}`.toLowerCase().includes(playbookQuery.trim().toLowerCase()),
+  );
 
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
@@ -1373,9 +1446,9 @@ export function CreateTaskPage({
             </section>
           )}
           {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
-          {err && (
-            <InlineStatus tone="error" detail={err.detail}>
-              {err.msg}
+          {pageError && (
+            <InlineStatus tone="error" detail={pageError.detail}>
+              {pageError.msg}
             </InlineStatus>
           )}
           <div className="create-actions">
@@ -1406,41 +1479,24 @@ export function CreateTaskPage({
         </div>
       </div>
       <aside className="create-preview-panel" aria-labelledby="create-playbook-title">
-        <div className="artifacthead">
+        <div className="artifacthead playbook-picker-header">
           <div className="artifacttitle" id="create-playbook-title">
             Playbook
           </div>
           {draftSlug ? <span className="pill">Draft</span> : null}
+          <PlaybookLibraryLink className="small playbook-browse-action" />
         </div>
         <div className="playbook-panel-controls">
-          <div className="playbook-panel-label">{browsePlaybooks ? "All playbooks" : "Preferred playbooks"}</div>
-          <button
-            type="button"
-            className="btn ghost small"
-            onClick={() => {
-              if (browsePlaybooks) setShortlistExtra(playbook);
-              setBrowsePlaybooks(!browsePlaybooks);
-              setPlaybookQuery("");
-            }}
-          >
-            {browsePlaybooks ? "Back to preferred" : "Browse all playbooks"}
-          </button>
-          {browsePlaybooks && (
-            <label className="create-field">
-              <span>Search playbooks</span>
-              <input type="search" className="field-input" value={playbookQuery} onChange={(event) => setPlaybookQuery(event.target.value)} />
-            </label>
-          )}
-          <button type="button" className="btn ghost small" disabled={creating} onClick={() => setCatalogRevision((revision) => revision + 1)}>
-            Refresh playbooks
-          </button>
+          <CollectionSearch label="playbooks" query={playbookQuery} onQueryChange={setPlaybookQuery} className="playbook-search" />
+          {starError && <InlineStatus tone="error">{starError}</InlineStatus>}
           <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
             {visiblePlaybooks.length > 0 ? (
               visiblePlaybooks.map((item) => {
                 const identity = playbookRefKey(item.source.reference);
                 const selected = samePlaybookRef(playbook, item.source.reference);
+                const starred = starredKeys.has(identity);
                 return (
-                  <div className={`playbook-picker-card${selected ? " selected" : ""}`} key={identity}>
+                  <div className={`playbook-picker-card${selected ? " selected" : ""}${item.diagnostics.length ? " invalid" : ""}`} key={identity}>
                     <label className={`playbook-option${selected ? " selected" : ""}`}>
                       <input
                         checked={selected}
@@ -1448,37 +1504,88 @@ export function CreateTaskPage({
                         className="playbook-option-input"
                         name="create-playbook"
                         aria-label={`${item.title ?? item.source.reference.key} — ${identity}`}
+                        aria-describedby={`create-playbook-description-${identity}`}
                         onChange={() => selectPlaybook(item.source.reference)}
                         type="radio"
                         value={identity}
                       />
                       <span className="playbook-option-content">
+                        <span className="playbook-option-meta">
+                          <span>{item.source.reference.scope}</span>
+                          {starred && samePlaybookRef(item.source.reference, RECOMMENDED_PLAYBOOK) && <span>Recommended</span>}
+                          {selected && <span className="playbook-option-selected">Selected</span>}
+                        </span>
                         <span className="playbook-option-topline">
                           <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
-                          <span className="pill">{item.source.reference.scope}</span>
+                          <span aria-hidden="true" className="playbook-option-indicator" />
                         </span>
-                        <span className="playbook-option-description">{item.description}</span>
-                        {selected && !preferredKeys.has(identity) && <span className="hint">Current selection · not preferred</span>}
+                        <span className="playbook-option-description" id={`create-playbook-description-${identity}`}>
+                          {item.description}
+                        </span>
                         {item.diagnostics.map((diagnostic) => (
                           <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
                         ))}
                       </span>
-                      <span aria-hidden="true" className="playbook-option-indicator" />
                     </label>
+                    <button
+                      type="button"
+                      className="playbook-star-button"
+                      aria-label={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
+                      title={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
+                      aria-pressed={starred}
+                      disabled={!pickerPreferences || starSaving || catalogLoading || creating}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      onClick={() => void togglePlaybookStar(item.source.reference)}
+                    >
+                      <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
+                    </button>
                     {selected && selectedSource && (
-                      <PlaybookGraph title={item.title ?? selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" showInspector={false} />
+                      <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
+                        <ul className="playbook-process-list">
+                          {selectedSource.definition.step.slice(0, 3).map((step) => (
+                            <li key={step.key}>
+                              <span>{step.title}</span>
+                              {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
+                            </li>
+                          ))}
+                        </ul>
+                        {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
+                        <div className="playbook-card-process">
+                          <span>
+                            {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
+                            {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
+                          </span>
+                          <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
+                            View workflow
+                          </button>
+                        </div>
+                      </section>
                     )}
                   </div>
                 );
               })
             ) : (
-              <div className="playbook-empty">{browsePlaybooks && playbookQuery ? "No matching playbooks." : "No preferred playbooks. Browse all playbooks to choose one."}</div>
+              <div className="playbook-empty">{playbookQuery ? "No matching playbooks." : "No installed playbooks. Browse the Playbook Library to find one."}</div>
             )}
           </div>
           {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
           {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
         </div>
       </aside>
+      {workflowPreviewOpen && selectedSource && (
+        <Dialog className="create-playbook-dialog" ariaLabel={`${selectedSource.definition.title} workflow`} onClose={() => setWorkflowPreviewOpen(false)}>
+          <div className="create-playbook-dialog-header">
+            <div>
+              <h2>{selectedSource.definition.title}</h2>
+              <p>{selectedSource.definition.description}</p>
+            </div>
+            <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(false)}>
+              Close
+            </button>
+          </div>
+          <PlaybookGraph title={selectedSource.definition.title} steps={selectedSource.definition.step} variant="definition" />
+        </Dialog>
+      )}
     </div>
   );
 }

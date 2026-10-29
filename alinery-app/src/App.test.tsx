@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import * as ipc from "./ipc";
+import { CURATED_PLAYBOOK_ARCHETYPES } from "./onboarding";
 import type { SessionNoticeRow } from "./sessionAttention";
 import type {
   AppConfig,
@@ -13,6 +14,7 @@ import type {
   CreateTaskResult,
   NotificationPrefs,
   PlaybookCatalog,
+  PlaybookRef,
   ReviewHandoffResult,
   ScopedPlaybook,
   SessionListItem,
@@ -25,6 +27,7 @@ import { executionReply } from "./views/executionTestFixture";
 import type * as ProviderSetupModule from "./views/ProviderSetupDialog";
 import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
 import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
+import type { TaskList as TaskListComponent } from "./views/TaskList";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -236,7 +239,7 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
 
 vi.mock("./ipc", () => ipcModule);
 vi.mock("./tabMotion", () => {
-  const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
+  const isPrimaryTab = (kind: string) => ["list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
   return {
     isPrimaryTab,
     primaryTabOf: (view: { kind: string; from?: unknown }) => {
@@ -313,24 +316,6 @@ vi.mock("./TerminalDrawer", () => ({
   clampDrawerWidth: (value: number) => value,
   TerminalDrawer: () => null,
 }));
-vi.mock("./views/Kanban", () => ({
-  Kanban: ({ onOpen, onOpenActiveSession }: { onOpen: (value: BoardTask) => void; onOpenActiveSession: (value: BoardTask, session: TaskActivitySession) => void }) => (
-    <div>
-      <button type="button" onClick={() => onOpen(task)}>
-        open task
-      </button>
-      <button type="button" onClick={() => onOpen(activeDraft)}>
-        open active draft
-      </button>
-      <button type="button" onClick={() => onOpen(archivedDraft)}>
-        open archived draft
-      </button>
-      <button type="button" onClick={() => onOpenActiveSession(task, activeSession)}>
-        open active card session
-      </button>
-    </div>
-  ),
-}));
 
 vi.mock("./views/Grid", () => ({
   Grid: ({ onOpen, storageKey }: { onOpen?: (value: BoardTask) => void; storageKey?: string }) => {
@@ -365,13 +350,22 @@ vi.mock("./views/ChatView", () => ({
   },
 }));
 vi.mock("./views/TaskList", () => ({
-  TaskList: ({ onOpen, onOpenActiveSession }: { onOpen: (value: BoardTask) => void; onOpenActiveSession: (value: BoardTask, session: TaskActivitySession) => void }) => (
+  TaskList: ({ onOpen, onOpenActiveSession, onCreate, onReplayOnboarding }: Parameters<typeof TaskListComponent>[0]) => (
     <div>
       <button type="button" onClick={() => onOpen(task)}>
         open list task
       </button>
       <button type="button" onClick={() => onOpenActiveSession(task, activeSession)}>
         open active list session
+      </button>
+      <button type="button" onClick={() => onCreate(CURATED_PLAYBOOK_ARCHETYPES[1].reference)}>
+        use list playbook
+      </button>
+      <button type="button" onClick={() => onCreate(CURATED_PLAYBOOK_ARCHETYPES[1].reference, CURATED_PLAYBOOK_ARCHETYPES[1].starterPreset)}>
+        use list preset
+      </button>
+      <button type="button" onClick={onReplayOnboarding}>
+        show list guide
       </button>
     </div>
   ),
@@ -477,10 +471,14 @@ vi.mock("./views/CreateTaskPage", async (importOriginal) => {
   const actual = await importOriginal<typeof CreateTaskModule>();
   const MockCreateTaskPage = ({
     initialDraft,
+    initialPlaybook,
+    initialPreset,
     onCreated,
     onOpened = () => {},
   }: {
     initialDraft?: BoardTask;
+    initialPlaybook?: PlaybookRef;
+    initialPreset?: Parameters<typeof actual.CreateTaskPage>[0]["initialPreset"];
     onCreated: (result: CreateTaskResult & { repoPath: string; selectedSessionId?: string }) => void;
     onOpened?: () => void;
   }) => {
@@ -497,6 +495,8 @@ vi.mock("./views/CreateTaskPage", async (importOriginal) => {
     return (
       <div>
         <span>create task:{initialDraft?.slug}</span>
+        <span>create playbook:{initialPlaybook?.key}</span>
+        <span>create preset:{initialPreset?.name}</span>
         <button type="button" onClick={() => onCreated(result)}>
           open created task
         </button>
@@ -645,64 +645,74 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
   await screen.findByRole("table", { name: "Playbook library" });
 });
 
-describe("onboarding gate", () => {
+describe("task list starter actions", () => {
   it.each([
-    { creation: "ready" as const, error: null },
-    { creation: "partial" as const, error: "Worktree could not be created" },
-  ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
-    window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => ({
-      source: { reference, path: null },
-      source_text: `+++\nversion = 2\nkey = "${reference.key}"\ntitle = "${reference.key}"\ndefault_harness = "omp"\n[[step]]\nkey = "inspect"\ntitle = "Inspect"\noutputs = [{ path = "result.md" }]\nauto_advance_default = false\n+++\n# Inspect\nInspect the work.`,
-      modified_at_ms: null,
-      definition: {
-        version: 2,
-        key: reference.key,
-        title: reference.key,
-        description: "",
-        default_model: "",
-        default_harness: "omp",
-        preamble: "",
-        section_order: ["inspect"],
-        step: [
-          {
-            key: "inspect",
-            title: "Inspect",
-            short: "",
-            inputs: [],
-            outputs: [{ path: "result.md" }],
-            model: "",
-            harness: "",
-            prompt: "Inspect the work.",
-            is_coding_step: false,
-            auto_advance_default: false,
-          },
-        ],
-      },
-    }));
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
-      task,
-      sessions: [],
-      executions: [],
-      creation,
-      start: creation === "ready" ? "queued" : "not_requested",
-      errors: error ? [{ stage: "git_worktree", code: "provisioning_failed", message: error }] : [],
-    });
+    ["use list playbook", "create preset:"],
+    ["use list preset", "create preset:Audit error handling and edge-case failure modes"],
+  ])("passes %s into the new-task form", async (action, preset) => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Run SuperDevelop starter task" }));
-    await waitFor(() => expect(screen.queryByTestId("onboarding-flow")).toBeNull());
-    const notifications = screen.getByRole("status", { name: "Notifications" });
-    if (error) expect(notifications.textContent).toContain(error);
-    else expect(notifications.textContent).toBe("");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    fireEvent.click(await screen.findByRole("button", { name: action }));
+    await screen.findByText("create playbook:bug-hunting");
+    expect(screen.getByText(preset)).toBeTruthy();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
   });
 
-  it("offers a configured install the guide once at Playbooks, then lands on the task list after Skip", async () => {
+  it("reopens the playbook guide from Tasks", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "show list guide" }));
+    expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+  });
+});
+
+describe("onboarding gate", () => {
+  it.each([
+    { repository: "with existing tasks", tasks: [task] },
+    { repository: "without tasks", tasks: [] },
+  ])("opens the new-task form after finishing resumed onboarding $repository without executing a task", async ({ tasks }) => {
+    ipcMocks.listBoardTasks.mockResolvedValue(tasks);
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
+    expect(screen.queryByRole("tab", { name: /First task/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
+    await screen.findByText("create playbook:superdevelop");
+    expect(screen.getByText("create preset:")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("carries the selected playbook into the new-task form after onboarding", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "playbooks");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("radio", { name: /Bug Hunting/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+    await screen.findByText("create playbook:bug-hunting");
+    expect(screen.getByText("create preset:")).toBeTruthy();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("opens the existing task form for a custom playbook without executing it", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    window.localStorage.setItem("alinery.onboardingStep.v1", "playbooks");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Build a new playbook" }));
+    await screen.findByText("create playbook:build-playbook");
+    expect(screen.getByText("create preset:Design a custom playbook for this repository")).toBeTruthy();
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it("offers a configured install the guide once at Models, then lands on the task list after Skip", async () => {
+    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    render(<App />);
+    await screen.findByTestId("onboarding-step-models");
     // With a repository the guide is a modal over the board, not a replacement for it.
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
@@ -720,7 +730,7 @@ describe("onboarding gate", () => {
   it("keeps workspace shortcuts and focus inside the open guide", async () => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     render(<App />);
-    await screen.findByTestId("onboarding-step-playbooks");
+    await screen.findByTestId("onboarding-step-models");
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
     const skip = within(guide).getByRole("button", { name: "Skip Onboarding" });
     vi.useFakeTimers();
@@ -743,7 +753,7 @@ describe("onboarding gate", () => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^API keys/ }));
     const provider = await screen.findByRole("dialog", { name: /providers/i });
     const accounts = within(provider).getByRole("tab", { name: "Accounts" });
     accounts.focus();
@@ -775,7 +785,7 @@ describe("onboarding gate", () => {
     expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
     expect(screen.queryByTestId("onboarding-step-playbooks")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByTestId("onboarding-step-playbooks");
+    await screen.findByTestId("onboarding-step-models");
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
@@ -789,7 +799,7 @@ describe("onboarding gate", () => {
     try {
       window.localStorage.removeItem("alinery.onboardingCompleted.v1");
       render(<App />);
-      await screen.findByTestId("onboarding-step-playbooks");
+      await screen.findByTestId("onboarding-step-models");
       expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
       expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
 
@@ -861,7 +871,7 @@ describe("startup view", () => {
     render(<App />);
 
     expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
-    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
   });
 
@@ -1093,18 +1103,7 @@ describe("session navigation acknowledgment", () => {
     expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
-  it("acknowledges task-card and global-list sessions before navigation", async () => {
-    ipcMocks.readAppConfig.mockResolvedValue({
-      ...appConfig,
-      global: { ...appConfig.global, experiments: { show_original_kanban: true } },
-    });
-    await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
-    await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
-
-    cleanup();
+  it("acknowledges task-list and global-list sessions before navigation", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open active list session" }));
@@ -1238,35 +1237,25 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-    // One Grid view by default, so the bar reads ⌘1 Canvas, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+    // One Grid view by default, so the bar reads ⌘1 Canvas, ⌘2 Tasks, ⌘3 Sessions.
     expect(screen.getByText("Go to Canvas").closest(".pitem")?.textContent).toContain("⌘1");
     expect((await screen.findByText("Go to Tasks")).closest(".pitem")?.textContent).toContain("⌘2");
     expect(screen.getByText("Go to Sessions").closest(".pitem")?.textContent).toContain("⌘3");
-    expect(screen.getByText("Go to Kanban").closest(".pitem")?.textContent).toContain("⌘4");
+    expect(screen.queryByText("Go to Kanban")).toBeNull();
     expect(screen.getByText("Go to Notifications").closest(".pitem")?.textContent).toContain("⌘8");
     expect(screen.queryByText("Go to Wiki")).toBeNull();
     expect(screen.getByText("Open Settings").closest(".pitem")?.textContent).toContain("⌘9");
   });
 
-  it("exposes both boards by default and opens classic Kanban", async () => {
-    await renderApp();
-
-    expect(screen.getByRole("button", { name: /Canvas/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Canvas")).toBeTruthy();
-    expect(screen.getByText("Go to Kanban")).toBeTruthy();
-  });
-
-  it("omits classic Kanban from navigation and the palette when disabled", async () => {
+  it.each([undefined, false, true])("opens Tasks for legacy Kanban startup with flag %s", async (show_original_kanban) => {
     ipcMocks.readAppConfig.mockResolvedValue({
       ...appConfig,
-      global: { ...appConfig.global, experiments: { show_original_kanban: false } },
+      appearance: { ...DEFAULT_APPEARANCE, startup_view: "kanban" },
+      global: { ...appConfig.global, experiments: { show_original_kanban } },
     });
     await renderApp();
-
-    expect(screen.queryByRole("button", { name: "Kanban4" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Kanban/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("Go to Canvas")).toBeTruthy();
     expect(screen.queryByText("Go to Kanban")).toBeNull();
@@ -1276,7 +1265,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     expect(screen.queryByRole("button", { name: /^Chat\d/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await screen.findByText("Go to Kanban");
+    await screen.findByText("Go to Canvas");
     expect(screen.queryByText("Go to Chat")).toBeNull();
     cleanup();
 
@@ -1287,7 +1276,7 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     expect(screen.getByRole("button", { name: /^Chat\d/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(await screen.findByText("Go to Chat")).toBeTruthy();
+    expect((await screen.findByText("Go to Chat")).closest(".pitem")?.textContent).toContain("⌘4");
   });
 
   it("keeps the Chat view mounted, and paused, while another tab is open", async () => {
@@ -1624,16 +1613,16 @@ describe("repository switch keeps the current page", () => {
     expect(screen.getByRole("button", { name: "Repository" })).toHaveProperty("title", "/repo");
   });
 
-  it("stays on kanban, settings, and notifications instead of bouncing to the task list", async () => {
+  it("stays on canvas, settings, and notifications instead of bouncing to the task list", async () => {
     await renderApp();
 
-    fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
-    expect(await screen.findByRole("button", { name: "open active card session" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
+    expect(await screen.findByRole("button", { name: "open task" })).toBeTruthy();
     await chooseRepo("/other");
-    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open task" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
     await chooseAllRepos();
-    expect(screen.getByRole("button", { name: "open active card session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "open task" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Account" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));

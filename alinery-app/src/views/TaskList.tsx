@@ -3,6 +3,8 @@ import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
+import type { StarterTaskPreset } from "../onboarding";
+import { PlaybookStarterDeck } from "../PlaybookStarterDeck";
 import {
   ArchiveTaskModal,
   EMPTY_TASK_ACTIVITY,
@@ -18,7 +20,7 @@ import {
   useBoardTaskActivity,
   useMinuteNow,
 } from "../shared";
-import type { BoardNav, BoardTask, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, PlaybookRef, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
 import "./TaskList.css";
 
 export type TaskListRow = {
@@ -112,13 +114,15 @@ export function TaskList({
   registerNav,
   onOpenActiveSession,
   onCreate,
+  onReplayOnboarding,
 }: {
   allRepos: boolean;
   onOpen: (task: BoardTask) => void;
   onDuplicate: (task: BoardTask) => void;
   registerNav: (n: BoardNav | null) => void;
   onOpenActiveSession: (task: BoardTask, session: TaskActivitySession) => void;
-  onCreate: () => void;
+  onCreate: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
+  onReplayOnboarding?: () => void;
 }) {
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -285,7 +289,7 @@ export function TaskList({
     <>
       <h1 className="view-title">Tasks</h1>
       {!empty && (
-        <button type="button" className="btn small" onClick={onCreate}>
+        <button type="button" className="btn small" onClick={() => onCreate()}>
           New task
         </button>
       )}
@@ -369,18 +373,7 @@ export function TaskList({
       )}
       {!loaded && <LoadingState label="Loading tasks" state={ORB_STATE} />}
       {empty ? (
-        <div className="list list-empty">
-          <EmptyState
-            art
-            title={showArchived ? "No tasks in this repository." : "No tasks yet."}
-            hint={showArchived ? undefined : "A task owns one branch and worktree, and holds every agent session you run on it."}
-            action={
-              <button type="button" className="btn" onClick={onCreate}>
-                New task
-              </button>
-            }
-          />
-        </div>
+        <div className="list list-empty task-list-starter">{!err && <PlaybookStarterDeck onCreate={onCreate} onReplayOnboarding={onReplayOnboarding} />}</div>
       ) : noMatches ? (
         <div className="list list-empty task-list-no-matches">
           <EmptyState title="No tasks match these filters." hint={`Clear filters to show all ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}.`} />

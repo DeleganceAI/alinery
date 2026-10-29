@@ -7,16 +7,13 @@ export const NAV_REQUIRES_CMD = false;
 export type Handlers = {
   overlayOpen: boolean;
   isFullscreen: boolean;
-  board: "kanban" | "grid" | "list" | "sessions" | "notifications" | null; // nav only active on a board view
-  // How many Grid views the bar shows, and whether classic Kanban is on it. Digits run left to
-  // right, so both shift which key Tasks, Sessions, and Kanban answer to.
+  board: "grid" | "list" | "sessions" | "notifications" | null; // nav only active on a board view
+  // Digits run left to right through Grid views, Tasks, Sessions, and Chat.
   gridCount: number;
-  showKanban: boolean;
   showChat: boolean;
   toggleSearch: () => void;
   openCreate: () => void;
   goList: () => void;
-  goKanban: () => void;
   goGrid: (slot: number) => void;
   goChat: () => void;
   goSessions: () => void;
@@ -87,15 +84,14 @@ export function useHotkeys(handlers: Handlers) {
         }
         const lk = k.toLowerCase();
         if (lk === "n") return end(e, H.openCreate);
-        // ⌘1..⌘7 follow the top bar left to right: the Grid views, then Tasks, Sessions, classic
-        // Kanban, and Chat. Three Grid views plus Kanban and Chat ends at ⌘7, so ⌘8 and ⌘9 never move.
+        // ⌘1..⌘7 follow the top bar left to right: the Grid views, then Tasks, Sessions,
+        // and Chat. Three Grid views plus Chat ends at ⌘6, so ⌘8 and ⌘9 never move.
         const digit = "1234567".indexOf(k);
         if (digit >= 0) {
           if (digit < H.gridCount) return end(e, () => H.goGrid(digit));
           if (digit === H.gridCount) return end(e, H.goList);
           if (digit === H.gridCount + 1) return end(e, H.goSessions);
-          if (H.showKanban && digit === H.gridCount + 2) return end(e, H.goKanban);
-          if (H.showChat && digit === H.gridCount + (H.showKanban ? 3 : 2)) return end(e, H.goChat);
+          if (H.showChat && digit === H.gridCount + 2) return end(e, H.goChat);
           return;
         }
         if (k === "8") return end(e, H.goNotifications);

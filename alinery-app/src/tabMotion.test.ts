@@ -53,9 +53,9 @@ describe("primaryTabOf", () => {
       harness: "h",
       model: "m",
       generic: false,
-      from: { kind: "task", slug: "s", from: { kind: "kanban" } },
+      from: { kind: "task", slug: "s", from: { kind: "list" } },
     };
-    expect(primaryTabOf(session)).toBe("kanban");
+    expect(primaryTabOf(session)).toBe("list");
   });
 
   it("keeps nested sessions owned by Notifications", () => {

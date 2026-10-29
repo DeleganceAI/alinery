@@ -9,6 +9,7 @@ import type {
   Config,
   CreateTaskResult,
   LinearTicket,
+  PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
   PreparedTaskAttachments,
@@ -190,6 +191,7 @@ beforeEach(() => {
     return structuredClone(source);
   });
   vi.mocked(ipc.createTaskForRepo).mockResolvedValue(readyReply);
+  vi.mocked(ipc.savePlaybookPickerPreferences).mockReset().mockResolvedValue(undefined);
   vi.mocked(ipc.writeDraftForRepo)
     .mockReset()
     .mockResolvedValue({ slug: "draft-storage" } as Task);
@@ -227,7 +229,7 @@ describe("continuation choices", () => {
     vi.mocked(ipc.readPlaybook).mockResolvedValue(source);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
 
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     const choices = within(screen.getByRole("group", { name: /Build/ }));
     expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(choices.getByRole("button", { name: "Wait for me" }));
@@ -254,7 +256,7 @@ describe("continuation choices", () => {
     expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText("Playbook complete")).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
     expect(screen.queryByRole("group", { name: "Build" })).toBeNull();
     expect(screen.getByText("Playbook complete").closest("button")).toBeNull();
   });
@@ -290,7 +292,7 @@ describe("continuation choices", () => {
         .getByRole("button", { name: "Wait for me" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
+    fireEvent.focus(window);
     expect(
       within(await screen.findByRole("group", { name: "Build" }))
         .getByRole("button", { name: "Wait for me" })
@@ -304,7 +306,7 @@ describe("continuation choices", () => {
     render(<CreateTaskPage initialDraft={{ ...draftTask, auto_advance: [] }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("group", { name: "Build" });
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
     expect(
       within(screen.getByRole("group", { name: "Build" }))
         .getByRole("button", { name: "Continue automatically" })
@@ -410,6 +412,176 @@ describe("GitHub imports", () => {
 });
 
 describe("scoped playbook selection", () => {
+  it("features and virtually stars the recommended playbook without writing preferences", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.getAllByRole("radio")[0]).toHaveProperty("value", "bundled/superdevelop");
+    expect(screen.getByRole("button", { name: "Unstar SuperDevelop" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Recommended")).toBeTruthy();
+    expect(screen.getAllByRole("radio")).toHaveLength(5);
+    expect(screen.queryByRole("combobox", { name: "Show installed playbooks" })).toBeNull();
+    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+  });
+
+  it("persists stars and explicit unstars across refresh without changing the selection or draft", async () => {
+    let saved: PickerPreferences = structuredClone(catalog.picker_preferences);
+    vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => ({ ...structuredClone(catalog), picker_preferences: structuredClone(saved) }));
+    vi.mocked(ipc.savePlaybookPickerPreferences).mockImplementation(async (preferences) => {
+      saved = structuredClone(preferences);
+    });
+    const view = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Keep my draft" } });
+    fireEvent.change(screen.getByPlaceholderText(/Describe the feature/), { target: { value: "Keep this context" } });
+    fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
+    await screen.findByRole("button", { name: "Unstar One-shot" });
+    expect(ipc.savePlaybookPickerPreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ entries: expect.arrayContaining([expect.objectContaining({ reference: sources[3].source.reference, preferred: true })]) }),
+      "/repo",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Unstar SuperDevelop" }));
+    await screen.findByRole("button", { name: "Star SuperDevelop" });
+    expect(saved.entries).toContainEqual(expect.objectContaining({ reference: sources[0].source.reference, preferred: false }));
+    expect(screen.getAllByRole("radio")[0]).toHaveProperty("value", "bundled/one-shot");
+    fireEvent.focus(window);
+    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(2));
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.getByRole("button", { name: "Star SuperDevelop" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Unstar One-shot" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Keep my draft");
+    expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Keep this context");
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    view.unmount();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
+    expect(screen.getByRole("button", { name: "Star SuperDevelop" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
+  });
+
+  it("keeps a reopened draft selection while displaying existing stars first", async () => {
+    const starred = structuredClone(catalog);
+    starred.picker_preferences = {
+      order: [sources[3].source.reference],
+      entries: [{ reference: sources[3].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
+    };
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(starred);
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.getAllByRole("radio")[0]).toHaveProperty("value", "bundled/one-shot");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Draft task");
+    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+  });
+
+  it("commits star changes only after success and blocks concurrent writes and focus refreshes", async () => {
+    const save = deferred<void>();
+    vi.mocked(ipc.savePlaybookPickerPreferences).mockReturnValue(save.promise);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
+    expect(screen.getByRole("button", { name: "Star One-shot" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Star Global SuperDevelop" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Star Global SuperDevelop" }));
+    fireEvent.focus(window);
+    expect(ipc.savePlaybookPickerPreferences).toHaveBeenCalledTimes(1);
+    expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(1);
+    await act(async () => save.reject(new Error("disk full")));
+    expect(screen.getByText(/Couldn't save starred playbooks: Error: disk full/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Star One-shot" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: "Star One-shot" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+  });
+
+  it("does not apply a pending star save to another repository", async () => {
+    const save = deferred<void>();
+    vi.mocked(ipc.savePlaybookPickerPreferences).mockReturnValue(save.promise);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
+    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenLastCalledWith("/other"));
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    await act(async () => save.resolve());
+    expect(screen.getByRole("button", { name: "Star One-shot" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Unstar One-shot" })).toBeNull();
+    expect(ipc.savePlaybookPickerPreferences).toHaveBeenCalledWith(expect.anything(), "/repo");
+  });
+
+  it("keeps malformed preferences read-only while allowing explicit playbook selection", async () => {
+    const invalid = structuredClone(catalog);
+    invalid.diagnostics = [{ code: "picker_preferences", message: "Malformed picker preferences", line: 1, field: "preferences", severity: "error" }];
+    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(invalid);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.getByRole("button", { name: "Star One-shot" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
+    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
+  });
+
+  it("previews actual steps and counts before opening the full workflow", async () => {
+    const source = structuredClone(sources[0]);
+    source.definition.step = ["Frame the question", "Gather sources", "Read sources", "Synthesize findings", "Review evidence"].map((title, index) => ({
+      ...source.definition.step[0],
+      key: `step-${index}`,
+      title,
+      inputs: index === 2 ? [{ path: "sources/*.md", mode: "each" as const }] : [],
+      outputs: [{ path: `result-${index}.md` }],
+    }));
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(source);
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const preview = within(await screen.findByRole("region", { name: "SuperDevelop workflow preview" }));
+    expect(preview.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
+    expect(preview.getByText("5 steps · Parallel work")).toBeTruthy();
+    expect(preview.getByText("+2 more steps")).toBeTruthy();
+    expect(preview.queryByText("Review evidence")).toBeNull();
+    expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
+    fireEvent.click(preview.getByRole("button", { name: "View workflow" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "SuperDevelop workflow" }));
+    const graph = within(dialog.getByRole("region", { name: "SuperDevelop graph" }));
+    expect(graph.getByRole("button", { name: "Inspect Review evidence" })).toBeTruthy();
+  });
+
+  it.each(["Close", "Escape"])("closes the workflow with %s while preserving the form, selection, and trigger focus", async (method) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    const name = screen.getByPlaceholderText("New task name…");
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    fireEvent.change(name, { target: { value: "Preserved workflow task" } });
+    const description = screen.getByPlaceholderText(/Describe the feature/);
+    fireEvent.change(description, { target: { value: "Keep the task context" } });
+    const trigger = screen.getByRole("button", { name: "View workflow" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "SuperDevelop workflow" });
+    if (method === "Close") fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    else {
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      fireEvent(dialog, new Event("cancel", { bubbles: true, cancelable: true }));
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull());
+    expect(name).toHaveProperty("value", "Preserved workflow task");
+    expect(description).toHaveProperty("value", "Keep the task context");
+    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(document.activeElement).toBe(trigger);
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+  });
+
+  it.each(["metaKey", "ctrlKey"])("suppresses the create shortcut with %s while inspecting a workflow", async (modifier) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Inspect before creating" } });
+    fireEvent.click(screen.getByRole("button", { name: "View workflow" }));
+    const dialog = await screen.findByRole("dialog", { name: "SuperDevelop workflow" });
+    fireEvent.keyDown(dialog, { key: "Enter", [modifier]: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", [modifier]: true });
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1));
+  });
+
   it.each([false, true])("opens the exact scoped seed first without persisting or creating (preferred: %s)", async (seedPreferred) => {
     const preferred = structuredClone(catalog);
     preferred.picker_preferences = {
@@ -419,10 +591,12 @@ describe("scoped playbook selection", () => {
     if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Repository SuperDevelop workflow preview" });
     expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
-    const displayedOrder = ["repo/superdevelop", "bundled/superdevelop"];
+    const displayedOrder = seedPreferred
+      ? ["bundled/superdevelop", "repo/superdevelop", "bundled/one-shot", "global/superdevelop", "repo/broken"]
+      : ["bundled/superdevelop", "bundled/one-shot", "global/superdevelop", "repo/broken", "repo/superdevelop"];
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
@@ -433,10 +607,10 @@ describe("scoped playbook selection", () => {
     expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
     expect(ipc.startSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.click(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Repository SuperDevelop workflow preview" });
 
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Seeded task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -455,14 +629,14 @@ describe("scoped playbook selection", () => {
     render(<CreateTaskPage initialPlaybook={initialPlaybook} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /workflow preview$/ })).toBeNull();
     expect(ipc.readPlaybook).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
   });
 
@@ -480,14 +654,14 @@ describe("scoped playbook selection", () => {
     );
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
-    expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: /workflow preview$/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
     expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
   });
 
-  it("keeps preferred order independent of the default and expands only the selected card", async () => {
+  it("starts with the first valid starred playbook and expands only the selected card", async () => {
     const preferred = structuredClone(catalog);
     preferred.picker_preferences = {
       order: [sources[3].source.reference, sources[0].source.reference],
@@ -503,39 +677,43 @@ describe("scoped playbook selection", () => {
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
     const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
-    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
-    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
-    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    const graph = await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "SuperDevelop graph" })).toBeNull();
-    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop"]);
-    if (!graph.parentElement) throw new Error("Graph must be inside the selected card");
-    expect(within(graph.parentElement).getByRole("radio", { name: /One-shot/ })).toHaveProperty("checked", true);
-    expect(within(graph).getByRole("button", { name: "Highlight Build" })).toBeTruthy();
+    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop", "global/superdevelop", "repo/broken", "repo/superdevelop"]);
+    expect(screen.getByRole("radio", { name: "One-shot — bundled/one-shot" })).toHaveProperty("checked", true);
+    fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
+    const preview = await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.queryByRole("region", { name: "One-shot workflow preview" })).toBeNull();
+    expect(choices()).toEqual(["bundled/one-shot", "bundled/superdevelop", "global/superdevelop", "repo/broken", "repo/superdevelop"]);
+    if (!preview.parentElement) throw new Error("Preview must be inside the selected card");
+    expect(within(preview.parentElement).getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
+    expect(within(preview).getByText("Build")).toBeTruthy();
   });
 
-  it("browses inline without losing form data or preferring a one-task selection", async () => {
+  it("searches every installed playbook without losing form data or starring a one-task selection", async () => {
     const preferred = structuredClone(catalog);
     preferred.picker_preferences = {
       order: [sources[0].source.reference],
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
     vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
-    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
+    const onCancel = vi.fn();
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={onCancel} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText("New task name…")));
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
     const description = screen.getByPlaceholderText(/Describe the feature/);
     fireEvent.change(description, { target: { value: "Keep this task description" } });
-    fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "global/superdevelop" } });
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Global SuperDevelop workflow preview" });
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
     expect(screen.getAllByRole("radio")).toHaveLength(1);
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear playbooks search" }));
+    expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Search playbooks" }));
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
+    expect(screen.queryByRole("button", { name: "Clear playbooks search" })).toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([
       "bundled/superdevelop",
       "bundled/one-shot",
@@ -545,18 +723,26 @@ describe("scoped playbook selection", () => {
     ]);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Preserved draft");
     expect(description).toHaveProperty("value", "Keep this task description");
-    fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
-    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
-    fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
-    await screen.findByRole("region", { name: "SuperDevelop graph" });
-    expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", false);
-    expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["bundled/superdevelop", "global/superdevelop"]);
-    fireEvent.click(screen.getByRole("button", { name: "Browse all playbooks" }));
+    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "no matching workflow" } });
     expect(screen.queryByRole("radio")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Back to preferred" }));
-    expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
-    expect(screen.queryByRole("radio", { name: /Global SuperDevelop/ })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search playbooks" }), { key: "Escape" });
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("radio")).toHaveLength(5);
+    expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
+  });
+
+  it.each(["metaKey", "ctrlKey"])("does not create a task from the search clear button with %s+Enter", async (modifier) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Ready to create" } });
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "superdevelop" } });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Clear playbooks search" }), { key: "Enter", [modifier]: true });
+    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", [modifier]: true });
+    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1));
   });
 
   it("opens an unconfigured repository in the searchable library including legacy-hidden choices", async () => {
@@ -567,33 +753,107 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("searchbox", { name: "Search playbooks" });
     const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Global SuperDevelop workflow preview" });
     expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "");
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot graph" });
-    expect(screen.queryByRole("region", { name: "Global SuperDevelop graph" })).toBeNull();
+    await screen.findByRole("region", { name: "One-shot workflow preview" });
+    expect(screen.queryByRole("region", { name: "Global SuperDevelop workflow preview" })).toBeNull();
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(choices);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
   });
 
+  it.each([false, true])("refreshes on window focus without resetting the picker or accepting an unreadable source (failure: %s)", async (fails) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    expect(screen.queryByRole("button", { name: "Refresh playbooks" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Browse the Playbook Library" }).getAttribute("href")).toBe("https://alinery.ai/playbooks");
+    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserve this draft" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "global/superdevelop" } });
+    fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
+    await screen.findByRole("region", { name: "Global SuperDevelop workflow preview" });
+
+    const nextCatalog = deferred<PlaybookCatalog>();
+    const nextSource = deferred<ScopedPlaybook>();
+    vi.mocked(ipc.listPlaybookCatalog).mockReturnValueOnce(nextCatalog.promise);
+    vi.mocked(ipc.readPlaybook).mockReturnValue(nextSource.promise);
+    fireEvent.focus(window);
+    expect(screen.getByRole("region", { name: "Global SuperDevelop workflow preview" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    await act(async () => nextCatalog.resolve(structuredClone(catalog)));
+    expect(screen.getByRole("searchbox", { name: "Search playbooks" })).toHaveProperty("value", "global/superdevelop");
+    expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Preserve this draft");
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+
+    await act(async () => {
+      if (fails) nextSource.reject(new Error("Could not read updated playbook"));
+      else nextSource.resolve(structuredClone(sources[1]));
+    });
+    expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", fails);
+    if (fails) {
+      expect(within(screen.getByRole("complementary", { name: "Playbook" })).getByText(/Could not read updated playbook/)).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "Global SuperDevelop workflow preview" })).toBeNull();
+    } else {
+      expect(screen.getByRole("region", { name: "Global SuperDevelop workflow preview" })).toBeTruthy();
+    }
+  });
+
+  it("keeps the workflow dialog open during refresh but closes it after source failure", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "View workflow" }));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+    const refreshedSource = deferred<ScopedPlaybook>();
+    vi.mocked(ipc.readPlaybook).mockReturnValue(refreshedSource.promise);
+    await act(async () => fireEvent.focus(window));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+    await act(async () => refreshedSource.reject(new Error("Could not read updated playbook")));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    vi.mocked(ipc.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+    await act(async () => fireEvent.focus(window));
+    expect(screen.getByRole("region", { name: "SuperDevelop workflow preview" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View workflow" }));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+  });
+
+  it.each(["request", "diagnostics"] as const)("clears a recovered catalog error after focus refresh (%s)", async (failure) => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+    const message = failure === "request" ? "Couldn't load repository settings." : "Some playbook sources could not be loaded.";
+    if (failure === "request") {
+      vi.mocked(ipc.listPlaybookCatalog).mockRejectedValueOnce(new Error("Temporary catalog failure"));
+    } else {
+      vi.mocked(ipc.listPlaybookCatalog).mockResolvedValueOnce({
+        ...structuredClone(catalog),
+        diagnostics: [{ code: "picker_preferences", message: "Malformed preferences", field: null, line: null, severity: "error" }],
+      });
+    }
+    fireEvent.focus(window);
+    await screen.findByText(message);
+    fireEvent.focus(window);
+    await waitFor(() => expect(screen.queryByText(message)).toBeNull());
+    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
+  });
+
   it("retains the seed on refresh and a later user choice across catalog and repository changes", async () => {
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Repository SuperDevelop workflow preview" });
     const displayedOrder = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
-    expect(displayedOrder[0]).toBe("repo/superdevelop");
-    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
-    await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
+    expect(displayedOrder[0]).toBe("bundled/superdevelop");
+    fireEvent.focus(window);
+    await screen.findByRole("region", { name: "Repository SuperDevelop workflow preview" });
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
-    await screen.findByRole("region", { name: /graph$/ });
-    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
+    await screen.findByRole("region", { name: /workflow preview$/ });
+    fireEvent.focus(window);
     await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(3));
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
-    await screen.findByRole("region", { name: "Global SuperDevelop graph" });
+    await screen.findByRole("region", { name: "Global SuperDevelop workflow preview" });
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
@@ -626,7 +886,7 @@ describe("scoped playbook selection", () => {
         .getAttribute("aria-pressed"),
     ).toBe("true");
     vi.mocked(ipc.readPlaybook).mockResolvedValue(revised);
-    fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
+    fireEvent.focus(window);
 
     expect(
       within(await screen.findByRole("group", { name: "Added" }))
@@ -684,10 +944,10 @@ describe("OMP model default", () => {
   it("uses hosted Flash when signed in without a settings default, including after changing playbooks", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
   });
 
@@ -697,14 +957,14 @@ describe("OMP model default", () => {
       defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "anthropic/claude-sonnet-4-6");
   });
 
   it.each(["signed out", "account status unavailable"])("leaves the model unset when %s", async (status) => {
     if (status === "account status unavailable") vi.mocked(ipc.accountStatus).mockRejectedValue(new Error("Account unavailable"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "");
   });
 
@@ -712,7 +972,7 @@ describe("OMP model default", () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", model);
   });
 });
@@ -866,6 +1126,39 @@ describe("per-step default model", () => {
     expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ keep: "kept-override" });
   });
 
+  it("preserves saved step overrides through a failed focus refresh and draft reopen", async () => {
+    let saved: BoardTask = { ...draftTask, step_models: { build: "saved-override" } };
+    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
+      saved = { ...saved, name: args.name, step_models: args.stepModels ?? undefined };
+      return { slug: saved.slug } as Task;
+    });
+    vi.useFakeTimers();
+    try {
+      let form!: ReturnType<typeof render>;
+      await act(async () => {
+        form = render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(screen.getByLabelText("Build model")).toHaveProperty("value", "saved-override");
+      vi.mocked(ipc.readPlaybook).mockRejectedValue(new Error("Could not read updated playbook"));
+      await act(async () => fireEvent.focus(window));
+      expect(within(screen.getByRole("complementary", { name: "Playbook" })).getByText(/Could not read updated playbook/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited while unavailable" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Edited while unavailable", stepModels: { build: "saved-override" } }));
+      form.unmount();
+      vi.mocked(ipc.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+      await act(async () => {
+        render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Edited while unavailable");
+      expect(screen.getByLabelText("Build model")).toHaveProperty("value", "saved-override");
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it("restores one override and shows the chain on the other steps", async () => {
     const restored = structuredClone(sources[0]);
     restored.definition.step = [
@@ -945,7 +1238,7 @@ describe("Linear description images", () => {
       attachment_errors: ["Could not read missing.txt"],
     });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     const entries = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entries, { target: { value: "/manual.txt, https://example.test/manual.png" } });
     fireEvent.keyDown(entries, { key: "Enter" });
@@ -967,7 +1260,7 @@ describe("Linear description images", () => {
   it("saves remote references in drafts and restores them when an imported image is removed", async () => {
     vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     beginImport();
     await screen.findByText(image.name);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
@@ -993,7 +1286,7 @@ describe("Linear description images", () => {
       });
     vi.mocked(ipc.importGithubForRepo).mockResolvedValueOnce({ reference: "org/repo#1", title: "GitHub title", description: "GitHub body" });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     const entries = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entries, { target: { value: "/manual.txt" } });
     fireEvent.keyDown(entries, { key: "Enter" });
@@ -1017,7 +1310,7 @@ describe("Linear description images", () => {
     vi.mocked(ipc.importLinearForRepo).mockReturnValueOnce(pending.promise);
     const props = { activeRepo: "/repo", knownRepos: ["/repo", "/other"], initialDraft: draftTask, onCancel: () => {}, onCreated: () => {} };
     const view = render(<CreateTaskPage {...props} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     beginImport();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
@@ -1036,7 +1329,7 @@ describe("Linear description images", () => {
     } else {
       view.unmount();
       render(<CreateTaskPage {...props} />);
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
     }
     await act(async () => pending.resolve(ticket));
     expect(screen.queryByText(image.name)).toBeNull();
@@ -1057,7 +1350,7 @@ describe("starting branch contract", () => {
         onCreated={() => {}}
       />,
     );
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
@@ -1187,7 +1480,7 @@ describe("starting branch contract", () => {
   it.each(["", "release", "refs/heads/deleted", "b".repeat(40)])("blocks unavailable saved identity %j without substitution", async (base) => {
     taskSourceBranchesForRepo.mockResolvedValueOnce({ ...branchSnapshot(), selected: { base_ref: base, available: false } });
     render(<CreateTaskPage initialDraft={{ ...draftTask, draft_base_ref: base }} activeRepo="/other" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", base);
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
@@ -1297,7 +1590,7 @@ describe("starting branch contract", () => {
         render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onOpened={onOpened} onCancel={() => {}} onCreated={() => {}} />);
       });
       expect(onOpened).toHaveBeenCalledOnce();
-      expect(screen.getByRole("region", { name: /graph$/ })).toBeDefined();
+      expect(screen.getByRole("region", { name: /workflow preview$/ })).toBeDefined();
       const title = screen.getByPlaceholderText("New task name…");
       fireEvent.change(title, { target: { value: "Choose a starting branch" } });
       expect(title).toHaveProperty("value", "Choose a starting branch");
@@ -1316,7 +1609,7 @@ describe("starting branch contract", () => {
     vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, branch: "new-task-branch", draft_base_ref: "refs/heads/release" };
     render(<CreateTaskPage initialDraft={saved} activeRepo="/other" knownRepos={["/other", "/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
     expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
@@ -1336,7 +1629,7 @@ describe("starting branch contract", () => {
       await act(async () => {
         render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
       });
-      expect(screen.getByRole("region", { name: /graph$/ })).toBeDefined();
+      expect(screen.getByRole("region", { name: /workflow preview$/ })).toBeDefined();
       expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Saved description");
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
       expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
@@ -1357,7 +1650,7 @@ describe("starting branch contract", () => {
 describe("v2 task creation", () => {
   it("requires a positive u32 cap and always creates a dedicated worktree", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     const cap = screen.getByRole("spinbutton", { name: "Maximum live sessions" });
     expect(cap).toHaveProperty("value", "10");
@@ -1394,7 +1687,7 @@ describe("v2 task creation", () => {
       );
     }
     render(<CreationFlow />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     if (start === "not_requested") fireEvent.click(screen.getByRole("checkbox", { name: "Start eligible sessions after creation" }));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -1409,7 +1702,7 @@ describe("v2 task creation", () => {
     });
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/attachments: Could not copy evidence.pdf/);
@@ -1433,7 +1726,7 @@ describe("v2 task creation", () => {
     vi.mocked(ipc.createTaskForRepo).mockResolvedValue(reply);
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     const create = screen.getByRole("button", { name: "Create task" });
     fireEvent.click(create);
@@ -1461,7 +1754,7 @@ describe("v2 task creation", () => {
     render(
       <CreateTaskPage initialDraft={draftTask} initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
     );
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", false);
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
@@ -1499,7 +1792,7 @@ describe("v2 task creation", () => {
       errors: [{ stage: "provisioning", code: "ambiguous", message: "Inspect durable state" }],
     });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/provisioning: Inspect durable state/);
@@ -1511,7 +1804,7 @@ describe("v2 task creation", () => {
   it("freezes creation and autosave after a lost provisioning reply", async () => {
     vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("Connection closed"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByText(/Creation outcome is unknown/);
@@ -1541,7 +1834,7 @@ describe("task creation feedback", () => {
 
   const startCreate = async (onCreated: (result: TargetedCreateResult) => void) => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
   };
@@ -1562,7 +1855,7 @@ describe("task creation feedback", () => {
     const onCreated = vi.fn();
     const onBusy = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} onBusy={onBusy} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(await screen.findByPlaceholderText("New task name…"), { target: { value: "Slow task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     expect(onBusy).toHaveBeenCalledWith("create");
@@ -1619,7 +1912,7 @@ describe("clipboard task attachments", () => {
 
   const openForm = async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("region", { name: /graph$/ });
+    await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Clipboard evidence" } });
   };
 
@@ -1895,7 +2188,7 @@ describe("clipboard task attachments", () => {
           <CreateTaskPage {...props} />
         </StrictMode>,
       );
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       await screen.findByDisplayValue("Saved description");
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([1]), image([2])]);
       const previews = screen.getAllByRole("img").map((element) => element.getAttribute("src"));
@@ -1908,11 +2201,11 @@ describe("clipboard task attachments", () => {
         </StrictMode>,
       );
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       expect(screen.getByRole("img").getAttribute("src")).toBe(previews[1]);
       expect(live).toEqual(new Set([previews[1]]));
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("Draft deletion denied"));
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await screen.findByText(/Couldn't clear the draft/);
@@ -1982,12 +2275,12 @@ describe("clipboard task attachments", () => {
       vi.mocked(ipc.createTaskForRepo).mockReturnValueOnce(creation.promise);
       const onCreated = vi.fn();
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={onCreated} />);
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Frozen evidence" } });
       addEntry("/captured.bin");
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255]), image([128, 1])]);
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/other" } });
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
       fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
       fireEvent.change(screen.getByPlaceholderText(/Paste file paths/), { target: { value: "/pending.txt" } });
@@ -2055,7 +2348,7 @@ describe("clipboard task attachments", () => {
       vi.mocked(ipc.deleteDraftForRepo).mockReturnValueOnce(deletion.promise);
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialDraft={draftTask} onCancel={() => {}} onCreated={() => {}} />);
       await screen.findByDisplayValue("Saved description");
-      await screen.findByRole("region", { name: /graph$/ });
+      await screen.findByRole("region", { name: /workflow preview$/ });
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128])]);
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());

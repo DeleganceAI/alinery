@@ -239,9 +239,9 @@ export type TelemetryPrefs = { enabled: boolean; prompted: boolean; install_id: 
 export type UpdatePrefs = { check_enabled: boolean };
 export type PowerPrefs = { keep_awake: boolean };
 export type ExperimentalFeatures = {
-  /** Classic Kanban tab, shown after Sessions. Absent = enabled; false hides the tab. */
+  /** Legacy setting retained for compatibility; no longer affects navigation. */
   show_original_kanban?: boolean;
-  /** Chat tab, shown after Kanban. Absent = hidden; true shows the tab. */
+  /** Chat tab, shown after Sessions. Absent = hidden; true shows the tab. */
   show_chat?: boolean;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
@@ -942,7 +942,6 @@ export type SettingsSectionKey = "general" | "harness" | "connections" | "storag
 export type View =
   | { kind: "list" }
   | { kind: "grid"; gridViewId: string }
-  | { kind: "kanban" }
   | { kind: "chat" }
   | { kind: "sessions" }
   | { kind: "notifications" }
@@ -967,7 +966,7 @@ export type View =
     }
   | { kind: "reviewHandoff"; from: View; source: ReviewHandoffSource };
 
-export type Tab = "list" | "kanban" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "settings";
+export type Tab = "list" | "grid" | "chat" | "sessions" | "notifications" | "playbooks" | "settings";
 
 export type ChatBranch = { label: string; checkout: boolean };
 
