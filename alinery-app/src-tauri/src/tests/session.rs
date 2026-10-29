@@ -673,6 +673,29 @@ fn allow_root_session_open_rejects_non_drawer() {
 }
 
 #[test]
+fn live_drawer_terminals_keeps_only_live_no_harness_shells_oldest_first() {
+    let root = |id: &str, harness: &str, created: u64, archived: bool| SessionMeta {
+        id: id.into(),
+        worktree: "/repo".into(),
+        created,
+        archived,
+        harness: harness.into(),
+        generic: true,
+        ..Default::default()
+    };
+    let metas = vec![
+        root("drawer-new", "no-harness", 20, false),
+        root("drawer-exited", "no-harness", 5, false),
+        root("chat-live", "omp", 1, false),
+        root("drawer-archived", "no-harness", 2, true),
+        root("drawer-old", "no-harness", 10, false),
+    ];
+    let live: std::collections::HashSet<String> = ["drawer-new", "chat-live", "drawer-archived", "drawer-old"].iter().map(|id| id.to_string()).collect();
+    let ids: Vec<String> = live_drawer_terminals(metas, &live).into_iter().map(|meta| meta.id).collect();
+    assert_eq!(ids, ["drawer-old", "drawer-new"]);
+}
+
+#[test]
 fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
     assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));
     assert!(hosted_refresh_needed("resume", "omp", "alinery/Qwen3.6-35B-A3B"));

@@ -38,20 +38,8 @@ fn load_root_omp(repo: &Path, id: &str) -> Result<SessionMeta, String> {
 }
 
 fn root_omp_metas(repo: &Path) -> Vec<SessionMeta> {
-    let Ok(entries) = fs::read_dir(alinery_core::root_sessions_dir(repo)) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let name = name.to_str()?;
-            if !name.ends_with(".meta.json") {
-                return None;
-            }
-            let raw = fs::read_to_string(entry.path()).ok()?;
-            serde_json::from_str::<SessionMeta>(&raw).ok()
-        })
+    list_root_sessions_for_repo(repo)
+        .into_iter()
         .filter(|meta| meta.harness == alinery_core::DEFAULT_HARNESS_KEY)
         .collect()
 }
