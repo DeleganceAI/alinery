@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
@@ -299,6 +299,7 @@ export function TaskDetail({
   const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
+  const selectedArtifactImages = treeArtifactImages(artifactTree, selectedArtifactNode);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact);
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const [artifactText, setArtifactText] = useState("");
@@ -1726,8 +1727,9 @@ export function TaskDetail({
                 <article className="md artifactmd">
                   <ArtifactMarkdown
                     text={artifactText}
-                    taskSlug={selectedArtifactNode?.owner_task_slug ?? slug}
-                    artifactPath={selectedArtifact}
+                    taskSlug={slug}
+                    artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                    attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
                     comments={artifactComments}
                     draftAnchorIds={recoverableArtifactDraftAnchorIds}
                     onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}

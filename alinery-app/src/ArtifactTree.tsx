@@ -8,6 +8,39 @@ export function isDirectOwnedArtifactNode(node: ArtifactTreeNode): boolean {
   return node.kind === "owned" && node.source === "owned" && node.children.length === 0;
 }
 
+function nodeChain(nodes: ArtifactTreeNode[], id: string): ArtifactTreeNode[] {
+  for (const node of nodes) {
+    if (node.id === id) return [node];
+    const chain = nodeChain(node.children, id);
+    if (chain.length > 0) return [node, ...chain];
+  }
+  return [];
+}
+
+/**
+ * Where a tree-sourced (parent, live child or snapshot) artifact's relative images resolve: its path under its
+ * namespace root, the nearest folder owned by a different task than its parent, and that root's attachment node ids,
+ * so a snapshot reads its own copy. Owned artifacts resolve by path instead (undefined). A node missing from the
+ * tree yields no ids, so its images stay untouched.
+ */
+export function treeArtifactImages(nodes: ArtifactTreeNode[], node: ArtifactTreeNode | null) {
+  if (!node || node.source === "owned") return undefined;
+  const chain = nodeChain(nodes, node.id);
+  let root = 0;
+  for (let index = 1; index < chain.length - 1; index += 1) {
+    if (chain[index].owner_task_slug !== chain[index - 1].owner_task_slug) root = index;
+  }
+  // Attachments sit one level down, in the root's "Attachments" folder (artifact_tree.rs attachment_folder).
+  const attachments = chain.length > 1 ? chain[root].children.flatMap((child) => child.children).filter((child) => child.kind === "attachment") : [];
+  return {
+    artifactPath: chain
+      .slice(root + 1)
+      .map((item) => item.label)
+      .join("/"),
+    attachmentNodeIds: new Map(attachments.map((attachment) => [attachment.label, attachment.id])),
+  };
+}
+
 const sourceLabels: Partial<Record<ArtifactTreeNode["source"], string>> = {
   parent_context: "Parent",
   active_child: "Live",

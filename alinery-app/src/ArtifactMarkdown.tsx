@@ -673,13 +673,16 @@ export function attachmentNameFor(artifactPath: string | undefined, src: string 
   }
 }
 
-type ArtifactImageProps = ComponentProps<"img"> & { taskSlug?: string; artifactPath?: string };
+type ArtifactImageProps = ComponentProps<"img"> & { taskSlug?: string; artifactPath?: string; attachmentNodeIds?: ReadonlyMap<string, string> };
 
-// shortcut: only attachments/<name> resolves (the one place task images live, see AGENTS.md); add a Rust
-// read_artifact_image under artifacts/ if harnesses start writing images elsewhere.
-function ArtifactImage({ taskSlug, artifactPath, alt, ...props }: ArtifactImageProps) {
-  const name = taskSlug ? attachmentNameFor(artifactPath, props.src) : null;
-  const { src, error } = useAttachmentImageSrc(taskSlug ?? "", name ?? "");
+// shortcut: only attachments/<name> at the artifact's namespace root resolves (the task's artifacts/, or for a tree
+// artifact its parent/live-child/snapshot root, read by node id so only names in the last-polled tree); any other
+// image under artifacts/ keeps its literal src. Add a Rust read_artifact_image if harnesses write images elsewhere.
+function ArtifactImage({ taskSlug, artifactPath, attachmentNodeIds, alt, ...props }: ArtifactImageProps) {
+  const resolved = taskSlug ? attachmentNameFor(artifactPath, props.src) : null;
+  const nodeId = resolved ? attachmentNodeIds?.get(resolved) : undefined;
+  const name = attachmentNodeIds && !nodeId ? null : resolved;
+  const { src, error } = useAttachmentImageSrc(taskSlug ?? "", name ?? "", nodeId);
   if (name == null) return <img alt={alt} {...props} />;
   return <img alt={alt} {...props} src={src || undefined} title={error || props.title} />;
 }
@@ -689,6 +692,8 @@ type ArtifactMarkdownProps = {
   /** Owner of the attachments dir plus the artifact's name relative to artifacts/, so relative images resolve (#159). */
   taskSlug?: string;
   artifactPath?: string;
+  /** Tree artifacts only: attachment name -> tree node id in its namespace root (`taskSlug` is then the viewing task); unlisted names stay unresolved. */
+  attachmentNodeIds?: ReadonlyMap<string, string>;
   comments?: ArtifactComment[];
   draftAnchorIds?: string[];
   onAddComment?: (anchor: ArtifactCommentAnchor) => void;
@@ -704,11 +709,21 @@ function sameDraftAnchorIds(previous: string[] | undefined, next: string[] | und
   return true;
 }
 
+function sameAttachmentNodeIds(previous: ReadonlyMap<string, string> | undefined, next: ReadonlyMap<string, string> | undefined): boolean {
+  if (previous === next) return true;
+  if (!previous || !next || previous.size !== next.size) return false;
+  for (const [name, id] of previous) {
+    if (next.get(name) !== id) return false;
+  }
+  return true;
+}
+
 function sameArtifactMarkdownProps(previous: ArtifactMarkdownProps, next: ArtifactMarkdownProps): boolean {
   return (
     previous.text === next.text &&
     previous.taskSlug === next.taskSlug &&
     previous.artifactPath === next.artifactPath &&
+    sameAttachmentNodeIds(previous.attachmentNodeIds, next.attachmentNodeIds) &&
     previous.comments === next.comments &&
     sameDraftAnchorIds(previous.draftAnchorIds, next.draftAnchorIds) &&
     previous.onAddComment === next.onAddComment &&
@@ -720,6 +735,7 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({
   text,
   taskSlug,
   artifactPath,
+  attachmentNodeIds,
   comments = [],
   draftAnchorIds = [],
   onAddComment,
@@ -844,9 +860,9 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({
           {...props}
         />
       ),
-      img: ({ node, ...props }) => <ArtifactImage taskSlug={taskSlug} artifactPath={artifactPath} {...props} />,
+      img: ({ node, ...props }) => <ArtifactImage taskSlug={taskSlug} artifactPath={artifactPath} attachmentNodeIds={attachmentNodeIds} {...props} />,
     }),
-    [comments, draftAnchorIds, onAddComment, openDiagramZoom, taskSlug, artifactPath],
+    [comments, draftAnchorIds, onAddComment, openDiagramZoom, taskSlug, artifactPath, attachmentNodeIds],
   );
   return (
     <>

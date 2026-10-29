@@ -31,6 +31,21 @@ it("resolves ../attachments from a nested artifact", async () => {
   await waitFor(() => expect(ipc.readAttachmentImage).toHaveBeenCalledWith("task", "shot.png", undefined));
 });
 
+it("reads a tree artifact's attachment by node id and leaves names outside its tree untouched", async () => {
+  const attachmentNodeIds = new Map([["shot.png", "snapshot-shot"]]);
+  render(
+    <ArtifactMarkdown
+      text={"![qa](../attachments/shot.png)\n\n![gone](../attachments/gone.png)"}
+      taskSlug="task"
+      artifactPath="research/findings.md"
+      attachmentNodeIds={attachmentNodeIds}
+    />,
+  );
+  await waitFor(() => expect(ipc.readAttachmentImage).toHaveBeenCalledWith("task", "shot.png", "snapshot-shot"));
+  expect(ipc.readAttachmentImage).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("img", { name: "gone" }).getAttribute("src")).toBe("../attachments/gone.png");
+});
+
 it("leaves absolute http(s) images untouched", () => {
   render(<ArtifactMarkdown text="![remote](https://example.com/a.png)" taskSlug="task" artifactPath="03-report.md" />);
   expect(screen.getByRole("img", { name: "remote" }).getAttribute("src")).toBe("https://example.com/a.png");

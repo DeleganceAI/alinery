@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
@@ -226,6 +226,7 @@ export function SessionView({
   const artifactNames = artifactItems.map((a) => a.name);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
+  const selectedArtifactImages = treeArtifactImages(artifactTree, selectedArtifactNode);
   const selectedArtifactTreeId = selectedArtifactNode?.id;
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifactItem && !selectedArtifactItem.attachment);
@@ -3326,8 +3327,9 @@ export function SessionView({
                       <article className="md artifactmd">
                         <ArtifactMarkdown
                           text={artifactText}
-                          taskSlug={selectedArtifactNode?.owner_task_slug ?? taskSlug}
-                          artifactPath={selectedArtifact}
+                          taskSlug={taskSlug}
+                          artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                          attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
                           comments={artifactComments}
                           draftAnchorIds={recoverableArtifactDraftAnchorIds}
                           onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}
