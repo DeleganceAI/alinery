@@ -33,6 +33,7 @@ const scenario = vi.hoisted(() => ({
   tasksPromise: null as Promise<Task[]> | null,
   tasksError: null as Error | null,
   items: null as ArtifactListItem[] | null,
+  tree: null as ArtifactTreeNode[] | null,
 }));
 
 const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
@@ -55,6 +56,8 @@ const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<strin
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
+const readTaskArtifactNode = vi.hoisted(() => vi.fn(async (_taskSlug: string, _nodeId: string) => ""));
+const readAttachmentImage = vi.hoisted(() => vi.fn((_taskSlug: string, _name: string, _nodeId?: string) => new Promise<ArrayBuffer>(() => {})));
 const readChatImage = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
 const continueExecution = vi.hoisted(() => vi.fn());
@@ -137,11 +140,13 @@ vi.mock("../ipc", () =>
     listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
     listTaskArtifactTree: () => {
       scenario.treeCalls += 1;
-      return scenario.treeCalls === 1 ? Promise.resolve(initialTree) : new Promise<ArtifactTreeNode[]>(() => {});
+      return scenario.treeCalls === 1 ? Promise.resolve(scenario.tree ?? initialTree) : new Promise<ArtifactTreeNode[]>(() => {});
     },
     listArtifactCommentDrafts: async () => [],
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
+    readTaskArtifactNode,
+    readAttachmentImage,
     sessionStatus,
     archiveSession,
     sessionArtifactReady,
@@ -181,6 +186,7 @@ describe("SessionView artifact pane", () => {
   beforeEach(() => {
     scenario.itemCalls = 0;
     scenario.treeCalls = 0;
+    scenario.tree = null;
     vi.useFakeTimers();
     scenario.tasks = [{ ...task }];
   });
@@ -230,6 +236,32 @@ describe("SessionView artifact pane", () => {
 
     expect(screen.getByText("02-review-checks.md")).toBeDefined();
     expect(screen.getByText("3/3")).toBeDefined();
+  });
+
+  it("resolves a parent-context artifact's relative image through the parent's attachment node", async () => {
+    const parent = (id: string, kind: ArtifactTreeNode["kind"], label: string, children: ArtifactTreeNode[] = []): ArtifactTreeNode => ({
+      id,
+      kind,
+      label,
+      owner_task_slug: "parent",
+      source: "parent_context",
+      children,
+    });
+    scenario.tree = [
+      parent("parent-context", "subtask_folder", "Parent context", [
+        parent("parent-attachments", "subtask_folder", "Attachments", [parent("parent-shot", "attachment", "shot.png")]),
+        parent("parent-ticket", "referenced", "00-parent-ticket.md"),
+      ]),
+    ];
+    readTaskArtifactNode.mockResolvedValueOnce("![shot](attachments/shot.png)");
+    render(sessionView());
+    await flushPromises();
+
+    fireEvent.click(screen.getByRole("button", { name: /00-parent-ticket\.md/ }));
+    await flushPromises();
+
+    expect(readTaskArtifactNode).toHaveBeenCalledWith("task", "parent-ticket");
+    expect(readAttachmentImage).toHaveBeenCalledWith("task", "shot.png", "parent-shot");
   });
 
   it.each(["merged", "finished", "killed"] as const)("warns that a live %s child session may be stale", async (outcome) => {
