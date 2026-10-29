@@ -1056,8 +1056,9 @@ function obsTooltip(kind: ObservationDisplayKind): string {
 
 // Attention reason to pass to notify_session_attention, or null if no notification.
 // Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
-  if (kind === "idle" || kind === "errored") return "idle";
+function attentionReason(kind: ObservationDisplayKind): "idle" | "errored" | "waiting_for_input" | "waiting_for_approval" | null {
+  if (kind === "idle") return "idle";
+  if (kind === "errored") return "errored";
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
   return null;

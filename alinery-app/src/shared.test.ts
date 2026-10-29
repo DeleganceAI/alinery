@@ -1,6 +1,7 @@
 import { act, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as ipc from "./ipc";
 import {
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
@@ -8,6 +9,7 @@ import {
   formatAge,
   harnessDisplayName,
   isAllowedLaunchHarness,
+  notifySessionAttentionTransition,
   ompDefaultModel,
   repoName,
   SessionTimestamp,
@@ -391,5 +393,19 @@ describe("re-render comparators", () => {
       expect(sameTaskActivityMaps(map(summary()), map(summary({ active_session: { ...active, [field]: value } })))).toBe(false);
     }
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
+  });
+});
+
+describe("notifySessionAttentionTransition", () => {
+  // Issue #128: a turn OMP gave up on notified as "idle", which reads like a clean finish.
+  it("notifies a turn that stopped on an error as errored, not idle", () => {
+    vi.mocked(ipc.notifySessionAttention).mockResolvedValue(undefined);
+    notifySessionAttentionTransition("busy", "errored", "/r", "task");
+    notifySessionAttentionTransition("busy", "idle", "/r", "task");
+    notifySessionAttentionTransition("errored", "errored", "/r", "task");
+    expect(vi.mocked(ipc.notifySessionAttention).mock.calls).toEqual([
+      ["/r", "task", "errored"],
+      ["/r", "task", "idle"],
+    ]);
   });
 });
