@@ -2592,6 +2592,19 @@ describe("review continuation", () => {
     expect(nudgeSends()).toHaveLength(0);
   });
 
+  it("keeps Retry available on an errored session that owns no execution", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "errored", message: "The socket connection was closed unexpectedly" }));
+    const reply = readyReply();
+    reply.state.executions["execution-a"].owner_session_id = "someone-else";
+    reply.state.executions["execution-a"].previous_session_ids = [];
+    getTaskExecution.mockResolvedValue(reply);
+    renderSession();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    await waitFor(() => expect(retry).toHaveProperty("disabled", false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(nudgeSends()).toHaveLength(1));
+  });
+
   it("shows the error without Retry on the PTY transport, where the terminal is the retry path", async () => {
     sessionStatus.mockResolvedValue(liveObservation("pty", { state: "errored", message: "The socket connection was closed unexpectedly" }));
     renderSession();

@@ -399,7 +399,7 @@ describe("re-render comparators", () => {
 describe("notifySessionAttentionTransition", () => {
   // Issue #128: a turn OMP gave up on notified as "idle", which reads like a clean finish.
   it("notifies a turn that stopped on an error as errored, not idle", () => {
-    vi.mocked(ipc.notifySessionAttention).mockResolvedValue(undefined);
+    vi.mocked(ipc.notifySessionAttention).mockClear().mockResolvedValue(undefined);
     notifySessionAttentionTransition("busy", "errored", "/r", "task");
     notifySessionAttentionTransition("busy", "idle", "/r", "task");
     notifySessionAttentionTransition("errored", "errored", "/r", "task");
