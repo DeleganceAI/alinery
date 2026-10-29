@@ -659,9 +659,14 @@ export default function App() {
     const repo = appConfigRef.current?.active_repo;
     if (!repo) return true;
     creatingDrawer.current = true;
+    setDrawerCreating(true);
     const generation = drawerGeneration.current;
     try {
-      const metas = await ipc.listDrawerTerminals().catch(() => []);
+      const metas = await ipc.listDrawerTerminals().catch((e) => {
+        // Say so instead of hiding a surviving shell silently; a fresh shell still follows.
+        toast(`Couldn't restore terminals: ${String(e)}`, "error");
+        return [];
+      });
       while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
       // Switched meanwhile: the shells belong to the previous repo. Drop the list; never kill.
       if (drawerGeneration.current !== generation || appConfigRef.current?.active_repo !== repo) return true;
@@ -674,6 +679,7 @@ export default function App() {
       return true;
     } finally {
       creatingDrawer.current = false;
+      setDrawerCreating(false);
     }
   };
 

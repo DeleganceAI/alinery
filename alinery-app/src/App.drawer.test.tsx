@@ -248,6 +248,33 @@ describe("App terminal drawer tabs", () => {
     expect(latestDrawer().activeId).toBe("s-3");
   });
 
+  it("toasts a failed shell listing and still falls back to a new shell", async () => {
+    mocks.listDrawerTerminals.mockRejectedValue(new Error("list failed"));
+    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("fresh"));
+    await renderApp();
+    pressBackquote();
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("list failed"), "error"));
+    await waitFor(() => expect(latestDrawer().tabs).toEqual([{ id: "fresh", ordinal: 1, cwd: "/repo" }]));
+    expect(latestDrawer().open).toBe(true);
+    expect(latestDrawer().creating).toBe(false);
+  });
+
+  it("clears the creating flag once a pending restore settles", async () => {
+    const pending = deferred<SessionMeta[]>();
+    mocks.listDrawerTerminals.mockReturnValueOnce(pending.promise);
+    await renderApp();
+    pressBackquote();
+    // An empty, closed drawer is not mounted, so the flag is only visible once the tabs land;
+    // a second toggle meanwhile neither lists again nor creates a shell.
+    pressBackquote();
+    expect(drawerRecords.current).toHaveLength(0);
+    expect(mocks.listDrawerTerminals).toHaveBeenCalledTimes(1);
+    pending.resolve([meta("s-old-1")]);
+    await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-old-1"]));
+    expect(latestDrawer().creating).toBe(false);
+    expect(mocks.ensureDrawerTerminal).not.toHaveBeenCalled();
+  });
+
   it("does not create a terminal when there is no active repo", async () => {
     await renderApp({ ...appConfig, active_repo: "" });
     pressBackquote();
