@@ -667,16 +667,21 @@ mod tests {
         assert!(err.contains("not a git repository"), "{err}");
     }
 
+    // Held for the override's lifetime so two env-mutating tests never overlap (as in paths.rs).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct RestoreEnv {
         key: &'static str,
         prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl RestoreEnv {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::var_os(key);
             std::env::set_var(key, value);
-            Self { key, prev }
+            Self { key, prev, _lock: lock }
         }
     }
 
@@ -1019,7 +1024,20 @@ mod tests {
         let result = git_credential_fill(GITHUB_CREDENTIAL_FILL);
         let elapsed = started.elapsed();
         drop(guard);
-        let helper_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        // The wrapper writes the pid right after forking the helper, well inside the 5 s fill.
+        let pid_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let helper_pid: i32 = loop {
+            let text = std::fs::read_to_string(&pid_file).unwrap_or_default();
+            if let Ok(pid) = text.trim().parse() {
+                break pid;
+            }
+            assert!(
+                std::time::Instant::now() < pid_deadline,
+                "fake helper never wrote its pid to {} (got {text:?})",
+                pid_file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
         // A killed helper lingers as a zombie until PID 1 reaps it; allow up to a second for that.
         let reap_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         let mut helper_alive = true;
