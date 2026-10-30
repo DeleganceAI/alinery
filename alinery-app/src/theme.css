@@ -505,10 +505,12 @@ nav.tabs {
   min-width: 0;
   gap: 2px;
   margin-left: 0;
-  /* Primary nav never shrinks; the repo label (secondary metadata) yields first
-     — DESIGN.md §Responsive behavior. Shrinking here clipped tabs behind a
-     hidden scrollbar at raised --ui-scale, with no affordance that it had. */
-  flex: 0 0 auto;
+  /* The repo label (secondary metadata) still yields first — its switcher
+     carries a 1000x shrink weight — DESIGN.md §Responsive behavior. Once that
+     label is gone the nav is the last-resort valve: it shrinks and scrolls
+     behind its hidden scrollbar (no affordance) rather than pushing Search and
+     Account off-screen or letting the Add button overlap the repo trigger (#144). */
+  flex: 0 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -586,8 +588,9 @@ nav.tabs .tab:hover:not(.on) {
 .repo-switcher {
   display: flex;
   align-items: center;
-  min-width: 0;
-  flex: 0 1 auto;
+  /* Floor = add button + the trigger's fixed-px chrome (border, padding, dot, gaps, caret); grows above 1x so the scaled label keeps room (#144). */
+  flex: 0 1000 auto;
+  min-width: calc(var(--control-h) + 64px * max(1, var(--ui-scale)));
 }
 .repo-switcher .repo {
   border-top-right-radius: 0;

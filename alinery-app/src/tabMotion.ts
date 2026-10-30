@@ -59,7 +59,8 @@ export function useTabPill(navRef: RefObject<HTMLElement | null>, activeKey: str
       const on = nav.querySelector<HTMLElement>(`.tab[data-tab="${CSS.escape(activeKeyRef.current)}"]`);
       const navBox = nav.getBoundingClientRect();
       const onBox = on?.getBoundingClientRect();
-      applyTabPill(nav, layoutTabPill(navBox.left, onBox ? { left: onBox.left, width: onBox.width } : null), { instant: snap });
+      // The indicator scrolls with the tabs, so subtract scrollLeft to land on the tab's offsetLeft.
+      applyTabPill(nav, layoutTabPill(navBox.left - nav.scrollLeft, onBox ? { left: onBox.left, width: onBox.width } : null), { instant: snap });
     };
 
     let seenObservation = false;
@@ -81,6 +82,6 @@ export function useTabPill(navRef: RefObject<HTMLElement | null>, activeKey: str
     const on = nav.querySelector<HTMLElement>(`.tab[data-tab="${CSS.escape(activeKey)}"]`);
     const navBox = nav.getBoundingClientRect();
     const onBox = on?.getBoundingClientRect();
-    applyTabPill(nav, layoutTabPill(navBox.left, onBox ? { left: onBox.left, width: onBox.width } : null), { instant });
+    applyTabPill(nav, layoutTabPill(navBox.left - nav.scrollLeft, onBox ? { left: onBox.left, width: onBox.width } : null), { instant });
   }, [activeKey, instant, navRef]);
 }
