@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Playbook onboarding — ring pane</title>
+<style>
+  /* Tokens copied from alinery-app/src/theme.css (Space Dark). */
+  :root {
+    --canvas: #000104; --surface: #08090b; --surface-raised: #0e1013; --surface-subtle: #1b1d21;
+    --text-strong: #fffefa; --text: #f4f1ea; --text-muted: #9b9b97; --text-faint: #84867f;
+    --border: rgb(244 241 234 / 0.12); --border-strong: rgb(244 241 234 / 0.24);
+    --accent: #587aff; --accent-subtle: rgb(49 91 255 / 0.24);
+    --warning: #ffb347; --warning-subtle: rgb(255 179 71 / 0.12);
+    --success: #55c58a;
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 1040px; height: 680px; padding: 22px 24px 20px; background: var(--canvas); color: var(--text); font: 13px/1.45 var(--font-ui);
+         display: grid; grid-template-columns: 300px minmax(0,1fr); gap: 20px; overflow: hidden; }
+  h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; color: var(--text-strong); }
+  .lede { margin: 6px 0 14px; color: var(--text-muted); }
+  .rail { display: flex; flex-direction: column; min-width: 0; }
+  .card { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+  .card:hover { border-color: var(--border-strong); background: var(--surface-subtle); }
+  .card.selected { border-color: var(--accent); background: var(--accent-subtle); box-shadow: inset 3px 0 0 var(--accent); }
+  .card .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .card .top b { font-weight: 600; font-size: 14px; }
+  .card .top span { color: var(--text-muted); font-size: 12px; }
+  .strip { display: flex; flex-wrap: wrap; align-items: center; row-gap: 6px; }
+  .n { position: relative; display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .n.cp { color: var(--warning); border-color: var(--warning); background: var(--warning-subtle); }
+  .n.stk { isolation: isolate; background: var(--surface); }
+  .n.stk::before, .n.stk::after { content: ""; position: absolute; inset: -1px; border: 1px solid var(--border-strong); border-radius: 999px; z-index: -1; background: var(--surface); }
+  .n.stk::before { transform: translate(3px,-3px); } .n.stk::after { transform: translate(6px,-6px); opacity: .45; }
+  .c { width: 18px; height: 20px; flex: none; display: grid; place-items: center; color: var(--border-strong); }
+  .c svg { width: 18px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+  .c.hand { color: var(--warning); } .c.hand svg, .c.loop svg { width: 11px; height: 11px; stroke-width: 1.6; }
+  .c.loop { color: var(--text-muted); grid-auto-flow: column; gap: 1px; font-size: 9px; }
+  details { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+  summary { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); cursor: pointer; }
+  .mech { display: grid; grid-template-columns: 16px 1fr; gap: 8px 10px; margin: 10px 0 0; padding: 0; list-style: none; }
+  .mech li { display: contents; } .mech h4 { margin: 0; font-size: 13px; font-weight: 600; } .mech p { margin: 0; color: var(--text-muted); font-size: 12px; }
+  .mech svg { width: 16px; height: 16px; fill: none; stroke: var(--text-muted); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; margin-top: 2px; }
+  .mech .w svg { stroke: var(--warning); }
+
+  .pane { position: relative; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+  .pane-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 14px 18px 0; }
+  .pane-head h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-strong); }
+  .pane-head p { margin: 2px 0 0; color: var(--text-muted); max-width: 520px; }
+  .btn { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+  .btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .ring-wrap { position: relative; flex: 1; min-height: 0; }
+  .ring-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ring-wrap svg text { font-family: var(--font-ui); fill: var(--text-muted); font-size: 12px; }
+  .ring-wrap svg text.num { fill: var(--text); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .ring-wrap svg .node { cursor: pointer; }
+  .ring-wrap svg .node.cp circle.main { stroke: var(--warning); fill: #15110a; } .ring-wrap svg .node.cp text.num { fill: var(--warning); }
+  .ring-wrap svg .node.cur circle.main { stroke: var(--accent); fill: #0b1230; } .ring-wrap svg .node.cur text.num { fill: var(--accent); }
+  .ring-wrap svg .node.cur text.lbl { fill: var(--text); }
+  .ring-wrap svg .edge { transition: opacity .15s; } .ring-wrap svg .edge.dim { opacity: .15; }
+  .centre { position: absolute; left: 50%; top: 50%; width: 270px; transform: translate(-50%,-50%); text-align: center; pointer-events: none; }
+  .centre .ord { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); }
+  .centre h4 { margin: 2px 0 6px; font-size: 17px; font-weight: 600; color: var(--text-strong); line-height: 1.2; }
+  .centre .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border-strong); color: var(--text-muted); margin: 0 2px 8px; }
+  .centre .pill.w { color: var(--warning); border-color: var(--warning); background: var(--warning-subtle); }
+  .centre .pill.a { color: var(--accent); border-color: var(--accent); background: var(--accent-subtle); }
+  .centre .ex { margin: 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .centre .io { margin: 8px 0 0; font-size: 11px; color: var(--text-faint); }
+  .centre .io code { font: 11px/1 SFMono-Regular, Menlo, monospace; color: var(--text-muted); }
+  .foot { padding: 0 18px 10px; font-size: 11px; color: var(--text-faint); display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="arrow" viewBox="0 0 24 20"><path d="M2 10H20M16 6l4 4-4 4"/></symbol>
+  <symbol id="fanout" viewBox="0 0 24 20"><path d="M2 10h5M7 10c5 0 5-6 10-6h5M7 10h15M7 10c5 0 5 6 10 6h5"/></symbol>
+  <symbol id="fanin" viewBox="0 0 24 20"><path d="M2 4h5c5 0 5 6 10 6h5M2 10h20M2 16h5c5 0 5-6 10-6"/></symbol>
+  <!-- lucide: hand, git-fork, rotate-ccw, play, pause (the app already ships lucide-react) -->
+  <symbol id="hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+  <symbol id="fork" viewBox="0 0 24 24"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></symbol>
+  <symbol id="loop" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+  <symbol id="pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+</svg>
+
+<div class="rail">
+  <h2>How playbooks work</h2>
+  <p class="lede">A playbook is a fixed sequence of steps. Each step reads and writes named markdown files, and some steps wait for you.</p>
+  <div id="cards" role="radiogroup" aria-label="Explore starter playbooks"></div>
+  <details open>
+    <summary>How work moves</summary>
+    <ul class="mech">
+      <li><svg><use href="#arrow"/></svg><div><h4>Auto-advance</h4><p>Moves on when the step’s output is validated.</p></div></li>
+      <li class="w"><svg><use href="#hand"/></svg><div><h4>Human checkpoint</h4><p>Pauses for you to review or comment before continuing.</p></div></li>
+      <li><svg><use href="#fork"/></svg><div><h4>Parallel agents</h4><p>Runs an agent per artifact, then brings their results together.</p></div></li>
+    </ul>
+  </details>
+</div>
+
+<div class="pane">
+  <div class="pane-head">
+    <div><h3 id="pb-title"></h3><p id="pb-desc"></p></div>
+    <button class="btn" id="demo" type="button"><svg><use href="#play"/></svg><span>Resume demo</span></button>
+  </div>
+  <div class="ring-wrap">
+    <svg id="ring" viewBox="0 0 760 520" preserveAspectRatio="xMidYMid meet" aria-label="Playbook ring"></svg>
+    <div class="centre" id="centre"></div>
+  </div>
+  <div class="foot"><span>Hover a step. Nothing here scrolls.</span><span>Demo only · No agents are running.</span></div>
+</div>
+
+<script>
+const PLAYBOOKS = {"superdevelop": {"title": "SuperDevelop", "description": "Develop a change through Clarify, Investigate, Decide, Plan, Define Tests, Build, and Prepare Review.", "steps": [{"title": "Clarify", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}], "outputs": ["clarify.md"], "excerpt": "Clarify what must be learned before choosing a solution. Produce a focused investigation agenda that lets the next Session gather evidence efficiently."}, {"title": "Investigate", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}], "outputs": ["investigate.md"], "excerpt": "Answer the investigation questions using evidence from the current system. Explain what exists and how it behaves so the Decide stage can make informed choices."}, {"title": "Decide", "auto": false, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}, {"path": "investigate.md", "mode": "single"}], "outputs": ["decide.md"], "excerpt": "Turn the task and research into a small, coherent solution that the user understands and approves before implementation planning."}, {"title": "Plan", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}, {"path": "investigate.md", "mode": "single"}, {"path": "decide.md", "mode": "single"}], "outputs": ["plan.md"], "excerpt": "Convert the approved design into an implementation plan that another Session can execute without reconstructing the reasoning or guessing the intended interfaces."}, {"title": "Define Tests", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}, {"path": "investigate.md", "mode": "single"}, {"path": "decide.md", "mode": "single"}, {"path": "plan.md", "mode": "single"}], "outputs": ["test-contract.md"], "excerpt": "Establish how the approved behavior will be tested before implementing it. Produce a test contract and, where feasible within the task, real failing tests that the Build stage can use."}, {"title": "Build", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}, {"path": "investigate.md", "mode": "single"}, {"path": "decide.md", "mode": "single"}, {"path": "plan.md", "mode": "single"}, {"path": "test-contract.md", "mode": "single"}], "outputs": ["build-report.md"], "excerpt": "Implement the approved plan through small verified changes. Keep the design, tests, and actual behavior aligned, and leave evidence that another Session can check."}, {"title": "Prepare Review", "auto": false, "inputs": [{"path": "ticket.md", "mode": "single"}, {"path": "clarify.md", "mode": "single"}, {"path": "investigate.md", "mode": "single"}, {"path": "decide.md", "mode": "single"}, {"path": "plan.md", "mode": "single"}, {"path": "test-contract.md", "mode": "single"}, {"path": "build-report.md", "mode": "single"}], "outputs": ["review-package.md"], "excerpt": "Prepare the completed change for a human reviewer. Make its purpose, behavior, and verification easy to assess."}]}, "natural-planning-brainstorm": {"title": "Natural Planning Brainstorm", "description": "Frame purpose and outcome, harvest seven independent and three shared-wall perspectives losslessly, evaluate options and define human-steered next actions.", "steps": [{"title": "Frame the Challenge", "auto": true, "inputs": [{"path": "ticket.md", "mode": "single"}], "outputs": ["brainstorm-brief.md", "blind-perspective-request-*.md"], "excerpt": "Read the current assigned ticket, not a newer-looking file or the original ticket token by default. Work through purpose, principles, observable successful outcome, then current reality before proposing solutions. Inspired by David Allen's\u2026"}, {"title": "Generate Blind or Targeted Possibilities", "auto": true, "inputs": [{"path": "blind-perspective-request-*.md", "mode": "each"}], "outputs": ["blind-idea-contribution.md"], "excerpt": "Read only your exact request and its captured brief. Apply its search operation. For blind initial work, do not read sibling contributions. For shared-wall or targeted work, use the prior wall captured in the request, never a newer wall\u2026"}, {"title": "Harvest the First Wall", "auto": true, "inputs": [{"path": "brainstorm-brief.md", "mode": "single"}, {"path": "blind-idea-*.md", "mode": "complete"}], "outputs": ["first-idea-wall.md", "shared-perspective-request-*.md"], "excerpt": "Read the one complete contribution collection supplied by the engine and the assigned brief. Check that its domain context is coherent. Never infer coverage from files or silently combine another collection. Start with supplied human seed\u2026"}, {"title": "Generate with the Shared Wall", "auto": true, "inputs": [{"path": "shared-perspective-request-*.md", "mode": "each"}], "outputs": ["shared-idea-contribution.md"], "excerpt": "Read only your exact request and its captured brief. Apply its search operation. For blind initial work, do not read sibling contributions. For shared-wall or targeted work, use the prior wall captured in the request, never a newer wall\u2026"}, {"title": "Harvest the Cumulative Wall", "auto": true, "inputs": [{"path": "brainstorm-brief.md", "mode": "single"}, {"path": "first-idea-wall.md", "mode": "single"}, {"path": "shared-idea-*.md", "mode": "complete"}], "outputs": ["cumulative-idea-wall.md"], "excerpt": "Read the one complete contribution collection supplied by the engine and the assigned brief. Check that its domain context is coherent. Never infer coverage from files or silently combine another collection. Start with supplied human seed\u2026"}, {"title": "Shape the Options", "auto": true, "inputs": [{"path": "brainstorm-brief.md", "mode": "single"}, {"path": "cumulative-idea-wall.md", "mode": "single"}], "outputs": ["organized-options.md"], "excerpt": "Read the assigned cumulative wall and brief. Announce that generation is complete for this pass and evaluation may begin. Reconcile a prior option map and unresolved gaps if supplied. Use criteria grounded in purpose, principles, outcome\u2026"}, {"title": "Define Human-Reviewed Next Actions", "auto": false, "inputs": [{"path": "brainstorm-brief.md", "mode": "single"}, {"path": "cumulative-idea-wall.md", "mode": "single"}, {"path": "organized-options.md", "mode": "single"}], "outputs": ["brainstorm-handoff.md"], "excerpt": "Read the assigned brief, cumulative wall and organized options. Determine what can be concluded under the recorded authority. Recommend a direction and compare tradeoffs, but do not label a human-reserved decision approved without the\u2026"}, {"title": "Continue or Pause", "auto": false, "inputs": [{"path": "brainstorm-handoff.md", "mode": "single"}, {"path": "organized-options.md", "mode": "single"}], "outputs": ["ticket.md", "brainstorm-stopping-report.md"], "excerpt": "Read the assigned brainstorm handoff and organized options. Report what was learned and whether another generative pass would change the decision. The default method allows one useful targeted return after the seven-plus-three waves;\u2026"}]}, "academic-survey": {"title": "Academic Survey", "description": "Frame the question, search in parallel, give every source its own reading session, and follow relevant citations through successive evidence waves. Keep a cumulative, source-traceable survey draft.", "steps": [{"title": "Frame the Review", "auto": true, "inputs": [], "outputs": ["review-brief.md"], "excerpt": "Read the original task ticket at {{TICKETFILE}}, relevant supplied attachments, and {{REVIEWHANDOFFFILE}} if nonempty. This root-only step establishes the fixed review brief; later discovery tickets must not restart it."}, {"title": "Plan the Evidence Wave", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "ticket.md", "mode": "single"}], "outputs": ["search-plan.md", "search-request-*.md"], "excerpt": "Read the exact assigned review-brief.md and current ticket.md. Use the assigned ticket, not the original-ticket token or a newer-looking file. Preserve the fixed question, criteria and rigor; a material scope change needs human direction,\u2026"}, {"title": "Gather Candidate Sources", "auto": true, "inputs": [{"path": "search-request-*.md", "mode": "each"}], "outputs": ["search-result.md"], "excerpt": "Process only your assigned search request. Execute its source-specific search or citation lookup using available, authorized access. Follow pagination or export procedures to the agreed boundary. Do not broaden eligibility or claim\u2026"}, {"title": "Deduplicate and Dispatch Sources", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "search-plan.md", "mode": "single"}, {"path": "search-result*.md", "mode": "complete"}], "outputs": ["reading-wave.md", "source-request-*.md"], "excerpt": "Read the assigned brief, search plan and complete search-result collection. Account for every supplied search, including empty results and access failures. Do not substitute a task-wide glob for the engine's collection or silently omit an\u2026"}, {"title": "Read and Evaluate One Source", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "source-request-*.md", "mode": "each"}], "outputs": ["source-assessment.md"], "excerpt": "You own one source for this execution. Read your assigned source request and review brief, retrieve the available full text through authorized access, and assess the actual source rather than its reputation, citation count or an abstract\u2026"}, {"title": "Consolidate Evidence and New Citations", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "reading-wave.md", "mode": "single"}, {"path": "source-assessment*.md", "mode": "complete"}], "outputs": ["survey-evidence.md"], "excerpt": "Read the assigned review brief, reading-wave roster and complete source-assessment collection. Match assessments by source identity and actual input references, not filename suffixes. Account for every dispatched source before completing.\u2026"}, {"title": "Synthesize and Draft the Survey", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "survey-evidence.md", "mode": "single"}], "outputs": ["survey-draft.md"], "excerpt": "Read the assigned brief and cumulative evidence handoff, then consult the exact source assessments and supporting passages it references. Use all relevant accumulated evidence, not just this wave's papers. Do not introduce an unevaluated\u2026"}, {"title": "Continue Discovery or Review with the Human", "auto": true, "inputs": [{"path": "review-brief.md", "mode": "single"}, {"path": "survey-evidence.md", "mode": "single"}, {"path": "survey-draft.md", "mode": "single"}], "outputs": ["ticket.md", "review-stopping-report.md"], "excerpt": "Read the exact assigned brief, cumulative evidence and survey draft. This is the only step that can request another evidence wave."}]}};
+const ORDER = ["superdevelop","natural-planning-brainstorm","academic-survey"];
+const q = new URLSearchParams(location.search);
+let active = PLAYBOOKS[q.get("pb")] ? q.get("pb") : ORDER[0];
+let current = Math.max(0, (parseInt(q.get("step")||"1",10)||1) - 1);
+let hovered = null, playing = false, timer = null;
+
+// --- edges straight from the step contracts (same rule as PlaybookGraph.tsx: selectors overlap) ---
+const rx = p => new RegExp("^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+const overlap = (a, b) => rx(a).test(b) || rx(b).test(a);
+function edgesOf(steps) {
+  const out = [];
+  steps.forEach((c, j) => c.inputs.forEach(inp => steps.forEach((p, i) => {
+    if (i !== j && p.outputs.some(o => overlap(o, inp.path))) out.push({ i, j, path: inp.path, mode: inp.mode });
+  })));
+  return out;
+}
+// ponytail: rail = one artifact read by 2+ later non-adjacent steps; else a chord. Loop-backs are dashed.
+function classify(steps) {
+  const edges = edgesOf(steps), rails = [], chords = [], backs = [];
+  const far = edges.filter(e => e.j > e.i + 1);
+  const byArtifact = new Map();
+  far.forEach(e => { const k = e.i + "|" + e.path; (byArtifact.get(k) || byArtifact.set(k, []).get(k)).push(e); });
+  byArtifact.forEach((es, k) => {
+    const consumers = [...new Set(es.map(e => e.j))].sort((a, b) => a - b);
+    if (consumers.length >= 2) rails.push({ i: es[0].i, path: es[0].path, consumers }); else chords.push(es[0]);
+  });
+  edges.filter(e => e.j <= e.i).forEach(e => backs.push(e));
+  rails.sort((a, b) => a.i - b.i);
+  return { rails, chords, backs };
+}
+const each = s => s.inputs.some(x => x.mode === "each"), complete = s => s.inputs.some(x => x.mode === "complete");
+
+// --- left cards: variant A strip ---
+function strip(steps, backs) {
+  const parts = [];
+  steps.forEach((s, i) => {
+    const cls = "n" + (s.auto ? "" : " cp") + (each(s) ? " stk" : "");
+    parts.push(`<span class="${cls}">${i + 1}</span>`);
+    const next = steps[i + 1];
+    if (next) parts.push(!s.auto ? `<span class="c hand"><svg><use href="#hand"/></svg></span>` : `<span class="c"><svg><use href="#${each(next) ? "fanout" : complete(next) ? "fanin" : "arrow"}"/></svg></span>`);
+    else {
+      if (!s.auto) parts.push(`<span class="c hand"><svg><use href="#hand"/></svg></span>`);
+      const b = backs.find(e => e.i === i); if (b) parts.push(`<span class="c loop"><svg><use href="#loop"/></svg>${b.j + 1}</span>`);
+    }
+  });
+  return `<span class="strip">${parts.join("")}</span>`;
+}
+function renderCards() {
+  document.getElementById("cards").innerHTML = ORDER.map(k => {
+    const pb = PLAYBOOKS[k], { backs } = classify(pb.steps);
+    return `<button type="button" role="radio" aria-checked="${k === active}" class="card${k === active ? " selected" : ""}" data-pb="${k}">
+      <span class="top"><b>${pb.title}</b><span>${pb.steps.length} steps</span></span>${strip(pb.steps, backs)}</button>`;
+  }).join("");
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => { active = c.dataset.pb; current = 0; hovered = null; renderCards(); renderRing(); });
+}
+
+// --- the ring ---
+const W = 760, H = 520, CX = 380, CY = 262, R = 186, NR = 11;
+const pt = (a, r) => [CX + r * Math.cos(a), CY + r * Math.sin(a)];
+const ang = (i, n) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
+const arcPath = (a1, a2, r) => { const [x1, y1] = pt(a1, r), [x2, y2] = pt(a2, r); return `M${x1},${y1} A${r},${r} 0 ${a2 - a1 > Math.PI ? 1 : 0} 1 ${x2},${y2}`; };
+function wrap(t, max) { const w = t.split(" "), lines = [""]; for (const x of w) { if ((lines.at(-1) + " " + x).trim().length > max && lines.at(-1)) lines.push(x); else lines[lines.length - 1] = (lines.at(-1) + " " + x).trim(); } if (lines.length > 2) { lines.length = 2; lines[1] = lines[1].slice(0, max - 1) + "…"; } return lines; }
+const HAND = `<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>`;
+
+function renderRing() {
+  const pb = PLAYBOOKS[active], steps = pb.steps, n = steps.length, { rails, chords, backs } = classify(steps);
+  document.getElementById("pb-title").textContent = pb.title;
+  document.getElementById("pb-desc").textContent = pb.description;
+  const g = [];
+  // rails: nested inner arcs from the producer to the last consumer, ticks at every consumer
+  rails.forEach((rl, k) => {
+    const r = R - 16 - k * 9, a1 = ang(rl.i, n), a2 = ang(rl.consumers.at(-1), n);
+    g.push(`<g class="edge" data-touch="${[rl.i, ...rl.consumers].join(" ")}" fill="none" stroke="var(--border-strong)" stroke-width="1"><path d="${arcPath(a1, a2, r)}" stroke-dasharray="2 3"/>${rl.consumers.map(c => { const a = ang(c, n), [x1, y1] = pt(a, r), [x2, y2] = pt(a, R - NR - 1); return `<path d="M${x1},${y1} L${x2},${y2}"/>`; }).join("")}</g>`);
+  });
+  // chords: structural jumps
+  chords.forEach(e => {
+    const [xa, ya] = pt(ang(e.i, n), R - NR), [xb, yb] = pt(ang(e.j, n), R - NR), qx = CX * .45 + (xa + xb) / 2 * .55, qy = CY * .45 + (ya + yb) / 2 * .55;
+    g.push(`<path class="edge" data-touch="${e.i} ${e.j}" d="M${xa},${ya} Q${qx},${qy} ${xb},${yb}" fill="none" stroke="var(--accent)" stroke-width="1.25" opacity=".9"/>`);
+  });
+  // ring segments; the closing segment is drawn only when the playbook loops
+  for (let i = 0; i < n - 1; i++) {
+    const a1 = ang(i, n), a2 = ang(i + 1, n), nx = steps[i + 1];
+    if (each(nx) || complete(nx)) {
+      const m = (a1 + a2) / 2;
+      [-5, 0, 5].forEach(d => { const [x1, y1] = pt(a1, R + (each(nx) ? 0 : d)), [x2, y2] = pt(a2, R + (each(nx) ? d : 0)), [qx, qy] = pt(m, R + d * 1.4); g.push(`<path d="M${x1},${y1} Q${qx},${qy} ${x2},${y2}" fill="none" stroke="var(--border-strong)" stroke-width="1"/>`); });
+    } else g.push(`<path d="${arcPath(a1, a2, R)}" fill="none" stroke="var(--border-strong)" stroke-width="1.25"/>`);
+  }
+  // loop-back: to step 1 the ring closes; to any other step a dashed chord, and the ring stays open
+  const loop = backs.find(e => e.i === n - 1);
+  if (loop) {
+    const a1 = ang(n - 1, n), a2 = ang(n, n), label = `${loop.path} · back to ${loop.j + 1}`;
+    let d;
+    if (loop.j === 0) { g.push(`<path class="edge" data-touch="${n - 1} 0" d="${arcPath(a1, a2, R)}" fill="none" stroke="var(--success)" stroke-width="1.25" stroke-dasharray="4 3"/>`); d = arcPath(a1, a2, R - 22); }
+    else { const [xa, ya] = pt(a1, R - NR), [xb, yb] = pt(ang(loop.j, n), R - NR), qx = CX * .12 + (xa + xb) / 2 * .88, qy = CY * .12 + (ya + yb) / 2 * .88; d = `M${xa},${ya} Q${qx},${qy} ${xb},${yb}`; g.push(`<path class="edge" data-touch="${n - 1} ${loop.j}" d="${d}" fill="none" stroke="var(--success)" stroke-width="1.25" stroke-dasharray="4 3"/>`); d = `M${xa},${ya} Q${qx},${qy - 12} ${xb},${yb}`; }
+    g.push(`<path id="loopLabel" d="${d}" fill="none"/><text fill="var(--success)" font-size="11"><textPath href="#loopLabel" startOffset="50%" text-anchor="middle">${label}</textPath></text>`);
+  }
+  // hand badges after checkpoints
+  steps.forEach((s, i) => { if (s.auto) return; const [x, y] = pt(i === n - 1 && !loop ? ang(i, n) + (2 * Math.PI / n) * .3 : (ang(i, n) + ang(i + 1, n)) / 2, R); g.push(`<g transform="translate(${x - 8},${y - 8})"><circle cx="8" cy="8" r="8" fill="var(--surface)" stroke="var(--warning)"/><g transform="translate(3.2,3.2) scale(.4)" fill="none" stroke="var(--warning)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${HAND}</g></g>`); });
+  // nodes + labels
+  steps.forEach((s, i) => {
+    const a = ang(i, n), [x, y] = pt(a, R), [lx, ly] = pt(a, R + 28), c = Math.cos(a);
+    const anchor = Math.abs(c) < .25 ? "middle" : c > 0 ? "start" : "end", lines = wrap(s.title, 22);
+    const stk = each(s) ? `<circle cx="${x + 6}" cy="${y - 6}" r="${NR}" fill="none" stroke="var(--border-strong)" opacity=".45"/><circle cx="${x + 3}" cy="${y - 3}" r="${NR}" fill="var(--surface)" stroke="var(--border-strong)" opacity=".8"/>` : "";
+    const dy0 = lines.length === 2 ? -3 : 4;
+    g.push(`<g class="node${s.auto ? "" : " cp"}${i === (hovered ?? current) ? " cur" : ""}" data-i="${i}">${stk}<circle class="main" cx="${x}" cy="${y}" r="${NR}" fill="var(--surface)" stroke="var(--border-strong)"/><text class="num" x="${x}" y="${y + 3.5}" text-anchor="middle">${i + 1}</text><text class="lbl" x="${lx}" y="${ly + dy0}" text-anchor="${anchor}">${lines.map((l, k) => `<tspan x="${lx}" dy="${k ? 14 : 0}">${l}</tspan>`).join("")}</text></g>`);
+  });
+  const svg = document.getElementById("ring"); svg.innerHTML = g.join("");
+  svg.querySelectorAll(".node").forEach(nd => { nd.onmouseenter = () => { hovered = +nd.dataset.i; paint(); }; nd.onmouseleave = () => { hovered = null; paint(); }; });
+  paint();
+}
+function paint() {
+  const pb = PLAYBOOKS[active], steps = pb.steps, i = hovered ?? current, s = steps[i];
+  document.querySelectorAll("#ring .node").forEach(nd => nd.classList.toggle("cur", +nd.dataset.i === i));
+  document.querySelectorAll("#ring .edge").forEach(e => e.classList.toggle("dim", hovered !== null && !e.dataset.touch.split(" ").includes(String(i))));
+  const pills = [s.auto ? `<span class="pill a">Auto-advances</span>` : `<span class="pill w">Waits for you</span>`];
+  if (each(s)) pills.push(`<span class="pill">One agent per file</span>`); if (complete(s)) pills.push(`<span class="pill">Waits for all</span>`);
+  const reads = s.inputs.map(x => x.path), writes = s.outputs;
+  document.getElementById("centre").innerHTML = `<div class="ord">Step ${i + 1} of ${steps.length}</div><h4>${s.title}</h4><div>${pills.join("")}</div><p class="ex">${s.excerpt || "No prompt text."}</p><p class="io">${reads.length ? "reads " + reads.map(r => `<code>${r}</code>`).join(", ") : "reads the task ticket"}<br>writes ${writes.map(w => `<code>${w}</code>`).join(", ") || "nothing"}</p>`;
+}
+document.getElementById("demo").onclick = () => {
+  playing = !playing;
+  document.querySelector("#demo use").setAttribute("href", playing ? "#pause" : "#play");
+  document.querySelector("#demo span").textContent = playing ? "Pause demo" : "Resume demo";
+  clearInterval(timer); if (playing) timer = setInterval(() => { current = (current + 1) % PLAYBOOKS[active].steps.length; paint(); }, 1600);
+};
+renderCards(); renderRing();
+</script>
+</body>
+</html>
