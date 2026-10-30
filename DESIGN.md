@@ -634,3 +634,16 @@ Before approving app UI work, confirm:
 
 - [ ] After the first representative screen is implemented, visually tune the proposed neutral and accent values against native screenshots while preserving their semantic roles.
 - [ ] Decide whether Alinery should maintain a lightweight in-app component gallery for visual regression and design review after the shared components stabilize.
+
+
+## Playbooks Explore library (2026-10-28)
+
+The app Playbooks tab and public Playbook Library share a compact Explore layout inspired by GitHub Explore: underlined collection navigation, a left library summary, a central feed of bordered cards, and a small bundled collection at the right. This user-requested shared anatomy is an exception to the general website-layout non-goal above; all Alinery behavior and identity remain authoritative.
+
+- Keep the heading “Explore Playbooks”, quiet descriptive copy, readable accent-colored titles, neutral surfaces, and Lucide book icons. Cards are semantic lists, not tables or a marketing grid.
+- The left “Your library” rail uses observed installed, starred, and imported counts and shortcuts. The right “Featured Playbooks” rail shows the requested bundled collection in this order: SuperDevelop, Academic Survey, Bug Hunting, Systematic Evidence Review, and One-shot. Titles and descriptions come from the actual bundled catalog; omit missing entries and exclude same-key repository or global definitions. Never fabricate popularity or trending metrics.
+- Local cards show source, optional modification date, description, and star action. Community cards show the actual publisher, steps, version, description, and existing preview/download actions. Do not fetch every local definition just to invent missing list metadata.
+- Keep Local/Community navigation, all community filters, search, every sort direction, and import/edit/copy/export/publish/download behavior and confirmations intact. The graph/editor workspace remains unchanged.
+- Collapse the right rail below 1120px of available Playbooks width and the left rail below 760px. All hidden rail actions remain reachable through the central library navigation. The 900px desktop window must fit without horizontal scrolling.
+- Use existing appearance tokens, focus rings, and shared controls. The hierarchy is shared with the website, while app density and local data semantics stay native to Alinery.
+- Follow AGENTS.md's explicit prohibition on native app launch unless requested. Browser fixtures can verify layout with mocked IPC; they do not prove native integration.

@@ -1,0 +1,280 @@
+/* Shared Explore anatomy; all colors follow Alinery appearance tokens. */
+.playbooks-explore {
+  container-type: inline-size;
+}
+.playbooks-explore .playbooks-toolbar {
+  gap: 20px;
+  padding-bottom: 0;
+  margin-bottom: 24px;
+}
+.playbooks-explore-heading {
+  flex: 1 1 300px;
+}
+.playbooks-explore-heading p {
+  color: var(--text-muted);
+  font-size: calc(13px * var(--ui-scale));
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+.playbooks-explore .playbooks-toolbar > [role="tablist"] {
+  order: 3;
+  display: flex;
+  gap: 24px;
+  width: 100%;
+}
+.playbooks-explore .playbooks-toolbar .tab,
+.playbooks-explore .playbooks-library-controls[aria-label="Community list"] .btn {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 12px 2px;
+  border-bottom: 2px solid transparent;
+}
+.playbooks-explore .playbooks-toolbar .tab.on,
+.playbooks-explore .playbooks-library-controls[aria-label="Community list"] .btn.on {
+  color: var(--text-strong);
+  border-bottom-color: var(--accent);
+}
+.playbooks-explore-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 220px;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+.playbooks-explore-layout > * {
+  min-width: 0;
+}
+.playbooks-explore-sidebar,
+.playbooks-explore-aside {
+  overflow: auto;
+}
+.playbooks-explore-panel {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.playbooks-explore .playbooks-explore-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(13px * var(--ui-scale));
+  margin: 0;
+  padding: 16px;
+  background: var(--surface);
+}
+.playbooks-explore-profile {
+  padding: 24px 16px 16px;
+}
+.playbooks-explore-profile > svg {
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.playbooks-explore .playbooks-explore-profile h2 {
+  padding: 0;
+  background: none;
+  font-size: calc(16px * var(--ui-scale));
+}
+.playbooks-explore-profile p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.playbooks-explore-panel > button {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: 16px;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.playbooks-explore-panel > button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+.playbooks-explore-panel > button:focus-visible {
+  outline-offset: -2px;
+}
+.playbooks-explore-panel > button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.playbooks-explore-panel > button strong {
+  font-weight: 600;
+}
+.playbooks-explore-panel small {
+  display: block;
+  color: var(--text-muted);
+  margin-top: 8px;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+}
+.playbooks-explore-caption,
+.playbooks-explore-panel > p {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+  padding: 0 16px;
+  margin: 16px 0;
+}
+.playbooks-explore .playbooks-library h2 {
+  font-size: calc(16px * var(--ui-scale));
+  margin-bottom: 16px;
+}
+.playbooks-explore .playbooks-library {
+  padding: 0 3px 16px;
+}
+.playbooks-sort-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 16px;
+}
+.playbooks-sort-controls .playbooks-sort-header {
+  font-size: calc(11px * var(--ui-scale));
+  min-height: 28px;
+}
+.playbooks-card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.playbooks-explore-card {
+  position: relative;
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.playbooks-explore-card .playbooks-library-row {
+  padding: 0;
+  align-items: flex-start;
+  gap: 12px;
+  padding-inline-end: 32px;
+  border: 0;
+}
+.playbooks-explore-card .playbooks-library-row:hover:not(:disabled) {
+  background: none;
+}
+.playbooks-explore-card .playbooks-library-row:hover strong {
+  text-decoration: underline;
+}
+.playbooks-explore-card .playbooks-library-icon {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+.playbooks-explore-card .playbooks-library-name strong {
+  font-size: calc(17px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--accent);
+}
+.playbooks-explore-card .playbooks-library-name small {
+  display: block;
+  margin: 10px 0 16px;
+  line-height: 1.65;
+  font-size: calc(13px * var(--ui-scale));
+}
+.playbooks-card-metadata,
+.playbooks-card-date {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.6;
+}
+.playbooks-explore-card .playbooks-library-source {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+.playbooks-card-date {
+  margin-top: 4px;
+}
+.playbooks-card-star {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
+.playbooks-community-cards .playbooks-identity {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 4px 10px;
+}
+.playbooks-community-cards .playbooks-identity svg {
+  grid-row: 1 / 3;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+.playbooks-community-cards .playbooks-identity small {
+  grid-column: 2;
+  color: var(--text-muted);
+}
+.playbooks-community-cards .playbooks-identity > span {
+  color: var(--accent);
+  font-size: calc(17px * var(--ui-scale));
+  font-weight: 600;
+}
+.playbooks-card-publisher {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  margin: 12px 0;
+}
+.playbooks-card-description {
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1.65;
+  color: var(--text-muted);
+  margin: 12px 0;
+}
+.playbooks-community-cards .playbooks-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.playbooks-explore .playbooks-library > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+  font-size: calc(12px * var(--ui-scale));
+}
+@container (max-width: 1120px) {
+  .playbooks-explore-layout {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .playbooks-explore-aside {
+    display: none;
+  }
+}
+@container (max-width: 760px) {
+  .playbooks-explore-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .playbooks-explore-sidebar {
+    display: none;
+  }
+  .playbooks-explore .playbooks-detail {
+    padding: 16px;
+  }
+}
+
+.playbooks-explore-aside .playbooks-explore-panel small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
