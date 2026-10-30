@@ -22,10 +22,12 @@ falls out of `NormalizedStep` as it exists today:
 | hand | `auto_advance_default = false` | pauses for you; drawn **after** the step, since that is where the pause is. The last step gets a trailing hand. |
 | fan-out into a stacked node | any input with `mode = "each"` | the step runs once per matching file, one agent each |
 | fan-in | any input with `mode = "complete"` | the step waits for the whole collection |
-| loop-back | an output path that an earlier step takes as input | Academic Survey step 8 writes `ticket.md`, which step 2 reads |
+| loop-back | an output path that an earlier step takes as input | Natural Planning Brainstorm step 8 writes `ticket.md`, which step 1 reads |
 
-Academic Survey exercises all five: fan-out at 3 and 5, fan-in at 4 and 6, a
-checkpoint and a loop-back at 8. SuperDevelop only has checkpoints (3 and 7).
+Natural Planning Brainstorm exercises all five: fan-out at 2 and 4, fan-in at 3
+and 5, checkpoints at 7 and 8, and a loop-back from 8 to 1. Academic Survey has
+the same fan-out shape but every step auto-advances. SuperDevelop only has
+checkpoints (3 and 7).
 
 ## Variants
 
