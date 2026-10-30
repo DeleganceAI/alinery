@@ -38,7 +38,7 @@ const mcp: McpStatus = {
 
 describe("HotkeyBar runtime status", () => {
   it("keeps the footer identity minimal and exposes power-user status", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="kanban" daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} />);
     expect(html).toContain(">Alinery</span>");
     expect(html).toContain('class="live down"');
     expect(html).toContain("Daemon");
@@ -50,18 +50,18 @@ describe("HotkeyBar runtime status", () => {
   });
 
   it("prints the running app version next to the identity", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="kanban" daemon={daemon} mcp={mcp} version="0.11.0" />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} version="0.11.0" />);
     expect(html).toContain('class="footer-version"');
     expect(html).toContain("v0.11.0");
   });
 
   it("omits the version block until the version has loaded", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="kanban" daemon={daemon} mcp={mcp} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} />);
     expect(html).not.toContain("footer-version");
   });
 
   it("hides keyboard hints before a repository is selected", () => {
-    const html = renderToStaticMarkup(<HotkeyBar view="kanban" daemon={daemon} mcp={mcp} showHints={false} />);
+    const html = renderToStaticMarkup(<HotkeyBar view="list" daemon={daemon} mcp={mcp} showHints={false} />);
     expect(html).not.toContain('class="keys"');
     expect(html).not.toContain("Search");
   });
@@ -82,7 +82,7 @@ describe("HotkeyBar named Grid hints", () => {
 });
 
 describe("HotkeyBar duplicate task hints", () => {
-  it.each(["list", "kanban", "task"])("advertises Command+D in the %s context", (view) => {
+  it.each(["list", "task"])("advertises Command+D in the %s context", (view) => {
     const html = renderToStaticMarkup(<HotkeyBar view={view} daemon={daemon} mcp={mcp} />);
     expect(html).toContain("⌘D");
     expect(html).toContain("Duplicate");

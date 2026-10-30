@@ -26,9 +26,7 @@ export function viewFadeClass(instant: boolean) {
 }
 
 export function isPrimaryTab(kind: string): boolean {
-  return (
-    kind === "kanban" || kind === "list" || kind === "grid" || kind === "chat" || kind === "sessions" || kind === "notifications" || kind === "playbooks" || kind === "settings"
-  );
+  return kind === "list" || kind === "grid" || kind === "chat" || kind === "sessions" || kind === "notifications" || kind === "playbooks" || kind === "settings";
 }
 
 /** Every drill-down view (task, session, create, ...) nests back to the primary
@@ -61,7 +59,8 @@ export function useTabPill(navRef: RefObject<HTMLElement | null>, activeKey: str
       const on = nav.querySelector<HTMLElement>(`.tab[data-tab="${CSS.escape(activeKeyRef.current)}"]`);
       const navBox = nav.getBoundingClientRect();
       const onBox = on?.getBoundingClientRect();
-      applyTabPill(nav, layoutTabPill(navBox.left, onBox ? { left: onBox.left, width: onBox.width } : null), { instant: snap });
+      // The indicator scrolls with the tabs, so subtract scrollLeft to land on the tab's offsetLeft.
+      applyTabPill(nav, layoutTabPill(navBox.left - nav.scrollLeft, onBox ? { left: onBox.left, width: onBox.width } : null), { instant: snap });
     };
 
     let seenObservation = false;
@@ -83,6 +82,6 @@ export function useTabPill(navRef: RefObject<HTMLElement | null>, activeKey: str
     const on = nav.querySelector<HTMLElement>(`.tab[data-tab="${CSS.escape(activeKey)}"]`);
     const navBox = nav.getBoundingClientRect();
     const onBox = on?.getBoundingClientRect();
-    applyTabPill(nav, layoutTabPill(navBox.left, onBox ? { left: onBox.left, width: onBox.width } : null), { instant });
+    applyTabPill(nav, layoutTabPill(navBox.left - nav.scrollLeft, onBox ? { left: onBox.left, width: onBox.width } : null), { instant });
   }, [activeKey, instant, navRef]);
 }

@@ -32,6 +32,7 @@ const globalSettings: GlobalSettings = {
   telemetry: { enabled: true, prompted: false, install_id: "", endpoint: "https://telemetry.alinery.ai" },
   updates: { check_enabled: true },
   model_favorites: {},
+  experiments: { show_original_kanban: true },
 };
 
 vi.mock("../ipc", () =>
@@ -63,32 +64,6 @@ afterEach(() => {
 });
 
 describe("Settings experimental features", () => {
-  it("shows Original Kanban for older settings and persists an opt-out", async () => {
-    const onGlobalSettingsChange = vi.fn();
-    render(
-      <Settings
-        mcp={mcp}
-        activeRepo="/r"
-        knownRepos={["/r"]}
-        appearance={DEFAULT_APPEARANCE}
-        onAppearanceChange={() => {}}
-        onGlobalSettingsChange={onGlobalSettingsChange}
-        onNotificationsChange={() => {}}
-        initialSection="general"
-      />,
-    );
-
-    const checkbox = await screen.findByRole("checkbox", { name: /Original Kanban/ });
-    expect((checkbox as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("button", { name: "Grid views" })).toBeTruthy();
-    fireEvent.click(checkbox);
-
-    await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
-    const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
-    expect(saved.experiments?.show_original_kanban).toBe(false);
-    await waitFor(() => expect(onGlobalSettingsChange).toHaveBeenCalledWith(saved));
-  });
-
   it("keeps the Chat tab off until opted in, and leaves the Kanban flag alone", async () => {
     render(
       <Settings
@@ -105,12 +80,13 @@ describe("Settings experimental features", () => {
 
     const checkbox = (await screen.findByRole("checkbox", { name: /^Chat/ })) as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
+    expect(screen.queryByRole("checkbox", { name: /Original Kanban/ })).toBeNull();
     fireEvent.click(checkbox);
 
     await waitFor(() => expect(ipc.writeGlobalSettings).toHaveBeenCalled());
     const saved = vi.mocked(ipc.writeGlobalSettings).mock.calls[0][0] as GlobalSettings;
     expect(saved.experiments?.show_chat).toBe(true);
-    expect(saved.experiments?.show_original_kanban).not.toBe(false);
+    expect(saved.experiments?.show_original_kanban).toBe(true);
   });
 
   it("shows the Chat settings section only while the Chat flag is on", async () => {

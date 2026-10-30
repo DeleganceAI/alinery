@@ -325,6 +325,18 @@ fn explicit_playbook_overrides_configured_default_and_creates_eligible_sessions(
 }
 
 #[test]
+fn list_sessions_returns_only_session_metadata_not_sidecars() {
+    let fixture = Fixture::new();
+    let sessions = fixture.root.join(".alinery/tasks/task/sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(sessions.join("s1.meta.json"), r#"{"id":"s1"}"#).unwrap();
+    fs::write(sessions.join("s1.name.json"), r#"{"name":"Roll die round 1","source":"auto"}"#).unwrap();
+    fs::write(sessions.join("s1.execution-process.json"), r#"{"execution_id":"e1","incarnation":1,"session_id":"s1"}"#).unwrap();
+    let listed: Vec<Value> = serde_json::from_str(&fixture.call("alinery_list_sessions", json!({"slug":"task"}))).unwrap();
+    assert_eq!(listed, [json!({"id":"s1"})]);
+}
+
+#[test]
 fn real_mcp_create_start_disconnect_observe_history_and_exit() {
     let fixture = Fixture::with_ready_daemon();
     let playbook_extra = "PLAYBOOK-EXTRA-ONCE";
