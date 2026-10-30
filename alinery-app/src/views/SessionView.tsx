@@ -104,6 +104,7 @@ import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { readTaskExecution } from "../useExecutionObservation";
 import { ArtifactHandoffPage } from "./ArtifactHandoffPage";
+import { SignInInstructions } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -386,6 +387,7 @@ export function SessionView({
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
@@ -636,6 +638,7 @@ export function SessionView({
     setModelError(null);
     setModelRoles({});
     setLoginBusy(null);
+    setLoginNotice(null);
     setLivePromotedIds([]);
     setToolsOpen(false);
     setMcpDialog(null);
@@ -1735,8 +1738,9 @@ export function SessionView({
             }
           }
         }
+        const reply = loginReply(value);
+        if (reply) setLoginNotice(null);
         if (loginApplyRef.current) {
-          const reply = loginReply(value);
           if (reply) {
             const providerId = loginApplyRef.current;
             loginApplyRef.current = null;
@@ -1856,6 +1860,7 @@ export function SessionView({
     void writeRpc(stateRequest).catch(() => undefined);
   }, [chatAutoCompaction, rpcProcessLive, id]);
   const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
+    setLoginNotice(chatRef.current.pendingUi.find((request) => request.id === requestId)?.instructions ?? null);
     try {
       await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
       setChat((current) => dismissPendingUi(current, requestId));
@@ -2540,6 +2545,7 @@ export function SessionView({
   };
   const startChatLogin = async (providerId: string) => {
     setModelError(null);
+    setLoginNotice(null);
     setLoginBusy(providerId);
     loginApplyRef.current = providerId;
     loginOpenUrlRef.current = providerId;
@@ -2549,6 +2555,7 @@ export function SessionView({
       loginApplyRef.current = null;
       loginOpenUrlRef.current = null;
       setLoginBusy(null);
+      setLoginNotice(null);
       setModelError(String(error));
     }
   };
@@ -2556,6 +2563,7 @@ export function SessionView({
     setModelDialog(null);
     setModelError(null);
     setLoginBusy(null);
+    setLoginNotice(null);
     loginApplyRef.current = null;
     loginOpenUrlRef.current = null;
     try {
@@ -3020,6 +3028,7 @@ export function SessionView({
                       floatingActivity
                     />
                   </div>
+                  {loginNotice && !modelDialog ? <SignInInstructions text={loginNotice} /> : null}
                   {showChatComposer ? (
                     <>
                       {uiPrompt ? (
@@ -3235,7 +3244,9 @@ export function SessionView({
                 loginApplyRef.current = null;
                 loginOpenUrlRef.current = null;
               }}
-            />
+            >
+              {loginNotice ? <SignInInstructions text={loginNotice} /> : null}
+            </ChatModelDialog>
           )}
           {toolsOpen && <ChatToolsDialog tools={chat.sessionMeta.dumpTools ?? []} onClose={() => setToolsOpen(false)} />}
           {mcpDialog && (

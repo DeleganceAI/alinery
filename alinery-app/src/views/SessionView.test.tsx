@@ -848,13 +848,13 @@ describe("session chat approval", () => {
       .filter((payload) => payload?.type === "extension_ui_response" && payload.id === REQUEST);
   }
 
-  async function requestOpenUrl(launchUrl: string) {
+  async function requestOpenUrl(launchUrl: string, instructions?: string) {
     renderSession();
     await waitFor(() => expect(rpcAttachSession).toHaveBeenCalled());
     const calls = rpcAttachSession.mock.calls;
     const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
     await act(async () => {
-      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", launchUrl }));
+      attach.onLine(JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", launchUrl, instructions }));
     });
   }
 
@@ -900,6 +900,22 @@ describe("session chat approval", () => {
     expect(responses()[0]?.confirmed).toBe(true);
   });
 
+  it.each([true, false])("retains a replayed device code after Allow until login settles (%s)", async (success) => {
+    await requestOpenUrl("https://auth.openai.com/codex/device", "Enter code: ABCD-EFGH");
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(JSON.stringify({ type: "response", command: "login", success, error: success ? undefined : "Device authorization expired" }));
+    });
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
+  });
+
   it("declines once and opens nothing when the user denies", async () => {
     await requestOpenUrl("https://example.com/setup");
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
@@ -939,6 +955,53 @@ describe("session chat approval", () => {
     expect(openUrl).toHaveBeenCalledWith("https://auth.example/callback");
     expect(responses()[0]?.confirmed).toBe(true);
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+
+  it.each([
+    { success: true, reopen: false },
+    { success: false, reopen: false },
+    { success: true, reopen: true },
+    { success: false, reopen: true },
+  ])("keeps a session device code in the dialog until login settles ($success, reopen=$reopen)", async ({ success, reopen }) => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc"));
+    readOmpModelRoles.mockResolvedValue({});
+    renderSession({ messageDraft: { body: "/login", pendingActions: [], attachments: [] } });
+    await flushPromises();
+    const calls = rpcAttachSession.mock.calls;
+    const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
+    await act(async () => {
+      attach.onLine(
+        JSON.stringify({ type: "response", command: "get_login_providers", success: true, data: { providers: [{ id: "openai-codex-device", name: "Codex device" }] } }),
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Codex device/ }));
+    await act(async () => {
+      attach.onLine(
+        JSON.stringify({ type: "extension_ui_request", id: REQUEST, method: "open_url", url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" }),
+      );
+    });
+    await waitFor(() => expect(responses()).toHaveLength(1));
+    expect(openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device");
+    let dialog = screen.getByRole("dialog", { name: "Providers" });
+    expect(within(dialog).getByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+
+    if (reopen) {
+      fireEvent.click(within(dialog).getByTitle("Cancel"));
+      fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "/login" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      dialog = await screen.findByRole("dialog", { name: "Providers" });
+      expect(within(dialog).getByText(/ABCD-EFGH/)).toBeTruthy();
+    }
+    await act(async () => {
+      attach.onLine(
+        JSON.stringify({ type: "response", command: "login", success, data: { providerId: "openai-codex-device" }, error: success ? undefined : "Device authorization expired" }),
+      );
+    });
+    expect(within(dialog).queryByText(/ABCD-EFGH/)).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Copy code" })).toBeNull();
   });
 
   it("arms the sign-in bypass for one link only", async () => {

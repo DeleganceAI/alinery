@@ -498,7 +498,50 @@ describe("device-code sign-in (#130)", () => {
     expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
   });
 
-  it("shows the code on a replayed sign-in link that still needs approval", async () => {
+  it.each([
+    ["instructions", true],
+    ["instructions", false],
+    ["message", true],
+    ["message", false],
+  ] as const)("retains replayed %s after Allow and clears it on login success=%s", async (field, success) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    mountWith(
+      [
+        providersLine([{ id: "openai-codex-device", authenticated: false }]),
+        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", [field]: "Enter code: ABCD-EFGH" }),
+      ],
+      "manual",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("ABCD-EFGH"));
+    await emit({ type: "response", command: "login", success, error: success ? undefined : "Device authorization timed out" });
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
+  });
+
+  it("does not restore the code when the browser opener finishes after login", async () => {
+    await startLogin();
+    let finishOpen!: () => void;
+    mocks.openUrl.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    await emit({ type: "extension_ui_request", id: "device-url", method: "open_url", url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" });
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    await emit({ type: "response", command: "login", success: true });
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+    await act(async () => finishOpen());
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+  });
+
+  it("clears a replayed code when starting a new login whose write fails", async () => {
     mountWith(
       [
         providersLine([{ id: "openai-codex-device", authenticated: false }]),
@@ -506,20 +549,20 @@ describe("device-code sign-in (#130)", () => {
       ],
       "manual",
     );
-    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(uiResponses("stale-url")).toHaveLength(1));
     expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
-  });
-
-  it("falls back to the link's `message` when it carries no `instructions`", async () => {
-    mountWith(
-      [
-        providersLine([{ id: "openai-codex-device", authenticated: false }]),
-        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", message: "Enter code: ABCD-EFGH" }),
-      ],
-      "manual",
+    let rejectLogin!: (error: Error) => void;
+    mocks.rpcWriteSession.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectLogin = reject;
+        }),
     );
-    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
-    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /openai-codex-device/ }));
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+    await act(async () => rejectLogin(new Error("Login was not sent")));
+    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+    expect(screen.getByText(/Login was not sent/)).toBeTruthy();
   });
 });

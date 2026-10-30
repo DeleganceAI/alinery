@@ -142,14 +142,14 @@ export function ProviderSetupDialog({
             setModelError(reply.ok ? null : (reply.error ?? "Could not set model."));
           }
         }
+        const reply = loginReply(value);
+        if (reply) setLoginNotice(null);
         if (loginApplyRef.current) {
-          const reply = loginReply(value);
           if (reply) {
             const providerId = loginApplyRef.current;
             loginApplyRef.current = null;
             loginOpenUrlRef.current = false;
             setLoginBusy(null);
-            setLoginNotice(null);
             if (reply.ok) {
               setModelError(null);
               void ipc
@@ -272,6 +272,7 @@ export function ProviderSetupDialog({
   }, [mode]);
 
   const openBrowser = useCallback(async (request: PendingUi) => {
+    setLoginNotice(request.instructions ?? null);
     try {
       await settleOpenUrl(sessionIdRef.current, request.id, request.launchUrl || request.url, setModelError);
       const next = dismissPendingUi(chatRef.current, request.id);
@@ -296,7 +297,6 @@ export function ProviderSetupDialog({
         // Sign in authorizes only its first browser request; further links need approval.
         loginOpenUrlRef.current = false;
         handledUiRef.current.add(request.id);
-        setLoginNotice(request.instructions ?? null);
         void openBrowser(request);
       }
     }
@@ -341,6 +341,7 @@ export function ProviderSetupDialog({
   const startLogin = useCallback(async (providerId: string) => {
     if (loginApplyRef.current) return;
     setModelError(null);
+    setLoginNotice(null);
     setLoginBusy(providerId);
     loginApplyRef.current = providerId;
     loginOpenUrlRef.current = true;
