@@ -522,7 +522,8 @@ fn capability_revocation_and_continue_have_one_winner() {
 
 #[test]
 fn in_flight_native_scope_settles_while_revoked_and_old_revoke_cannot_break_rebinding() {
-    let fixture = Fixture::new();
+    let playbook = manual_review_playbook().replacen("auto_advance_default = false", "auto_advance_default = true", 1);
+    let fixture = Fixture::with_playbook(&playbook);
     fixture.spawn_omp();
     let control = fixture.settle_captured_seed();
     let incarnation = control["process_incarnation"].as_str().unwrap();
@@ -900,8 +901,9 @@ fn model_and_thinking_acknowledgements_retire_intake_but_not_selected_work() {
     assert_eq!(ready()["completion"]["status"], "waiting", "setting ACK cannot settle unrelated selected work");
     let settled = event(json!({"type":"native_work_settled","process_incarnation":incarnation,"operation_id":"native-held"}));
     assert_eq!(settled["ok"], true, "{settled}");
-    let accepted = ready();
-    assert_eq!(accepted["completion"]["status"], "accepted", "completed known settings must not strand intake: {accepted}");
+    let ready = ready();
+    assert_eq!(ready["completion"]["status"], "ready", "completed known settings must not strand intake: {ready}");
+    assert!(fixture.execution()["receipt_id"].is_null(), "endpoint remains open for review");
 }
 
 #[test]
