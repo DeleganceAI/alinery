@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Playbook step strip — flat treatments</title>
+<style>
+  /* Tokens copied from alinery-app/src/theme.css (Space Dark). */
+  :root {
+    --canvas: #000104; --surface: #08090b; --surface-raised: #0e1013;
+    --text: #f4f1ea; --text-muted: #9b9b97; --text-faint: #84867f;
+    --border: rgb(244 241 234 / 0.12); --border-strong: rgb(244 241 234 / 0.24);
+    --accent: #587aff; --accent-subtle: rgb(49 91 255 / 0.24);
+    --warning: #ffb347; --warning-subtle: rgb(255 179 71 / 0.12);
+    --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  }
+  body { margin: 0; padding: 28px 32px 36px; background: var(--canvas); color: var(--text); font: 13px/1.5 var(--font-ui); width: 640px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .lede { color: var(--text-muted); margin: 0 0 22px; }
+  .card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 14px; margin-bottom: 14px; }
+  .card.selected { border-color: var(--accent); background: var(--accent-subtle); box-shadow: inset 3px 0 0 var(--accent); }
+  .label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .label b { font-weight: 600; font-size: 14px; }
+  .label span { color: var(--text-muted); font-size: 12px; }
+  .variant { color: var(--text-faint); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 6px; }
+  .strip { display: flex; align-items: center; }
+  .n { position: relative; display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none;
+       border: 1px solid var(--border-strong); border-radius: 999px; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .n.cp { color: var(--warning); border-color: var(--warning); background: var(--warning-subtle); }
+  .n.cur { color: var(--accent); border-color: var(--accent); background: var(--accent-subtle); }
+  .n.stk { isolation: isolate; background: var(--surface); }
+  .n.stk::before, .n.stk::after { content: ""; position: absolute; inset: -1px; border: 1px solid var(--border-strong); border-radius: 999px; z-index: -1; background: var(--surface); }
+  .n.stk::before { transform: translate(3px, -3px); }
+  .n.stk::after  { transform: translate(6px, -6px); opacity: .45; }
+  .n .badge { position: absolute; right: -7px; bottom: -6px; width: 13px; height: 13px; border-radius: 999px;
+              background: var(--surface-raised); border: 1px solid var(--border-strong); display: grid; place-items: center; color: var(--warning); }
+  .n .badge svg { width: 8px; height: 8px; }
+  .c { width: 24px; height: 20px; flex: none; display: grid; place-items: center; color: var(--border-strong); }
+  .c svg { width: 24px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+  .c.hand { color: var(--warning); }
+  .c.hand svg, .c.loop svg { width: 12px; height: 12px; stroke-width: 1.6; }
+  .c.loop { color: var(--text-muted); gap: 1px; grid-auto-flow: column; font-size: 9px; }
+  .c.thin svg path { d: path("M4 10h16"); }
+  .cap { display: flex; margin-top: 5px; font-size: 10.5px; color: var(--text-muted); }
+  .cap > span { border-top: 1px solid var(--border-strong); padding-top: 3px; text-align: center; white-space: nowrap; display: inline-flex; justify-content: center; align-items: center; gap: 4px; }
+  .cap > span svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .cap > .gap { border: 0; }
+  .legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend svg { width: 24px; height: 14px; fill: none; stroke: var(--border-strong); stroke-width: 1; stroke-linecap: round; }
+  .legend .hand svg { width: 12px; height: 12px; stroke: var(--warning); stroke-width: 1.6; }
+  .note { color: var(--text-faint); font-size: 11px; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="arrow" viewBox="0 0 24 20"><path d="M2 10H20M16 6l4 4-4 4"/></symbol>
+  <symbol id="line" viewBox="0 0 24 20"><path d="M4 10h16"/></symbol>
+  <symbol id="fanout" viewBox="0 0 24 20"><path d="M2 10h5M7 10c5 0 5-6 10-6h5M7 10h15M7 10c5 0 5 6 10 6h5"/></symbol>
+  <symbol id="fanin" viewBox="0 0 24 20"><path d="M2 4h5c5 0 5 6 10 6h5M2 10h20M2 16h5c5 0 5-6 10-6"/></symbol>
+  <!-- lucide: hand, git-fork, rotate-ccw (the app already ships lucide-react) -->
+  <symbol id="hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+  <symbol id="fork" viewBox="0 0 24 24"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></symbol>
+  <symbol id="loop" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+</svg>
+
+<h1>Playbook step strip — flat treatments</h1>
+<p class="lede">One row, no branches drawn. Every glyph is derived from the step definition (see README.md).</p>
+
+<p class="variant">A · the connector is the symbol</p>
+<div class="card">
+  <div class="label"><b>Academic Survey</b><span>8 steps</span></div>
+  <div class="strip">
+    <span class="n">1</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n">2</span><span class="c"><svg><use href="#fanout"/></svg></span>
+    <span class="n stk">3</span><span class="c"><svg><use href="#fanin"/></svg></span>
+    <span class="n">4</span><span class="c"><svg><use href="#fanout"/></svg></span>
+    <span class="n stk">5</span><span class="c"><svg><use href="#fanin"/></svg></span>
+    <span class="n">6</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n">7</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n cp">8</span><span class="c loop"><svg><use href="#loop"/></svg>2</span>
+  </div>
+  <div class="legend">
+    <span><svg viewBox="0 0 24 14"><path d="M2 7H20M16 3l4 4-4 4"/></svg>auto-advance</span>
+    <span class="hand"><svg><use href="#hand"/></svg>waits for you</span>
+    <span><svg viewBox="0 0 24 14"><path d="M2 7h5M7 7c5 0 5-5 10-5h5M7 7h15M7 7c5 0 5 5 10 5h5"/></svg>one agent per file</span>
+    <span><svg viewBox="0 0 24 14"><path d="M2 2h5c5 0 5 5 10 5h5M2 7h20M2 12h5c5 0 5-5 10-5"/></svg>waits for all</span>
+    <span><svg viewBox="0 0 24 24" style="width:12px;height:12px;stroke-width:1.6;stroke:var(--text-muted)"><use href="#loop"/></svg>back to step</span>
+  </div>
+</div>
+
+<p class="variant">B · symbol on the node, connectors stay plain</p>
+<div class="card">
+  <div class="label"><b>Academic Survey</b><span>8 steps</span></div>
+  <div class="strip">
+    <span class="n">1</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">2</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n stk">3</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">4</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n stk">5</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">6</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">7</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n cp">8<span class="badge"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#hand"/></svg></span></span>
+  </div>
+  <p class="note">Stack = runs once per matching file. Hand badge = waits for you. Fan-in and loop-back are not shown; they live in the hover title.</p>
+</div>
+
+<p class="variant">C · plain strip, captions explain the branch in words</p>
+<div class="card">
+  <div class="label"><b>Academic Survey</b><span>8 steps</span></div>
+  <div class="strip">
+    <span class="n">1</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">2</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">3</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">4</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">5</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">6</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n">7</span><span class="c"><svg><use href="#line"/></svg></span>
+    <span class="n cp">8</span>
+  </div>
+  <div class="cap">
+    <span class="gap" style="width:88px"></span>
+    <span style="width:64px"><svg><use href="#fork"/></svg>×n, then join</span>
+    <span class="gap" style="width:24px"></span>
+    <span style="width:64px"><svg><use href="#fork"/></svg>×n, then join</span>
+    <span class="gap" style="width:24px"></span>
+    <span style="width:64px"><svg style="color:var(--warning)"><use href="#hand"/></svg>you · <svg><use href="#loop"/></svg>2</span>
+  </div>
+</div>
+
+<p class="variant">D · variant A on SuperDevelop (checkpoints at 3 and 7, currently on 6)</p>
+<div class="card selected">
+  <div class="label"><b>SuperDevelop</b><span>7 steps</span></div>
+  <div class="strip">
+    <span class="n">1</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n">2</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n cp">3</span><span class="c hand"><svg><use href="#hand"/></svg></span>
+    <span class="n">4</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n">5</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n cur">6</span><span class="c"><svg><use href="#arrow"/></svg></span>
+    <span class="n cp">7</span><span class="c hand"><svg><use href="#hand"/></svg></span>
+  </div>
+</div>
+</body>
+</html>
