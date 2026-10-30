@@ -945,9 +945,13 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
   }
 
   if (event.type === "response") {
-    // A login outcome, success or failure, live or replayed by the daemon, supersedes every sign-in
-    // link still waiting: OMP never waits for an answer to the `open_url` it sends for a login.
-    if (event.command === "login") state = state.pendingUi.filter((p) => p.method === "open_url").reduce((next, p) => dismissPendingUi(next, p.id), state);
+    // OMP leaves browser links and the manual OAuth fallback pending after login. That input has
+    // no login ID on the wire, so match its known title without dismissing unrelated questions.
+    if (event.command === "login") {
+      state = state.pendingUi
+        .filter((p) => p.method === "open_url" || (p.method === "input" && p.title === "Paste the authorization code (or full redirect URL):"))
+        .reduce((next, p) => dismissPendingUi(next, p.id), state);
+    }
     const sendCommand = event.command === "prompt" || event.command === "follow_up";
     if (event.success === false && typeof event.error === "string") {
       // OMP refuses history requests while it is busy. Nothing asks for history over RPC any

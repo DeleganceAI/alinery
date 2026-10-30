@@ -478,6 +478,51 @@ describe("ProviderSetupDialog", () => {
   });
 });
 
+describe("browser sign-in fallback", () => {
+  const browserLink = { type: "extension_ui_request", id: "7d4e2f", method: "open_url", url: "https://auth.openai.com/authorize" };
+  const manualCode = {
+    type: "extension_ui_request",
+    id: "1a2b3c",
+    method: "input",
+    title: "Paste the authorization code (or full redirect URL):",
+    timeout: 600000,
+  };
+  const loginSuccess = { type: "response", command: "login", success: true, data: { providerId: "openai-codex" } };
+  const signedIn = providersLine([{ id: "openai-codex", authenticated: true }]);
+
+  it("removes the unused manual-code prompt when browser sign-in succeeds", async () => {
+    await startLogin();
+    await emit(browserLink);
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(browserLink.url));
+    await emit(manualCode);
+    expect(screen.getByRole("textbox", { name: manualCode.title })).toBeTruthy();
+
+    await emit(loginSuccess);
+    await emit(JSON.parse(signedIn));
+
+    const provider = screen.getByRole("button", { name: /openai-codex.*Signed in/ });
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: manualCode.title })).toBeNull();
+    expect(screen.queryByText(manualCode.title)).toBeNull();
+    expect(uiResponses(manualCode.id)).toEqual([]);
+  });
+
+  it("does not restore a completed login's manual-code prompt when the dialog reopens", async () => {
+    mountWith([providersLine([{ id: "openai-codex", authenticated: false }]), JSON.stringify(browserLink), JSON.stringify(manualCode)], "manual");
+    expect(await screen.findByRole("textbox", { name: manualCode.title })).toBeTruthy();
+    cleanup();
+
+    mountWith([JSON.stringify(browserLink), JSON.stringify(manualCode), JSON.stringify(loginSuccess), signedIn], "manual");
+
+    const provider = await screen.findByRole("button", { name: /openai-codex.*Signed in/ });
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: manualCode.title })).toBeNull();
+    expect(screen.queryByText(manualCode.title)).toBeNull();
+    expect(uiResponses(manualCode.id)).toEqual([]);
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+  });
+});
+
 // Repro for #130: OMP's device-code sign-in delivers the user code only as `open_url.instructions`
 // ("Enter code: XXXX"); the dialog must show it, with a copy control, for as long as the sign-in
 // is pending -- including on the auto-opened first link, which today is hidden and dismissed.
