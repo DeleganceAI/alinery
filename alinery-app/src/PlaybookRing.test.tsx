@@ -83,12 +83,11 @@ describe("PlaybookRing", () => {
     const onSelectStep = vi.fn();
     const onHoverStep = vi.fn();
     render(
-      <PlaybookRing steps={survey} selectedStepKey="frame" onSelectStep={onSelectStep} onHoverStep={onHoverStep} progress={{ now: 1, max: 6, text: "frame, step 1 of 6" }}>
+      <PlaybookRing steps={survey} selectedStepKey="frame" onSelectStep={onSelectStep} onHoverStep={onHoverStep}>
         <span>centre</span>
       </PlaybookRing>,
     );
-    const ring = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(ring.getAttribute("aria-valuetext")).toBe("frame, step 1 of 6");
+    const ring = screen.getByRole("region", { name: "Playbook steps" });
     expect(ring.querySelector("title")).toBeNull();
     const rail = ring.querySelector(".ring-rail") as SVGGElement;
     const chord = ring.querySelector(".ring-chord") as SVGPathElement;

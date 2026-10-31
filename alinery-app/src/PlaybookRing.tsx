@@ -1,6 +1,6 @@
 import { Hand } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
-import { type SimulatedStepStatus, selectorsOverlap } from "./PlaybookGraph";
+import { selectorsOverlap } from "./PlaybookGraph";
 import type { NormalizedStep } from "./types";
 import "./PlaybookRing.css";
 
@@ -82,17 +82,15 @@ function wrapTitle(title: string, max: number): string[] {
 
 type Props = {
   steps: NormalizedStep[];
+  /** The step that stays highlighted when nothing is hovered. */
   selectedStepKey: string | null;
-  simulatedStatuses?: Record<string, SimulatedStepStatus>;
   onSelectStep: (key: string) => void;
   onHoverStep?: (key: string | null) => void;
-  /** Demo position, exposed as a progressbar so the ring doubles as the demo's progress indicator. */
-  progress?: { now: number; max: number; text: string };
   /** Rendered in the centre of the ring. */
   children?: ReactNode;
 };
 
-export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, onSelectStep, onHoverStep, progress, children }: Props) {
+export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep, children }: Props) {
   const id = useId();
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const { rails, chords, loop } = classifyRingEdges(steps);
@@ -106,15 +104,7 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
   };
 
   return (
-    <div
-      className="playbook-ring"
-      role={progress ? "progressbar" : undefined}
-      aria-label={progress ? "Playbook demo" : undefined}
-      aria-valuemin={progress ? 1 : undefined}
-      aria-valuemax={progress?.max}
-      aria-valuenow={progress?.now}
-      aria-valuetext={progress?.text}
-    >
+    <section className="playbook-ring" aria-label="Playbook steps">
       {/* No <title>: WebKit shows it as a tooltip wherever the pointer rests. The progressbar wrapper carries the label. */}
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden={count === 0 || undefined}>
         {rails.map((rail, order) => {
@@ -217,10 +207,8 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
           const cos = Math.cos(angle);
           const anchor = Math.abs(cos) < 0.25 ? "middle" : cos > 0 ? "start" : "end";
           const lines = wrapTitle(step.title, 22);
-          const status = simulatedStatuses[step.key];
           const classes = ["ring-node"];
           if (!step.auto_advance_default) classes.push("cp");
-          if (status === "completed") classes.push("done");
           if (index === focusIndex) classes.push("cur");
           const select = () => onSelectStep(step.key);
           return (
@@ -265,6 +253,6 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
         })}
       </svg>
       {children && <div className="playbook-ring-centre">{children}</div>}
-    </div>
+    </section>
   );
 }

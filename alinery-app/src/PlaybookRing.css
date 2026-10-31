@@ -78,8 +78,6 @@
 }
 .playbook-ring .ring-node.cp circle.main { stroke: var(--warning); }
 .playbook-ring .ring-node.cp text.num { fill: var(--warning); }
-.playbook-ring .ring-node.done circle.main { stroke: var(--success); }
-.playbook-ring .ring-node.done text.num { fill: var(--success); }
 .playbook-ring .ring-node.cur circle.main {
   stroke: var(--accent);
   stroke-width: 1.5;

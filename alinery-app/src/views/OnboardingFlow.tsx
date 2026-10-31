@@ -6,7 +6,6 @@ import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
-import type { SimulatedStepStatus } from "../PlaybookGraph";
 import { PlaybookRing, promptExcerpt } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { toast } from "../toast";
@@ -58,16 +57,6 @@ export function OnboardingFlow({
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
   const [hoveredStepKey, setHoveredStepKey] = useState<string | null>(null);
-  const [simStepIndex, setSimStepIndex] = useState<number | null>(null);
-  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
-
-  useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!media) return;
-    const update = () => setReducedMotion(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
 
   // Step 02: model readiness state
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
@@ -225,42 +214,7 @@ export function OnboardingFlow({
     setSelectedArchetypeKey(key);
     const nextDef = liveDefinitions[key];
     setSelectedStepKey(nextDef?.step[0]?.key ?? null);
-    setSimStepIndex(0);
   };
-
-  const simulatedStatuses = useMemo<Record<string, SimulatedStepStatus>>(() => {
-    if (simStepIndex === null) return {};
-    const statuses: Record<string, SimulatedStepStatus> = {};
-    playbookSteps.forEach((s, index) => {
-      if (index < simStepIndex) {
-        statuses[s.key] = "completed";
-      } else if (index === simStepIndex) {
-        statuses[s.key] = s.auto_advance_default ? "running" : "waiting_for_approval";
-      } else {
-        statuses[s.key] = "idle";
-      }
-    });
-    return statuses;
-  }, [playbookSteps, simStepIndex]);
-
-  const currentSimStep = simStepIndex !== null && simStepIndex < playbookSteps.length ? playbookSteps[simStepIndex] : null;
-  const simDuration = simStepIndex !== null && simStepIndex >= playbookSteps.length ? 2800 : currentSimStep?.auto_advance_default ? 2600 : 3800;
-  // This preview only changes local state; real checkpoint approval remains explicit.
-  useEffect(() => {
-    setSimStepIndex(playbookSteps.length ? 0 : null);
-    setSelectedStepKey(playbookSteps[0]?.key ?? null);
-  }, [step, appConfig.active_repo, selectedArchetypeKey, playbookSteps]);
-
-  // The demo always plays and loops; only a reduced-motion preference holds it on the first step.
-  useEffect(() => {
-    if (step !== "playbooks" || reducedMotion || simStepIndex === null || playbookSteps.length === 0) return;
-    const timer = window.setTimeout(() => {
-      const next = simStepIndex >= playbookSteps.length ? 0 : simStepIndex + 1;
-      setSimStepIndex(next);
-      if (playbookSteps[next]) setSelectedStepKey(playbookSteps[next].key);
-    }, simDuration);
-    return () => window.clearTimeout(timer);
-  }, [step, appConfig.active_repo, selectedArchetypeKey, reducedMotion, simStepIndex, simDuration, playbookSteps]);
 
   const handleCommitDefaultModel = (nextModel: string) => {
     setModelError("");
@@ -296,16 +250,6 @@ export function OnboardingFlow({
   const hoveredStep = playbookSteps.find((s) => s.key === hoveredStepKey) ?? null;
   const focusStep = hoveredStep ?? selectedStep;
   const focusIndex = hoveredStep ? playbookSteps.indexOf(hoveredStep) : selectedStepIndex;
-
-  const demoComplete = simStepIndex !== null && simStepIndex >= playbookSteps.length;
-  const simStatusCopy = (() => {
-    if (demoComplete) return "Every step is complete. The preview will loop again.";
-    if (!selectedStep) return "Select a step to see how work moves through the playbook.";
-    if (!selectedStep.auto_advance_default) return "Real runs wait for your approval. This preview continues automatically.";
-    if (selectedStep.inputs.some((input) => input.mode === "each")) return "Each matching artifact starts a parallel session. Their results feed the next step.";
-    if (selectedStep.inputs.some((input) => input.mode === "complete")) return "This step waits for every upstream result before bringing the work together.";
-    return "The agent creates an artifact, then hands the work to the next step.";
-  })();
 
   return (
     <div className="view scroll onboarding-view" data-testid="onboarding-flow">
@@ -530,25 +474,12 @@ export function OnboardingFlow({
                   key={activePlaybook.key}
                   steps={playbookSteps}
                   selectedStepKey={selectedStep?.key ?? null}
-                  simulatedStatuses={simulatedStatuses}
-                  onSelectStep={(key) => {
-                    setSelectedStepKey(key);
-                    setSimStepIndex(playbookSteps.findIndex((s) => s.key === key));
-                  }}
+                  onSelectStep={setSelectedStepKey}
                   onHoverStep={setHoveredStepKey}
-                  progress={
-                    playbookSteps.length
-                      ? {
-                          now: demoComplete ? playbookSteps.length : selectedStepIndex + 1,
-                          max: playbookSteps.length,
-                          text: demoComplete ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`,
-                        }
-                      : undefined
-                  }
                 >
                   <span className="onboarding-step-ordinal onboarding-knockout">{focusStep ? `Step ${focusIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
                   <h4>
-                    <span className="onboarding-knockout">{demoComplete && !hoveredStep ? "Demo complete" : (focusStep?.title ?? activePlaybook.title)}</span>
+                    <span className="onboarding-knockout">{focusStep?.title ?? activePlaybook.title}</span>
                   </h4>
                   {focusStep && (
                     <div className="onboarding-step-badges">
@@ -565,12 +496,13 @@ export function OnboardingFlow({
                     </div>
                   )}
                   <p className="onboarding-sim-copy">
-                    <span className="onboarding-knockout">{hoveredStep ? promptExcerpt(hoveredStep.prompt) || "This step has no prompt text." : simStatusCopy}</span>
+                    <span className="onboarding-knockout">
+                      {focusStep ? promptExcerpt(focusStep.prompt) || "This step has no prompt text." : "Hover or click a step to read its prompt."}
+                    </span>
                   </p>
                 </PlaybookRing>
                 <div className="onboarding-stage-foot">
-                  <span>Hover a step to read its prompt. Click one to jump there.</span>
-                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
+                  <span>Hover a step to read its prompt. Click one to keep it.</span>
                 </div>
               </div>
             ) : (

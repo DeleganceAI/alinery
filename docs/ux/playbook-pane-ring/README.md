@@ -14,7 +14,8 @@ a step and its prompt's opening lines, mode, and reads/writes appear in the
 centre of the ring. Nothing moves and nothing scrolls.
 
 Drops: the canvas, the reads/writes contract grid, the full prompt text, and
-the per-step inspector. The demo survives as a highlight walking the ring.
+the per-step inspector, and the timer-driven demo. The ring is still; it
+answers hover and click.
 
 ## Why a ring
 
@@ -55,9 +56,9 @@ Edges come straight from the step contracts, by the same selector-overlap rule
 | an input with `mode = "each"` | stacked node, and the segment into it splits into three strands |
 | an input with `mode = "complete"` | the three strands merge back into one |
 
-Chords and the loop sit at 35% opacity. They come up to full for the step the
-demo is on and for a hovered step; hovering fades every edge that does not
-touch that step. The centre text knocks out whatever crosses it, line by line.
+Chords and the loop sit at 35% opacity. They come up to full for the hovered
+step, or the clicked step when nothing is hovered; hovering fades every edge
+that does not touch that step. The centre text knocks out whatever crosses it, line by line.
 
 ## Limits
 
@@ -72,7 +73,7 @@ rails are the busiest case among the starters; whether nested rails read as
 1. Nested rails on SuperDevelop: keep, collapse to one rail, or hover-only?
 2. The hand badge sits on the segment after a checkpoint. Would a hand on the
    node itself read better?
-3. The demo walks the ring on a timer, always, and loops. There is no pause
-   button; clicking a step jumps the demo there. Only a reduced-motion
-   preference holds it on step 1.
+3. Only step nodes and their titles answer hover and click. Should chords,
+   rails, and hand badges answer too, for example naming the artifact a chord
+   carries?
 4. The centre block is 270px wide and clamps the prompt to three lines. Enough?

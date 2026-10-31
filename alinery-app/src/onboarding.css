@@ -782,10 +782,6 @@
   line-height: 1.4;
   max-width: 68ch;
 }
-.onboarding-demo-caption {
-  color: var(--text-faint);
-  font-size: calc(11px * var(--ui-scale));
-}
 .onboarding-stage-foot {
   flex: none;
   display: flex;

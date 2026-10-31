@@ -313,9 +313,9 @@ describe("OnboardingFlow wizard", () => {
       />,
     );
     const retry = await screen.findByRole("button", { name: "Retry preview" });
-    expect(screen.queryByRole("progressbar", { name: "Playbook demo" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Playbook steps" })).toBeNull();
     fireEvent.click(retry);
-    expect(await screen.findByRole("progressbar", { name: "Playbook demo" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Playbook steps" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
@@ -355,12 +355,6 @@ describe("OnboardingFlow wizard", () => {
     onCompleteToWorkspace: vi.fn(),
     onOpenCreateWithPlaybook: vi.fn(),
   });
-  const advanceDemo = async (milliseconds: number) => {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(milliseconds);
-    });
-  };
-
   it("returns a repository-free preview to repository selection without offering blocked completion", async () => {
     render(<OnboardingFlow {...flowProps()} appConfig={{ ...baseConfig, active_repo: "", known_repos: [] }} initialStep="workspace" />);
     fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
@@ -373,38 +367,39 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
-  it("jumps the demo to a clicked ring step and keeps playing from there", async () => {
-    vi.useFakeTimers();
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+  it("shows the first step in the centre, previews a hovered step, and keeps a clicked one without executing anything", async () => {
+    const props = flowProps();
+    const createTask = vi.spyOn(ipc, "createTaskForRepo");
+    const createSession = vi.spyOn(ipc, "createSession");
+    const createSessionForRepo = vi.spyOn(ipc, "createSessionForRepo");
+    const openSession = vi.spyOn(ipc, "openSession");
+    render(<OnboardingFlow {...props} initialStep="playbooks" />);
     await act(async () => {});
-    await advanceDemo(2600);
-    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
-    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuenow")).toBe("4");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Plan, step 4 of 7");
-    await advanceDemo(2599);
-    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 5 of 7")).toBeTruthy();
+    const ring = screen.getByRole("region", { name: "Playbook steps" });
+    expect(within(ring).getByText("Step 1 of 7")).toBeTruthy();
+    expect(within(ring).getByRole("heading", { name: "Clarify" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset|Pause|Resume/ })).toBeNull();
+    const plan = within(ring).getByRole("button", { name: "Plan" });
+    fireEvent.mouseEnter(plan);
+    expect(within(ring).getByRole("heading", { name: "Plan" })).toBeTruthy();
+    expect(within(ring).getByText("Step 4 of 7")).toBeTruthy();
+    expect(within(ring).getByText("This step has no prompt text.")).toBeTruthy();
+    fireEvent.mouseLeave(plan);
+    expect(within(ring).getByRole("heading", { name: "Clarify" })).toBeTruthy();
+    const decide = within(ring).getByRole("button", { name: "Decide" });
+    fireEvent.click(decide);
+    expect(decide.getAttribute("aria-pressed")).toBe("true");
+    expect(within(ring).getByRole("heading", { name: "Decide" })).toBeTruthy();
+    expect(within(ring).getByText("Human checkpoint")).toBeTruthy();
+    expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
+    expect(createTask).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
+    expect(createSessionForRepo).not.toHaveBeenCalled();
+    expect(openSession).not.toHaveBeenCalled();
+    expect(ipc.ompSetupSession).not.toHaveBeenCalled();
   });
 
-  it("starts a fresh step duration when switching playbooks mid-step", async () => {
-    vi.useFakeTimers();
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
-    await act(async () => {});
-    await advanceDemo(1000);
-    fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
-    await act(async () => {});
-    await advanceDemo(2599);
-    expect(screen.getByText("Step 1 of 3")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 2 of 3")).toBeTruthy();
-  });
-
-  it("moves playbook selection and focus with the keyboard and plays the selected playbook", async () => {
-    vi.useFakeTimers();
+  it("moves playbook selection and focus with the keyboard", async () => {
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     const radios = within(screen.getByRole("radiogroup", { name: "Explore starter playbooks" })).getAllByRole("radio");
@@ -421,10 +416,7 @@ describe("OnboardingFlow wizard", () => {
       expect(radios[index].getAttribute("tabindex")).toBe("0");
       expect(radios.filter((radio) => radio.tabIndex === 0)).toEqual([radios[index]]);
     }
-    await advanceDemo(2599);
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
   it("continues through exactly three steps and opens task creation without executing a task", async () => {
@@ -463,102 +455,17 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
-  it("autoplays every step, briefly shows human checkpoints, and loops without executing tasks", async () => {
-    vi.useFakeTimers();
-    const props = flowProps();
-    const createTask = vi.spyOn(ipc, "createTaskForRepo");
-    const createSession = vi.spyOn(ipc, "createSession");
-    const createSessionForRepo = vi.spyOn(ipc, "createSessionForRepo");
-    const openSession = vi.spyOn(ipc, "openSession");
-    render(<OnboardingFlow {...props} initialStep="playbooks" />);
-    await act(async () => {});
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
-    expect(progress.getAttribute("aria-valuemin")).toBe("1");
-    expect(progress.getAttribute("aria-valuemax")).toBe("7");
-    expect(progress.getAttribute("aria-valuenow")).toBe("1");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Clarify, step 1 of 7");
-    expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset|Pause|Resume/ })).toBeNull();
-    await advanceDemo(2600);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("2");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
-    await advanceDemo(2600);
-    expect(screen.getByText(/Real runs wait for your approval/)).toBeTruthy();
-    await advanceDemo(3799);
-    expect(screen.getByText("Step 3 of 7")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
-    for (const wave of [5, 6]) {
-      await advanceDemo(2600);
-      expect(screen.getByText(`Step ${wave} of 7`)).toBeTruthy();
-    }
-    await advanceDemo(2600);
-    expect(screen.getByText("Step 7 of 7")).toBeTruthy();
-    await advanceDemo(3800);
-    expect(screen.getByText("Demo complete")).toBeTruthy();
-    expect(progress.getAttribute("aria-valuenow")).toBe("7");
-    expect(progress.getAttribute("aria-valuetext")).toBe("Demo complete");
-    await advanceDemo(2799);
-    expect(screen.getByText("Demo complete")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
-    expect(createTask).not.toHaveBeenCalled();
-    expect(createSession).not.toHaveBeenCalled();
-    expect(createSessionForRepo).not.toHaveBeenCalled();
-    expect(openSession).not.toHaveBeenCalled();
-    expect(ipc.ompSetupSession).not.toHaveBeenCalled();
-  });
-
-  it("restarts when changing archetypes and keeps fan-out modes visible in the centre", async () => {
-    vi.useFakeTimers();
+  it("switches the centre to a newly selected playbook and shows fan-out modes for its steps", async () => {
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
-    await advanceDemo(2600);
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     expect(screen.getByText("Step 1 of 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Gather Candidate Sources" }));
     expect(screen.getByText("each — spawns parallel sessions")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Deduplicate and Dispatch Sources" }));
     expect(screen.getByText("complete — waits for all upstream outputs")).toBeTruthy();
-    await advanceDemo(4000);
     expect(screen.getByText("Step 3 of 3")).toBeTruthy();
-  });
-
-  it("clears autoplay timers when leaving, changing repositories, or unmounting", async () => {
-    vi.useFakeTimers();
-    const props = flowProps();
-    const view = render(<OnboardingFlow {...props} initialStep="playbooks" />);
-    await act(async () => {});
-    await advanceDemo(1000);
-    view.rerender(<OnboardingFlow {...props} appConfig={{ ...baseConfig, active_repo: "/other/repo" }} initialStep="playbooks" />);
-    await act(async () => {});
-    await advanceDemo(2599);
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: /Models/ }));
-    await advanceDemo(4000);
-    fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    view.unmount();
-    await advanceDemo(0);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("holds the demo on the first step under reduced motion while steps stay clickable", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
-    await act(async () => {});
-    expect(screen.getByRole("radiogroup")).toBeTruthy();
-    await advanceDemo(10000);
-    expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
-    await advanceDemo(10000);
-    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
   });
 
   it("opens the mechanics guide by default and lets users collapse and reopen it", async () => {
