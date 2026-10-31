@@ -38,7 +38,7 @@ function Status({ children, tone }: { children: ReactNode; tone?: "ok" | "bad" |
 export function SignInInstructions({ text }: { text: string }) {
   const code = /code:?\s*(\S+)\s*$/i.exec(text)?.[1];
   return (
-    <p className="chat-msg-muted">
+    <p className="chat-sign-in-instructions">
       {text} {code ? <CopyTextButton text={code} label="code" /> : null}
     </p>
   );
