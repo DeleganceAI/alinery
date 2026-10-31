@@ -10,8 +10,10 @@ steps. The PNGs are renders of it at 1040×680.
 
 Shows: the real structure of the playbook, where it pauses for a human, where it
 fans out into parallel agents, and the fact that most playbooks are loops. Hover
-a step and its prompt's opening lines, mode, and reads/writes appear in the
-centre of the ring. Nothing moves and nothing scrolls.
+or click a step and its prompt's opening lines and mode appear in the centre of
+the ring, and stay there until another step is visited. The excerpt skips the
+"Execution contract" section every bundled step opens with. Nothing moves and
+nothing scrolls.
 
 Drops: the canvas, the reads/writes contract grid, the full prompt text, and
 the per-step inspector, and the timer-driven demo. The ring is still; it

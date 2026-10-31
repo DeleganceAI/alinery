@@ -56,7 +56,6 @@ export function OnboardingFlow({
   const [definitionErrors, setDefinitionErrors] = useState<Record<string, string>>({});
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
-  const [hoveredStepKey, setHoveredStepKey] = useState<string | null>(null);
 
   // Step 02: model readiness state
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
@@ -247,9 +246,6 @@ export function OnboardingFlow({
     playbookSteps.findIndex((s) => s.key === selectedStepKey),
   );
   const selectedStep = playbookSteps[selectedStepIndex] ?? playbookSteps[0];
-  const hoveredStep = playbookSteps.find((s) => s.key === hoveredStepKey) ?? null;
-  const focusStep = hoveredStep ?? selectedStep;
-  const focusIndex = hoveredStep ? playbookSteps.indexOf(hoveredStep) : selectedStepIndex;
 
   return (
     <div className="view scroll onboarding-view" data-testid="onboarding-flow">
@@ -475,18 +471,23 @@ export function OnboardingFlow({
                   steps={playbookSteps}
                   selectedStepKey={selectedStep?.key ?? null}
                   onSelectStep={setSelectedStepKey}
-                  onHoverStep={setHoveredStepKey}
+                  onHoverStep={(key) => {
+                    // Hover sticks: the centre keeps the last step the pointer visited.
+                    if (key) setSelectedStepKey(key);
+                  }}
                 >
-                  <span className="onboarding-step-ordinal onboarding-knockout">{focusStep ? `Step ${focusIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
+                  <span className="onboarding-step-ordinal onboarding-knockout">
+                    {selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}
+                  </span>
                   <h4>
-                    <span className="onboarding-knockout">{focusStep?.title ?? activePlaybook.title}</span>
+                    <span className="onboarding-knockout">{selectedStep?.title ?? activePlaybook.title}</span>
                   </h4>
-                  {focusStep && (
+                  {selectedStep && (
                     <div className="onboarding-step-badges">
-                      <span className={`pill ${focusStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
-                        {focusStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                      <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
+                        {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
                       </span>
-                      {[...new Set(focusStep.inputs.map((input) => input.mode))]
+                      {[...new Set(selectedStep.inputs.map((input) => input.mode))]
                         .filter((mode) => mode !== "single")
                         .map((mode) => (
                           <span className="pill" key={mode}>
@@ -497,12 +498,12 @@ export function OnboardingFlow({
                   )}
                   <p className="onboarding-sim-copy">
                     <span className="onboarding-knockout">
-                      {focusStep ? promptExcerpt(focusStep.prompt) || "This step has no prompt text." : "Hover or click a step to read its prompt."}
+                      {selectedStep ? promptExcerpt(selectedStep.prompt) || "This step has no prompt text." : "Hover or click a step to read its prompt."}
                     </span>
                   </p>
                 </PlaybookRing>
                 <div className="onboarding-stage-foot">
-                  <span>Hover a step to read its prompt. Click one to keep it.</span>
+                  <span>Hover or click a step to read its prompt.</span>
                 </div>
               </div>
             ) : (

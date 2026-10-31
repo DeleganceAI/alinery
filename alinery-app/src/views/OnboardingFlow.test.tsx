@@ -367,7 +367,7 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
-  it("shows the first step in the centre, previews a hovered step, and keeps a clicked one without executing anything", async () => {
+  it("shows the first step in the centre and keeps the last hovered or clicked step without executing anything", async () => {
     const props = flowProps();
     const createTask = vi.spyOn(ipc, "createTaskForRepo");
     const createSession = vi.spyOn(ipc, "createSession");
@@ -385,7 +385,8 @@ describe("OnboardingFlow wizard", () => {
     expect(within(ring).getByText("Step 4 of 7")).toBeTruthy();
     expect(within(ring).getByText("This step has no prompt text.")).toBeTruthy();
     fireEvent.mouseLeave(plan);
-    expect(within(ring).getByRole("heading", { name: "Clarify" })).toBeTruthy();
+    expect(within(ring).getByRole("heading", { name: "Plan" })).toBeTruthy();
+    expect(plan.getAttribute("aria-pressed")).toBe("true");
     const decide = within(ring).getByRole("button", { name: "Decide" });
     fireEvent.click(decide);
     expect(decide.getAttribute("aria-pressed")).toBe("true");

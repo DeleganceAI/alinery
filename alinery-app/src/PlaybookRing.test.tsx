@@ -72,6 +72,26 @@ describe("classifyRingEdges", () => {
 describe("promptExcerpt", () => {
   it("skips headings, lists, and fences and strips inline markup", () => {
     expect(promptExcerpt("# Title\n\n- a list\n\n```\ncode\n```\n\nRead the `brief` and **decide**.\n\nSecond paragraph.")).toBe("Read the brief and decide.");
+    expect(promptExcerpt("Keep `{{TASK_NAME}}` and _emphasis_ intact.")).toBe("Keep {{TASK_NAME}} and emphasis intact.");
+  });
+  it("drops the shared execution contract so each step shows its own text", () => {
+    const prompt = [
+      "## Execution contract",
+      "",
+      "You are working on **{{TASK_NAME}}** in the existing task worktree `{{WORKTREE}}`.",
+      "",
+      "Additional user instructions:",
+      "",
+      "{{PROMPT_EXTRA}}",
+      "",
+      "## Evaluate Possible Resolutions",
+      "",
+      "Read the exact bound `root-cause-analysis.md`, then inspect the cited code.",
+      "",
+      "- a list",
+    ].join("\n");
+    expect(promptExcerpt(prompt)).toBe("Read the exact bound root-cause-analysis.md, then inspect the cited code.");
+    expect(promptExcerpt("## Execution contract\n\nOnly the contract.")).toBe("");
   });
   it("cuts long paragraphs at a word boundary", () => {
     expect(promptExcerpt("one two three four five", 9)).toBe("one two…");

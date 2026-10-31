@@ -41,12 +41,18 @@ export function classifyRingEdges(steps: NormalizedStep[]): RingEdges {
   return { rails, chords, loop };
 }
 
-/** First prose paragraph of a step prompt: skips headings, lists, fences, tables, and template-only lines. */
+/**
+ * First prose paragraph of a step prompt: skips headings, lists, fences, tables, and template-only lines.
+ * Every bundled step opens with the shared "## Execution contract" section, so that section is dropped
+ * first; the step's own text starts at the next heading.
+ */
 export function promptExcerpt(prompt: string, max = 240): string {
-  for (const block of prompt.split(/\n\s*\n/)) {
+  const own = prompt.replace(/^##\s+execution contract\b[\s\S]*?(?=\n#{1,2}\s|$(?![\s\S]))/im, "");
+  for (const block of own.split(/\n\s*\n/)) {
     const paragraph = block.trim();
     if (!paragraph || /^(#|-|\*|\||```|\{\{|<|\d+\.)/.test(paragraph)) continue;
-    const text = paragraph.replace(/[`*_]/g, "").replace(/\s+/g, " ");
+    // Strip emphasis markers only; underscores inside tokens like {{TASK_NAME}} stay.
+    const text = paragraph.replace(/[`*]|\b_|_\b/g, "").replace(/\s+/g, " ");
     return text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")}…` : text;
   }
   return "";
