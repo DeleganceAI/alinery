@@ -6,6 +6,7 @@ import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
+import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
 import { PlaybookRing, promptExcerpt } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { toast } from "../toast";
@@ -465,6 +466,9 @@ export function OnboardingFlow({
                     <h3>{activePlaybook.title}</h3>
                     {activePlaybook.description && <p className="onboarding-sim-copy">{activePlaybook.description}</p>}
                   </div>
+                  <PlaybookLibraryLink className="small" playbook={selectedArchetype.reference}>
+                    Explore in the Playbook Library
+                  </PlaybookLibraryLink>
                 </div>
                 <PlaybookRing
                   key={activePlaybook.key}

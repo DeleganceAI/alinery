@@ -24,6 +24,14 @@ describe("PlaybookLibraryLink", () => {
     expect(openUrl).toHaveBeenCalledWith("https://alinery.ai/playbooks");
   });
 
+  it("deep-links to one playbook when given its reference", () => {
+    render(<PlaybookLibraryLink playbook={{ scope: "bundled", key: "bug-hunting" }}>Explore in the Playbook Library</PlaybookLibraryLink>);
+    const link = screen.getByRole("link", { name: "Explore in the Playbook Library" });
+    expect(link.getAttribute("href")).toBe("https://alinery.ai/playbooks?playbook=bundled%3Abug-hunting");
+    fireEvent.click(link);
+    expect(openUrl).toHaveBeenCalledWith("https://alinery.ai/playbooks?playbook=bundled%3Abug-hunting");
+  });
+
   it("keeps link interactions from triggering enclosing task actions", () => {
     const parentAction = vi.fn();
     render(

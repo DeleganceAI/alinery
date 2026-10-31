@@ -768,6 +768,7 @@
   padding: 14px 18px 0;
 }
 .onboarding-sim-title { min-width: 0; }
+.onboarding-stage-head .playbook-library-link { flex: none; }
 .onboarding-sim-title h3 {
   margin: 0;
   color: var(--text-strong);

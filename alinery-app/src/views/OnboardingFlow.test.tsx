@@ -392,6 +392,11 @@ describe("OnboardingFlow wizard", () => {
     expect(decide.getAttribute("aria-pressed")).toBe("true");
     expect(within(ring).getByRole("heading", { name: "Decide" })).toBeTruthy();
     expect(within(ring).getByText("Human checkpoint")).toBeTruthy();
+    const explore = screen.getByRole("link", { name: "Explore in the Playbook Library" });
+    expect(explore.getAttribute("href")).toBe("https://alinery.ai/playbooks?playbook=bundled%3Asuperdevelop");
+    const openUrl = vi.spyOn(ipc, "openUrl").mockResolvedValue();
+    fireEvent.click(explore);
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("https://alinery.ai/playbooks?playbook=bundled%3Asuperdevelop");
     expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
