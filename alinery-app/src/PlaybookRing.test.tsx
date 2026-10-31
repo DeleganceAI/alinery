@@ -89,9 +89,18 @@ describe("PlaybookRing", () => {
     );
     const ring = screen.getByRole("progressbar", { name: "Playbook demo" });
     expect(ring.getAttribute("aria-valuetext")).toBe("frame, step 1 of 6");
+    expect(ring.querySelector("title")).toBeNull();
+    const rail = ring.querySelector(".ring-rail") as SVGGElement;
+    const chord = ring.querySelector(".ring-chord") as SVGPathElement;
+    expect(rail.classList.contains("lit")).toBe(true);
+    expect(chord.classList.contains("dim")).toBe(false);
     const gather = screen.getByRole("button", { name: "gather" });
     fireEvent.mouseEnter(gather);
     expect(onHoverStep).toHaveBeenCalledWith("gather");
+    expect(rail.classList.contains("dim")).toBe(true);
+    expect(chord.classList.contains("dim")).toBe(true);
+    fireEvent.mouseEnter(screen.getByRole("button", { name: "plan" }));
+    expect(chord.classList.contains("lit")).toBe(true);
     fireEvent.click(gather);
     expect(onSelectStep).toHaveBeenCalledWith("gather");
     expect(screen.getByText("ticket.md · back to 2")).toBeTruthy();

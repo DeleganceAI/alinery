@@ -373,69 +373,28 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
-  it("pauses autoplay when selecting a ring step so its details stay in the centre", async () => {
+  it("jumps the demo to a clicked ring step and keeps playing from there", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     await advanceDemo(2600);
     fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
-    await advanceDemo(6000);
     expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
     expect(screen.getByText("Step 4 of 7")).toBeTruthy();
     const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
     expect(progress.getAttribute("aria-valuenow")).toBe("4");
     expect(progress.getAttribute("aria-valuetext")).toBe("Plan, step 4 of 7");
-  });
-
-  it.each([
-    { step: 1, precedingSteps: 0, duration: 2600 },
-    { step: 3, precedingSteps: 2, duration: 3800 },
-  ])("resumes step $step after only its remaining playback time", async ({ step, precedingSteps, duration }) => {
-    vi.useFakeTimers();
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
-    await act(async () => {});
-    for (let index = 0; index < precedingSteps; index += 1) await advanceDemo(2600);
-    await advanceDemo(1000);
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    await advanceDemo(10000);
-    expect(screen.getByText(`Step ${step} of 7`)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
-    await advanceDemo(500);
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    await advanceDemo(5000);
-    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
-    await advanceDemo(duration - 1501);
-    expect(screen.getByText(`Step ${step} of 7`)).toBeTruthy();
+    await advanceDemo(2599);
+    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
     await advanceDemo(1);
-    expect(screen.getByText(`Step ${step + 1} of 7`)).toBeTruthy();
+    expect(screen.getByText("Step 5 of 7")).toBeTruthy();
   });
 
-  it("returns from manual inspection to the active step when resuming", async () => {
-    vi.useFakeTimers();
-    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
-    await act(async () => {});
-    await advanceDemo(2600);
-    await advanceDemo(900);
-    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
-    await advanceDemo(5000);
-    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
-    expect(screen.getByRole("heading", { name: "Investigate" })).toBeTruthy();
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "Playbook demo" }).getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
-    await advanceDemo(1699);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    await advanceDemo(1);
-    expect(screen.getByRole("heading", { name: "Decide" })).toBeTruthy();
-  });
-
-  it("starts a fresh step duration when switching playbooks during a paused partial step", async () => {
+  it("starts a fresh step duration when switching playbooks mid-step", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     await advanceDemo(1000);
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     await act(async () => {});
     await advanceDemo(2599);
@@ -444,11 +403,10 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 2 of 3")).toBeTruthy();
   });
 
-  it("moves playbook selection and focus with the keyboard without restarting a paused demo", async () => {
+  it("moves playbook selection and focus with the keyboard and plays the selected playbook", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
     const radios = within(screen.getByRole("radiogroup", { name: "Explore starter playbooks" })).getAllByRole("radio");
     radios[0].focus();
     for (const [key, index] of [
@@ -462,10 +420,11 @@ describe("OnboardingFlow wizard", () => {
       expect(radios[index].getAttribute("aria-checked")).toBe("true");
       expect(radios[index].getAttribute("tabindex")).toBe("0");
       expect(radios.filter((radio) => radio.tabIndex === 0)).toEqual([radios[index]]);
-      expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
     }
-    await advanceDemo(10000);
+    await advanceDemo(2599);
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
+    await advanceDemo(1);
+    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
   });
 
   it("continues through exactly three steps and opens task creation without executing a task", async () => {
@@ -519,16 +478,11 @@ describe("OnboardingFlow wizard", () => {
     expect(progress.getAttribute("aria-valuemax")).toBe("7");
     expect(progress.getAttribute("aria-valuenow")).toBe("1");
     expect(progress.getAttribute("aria-valuetext")).toBe("Clarify, step 1 of 7");
-    expect(screen.getByRole("button", { name: "Pause demo" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Simulate|Advance step|Approve|Reset|Pause|Resume/ })).toBeNull();
     await advanceDemo(2600);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     expect(progress.getAttribute("aria-valuenow")).toBe("2");
     expect(progress.getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    await advanceDemo(4000);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
     await advanceDemo(2600);
     expect(screen.getByText(/Real runs wait for your approval/)).toBeTruthy();
     await advanceDemo(3799);
@@ -564,7 +518,6 @@ describe("OnboardingFlow wizard", () => {
     await advanceDemo(2600);
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     expect(screen.getByText("Step 1 of 3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
     fireEvent.click(screen.getByRole("button", { name: "Gather Candidate Sources" }));
     expect(screen.getByText("each — spawns parallel sessions")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Deduplicate and Dispatch Sources" }));
@@ -594,18 +547,18 @@ describe("OnboardingFlow wizard", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("respects reduced motion until demo playback is explicitly requested", async () => {
+  it("holds the demo on the first step under reduced motion while steps stay clickable", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     expect(screen.getByRole("radiogroup")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
     await advanceDemo(10000);
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
-    await advanceDemo(2600);
-    expect(screen.getByText("Step 2 of 7")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
+    await advanceDemo(10000);
+    expect(screen.getByText("Step 4 of 7")).toBeTruthy();
   });
 
   it("opens the mechanics guide by default and lets users collapse and reopen it", async () => {

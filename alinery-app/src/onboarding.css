@@ -786,31 +786,6 @@
   color: var(--text-faint);
   font-size: calc(11px * var(--ui-scale));
 }
-.onboarding-demo-toggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: calc(12px * var(--ui-scale));
-  cursor: pointer;
-  transition: color 180ms ease-in-out, background-color 180ms ease-in-out;
-}
-.onboarding-demo-toggle:hover:not(:disabled) {
-  background: var(--surface-raised);
-  color: var(--text-strong);
-}
-.onboarding-demo-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.onboarding-demo-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
 .onboarding-stage-foot {
   flex: none;
   display: flex;
@@ -834,7 +809,20 @@
   font-weight: 600;
   line-height: 1.2;
 }
-.playbook-ring-centre .onboarding-step-badges { justify-content: center; margin-bottom: 8px; }
+/* Chords cross the centre; each line of text and the badge row knock them out so the copy stays legible. */
+.playbook-ring-centre .onboarding-knockout {
+  padding: 0 5px;
+  background: var(--surface);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.playbook-ring-centre .onboarding-step-badges {
+  display: inline-flex;
+  justify-content: center;
+  margin-bottom: 8px;
+  padding: 0 6px;
+  background: var(--surface);
+}
 .playbook-ring-centre .onboarding-sim-copy {
   min-height: 0;
   max-width: none;
@@ -1226,7 +1214,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .onboarding-card-detail,
-  .onboarding-demo-toggle,
   .onboarding-archetype-card { transition: none; }
   .onboarding-card-detail { transform: none; }
 }

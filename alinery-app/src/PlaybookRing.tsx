@@ -98,7 +98,8 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
   const { rails, chords, loop } = classifyRingEdges(steps);
   const count = steps.length;
   const focusIndex = steps.findIndex((step) => step.key === (hoveredKey ?? selectedStepKey));
-  const touches = (indexes: number[]) => hoveredKey === null || indexes.includes(focusIndex);
+  // Edges light up for the hovered step, or the demo's current step; hovering fades every other edge.
+  const edgeClass = (indexes: number[]) => (indexes.includes(focusIndex) ? " lit" : hoveredKey === null ? "" : " dim");
   const hover = (key: string | null) => {
     setHoveredKey(key);
     onHoverStep?.(key);
@@ -114,12 +115,12 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
       aria-valuenow={progress?.now}
       aria-valuetext={progress?.text}
     >
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" aria-hidden={count === 0 || undefined}>
-        <title>{`${count} playbook steps as a ring`}</title>
+      {/* No <title>: WebKit shows it as a tooltip wherever the pointer rests. The progressbar wrapper carries the label. */}
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden={count === 0 || undefined}>
         {rails.map((rail, order) => {
           const radius = R - 16 - order * 9;
           return (
-            <g key={`${rail.from}-${rail.path}`} className={`ring-edge ring-rail${touches([rail.from, ...rail.consumers]) ? "" : " dim"}`}>
+            <g key={`${rail.from}-${rail.path}`} className={`ring-edge ring-rail${edgeClass([rail.from, ...rail.consumers])}`}>
               <path d={arcPath(angleOf(rail.from, count), angleOf(rail.consumers[rail.consumers.length - 1], count), radius)} />
               {rail.consumers.map((consumer) => {
                 const angle = angleOf(consumer, count);
@@ -138,7 +139,7 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
           return (
             <path
               key={`${chord.from}-${chord.to}-${chord.path}`}
-              className={`ring-edge ring-chord${touches([chord.from, chord.to]) ? "" : " dim"}`}
+              className={`ring-edge ring-chord${edgeClass([chord.from, chord.to])}`}
               d={`M${xa},${ya} Q${qx},${qy} ${xb},${yb}`}
             />
           );
@@ -166,7 +167,7 @@ export function PlaybookRing({ steps, selectedStepKey, simulatedStatuses = {}, o
             const a1 = angleOf(count - 1, count);
             const a2 = angleOf(count, count);
             const label = `${loop.path} · back to ${loop.to + 1}`;
-            const dim = touches([loop.from, loop.to]) ? "" : " dim";
+            const dim = edgeClass([loop.from, loop.to]);
             // Back to step 1 the ring closes. Back to any other step it is a chord and the ring stays open.
             if (loop.to === 0) {
               return (

@@ -55,7 +55,9 @@ Edges come straight from the step contracts, by the same selector-overlap rule
 | an input with `mode = "each"` | stacked node, and the segment into it splits into three strands |
 | an input with `mode = "complete"` | the three strands merge back into one |
 
-Hovering a step dims every chord and rail that does not touch it.
+Chords and the loop sit at 35% opacity. They come up to full for the step the
+demo is on and for a hovered step; hovering fades every edge that does not
+touch that step. The centre text knocks out whatever crosses it, line by line.
 
 ## Limits
 
@@ -70,6 +72,7 @@ rails are the busiest case among the starters; whether nested rails read as
 1. Nested rails on SuperDevelop: keep, collapse to one rail, or hover-only?
 2. The hand badge sits on the segment after a checkpoint. Would a hand on the
    node itself read better?
-3. The demo currently walks the ring on a timer. Is that worth keeping, or
-   does hover alone carry onboarding?
+3. The demo walks the ring on a timer, always, and loops. There is no pause
+   button; clicking a step jumps the demo there. Only a reduced-motion
+   preference holds it on step 1.
 4. The centre block is 270px wide and clamps the prompt to three lines. Enough?
