@@ -1,0 +1,99 @@
+/* The ring fills whatever box it is given; the SVG scales, so it never scrolls or pans. */
+.playbook-ring {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.playbook-ring > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--border-strong);
+}
+.playbook-ring text {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  fill: var(--text-muted);
+}
+.playbook-ring .ring-segment,
+.playbook-ring .ring-segment path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.25;
+}
+.playbook-ring .ring-edge { transition: opacity 150ms ease-in-out; }
+.playbook-ring .ring-edge.dim { opacity: 0.15; }
+.playbook-ring .ring-rail path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.playbook-ring .ring-rail path:first-child { stroke-dasharray: 2 3; }
+.playbook-ring .ring-chord {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.25;
+  opacity: 0.9;
+}
+.playbook-ring .ring-loop path {
+  fill: none;
+  stroke: var(--success);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
+/* The label rides an invisible twin of the loop path, offset so the text clears the dashes. */
+.playbook-ring .ring-loop path.ring-loop-label { stroke: none; }
+.playbook-ring .ring-loop text {
+  fill: var(--success);
+  font-size: 11px;
+}
+.playbook-ring .ring-hand circle {
+  fill: var(--surface);
+  stroke: var(--warning);
+}
+.playbook-ring .ring-hand svg { color: var(--warning); }
+
+.playbook-ring .ring-node { cursor: pointer; }
+.playbook-ring .ring-node:focus-visible { outline: none; }
+.playbook-ring .ring-node:focus-visible circle.main { stroke-width: 2; }
+.playbook-ring .ring-node circle.main {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  transition: stroke 150ms ease-in-out;
+}
+.playbook-ring .ring-node circle.ghost {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+}
+.playbook-ring .ring-node text.num {
+  fill: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.playbook-ring .ring-node.cp circle.main { stroke: var(--warning); }
+.playbook-ring .ring-node.cp text.num { fill: var(--warning); }
+.playbook-ring .ring-node.done circle.main { stroke: var(--success); }
+.playbook-ring .ring-node.done text.num { fill: var(--success); }
+.playbook-ring .ring-node.cur circle.main {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.playbook-ring .ring-node.cur text.num { fill: var(--accent); }
+.playbook-ring .ring-node.cur text.lbl { fill: var(--text); }
+
+.playbook-ring-centre {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(270px, 38%);
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .playbook-ring .ring-edge,
+  .playbook-ring .ring-node circle.main { transition: none; }
+}
