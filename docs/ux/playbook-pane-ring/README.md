@@ -30,6 +30,15 @@ bundled playbook that matters ends by writing `ticket.md` back to an earlier
 step, and the canvas never showed that. On the ring the loop is the segment
 that closes the circle. SuperDevelop has no loop, so its ring stays open.
 
+## It is implemented
+
+`alinery-app/src/PlaybookRing.tsx` is the component, used by the playbooks step
+of `OnboardingFlow.tsx` in place of the canvas. `in-app-*.png` are renders of
+that component with the app's own stylesheet. The edge classification lives in
+`classifyRingEdges` and has a unit test beside the source. Geometry is in
+viewBox units at the top of the file; the ring radius, label offset, and rail
+spacing are the knobs to turn.
+
 ## Drawing rules
 
 Edges come straight from the step contracts, by the same selector-overlap rule
