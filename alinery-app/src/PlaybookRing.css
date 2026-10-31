@@ -24,7 +24,7 @@
   stroke-width: 1.25;
 }
 .playbook-ring .ring-edge { transition: opacity 150ms ease-in-out; }
-/* Chords and the loop sit back until a step they touch is hovered or is the demo's current step. */
+/* Chords and the loop sit back until a step they touch is hovered or kept. Rails never change. */
 .playbook-ring .ring-chord,
 .playbook-ring .ring-loop { opacity: 0.35; }
 .playbook-ring .ring-edge.lit { opacity: 1; }

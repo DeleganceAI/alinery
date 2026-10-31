@@ -102,7 +102,7 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
   const { rails, chords, loop } = classifyRingEdges(steps);
   const count = steps.length;
   const focusIndex = steps.findIndex((step) => step.key === (hoveredKey ?? selectedStepKey));
-  // Edges light up for the hovered step, or the demo's current step; hovering fades every other edge.
+  // Chords and the loop light up for the focused step; hovering fades the others. Rails never change.
   const edgeClass = (indexes: number[]) => (indexes.includes(focusIndex) ? " lit" : hoveredKey === null ? "" : " dim");
   const hover = (key: string | null) => {
     setHoveredKey(key);
@@ -116,7 +116,7 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
         {rails.map((rail, order) => {
           const radius = R - 16 - order * 9;
           return (
-            <g key={`${rail.from}-${rail.path}`} className={`ring-edge ring-rail${edgeClass([rail.from, ...rail.consumers])}`}>
+            <g key={`${rail.from}-${rail.path}`} className="ring-rail">
               <path d={arcPath(angleOf(rail.from, count), angleOf(rail.consumers[rail.consumers.length - 1], count), radius)} />
               {rail.consumers.map((consumer) => {
                 const angle = angleOf(consumer, count);

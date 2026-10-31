@@ -59,8 +59,8 @@ Edges come straight from the step contracts, by the same selector-overlap rule
 | an input with `mode = "complete"` | the three strands merge back into one |
 
 Chords and the loop sit at 35% opacity. They come up to full for the hovered
-step, or the clicked step when nothing is hovered; hovering fades every edge
-that does not touch that step. The centre text knocks out whatever crosses it, line by line.
+step, or the clicked step when nothing is hovered; hovering fades every chord and loop
+that does not touch that step. Rails never change. The centre text knocks out whatever crosses it, line by line.
 
 ## Limits
 

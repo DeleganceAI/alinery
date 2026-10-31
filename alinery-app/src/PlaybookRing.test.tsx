@@ -111,12 +111,12 @@ describe("PlaybookRing", () => {
     expect(ring.querySelector("title")).toBeNull();
     const rail = ring.querySelector(".ring-rail") as SVGGElement;
     const chord = ring.querySelector(".ring-chord") as SVGPathElement;
-    expect(rail.classList.contains("lit")).toBe(true);
+    expect(rail.classList.contains("lit")).toBe(false);
     expect(chord.classList.contains("dim")).toBe(false);
     const gather = screen.getByRole("button", { name: "gather" });
     fireEvent.mouseEnter(gather);
     expect(onHoverStep).toHaveBeenCalledWith("gather");
-    expect(rail.classList.contains("dim")).toBe(true);
+    expect(rail.classList.contains("dim")).toBe(false);
     expect(chord.classList.contains("dim")).toBe(true);
     fireEvent.mouseEnter(screen.getByRole("button", { name: "plan" }));
     expect(chord.classList.contains("lit")).toBe(true);
