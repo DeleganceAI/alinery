@@ -17,7 +17,7 @@ import {
   setModelCommand,
 } from "../ompRpc";
 import type { HostedCatalogView } from "../types";
-import { ChatEntryRow } from "./ChatEntryRow";
+import { ChatEntryRow, SignInInstructions } from "./ChatEntryRow";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
 
@@ -96,6 +96,9 @@ export function ProviderSetupDialog({
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState<string | null>(null);
+  // The device code a sign-in needs typed into the browser. It arrives only on the link's
+  // `instructions`, and that row is dismissed as soon as the browser opens.
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
   const [catalogueStatus, setCatalogueStatus] = useState<"connecting" | "ready" | "failed">("connecting");
@@ -139,8 +142,9 @@ export function ProviderSetupDialog({
             setModelError(reply.ok ? null : (reply.error ?? "Could not set model."));
           }
         }
+        const reply = loginReply(value);
+        if (reply) setLoginNotice(null);
         if (loginApplyRef.current) {
-          const reply = loginReply(value);
           if (reply) {
             const providerId = loginApplyRef.current;
             loginApplyRef.current = null;
@@ -268,6 +272,7 @@ export function ProviderSetupDialog({
   }, [mode]);
 
   const openBrowser = useCallback(async (request: PendingUi) => {
+    setLoginNotice(request.instructions ?? null);
     try {
       await settleOpenUrl(sessionIdRef.current, request.id, request.launchUrl || request.url, setModelError);
       const next = dismissPendingUi(chatRef.current, request.id);
@@ -336,6 +341,7 @@ export function ProviderSetupDialog({
   const startLogin = useCallback(async (providerId: string) => {
     if (loginApplyRef.current) return;
     setModelError(null);
+    setLoginNotice(null);
     setLoginBusy(providerId);
     loginApplyRef.current = providerId;
     loginOpenUrlRef.current = true;
@@ -345,6 +351,7 @@ export function ProviderSetupDialog({
       loginApplyRef.current = null;
       loginOpenUrlRef.current = false;
       setLoginBusy(null);
+      setLoginNotice(null);
       setModelError(String(error));
     }
   }, []);
@@ -456,6 +463,7 @@ export function ProviderSetupDialog({
       }}
       onClose={() => onClose("dismissed")}
     >
+      {loginNotice ? <SignInInstructions text={loginNotice} /> : null}
       {chat.entries
         .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))
         .map((entry) => (

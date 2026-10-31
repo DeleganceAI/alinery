@@ -1570,3 +1570,55 @@ describe("carryOver", () => {
     expect(next.entrySeq).toBe(1);
   });
 });
+
+// Repro for #130 (minor): a sign-in's `open_url` is fire-and-forget on OMP's side and never leaves
+// the daemon's replay ring, so a reattached accounts dialog shows every earlier sign-in link as a
+// live "waiting" row. A `login` response is the moment those rows are superseded.
+describe("login response settles pending browser links (#130)", () => {
+  it.each([true, false])("settles the manual OAuth fallback after browser login (success=%s), preserving unrelated questions", (success) => {
+    const fallback = {
+      type: "extension_ui_request",
+      id: "a1b2c3",
+      method: "input",
+      title: "Paste the authorization code (or full redirect URL):",
+      timeout: 600000,
+    };
+    const pending = applyRpcLines([
+      { type: "extension_ui_request", id: "task-question", method: "input", title: "Which branch should I use?" },
+      { type: "extension_ui_request", id: "task-approval", method: "confirm", title: "Run bash?" },
+      fallback,
+    ]);
+    const settled = applyRpcLine(pending, {
+      type: "response",
+      id: "l1",
+      command: "login",
+      success,
+      ...(success ? { data: { providerId: "openai-codex" } } : { error: "Login failed" }),
+    });
+    expect(settled.pendingUi.map((request) => request.id)).toEqual(["task-question", "task-approval"]);
+    expect(settled.entries.some((entry) => entry.type === "approval" && entry.requestId === "task-approval")).toBe(true);
+    expect(settled.entries.some((entry) => entry.type === "error")).toBe(!success);
+    expect(applyRpcLine(settled, fallback)).toBe(settled);
+  });
+
+  it("dismisses pending open_url rows when a login response arrives", () => {
+    const pending = applyRpcLine(emptyTranscript(), {
+      type: "extension_ui_request",
+      id: "stale-url",
+      method: "open_url",
+      url: "https://auth.openai.com/codex/device",
+      instructions: "Enter code: ABCD-EFGH",
+    });
+    expect(pending.entries).toMatchObject([{ type: "approval", instructions: "Enter code: ABCD-EFGH" }]);
+    const settled = applyRpcLine(pending, { type: "response", id: "l1", command: "login", success: true, data: { providerId: "openai-codex-device" } });
+    expect(settled.pendingUi).toEqual([]);
+    expect(settled.entries.some((e) => e.type === "approval")).toBe(false);
+  });
+
+  it("settles them on a failed login too, and still records the error", () => {
+    const pending = applyRpcLine(emptyTranscript(), { type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device" });
+    const settled = applyRpcLine(pending, { type: "response", id: "l1", command: "login", success: false, error: "Device authorization timed out" });
+    expect(settled.pendingUi).toEqual([]);
+    expect(settled.entries.map((e) => e.type)).toEqual(["error"]);
+  });
+});

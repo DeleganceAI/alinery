@@ -848,6 +848,7 @@ function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknow
       action: "Open a link in your browser?",
       detail: displayUrl(pending.launchUrl ?? pending.url ?? ""),
       detailFormat: "plain",
+      instructions: pending.instructions,
       at: Date.now(),
     });
   }
@@ -944,6 +945,13 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
   }
 
   if (event.type === "response") {
+    // OMP leaves browser links and the manual OAuth fallback pending after login. That input has
+    // no login ID on the wire, so match its known title without dismissing unrelated questions.
+    if (event.command === "login") {
+      state = state.pendingUi
+        .filter((p) => p.method === "open_url" || (p.method === "input" && p.title === "Paste the authorization code (or full redirect URL):"))
+        .reduce((next, p) => dismissPendingUi(next, p.id), state);
+    }
     const sendCommand = event.command === "prompt" || event.command === "follow_up";
     if (event.success === false && typeof event.error === "string") {
       // OMP refuses history requests while it is busy. Nothing asks for history over RPC any

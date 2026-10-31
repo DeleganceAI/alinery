@@ -5685,6 +5685,21 @@ dialog.modal::backdrop {
   font-size: 12px;
   color: var(--text-muted);
 }
+.chat-sign-in-instructions {
+  margin: 16px 0;
+  padding: 12px 16px;
+  color: var(--accent);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.chat-sign-in-instructions .copy-value-button {
+  color: inherit;
+  vertical-align: middle;
+}
 .chat-msg-actions {
   display: flex;
   flex-wrap: wrap;
@@ -6471,10 +6486,17 @@ dialog.modal::backdrop {
   padding: 0 2px;
 }
 .chat-provider-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex: none;
   font-size: calc(12px * var(--ui-scale));
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+}
+.chat-provider-check {
+  flex: none;
+  color: var(--success);
 }
 .chat-model-item:enabled .chat-provider-status {
   color: var(--text);

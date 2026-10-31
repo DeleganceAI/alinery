@@ -1,6 +1,6 @@
 import { Bot, Brain, Cable, CircleAlert, CircleStop, FileOutput, type LucideIcon, MessageSquare, Navigation, Reply, ShieldAlert, Terminal, Wrench } from "lucide-react";
 import { memo, type ReactNode, useEffect, useState } from "react";
-import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
+import { ChatMarkdown, CopyChatMessageButton, CopyTextButton } from "../chat/CopyMessage";
 import { type ChatStampParts, formatChatStamp, formatDuration, formatIso } from "../chat/format";
 import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
 
@@ -30,6 +30,18 @@ function kindFace(type: ChatEntryType): string {
 
 function Status({ children, tone }: { children: ReactNode; tone?: "ok" | "bad" | "wait" }) {
   return <span className={`chat-status${tone ? ` chat-status-${tone}` : ""}`}>{children}</span>;
+}
+
+/** Extension text that travels with a sign-in link (`open_url.instructions`). OMP's device flows
+ *  end it with `code: XXXX`, the part the user has to type into the browser, so that gets a copy
+ *  control; any other wording is shown as-is. */
+export function SignInInstructions({ text }: { text: string }) {
+  const code = /code:?\s*(\S+)\s*$/i.exec(text)?.[1];
+  return (
+    <p className="chat-sign-in-instructions">
+      {text} {code ? <CopyTextButton text={code} label="code" /> : null}
+    </p>
+  );
 }
 
 function isWork(entry: ChatEntry) {
@@ -359,6 +371,7 @@ function ChatEntryRowImpl({
               </div>
             )
           ) : null}
+          {entry.instructions ? <SignInInstructions text={entry.instructions} /> : null}
           {entry.scope ? <p className="chat-work-meta">{entry.scope}</p> : null}
           <div className="chat-msg-actions">
             <button type="button" className="btn primary small" disabled={entry.disabled} onClick={() => onApprove?.(entry.requestId, true)}>
