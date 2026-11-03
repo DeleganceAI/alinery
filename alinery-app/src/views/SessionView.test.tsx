@@ -33,6 +33,7 @@ const scenario = vi.hoisted(() => ({
   tasksPromise: null as Promise<Task[]> | null,
   tasksError: null as Error | null,
   items: null as ArtifactListItem[] | null,
+  comments: [] as Awaited<ReturnType<typeof Ipc.listArtifactComments>>,
 }));
 
 const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
@@ -141,7 +142,13 @@ vi.mock("../ipc", () =>
     },
     listArtifactCommentDrafts: async () => [],
     listArtifactCommentDraftsForRepo: async () => [],
-    listArtifactComments: async () => [],
+    listArtifactComments: async () => scenario.comments,
+    readArtifact: async () => "# Review context",
+    artifactReviewPendingStatus: async () => null,
+    prepareArtifactCommentsPrompt: async () => ({
+      text: "Please address the review comments.",
+      provenance: { type: "artifact_comments" as const, items: [{ artifact: "01-review-context.md", review: "01-review-context.comments.md", comments_hash: "hash" }] },
+    }),
     sessionStatus,
     archiveSession,
     sessionArtifactReady,
@@ -628,15 +635,20 @@ function captureRpcOnLine(slot: { current?: (line: string) => void }) {
 
 describe("session message composer feature gate", () => {
   beforeEach(() => {
+    scenario.treeCalls = 0;
     scenario.taskCalls = 0;
     scenario.tasks = [{ ...task }];
     scenario.tasksPromise = null;
     scenario.tasksError = null;
     scenario.items = null;
+    scenario.comments = [];
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    scenario.comments = [];
+  });
 
   it("shows Chat and the Chat composer for OMP", () => {
     renderSession();
@@ -653,6 +665,56 @@ describe("session message composer feature gate", () => {
     expect(await screen.findByText("Send findings to task")).toBeDefined();
     fireEvent.click((await screen.findByText("Add approval prompt")).closest("button") as HTMLButtonElement);
     await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ body: "Please approve the review." })));
+  });
+
+  it.each([
+    ["no-harness", "pty", false],
+    ["omp", "pty", false],
+    ["omp", "rpc", true],
+  ] as const)("only offers editable review drafts with a Chat composer (%s/%s)", async (harness, transport, composerVisible) => {
+    scenario.items = [{ name: "03-review-findings.md", modified_at_ms: 3, playbook_step: "review-findings", session_id: "", handoffs: [] }, ...initialItems];
+    scenario.comments = [
+      {
+        id: "comment",
+        artifact: "01-review-context.md",
+        anchor_id: "heading",
+        anchor_kind: "h1",
+        anchor_label: "Review context",
+        anchor_excerpt: "Review context",
+        line_start: 1,
+        line_end: 1,
+        body: "Please clarify this finding.",
+        created_at_ms: 1,
+      },
+    ];
+    sessionStatus.mockResolvedValue(liveObservation(transport));
+    const onDraftChange = vi.fn();
+    const onStartReviewHandoff = vi.fn();
+    renderSession({ harness, playbook: "review", onMessageDraftChange: onDraftChange, onStartReviewHandoff });
+
+    fireEvent.click(await screen.findByRole("button", { name: /01-review-context.md/ }));
+    await screen.findByRole("heading", { name: "Review context" });
+
+    if (composerVisible) {
+      expect(screen.getByLabelText("Message or /command")).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Add human comments to the message draft" }));
+      await waitFor(() => expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({ body: "Please address the review comments." })));
+      fireEvent.click(screen.getByRole("button", { name: "Add an editable request for the harness to submit the GitHub approval/comment" }));
+      await waitFor(() => expect(onDraftChange).toHaveBeenLastCalledWith(expect.objectContaining({ body: expect.stringContaining("Please approve the review.") })));
+    } else {
+      expect(screen.queryByLabelText("Message or /command")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Add human comments to the message draft" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Add an editable request for the harness to submit the GitHub approval/comment" })).toBeNull();
+      expect(onDraftChange).not.toHaveBeenCalled();
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose an existing task to receive these review findings" }));
+    expect(onStartReviewHandoff).toHaveBeenCalledWith({
+      source_repo_path: "/repo",
+      source_slug: "task",
+      source_session: "session",
+      source_artifact: "03-review-findings.md",
+    });
   });
 });
 
