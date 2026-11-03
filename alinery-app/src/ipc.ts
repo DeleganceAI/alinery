@@ -346,6 +346,7 @@ export const submitExecutionArtifacts = (request: EndExecutionRequest, artifacts
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
+export const listDrawerTerminals = () => invoke<SessionMeta[]>("list_drawer_terminals");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
 export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>

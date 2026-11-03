@@ -176,6 +176,7 @@ pub fn run() {
             create_session,
             create_session_for_repo,
             ensure_drawer_terminal,
+            list_drawer_terminals,
             list_chat_repos,
             list_chat_threads,
             chat_thread_name,

@@ -648,6 +648,38 @@ export default function App() {
     setRepo(value);
   };
 
+  // Drawer shells outlive a normal quit (alineryd keeps the pty) but their tabs were only
+  // React state, so an empty drawer first puts the still-live ones back as tabs (issue #141).
+  // Resolves false when there is nothing to restore and a new shell should be created.
+  const restoreDrawerTabs = async (): Promise<boolean> => {
+    if (creatingDrawer.current) return true;
+    const repo = appConfigRef.current?.active_repo;
+    if (!repo) return true;
+    creatingDrawer.current = true;
+    setDrawerCreating(true);
+    const generation = drawerGeneration.current;
+    try {
+      const metas = await ipc.listDrawerTerminals().catch((e) => {
+        // Say so instead of hiding a surviving shell silently; a fresh shell still follows.
+        toast(`Couldn't restore terminals: ${String(e)}`, "error");
+        return [];
+      });
+      while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
+      // Switched meanwhile: the shells belong to the previous repo. Drop the list; never kill.
+      if (drawerGeneration.current !== generation || appConfigRef.current?.active_repo !== repo) return true;
+      const tabs = metas.map((meta, i) => ({ id: meta.id, ordinal: i + 1, cwd: meta.worktree || repo }));
+      if (tabs.length === 0) return false;
+      const next = { tabs, activeId: tabs[0].id, nextOrdinal: tabs.length + 1 };
+      drawerRef.current = next;
+      setDrawer(next);
+      setDrawerOpen(true);
+      return true;
+    } finally {
+      creatingDrawer.current = false;
+      setDrawerCreating(false);
+    }
+  };
+
   const toggleTerminalDrawer = async () => {
     if (!appConfigRef.current?.active_repo) return;
     if (drawerOpen) {
@@ -658,7 +690,7 @@ export default function App() {
       setDrawerOpen(true);
       return;
     }
-    await addDrawerTab();
+    if (!(await restoreDrawerTabs())) await addDrawerTab();
   };
 
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
