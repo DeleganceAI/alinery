@@ -11,7 +11,7 @@
     "@effect/platform-node-shared": "4.0.0-rc.115",
     "ajv": "8.18.0",
     "effect": "4.0.0-rc.115",
-    "node": "26.4.0"
+    "node": "26.12.1"
   },
   "overrides": {
     "effect": "4.0.0-rc.115",
