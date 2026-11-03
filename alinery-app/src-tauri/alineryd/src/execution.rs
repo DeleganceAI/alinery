@@ -532,11 +532,18 @@ pub(super) fn prepare_end_execution(repo: &Path, reg: &Registry, request: &Prepa
         return Err("execution is already accepted".into());
     }
     if !record.shutdown_confirmed {
-        let owner = owner(reg, &request.session_id)?;
-        let gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
-        owner.live()?;
-        if gate.process.as_ref() != Some(&process) || !matches!(record.lifecycle, ExecutionLifecycle::Running | ExecutionLifecycle::Interrupted) {
-            return Err("current execution process disposition is unknown".into());
+        match owner(reg, &request.session_id) {
+            Ok(owner) => {
+                let gate = owner.gate.lock().unwrap_or_else(|e| e.into_inner());
+                owner.live()?;
+                if gate.process.as_ref() != Some(&process) || !matches!(record.lifecycle, ExecutionLifecycle::Running | ExecutionLifecycle::Interrupted) {
+                    return Err("current execution process disposition is unknown".into());
+                }
+            }
+            // Interrupted with no session in this daemon (killed mid-step): the confirmed
+            // end/restart request releases it in stop_execution_boundary, not here.
+            Err(_) if record.lifecycle == ExecutionLifecycle::Interrupted => {}
+            Err(error) => return Err(error),
         }
     }
     let inspected = inspect_execution_publications(repo, &request.task_slug, &record);
@@ -571,6 +578,7 @@ fn stop_execution_boundary(repo: &Path, reg: &Registry, request: &EndExecutionRe
     if process.incarnation != request.process_incarnation {
         return Ok(stale("execution process incarnation changed".into()));
     }
+    // Outside the state lock (gate first): a session relaunched meanwhile gets a new incarnation from `spawned`, so the closure's read_process check makes this request stale.
     let owner = owner(reg, &request.session_id).ok();
     let gate = owner.as_ref().map(|owner| owner.gate.lock().unwrap_or_else(|e| e.into_inner()));
     let authorized = mutate_execution_state(repo, &request.task_slug, &meta.daemon_namespace, "authorize human stopped handoff", |_, state| {
@@ -590,17 +598,28 @@ fn stop_execution_boundary(repo: &Path, reg: &Registry, request: &EndExecutionRe
             }));
         }
         if !record.shutdown_confirmed {
-            let Some(owner) = &owner else {
+            if let Some(owner) = &owner {
+                owner.live()?;
+                if gate.as_ref().and_then(|gate| gate.process.as_ref()) != Some(&process)
+                    || !matches!(record.lifecycle, ExecutionLifecycle::Running | ExecutionLifecycle::Interrupted)
+                {
+                    return Err("execution process disposition is unknown".into());
+                }
+                // Interrupted retains code/capacity claims and rejects all further input.
+                record.lifecycle = ExecutionLifecycle::Interrupted;
+            } else if record.lifecycle == ExecutionLifecycle::Interrupted {
+                // No session in this daemon can ever prove this exit (daemon killed mid-step).
+                // The confirmed human request is the attestation; nothing is signaled or inferred.
+                let proof = proof_path(repo, &request.task_slug, &process);
+                if proof.exists() || pending_exits().lock().unwrap_or_else(|e| e.into_inner()).contains_key(&proof) {
+                    return Err("an exit for this process is still being recorded; retry".into());
+                }
+                release_interrupted_owner(state, &request.execution_id, &request.session_id)?;
+            } else {
                 return Err("live execution owner unavailable; shutdown is not proven".into());
-            };
-            owner.live()?;
-            if gate.as_ref().and_then(|gate| gate.process.as_ref()) != Some(&process) || !matches!(record.lifecycle, ExecutionLifecycle::Running | ExecutionLifecycle::Interrupted)
-            {
-                return Err("execution process disposition is unknown".into());
             }
-            // Interrupted retains code/capacity claims and rejects all further input.
-            record.lifecycle = ExecutionLifecycle::Interrupted;
         }
+        let record = state.executions.get_mut(&request.execution_id).ok_or("missing execution")?;
         record.human_end = Some(request.clone());
         record.ready_revision = None;
         record.ready_assessment = None;
@@ -1830,6 +1849,72 @@ mod bookkeeping_tests {
         let before = f.state();
         exited(&f.repo, "task", Some(&f.process), "lane", Some(0));
         assert_eq!(f.state(), before, "duplicate confirmation cannot republish or advance revision");
+    }
+
+    // Issue #129: a daemon killed mid-step leaves its owner Interrupted with no exit proof and
+    // no registry entry. Only the confirmed end/restart request releases it, and only once the
+    // record is Interrupted and no exit for that process is still being recorded.
+    #[test]
+    fn confirmed_end_releases_interrupted_owner_this_daemon_never_held() {
+        let f = Fixture::with_review(true);
+        let _ = f.owner(); // writes the session meta; the registry stays empty
+        alinery_core::write_task(
+            &f.repo,
+            &alinery_core::Task {
+                slug: "task".into(),
+                name: "Task".into(),
+                has_worktree: true,
+                worktree: f.repo.to_string_lossy().into_owned(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let reg: Registry = Arc::new(Mutex::new(HashMap::new()));
+        let prepare = PrepareEndExecutionRequest {
+            task_slug: "task".into(),
+            execution_id: f.process.execution_id.clone(),
+            session_id: f.process.session_id.clone(),
+        };
+        let before = f.state();
+        assert_eq!(
+            prepare_end_execution(&f.repo, &reg, &prepare).unwrap_err(),
+            "unknown-session",
+            "a running owner is never released"
+        );
+        assert_eq!(f.state(), before);
+
+        mutate_execution_state(&f.repo, "task", "lane", "fixture daemon restart", |_, state| {
+            interrupt_unproven_owners(state, &BTreeSet::new());
+            Ok(())
+        })
+        .unwrap();
+        let request = prepare_end_execution(&f.repo, &reg, &prepare).unwrap().request;
+        assert_eq!(request.process_incarnation, f.process.incarnation);
+        assert_eq!(
+            f.state().executions[&f.process.execution_id].lifecycle,
+            ExecutionLifecycle::Interrupted,
+            "preparation releases nothing"
+        );
+
+        let proof = proof_path(&f.repo, "task", &f.process);
+        pending_exits().lock().unwrap().insert(
+            proof.clone(),
+            ExitProof {
+                process: f.process.clone(),
+                code: Some(0),
+            },
+        );
+        assert!(stop_execution(&f.repo, &reg, &request).is_err(), "a pending exit outranks the attestation");
+        pending_exits().lock().unwrap().remove(&proof);
+        assert_eq!(f.state().executions[&f.process.execution_id].lifecycle, ExecutionLifecycle::Interrupted);
+
+        assert!(stop_execution(&f.repo, &reg, &request).unwrap().shutdown_confirmed);
+        let state = f.state();
+        let record = &state.executions[&f.process.execution_id];
+        assert_eq!(record.lifecycle, ExecutionLifecycle::Failed);
+        assert_eq!(record.exit_code, None);
+        assert!(record.receipt_id.is_none(), "release is not acceptance");
+        assert_eq!(record.error.as_deref(), Some("previous process released by user; no exit was recorded"));
     }
 
     #[test]
