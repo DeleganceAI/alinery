@@ -95,9 +95,17 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
     }
     scrub_git_env(&mut cmd);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
+    // The credential helper inherits git's stderr and can outlive a kill of git alone, so
+    // stderr is never piped (joining its reader would block for the helper's lifetime) and
+    // git gets its own process group so the deadline kill reaps the helper too.
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().map_err(|e| format!("git credential fill: {e}"))?;
     {
         use std::io::Write;
@@ -105,19 +113,10 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
         stdin.write_all(input.as_bytes()).map_err(|e| format!("git credential fill: {e}"))?;
     }
     let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
         use std::io::Read;
         let mut bytes = Vec::new();
         if let Some(mut pipe) = stdout {
-            let _ = pipe.read_to_end(&mut bytes);
-        }
-        bytes
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        if let Some(mut pipe) = stderr {
             let _ = pipe.read_to_end(&mut bytes);
         }
         bytes
@@ -127,10 +126,13 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if std::time::Instant::now() >= deadline => {
+                #[cfg(unix)]
+                unsafe {
+                    libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
                 return Err("git credential fill timed out".into());
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
@@ -138,7 +140,6 @@ pub fn git_credential_fill(input: &str) -> Result<Option<GitCredential>, String>
         }
     };
     let stdout = stdout_reader.join().unwrap_or_default();
-    let _ = stderr_reader.join();
     if !status.success() {
         return Ok(None);
     }
@@ -666,16 +667,21 @@ mod tests {
         assert!(err.contains("not a git repository"), "{err}");
     }
 
+    // Held for the override's lifetime so two env-mutating tests never overlap (as in paths.rs).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct RestoreEnv {
         key: &'static str,
         prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl RestoreEnv {
         fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::var_os(key);
             std::env::set_var(key, value);
-            Self { key, prev }
+            Self { key, prev, _lock: lock }
         }
     }
 
@@ -985,6 +991,70 @@ mod tests {
         assert_eq!(parsed.secret, "gho_secret");
         assert!(parse_git_credential("username=octocat\npassword=\n").is_none());
         assert!(parse_git_credential("protocol=https\n").is_none());
+    }
+
+    // Issue #158: Git Credential Manager hung, git was killed at the 5s deadline, and the orphaned
+    // helper kept git's inherited stderr open. The fill must still return at the deadline and
+    // must not leave the helper behind.
+    #[test]
+    fn credential_fill_timeout_is_bounded_when_a_helper_outlives_git() {
+        let dir = unique_repo_dir_only("credential-fill-timeout");
+        let real_git = resolve_git_program().program;
+        let fake_git = dir.join("git");
+        let pid_file = dir.join("helper.pid");
+        // The direct child (sh, standing in for git) is what the deadline kills; the sleeping
+        // grandchild stands in for the helper and inherits git's pipes. Everything but
+        // `credential` goes to the real git so parallel tests keep working.
+        std::fs::write(
+            &fake_git,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = credential ]; then sleep 20 & echo $! > '{}'; wait; exit 0; fi\nexec '{}' \"$@\"\n",
+                pid_file.display(),
+                real_git.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let guard = RestoreEnv::set("ALINERY_GIT_PATH", &fake_git);
+        let started = std::time::Instant::now();
+        let result = git_credential_fill(GITHUB_CREDENTIAL_FILL);
+        let elapsed = started.elapsed();
+        drop(guard);
+        // The wrapper writes the pid right after forking the helper, well inside the 5 s fill.
+        let pid_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let helper_pid: i32 = loop {
+            let text = std::fs::read_to_string(&pid_file).unwrap_or_default();
+            if let Ok(pid) = text.trim().parse() {
+                break pid;
+            }
+            assert!(
+                std::time::Instant::now() < pid_deadline,
+                "fake helper never wrote its pid to {} (got {text:?})",
+                pid_file.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
+        // A killed helper lingers as a zombie until PID 1 reaps it; allow up to a second for that.
+        let reap_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let mut helper_alive = true;
+        while helper_alive && std::time::Instant::now() < reap_deadline {
+            helper_alive = unsafe { libc::kill(helper_pid, 0) } == 0;
+            if helper_alive {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+        unsafe { libc::kill(helper_pid, libc::SIGKILL) };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "fill returned after {elapsed:?}; a helper holding the pipe must not extend the deadline"
+        );
+        assert_eq!(result.err().as_deref(), Some("git credential fill timed out"));
+        assert!(!helper_alive, "helper {helper_pid} outlived the timed-out fill");
     }
 
     fn commit_file(repo: &Path) {
