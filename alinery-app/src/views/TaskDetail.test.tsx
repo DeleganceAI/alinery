@@ -5,6 +5,7 @@ import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import type {
+  ArtifactTreeNode,
   BoardNav,
   BoardTask,
   DispatchOutcome,
@@ -58,6 +59,8 @@ const mocks = vi.hoisted(() => ({
   listArtifactsWithMetadata: vi.fn(),
   listTaskArtifactTree: vi.fn(),
   readArtifact: vi.fn(),
+  readTaskArtifactNode: vi.fn(),
+  readAttachmentImage: vi.fn(),
   listArtifactCommentDrafts: vi.fn(),
   sessionStatuses: vi.fn(),
   sessionStatus: vi.fn(),
@@ -87,6 +90,8 @@ vi.mock("../ipc", () =>
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskArtifactTree: mocks.listTaskArtifactTree,
     readArtifact: mocks.readArtifact,
+    readTaskArtifactNode: mocks.readTaskArtifactNode,
+    readAttachmentImage: mocks.readAttachmentImage,
     listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
     sessionStatuses: mocks.sessionStatuses,
     sessionStatus: mocks.sessionStatus,
@@ -319,6 +324,8 @@ beforeEach(() => {
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
   mocks.readArtifact.mockReset().mockResolvedValue("");
+  mocks.readTaskArtifactNode.mockReset().mockResolvedValue("");
+  mocks.readAttachmentImage.mockReset().mockReturnValue(new Promise(() => {}));
   mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
   mocks.sessionStatuses.mockReset().mockImplementation(async (ids: string[]) =>
     Object.fromEntries(
@@ -2130,5 +2137,32 @@ describe("a get_task error", () => {
     // The seeded header must survive the error — a regression here (e.g. an unguarded
     // `.catch` that also clears `task`) would blank it.
     expect(screen.getByText(fixture.name)).toBeDefined();
+  });
+});
+
+describe("artifact preview images", () => {
+  it("resolves a nested snapshot artifact's relative image through the snapshot's attachment node", async () => {
+    const node = (id: string, kind: ArtifactTreeNode["kind"], label: string, children: ArtifactTreeNode[] = []): ArtifactTreeNode => ({
+      id,
+      kind,
+      label,
+      owner_task_slug: "child",
+      source: "snapshot",
+      children,
+    });
+    mocks.listTaskArtifactTree.mockResolvedValue([
+      node("snapshot", "subtask_folder", "child", [
+        node("snapshot-attachments", "subtask_folder", "Attachments", [node("snapshot-shot", "attachment", "shot.png")]),
+        node("snapshot-research", "subtask_folder", "research", [node("snapshot-findings", "referenced", "findings.md")]),
+      ]),
+    ]);
+    mocks.readTaskArtifactNode.mockResolvedValue("![shot](../attachments/shot.png)");
+    await renderDetail();
+
+    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /findings\.md/ }));
+
+    await waitFor(() => expect(mocks.readAttachmentImage).toHaveBeenCalledWith("parent", "shot.png", "snapshot-shot"));
+    expect(mocks.readTaskArtifactNode).toHaveBeenCalledWith("parent", "snapshot-findings");
   });
 });

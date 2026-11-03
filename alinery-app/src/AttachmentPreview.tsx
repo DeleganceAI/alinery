@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useState } from "react";
 import * as ipc from "./ipc";
 
-export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
+/** Blob URL for an attachment image (empty while loading or when `name` is empty); `setError` lets callers report decode/reveal failures in the same slot. */
+export function useAttachmentImageSrc(taskSlug: string, name: string, nodeId?: string) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -10,6 +11,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
     let url = "";
     setSrc("");
     setError("");
+    if (!name) return;
     ipc.readAttachmentImage(taskSlug, name, nodeId).then(
       (bytes) => {
         if (cancelled) return;
@@ -25,6 +27,12 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
       if (url) URL.revokeObjectURL(url);
     };
   }, [taskSlug, name, nodeId]);
+
+  return { src, error, setError };
+}
+
+export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
+  const { src, error, setError } = useAttachmentImageSrc(taskSlug, name, nodeId);
 
   return (
     <details className="attachment-preview" open>
