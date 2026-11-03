@@ -18,8 +18,12 @@ const directory = path.resolve(values["control-dir"]);
 await mkdir(directory, { recursive: true });
 let sequence = 0;
 const sockets = new Set();
+// OMP >= v18.4.12 compresses each loaded skill description into a routing hint
+// through a cached background one-shot that is not part of any turn.
+const isSkillHintRequest = (body) =>
+  body.messages?.length === 1 && typeof body.messages[0].content === "string" && body.messages[0].content.startsWith("Compress into one routing hint");
 const server = createServer(async (request, response) => {
-  const number = ++sequence;
+  let number = 0;
   try {
     if (request.method !== "POST" || !request.url.endsWith("/chat/completions")) {
       response.writeHead(404).end();
@@ -28,20 +32,26 @@ const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    await writeFile(path.join(directory, `request-${number}.json`), JSON.stringify({ scenario: values.scenario, body }));
     let script;
-    // The test creates response-N.json to release this exact request. A missing
-    // response never invents model behavior or counts as successful settlement.
-    while (!response.destroyed) {
-      try {
-        script = JSON.parse(await readFile(path.join(directory, `response-${number}.json`), "utf8"));
-        break;
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+    if (isSkillHintRequest(body)) {
+      // Answered here without a request number so scenario indexes stay stable.
+      script = { content: "Use for the isolated continuation acceptance review." };
+    } else {
+      number = ++sequence;
+      await writeFile(path.join(directory, `request-${number}.json`), JSON.stringify({ scenario: values.scenario, body }));
+      // The test creates response-N.json to release this exact request. A missing
+      // response never invents model behavior or counts as successful settlement.
+      while (!response.destroyed) {
+        try {
+          script = JSON.parse(await readFile(path.join(directory, `response-${number}.json`), "utf8"));
+          break;
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        await delay(10);
       }
-      await delay(10);
+      if (response.destroyed) return;
     }
-    if (response.destroyed) return;
     if (script.error) {
       response.writeHead(script.status ?? 500, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: script.error }));
@@ -71,7 +81,7 @@ const server = createServer(async (request, response) => {
       );
       response.end("data: [DONE]\n\n");
     }
-    await writeFile(path.join(directory, `responded-${number}`), "released\n");
+    if (number) await writeFile(path.join(directory, `responded-${number}`), "released\n");
   } catch (error) {
     await writeFile(path.join(directory, `error-${number}`), String(error));
     if (!response.headersSent) response.writeHead(500);

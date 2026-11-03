@@ -5,6 +5,7 @@ import uiWidget from "../chat/fixtures/live-extension_ui_request.json";
 import subagentLifecycle from "../chat/fixtures/live-subagent_lifecycle.json";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { askConfirm, confirmDanger } from "../confirm";
+import { RETRY_MESSAGE } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
 import { journalPage } from "../test/ompJournal";
 import { stubScrollSize } from "../test/scroll";
@@ -337,7 +338,7 @@ describe("ChatView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "abort" })));
   });
-  async function openLive(status: ReturnType<typeof observed>, others: ChatThread[] = []) {
+  async function openLive(status: object, others: ChatThread[] = []) {
     let onLine: (line: string) => void = () => {};
     mocks.chatRpcAttach.mockImplementation(async (args: { onLine: (line: string) => void }) => {
       onLine = args.onLine;
@@ -824,6 +825,20 @@ describe("ChatView", () => {
     emit({ type: "turn_end" });
     sendIdle("two");
     await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: "two" })));
+  });
+
+  // Issue #128: OMP gave up on a turn (provider socket closed); the thread showed Error with no way to resume short of typing.
+  it("retries a turn OMP gave up on without consuming the draft", async () => {
+    const live = observed("idle", "alive", "rpc");
+    await openLive({ ...live, state: { ...live.state, agent: { state: "errored", message: "The socket connection was closed unexpectedly" } } });
+    expect(await titleBar().findByText("Error")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("The socket connection was closed unexpectedly");
+    fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "half typed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repo", "s-live", expect.objectContaining({ type: "prompt", message: RETRY_MESSAGE })));
+    // The send opened a turn, so the composer now queues; the draft itself is untouched.
+    expect(screen.getByDisplayValue("half typed")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("queues a second send made before OMP reports the first turn", async () => {

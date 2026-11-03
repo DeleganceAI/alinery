@@ -6,6 +6,8 @@ export const LARGE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_SESSION_MESSAGE_BYTES = 4 * 1024 * 1024;
 export const OMP_BRACKETED_PASTE_END = "\u001b[201~";
 export const OMP_INTERRUPT_DATA = "\u001b";
+// Retry after OMP gave up on a turn: the model keeps its context, so a short continue is enough.
+export const RETRY_MESSAGE = "The previous response was cut off by a connection error. Continue from where you left off.";
 
 export type SessionMessageDraft = {
   body: string;
@@ -99,7 +101,7 @@ export function sessionMessageDisabledReason(readiness: SessionMessageReadiness,
   if (readiness.connection === "recovering") return "The terminal is recovering its session connection.";
   if (readiness.connection === "failed") return "The terminal connection failed. Use the terminal after reconnecting.";
   if (readiness.connection === "opening") return "The terminal is opening.";
-  if (!readiness.agent || readiness.agent.state !== "idle") {
+  if (!readiness.agent || (readiness.agent.state !== "idle" && readiness.agent.state !== "errored")) {
     return readiness.agent?.state === "unknown" ? "Session readiness is unknown." : "The session is running. Wait until it is Idle.";
   }
   if (!readiness.process || readiness.process.state === "starting") return "The session process is starting.";

@@ -177,6 +177,10 @@ pub enum RunnerEvent {
     AdapterError {
         detail: String,
     },
+    /// OMP ended a turn with stop reason `error` and will not retry it on its own.
+    TurnError {
+        detail: String,
+    },
 }
 
 fn deserialize_optional_non_empty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -216,6 +220,10 @@ pub enum AgentState {
         correlation_id: String,
     },
     Idle,
+    /// Settled like Idle, but the last turn stopped on an error OMP gave up on.
+    Errored {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

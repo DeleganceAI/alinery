@@ -231,6 +231,7 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (!role) return null;
   const mapped: ChatMessage = { role, content: mapContent(message.content) };
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
+  if (typeof message.errorMessage === "string") mapped.errorMessage = message.errorMessage;
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
   if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
@@ -528,6 +529,8 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         message.stopReason === "aborted",
       );
       entries.push(...exploded);
+      // The live path appends this row on agent_end; a reopened session must show the same failure.
+      if (message.stopReason === "error" && message.errorMessage) entries.push({ id: alloc("error"), actor: ACTOR.omp, type: "error", text: message.errorMessage });
     }
   }
   return { entries, entrySeq, liveAssistantKeys: {} };

@@ -1763,7 +1763,7 @@ pub(crate) async fn daemon_status(state: State<'_, AppState>) -> Result<DaemonSt
                     alinery_core::AgentState::Busy => busy += 1,
                     alinery_core::AgentState::WaitingForInput { .. } => waiting_for_input += 1,
                     alinery_core::AgentState::WaitingForApproval { .. } => waiting_for_approval += 1,
-                    alinery_core::AgentState::Idle => idle += 1,
+                    alinery_core::AgentState::Idle | alinery_core::AgentState::Errored { .. } => idle += 1,
                     alinery_core::AgentState::Unknown => unknown += 1,
                 }
             }

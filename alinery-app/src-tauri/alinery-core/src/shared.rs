@@ -1076,7 +1076,7 @@ pub fn normalized_session_status(state: &SessionState) -> NormalizedSessionStatu
             AgentState::WaitingForInput { .. } => return NormalizedSessionStatus::WaitingForInput,
             AgentState::WaitingForApproval { .. } => return NormalizedSessionStatus::WaitingForApproval,
             AgentState::Busy => return NormalizedSessionStatus::InProgress,
-            AgentState::Unknown | AgentState::Idle => {}
+            AgentState::Unknown | AgentState::Idle | AgentState::Errored { .. } => {}
         }
     }
 
@@ -1090,7 +1090,7 @@ pub fn normalized_session_status(state: &SessionState) -> NormalizedSessionStatu
         ProcessState::Starting => NormalizedSessionStatus::Starting,
         ProcessState::Exited { .. } => NormalizedSessionStatus::Exited,
         ProcessState::Alive => match state.agent {
-            AgentState::Idle => NormalizedSessionStatus::Idle,
+            AgentState::Idle | AgentState::Errored { .. } => NormalizedSessionStatus::Idle,
             AgentState::Unknown | AgentState::Busy => NormalizedSessionStatus::InProgress,
             AgentState::WaitingForInput { .. } => NormalizedSessionStatus::WaitingForInput,
             AgentState::WaitingForApproval { .. } => NormalizedSessionStatus::WaitingForApproval,
@@ -1114,8 +1114,18 @@ pub fn reduce_runner_event(current: &SessionState, event: &RunnerEvent) -> Runne
             }
         }
         RunnerEvent::Idle { .. } => {
-            if !matches!(current.agent, AgentState::WaitingForInput { .. } | AgentState::WaitingForApproval { .. }) {
+            // The daemon's agent_end settle and session_stop both reduce a bare Idle; neither may hide an
+            // error the extension reported for the same turn. Only the next Busy clears it.
+            if !matches!(
+                current.agent,
+                AgentState::WaitingForInput { .. } | AgentState::WaitingForApproval { .. } | AgentState::Errored { .. }
+            ) {
                 state.agent = AgentState::Idle;
+            }
+        }
+        RunnerEvent::TurnError { detail } => {
+            if !matches!(current.agent, AgentState::WaitingForInput { .. } | AgentState::WaitingForApproval { .. }) {
+                state.agent = AgentState::Errored { message: detail.clone() };
             }
         }
         RunnerEvent::WaitingForInput { correlation_id, .. } => {
@@ -2326,6 +2336,10 @@ prompt_injection = "arg"
                 agent: AgentState::Idle,
                 ..live_omp_state()
             };
+            let errored = SessionState {
+                agent: AgentState::Errored { message: "socket closed".into() },
+                ..live_omp_state()
+            };
             let ready = SessionState {
                 playbook: PlaybookState::ReadyToAdvance,
                 ..live_omp_state()
@@ -2362,6 +2376,7 @@ prompt_injection = "arg"
                 (waiting_input.clone(), NormalizedSessionStatus::WaitingForInput),
                 (waiting_approval, NormalizedSessionStatus::WaitingForApproval),
                 (idle, NormalizedSessionStatus::Idle),
+                (errored, NormalizedSessionStatus::Idle),
                 (ready, NormalizedSessionStatus::ReadyToAdvance),
                 (completed, NormalizedSessionStatus::Completed),
                 (failed.clone(), NormalizedSessionStatus::Failed),
@@ -2373,6 +2388,31 @@ prompt_injection = "arg"
             }
             assert_eq!(normalized_session_status(&waiting_input), normalized_session_status(&waiting_input_with_new_correlation));
             assert_eq!(normalized_session_status(&failed), normalized_session_status(&failed_with_new_detail));
+        }
+
+        // Issue #128: OMP ends a turn it gave up on with stop reason `error`; reducing that to a
+        // clean Idle hid the failure while the playbook step stalled.
+        #[test]
+        fn turn_error_is_sticky_until_the_next_turn() {
+            let busy = SessionState {
+                agent: AgentState::Busy,
+                ..live_omp_state()
+            };
+            let error = RunnerEvent::TurnError { detail: "socket closed".into() };
+            let errored = reduce_runner_event(&busy, &error).state;
+            assert_eq!(errored.agent, AgentState::Errored { message: "socket closed".into() });
+            assert_eq!(normalized_session_status(&errored), NormalizedSessionStatus::Idle);
+            assert_eq!(reduce_runner_event(&errored, &RunnerEvent::Idle { omp_turn_id: None }).state.agent, errored.agent);
+            let next_turn = RunnerEvent::Busy {
+                omp_turn_id: None,
+                correlation_id: None,
+            };
+            assert_eq!(reduce_runner_event(&errored, &next_turn).state.agent, AgentState::Busy);
+            let waiting = SessionState {
+                agent: AgentState::WaitingForInput { correlation_id: "ask".into() },
+                ..live_omp_state()
+            };
+            assert_eq!(reduce_runner_event(&waiting, &error).state.agent, waiting.agent);
         }
 
         #[test]
@@ -2398,6 +2438,7 @@ prompt_injection = "arg"
                 RunnerEvent::AdapterError {
                     detail: "extension failed".into(),
                 },
+                RunnerEvent::TurnError { detail: "socket closed".into() },
             ];
             for event in events {
                 let envelope = RunnerEventEnvelope {

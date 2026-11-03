@@ -1040,6 +1040,8 @@ export function obsLabel(kind: ObservationDisplayKind): string {
       return "Running";
     case "idle":
       return "Idle";
+    case "errored":
+      return "Error";
     case "unknown":
       return "Unknown";
   }
@@ -1073,6 +1075,8 @@ function obsTooltip(kind: ObservationDisplayKind): string {
       return "Agent is processing — in progress";
     case "idle":
       return "Agent turn complete — idle";
+    case "errored":
+      return "The last turn stopped on an error — retry to continue";
     case "unknown":
       return "Agent state unknown";
   }
@@ -1080,8 +1084,9 @@ function obsTooltip(kind: ObservationDisplayKind): string {
 
 // Attention reason to pass to notify_session_attention, or null if no notification.
 // Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
+function attentionReason(kind: ObservationDisplayKind): "idle" | "errored" | "waiting_for_input" | "waiting_for_approval" | null {
   if (kind === "idle") return "idle";
+  if (kind === "errored") return "errored";
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
   return null;
@@ -1189,7 +1194,8 @@ export function StatusDot({
     );
   }
 
-  return <StatusMarker kind={kind} minimal={minimal} />;
+  const agent = obs?.state?.agent;
+  return <StatusMarker kind={kind} minimal={minimal} title={kind === "errored" && agent?.state === "errored" ? agent.message : undefined} />;
 }
 
 /**
@@ -1225,7 +1231,7 @@ export function StatusMarker({
   }
 
   // Compact badges for waits and failures.
-  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "unknown") {
+  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "errored" || kind === "unknown") {
     return (
       <span className={`statusdot statusdot-badge statusdot-${kind}`} title={title}>
         <StateIcon state={kind} />

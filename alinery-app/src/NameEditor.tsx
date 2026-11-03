@@ -125,7 +125,12 @@ export function awaitingSessionName(
   observation: { lifecycle: { state: string }; state?: { process: { state: string }; agent: { state: string } } | null } | null | undefined,
 ): boolean {
   if (session.name || session.name_error || session.archived || session.harness !== "omp") return false;
-  return observation?.lifecycle.state === "live" && observation.state?.process.state !== "exited" && observation.state?.agent.state !== "idle";
+  return (
+    observation?.lifecycle.state === "live" &&
+    observation.state?.process.state !== "exited" &&
+    observation.state?.agent.state !== "idle" &&
+    observation.state?.agent.state !== "errored"
+  );
 }
 
 export function PendingSessionName() {

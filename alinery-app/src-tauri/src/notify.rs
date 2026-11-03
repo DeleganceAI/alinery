@@ -76,6 +76,7 @@ pub(crate) fn set_dock_badge_count(app: AppHandle, count: i64) -> Result<(), Str
 pub(crate) fn session_attention_body(repo: &Path, slug: Option<String>, reason: &str) -> Result<String, String> {
     let suffix = match reason {
         "idle" => "idle, needs you",
+        "errored" => "stopped on an error, needs you",
         "waiting_for_input" => "waiting for your input",
         "waiting_for_approval" => "waiting for your approval",
         _ => return Err(format!("unsupported attention reason: {reason}")),
@@ -89,7 +90,7 @@ pub(crate) fn session_attention_body(repo: &Path, slug: Option<String>, reason: 
 }
 
 // Semantic attention bridge. The frontend calls this on normalized transitions into
-// idle/waiting states; only the three allowed semantic transitions may fire a notification.
+// idle/errored/waiting states; only the four allowed semantic transitions may fire a notification.
 // Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
 #[tauri::command]
 pub(crate) fn notify_session_attention(app: AppHandle, repo_path: String, slug: Option<String>, reason: String) -> Result<(), String> {

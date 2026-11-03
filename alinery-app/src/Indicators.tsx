@@ -33,6 +33,7 @@ const STATE_ICON = {
   waiting_for_input: MessageSquareDot,
   waiting_for_approval: Hand,
   failed: CircleX,
+  errored: CircleX,
   unknown: CircleQuestionMark,
 } as const;
 

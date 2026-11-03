@@ -29,7 +29,7 @@ import { NameEditor } from "../NameEditor";
 import { setThinkingLevelCommand } from "../ompRpc";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
-import { OMP_INTERRUPT_DATA } from "../sessionMessage";
+import { OMP_INTERRUPT_DATA, RETRY_MESSAGE } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
@@ -252,6 +252,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const uiPrompt = chat.prompt;
   const sendNowEnabled = chat.sendNowEnabled;
   const statusKind = activity.kind;
+  const turnError = statusKind === "errored" && observation?.state?.agent.state === "errored" ? observation.state.agent.message : null;
   const processLive = chat.processLive;
   const inTerminal = chat.inTerminal;
   const terminalIo = chat.terminalIo;
@@ -760,6 +761,14 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             </span>
             <button type="button" className="btn small" onClick={() => chat.reconnect()}>
               Reconnect
+            </button>
+          </div>
+        ) : null}
+        {turnError !== null && disconnected === null && !inTerminal && !activity.turnActive ? (
+          <div className="chat-banner" role="alert">
+            <span>{turnError}</span>
+            <button type="button" className="btn small" disabled={sending} onClick={() => send(RETRY_MESSAGE)}>
+              Retry
             </button>
           </div>
         ) : null}

@@ -1646,9 +1646,11 @@ describe("2C — OMP extension callback behavior in isolation", () => {
     await api.trigger("agent_start", { type: "agent_start" });
     assert.deepEqual(emit.emitted[0], { type: "busy" });
 
+    // OMP's own retry: the failed tail rides along, but willContinue means the turn is still live.
     await api.trigger("agent_end", {
       type: "agent_end",
       willContinue: true,
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "socket closed" }],
     });
     assert.deepEqual(emit.emitted[1], { type: "busy" });
 
@@ -1673,6 +1675,34 @@ describe("2C — OMP extension callback behavior in isolation", () => {
       assert.notEqual(ev.type, "readiness_reported");
       assert.notEqual(ev.type, "process_exited");
     }
+  });
+
+  // Issue #128: OMP ends a turn whose provider stream died with an assistant message
+  // `stopReason: "error"` and fires agent_end with that tail. Reporting it as a clean
+  // `idle` hides the failure: the UI shows Idle and the playbook step stalls.
+  test("error_stopped_terminal_agent_end_is_not_reported_as_idle", async () => {
+    const api = makeFakeApi();
+    const emit = makeRecordingEmitter();
+    registerCallbacks(api, emit, makeCompletionEmitter(emit), undefined);
+
+    await api.trigger("agent_start", { type: "agent_start" });
+    await api.trigger("agent_end", {
+      type: "agent_end",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Analyze every candidate." }] },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Partial analysis that was already streamed…" }],
+          stopReason: "error",
+          errorMessage: "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+        },
+      ],
+    });
+
+    const last = emit.emitted.at(-1);
+    assert.notDeepEqual(last, { type: "idle" }, "a transport error stop must surface, not read as a clean idle turn");
+    assert.equal(last.type, "turn_error");
+    assert.match(last.detail, /socket connection was closed unexpectedly/);
   });
 
   test("maps_approval_with_matching_correlation", async () => {

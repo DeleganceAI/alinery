@@ -539,7 +539,8 @@ export type AgentState =
   | { state: "busy" }
   | { state: "waiting_for_input"; correlation_id: string }
   | { state: "waiting_for_approval"; correlation_id: string }
-  | { state: "idle" };
+  | { state: "idle" }
+  | { state: "errored"; message: string };
 
 // Mirrors alinery-core PlaybookState
 export type PlaybookState = { state: "in_progress" } | { state: "ready_to_advance" } | { state: "completed" } | { state: "failed"; reason: string };
@@ -584,6 +585,8 @@ export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";
   content: ChatPart[];
   stopReason?: string;
+  /** OMP's reason text on a `stopReason: "error"` row. */
+  errorMessage?: string;
   customType?: string;
   /**
    * Id of the OMP journal row this message came from. Present only for messages read off disk;
