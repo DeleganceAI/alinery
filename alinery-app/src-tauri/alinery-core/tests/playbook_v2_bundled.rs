@@ -574,10 +574,10 @@ fn bundled_solution_exploration_loops_and_compares() {
 }
 
 #[test]
-fn numeric_demos_are_not_bundled() {
+fn retired_and_demo_playbooks_are_not_bundled() {
     let trace = Trace::new("superdevelop");
     let catalog = load_playbook_catalog(&trace.roots);
-    for key in ["parallel-numbers", "parallel-squares"] {
+    for key in ["generic-session", "parallel-numbers", "parallel-squares"] {
         let reference = PlaybookRef {
             scope: PlaybookScope::Bundled,
             key: key.into(),
@@ -668,22 +668,6 @@ fn single_result_trace(key: &str, step: &str, output: &str) {
 #[test]
 fn bundled_free_form_trace() {
     single_result_trace("free-form", "session", "session-result.md");
-}
-
-#[test]
-fn bundled_generic_session_trace() {
-    single_result_trace("generic-session", "complete-the-request", "result.md");
-    let generic = Trace::new("generic-session");
-    let free = resolve_playbook(
-        &generic.roots,
-        &PlaybookRef {
-            scope: PlaybookScope::Bundled,
-            key: "free-form".into(),
-        },
-    )
-    .unwrap();
-    assert_ne!(generic.state.reference, free.source.reference);
-    assert_ne!(generic.definition, free.definition);
 }
 
 #[test]

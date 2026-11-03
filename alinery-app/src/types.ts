@@ -628,6 +628,7 @@ export type NormalizedPlaybook = {
   version: number;
   key: string;
   title: string;
+  tagline?: string;
   description: string;
   default_model: string;
   default_harness: string;

@@ -397,6 +397,10 @@ The server checks:
 
 Required top-level fields: `version` integer, `key` string, `title` string, `description` string, `default_model` string, `default_harness` string, `step` array.
 
+Optional top-level field: `tagline` string. It is an author-written sentence describing what the Playbook helps accomplish, distinct from its full `description`. When present it must be nonblank, at most 120 Unicode scalar values, and contain no control characters or Unicode line/paragraph separators (U+2028/U+2029). Preserve the parsed string exactly. An invalid value produces `invalid_tagline`, field `tagline`, message `tagline must be nonblank, at most 120 Unicode characters, and contain no control characters or line separators`. A non-string produces `invalid_field_type`. Apply this semantic check only after structural checks pass, as with empty titles.
+
+**Tagline rollout:** these rules require the companion `alinery-web` validator update before publishing tagged files. Older apps reject files containing the field. The source body retains it without a database migration; existing summary responses remain unchanged. This section specifies the coordinated format change, not confirmation that the deployed API already accepts it.
+
 Each step: `key`, `title`, `short`, `model`, `harness` string; `is_coding_step`, `auto_advance_default` boolean; `inputs`, `outputs` array.
 
 Each input: `path` string, `mode` string. Each output: `path` string. `mode` is not checked against a set. Unknown harness names are not rejected. Prompt text is not scanned for secrets.

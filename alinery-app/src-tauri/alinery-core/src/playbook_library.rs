@@ -16,7 +16,6 @@ pub const BUNDLED_PLAYBOOKS: &[(&str, &str)] = &[
     ("review", include_str!("../../playbooks/review/playbook.md")),
     ("bug-hunting", include_str!("../../playbooks/bug-hunting/playbook.md")),
     ("free-form", include_str!("../../playbooks/free-form/playbook.md")),
-    ("generic-session", include_str!("../../playbooks/generic-session/playbook.md")),
     ("natural-planning-brainstorm", include_str!("../../playbooks/natural-planning-brainstorm/playbook.md")),
     ("systematic-naming", include_str!("../../playbooks/systematic-naming/playbook.md")),
     ("primed-feature-development", include_str!("../../playbooks/primed-feature-development/playbook.md")),
@@ -846,6 +845,35 @@ mod tests {
                 overwrite,
             },
         )
+    }
+
+    #[test]
+    fn bundled_taglines_survive_copy_edit_save_and_reload() {
+        let sandbox = Sandbox::new();
+        for (key, source) in BUNDLED_PLAYBOOKS {
+            let mut definition = parse_playbook_md(source).unwrap();
+            let tagline = definition.tagline.clone().expect("each bundled playbook has a tagline");
+            definition.key = format!("copy-{key}");
+            definition.title = format!("Copy of {}", definition.title);
+            let target = PlaybookRef {
+                scope: PlaybookScope::Repo,
+                key: definition.key.clone(),
+            };
+            let saved = save_playbook(
+                &sandbox.roots,
+                SavePlaybookRequest {
+                    target: target.clone(),
+                    source: render_playbook_md(&definition),
+                    overwrite: false,
+                },
+            )
+            .unwrap();
+            let reloaded = resolve_playbook(&sandbox.roots, &target).unwrap();
+            assert_eq!(saved.definition, definition);
+            assert_eq!(reloaded.definition, definition);
+            assert_eq!(reloaded.definition.tagline.as_deref(), Some(tagline.as_str()));
+            assert_eq!(parse_playbook_md(&fs::read_to_string(saved.source.path.unwrap()).unwrap()).unwrap(), definition);
+        }
     }
 
     #[test]

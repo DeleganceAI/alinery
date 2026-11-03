@@ -1430,6 +1430,7 @@ mod tests {
                 version: 2,
                 key: "graph".into(),
                 title: "Graph".into(),
+                tagline: None,
                 description: String::new(),
                 default_model: String::new(),
                 default_harness: "omp".into(),

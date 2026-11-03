@@ -2,6 +2,7 @@
 version = 2
 key = "academic-survey"
 title = "Academic Survey"
+tagline = "Build a source-backed understanding of a research question."
 description = "Frame the question, search in parallel, give every source its own reading session, and follow relevant citations through successive evidence waves. Keep a cumulative, source-traceable survey draft."
 default_model = ""
 default_harness = "omp"
