@@ -1335,3 +1335,115 @@ fn t15_version_probes_never_kill_a_live_session() {
 
     d.shutdown().ok();
 }
+
+// #150: a normal-buffer shell prints more lines than fit, the window shrinks (the app forwards
+// every fit as a `resize`), the pane is reopened. The replay must still END with the newest
+// output. attach_client used to append a reconstructed frame after the raw tail; that frame opens
+// with ESC[H ESC[J, wipes the viewport the tail just drew, and repaints it from an emulator that
+// keeps no scrollback and truncates from the BOTTOM on a shrink — so the newest lines vanished.
+#[test]
+fn t16_reattach_after_shrink_keeps_the_newest_output_visible() {
+    let _g = test_lock();
+    if !pty_available() {
+        eprintln!("skip t16: no pty");
+        return;
+    }
+    let repo = TempRepo::new();
+    let harnesses = format!(
+        r#"
+[[harness]]
+key = "omp"
+name = "numbered"
+binary = "sh"
+args = ["-c", "i=1; while [ $i -le 200 ]; do echo QA_REPLAY-$i; i=$((i+1)); done; printf 'PROMPT-{token}> '; sleep 30"]
+model_arg = []
+prompt_injection = "arg"
+adapter = "unsupported"
+"#,
+        token = repo.token
+    );
+    fs::write(repo.root.join(".alinery/harnesses.toml"), harnesses).unwrap();
+    let d = Daemon::spawn(&repo, None).expect("daemon");
+
+    let task_slug = "shrink-task";
+    let task_dir = repo.root.join(".alinery/tasks").join(task_slug);
+    let sessions_dir = task_dir.join("sessions");
+    fs::create_dir_all(&sessions_dir).unwrap();
+    fs::write(
+        task_dir.join("task.md"),
+        format!(
+            "name = \"Shrink\"\nslug = \"{task_slug}\"\nbranch = \"shrink\"\nworktree = {:?}\nhas_worktree = true\ncreated = 1\n",
+            repo.root.display().to_string()
+        ),
+    )
+    .unwrap();
+    let id = format!("s-{}", repo.token);
+    fs::write(
+        sessions_dir.join(format!("{id}.meta.json")),
+        serde_json::to_vec(&json!({
+            "id": id,
+            "worktree": repo.root.display().to_string(),
+            "created": 1,
+            "harness": "omp",
+            "generic": true,
+            "prompt": ""
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    // Tall pane: 40 rows.
+    let mut s1 = UnixStream::connect(&d.socket).expect("connect");
+    writeln!(
+        s1,
+        r#"{{"op":"spawn","id":"{id}","cwd":"{cwd}","task_slug":"{task_slug}","model":"","phase":"","attach_id":1,"cols":80,"rows":40}}"#,
+        cwd = repo.root.display(),
+    )
+    .unwrap();
+    let mut ack = String::new();
+    BufReader::new(&s1).read_line(&mut ack).unwrap();
+    assert!(ack.contains("\"ok\":true"), "spawn ack: {ack}");
+
+    // The prompt is the last thing the shell emits: once it is on disk, all 200 lines are too.
+    let scroll = sessions_dir.join(format!("{id}.scrollback"));
+    let prompt = format!("PROMPT-{}>", repo.token);
+    let on_disk = || fs::read(&scroll).map(|b| String::from_utf8_lossy(&b).contains(&prompt)).unwrap_or(false);
+    let start = Instant::now();
+    while !on_disk() && start.elapsed() < Duration::from_secs(15) {
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(on_disk(), "harness never reached its prompt");
+
+    // Shrink the pane while attached, then navigate away.
+    assert_eq!(d.rpc(json!({"op": "resize", "id": id, "cols": 80, "rows": 20})).unwrap(), json!({"ok": true}));
+    drop(s1);
+
+    // Reopen at the shrunken geometry.
+    let mut s2 = UnixStream::connect(&d.socket).expect("reconnect");
+    s2.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+    writeln!(s2, r#"{{"op":"attach","id":"{id}","attach_id":2,"cols":80,"rows":20}}"#).unwrap();
+    let mut r2 = BufReader::new(s2);
+    let mut ack2 = String::new();
+    r2.read_line(&mut ack2).unwrap();
+    assert!(ack2.contains("\"ok\":true"), "attach ack: {ack2}");
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match r2.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => break, // read timeout: the idle shell sends nothing more
+        }
+    }
+
+    // What the reopened xterm shows: same geometry, with scrollback like the real client.
+    let mut client = vt100::Parser::new(20, 80, 10_000);
+    client.process(&buf);
+    let visible = client.screen().contents();
+    assert!(
+        visible.contains("QA_REPLAY-200"),
+        "the newest output must stay visible after shrink + reopen; viewport:\n{visible}"
+    );
+    assert!(visible.contains(&prompt), "the prompt must follow the newest output; viewport:\n{visible}");
+    d.kill_nine();
+}
