@@ -642,7 +642,7 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
 
   fireEvent.click(screen.getByTitle(task.repo_path));
   fireEvent.click(await screen.findByRole("button", { name: "Playbooks" }));
-  await screen.findByRole("table", { name: "Playbook library" });
+  await screen.findByRole("list", { name: "Playbook library" });
 });
 
 describe("task list starter actions", () => {
@@ -847,7 +847,7 @@ describe("startup view", () => {
 
     await renderApp();
 
-    expect(await screen.findByRole("table", { name: "Playbook library" })).toBeTruthy();
+    expect(await screen.findByRole("list", { name: "Playbook library" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
   });
 
@@ -861,7 +861,7 @@ describe("startup view", () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Add a repository" })).toBeTruthy();
-    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Playbook library" })).toBeNull();
   });
 
   it("keeps incomplete onboarding visible when Playbooks is saved", async () => {
@@ -872,7 +872,7 @@ describe("startup view", () => {
 
     expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
-    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Playbook library" })).toBeNull();
   });
 
   it("opens the saved configured canvas at startup", async () => {
@@ -1081,7 +1081,7 @@ describe("Playbooks navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     await screen.findByText("task detail:task");
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
-    await screen.findByRole("table", { name: "Playbook library" });
+    await screen.findByRole("list", { name: "Playbook library" });
     fireEvent.keyDown(document.body, { key: "Escape" });
     await screen.findByText("task detail:task");
   });
