@@ -60,7 +60,8 @@ Edges come straight from the step contracts, by the same selector-overlap rule
 
 Chords and the loop sit at 35% opacity. They come up to full for the hovered
 step, or the clicked step when nothing is hovered; hovering fades every chord and loop
-that does not touch that step. Rails never change. The centre text knocks out whatever crosses it, line by line.
+that does not touch that step. Rails never change. Chords and the loop end in a small arrowhead at the
+consumer step. The centre text knocks out whatever crosses it, line by line.
 
 ## Limits
 

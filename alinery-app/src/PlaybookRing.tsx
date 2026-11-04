@@ -113,6 +113,25 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
     <section className="playbook-ring" aria-label="Playbook steps">
       {/* No <title>: WebKit shows it as a tooltip wherever the pointer rests. The progressbar wrapper carries the label. */}
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="presentation" aria-hidden={count === 0 || undefined}>
+        <defs>
+          {/* Arrowhead at the consumer end of chords and the loop. Filled by class so it matches the edge stroke. */}
+          {(["chord", "loop"] as const).map((kind) => (
+            <marker
+              key={kind}
+              id={`${id}-arrow-${kind}`}
+              className={`ring-arrow-${kind}`}
+              viewBox="0 0 10 10"
+              refX="10"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              markerUnits="userSpaceOnUse"
+              orient="auto"
+            >
+              <path d="M0,0 L10,5 L0,10 z" />
+            </marker>
+          ))}
+        </defs>
         {rails.map((rail, order) => {
           const radius = R - 16 - order * 9;
           return (
@@ -137,6 +156,7 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
               key={`${chord.from}-${chord.to}-${chord.path}`}
               className={`ring-edge ring-chord${edgeClass([chord.from, chord.to])}`}
               d={`M${xa},${ya} Q${qx},${qy} ${xb},${yb}`}
+              markerEnd={`url(#${id}-arrow-chord)`}
             />
           );
         })}
@@ -168,7 +188,8 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
             if (loop.to === 0) {
               return (
                 <g className={`ring-edge ring-loop${dim}`}>
-                  <path d={arcPath(a1, a2, R)} />
+                  {/* Stops at the edge of node 1 so the arrowhead is not drawn under it. */}
+                  <path d={arcPath(a1, a2 - (NODE_R + 2) / R, R)} markerEnd={`url(#${id}-arrow-loop)`} />
                   <path id={`${id}-loop`} className="ring-loop-label" d={arcPath(a1, a2, R - 22)} />
                   <text>
                     <textPath href={`#${id}-loop`} startOffset="50%" textAnchor="middle">
@@ -184,7 +205,7 @@ export function PlaybookRing({ steps, selectedStepKey, onSelectStep, onHoverStep
             const qy = CY * 0.12 + ((ya + yb) / 2) * 0.88;
             return (
               <g className={`ring-edge ring-loop${dim}`}>
-                <path d={`M${xa},${ya} Q${qx},${qy} ${xb},${yb}`} />
+                <path d={`M${xa},${ya} Q${qx},${qy} ${xb},${yb}`} markerEnd={`url(#${id}-arrow-loop)`} />
                 <path id={`${id}-loop`} className="ring-loop-label" d={`M${xa},${ya} Q${qx},${qy - 16} ${xb},${yb}`} />
                 <text>
                   <textPath href={`#${id}-loop`} startOffset="50%" textAnchor="middle">

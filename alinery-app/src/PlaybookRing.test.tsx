@@ -113,6 +113,10 @@ describe("PlaybookRing", () => {
     const chord = ring.querySelector(".ring-chord") as SVGPathElement;
     expect(rail.classList.contains("lit")).toBe(false);
     expect(chord.classList.contains("dim")).toBe(false);
+    // Arrowheads point into the consumer: chords and the loop carry a marker, rails do not.
+    expect(chord.getAttribute("marker-end")).toMatch(/^url\(#.+-arrow-chord\)$/);
+    expect((ring.querySelector(".ring-loop path") as SVGPathElement).getAttribute("marker-end")).toMatch(/^url\(#.+-arrow-loop\)$/);
+    expect(ring.querySelectorAll(".ring-rail [marker-end]")).toHaveLength(0);
     const gather = screen.getByRole("button", { name: "gather" });
     fireEvent.mouseEnter(gather);
     expect(onHoverStep).toHaveBeenCalledWith("gather");
