@@ -1087,9 +1087,22 @@ pub(crate) fn rpc_secret_path(dir: &Path, repo: &str, lane: &str) -> PathBuf {
     dir.join("rpc-secrets").join(format!("{}.secret", fnv1a64_hex(&format!("{repo}\n{lane}"))))
 }
 
-/// Write the copy the app keeps (before the daemon exists, so a successful start never lacks it).
+/// Where a token waits until its daemon has answered with it (`daemon_rpc::rpc_token` promotes it).
+pub(crate) fn pending_rpc_secret_path(committed: &Path) -> PathBuf {
+    committed.with_extension("pending")
+}
+
+/// Write the kept copy directly (tests; a start goes through `store_pending_rpc_secret`).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn store_rpc_secret(dir: &Path, repo: &str, lane: &str, secret: &str) -> Result<(), String> {
     alinery_core::write_owner_only_bytes(&rpc_secret_path(dir, repo, lane), secret.as_bytes())
+}
+
+/// Keep the token of a daemon about to be spawned, without replacing the live daemon's token: the
+/// spawn may lose the ownership lock to a daemon that is alive but slow to answer, and then the new
+/// token belongs to nobody. A daemon that does start answers with it, and `rpc_token` commits it.
+pub(crate) fn store_pending_rpc_secret(dir: &Path, repo: &str, lane: &str, secret: &str) -> Result<(), String> {
+    alinery_core::write_owner_only_bytes(&pending_rpc_secret_path(&rpc_secret_path(dir, repo, lane)), secret.as_bytes())
 }
 
 /// The hand-off file a local daemon reads and deletes before it listens (`--rpc-secret-file`).

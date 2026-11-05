@@ -101,6 +101,10 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
             tx.send(trailers("0")).unwrap();
         }
         // protocol 25, build_id "b-1", epoch "e-7", capabilities [1, 2] (packed), repo_root "/r".
+        "/alinery.v1.AdminService/Hello" if req.headers().get("authorization").is_some_and(|v| v == "Bearer stale") => {
+            builder = builder.header("grpc-status", "16").header("grpc-message", "wrong token");
+            empty = true;
+        }
         "/alinery.v1.AdminService/Hello" => {
             let mut message = vec![0x08, 25, 0x12, 3];
             message.extend_from_slice(b"b-1");
@@ -613,6 +617,37 @@ fn shutdown_falls_back_to_the_old_op_only_when_there_is_nothing_to_call() {
     )
     .unwrap_err();
     assert_eq!(error, "old op failed");
+}
+
+#[test]
+fn a_pending_token_replaces_the_kept_one_only_once_its_daemon_answers_with_it() {
+    let secret_of = |t: &Teardown| crate::daemon::rpc_secret_path(alinery_core::app_config_dir_of(&t.app_config).unwrap(), &t.repo.display().to_string(), "");
+    let stop = |t: &Teardown| {
+        shutdown_daemon(&t.repo.display().to_string(), &t.app_config, None, ShutdownOrigin::StopDaemon, "", None, || {
+            panic!("must not fall back")
+        })
+    };
+    let pend = |t: &Teardown, token: &str| {
+        let dir = alinery_core::app_config_dir_of(&t.app_config).unwrap();
+        crate::daemon::store_pending_rpc_secret(dir, &t.repo.display().to_string(), "", token).unwrap();
+    };
+
+    // A spawn that lost the ownership lock leaves a token no daemon holds; the live daemon's still works.
+    let t = teardown_fixture(None, "live-kept");
+    pend(&t, "stale");
+    stop(&t).unwrap();
+    assert_eq!(shutdowns_with("live-kept").len(), 1);
+    assert!(shutdowns_with("stale").is_empty());
+    assert_eq!(fs::read_to_string(secret_of(&t)).unwrap(), "live-kept");
+
+    // A spawn that took over: its token answers, so it becomes the kept one.
+    let t = teardown_fixture(None, "replaced");
+    pend(&t, "fresh-token");
+    stop(&t).unwrap();
+    assert_eq!(shutdowns_with("fresh-token").len(), 1);
+    assert!(shutdowns_with("replaced").is_empty());
+    assert_eq!(fs::read_to_string(secret_of(&t)).unwrap(), "fresh-token");
+    assert!(!crate::daemon::pending_rpc_secret_path(&secret_of(&t)).exists());
 }
 
 #[test]

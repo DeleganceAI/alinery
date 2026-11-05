@@ -1117,11 +1117,15 @@ pub(crate) fn rpc_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, St
 /// Open the RPC forward and ask the daemon `Hello` through it. Re-requesting a forward that exists is harmless.
 fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result<crate::daemon_rpc::HelloResponse, String> {
     let (local, remote_socket) = rpc_forward(&session.conn.host_id, repo_path)?;
-    let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, repo_path, "")).map_err(|e| format!("no RPC token for this daemon: {e}"))?;
+    let secret_path = crate::daemon::rpc_secret_path(&session.secrets_dir, repo_path, "");
     let deadline = Instant::now() + wait;
     loop {
         let _ = session.conn.forward(&local, &remote_socket);
-        match tauri::async_runtime::block_on(crate::daemon_rpc::hello(&local, token.trim())) {
+        let hello = tauri::async_runtime::block_on(async {
+            let token = crate::daemon_rpc::rpc_token(&local, &secret_path).await?;
+            crate::daemon_rpc::hello(&local, &token).await
+        });
+        match hello {
             Ok(hello) => return Ok(hello),
             Err(error) if Instant::now() >= deadline => return Err(error),
             Err(_) => std::thread::sleep(Duration::from_millis(200)),
@@ -1163,7 +1167,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         // The RPC token travels the same way, and its copy is kept per repo and lane (the remote lane is "").
         let rpc_secret = crate::daemon::new_rpc_secret()?;
         let rpc_secret_file = format!("{}/ui-secrets/{}.rpc", session.config_dir, &repo_hash[..12]);
-        crate::daemon::store_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
+        crate::daemon::store_pending_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
         session.channel.call(
             RepoOp::WriteFile {
                 path: rpc_secret_file.clone().into(),

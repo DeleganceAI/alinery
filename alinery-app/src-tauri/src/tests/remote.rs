@@ -206,8 +206,11 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     // The RPC socket rides its own forward: Hello through the bridge path, with the token this Mac kept.
     let hello_now = |session: &RemoteSession| {
         let (local, _) = rpc_forward(&session.conn.host_id, &repo).unwrap();
-        let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "")).unwrap();
-        tauri::async_runtime::block_on(crate::daemon_rpc::hello(&local, token.trim())).unwrap()
+        let secret = crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "");
+        tauri::async_runtime::block_on(async {
+            let token = crate::daemon_rpc::rpc_token(&local, &secret).await.unwrap();
+            crate::daemon_rpc::hello(&local, &token).await.unwrap()
+        })
     };
     let first_hello = hello_now(&session);
     assert_eq!(first_hello.protocol, alinery_core::PROTOCOL_VERSION);

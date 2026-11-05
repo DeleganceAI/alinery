@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager};
 
 use alinery_core::daemon_client::{self, daemon_command};
 
-use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon, new_rpc_secret, store_rpc_secret, write_rpc_secret_handoff};
+use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon, new_rpc_secret, store_pending_rpc_secret, write_rpc_secret_handoff};
 use crate::paths::{app_config_path, is_local_repo_dir};
 use crate::state::AppState;
 
@@ -42,7 +42,7 @@ fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
     // The token is kept before the daemon exists, as for a remote daemon, so a started daemon never
     // lacks its copy. The daemon deletes the hand-off file once it has read it.
     let secret = new_rpc_secret()?;
-    store_rpc_secret(
+    store_pending_rpc_secret(
         alinery_core::app_config_dir_of(app_config).ok_or("app config root unavailable")?,
         &repo.to_string_lossy(),
         namespace.as_deref().unwrap_or(""),

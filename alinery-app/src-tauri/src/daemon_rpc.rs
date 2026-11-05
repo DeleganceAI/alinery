@@ -360,11 +360,11 @@ pub(crate) async fn daemon_rpc(request: Request<'_>, webview: Webview) -> Result
     let config = app_config_path(app)?;
     let config_dir = alinery_core::app_config_dir_of(&config).ok_or("app config root unavailable")?;
     let (socket, secret_path) = resolve(&repo, config_dir, alineryd_socket_namespace().as_deref())?;
-    let token = std::fs::read_to_string(&secret_path).map_err(|e| format!("daemon RPC token for {repo}: {e}"))?;
+    let token = rpc_token(&socket, &secret_path).await.map_err(|e| format!("daemon RPC token for {repo}: {e}"))?;
     // A closed window ends its calls too; a reload does not announce itself, and a failed send covers that.
     let label = webview.label().to_string();
     watch_window(&webview, &label);
-    BRIDGE.run(&socket, token.trim(), call, |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok()).await;
+    BRIDGE.run(&socket, &token, call, |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok()).await;
     Ok(())
 }
 
@@ -474,6 +474,25 @@ pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, S
         .map_err(|_| "Hello timed out".to_string())?
 }
 
+/// The token for the daemon on `socket`. A start keeps its new token as pending (see
+/// `store_pending_rpc_secret`); the daemon that answers Hello with it makes it the committed one,
+/// and until one does the committed token is still the live daemon's.
+pub(crate) async fn rpc_token(socket: &Path, committed: &Path) -> Result<String, String> {
+    let read = |path: &Path| std::fs::read_to_string(path).map(|token| token.trim().to_string());
+    let old = read(committed);
+    let pending = crate::daemon::pending_rpc_secret_path(committed);
+    if let Ok(new) = read(&pending) {
+        if hello(socket, &new).await.is_ok() {
+            std::fs::rename(&pending, committed).map_err(|e| format!("commit RPC token: {e}"))?;
+            return Ok(new);
+        }
+        if old.is_err() {
+            return Ok(new);
+        }
+    }
+    old.map_err(|e| e.to_string())
+}
+
 /// Stop one daemon through `AdminService.Shutdown` with the origin of the deliberate action that
 /// asked for it, and return how many sessions it ended.
 ///
@@ -523,8 +542,11 @@ pub(crate) fn shutdown_daemon(
     legacy: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let (socket, secret_path) = resolve(repo_key, app_config_dir_of(app_config).ok_or("app config root unavailable")?, lane)?;
-    let Ok(token) = std::fs::read_to_string(&secret_path) else { return legacy() };
-    match tauri::async_runtime::block_on(shutdown_over_rpc(&socket, token.trim(), origin, confirmation_id, bound)) {
+    let shutdown = tauri::async_runtime::block_on(async {
+        let token = rpc_token(&socket, &secret_path).await?;
+        shutdown_over_rpc(&socket, &token, origin, confirmation_id, bound).await
+    });
+    match shutdown {
         Ok(_) => Ok(()),
         Err(error) if error.starts_with(STATUS_PREFIX) => Err(format!("the daemon refused to shut down: {error}")),
         // A daemon that took the connection and then went silent is not an older one; the old wire would only wedge too.
