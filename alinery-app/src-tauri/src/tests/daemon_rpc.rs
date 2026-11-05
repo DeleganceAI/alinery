@@ -1,7 +1,7 @@
 //! The webview bridge against a stand-in daemon: a hyper HTTP/2 server on a temp unix socket.
 
 use super::*;
-use crate::daemon_rpc::{hello, resolve, Bridge, Call, Hello};
+use crate::daemon_rpc::{hello, resolve, shutdown_daemon, Bridge, Call, Capability, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse};
 use bytes::Bytes;
 use http::HeaderMap;
 use http_body_util::BodyExt;
@@ -9,6 +9,7 @@ use hyper::body::{Body, Frame, Incoming};
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use prost::Message;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -58,6 +59,19 @@ impl Drop for Feed {
     }
 }
 
+/// Every Shutdown any stand-in received: the Authorization header, then the decoded request.
+static SHUTDOWNS: Mutex<Vec<(String, ShutdownRequest)>> = Mutex::new(Vec::new());
+
+fn shutdowns_with(token: &str) -> Vec<ShutdownRequest> {
+    SHUTDOWNS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(t, _)| t == &format!("Bearer {token}"))
+        .map(|(_, r)| r.clone())
+        .collect()
+}
+
 struct Server {
     socket: PathBuf,
     accepts: Arc<AtomicUsize>,
@@ -99,6 +113,27 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
             tx.send(Frame::data(Bytes::from(body))).unwrap();
             tx.send(trailers("0")).unwrap();
         }
+        // Reads the token and the request the way the real daemon would, and answers with what it saw:
+        // sessions_stopped = origin * 1000 + the length of the confirmation id.
+        "/alinery.v1.AdminService/Shutdown" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            let request = ShutdownRequest::decode(&sent[5..]).unwrap();
+            SHUTDOWNS.lock().unwrap().push((token.clone(), request.clone()));
+            if token == "Bearer wrong" {
+                builder = builder.header("grpc-status", "16").header("grpc-message", "wrong token");
+                empty = true;
+            } else {
+                let message = ShutdownResponse {
+                    sessions_stopped: request.origin as u32 * 1000 + request.confirmation_id.len() as u32,
+                }
+                .encode_to_vec();
+                let mut body = vec![0, 0, 0, 0, message.len() as u8];
+                body.extend_from_slice(&message);
+                tx.send(Frame::data(Bytes::from(body))).unwrap();
+                tx.send(trailers("0")).unwrap();
+            }
+        }
         "/trailers-only" => {
             builder = builder.header("grpc-status", "16");
             empty = true;
@@ -136,7 +171,10 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
 async fn serve() -> Server {
     let dir = PathBuf::from(format!("/tmp/alinery-rpc-test-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
     fs::create_dir_all(&dir).unwrap();
-    let socket = dir.join("rpc.sock");
+    serve_at(dir.join("rpc.sock"), dir).await
+}
+
+async fn serve_at(socket: PathBuf, dir: PathBuf) -> Server {
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (accepts, aborted, held) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Held::default());
     let (kill, _) = watch::channel(0u32);
@@ -419,16 +457,215 @@ async fn unary_reads_a_non_zero_grpc_status_from_a_trailers_only_answer() {
 }
 
 #[tokio::test]
-async fn hello_decodes_the_fields_the_shell_reads_and_skips_the_rest() {
+async fn hello_decodes_the_fields_the_shell_reads() {
     let server = serve().await;
     assert_eq!(
         hello(&server.socket, "tok").await.unwrap(),
-        Hello {
+        HelloResponse {
             protocol: 25,
             build_id: "b-1".into(),
-            epoch: "e-7".into()
+            epoch: "e-7".into(),
+            capabilities: vec![Capability::View as i32, Capability::Act as i32],
+            repo_root: "/r".into(),
+            app_config_identity: String::new(),
         }
     );
     let gone = hello(&server.socket.with_file_name("none.sock"), "tok").await.unwrap_err();
     assert!(gone.contains("connect"), "{gone}");
+}
+
+/// The bytes protobuf-es wrote from proto/alinery/v1/admin.proto (`bun proto/golden.ts`). Each field is
+/// checked by name, so a field number changed in a struct above fails here naming that field; the
+/// re-encode catches a changed type or a lost field that decoding alone would pass.
+fn golden(name: &str) -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../proto/golden/admin.json");
+    let fixtures: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).unwrap();
+    let hex = fixtures[name].as_str().unwrap_or_else(|| panic!("{name} is missing from {}", path.display()));
+    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+}
+
+#[test]
+fn golden_shutdown_request_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("ShutdownRequest");
+    let request = ShutdownRequest::decode(bytes.as_slice()).unwrap();
+    assert_eq!(request.origin, ShutdownOrigin::ConfirmedTakeover as i32, "ShutdownRequest.origin");
+    assert_eq!(request.confirmation_id, "confirm-1", "ShutdownRequest.confirmation_id");
+    assert_eq!(request.encode_to_vec(), bytes);
+}
+
+#[test]
+fn golden_shutdown_response_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("ShutdownResponse");
+    let response = ShutdownResponse::decode(bytes.as_slice()).unwrap();
+    assert_eq!(response.sessions_stopped, 300, "ShutdownResponse.sessions_stopped");
+    assert_eq!(response.encode_to_vec(), bytes);
+}
+
+#[test]
+fn golden_hello_request_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("HelloRequest");
+    let request = HelloRequest::decode(bytes.as_slice()).unwrap();
+    assert_eq!(request.client_id, "client-1", "HelloRequest.client_id");
+    assert_eq!(request.client_kind, "desktop", "HelloRequest.client_kind");
+    assert_eq!(request.protocol, 25, "HelloRequest.protocol");
+    assert_eq!(request.encode_to_vec(), bytes);
+}
+
+#[test]
+fn golden_hello_response_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("HelloResponse");
+    let response = HelloResponse::decode(bytes.as_slice()).unwrap();
+    assert_eq!(response.protocol, 25, "HelloResponse.protocol");
+    assert_eq!(response.build_id, "build-abc", "HelloResponse.build_id");
+    assert_eq!(response.epoch, "epoch-1", "HelloResponse.epoch");
+    assert_eq!(
+        response.capabilities,
+        vec![Capability::View as i32, Capability::Act as i32, Capability::Admin as i32],
+        "HelloResponse.capabilities"
+    );
+    assert_eq!(response.repo_root, "/repo", "HelloResponse.repo_root");
+    assert_eq!(response.app_config_identity, "identity-1", "HelloResponse.app_config_identity");
+    assert_eq!(response.encode_to_vec(), bytes);
+}
+
+/// A repo whose `.alinery/rpc[-lane].sock` is served by a stand-in, with the token this app would have
+/// kept for it. Plain `#[test]`, because `shutdown_daemon` blocks on the app's own runtime.
+struct Teardown {
+    repo: PathBuf,
+    app_config: PathBuf,
+    server: Server,
+}
+
+fn teardown_fixture(lane: Option<&str>, token: &str) -> Teardown {
+    let root = PathBuf::from(format!("/tmp/alinery-sd-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
+    let repo = root.join("repo");
+    fs::create_dir_all(repo.join(".alinery")).unwrap();
+    let app_config = root.join("cfg").join("app.toml");
+    let key = repo.display().to_string();
+    crate::daemon::store_rpc_secret(alinery_core::app_config_dir_of(&app_config).unwrap(), &key, lane.unwrap_or(""), token).unwrap();
+    let socket = alinery_core::rpc_socket_path(&repo, lane);
+    let server = tauri::async_runtime::block_on(serve_at(socket, root));
+    Teardown { repo, app_config, server }
+}
+
+#[test]
+fn shutdown_goes_over_rpc_with_its_origin_and_confirmation_and_skips_the_old_op() {
+    let origins = [
+        ShutdownOrigin::StopDaemon,
+        ShutdownOrigin::CloseRepo,
+        ShutdownOrigin::RestoreBackup,
+        ShutdownOrigin::ConfirmedTakeover,
+        ShutdownOrigin::StopRemote,
+    ];
+    for origin in origins {
+        let token = format!("origin-{}", origin as i32);
+        let t = teardown_fixture(Some("d1234"), &token);
+        let key = t.repo.display().to_string();
+        shutdown_daemon(&key, &t.app_config, Some("d1234"), origin, "confirm-xyz", None, || {
+            panic!("the old op must not run when rpc.sock answers")
+        })
+        .unwrap();
+        assert_eq!(
+            shutdowns_with(&token),
+            vec![ShutdownRequest {
+                origin: origin as i32,
+                confirmation_id: "confirm-xyz".into()
+            }]
+        );
+    }
+}
+
+#[test]
+fn shutdown_falls_back_to_the_old_op_only_when_there_is_nothing_to_call() {
+    let ran = std::cell::Cell::new(0);
+    let legacy = || {
+        ran.set(ran.get() + 1);
+        Ok(())
+    };
+    // No token kept: a daemon of an older protocol, or one another app started.
+    let t = teardown_fixture(None, "unused");
+    let other = t.repo.with_file_name("repo-without-token");
+    shutdown_daemon(&other.display().to_string(), &t.app_config, None, ShutdownOrigin::StopDaemon, "", None, legacy).unwrap();
+    assert_eq!(ran.get(), 1);
+    // A token but no socket answering: a daemon of an older protocol, or a stale file.
+    let t = teardown_fixture(Some("a"), "unused");
+    shutdown_daemon(
+        &t.repo.display().to_string(),
+        &t.app_config,
+        Some("other-lane"),
+        ShutdownOrigin::StopDaemon,
+        "",
+        None,
+        legacy,
+    )
+    .unwrap();
+    assert_eq!(ran.get(), 2);
+    // A failing old op is still the caller's error.
+    let t = teardown_fixture(None, "unused");
+    let error = shutdown_daemon(
+        &t.repo.display().to_string(),
+        &t.app_config,
+        Some("no-token-for-this-lane"),
+        ShutdownOrigin::StopDaemon,
+        "",
+        None,
+        || Err("old op failed".into()),
+    )
+    .unwrap_err();
+    assert_eq!(error, "old op failed");
+}
+
+#[test]
+fn a_daemon_that_refuses_is_an_error_and_never_retried_on_the_old_wire() {
+    let t = teardown_fixture(None, "wrong");
+    let error = shutdown_daemon(&t.repo.display().to_string(), &t.app_config, None, ShutdownOrigin::StopDaemon, "", None, || {
+        panic!("must not fall back")
+    })
+    .unwrap_err();
+    assert!(error.contains("refused") && error.contains("grpc-status 16"), "{error}");
+}
+
+/// A second copy of this test binary, listening on `ALINERY_TEST_LISTEN`, so there is a peer that is not this process.
+#[test]
+fn listener_child_for_the_takeover_identity_test() {
+    let Some(path) = std::env::var_os("ALINERY_TEST_LISTEN") else { return };
+    let _listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+    std::thread::sleep(Duration::from_secs(60));
+}
+
+#[test]
+fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
+    let t = teardown_fixture(None, "bound");
+    let key = t.repo.display().to_string();
+    // This process serves the stand-in, so its identity is the one a takeover of it would hold.
+    let here = alinery_core::daemon_client::peer_process_identity(&std::os::unix::net::UnixStream::connect(&t.server.socket).unwrap()).unwrap();
+    shutdown_daemon(&key, &t.app_config, None, ShutdownOrigin::ConfirmedTakeover, "c-1", Some(&here), || panic!("rpc answers")).unwrap();
+    assert_eq!(shutdowns_with("bound").len(), 1);
+    // An identity taken from another process is stale: refused before any request is sent.
+    let child_socket = t.repo.with_file_name("child.sock");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::daemon_rpc::listener_child_for_the_takeover_identity_test", "--nocapture"])
+        .env("ALINERY_TEST_LISTEN", &child_socket)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stream = None;
+    for _ in 0..100 {
+        match std::os::unix::net::UnixStream::connect(&child_socket) {
+            Ok(connected) => {
+                stream = Some(connected);
+                break;
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let foreign = alinery_core::daemon_client::peer_process_identity(&stream.expect("the child listens")).unwrap();
+    let error = shutdown_daemon(&key, &t.app_config, None, ShutdownOrigin::ConfirmedTakeover, "c-2", Some(&foreign), || {
+        panic!("must not fall back")
+    })
+    .unwrap_err();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(error.starts_with("stale daemon"), "{error}");
+    assert_eq!(shutdowns_with("bound").len(), 1, "the second call sent nothing");
 }

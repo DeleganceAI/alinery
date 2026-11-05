@@ -42,6 +42,7 @@ hyper-util = { version = "0.1.20", default-features = false, features = ["tokio"
 http-body-util = "0.1.3"
 http = "1"
 bytes = "1"
+prost = { version = "0.14", default-features = false, features = ["derive"] }
 tokio = { version = "1.52", features = ["net", "time", "sync", "macros", "rt"] }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

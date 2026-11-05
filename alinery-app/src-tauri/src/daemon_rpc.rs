@@ -23,8 +23,11 @@ use tokio::net::UnixStream;
 use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::time::Instant;
 
+use alinery_core::daemon_client::{peer_process_identity, PeerProcessIdentity, DAEMON_CONTROL_TIMEOUT};
+use prost::Message;
+
 use crate::daemon::{alineryd_socket_namespace, rpc_secret_path};
-use crate::paths::{app_config_path, RepoRef};
+use crate::paths::{app_config_dir_of, app_config_path, RepoRef};
 
 const HEAD: u8 = 1;
 const BODY: u8 = 2;
@@ -114,10 +117,66 @@ async fn connect(socket: &Path) -> Result<Sender, String> {
     Ok(sender)
 }
 
+fn build_request(token: &str, call: &Call) -> Result<http::Request<Full<Bytes>>, String> {
+    // HTTP/2 takes :scheme and :authority from an absolute URI.
+    let mut req = http::Request::post(format!("http://daemon{}", call.path));
+    for (name, value) in &call.headers {
+        // The token is the shell's to add, `te` is fixed, and a webview must not pick the transport's pseudo-fields.
+        if !matches!(name.as_str(), "authorization" | "te" | "host" | "content-length") {
+            req = req.header(name, value);
+        }
+    }
+    req.header("te", "trailers")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Full::new(Bytes::from(call.body.clone())))
+        .map_err(|e| e.to_string())
+}
+
 enum Outcome {
     Done,
     /// The Channel refused a send: the webview is gone.
     ReceiverGone,
+}
+
+fn unary_call(path: &str, message: &[u8]) -> Call {
+    let mut body = vec![0u8];
+    body.extend_from_slice(&(message.len() as u32).to_be_bytes());
+    body.extend_from_slice(message);
+    Call {
+        id: String::new(),
+        owner: String::new(),
+        path: path.to_string(),
+        headers: vec![("content-type".into(), "application/grpc+proto".into())],
+        body,
+    }
+}
+
+/// An error that carries the daemon's own answer, as opposed to one where no answer arrived.
+const STATUS_PREFIX: &str = "grpc-status ";
+
+async fn read_unary(mut res: hyper::Response<hyper::body::Incoming>) -> Result<Vec<u8>, String> {
+    let header = |map: &http::HeaderMap, name: &str| map.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let (mut status, mut detail) = (header(res.headers(), "grpc-status"), header(res.headers(), "grpc-message"));
+    let mut data = Vec::new();
+    while let Some(frame) = res.frame().await {
+        let frame = frame.map_err(|e| e.to_string())?;
+        if let Some(chunk) = frame.data_ref() {
+            data.extend_from_slice(chunk);
+        } else if let Some(trailers) = frame.trailers_ref() {
+            status = header(trailers, "grpc-status").or(status);
+            detail = header(trailers, "grpc-message").or(detail);
+        }
+    }
+    match status.as_deref() {
+        Some("0") => {}
+        Some(code) => return Err(format!("{STATUS_PREFIX}{code}: {}", detail.unwrap_or_default())),
+        None => return Err("the daemon answered without a grpc-status".into()),
+    }
+    let len = data.get(1..5).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    match (data.first(), len) {
+        (Some(0), Some(len)) if data.len() == 5 + len => Ok(data[5..].to_vec()),
+        _ => Err("the daemon's reply was not one uncompressed gRPC message".into()),
+    }
 }
 
 impl Bridge {
@@ -135,24 +194,10 @@ impl Bridge {
     }
 
     async fn request(&self, socket: &Path, token: &str, call: &Call) -> Result<hyper::Response<hyper::body::Incoming>, String> {
-        let build = || -> Result<http::Request<Full<Bytes>>, String> {
-            // HTTP/2 takes :scheme and :authority from an absolute URI.
-            let mut req = http::Request::post(format!("http://daemon{}", call.path));
-            for (name, value) in &call.headers {
-                // The token is the shell's to add, `te` is fixed, and a webview must not pick the transport's pseudo-fields.
-                if !matches!(name.as_str(), "authorization" | "te" | "host" | "content-length") {
-                    req = req.header(name, value);
-                }
-            }
-            req.header("te", "trailers")
-                .header("authorization", format!("Bearer {token}"))
-                .body(Full::new(Bytes::from(call.body.clone())))
-                .map_err(|e| e.to_string())
-        };
         let mut sender = self.sender(socket, false).await?;
-        match sender.send_request(build()?).await {
+        match sender.send_request(build_request(token, call)?).await {
             // A connection that died between calls: nothing reached the daemon, so open another and send again.
-            Err(e) if e.is_closed() || e.is_canceled() => self.sender(socket, true).await?.send_request(build()?).await.map_err(|e| e.to_string()),
+            Err(e) if e.is_closed() || e.is_canceled() => self.sender(socket, true).await?.send_request(build_request(token, call)?).await.map_err(|e| e.to_string()),
             other => other.map_err(|e| e.to_string()),
         }
     }
@@ -161,39 +206,8 @@ impl Bridge {
     /// protobuf body of the reply. A non-zero `grpc-status` (in the trailers, or in the head of a
     /// trailers-only answer) is an error naming the status.
     pub(crate) async fn unary(&self, socket: &Path, token: &str, path: &str, message: &[u8]) -> Result<Vec<u8>, String> {
-        let mut body = vec![0u8];
-        body.extend_from_slice(&(message.len() as u32).to_be_bytes());
-        body.extend_from_slice(message);
-        let call = Call {
-            id: String::new(),
-            owner: String::new(),
-            path: path.to_string(),
-            headers: vec![("content-type".into(), "application/grpc+proto".into())],
-            body,
-        };
-        let mut res = self.request(socket, token, &call).await?;
-        let header = |map: &http::HeaderMap, name: &str| map.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
-        let (mut status, mut detail) = (header(res.headers(), "grpc-status"), header(res.headers(), "grpc-message"));
-        let mut data = Vec::new();
-        while let Some(frame) = res.frame().await {
-            let frame = frame.map_err(|e| e.to_string())?;
-            if let Some(chunk) = frame.data_ref() {
-                data.extend_from_slice(chunk);
-            } else if let Some(trailers) = frame.trailers_ref() {
-                status = header(trailers, "grpc-status").or(status);
-                detail = header(trailers, "grpc-message").or(detail);
-            }
-        }
-        match status.as_deref() {
-            Some("0") => {}
-            Some(code) => return Err(format!("grpc-status {code}: {}", detail.unwrap_or_default())),
-            None => return Err("the daemon answered without a grpc-status".into()),
-        }
-        let len = data.get(1..5).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
-        match (data.first(), len) {
-            (Some(0), Some(len)) if data.len() == 5 + len => Ok(data[5..].to_vec()),
-            _ => Err("the daemon's reply was not one uncompressed gRPC message".into()),
-        }
+        let res = self.request(socket, token, &unary_call(path, message)).await?;
+        read_unary(res).await
     }
 
     async fn drive<F: FnMut(Vec<u8>) -> bool>(&self, socket: &Path, token: &str, call: &Call, out: &mut Out<F>) -> Outcome {
@@ -372,70 +386,149 @@ pub(crate) fn daemon_rpc_cancel(call_id: String) {
     BRIDGE.cancel(&call_id);
 }
 
-/// What `AdminService.Hello` answers that the shell reads.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Hello {
+// The admin messages the shell sends and reads, written by hand from proto/alinery/v1/admin.proto
+// (grpc-js speaks only binary protobuf, so there is no generated Rust). `tests::daemon_rpc` decodes
+// the bytes protobuf-es wrote from the same .proto (`proto/golden/admin.json`), so a field renumbered
+// there fails `cargo test` and names the field.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
+#[repr(i32)]
+pub(crate) enum Capability {
+    Unspecified = 0,
+    View = 1,
+    Act = 2,
+    Approve = 3,
+    Admin = 4,
+    Agent = 5,
+}
+
+/// Invariant 1: the only ways to stop a daemon. A name appears only in the functions the gate
+/// (`check-no-auto-session-kill.sh`) lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
+#[repr(i32)]
+pub(crate) enum ShutdownOrigin {
+    Unspecified = 0,
+    StopDaemon = 1,
+    CloseRepo = 2,
+    RestoreBackup = 3,
+    ConfirmedTakeover = 4,
+    StopRemote = 5,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct HelloRequest {
+    #[prost(string, tag = "1")]
+    pub client_id: String,
+    #[prost(string, tag = "2")]
+    pub client_kind: String,
+    #[prost(uint32, tag = "3")]
     pub protocol: u32,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct HelloResponse {
+    #[prost(uint32, tag = "1")]
+    pub protocol: u32,
+    #[prost(string, tag = "2")]
     pub build_id: String,
+    #[prost(string, tag = "3")]
     pub epoch: String,
+    #[prost(enumeration = "Capability", repeated, tag = "4")]
+    pub capabilities: Vec<i32>,
+    #[prost(string, tag = "5")]
+    pub repo_root: String,
+    #[prost(string, tag = "6")]
+    pub app_config_identity: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct ShutdownRequest {
+    #[prost(enumeration = "ShutdownOrigin", tag = "1")]
+    pub origin: i32,
+    #[prost(string, tag = "2")]
+    pub confirmation_id: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct ShutdownResponse {
+    #[prost(uint32, tag = "1")]
+    pub sessions_stopped: u32,
+}
+
+/// One unary call on the bridge's pooled connection to `socket`, with the messages typed.
+pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(socket: &Path, token: &str, path: &str, request: &Req) -> Result<Res, String> {
+    let reply = BRIDGE.unary(socket, token, path, &request.encode_to_vec()).await?;
+    Res::decode(reply.as_slice()).map_err(|e| format!("the daemon's reply to {path} did not decode: {e}"))
 }
 
 /// Hello through the bridge path: the RPC liveness probe (over a forward a connect alone proves
-/// nothing, plan 2.1.3). The two messages are encoded by hand; S1.4 replaces this with its prost
-/// structs and golden test.
-pub(crate) async fn hello(socket: &Path, token: &str) -> Result<Hello, String> {
-    let id = b"alinery-shell";
-    let mut request = vec![0x0a, id.len() as u8];
-    request.extend_from_slice(id);
-    request.extend_from_slice(&[0x12, 7]);
-    request.extend_from_slice(b"desktop");
-    request.push(0x18);
-    request.push(alinery_core::PROTOCOL_VERSION as u8);
-    let reply = tokio::time::timeout(Duration::from_secs(10), BRIDGE.unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
+/// nothing, plan 2.1.3).
+pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, String> {
+    let request = HelloRequest {
+        client_id: "alinery-shell".into(),
+        client_kind: "desktop".into(),
+        protocol: alinery_core::PROTOCOL_VERSION,
+    };
+    tokio::time::timeout(Duration::from_secs(10), unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
         .await
-        .map_err(|_| "Hello timed out".to_string())??;
-    decode_hello(&reply)
+        .map_err(|_| "Hello timed out".to_string())?
 }
 
-fn decode_hello(mut bytes: &[u8]) -> Result<Hello, String> {
-    fn varint(bytes: &mut &[u8]) -> Result<u64, String> {
-        let (mut value, mut shift) = (0u64, 0);
-        loop {
-            let (&byte, rest) = bytes.split_first().ok_or("truncated Hello")?;
-            *bytes = rest;
-            value |= u64::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return Ok(value);
-            }
-            shift += 7;
+/// Stop one daemon through `AdminService.Shutdown` with the origin of the deliberate action that
+/// asked for it, and return how many sessions it ended.
+///
+/// `bound` is the process incarnation a takeover's consent was given for: the connection is refused
+/// when its peer is another process. The call goes on a connection of its own, never the bridge's
+/// pooled one, which a restart would leave stale.
+async fn shutdown_over_rpc(socket: &Path, token: &str, origin: ShutdownOrigin, confirmation_id: &str, bound: Option<&PeerProcessIdentity>) -> Result<u32, String> {
+    let stream = std::os::unix::net::UnixStream::connect(socket).map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    if let Some(expected) = bound {
+        if peer_process_identity(&stream)? != *expected {
+            return Err("stale daemon: peer process incarnation changed".into());
         }
     }
-    let mut hello = Hello {
-        protocol: 0,
-        build_id: String::new(),
-        epoch: String::new(),
+    stream.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let stream = UnixStream::from_std(stream).map_err(|e| e.to_string())?;
+    let (mut sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(stream)).await.map_err(|e| e.to_string())?;
+    tokio::spawn(conn);
+    let request = ShutdownRequest {
+        origin: origin as i32,
+        confirmation_id: confirmation_id.into(),
     };
-    while !bytes.is_empty() {
-        let tag = varint(&mut bytes)?;
-        match tag & 7 {
-            0 => {
-                let value = varint(&mut bytes)?;
-                if tag >> 3 == 1 {
-                    hello.protocol = value as u32;
-                }
-            }
-            2 => {
-                let len = varint(&mut bytes)? as usize;
-                let (field, rest) = bytes.split_at_checked(len).ok_or("truncated Hello")?;
-                bytes = rest;
-                match tag >> 3 {
-                    2 => hello.build_id = String::from_utf8_lossy(field).into_owned(),
-                    3 => hello.epoch = String::from_utf8_lossy(field).into_owned(),
-                    _ => {}
-                }
-            }
-            other => return Err(format!("unexpected wire type {other} in Hello")),
-        }
+    let call = unary_call("/alinery.v1.AdminService/Shutdown", &request.encode_to_vec());
+    let reply = tokio::time::timeout(DAEMON_CONTROL_TIMEOUT, async {
+        read_unary(sender.send_request(build_request(token, &call)?).await.map_err(|e| e.to_string())?).await
+    })
+    .await
+    .map_err(|_| "Shutdown timed out".to_string())??;
+    Ok(ShutdownResponse::decode(reply.as_slice())
+        .map_err(|e| format!("the daemon's reply to Shutdown did not decode: {e}"))?
+        .sessions_stopped)
+}
+
+/// Where a teardown reaches a daemon: `repo_key`'s RPC socket and the token this app kept for it.
+/// A daemon that cannot be reached there (one of an older protocol has no `rpc.sock`, one started by
+/// another app has a token this one lacks, or the socket is a stale file) is stopped through
+/// `legacy`, the JSON `shutdown` op that `AdminService.Shutdown` replaces (plan O23: the new app must
+/// still be able to stop an older daemon; S5.3 deletes it). A daemon that does answer and refuses
+/// (a wrong token, a missing capability, a bad origin) is an error, never a retry on the old wire.
+/// The five teardown origins call this, and only they.
+pub(crate) fn shutdown_daemon(
+    repo_key: &str,
+    app_config: &Path,
+    lane: Option<&str>,
+    origin: ShutdownOrigin,
+    confirmation_id: &str,
+    bound: Option<&PeerProcessIdentity>,
+    legacy: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let (socket, secret_path) = resolve(repo_key, app_config_dir_of(app_config).ok_or("app config root unavailable")?, lane)?;
+    let Ok(token) = std::fs::read_to_string(&secret_path) else { return legacy() };
+    match tauri::async_runtime::block_on(shutdown_over_rpc(&socket, token.trim(), origin, confirmation_id, bound)) {
+        Ok(_) => Ok(()),
+        Err(error) if error.starts_with(STATUS_PREFIX) => Err(format!("the daemon refused to shut down: {error}")),
+        // A daemon that took the connection and then went silent is not an older one; the old wire would only wedge too.
+        Err(error) if error.starts_with("stale daemon") || error.ends_with("timed out") => Err(error),
+        Err(_) => legacy(),
     }
-    Ok(hello)
 }

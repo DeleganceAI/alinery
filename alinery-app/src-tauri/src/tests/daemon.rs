@@ -216,7 +216,7 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     let state = AppState::default();
     let lifecycle = state.repo_lifecycle(&repo);
     let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-    crate::close_repo_daemon(&state, &repo, &guard).expect("close must stop and wait for the app's current lane");
+    crate::close_repo_daemon(&state, &repo, &repo.join("no-app-config/app.toml"), &guard).expect("close must stop and wait for the app's current lane");
 
     let production_before_cleanup = production_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();
     let current_before_cleanup = current_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();

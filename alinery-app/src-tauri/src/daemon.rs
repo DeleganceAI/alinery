@@ -985,7 +985,16 @@ pub(crate) fn confirm_repo_takeover_blocking(
     if preparation.expires <= takeover_now() {
         return Err("takeover confirmation expired; prepare again".into());
     }
-    connection.shutdown().map_err(|error| format!("selected daemon shutdown failed: {error}"))?;
+    shutdown_daemon(
+        &repo.display().to_string(),
+        app_config,
+        Some(&owner.lane),
+        ShutdownOrigin::ConfirmedTakeover,
+        confirmation_id,
+        Some(&preparation.identity),
+        || connection.shutdown(),
+    )
+    .map_err(|error| format!("selected daemon shutdown failed: {error}"))?;
     daemon_client::wait_for_daemon_gone(repo, &owner.lane).map_err(|error| format!("selected daemon exit not established: {error}"))?;
     takeover_allowed(state, repo)?;
     validate_known_target_repo(&known(), &repo.display().to_string())?;
@@ -1260,14 +1269,22 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
         if is_active {
             state.kill_mcp_for_repo(&repo);
         }
-        daemon.call(&daemon_client::shutdown_request()).map(|_| ())?;
+        let app_config = app_config_path(&app)?;
+        shutdown_daemon(
+            &repo.display().to_string(),
+            &app_config,
+            alineryd_socket_namespace().as_deref(),
+            ShutdownOrigin::StopDaemon,
+            "",
+            None,
+            || daemon.call(&daemon_client::shutdown_request()).map(|_| ()),
+        )?;
         daemon_client::wait_for_daemon_gone(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""))?;
         // Own-lane teardown — drops cached foreign session routes too.
         state.clear_daemon(&repo);
         drop(closing);
 
         // Restart what we just stopped, for this repo only.
-        let app_config = app_config_path(&app)?;
         attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
         if is_active {
             ensure_mcp_server(&app, &repo, false);
@@ -1319,16 +1336,23 @@ pub(crate) async fn repo_live_sessions(app: AppHandle, path: String) -> u32 {
 // after delisting succeeds; `close_all_repos` releases each successfully closed repo.
 //
 // Fail-closed: if a daemon still answers after shutdown+wait, do NOT clear state.
-pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path, _guard: &std::sync::MutexGuard<'_, ()>) -> Result<(), String> {
+pub(crate) fn close_repo_daemon(state: &AppState, repo: &Path, app_config: &Path, _guard: &std::sync::MutexGuard<'_, ()>) -> Result<(), String> {
     // Shutdown opens a window in which the repo is still listed and its socket is going
     // away — indistinguishable, to the poller, from a daemon that just crashed. Hold the
     // repo closed for the whole teardown so nothing respawns into the gap. The guard
     // releases on every exit path, including the fail-closed `?` below.
     let _closing = state.mark_closing(repo);
     if let Ok(daemon) = connect_current_daemon(repo) {
-        daemon
-            .call(&daemon_client::shutdown_request())
-            .map_err(|e| format!("shutdown failed for {}: {e}", repo.display()))?;
+        shutdown_daemon(
+            &repo.display().to_string(),
+            app_config,
+            alineryd_socket_namespace().as_deref(),
+            ShutdownOrigin::CloseRepo,
+            "",
+            None,
+            || daemon.call(&daemon_client::shutdown_request()).map(|_| ()),
+        )
+        .map_err(|e| format!("shutdown failed for {}: {e}", repo.display()))?;
         daemon_client::wait_for_daemon_gone(repo, alineryd_socket_namespace().as_deref().unwrap_or(""))?;
     }
     // Lock markers are permanent; only releasing the kernel lock ends ownership.
@@ -1417,7 +1441,7 @@ pub(crate) fn close_all_repos_blocking<R: tauri::Runtime>(app: &AppHandle<R>) ->
         let lifecycle = state.repo_lifecycle(repo);
         let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
         let reservation = state.reserve_repo(repo)?.ok_or("repo-busy: another Alinery window owns this project")?;
-        close_repo_daemon(&state, repo, &guard)?;
+        close_repo_daemon(&state, repo, &app_config_path(app)?, &guard)?;
         state.release_repo(repo);
         drop(reservation);
         Ok(())

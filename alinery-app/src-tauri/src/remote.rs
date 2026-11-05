@@ -1115,7 +1115,7 @@ pub(crate) fn rpc_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, St
 }
 
 /// Open the RPC forward and ask the daemon `Hello` through it. Re-requesting a forward that exists is harmless.
-fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result<crate::daemon_rpc::Hello, String> {
+fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result<crate::daemon_rpc::HelloResponse, String> {
     let (local, remote_socket) = rpc_forward(&session.conn.host_id, repo_path)?;
     let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, repo_path, "")).map_err(|e| format!("no RPC token for this daemon: {e}"))?;
     let deadline = Instant::now() + wait;
@@ -1409,9 +1409,13 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
     let (local, remote_socket) = repo_forward(host_id, path)?;
     let client = DaemonClient::connect_path(local.clone())?.with_observe_timeout(REMOTE_OBSERVE_TIMEOUT);
     let _ = session.conn.forward(&local, &remote_socket);
+    let (rpc_local, rpc_remote) = rpc_forward(host_id, path)?;
+    let _ = session.conn.forward(&rpc_local, &rpc_remote);
     // A daemon that does not answer has nothing to end; the attach below starts a new one.
     if client.version_checked().is_ok() {
-        client.call(&daemon_client::shutdown_request()).map(|_| ())?;
+        crate::daemon_rpc::shutdown_daemon(&key, &app_config_path(app)?, None, crate::daemon_rpc::ShutdownOrigin::StopRemote, "", None, || {
+            client.call(&daemon_client::shutdown_request()).map(|_| ())
+        })?;
         session.channel.call(RepoOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
         state.clear_daemon(Path::new(&key));
     }

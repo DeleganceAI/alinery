@@ -5,15 +5,15 @@ import { rmSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import * as grpc from "@grpc/grpc-js";
 import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
-import { adminService, type DaemonInfo } from "./admin.ts";
+import { adminService, type DaemonInfo, type Lifecycle } from "./admin.ts";
 import { credentials, PEER_CLASSES, type PeerClass } from "./auth.ts";
 import { addService } from "./grpc.ts";
 import { peerExecutable, samePath } from "./peer.ts";
 
-function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo) {
+function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle) {
   const server = new grpc.Server();
   const values = (header: Headers) => credentials(header, peer, secret);
-  addService(server, AdminService, adminService(info), values);
+  addService(server, AdminService, adminService(info, lifecycle), values);
   return server.createConnectionInjector(grpc.ServerCredentials.createInsecure());
 }
 
@@ -24,10 +24,10 @@ function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable:
   return peer && samePath(peer, hostExecutable) ? "shell" : "other";
 }
 
-export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo };
+export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle };
 
 export function serveRpc(options: RpcOptions): Promise<NetServer> {
-  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info)]));
+  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info, options.lifecycle)]));
   const net = createNetServer((sock) => {
     sock.on("error", () => {});
     servers.get(peerClass(sock, options.hostExecutable))!.injectConnection(sock);

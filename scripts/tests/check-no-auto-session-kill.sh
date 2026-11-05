@@ -6,7 +6,10 @@
 #
 # Fails if any function in the Tauri app sends the daemon's `shutdown` op (which
 # SIGTERM/SIGKILLs every harness process group) unless that function is one of the
-# deliberate teardown origins below.
+# deliberate teardown origins below. The same holds for the RPC form: a name of
+# `ShutdownOrigin` (`AdminService.Shutdown`, plan invariant 1) may appear only in those
+# functions, and each of them must name one. The JSON `shutdown` op stays as the way to stop a
+# daemon of an older protocol (plan O23) until S5.3, reached only from the same functions.
 #
 # A behavioural test alone would pass against a re-introduced *conditional* kill, which
 # is exactly how the original bug shipped — hence a source-level check.
@@ -84,6 +87,46 @@ for fn in $senders; do
     *" $fn "*) echo "ok       $fn (deliberate teardown)" ;;
     *)
       echo "ERROR: $fn sends the daemon shutdown op — that kills every live session." >&2
+      status=1
+      ;;
+  esac
+done
+
+# The RPC form: where a `ShutdownOrigin` is named. Comment lines do not count.
+origin_users="$(
+  awk '
+    FNR == 1 { current = "" }
+    match($0, /^[[:space:]]*(pub(\([^)]*\))? )?(async )?fn [a-z_0-9]+/) {
+      f = $0
+      sub(/.*fn /, "", f)
+      sub(/[^a-z_0-9].*/, "", f)
+      current = f
+    }
+    /^[[:space:]]*\/\// { next }
+    /ShutdownOrigin::/ { print current }
+  ' "${LIBS[@]}" | sort -u | tr '\n' ' '
+)"
+origin_users="$(echo $origin_users)"
+
+if [ -z "$origin_users" ]; then
+  echo "ERROR: found no ShutdownOrigin users at all — the match pattern has drifted from the code." >&2
+  exit 1
+fi
+
+for fn in $origin_users; do
+  case " $ALLOWED " in
+    *" $fn "*) ;;
+    *)
+      echo "ERROR: $fn names a ShutdownOrigin — that stops the daemon and ends every live session." >&2
+      status=1
+      ;;
+  esac
+done
+for fn in $ALLOWED; do
+  case " $origin_users " in
+    *" $fn "*) echo "ok       $fn (names its ShutdownOrigin)" ;;
+    *)
+      echo "ERROR: $fn is a teardown origin but names no ShutdownOrigin." >&2
       status=1
       ;;
   esac

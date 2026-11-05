@@ -523,7 +523,7 @@ pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfi
             // B6: removing a repo shuts its daemon down. That is the owner's call — a second
             // alinery must not tear down the window that actually holds the folder.
             require_repo_owned(state, &target)?;
-            close_repo_daemon(state, &target, guard.as_ref().expect("lifecycle guard accompanies state"))
+            close_repo_daemon(state, &target, &app_config_path(&app)?, guard.as_ref().expect("lifecycle guard accompanies state"))
                 .map_err(|e| format!("{e}. Live sessions may still be running — stop them from Settings → Harness, then try again."))?;
         }
         // One source of truth for "was this the active repo": the same normalization the
