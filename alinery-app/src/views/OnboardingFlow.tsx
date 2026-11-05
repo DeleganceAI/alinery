@@ -587,6 +587,7 @@ export function OnboardingFlow({
                     title={activePlaybook.title}
                     steps={playbookSteps}
                     variant="definition"
+                    direction="horizontal"
                     showInspector={false}
                     hideToolbar={true}
                     minScale={1}

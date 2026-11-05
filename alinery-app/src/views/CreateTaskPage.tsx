@@ -173,8 +173,12 @@ export function CreateTaskPage({
   const importingRef = useRef(false);
   const attachmentGeneration = useRef(0);
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
+  const [contextErrorAttempt, setContextErrorAttempt] = useState(0);
   const [attachmentDraft, setAttachmentDraft] = useState("");
   const [dropping, setDropping] = useState(false);
+  const contextDisclosureRef = useRef<HTMLDetailsElement>(null);
+  const advancedDisclosureRef = useRef<HTMLDetailsElement>(null);
+  const previousContextItems = useRef(new Set<string>());
   const [created, setCreated] = useState<TargetedCreateResult | null>(null);
   const [err, setErr] = useState<ErrState>(null);
   const [catalogError, setCatalogError] = useState<ErrState>(null);
@@ -237,6 +241,10 @@ export function CreateTaskPage({
   const cap = Number(maxLiveSessions);
   const validCap = /^\d+$/.test(maxLiveSessions) && Number.isInteger(cap) && cap > 0 && cap <= 4_294_967_295;
 
+  useEffect(() => {
+    if (!validCap && advancedDisclosureRef.current) advancedDisclosureRef.current.open = true;
+  }, [validCap]);
+
   // The busy flag is the shared guard, not this component's own: a create started from
   // the ⌘N form and a duplicate started from a board are the same slot.
   const creating = mutationKind === "create";
@@ -245,6 +253,25 @@ export function CreateTaskPage({
     imagesRef.current = next;
     setImages(next);
   };
+
+  useEffect(() => {
+    const items = new Set([
+      // A new failed paste/import must be visible even when its message is unchanged.
+      ...(contextErrorAttempt ? [`error-attempt:${contextErrorAttempt}`] : []),
+      ...(evidence.trim() ? ["evidence"] : []),
+      ...attachments.map((entry) => `attachment:${entry}`),
+      ...images.map((image) => `image:${image.id}`),
+      ...linearImages.map((image) => `linear:${image.source_url}:${image.name}`),
+      ...images.filter((image) => image.previewUnavailable).map((image) => `preview-error:${image.id}`),
+      ...pasteErrors.map((error) => `paste-error:${error}`),
+      ...linearImageErrors.map((error) => `linear-error:${error}`),
+      ...(draftAttachmentsError ? [`draft-error:${draftAttachmentsError}`] : []),
+    ]);
+    // Native details owns the manual choice. Reveal only newly arriving content or errors,
+    // not edits, removals, or unrelated renders, and never automatically collapse it.
+    if ([...items].some((item) => !previousContextItems.current.has(item)) && contextDisclosureRef.current) contextDisclosureRef.current.open = true;
+    previousContextItems.current = items;
+  }, [evidence, attachments, images, linearImages, pasteErrors, linearImageErrors, draftAttachmentsError, contextErrorAttempt]);
 
   useEffect(
     () => () => {
@@ -295,6 +322,7 @@ export function CreateTaskPage({
     if (!hasImage) return;
     if (!event.clipboardData.getData("text/plain")) event.preventDefault();
     setPasteErrors(errors);
+    if (errors.length) setContextErrorAttempt((attempt) => attempt + 1);
     if (added.length) {
       dirtyRef.current = true;
       updateImages([...imagesRef.current, ...added]);
@@ -802,6 +830,7 @@ export function CreateTaskPage({
         setGithubIssue("");
         setLinearImages(t.images);
         setLinearImageErrors(t.image_errors);
+        if (t.image_errors.length) setContextErrorAttempt((attempt) => attempt + 1);
         dirtyRef.current = false;
       })
       .catch((e) => {
@@ -987,591 +1016,626 @@ export function CreateTaskPage({
 
   return (
     <div className="createpage createpage-with-preview" onKeyDown={onKey}>
-      <div className="create-form-panel">
-        <div className="createform createform-page">
-          <h1 className="create-title">New task</h1>
-          <div className="create-repository-source">
-            <label className="create-field">
-              <span>Repository</span>
-              <select className="field-input" value={repoPath} disabled={creating || clearing || creatingRef.current} onChange={(e) => selectRepo(e.target.value)}>
-                {knownRepos.map((repo) => (
-                  <option key={repo} value={repo}>
-                    {repo}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="create-source-field">
+      <div className="create-content">
+        <div className="create-form-panel">
+          <div className="createform createform-page">
+            <h1 className="create-title">New task</h1>
+            <div className="create-repository-source">
               <label className="create-field">
-                <span>Starting branch</span>
-                <select
-                  className="field-input"
-                  value={baseRef ?? ""}
-                  disabled={branchesLoading || !!branchError || creating || clearing || creatingRef.current}
-                  onChange={(event) => {
-                    if (creatingRef.current || clearingRef.current || branchesLoading || branchError || branchSnapshotRequest.current !== branchRequest.current) return;
-                    const next = event.target.value;
-                    if (!branchOptions.some((option) => option.value === next)) return;
-                    dirtyRef.current = true;
-                    baseRefRef.current = next;
-                    setBaseRef(next);
-                  }}
-                >
-                  {baseRef === null && (
-                    <option value="" disabled>
-                      {branchesLoading ? "Loading…" : "Choose a branch"}
-                    </option>
-                  )}
-                  {baseRef !== null && !branchOptions.some((option) => option.value === baseRef) && (
-                    <option value={baseRef} disabled>
-                      {unavailableBranchLabel}
-                    </option>
-                  )}
-                  {branchOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                <span>Repository</span>
+                <select className="field-input" value={repoPath} disabled={creating || clearing || creatingRef.current} onChange={(e) => selectRepo(e.target.value)}>
+                  {knownRepos.map((repo) => (
+                    <option key={repo} value={repo}>
+                      {repo}
                     </option>
                   ))}
                 </select>
               </label>
-              {branchError && (
+              <div className="create-source-field">
+                <label className="create-field">
+                  <span>Starting branch</span>
+                  <select
+                    className="field-input"
+                    value={baseRef ?? ""}
+                    disabled={branchesLoading || !!branchError || creating || clearing || creatingRef.current}
+                    onChange={(event) => {
+                      if (creatingRef.current || clearingRef.current || branchesLoading || branchError || branchSnapshotRequest.current !== branchRequest.current) return;
+                      const next = event.target.value;
+                      if (!branchOptions.some((option) => option.value === next)) return;
+                      dirtyRef.current = true;
+                      baseRefRef.current = next;
+                      setBaseRef(next);
+                    }}
+                  >
+                    {baseRef === null && (
+                      <option value="" disabled>
+                        {branchesLoading ? "Loading…" : "Choose a branch"}
+                      </option>
+                    )}
+                    {baseRef !== null && !branchOptions.some((option) => option.value === baseRef) && (
+                      <option value={baseRef} disabled>
+                        {unavailableBranchLabel}
+                      </option>
+                    )}
+                    {branchOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {branchError && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    aria-label="Retry starting branches"
+                    disabled={branchesLoading || creating || clearing || creatingRef.current}
+                    onClick={() => {
+                      if (creatingRef.current || clearingRef.current || branchesLoading || !branchError) return;
+                      invalidateStartingBranches(false);
+                    }}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            </div>
+            {startingBranchProblem && (
+              <div className="hint create-source-hint" role="status">
+                {startingBranchProblem}
+              </div>
+            )}
+            <div className="modes" role="group" aria-label="Task source">
+              {(["inline", "github", "linear"] as const).map((m) => (
                 <button
                   type="button"
-                  className="btn ghost"
-                  aria-label="Retry starting branches"
-                  disabled={branchesLoading || creating || clearing || creatingRef.current}
+                  key={m}
+                  className={`tab${mode === m ? " on" : ""}`}
+                  aria-pressed={mode === m}
                   onClick={() => {
-                    if (creatingRef.current || clearingRef.current || branchesLoading || !branchError) return;
-                    invalidateStartingBranches(false);
+                    setMode(m);
+                    if (m !== "linear") setLinearId("");
+                    if (m !== "github") setGithubIssue("");
                   }}
                 >
-                  Retry
+                  {m === "inline" ? "Write task" : m === "github" ? "GitHub" : "Linear"}
                 </button>
-              )}
+              ))}
             </div>
-          </div>
-          {startingBranchProblem && (
-            <div className="hint create-source-hint" role="status">
-              {startingBranchProblem}
-            </div>
-          )}
-          <div className="modes">
-            {(["inline", "github", "linear"] as const).map((m) => (
-              <button
-                type="button"
-                key={m}
-                className={`tab${mode === m ? " on" : ""}`}
-                onClick={() => {
-                  setMode(m);
-                  if (m !== "linear") setLinearId("");
-                  if (m !== "github") setGithubIssue("");
-                }}
-              >
-                {m === "inline" ? "Inline" : m === "github" ? "GitHub" : "Linear"}
-              </button>
-            ))}
-          </div>
-          {mode === "linear" && (
-            <div className="crow">
+            {mode === "linear" && (
+              <div className="create-field">
+                <label htmlFor="create-linear-ref">Linear ticket ID or URL</label>
+                <div className="crow">
+                  <input
+                    id="create-linear-ref"
+                    className="field-input grow"
+                    value={ref}
+                    onChange={(e) => setRef(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && importLinear()}
+                    placeholder="Linear ticket id or URL (e.g. ENG-123)…"
+                  />
+                  <button type="button" className="btn ghost small" disabled={importing} onClick={importLinear}>
+                    {importing ? "Importing…" : "Import"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {mode === "github" && (
+              <div className="create-field">
+                <label htmlFor="create-github-ref">GitHub issue or pull request</label>
+                <div className="crow">
+                  <input
+                    id="create-github-ref"
+                    className="field-input grow"
+                    value={ref}
+                    onChange={(e) => {
+                      setRef(e.target.value);
+                      setGithubIssue("");
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && importGitHub()}
+                    placeholder={importing ? "Importing GitHub issue or pull request…" : "GitHub issue or pull request URL, owner/repo#123, or #123…"}
+                  />
+                  <button type="button" className="btn ghost small" disabled={importing || !ref.trim()} onClick={() => importGitHub()}>
+                    {importing ? "Importing…" : "Import"}
+                  </button>
+                </div>
+              </div>
+            )}
+            <label className="create-field">
+              <span>Task name</span>
               <input
-                className="field-input grow"
-                value={ref}
-                onChange={(e) => setRef(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && importLinear()}
-                placeholder="Linear ticket id or URL (e.g. ENG-123)…"
-              />
-              <button type="button" className="btn ghost small" disabled={importing} onClick={importLinear}>
-                {importing ? "Importing…" : "Import"}
-              </button>
-            </div>
-          )}
-          {mode === "github" && (
-            <div className="crow">
-              <input
-                className="field-input grow"
-                value={ref}
+                ref={titleRef}
+                className="field-input title"
+                value={name}
                 onChange={(e) => {
-                  setRef(e.target.value);
-                  setGithubIssue("");
+                  dirtyRef.current = true;
+                  const next = e.target.value;
+                  setName(next);
+                  if (!slugEdited) setTaskSlug(slugifyTaskName(next));
                 }}
-                onKeyDown={(e) => e.key === "Enter" && importGitHub()}
-                placeholder={importing ? "Importing GitHub issue or pull request…" : "GitHub issue or pull request URL, owner/repo#123, or #123…"}
+                onKeyDown={(e) => e.key === "Enter" && create()}
+                placeholder="New task name…"
               />
-              <button type="button" className="btn ghost small" disabled={importing || !ref.trim()} onClick={() => importGitHub()}>
-                {importing ? "Importing…" : "Import"}
-              </button>
-            </div>
-          )}
-          <input
-            ref={titleRef}
-            className="field-input title"
-            value={name}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              const next = e.target.value;
-              setName(next);
-              if (!slugEdited) setTaskSlug(slugifyTaskName(next));
-            }}
-            onKeyDown={(e) => e.key === "Enter" && create()}
-            placeholder="New task name…"
-          />
-          <label className="create-field">
-            <span>Task slug</span>
-            <input
-              className="field-input"
-              value={taskSlug}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                const next = slugifyTaskName(e.target.value);
-                setTaskSlug(next);
-                setSlugEdited(next !== slugifyTaskName(name));
-              }}
-              placeholder="task-slug"
-            />
-            <div className="hint">Task folder and automatic Git names. Edit to override.</div>
-          </label>
-          <textarea
-            className="field-input description"
-            rows={7}
-            value={desc}
-            onPaste={onPasteImage}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              setDesc(e.target.value);
-            }}
-            placeholder="Describe the feature / ticket — the original impetus every phase session reads (optional)…"
-          />
-          <label className="create-field">
-            <span>Evidence / pointers</span>
-            <textarea
-              className="field-input"
-              rows={4}
-              value={evidence}
-              onPaste={onPasteImage}
-              onChange={(e) => {
-                dirtyRef.current = true;
-                setEvidence(e.target.value);
-              }}
-              placeholder="Logs, stack traces, repro steps, links — appended to the ticket every session reads (optional)…"
-            />
-          </label>
-          <div className={`create-field attachments-field${dropping ? " dropping" : ""}`}>
-            <span>Attachments</span>
-            <div className="crow">
-              <input
-                className="field-input grow"
-                value={attachmentDraft}
-                disabled={creatingRef.current}
+            </label>
+            <label className="create-field">
+              <span>Description</span>
+              <textarea
+                className="field-input description"
+                rows={7}
+                value={desc}
                 onPaste={onPasteImage}
                 onChange={(e) => {
-                  if (!creatingRef.current) setAttachmentDraft(e.target.value);
+                  dirtyRef.current = true;
+                  setDesc(e.target.value);
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addAttachmentEntries(attachmentDraft);
+                placeholder="Describe the feature / ticket — the original impetus every phase session reads (optional)…"
+              />
+            </label>
+            <details className="create-disclosure" ref={contextDisclosureRef}>
+              <summary>Additional context</summary>
+              <div className="create-disclosure-body">
+                <label className="create-field">
+                  <span>Evidence / pointers</span>
+                  <textarea
+                    className="field-input"
+                    rows={4}
+                    value={evidence}
+                    onPaste={onPasteImage}
+                    onChange={(e) => {
+                      dirtyRef.current = true;
+                      setEvidence(e.target.value);
+                    }}
+                    placeholder="Logs, stack traces, repro steps, links — appended to the ticket every session reads (optional)…"
+                  />
+                </label>
+                <div className={`create-field attachments-field${dropping ? " dropping" : ""}`}>
+                  <span>Attachments</span>
+                  <div className="crow">
+                    <input
+                      className="field-input grow"
+                      aria-label="Attachment paths or URLs"
+                      value={attachmentDraft}
+                      disabled={creatingRef.current}
+                      onPaste={onPasteImage}
+                      onChange={(e) => {
+                        if (!creatingRef.current) setAttachmentDraft(e.target.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addAttachmentEntries(attachmentDraft);
+                        }
+                      }}
+                      placeholder="Paste file paths or http(s) URLs, comma-separated…"
+                    />
+                    <button className="btn ghost small" type="button" disabled={creatingRef.current} onClick={pickAttachments}>
+                      Add files…
+                    </button>
+                  </div>
+                  {attachments.map((entry) => (
+                    <div key={entry} className="attachment-row">
+                      <span className="attachment-row-name" title={entry}>
+                        {entry}
+                      </span>
+                      <button
+                        className="btn ghost small"
+                        type="button"
+                        disabled={creatingRef.current}
+                        aria-label={`Remove ${entry}`}
+                        onClick={() => {
+                          if (creatingRef.current) return;
+                          dirtyRef.current = true;
+                          setAttachments((cur) => cur.filter((x) => x !== entry));
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {linearImages.map((image) => (
+                    <div key={image.name} className="attachment-row">
+                      <span className="attachment-row-name" title={image.source_url}>
+                        {image.name}
+                      </span>
+                      <button
+                        className="btn ghost small"
+                        type="button"
+                        disabled={creatingRef.current}
+                        aria-label={`Remove ${image.name}`}
+                        onClick={() => {
+                          if (creatingRef.current) return;
+                          dirtyRef.current = true;
+                          setDesc((current) => restoreLinearImageUrls(current, [image]));
+                          setLinearImages((current) => current.filter((item) => item.name !== image.name));
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {linearImageErrors.map((error) => (
+                    <InlineStatus key={error} tone="warning">
+                      {error}
+                    </InlineStatus>
+                  ))}
+                  {images.map((image) => (
+                    <div key={image.id} className="attachment-row">
+                      {image.previewUnavailable ? (
+                        <span className="hint">Preview unavailable</span>
+                      ) : (
+                        <img
+                          className="attachment-thumbnail"
+                          src={image.previewUrl}
+                          alt={`Preview of ${image.name}`}
+                          onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
+                        />
+                      )}
+                      <span className="attachment-row-name" title={image.name}>
+                        {image.name}
+                      </span>
+                      <span>
+                        {image.file.size >= 1024 * 1024
+                          ? `${(image.file.size / (1024 * 1024)).toFixed(1)} MiB`
+                          : image.file.size >= 1024
+                            ? `${(image.file.size / 1024).toFixed(1)} KiB`
+                            : `${image.file.size} B`}
+                      </span>
+                      <button
+                        className="btn ghost small"
+                        type="button"
+                        disabled={creatingRef.current}
+                        aria-label={`Remove ${image.name}`}
+                        onClick={() => {
+                          if (creatingRef.current) return;
+                          URL.revokeObjectURL(image.previewUrl);
+                          updateImages(imagesRef.current.filter((item) => item.id !== image.id));
+                          dirtyRef.current = true;
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
+                  {!draftAttachmentsReady && (
+                    <InlineStatus tone={draftAttachmentsError ? "error" : "warning"}>{draftAttachmentsError || "Loading draft attachments…"}</InlineStatus>
+                  )}
+                  <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Pasted images are saved with the draft when autosave is enabled.</div>
+                  <div className="hint">
+                    Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this
+                    form.
+                  </div>
+                </div>
+              </div>
+            </details>
+            <label className="create-field task-default-model">
+              <span>Task Default Model</span>
+              <ModelInput
+                harness="omp"
+                repoPath={repoPath}
+                ariaLabel="Task Default Model"
+                value={model}
+                onChange={(v) => {
+                  dirtyRef.current = true;
+                  setModel(v);
+                  setModelNeedsReselection(false);
+                }}
+                onOpenPicker={() => setPicking("task")}
+              />
+              {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
+            </label>
+            {!!selectedSource?.definition.step.length && (
+              <details className="create-disclosure">
+                <summary>Step settings</summary>
+                <div className="step-model-list create-disclosure-body">
+                  <div className="step-model-head">
+                    <span>Step</span>
+                    <span>After each step</span>
+                    <span>Step model / source</span>
+                  </div>
+                  {selectedSource.definition.step.map((step) => {
+                    const hasDestination = selectedSource.definition.step.some((consumer) =>
+                      step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
+                    );
+                    const automatic = autoAdvance.includes(step.key);
+                    const display = stepModelDisplay({
+                      stepModel: step.model,
+                      playbookDefaultModel: selectedSource.definition.default_model,
+                      taskModel: model,
+                      productModel,
+                      override: stepModels[step.key],
+                    });
+                    return (
+                      <div key={step.key} className="step-model-row">
+                        <span className="create-continuation-label">{step.title}</span>
+                        <div className="step-continuation-control" data-label="After each step">
+                          {hasDestination ? (
+                            <div className="create-continuation-choices" role="group" aria-label={step.title}>
+                              {[true, false].map((value) => (
+                                <button
+                                  key={String(value)}
+                                  type="button"
+                                  aria-pressed={automatic === value}
+                                  disabled={creating || clearing || creatingRef.current}
+                                  onClick={() => {
+                                    if (automatic === value) return;
+                                    dirtyRef.current = true;
+                                    setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
+                                  }}
+                                >
+                                  <span className="create-continuation-check" aria-hidden="true">
+                                    {automatic === value ? "✓" : ""}
+                                  </span>
+                                  {value ? "Continue automatically" : "Wait for me"}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="create-continuation-complete">Playbook complete</span>
+                          )}
+                        </div>
+                        <div className="step-model-control" data-label="Step model / source">
+                          <ModelInput
+                            harness="omp"
+                            repoPath={repoPath}
+                            prefillRemembered={false}
+                            placeholder="Inherits"
+                            ariaLabel={`${step.title} model`}
+                            value={display.value}
+                            onChange={(value) => onStepModelChange(step.key, value)}
+                            onOpenPicker={() => setPicking(step.key)}
+                          />
+                          {display.source && display.source !== "task-default" && (
+                            <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{STEP_MODEL_CAPTION[display.source]}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+            {picking && (
+              <ProviderSetupDialog
+                mode="manual"
+                initialTab="models"
+                unsignedOpensAccounts
+                onPick={(next) => {
+                  dirtyRef.current = true;
+                  if (picking === "task") {
+                    setModel(next);
+                    setModelNeedsReselection(false);
+                  } else if (picking) {
+                    onStepModelChange(picking, next);
                   }
                 }}
-                placeholder="Paste file paths or http(s) URLs, comma-separated…"
+                onClose={() => setPicking(null)}
               />
-              <button className="btn ghost small" type="button" disabled={creatingRef.current} onClick={pickAttachments}>
-                Add files…
-              </button>
-            </div>
-            {attachments.map((entry) => (
-              <div key={entry} className="attachment-row">
-                <span className="attachment-row-name" title={entry}>
-                  {entry}
-                </span>
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  disabled={creatingRef.current}
-                  aria-label={`Remove ${entry}`}
-                  onClick={() => {
-                    if (creatingRef.current) return;
-                    dirtyRef.current = true;
-                    setAttachments((cur) => cur.filter((x) => x !== entry));
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            {linearImages.map((image) => (
-              <div key={image.name} className="attachment-row">
-                <span className="attachment-row-name" title={image.source_url}>
-                  {image.name}
-                </span>
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  disabled={creatingRef.current}
-                  aria-label={`Remove ${image.name}`}
-                  onClick={() => {
-                    if (creatingRef.current) return;
-                    dirtyRef.current = true;
-                    setDesc((current) => restoreLinearImageUrls(current, [image]));
-                    setLinearImages((current) => current.filter((item) => item.name !== image.name));
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            {linearImageErrors.map((error) => (
-              <InlineStatus key={error} tone="warning">
-                {error}
-              </InlineStatus>
-            ))}
-            {images.map((image) => (
-              <div key={image.id} className="attachment-row">
-                {image.previewUnavailable ? (
-                  <span className="hint">Preview unavailable</span>
-                ) : (
-                  <img
-                    className="attachment-thumbnail"
-                    src={image.previewUrl}
-                    alt={`Preview of ${image.name}`}
-                    onError={() => updateImages(imagesRef.current.map((item) => (item.id === image.id ? { ...item, previewUnavailable: true } : item)))}
+            )}
+            <details className="create-disclosure" ref={advancedDisclosureRef}>
+              <summary>Advanced settings</summary>
+              <div className="create-disclosure-body">
+                <label className="create-field">
+                  <span>Task slug</span>
+                  <input
+                    className="field-input"
+                    value={taskSlug}
+                    onChange={(e) => {
+                      dirtyRef.current = true;
+                      const next = slugifyTaskName(e.target.value);
+                      setTaskSlug(next);
+                      setSlugEdited(next !== slugifyTaskName(name));
+                    }}
+                    placeholder="task-slug"
                   />
-                )}
-                <span className="attachment-row-name" title={image.name}>
-                  {image.name}
-                </span>
-                <span>
-                  {image.file.size >= 1024 * 1024
-                    ? `${(image.file.size / (1024 * 1024)).toFixed(1)} MiB`
-                    : image.file.size >= 1024
-                      ? `${(image.file.size / 1024).toFixed(1)} KiB`
-                      : `${image.file.size} B`}
-                </span>
-                <button
-                  className="btn ghost small"
-                  type="button"
-                  disabled={creatingRef.current}
-                  aria-label={`Remove ${image.name}`}
-                  onClick={() => {
-                    if (creatingRef.current) return;
-                    URL.revokeObjectURL(image.previewUrl);
-                    updateImages(imagesRef.current.filter((item) => item.id !== image.id));
-                    dirtyRef.current = true;
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            {pasteErrors.length > 0 && <InlineStatus tone="error">{pasteErrors.join("\n")}</InlineStatus>}
-            {!draftAttachmentsReady && <InlineStatus tone={draftAttachmentsError ? "error" : "warning"}>{draftAttachmentsError || "Loading draft attachments…"}</InlineStatus>}
-            <div className="hint">Paste images in Description, Evidence / pointers, or Attachments. Pasted images are saved with the draft when autosave is enabled.</div>
-            <div className="hint">
-              Local files are copied into the task. Attachment URLs are recorded, never fetched. Linear description images download on import. Drop files anywhere on this form.
-            </div>
-          </div>
-          <label className="create-field task-default-model">
-            <span>Task Default Model</span>
-            <ModelInput
-              harness="omp"
-              repoPath={repoPath}
-              ariaLabel="Task Default Model"
-              value={model}
-              onChange={(v) => {
-                dirtyRef.current = true;
-                setModel(v);
-                setModelNeedsReselection(false);
-              }}
-              onOpenPicker={() => setPicking("task")}
-            />
-            {modelNeedsReselection && <InlineStatus tone="error">Select a model available in this repository.</InlineStatus>}
-          </label>
-          {!!selectedSource?.definition.step.length && (
-            <div className="create-field">
-              <span>Step settings</span>
-              <div className="step-model-list">
-                <div className="step-model-head">
-                  <span>Step</span>
-                  <span>After each step</span>
-                  <span>Step model / source</span>
+                  <div className="hint">Task folder and automatic Git names. Edit to override.</div>
+                </label>
+                <div className="crow worktree-row">
+                  <span>Dedicated task worktree</span>
+                  <label className="create-field grow">
+                    <span>New task branch</span>
+                    <input
+                      className="field-input worktree-input"
+                      value={branchName}
+                      onChange={(e) => {
+                        dirtyRef.current = true;
+                        setBranchName(e.target.value);
+                      }}
+                      placeholder="Branch name (optional — auto if blank or taken)"
+                    />
+                  </label>
+                  <label className="create-field grow">
+                    <span>Worktree folder</span>
+                    <input
+                      className="field-input worktree-input"
+                      value={worktreeName}
+                      onChange={(e) => {
+                        dirtyRef.current = true;
+                        setWorktreeName(e.target.value);
+                      }}
+                      placeholder="Worktree folder name (optional — auto if blank or taken)"
+                    />
+                  </label>
                 </div>
-                {selectedSource.definition.step.map((step) => {
-                  const hasDestination = selectedSource.definition.step.some((consumer) =>
-                    step.outputs.some((output) => consumer.inputs.some((input) => selectorsOverlap(output.path, input.path))),
-                  );
-                  const automatic = autoAdvance.includes(step.key);
-                  const display = stepModelDisplay({
-                    stepModel: step.model,
-                    playbookDefaultModel: selectedSource.definition.default_model,
-                    taskModel: model,
-                    productModel,
-                    override: stepModels[step.key],
-                  });
+                <label className="create-field">
+                  <span>Maximum live sessions</span>
+                  <input
+                    className="field-input"
+                    type="number"
+                    min="1"
+                    max="4294967295"
+                    step="1"
+                    value={maxLiveSessions}
+                    onChange={(event) => {
+                      dirtyRef.current = true;
+                      setMaxLiveSessions(event.target.value);
+                    }}
+                  />
+                </label>
+              </div>
+            </details>
+            {created && (
+              <section aria-label="Creation result">
+                <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
+                  Creation: {created.creation}. Start: {created.start}.
+                </InlineStatus>
+                {created.errors.map((error) => (
+                  <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
+                    {error.stage}: {error.message}
+                  </InlineStatus>
+                ))}
+                {created.attachment_errors?.map((error) => (
+                  <InlineStatus key={error} tone="warning">
+                    {error}
+                  </InlineStatus>
+                ))}
+                {created.sessions.map((session) => (
+                  <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
+                    Open session {session.id}
+                  </button>
+                ))}
+                {created.executions.map((execution) => (
+                  <div key={execution.id}>
+                    {execution.candidate.step_key}: {execution.lifecycle}
+                    {execution.error ? ` — ${execution.error}` : ""}
+                  </div>
+                ))}
+                {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
+              </section>
+            )}
+            {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
+            {pageError && (
+              <InlineStatus tone="error" detail={pageError.detail}>
+                {pageError.msg}
+              </InlineStatus>
+            )}
+          </div>
+        </div>
+        <aside className="create-preview-panel" aria-labelledby="create-playbook-title">
+          <div className="artifacthead playbook-picker-header">
+            <div className="artifacttitle" id="create-playbook-title">
+              Playbook
+            </div>
+            {draftSlug ? <span className="pill">Draft</span> : null}
+            <PlaybookLibraryLink className="small playbook-browse-action" />
+          </div>
+          <div className="playbook-panel-controls">
+            <CollectionSearch label="playbooks" query={playbookQuery} onQueryChange={setPlaybookQuery} className="playbook-search" />
+            {starError && <InlineStatus tone="error">{starError}</InlineStatus>}
+            <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
+              {visiblePlaybooks.length > 0 ? (
+                visiblePlaybooks.map((item) => {
+                  const identity = playbookRefKey(item.source.reference);
+                  const selected = samePlaybookRef(playbook, item.source.reference);
+                  const starred = starredKeys.has(identity);
                   return (
-                    <div key={step.key} className="step-model-row">
-                      <span className="create-continuation-label">{step.title}</span>
-                      <div className="step-continuation-control" data-label="After each step">
-                        {hasDestination ? (
-                          <div className="create-continuation-choices" role="group" aria-label={step.title}>
-                            {[true, false].map((value) => (
-                              <button
-                                key={String(value)}
-                                type="button"
-                                aria-pressed={automatic === value}
-                                disabled={creating || clearing || creatingRef.current}
-                                onClick={() => {
-                                  if (automatic === value) return;
-                                  dirtyRef.current = true;
-                                  setAutoAdvance((cur) => (value ? [...cur, step.key] : cur.filter((key) => key !== step.key)));
-                                }}
-                              >
-                                <span className="create-continuation-check" aria-hidden="true">
-                                  {automatic === value ? "✓" : ""}
-                                </span>
-                                {value ? "Continue automatically" : "Wait for me"}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="create-continuation-complete">Playbook complete</span>
-                        )}
-                      </div>
-                      <div className="step-model-control" data-label="Step model / source">
-                        <ModelInput
-                          harness="omp"
-                          repoPath={repoPath}
-                          prefillRemembered={false}
-                          placeholder="Inherits"
-                          ariaLabel={`${step.title} model`}
-                          value={display.value}
-                          onChange={(value) => onStepModelChange(step.key, value)}
-                          onOpenPicker={() => setPicking(step.key)}
+                    <div className={`playbook-picker-card${selected ? " selected" : ""}${item.diagnostics.length ? " invalid" : ""}`} key={identity}>
+                      <label className={`playbook-option${selected ? " selected" : ""}`}>
+                        <input
+                          checked={selected}
+                          disabled={creating || catalogLoading || item.diagnostics.length > 0}
+                          className="playbook-option-input"
+                          name="create-playbook"
+                          aria-label={`${item.title ?? item.source.reference.key} — ${identity}`}
+                          aria-describedby={`create-playbook-description-${identity}`}
+                          onChange={() => selectPlaybook(item.source.reference)}
+                          type="radio"
+                          value={identity}
                         />
-                        {display.source && display.source !== "task-default" && (
-                          <span className={`step-model-badge${display.source === "override" ? " is-override" : ""}`}>{STEP_MODEL_CAPTION[display.source]}</span>
-                        )}
-                      </div>
+                        <span className="playbook-option-content">
+                          <span className="playbook-option-meta">
+                            <span>{item.source.reference.scope}</span>
+                            {starred && samePlaybookRef(item.source.reference, RECOMMENDED_PLAYBOOK) && <span>Recommended</span>}
+                            {selected && <span className="playbook-option-selected">Selected</span>}
+                          </span>
+                          <span className="playbook-option-topline">
+                            <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
+                            <span aria-hidden="true" className="playbook-option-indicator" />
+                          </span>
+                          <span className="playbook-option-description" id={`create-playbook-description-${identity}`}>
+                            {item.description}
+                          </span>
+                          {item.diagnostics.map((diagnostic) => (
+                            <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
+                          ))}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="playbook-star-button"
+                        aria-label={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
+                        title={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
+                        aria-pressed={starred}
+                        disabled={!pickerPreferences || starSaving || catalogLoading || creating}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        onClick={() => void togglePlaybookStar(item.source.reference)}
+                      >
+                        <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
+                      </button>
+                      {selected && selectedSource && (
+                        <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
+                          <ul className="playbook-process-list">
+                            {selectedSource.definition.step.slice(0, 3).map((step) => (
+                              <li key={step.key}>
+                                <span>{step.title}</span>
+                                {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
+                              </li>
+                            ))}
+                          </ul>
+                          {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
+                          <div className="playbook-card-process">
+                            <span>
+                              {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
+                              {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
+                            </span>
+                            <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
+                              View workflow
+                            </button>
+                          </div>
+                        </section>
+                      )}
                     </div>
                   );
-                })}
-              </div>
+                })
+              ) : (
+                <div className="playbook-empty">{playbookQuery ? "No matching playbooks." : "No installed playbooks. Browse the Playbook Library to find one."}</div>
+              )}
             </div>
-          )}
-          {picking && (
-            <ProviderSetupDialog
-              mode="manual"
-              initialTab="models"
-              unsignedOpensAccounts
-              onPick={(next) => {
-                dirtyRef.current = true;
-                if (picking === "task") {
-                  setModel(next);
-                  setModelNeedsReselection(false);
-                } else if (picking) {
-                  onStepModelChange(picking, next);
-                }
-              }}
-              onClose={() => setPicking(null)}
-            />
-          )}
-          <div className="crow worktree-row">
-            <span>Dedicated task worktree</span>
-            <label className="create-field grow">
-              <span>New task branch</span>
-              <input
-                className="field-input worktree-input"
-                value={branchName}
-                onChange={(e) => {
-                  dirtyRef.current = true;
-                  setBranchName(e.target.value);
-                }}
-                placeholder="Branch name (optional — auto if blank or taken)"
-              />
-            </label>
-            <label className="create-field grow">
-              <span>Worktree folder</span>
-              <input
-                className="field-input worktree-input"
-                value={worktreeName}
-                onChange={(e) => {
-                  dirtyRef.current = true;
-                  setWorktreeName(e.target.value);
-                }}
-                placeholder="Worktree folder name (optional — auto if blank or taken)"
-              />
-            </label>
+            {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
+            {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
           </div>
-          <label className="create-field">
-            <span>Maximum live sessions</span>
-            <input
-              className="field-input"
-              type="number"
-              min="1"
-              max="4294967295"
-              step="1"
-              value={maxLiveSessions}
-              onChange={(event) => {
-                dirtyRef.current = true;
-                setMaxLiveSessions(event.target.value);
-              }}
-            />
-          </label>
-          <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
-          {created && (
-            <section aria-label="Creation result">
-              <InlineStatus tone={created.creation === "partial" || created.start === "failed" ? "warning" : "info"}>
-                Creation: {created.creation}. Start: {created.start}.
-              </InlineStatus>
-              {created.errors.map((error) => (
-                <InlineStatus key={`${error.stage}:${error.code}:${error.message}`} tone="error" detail={error.code}>
-                  {error.stage}: {error.message}
-                </InlineStatus>
-              ))}
-              {created.attachment_errors?.map((error) => (
-                <InlineStatus key={error} tone="warning">
-                  {error}
-                </InlineStatus>
-              ))}
-              {created.sessions.map((session) => (
-                <button className="btn ghost" type="button" key={session.id} disabled={!created.task} onClick={() => onCreated({ ...created, selectedSessionId: session.id })}>
-                  Open session {session.id}
-                </button>
-              ))}
-              {created.executions.map((execution) => (
-                <div key={execution.id}>
-                  {execution.candidate.step_key}: {execution.lifecycle}
-                  {execution.error ? ` — ${execution.error}` : ""}
-                </div>
-              ))}
-              {!created.task && <InlineStatus tone="warning">No task identity was returned. Inspect the repository before trying again.</InlineStatus>}
-            </section>
-          )}
-          {creating && <InlineStatus tone="info">Creating New Task… You can keep using Alinery while the worktree is set up.</InlineStatus>}
-          {pageError && (
-            <InlineStatus tone="error" detail={pageError.detail}>
-              {pageError.msg}
-            </InlineStatus>
-          )}
-          <div className="create-actions">
-            {created ? (
-              <button className="btn" type="button" disabled={!created.task} onClick={() => onCreated(created)}>
-                Open task
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn"
-                disabled={!draftAttachmentsReady || creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug}
-                onClick={create}
-              >
-                {creating ? "Creating…" : "Create task"}
-              </button>
-            )}
-            {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
-            {draftSlug ? (
-              <button className="btn ghost" disabled={creating || clearing || creatingRef.current} onClick={clearDraft} type="button">
-                {clearing ? "Clearing draft…" : "Clear draft"}
-              </button>
-            ) : null}
-            <button type="button" className="btn ghost" onClick={onCancel}>
-              Cancel
-            </button>
-          </div>
-        </div>
+        </aside>
       </div>
-      <aside className="create-preview-panel" aria-labelledby="create-playbook-title">
-        <div className="artifacthead playbook-picker-header">
-          <div className="artifacttitle" id="create-playbook-title">
-            Playbook
-          </div>
-          {draftSlug ? <span className="pill">Draft</span> : null}
-          <PlaybookLibraryLink className="small playbook-browse-action" />
+      <footer className="create-footer">
+        <div className="create-footer-context">
+          <Checkbox checked={start} onChange={setStart} label="Start eligible sessions after creation" />
+          {!created && createBlockedReason && !creating && <span className="hint">{createBlockedReason}</span>}
         </div>
-        <div className="playbook-panel-controls">
-          <CollectionSearch label="playbooks" query={playbookQuery} onQueryChange={setPlaybookQuery} className="playbook-search" />
-          {starError && <InlineStatus tone="error">{starError}</InlineStatus>}
-          <div className="playbook-picker" role="radiogroup" aria-label="Choose playbook">
-            {visiblePlaybooks.length > 0 ? (
-              visiblePlaybooks.map((item) => {
-                const identity = playbookRefKey(item.source.reference);
-                const selected = samePlaybookRef(playbook, item.source.reference);
-                const starred = starredKeys.has(identity);
-                return (
-                  <div className={`playbook-picker-card${selected ? " selected" : ""}${item.diagnostics.length ? " invalid" : ""}`} key={identity}>
-                    <label className={`playbook-option${selected ? " selected" : ""}`}>
-                      <input
-                        checked={selected}
-                        disabled={creating || catalogLoading || item.diagnostics.length > 0}
-                        className="playbook-option-input"
-                        name="create-playbook"
-                        aria-label={`${item.title ?? item.source.reference.key} — ${identity}`}
-                        aria-describedby={`create-playbook-description-${identity}`}
-                        onChange={() => selectPlaybook(item.source.reference)}
-                        type="radio"
-                        value={identity}
-                      />
-                      <span className="playbook-option-content">
-                        <span className="playbook-option-meta">
-                          <span>{item.source.reference.scope}</span>
-                          {starred && samePlaybookRef(item.source.reference, RECOMMENDED_PLAYBOOK) && <span>Recommended</span>}
-                          {selected && <span className="playbook-option-selected">Selected</span>}
-                        </span>
-                        <span className="playbook-option-topline">
-                          <span className="playbook-option-title">{item.title ?? item.source.reference.key}</span>
-                          <span aria-hidden="true" className="playbook-option-indicator" />
-                        </span>
-                        <span className="playbook-option-description" id={`create-playbook-description-${identity}`}>
-                          {item.description}
-                        </span>
-                        {item.diagnostics.map((diagnostic) => (
-                          <span key={`${diagnostic.code}:${diagnostic.field}:${diagnostic.line}:${diagnostic.message}`}>{diagnostic.message}</span>
-                        ))}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      className="playbook-star-button"
-                      aria-label={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
-                      title={`${starred ? "Unstar" : "Star"} ${item.title ?? item.source.reference.key}`}
-                      aria-pressed={starred}
-                      disabled={!pickerPreferences || starSaving || catalogLoading || creating}
-                      onKeyDown={(event) => event.stopPropagation()}
-                      onClick={() => void togglePlaybookStar(item.source.reference)}
-                    >
-                      <Star size={16} strokeWidth={1.5} fill={starred ? "currentColor" : "none"} aria-hidden="true" />
-                    </button>
-                    {selected && selectedSource && (
-                      <section className="playbook-card-overview" aria-label={`${item.title ?? selectedSource.definition.title} workflow preview`}>
-                        <ul className="playbook-process-list">
-                          {selectedSource.definition.step.slice(0, 3).map((step) => (
-                            <li key={step.key}>
-                              <span>{step.title}</span>
-                              {step.inputs.some((input) => input.mode === "each") && <span className="playbook-process-parallel">Parallel</span>}
-                            </li>
-                          ))}
-                        </ul>
-                        {selectedSource.definition.step.length > 3 && <div className="playbook-process-more">+{selectedSource.definition.step.length - 3} more steps</div>}
-                        <div className="playbook-card-process">
-                          <span>
-                            {selectedSource.definition.step.length} {selectedSource.definition.step.length === 1 ? "step" : "steps"}
-                            {selectedSource.definition.step.some((step) => step.inputs.some((input) => input.mode === "each")) && " · Parallel work"}
-                          </span>
-                          <button className="btn ghost small" type="button" onClick={() => setWorkflowPreviewOpen(true)}>
-                            View workflow
-                          </button>
-                        </div>
-                      </section>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="playbook-empty">{playbookQuery ? "No matching playbooks." : "No installed playbooks. Browse the Playbook Library to find one."}</div>
-            )}
-          </div>
-          {playbookNeedsReselection && <InlineStatus tone="error">The selected or configured playbook is unavailable or invalid. Choose a valid scoped playbook.</InlineStatus>}
-          {sourceError && <InlineStatus tone="error">{sourceError}</InlineStatus>}
+        <div className="create-actions">
+          {created ? (
+            <button className="btn" type="button" disabled={!created.task} onClick={() => onCreated(created)}>
+              Open task
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn"
+              disabled={!draftAttachmentsReady || creating || clearing || importing || creatingRef.current || !!createBlockedReason || !taskSlug}
+              onClick={create}
+            >
+              {creating ? "Creating…" : "Create task"}
+            </button>
+          )}
+          {draftSlug ? (
+            <button className="btn ghost" disabled={creating || clearing || creatingRef.current} onClick={clearDraft} type="button">
+              {clearing ? "Clearing draft…" : "Clear draft"}
+            </button>
+          ) : null}
+          <button type="button" className="btn ghost" onClick={onCancel}>
+            Cancel
+          </button>
         </div>
-      </aside>
+      </footer>
       {workflowPreviewOpen && selectedSource && (
         <Dialog className="create-playbook-dialog" ariaLabel={`${selectedSource.definition.title} workflow`} onClose={() => setWorkflowPreviewOpen(false)}>
           <div className="create-playbook-dialog-header">
