@@ -229,6 +229,7 @@ The daemon and the app both depend on `alinery-proto`. Generated code is checked
 version: v2
 modules:
   - path: .
+    excludes: [node_modules]
 lint:
   use: [STANDARD]
 breaking:
@@ -1171,7 +1172,7 @@ Each session is one PR. The fields are always the same:
 
 ### S0.1 Proto toolchain and the daemon test step
 
-Status: not started. Needs: nothing. Its research was answered by the review spike (4.1 S0.1).
+Status: **done, 29c397b** (code and tests). Left for you: nothing is required. Optional: run `scripts/install-proto.sh --with-dev` and `scripts/tests/check-proto-gen.sh` on Linux (not run; see 4.2). `./scripts/check.sh` as a whole does not pass on this branch for reasons S0.1 did not touch (4.4); every step S0.1 added does. Its research was answered by the review spike (4.1 S0.1).
 
 **Goal.** `proto/` exists with `common.proto` and `admin.proto`, generated TypeScript is checked in, and both the daemon and the app import it. `./scripts/check.sh` runs the daemon's and the engine's `bun test` (today it runs neither: its steps are biome, typecheck, vitest, the omp extension, the Rust steps and the shell gates).
 
@@ -2500,7 +2501,8 @@ Status: not started. Needs: S7.1, S7.3.
 | S4.9 (O11) | fflate 0.8.3 reads zip64 and writes none, so a TypeScript-made archive stops at 4 GiB or 65,535 entries. This repo's backup set: 289 MB, 43 tasks. macOS `/usr/bin/zip` 3.0 and `unzip` 6.00 have `ZIP64_SUPPORT`; a 70,001-entry archive from `zip` listed whole with `unzip -Z1`; a vanished file on the list is a warning and exit 0. `debian:12` has neither tool. |
 | S7.2 | `heapStats()` from `bun:jsc` works under `bun run` and compiled. |
 | O5 / O26 echo (v0.8) | `echo-load.ts`: PTY echo through `Bun.Terminal` (`cat` in raw mode), 2,000 samples at 200 Hz, two runs each. Idle e2e p99 0.10 to 0.11 ms. Synchronous durable writes (one task creation every 200 ms): p99 4.9 to 21.5 ms, max loop gap up to 41 ms. Reconcile back to back over 1,000 tasks: p99 2.6 to 2.9 ms, pass p50 19 ms. git children and a 300 MB `zip`: no effect on their own. Everything at once: p99 31 ms, gap 47 to 55 ms. With the fsync on a Worker: p99 0.14 to 0.18 ms; everything at once p99 5.3 to 5.4 ms, but max gap still 21 to 26 ms, cause not measured (likely the task's synchronous `mkdir` and writes under I/O load). Most of the e2e delay is input waiting on a blocked loop, not output. Not measured: a real socket client, several PTYs, Linux. |
-| S0.1 exports (v0.8) | `exports-check.sh`: the subpath mapping works in Bun, `bun build --compile`, `tsc` and Vite 7.3.6 once `proto/` has its own `node_modules`; without it all fail (tsc silently). Not checked: vitest, Linux. |
+| S0.1 exports (v0.8) | `exports-check.sh`: the subpath mapping works in Bun, `bun build --compile`, `tsc` and Vite 7.3.6 once `proto/` has its own `node_modules`; without it all fail (tsc silently). Not checked in the spike: vitest, Linux. S0.1 checked vitest: the app's `src/proto.test.ts` passes, and fails with `Failed to resolve import "@bufbuild/protobuf/codegenv2"` when `proto/node_modules` is moved away. Linux is still unrun. |
+| S0.1 build (v0.9) | `proto/` is at the repo root beside `playbook-engine`; the `file:` paths in the plan work as written. `npm --prefix proto ci --omit=dev` installs no buf, so `scripts/install-proto.sh` takes `--with-dev` and `check.sh` and `check-proto-gen.sh` use it; the script is a no-op while `node_modules/.package-lock.json` is newer than `package-lock.json`, so `tauri dev`'s `dev-fetch-bun.sh --no-download` does not reach the network. Both consumers also list `@bufbuild/protobuf` 2.16.0 directly (the app's tests import `create` and `fromBinary`; without it Vite cannot resolve it from `src/`). `proto/buf.yaml` has `excludes: [node_modules]`. `check.sh` finds Bun the way `dev-fetch-bun.sh` does, without downloading, and fails with the fetch command; `dev_fetch_bun_test.sh` now forbids running the fetch from `check.sh`, not naming it. A first `bun test` in the daemon right after `bun install` showed 2 failures and 2 errors once and never again in 7 runs: not reproduced. |
 | O23 buf (v0.8) | `buf-breaking-check.sh`: `--path` limits `buf breaking` to two files, 14 of 14 cases; a git-ref baseline works from a worktree; a baseline without the files exits 1, a break exits 100. |
 | Lock queue (v0.8) | `mutation-queue.test.ts` with the Rust holder: with the deadline from enqueue, a 500 ms hold lets all 50 land (last at about 570 ms) and a 5 s hold fails all 50 at 2.00 to 2.004 s. The v0.6 shape failed one call every 2 s. 9 of 9 runs. |
 | S2.3 Linux watcher (v0.8) | `debian:12` arm64, Colima VM kernel 6.8: Bun `fs.watch` 0 missed, 0 burst misses, p50 0 ms, max 2 to 8 ms, 495 to 514 extra events, scrollback 142 to 195 events/s, #34160 does not apply (3 to 5 ms per 500 watches). `@parcel/watcher` 2.6.0 lost the final state of 500 to 556 paths per burst and missed new subtrees. x64 not run (QEMU without AVX). |
@@ -2520,7 +2522,7 @@ Slots the sessions fill (empty until then):
 
 | Session | Records |
 |---|---|
-| S0.1 | The `exports` mapping, if it needed a change |
+| S0.1 | The `exports` mapping, if it needed a change: none. `"./*": "./gen/*.ts"` works as written in Bun, vitest and `tsc` (2026-11-05). |
 | S2.3 | The Linux watcher run; a switch to `@parcel/watcher` if it happens |
 | S2.1 | The Subscribe measurements |
 | S3.4 | The O8 measurement |
@@ -2548,7 +2550,7 @@ Resolved by the plan review and removed in v0.4: buf and protoc-gen-es, Connect 
 | Which git the daemon finds on a Mac without Command Line Tools; whether its PATH on a remote host (under `systemd-run --user` or `setsid`) finds the git the setup probe found. The remote-sshd container has no user systemd | S4.7 |
 | What a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8) | S7.1 |
 | What causes the 20 to 26 ms loop gaps left under combined load once the fsync is on a Worker | S3.4 |
-| The `proto/` install step under vitest and on Linux | S0.1 |
+| The `proto/` install step on Linux (it passes under vitest and Bun on macOS) | a Linux run of `scripts/install-proto.sh` and the three `alinery-proto` tests |
 
 ## 4.3 References
 
@@ -2579,7 +2581,7 @@ External:
 For the user:
 - **Keep up with the base branch, not `main`.** `remote-daemon` stacks on `experimental-pi-durable-as-a-harness`; on 2026-11-05 it was 3 commits behind it (`c5a5109`, and a drop reverted by `b476097`). Pull the base in when it moves; `main` is merged into neither branch until later (user, 2026-11-05).
 - **R5**: telemetry ingest credentials are hardcoded at `alinery-core/src/telemetry.rs:21-22`. Out of this plan's scope. After S4.1 the daemon holds a copy too (O17 c), and a remote host gets it with the runtime, so a fix changes both.
-- **`check.sh` runs no daemon `bun test`.** S0.1 adds the step.
+- **`./scripts/check.sh` does not pass on this branch before or after S0.1 (found 2026-11-05).** Steps S0.1 did not touch fail: biome (formatting in 10 files, e.g. `TaskRunGraph.tsx`, `SessionView.tsx`), `tsc` on tests (10 errors in `ChatView.test.tsx`, `SessionView.test.tsx`, `chatTranscript.test.ts`, `Settings.backup.test.tsx`), 4 vitest tests (`ProviderSetupDialog`, `SessionView`, `TaskDetail`), clippy (one warning at a `files.iter().any(|name| *name == "SKILL.md")`), and the Rust test `tests::daemon::takeover_rejects_invalid_and_compatible_targets_before_shutdown`. Every later session inherits this until someone fixes them. S0.1 ran the rest of `check.sh` with those steps made non-fatal in a scratch copy: all else passed. `check.sh` now runs the proto, daemon and playbook-engine `bun test` steps (S0.1).
 - **Hardened-runtime probe (S0.5).** Needs the release signing identity: build `docs/thick-daemon-spikes/src/hardened-probe.ts` with `bun build --compile`, sign it with `codesign --force --timestamp --options runtime --entitlements <the release plist> --sign "Developer ID Application: <team>"`, run it, and expect `"ok":true`. Commands in the spikes README.
 - **Live webview check (S1.2).** Needs the app launched: in devtools, `admin(<repo>).hello({})` answers through the bridge.
 - **Rosetta and today's peer check.** Under Rosetta x64 emulation (Docker on Apple silicon), another process's `/proc/<pid>/exe` reads `/run/rosetta/rosetta`, so today's daemon peer check (`main.ts:703`) can't see the real executable there either. It matters only for emulated x64 Linux.
@@ -2606,6 +2608,8 @@ README suggestions (README is human-edited; nothing here edits it):
 - v0.4, 2026-10-27: plan review. D8 (the Tauri UI is the only client; P6 becomes the setup screen; O13 and T4 to T6 withdrawn). Spikes for S0.1 to S0.5, the O3 scan, the store, TOML and zip, with code in `docs/thick-daemon-spikes/`; their results in 2.x and 4.1. The bridge (2.1.9), auth (2.1.10, O20), durability (2.3.2) and the 30 MIXED commands (2.3.4) rewritten from them. Every session gets an Accept list; Needs corrected across P1 to P5. New Open items O20 and O21; the O14 trace in 4.1.
 - v0.5, 2026-10-27: the user decided O4 (a) with D9 (hosts and daemons set up separately; onboarding runs on a host's first daemon), O7 (a), O11 (b, the host's `zip` and `unzip`), O14 (b, `execution.json` is the truth), O20 (c) and O21 (b). O22 raised (the cross-repo handoff under O20 c). S4.2, S4.9, S5.1 and P6 (S6.1 hosts and the onboarded mark, S6.2 the setup screen) rewritten to match.
 - v0.6, 2026-10-27: the user decided O1 (b, `@grpc/grpc-js`), O2 (a, today's Tauri client), O3 (a, files stay the truth, after a SQLite measurement) and O6 (a); the local machine may be macOS or Linux. 2.1.7 to 2.1.9 rewritten for grpc-js with Connect-shaped handlers and a gRPC-web bridge over one HTTP/2 connection per daemon; S0.2, S0.3, S1.1, S1.2 and S1.4 (the shell encodes its own few messages with `prost`, WA) follow. New spike code: `grpc-server.ts`, `grpc-adapter.ts`, `grpc-bridge.ts`, `bridge-rs/src/bin/h2.rs`, `sqlite-bench.ts`; results in 4.1.
+- v0.9, 2026-11-05: build run, session by session.
+  - S0.1 (29c397b): `proto/` at the repo root with `common.proto` and `admin.proto`, checked-in `gen/`, `check-proto-gen.sh`, `scripts/install-proto.sh`, and the proto, daemon and playbook-engine `bun test` steps in `check.sh`. Findings in 4.1 and 4.4.
 - v0.8, 2026-11-05: spikes run before the build, code in `docs/thick-daemon-spikes/`:
   - PTY echo under load (O5) raised O26: on the main thread `F_FULLFSYNC` stalls the PTYs, and a fsync-only Worker fixes it (the user decided (a) the same day; O7 stands for everything else).
   - `proto/` needs its own install step (S0.1).
