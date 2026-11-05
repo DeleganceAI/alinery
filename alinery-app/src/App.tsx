@@ -41,6 +41,7 @@ import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { liveSessionsNow } from "./sync/hooks";
+import { observationNow } from "./sync/sessionObservation";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -383,7 +384,7 @@ export default function App() {
       return true;
     } catch {
       try {
-        const state = (await ipc.sessionStatus(id, "")).lifecycle.state;
+        const state = (await observationNow((await ipc.readAppConfig()).active_repo, "", id)).lifecycle.state;
         return state !== "live" && state !== "never_started";
       } catch {
         return false;

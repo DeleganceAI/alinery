@@ -371,29 +371,6 @@ pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo
     .await
 }
 
-#[tauri::command]
-pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<SessionObservation, String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    // Chat polls this every 1.5s; a sync command would run the daemon round trip on the main thread.
-    off_main_thread("chat session status", move || {
-        let state = app.state::<AppState>();
-        let meta = chat_meta(&state, &target, &id)?;
-        // A slow or failed read is an error, not "no process": collapsing it to None read as
-        // Orphaned, flickered the title, and made stream recovery skip a live thread.
-        let live = match chat_daemon(&state, &target).ok() {
-            Some(daemon) => daemon.session_status_observed(&id)?,
-            None => None,
-        };
-        Ok(SessionObservation {
-            lifecycle: lifecycle_from_structured(meta.started_at, meta.ended_at, meta.exit_code, live.as_ref().map(|live| &live.state)),
-            state: live.as_ref().map(|live| live.state.clone()),
-            checkpoint: meta.semantic,
-            transport: live.map(|live| live.transport),
-        })
-    })
-    .await
-}
-
 /// Attach the terminal view to a thread that is in its PTY transport. Attach only: it never spawns.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]

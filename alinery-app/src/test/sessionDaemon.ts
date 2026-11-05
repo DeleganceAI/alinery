@@ -1,0 +1,132 @@
+// A fake daemon that serves Session entities over a real connect router (plan 2.5), for view tests
+// that need session status. A test states what a session looks like as the old `SessionObservation`
+// and the helper writes the entity the daemon would hold; `show` after mount is a live delta.
+import { create } from "@bufbuild/protobuf";
+import type { Transport } from "@connectrpc/connect";
+import { type Entity, EntitySchema, SessionSchema } from "alinery-proto/alinery/v1/entities_pb";
+import type { SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
+import { sessionEntityKey } from "../sync/sessionObservation";
+import type { SessionObservation } from "../types";
+import { daemonHarness, put, scriptedSync, snapshot, untilAborted } from "./daemonHarness";
+
+/** The Session entity for an observation: the inverse of `observationOf`. */
+export function sessionEntity(taskSlug: string, id: string, o: SessionObservation, wait?: { kind: string; correlationId: string }): Entity {
+  const live = o.lifecycle.state === "live" || o.lifecycle.state === "live_exited";
+  const s = o.state;
+  const exited = o.lifecycle.state === "exited" ? o.lifecycle.code : undefined;
+  const corr = s && "correlation_id" in s.agent ? s.agent.correlation_id : "";
+  const session = create(SessionSchema, {
+    id,
+    startedAt: o.lifecycle.state === "never_started" ? undefined : 1n,
+    endedAt: ["interrupted", "exited"].includes(o.lifecycle.state) ? 2n : undefined,
+    exitCode: exited,
+    semantic: {
+      phaseCompletedAt: o.checkpoint.phase_completed_at == null ? undefined : BigInt(o.checkpoint.phase_completed_at),
+      ompSessionId: o.checkpoint.omp_session_id ?? undefined,
+      ompTurnId: o.checkpoint.omp_turn_id == null ? undefined : BigInt(o.checkpoint.omp_turn_id),
+    },
+    status:
+      s || live
+        ? {
+            process: s?.process.state ?? (o.lifecycle.state === "live_exited" ? "exited" : "alive"),
+            agent: s?.agent.state ?? "unknown",
+            agentCorrelationId: corr,
+            playbook: s?.playbook.state ?? "in_progress",
+            playbookReason: s?.playbook.state === "failed" ? s.playbook.reason : "",
+            adapter: s?.adapter ?? "unsupported",
+            messageAdapter: s?.message_adapter ?? "unsupported",
+            transport: o.transport ?? "",
+          }
+        : undefined,
+    wait,
+  });
+  return create(EntitySchema, { key: sessionEntityKey(taskSlug, id), value: { case: "session", value: session } });
+}
+
+/** Serves every repo's sessions. `transport` is what `daemonTransport` should return. */
+export function sessionDaemon() {
+  const rows = new Map<string, Entity>(); // `${repo}\0${entity key}`
+  const live = new Set<() => void>();
+  const seq = { n: 1 };
+  const version = { n: 0 };
+  const matches = (scope: { kind: { case?: string; value?: unknown } }, key: string) => {
+    const [k, slug, ...rest] = key.split("/");
+    if (scope.kind.case === "session") {
+      const ref = (scope.kind.value as { session?: { taskSlug: string; id: string } }).session;
+      return k === "session" && slug === (ref?.taskSlug || "_") && rest.join("/") === ref?.id;
+    }
+    if (scope.kind.case === "task") return slug === (scope.kind.value as { slug: string }).slug;
+    if (scope.kind.case === "chat") return k === "chat" || (k === "session" && slug === "_");
+    return false;
+  };
+  // Sessions known by id alone, served under whatever task slug a subscription asks for: for tests that do not care which task or repo.
+  const wild = new Map<string, SessionObservation>();
+  const wildCache = new Map<string, Entity>();
+  const wildRows = (scope: { kind: { case?: string; value?: unknown } }) => {
+    const slug =
+      scope.kind.case === "task"
+        ? (scope.kind.value as { slug: string }).slug
+        : scope.kind.case === "session"
+          ? ((scope.kind.value as { session?: { taskSlug: string } }).session?.taskSlug ?? "")
+          : "";
+    return [...wild]
+      .map(([id, o]) => {
+        const key = `${slug}\u0000${id}`;
+        let e = wildCache.get(key);
+        if (!e) wildCache.set(key, (e = sessionEntity(slug, id, o)));
+        return e;
+      })
+      .filter((e) => matches(scope, e.key));
+  };
+  const subscribed: { requests: number } = { requests: 0 };
+  const transports = new Map<string, Transport>();
+  const transport = (repo: string): Transport => {
+    let t = transports.get(repo);
+    if (!t) {
+      const { sync } = scriptedSync(async function* (req, _call, signal): AsyncGenerator<SubscribeResponse> {
+        subscribed.requests += 1;
+        const mine = () => {
+          const own = [...rows].filter(([k, e]) => k.startsWith(`${repo}\u0000`) && matches(req.scope as never, e.key)).map(([, e]) => e);
+          const have = new Set(own.map((e) => e.key));
+          return [...own, ...wildRows(req.scope as never).filter((e) => !have.has(e.key))];
+        };
+        let known = new Map(mine().map((e) => [e.key, e]));
+        yield snapshot([...known.values()], seq.n);
+        let seen = version.n;
+        for (;;) {
+          if (version.n === seen) await Promise.race([untilAborted(signal), new Promise<void>((r) => live.add(r))]);
+          if (signal.aborted) return;
+          seen = version.n;
+          for (const e of mine()) {
+            if (known.get(e.key) !== e) yield put(e, ++seq.n);
+          }
+          known = new Map(mine().map((e) => [e.key, e]));
+        }
+      });
+      t = daemonHarness({ sync }).transport as Transport;
+      transports.set(repo, t);
+    }
+    return t;
+  };
+  return {
+    transport,
+    subscribed,
+    /** One session by id alone, in any repo and under any task slug. */
+    showId(id: string, o: SessionObservation) {
+      wild.set(id, o);
+      for (const k of [...wildCache.keys()]) if (k.endsWith(`\u0000${id}`)) wildCache.delete(k);
+      version.n += 1;
+      const wake = [...live];
+      live.clear();
+      for (const r of wake) r();
+    },
+    /** Set (or change, when subscribers already hold it) one session. */
+    show(repo: string, taskSlug: string, id: string, o: SessionObservation, wait?: { kind: string; correlationId: string }) {
+      rows.set(`${repo}\u0000${sessionEntityKey(taskSlug, id)}`, sessionEntity(taskSlug, id, o, wait));
+      version.n += 1;
+      const wake = [...live];
+      live.clear();
+      for (const r of wake) r();
+    },
+  };
+}

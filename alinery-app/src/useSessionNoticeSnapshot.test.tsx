@@ -1,19 +1,21 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonTransport } from "./daemon/transport";
 import { mockIpc } from "./test/mockIpc";
+import { sessionDaemon } from "./test/sessionDaemon";
 import type { SessionListItem, SessionObservation } from "./types";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 
 const mocks = vi.hoisted(() => ({
   listSessionItems: vi.fn(),
-  sessionListStatuses: vi.fn(),
   clearSessionNotifications: vi.fn(),
 }));
 
+vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
 vi.mock("./ipc", () =>
   mockIpc({
     listSessionItems: mocks.listSessionItems,
-    sessionListStatuses: mocks.sessionListStatuses,
     clearSessionNotifications: mocks.clearSessionNotifications,
   }),
 );
@@ -52,22 +54,19 @@ const waiting = (correlation = "corr-1"): SessionObservation => ({
   checkpoint: {},
 });
 
-const key = (row: SessionListItem) => `${row.repo_path}:${row.task_slug}:${row.id}`;
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((accept, decline) => {
+  const promise = new Promise<T>((accept) => {
     resolve = accept;
-    reject = decline;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.listSessionItems.mockReset().mockResolvedValue([]);
-  mocks.sessionListStatuses.mockReset().mockResolvedValue({});
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.clearSessionNotifications.mockReset().mockResolvedValue(undefined);
 });
 
@@ -77,24 +76,21 @@ afterEach(() => {
 });
 
 describe("useSessionNoticeSnapshot", () => {
-  it("publishes one all-repository item and status batch atomically", async () => {
+  it("publishes the all-repository item list and follows each session's daemon stream", async () => {
     const row = item("wait", { repo_path: "/repo-b" });
-    const statuses = deferred<Record<string, SessionObservation>>();
     mocks.listSessionItems.mockResolvedValue([row]);
-    mocks.sessionListStatuses.mockReturnValue(statuses.promise);
     const { result } = renderHook(() => useSessionNoticeSnapshot());
 
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(mocks.listSessionItems).toHaveBeenCalledWith(true, false);
-    expect(mocks.sessionListStatuses).toHaveBeenCalledWith([{ repo_path: "/repo-b", task_slug: "task", id: "wait" }]);
-    expect(result.current.loaded).toBe(false);
-    expect(result.current.items).toEqual([]);
-
-    statuses.resolve({ [key(row)]: waiting() });
-    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.loaded).toBe(true);
     expect(result.current.items).toEqual([row]);
+    expect(result.current.rows).toEqual([]);
+
+    daemon.show("/repo-b", "task", "wait", waiting());
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait"]);
+    expect(mocks.listSessionItems).toHaveBeenCalledTimes(1); // no refetch: the stream delivered it
   });
 
   it("schedules five seconds after completion and coalesces in-flight refreshes", async () => {
@@ -117,10 +113,10 @@ describe("useSessionNoticeSnapshot", () => {
     expect(mocks.listSessionItems).toHaveBeenCalledTimes(3);
   });
 
-  it("replaces stale state on item failure and uses current metadata when statuses fail", async () => {
+  it("replaces stale state on item failure and keeps current metadata rows with no daemon status", async () => {
     const old = item("old");
     mocks.listSessionItems.mockResolvedValueOnce([old]);
-    mocks.sessionListStatuses.mockResolvedValueOnce({ [key(old)]: waiting() });
+    daemon.show(old.repo_path, "task", "old", waiting());
     const { result } = renderHook(() => useSessionNoticeSnapshot());
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows).toHaveLength(1);
@@ -134,22 +130,21 @@ describe("useSessionNoticeSnapshot", () => {
 
     const completion = item("completion", { semantic: { phase_completed_at: 20 } });
     mocks.listSessionItems.mockResolvedValueOnce([completion]);
-    mocks.sessionListStatuses.mockRejectedValueOnce(new Error("statuses failed"));
     await act(async () => result.current.requestRefresh());
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.observations).toEqual({});
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["completion"]);
-    expect(result.current.error).toEqual({ source: "load", detail: "statuses failed" });
+    expect(result.current.error).toBeNull();
   });
 
   it("applies persisted exact suppression and reveals a changed occurrence", async () => {
     const row = item("wait", { notification_suppression: { notice: "waiting_for_input", occurrence: "corr-1" } });
     mocks.listSessionItems.mockResolvedValue([row]);
-    mocks.sessionListStatuses.mockResolvedValueOnce({ [key(row)]: waiting("corr-1") }).mockResolvedValueOnce({ [key(row)]: waiting("corr-2") });
+    daemon.show(row.repo_path, row.task_slug, row.id, waiting("corr-1"));
     const { result } = renderHook(() => useSessionNoticeSnapshot());
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows).toEqual([]);
-    await act(async () => result.current.requestRefresh());
+    daemon.show(row.repo_path, row.task_slug, row.id, waiting("corr-2"));
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait"]);
   });
@@ -158,7 +153,7 @@ describe("useSessionNoticeSnapshot", () => {
     const wait = item("wait", { repo_path: "/repo-a" });
     const completion = item("completion", { repo_path: "/repo-b", semantic: { phase_completed_at: 20 } });
     mocks.listSessionItems.mockResolvedValue([wait, completion]);
-    mocks.sessionListStatuses.mockResolvedValue({ [key(wait)]: waiting() });
+    daemon.show(wait.repo_path, wait.task_slug, wait.id, waiting());
     const { result } = renderHook(() => useSessionNoticeSnapshot());
     await act(async () => vi.advanceTimersByTimeAsync(0));
     const pendingRefresh = deferred<SessionListItem[]>();

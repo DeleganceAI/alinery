@@ -14,6 +14,7 @@ export type LiveSession = {
   playbook: { state: string; reason?: string };
   adapter: string;
   message_adapter: string;
+  transport?: string;
   wait?: null | { kind: string; correlationId: string; prompt?: string };
 };
 
@@ -32,6 +33,7 @@ export function withLive(entity: Entity, live: LiveSession | undefined): Entity 
         playbookReason: live.playbook.reason ?? "",
         adapter: live.adapter,
         messageAdapter: live.message_adapter,
+        transport: live.transport ?? "",
       })
     : undefined;
   out.value.value.wait = live?.wait ? create(SessionWaitSchema, { kind: live.wait.kind, correlationId: live.wait.correlationId, prompt: live.wait.prompt }) : undefined;

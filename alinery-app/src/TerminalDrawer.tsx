@@ -1,7 +1,8 @@
 import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
+import { sessionObservationKey, useSessionObservations } from "./sync/sessionObservation";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
@@ -188,34 +189,27 @@ export function TerminalDrawer({
     if (!focused || focused === document.body || tabListRef.current?.contains(focused)) activeTabRef.current?.focus();
   }, [tabIds]);
 
+  // A tab whose session has stopped is reported once, as the subscription shows it.
+  const drawerRefs = useMemo(
+    () =>
+      activeRepo
+        ? tabIds
+            .split("\n")
+            .filter(Boolean)
+            .map((id) => ({ repo_path: activeRepo, task_slug: "", id }))
+        : [],
+    [tabIds, activeRepo],
+  );
+  const observed = useSessionObservations(drawerRefs);
+  const reportedExit = useRef(new Set<string>());
   useEffect(() => {
-    const ids = tabIds.split("\n").filter(Boolean);
-    if (ids.length === 0) return;
-    const reported = new Set<string>();
-    let alive = true;
-    const tick = () => {
-      for (const id of ids) {
-        if (reported.has(id)) continue;
-        ipc
-          .sessionStatus(id, "")
-          .then((obs) => {
-            if (!alive || reported.has(id)) return;
-            const state = obs.lifecycle.state;
-            if (state !== "live" && state !== "never_started") {
-              reported.add(id);
-              onTabExited(id);
-            }
-          })
-          .catch(() => {});
-      }
-    };
-    tick();
-    const timer = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [tabIds, onTabExited]);
+    for (const ref of drawerRefs) {
+      const state = observed[sessionObservationKey(ref.repo_path, "", ref.id)]?.lifecycle.state;
+      if (!state || state === "live" || state === "never_started" || reportedExit.current.has(ref.id)) continue;
+      reportedExit.current.add(ref.id);
+      onTabExited(ref.id);
+    }
+  }, [drawerRefs, observed, onTabExited]);
 
   if (!open && tabs.length === 0) return null;
 

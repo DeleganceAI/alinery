@@ -1285,7 +1285,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
     assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
 
-    // The sessions list, list statuses, artifact readiness, notification clearing and task activity
+    // The sessions list, artifact readiness, notification clearing and task activity
     // all read the host's files; live states come through the forward.
     let rows = crate::list_session_items_with_repo_resolver(&state, false, true, Vec::new(), Some(&key), crate::RepoRef::parse).unwrap();
     let s1 = rows.iter().find(|row| row.session.meta.id == "s1").unwrap_or_else(|| panic!("{}", rows.len()));
@@ -1297,15 +1297,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             .all(|row| row.session.meta.id != "s1"),
         "archived sessions are left out unless asked for"
     );
-    let status_ref = |id: &str| crate::SessionStatusRef {
-        repo_path: key.clone(),
-        task_slug: slug(),
-        id: id.into(),
-    };
-    let statuses = crate::remote_session_statuses(&state, &[status_ref("s1"), status_ref("missing")]);
-    assert_eq!(statuses.len(), 2);
-    assert!(statuses.contains_key(&crate::session_list_status_key(&key, "remote-task", "s1")));
-
     let ready = |sid: &str| {
         remote_call::<bool>(
             &state,

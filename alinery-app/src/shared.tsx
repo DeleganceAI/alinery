@@ -1070,12 +1070,15 @@ function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_in
   return null;
 }
 
-// Both standalone dots and filtered collections use the same transition policy.
+// Both standalone dots and filtered collections use the same transition policy: a session that was
+// settled and now waits on something it was not waiting on (a new Attention `wait`) notifies, and so
+// does busy -> idle. A first sighting ("loading", or no previous kind) and a re-render that shows the
+// same kind again, which is all a reconnect snapshot of an unchanged session is, raise nothing.
 export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
   const reason = attentionReason(current);
-  if (previous === "busy" && reason !== null) {
-    ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-  }
+  if (reason === null || previous === null || previous === "loading" || previous === "unknown" || previous === current) return;
+  if (reason === "idle" && previous !== "busy") return;
+  ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
 }
 
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
@@ -1100,8 +1103,7 @@ export function StatusDot({
   slug?: string;
   repoPath?: string;
   minimal?: boolean;
-  // When provided by a parent that already polls, the dot is fully controlled.
-  // When absent, the dot polls session_status itself.
+  // The parent reads the session from its subscription (useSessionObservations); null shows "loading".
   observation?: SessionObservation | null;
   superseded?: boolean;
   unreadCompletion?: boolean;
@@ -1112,33 +1114,8 @@ export function StatusDot({
   terminalLabel?: "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null;
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
-  const [polledObs, setPolledObs] = useState<{ key: string; observation: SessionObservation } | null>(null);
   const prevKind = useRef<{ key: string; kind: ObservationDisplayKind } | null>(null);
-  const controlled = observation !== undefined;
-
-  // Self-polling path: used by standalone dots that don't have a parent batcher.
-  useEffect(() => {
-    if (controlled) return;
-    let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(id, slug ?? null)
-        .then((obs) => {
-          if (alive) setPolledObs({ key: pollKey, observation: obs });
-        })
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id, slug, controlled, pollKey]);
-
-  // A SessionView can retain this component while navigating between session ids.
-  // Never render the previous session's observation during the first poll for the new id.
-  const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
-  const obs = observation ?? currentPolledObs;
+  const obs = observation ?? null;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
   const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
   const processLive =
@@ -1279,30 +1256,11 @@ export function KillButton({
   slug?: string;
   repoPath?: string;
   onKilled?: () => void;
-  live?: boolean;
+  live: boolean;
   danger?: boolean;
 }) {
-  const [polledLive, setPolledLive] = useState(false);
   const [busy, setBusy] = useState(false);
-  const controlled = live !== undefined;
-  useEffect(() => {
-    if (controlled) return;
-    let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(id, slug ?? null)
-        .then((obs) => {
-          if (alive) setPolledLive(obs.lifecycle.state === "live");
-        })
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id, slug, controlled]);
-  if (!(live ?? polledLive)) return null;
+  if (!live) return null;
   return (
     <button
       type="button"

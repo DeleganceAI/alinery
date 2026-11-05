@@ -4,10 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import type { VinculumTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
+import { daemonTransport } from "../daemon/transport";
 import { mockIpc } from "../test/mockIpc";
-import type { ChatThread, SessionMeta } from "../types";
+import { sessionDaemon } from "../test/sessionDaemon";
+import type { ChatThread, SessionMeta, SessionObservation } from "../types";
 import { ChatView, repoLabel } from "./ChatView";
 
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
+/** What the daemon says about a chat thread's session ("" is the task slug of a chat). */
+const showChat = (id: string, o: unknown) => daemon.show("/repo", "", id, o as SessionObservation);
 vi.mock("../confirm", () => ({
   confirmDanger: vi.fn(async () => true),
   askConfirm: vi.fn(async () => "cancel"),
@@ -30,7 +36,6 @@ const mocks = vi.hoisted(() => ({
   setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
   createChatThread: vi.fn(),
-  chatSessionStatus: vi.fn(),
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatTranscript: vi.fn(async (): Promise<VinculumTranscript> => ({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] })),
@@ -40,7 +45,6 @@ const mocks = vi.hoisted(() => ({
   chatAbort: vi.fn(async () => undefined),
   readChatOmp: vi.fn(),
   openUrl: vi.fn(),
-  sessionListStatuses: vi.fn(),
   chatThreadName: vi.fn(),
   startChatThread: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
@@ -59,7 +63,6 @@ vi.mock("../ipc", () =>
     setChatPinned: mocks.setChatPinned,
     resumeChatThread: mocks.resumeChatThread,
     createChatThread: mocks.createChatThread,
-    chatSessionStatus: mocks.chatSessionStatus,
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatTranscript: mocks.chatTranscript,
@@ -69,7 +72,6 @@ vi.mock("../ipc", () =>
     chatAbort: mocks.chatAbort,
     readChatOmp: mocks.readChatOmp,
     openUrl: mocks.openUrl,
-    sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
     startChatThread: mocks.startChatThread,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
@@ -112,6 +114,8 @@ function thread(id: string, extra: Partial<ChatThread> = {}): ChatThread {
   };
 }
 
+const THREADS = ["s-new", "s-live", "s-wt"];
+
 /** A live OMP chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
 function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
   return {
@@ -135,12 +139,12 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  mocks.chatSessionStatus.mockResolvedValue(null);
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   mocks.openUrl.mockResolvedValue(undefined);
-  mocks.sessionListStatuses.mockResolvedValue({});
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
   mocks.listChatThreads.mockResolvedValue([]);
@@ -277,7 +281,7 @@ describe("ChatView", () => {
   it("shows the transcript and sends through Vinculum without an OMP attach", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
     mocks.listChatThreads.mockResolvedValue([row]);
-    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
+    for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
     mocks.chatTranscript.mockResolvedValue({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
@@ -291,7 +295,7 @@ describe("ChatView", () => {
   it("shows the model and thinking level from the transcript and applies a set from the reply", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false, model: "stale/model" }) });
     mocks.listChatThreads.mockResolvedValue([row]);
-    mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
+    for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
     const transcript = {
       messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
       model: "xai/grok-4.6",
@@ -329,10 +333,11 @@ describe("ChatView", () => {
     try {
       const row = thread("s-live", { session: meta("s-live", { started_at: 1, ended_at: null, archived: false }) });
       mocks.listChatThreads.mockResolvedValue([row]);
-      mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      for (const id of THREADS) showChat(id, observed("busy"));
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       expect(await screen.findByRole("button", { name: "Abort turn" })).toBeTruthy();
+      for (const id of THREADS) showChat(id, observed("idle"));
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
       expect(titleBar().getByText("Idle")).toBeTruthy();
@@ -344,11 +349,9 @@ describe("ChatView", () => {
   it("marks rail threads with the shared status treatments for what was observed", async () => {
     const live = (id: string) => thread(id, { session: meta(id, { started_at: 1, ended_at: null, archived: false }) });
     mocks.listChatThreads.mockResolvedValue([live("s-run"), live("s-idle"), live("s-ask"), thread("s-done")]);
-    mocks.sessionListStatuses.mockResolvedValue({
-      "/repo::s-run": observed("busy"),
-      "/repo::s-idle": observed("idle"),
-      "/repo::s-ask": observed("waiting_for_input"),
-    });
+    showChat("s-run", observed("busy"));
+    showChat("s-idle", observed("idle"));
+    showChat("s-ask", observed("waiting_for_input"));
     render(chat());
     const running = await screen.findByRole("button", { name: "Chat s-run, Running" });
     expect(running.querySelector(".ind-orb")).not.toBeNull();
@@ -372,11 +375,12 @@ describe("ChatView", () => {
       mocks.listChatThreads
         .mockResolvedValueOnce([thread("s-live", { session: meta("s-live", liveMeta) })])
         .mockResolvedValue([thread("s-live", { name: "Fix the build", session: meta("s-live", liveMeta) })]);
-      mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      for (const id of THREADS) showChat(id, observed("busy"));
       mocks.chatThreadName.mockResolvedValue("Fix the build");
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await screen.findByRole("button", { name: "Abort turn" });
+      for (const id of THREADS) showChat(id, observed("idle"));
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
       expect(mocks.chatThreadName).not.toHaveBeenCalled();
@@ -397,10 +401,11 @@ describe("ChatView", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
-      mocks.chatSessionStatus.mockResolvedValueOnce(observed("busy")).mockResolvedValue(observed("idle"));
+      for (const id of THREADS) showChat(id, observed("busy"));
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await screen.findByRole("button", { name: "Abort turn" });
+      for (const id of THREADS) showChat(id, observed("idle"));
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
       await vi.advanceTimersByTimeAsync(9000);
@@ -419,7 +424,7 @@ describe("ChatView", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
-      mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+      for (const id of THREADS) showChat(id, observed("idle"));
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await titleBar().findByText("Idle");
@@ -441,7 +446,7 @@ describe("ChatView", () => {
 
   it("says a running thread's archive stops it, and leaves Enter on Cancel", async () => {
     mocks.listChatThreads.mockResolvedValue([live("s-live")]);
-    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    for (const id of THREADS) showChat(id, observed("idle"));
     vi.mocked(confirmDanger).mockResolvedValue(false);
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
@@ -454,7 +459,7 @@ describe("ChatView", () => {
   it("will not remove a running thread's worktree on its own", async () => {
     const worktree = "/repo/.alinery/chat-worktrees/s-wt";
     mocks.listChatThreads.mockResolvedValue([live("s-wt", { checkout: false, session: meta("s-wt", { ...liveMeta, worktree }) })]);
-    mocks.chatSessionStatus.mockResolvedValue(observed("idle"));
+    for (const id of THREADS) showChat(id, observed("idle"));
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-wt") }));
     const remove = (await screen.findByRole("button", { name: "Remove worktree" })) as HTMLButtonElement;

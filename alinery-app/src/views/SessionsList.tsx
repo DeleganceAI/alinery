@@ -1,5 +1,5 @@
 import { ChevronRight, Pencil } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
@@ -11,7 +11,6 @@ import {
   orderSessionListItems,
   PRIORITY_SESSION_SORT,
   type SessionSort,
-  sameSessionObservationMaps,
   selectSessionSort,
   sessionDisplayKind,
   sessionListItemKey,
@@ -32,7 +31,8 @@ import {
   sameSessionMetas,
   useMinuteNow,
 } from "../shared";
-import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
+import { useSessionObservations } from "../sync/sessionObservation";
+import type { BoardNav, NameCommit, SessionListItem, SessionObservation } from "../types";
 import { useSessionSort } from "../useSessionSort";
 import "./SessionsList.css";
 
@@ -62,7 +62,7 @@ const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string 
 // Groups a row by the status its StatusDot renders, from the same canonical
 // observation and exit metadata. A row with no observation yet is Unknown —
 // absence of evidence is never reported as Not started.
-function sessionStatusGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
+function observationGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
   if (item.archived) return "archived";
   const kind = sessionDisplayKind(observation, superseded, item.exit_code, hasAcknowledgedExit(item));
   switch (kind) {
@@ -131,7 +131,6 @@ export function SessionsList({
   onNameCommitted?: (change: NameCommit) => void;
 }) {
   const [items, setItems] = useState<SessionListItem[]>([]);
-  const [observations, setObservations] = useState<Record<string, SessionObservation>>({});
   const [selectedKey, setSelectedKey] = useState("");
   const [err, setErr] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -149,7 +148,6 @@ export function SessionsList({
   // lands on a picker with nothing to pick — the real next step is a task.
   const [taskCount, setTaskCount] = useState<number | null>(null);
   const itemsRef = useRef<SessionListItem[]>([]);
-  const statusRequest = useRef(0);
   const itemRequest = useRef(0);
   const scopeVersion = useRef(0);
   const scopeKey = `${allRepos}:${activeRepo}:${showArchived}`;
@@ -158,7 +156,6 @@ export function SessionsList({
     currentScope.current = scopeKey;
     scopeVersion.current += 1;
     itemRequest.current += 1;
-    statusRequest.current += 1;
   }
   const [editingKey, setEditingKey] = useState("");
   const renameTrigger = useRef<HTMLButtonElement | null>(null);
@@ -169,26 +166,9 @@ export function SessionsList({
     renameTrigger.current?.focus();
   };
 
-  const refreshStatuses = (rows: SessionListItem[]) => {
-    const statusRows = rows.filter((item) => !item.archived);
-    const request = ++statusRequest.current;
-    if (statusRows.length === 0) {
-      setObservations((current) => (Object.keys(current).length === 0 ? current : {}));
-      return Promise.resolve();
-    }
-    const refs: SessionStatusRef[] = statusRows.map((item) => ({
-      repo_path: item.repo_path,
-      task_slug: item.task_slug,
-      id: item.id,
-    }));
-    return ipc
-      .sessionListStatuses(refs)
-      .catch(() => ({}) as Record<string, SessionObservation>)
-      .then((observed) => {
-        if (request !== statusRequest.current) return;
-        setObservations((current) => (sameSessionObservationMaps(current, observed) ? current : observed));
-      });
-  };
+  // Status comes from the daemons' session streams, one per task, not from a poll.
+  const statusRefs = useMemo(() => items.filter((item) => !item.archived).map((item) => ({ repo_path: item.repo_path, task_slug: item.task_slug, id: item.id })), [items]);
+  const observations = useSessionObservations(statusRefs);
 
   const load = async () => {
     const version = scopeVersion.current;
@@ -201,7 +181,6 @@ export function SessionsList({
       setItems((previous) => (sameSessionListItems(previous, rows) ? previous : rows));
       setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
       setErr("");
-      void refreshStatuses(rows);
     } catch (error) {
       if (current()) setErr(String(error));
     } finally {
@@ -227,7 +206,6 @@ export function SessionsList({
   useEffect(() => {
     itemsRef.current = [];
     setItems([]);
-    setObservations({});
     setSelectedKey("");
     setErr("");
     setLoaded(false);
@@ -244,7 +222,6 @@ export function SessionsList({
       alive = false;
       scopeVersion.current += 1;
       itemRequest.current += 1;
-      statusRequest.current += 1;
       window.clearTimeout(timer);
     };
   }, [allRepos, activeRepo, showArchived]);
@@ -264,21 +241,6 @@ export function SessionsList({
       alive = false;
     };
   }, [empty, allRepos, activeRepo]);
-
-  useEffect(() => {
-    let alive = true;
-    let timer = 0;
-    const poll = () => {
-      refreshStatuses(itemsRef.current).finally(() => {
-        if (alive) timer = window.setTimeout(poll, 1500);
-      });
-    };
-    timer = window.setTimeout(poll, 1500);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-    };
-  }, []);
 
   // Attention follows the fetched collection, not rows that filters can unmount.
   const previousKinds = useRef(new Map<string, ObservationDisplayKind>());
@@ -313,7 +275,7 @@ export function SessionsList({
   const filtered = queryTerms.length > 0 || statusFilter !== "all";
   const visibleItems = filtered
     ? orderedItems.filter((item) => {
-        if (statusFilter !== "all" && sessionStatusGroup(item, observations[rowKey(item)], isSuperseded(item)) !== statusFilter) return false;
+        if (statusFilter !== "all" && observationGroup(item, observations[rowKey(item)], isSuperseded(item)) !== statusFilter) return false;
         if (queryTerms.length === 0) return true;
         const text = [
           item.name,

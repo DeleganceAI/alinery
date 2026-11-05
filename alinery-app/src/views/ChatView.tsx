@@ -9,10 +9,10 @@ import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { NameEditor } from "../NameEditor";
 import { repoDisplayPath } from "../remoteRepo";
-
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import { useSessionObservations } from "../sync/sessionObservation";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatPane } from "./ChatPane";
@@ -95,7 +95,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const [createWorktree, setCreateWorktree] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
-  const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
   // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -159,8 +158,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     };
   }, [reposKey]);
 
-  // One batched read for every live thread in the rail, not a poller per row. The selected thread
-  // also has its own 1.5s poll and live transcript, which the rail prefers for that row.
+  // Every live thread in the rail, from one chat-scope stream per repo.
   const liveRefs = useMemo(
     () =>
       threads
@@ -168,25 +166,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
         .map((thread) => ({ repo_path: thread.repo_path, task_slug: "", id: thread.session.id })),
     [threads],
   );
-  useEffect(() => {
-    if (liveRefs.length === 0) return;
-    let cancelled = false;
-    const poll = () => {
-      if (!activeRef.current) return;
-      ipc
-        .sessionListStatuses(liveRefs)
-        .then((next) => {
-          if (!cancelled) setRailObservations(next);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [liveRefs]);
+  const railObservations = useSessionObservations(liveRefs, active);
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;

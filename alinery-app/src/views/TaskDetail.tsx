@@ -1,6 +1,6 @@
 import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
@@ -26,7 +26,6 @@ import {
   orderTaskPanelRows,
   PRIORITY_SESSION_SORT,
   type SessionSort,
-  sameSessionObservationMaps,
   selectSessionSort,
   sessionSortArrow,
   sessionStartedAt,
@@ -56,6 +55,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
+import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -68,7 +68,6 @@ import type {
   RelatedTaskRef,
   SessionDisplayMeta,
   SessionMeta,
-  SessionObservation,
   SubtaskManagerState,
   Task,
   TaskActivitySummary,
@@ -219,7 +218,18 @@ export function TaskDetail({
   const queuedExecutionCount = executions.filter((execution) => execution.lifecycle === "queued" && execution.start_requested).length;
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessions, setSessions] = useState<SessionDisplayMeta[]>([]);
-  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
+  // Status is read from the task's session stream, by session id.
+  const statusRefs = useMemo(() => sessions.map((session) => ({ repo_path: repoPath, task_slug: slug, id: session.id })), [sessions, repoPath, slug]);
+  const observed = useSessionObservations(statusRefs);
+  const observationsById = useMemo(
+    () =>
+      Object.fromEntries(
+        sessions.flatMap((session) =>
+          observed[sessionObservationKey(repoPath, slug, session.id)] ? [[session.id, observed[sessionObservationKey(repoPath, slug, session.id)]]] : [],
+        ),
+      ),
+    [sessions, observed, repoPath, slug],
+  );
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
   const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
   const [childPlaybookStep, setChildPlaybookStep] = useState("");
@@ -249,7 +259,7 @@ export function TaskDetail({
   const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
-    sessionStatuses,
+    observationsById,
     hasExpectedArtifact,
     PRIORITY_SESSION_SORT,
   ).flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]));
@@ -296,7 +306,7 @@ export function TaskDetail({
     projectedRows.push(currentManagerRow);
   }
   projectedRows.push(...managerlessFinishedRows);
-  const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
+  const taskPanelRows = orderTaskPanelRows(projectedRows, observationsById, hasExpectedArtifact, sessionSort);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact);
@@ -475,15 +485,6 @@ export function TaskDetail({
     } else {
       setSessionsError(String(sessionsResult.error));
     }
-
-    const statuses = await ipc
-      .sessionStatuses(
-        ss.map((session) => session.id),
-        slug,
-      )
-      .catch(() => ({}) as Record<string, SessionObservation>);
-    if (!isCurrent()) return;
-    setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
   const refreshLiveTaskState = async () => {
@@ -537,14 +538,6 @@ export function TaskDetail({
     setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
     setSessionsLoaded(true);
     setSessionsError("");
-    const statuses = await ipc
-      .sessionStatuses(
-        ss.map((session) => session.id),
-        slug,
-      )
-      .catch(() => ({}) as Record<string, SessionObservation>);
-    if (!isCurrent()) return;
-    setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
   useEffect(() => {
@@ -1291,7 +1284,7 @@ export function TaskDetail({
                 <TaskRunGraph
                   sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
                   state={executionView?.state ?? null}
-                  observations={sessionStatuses}
+                  observations={observationsById}
                   onOpenSession={(session) => {
                     const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
                     const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
@@ -1400,7 +1393,7 @@ export function TaskDetail({
                       );
                     }
                     const s = row.session;
-                    const obs = sessionStatuses[s.id] ?? null;
+                    const obs = observationsById[s.id] ?? null;
                     const isLive = obs ? obs.lifecycle.state === "live" : false;
                     if (row.kind === "subtask_manager") {
                       const label = row.child ? row.child.name : s.subtask_slug || "Sub-task setup";

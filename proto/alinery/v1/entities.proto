@@ -49,6 +49,7 @@ message SessionStatus {
   string playbook_reason = 6;
   string adapter = 7;
   string message_adapter = 8;
+  string transport = 9;  // pty (a terminal session) or rpc (an agent session), as the `status` op reports it
 }
 // The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
 message SessionWait {

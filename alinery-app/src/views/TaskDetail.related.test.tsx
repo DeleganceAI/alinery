@@ -47,7 +47,6 @@ const mocks = vi.hoisted(() => ({
   listBoardTasks: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
-  sessionStatuses: vi.fn(),
   setRelatedTasksForRepo: vi.fn(),
 }));
 
@@ -57,7 +56,6 @@ vi.mock("../ipc", () =>
     listBoardTasks: mocks.listBoardTasks,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    sessionStatuses: mocks.sessionStatuses,
     setRelatedTasksForRepo: mocks.setRelatedTasksForRepo,
   }),
 );
@@ -67,7 +65,6 @@ beforeEach(() => {
   mocks.listBoardTasks.mockReset().mockResolvedValue([]);
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockResolvedValue({});
   mocks.setRelatedTasksForRepo.mockReset().mockImplementation(async (_repo: string, _slug: string, related: Task["related_tasks"]) => task({ related_tasks: related }));
 });
 

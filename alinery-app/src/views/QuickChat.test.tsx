@@ -1,9 +1,11 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
+import { daemonTransport } from "../daemon/transport";
 import { mockIpc } from "../test/mockIpc";
 import { stubScrollSize } from "../test/scroll";
-import type { ChatThread, SessionMeta } from "../types";
+import { sessionDaemon } from "../test/sessionDaemon";
+import type { ChatThread, SessionMeta, SessionObservation } from "../types";
 import { ChatView } from "./ChatView";
 import { ChatSessionProvider } from "./chatThreadSession";
 import { focusQuickChatComposer, QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
@@ -18,16 +20,15 @@ vi.mock("./ProviderSetupDialog", () => ({
   ProviderSetupDialog: () => <div data-testid="providers" />,
 }));
 
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
-  chatSessionStatus: vi.fn(),
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatPrompt: vi.fn(),
   chatTranscript: vi.fn(),
   readChatOmp: vi.fn(),
-  sessionListStatuses: vi.fn(),
   chatThreadName: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
@@ -39,13 +40,11 @@ vi.mock("../ipc", () =>
   mockIpc({
     listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
-    chatSessionStatus: mocks.chatSessionStatus,
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatPrompt: mocks.chatPrompt,
     chatTranscript: mocks.chatTranscript,
     readChatOmp: mocks.readChatOmp,
-    sessionListStatuses: mocks.sessionListStatuses,
     chatThreadName: mocks.chatThreadName,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
@@ -124,13 +123,15 @@ beforeEach(() => {
   setViewport(VIEW_W, VIEW_H);
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
   mocks.listChatThreads.mockResolvedValue([]);
-  mocks.chatSessionStatus.mockResolvedValue(observed());
   mocks.onStreamClosed.mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatPrompt.mockResolvedValue(undefined);
   mocks.chatTranscript.mockResolvedValue([]);
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
-  mocks.sessionListStatuses.mockResolvedValue({});
+  // Every chat thread under test is a live idle OMP chat as the daemon reports it.
+  const daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+  for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);
   mocks.chatThreadName.mockResolvedValue(null);
   mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
   mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));

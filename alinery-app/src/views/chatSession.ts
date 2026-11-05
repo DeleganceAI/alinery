@@ -5,6 +5,7 @@ import { applyFilePage, type ChatTranscriptState, emptyTranscript } from "../cha
 import * as ipc from "../ipc";
 import { abortAndPromptCommand, followUpCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
+import { observationNow } from "../sync/sessionObservation";
 
 export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
   const page = decodeOmpPage(buffer);
@@ -43,6 +44,6 @@ export function chatTerminalIo(repoPath: string, id: string): SessionTerminalIo 
     write: (data) => ipc.chatPtyWrite(repoPath, id, data),
     resize: (cols, rows) => ipc.chatPtyResize(repoPath, id, cols, rows),
     detach: (attachId) => ipc.chatDetach(repoPath, id, attachId),
-    status: () => ipc.chatSessionStatus(repoPath, id),
+    status: () => observationNow(repoPath, "", id),
   };
 }

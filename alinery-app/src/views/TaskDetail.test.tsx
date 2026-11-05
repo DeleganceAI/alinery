@@ -1,16 +1,20 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
+import { sessionDaemon } from "../test/sessionDaemon";
 import type {
+  AgentState,
   BoardNav,
   BoardTask,
   ExecutionAvailability,
   SessionDisplayMeta,
   SessionMeta,
   SessionObservation,
+  SessionState,
   SubtaskManagerState,
   Task,
   TaskActivityRef,
@@ -19,6 +23,19 @@ import type {
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
+let daemon = sessionDaemon();
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+const explicitStatuses = new Set<string>();
+// `sessionStatuses.mockResolvedValue({ id: observation })` states what the fake daemon says about those sessions.
+const sessionStatuses = {
+  mockResolvedValue(map: Record<string, SessionObservation>) {
+    for (const [id, o] of Object.entries(map)) {
+      explicitStatuses.add(id);
+      daemon.showId(id, o);
+    }
+    return sessionStatuses;
+  },
+};
 const scenario = vi.hoisted(() => ({
   task: {} as Task,
   relatedTasks: [] as Task[],
@@ -58,8 +75,6 @@ const mocks = vi.hoisted(() => ({
   listTaskArtifactTree: vi.fn(),
   readArtifact: vi.fn(),
   listArtifactCommentDrafts: vi.fn(),
-  sessionStatuses: vi.fn(),
-  sessionStatus: vi.fn(),
   worktreeExists: vi.fn(),
   markSessionNotificationRead: vi.fn(),
 }));
@@ -88,8 +103,6 @@ vi.mock("../ipc", () =>
     listTaskArtifactTree: mocks.listTaskArtifactTree,
     readArtifact: mocks.readArtifact,
     listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
-    sessionStatuses: mocks.sessionStatuses,
-    sessionStatus: mocks.sessionStatus,
     worktreeExists: mocks.worktreeExists,
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
@@ -262,6 +275,7 @@ beforeEach(() => {
   };
   scenario.childBoardTask = { ...childBoardTask };
   scenario.managerObservation = null;
+  explicitStatuses.clear();
   vi.stubGlobal("localStorage", {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -316,24 +330,18 @@ beforeEach(() => {
   mocks.listBoardTasks.mockReset().mockImplementation(async () => [scenario.childBoardTask]);
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
   mocks.allowExecutionCompletion.mockReset().mockResolvedValue(undefined);
-  mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
+  mocks.listSessions.mockReset().mockImplementation(async () => {
+    // A listed session the test gave no status reads as never started (or as the manager scenario says).
+    for (const row of scenario.sessions)
+      if (!explicitStatuses.has(row.id)) daemon.showId(row.id, scenario.managerObservation ?? { lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+    return scenario.sessions;
+  });
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
   mocks.readArtifact.mockReset().mockResolvedValue("");
   mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockImplementation(async (ids: string[]) =>
-    Object.fromEntries(
-      ids.map((id) => [
-        id,
-        scenario.managerObservation ?? {
-          lifecycle: { state: "never_started" as const },
-          state: null,
-          checkpoint: {},
-        },
-      ]),
-    ),
-  );
-  mocks.sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.worktreeExists.mockReset().mockResolvedValue(true);
   mocks.markSessionNotificationRead.mockReset().mockResolvedValue(undefined);
 });
@@ -378,7 +386,7 @@ describe("task run graph", () => {
       { ...session({ id: "prior" }), name: "Prior attempt" },
     ];
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["prior"] })]));
-    mocks.sessionStatuses.mockResolvedValue(
+    sessionStatuses.mockResolvedValue(
       observed
         ? {
             unread: observation("idle"),
@@ -556,7 +564,7 @@ describe("session work names", () => {
 
   it("shows a waiting ellipsis for a live unnamed OMP session and still opens rename", async () => {
     scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     await renderDetail();
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -567,13 +575,13 @@ describe("session work names", () => {
   it("replaces the name animation with a dash when a live agent becomes idle", async () => {
     vi.useFakeTimers();
     scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     const rendered = renderDetail();
     await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
     await rendered;
     expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
 
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -585,7 +593,7 @@ describe("session work names", () => {
 
   it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
     scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       terminal: observation("busy"),
       stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
     });
@@ -829,7 +837,7 @@ describe("task session archive pending feedback", () => {
 describe("task session row Stop", () => {
   it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
     scenario.sessions = [session({ id: "stop-me", harness: "vinculum" })];
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
     const pending = deferred<void>();
     ipcSpies.sessionAbort.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
@@ -846,7 +854,7 @@ describe("task session row Stop", () => {
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => pending.reject(new Error("abort delivery failed")));
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
@@ -863,11 +871,20 @@ describe("task session row Stop", () => {
       { id: "terminal", agent: "busy", transport: "pty", live: true },
     ] as const;
     scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
-    mocks.sessionStatuses.mockResolvedValue(
+    sessionStatuses.mockResolvedValue(
       Object.fromEntries(
-        rows.map(({ id, agent, transport, live }) => {
+        rows.map(({ id, agent, transport, live }): [string, SessionObservation] => {
           const obs = observation("busy");
-          return [id, { ...obs, transport, lifecycle: live ? obs.lifecycle : { state: "exited", code: 0 }, state: { ...obs.state, agent: { state: agent } } }];
+          // A daemon that still holds an exited session reports its process as exited.
+          return [
+            id,
+            {
+              ...obs,
+              transport,
+              lifecycle: live ? obs.lifecycle : { state: "live_exited" },
+              state: { ...obs.state, process: live ? { state: "alive" } : { state: "exited", code: 0 }, agent: { state: agent } as AgentState } as SessionState,
+            },
+          ];
         }),
       ),
     );
@@ -1784,7 +1801,7 @@ describe("session list without identifiers", () => {
     const newest = session({ id: "opaque-newest", created: 30 });
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue([archived, resumed, newest]);
-    mocks.sessionStatuses.mockResolvedValue({});
+    sessionStatuses.mockResolvedValue({});
     const onOpenSession = vi.fn();
     const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -1839,7 +1856,7 @@ describe("attention-first session order", () => {
     ]);
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       "older-design": observation("busy"),
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
@@ -1849,8 +1866,6 @@ describe("attention-first session order", () => {
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
     });
-    expect(mocks.sessionStatuses).toHaveBeenCalledTimes(1);
-    expect(mocks.sessionStatuses).toHaveBeenCalledWith(["newer-tdd", "older-design"], "a-task");
     expect(backendRows.map((row) => row.id)).toEqual(["newer-tdd", "older-design"]);
   });
 
@@ -1866,7 +1881,7 @@ describe("attention-first session order", () => {
     });
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue([unread, acknowledged]);
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       "unread-design": {
         lifecycle: { state: "exited", code: 0 },
         state: null,
@@ -1897,7 +1912,7 @@ describe("attention-first session order", () => {
     mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
       if (id === stopped.id) stopped = { ...stopped, exit_notification_read_at: 100 };
     });
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       "stopped-generic": {
         lifecycle: { state: "exited", code: 143 },
         state: null,
@@ -1939,7 +1954,7 @@ describe("session time columns and sorting", () => {
     ]);
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
@@ -1973,7 +1988,7 @@ describe("session time columns and sorting", () => {
     let rows = [session({ id: "a", phase: "design", created: 20, status_changed_at: 100 }), session({ id: "b", phase: "build", created: 10, status_changed_at: 200 })];
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockImplementation(async () => rows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
@@ -2014,9 +2029,7 @@ describe("session time columns and sorting", () => {
     let targetObservation = failedObservation("StaleSource");
     mocks.getTask.mockResolvedValue(fixture);
     mocks.listSessions.mockResolvedValue(rows);
-    mocks.sessionStatuses.mockImplementation(async () => ({
-      target: targetObservation,
-    }));
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
 
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -2024,6 +2037,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByText("Stale")).toBeDefined();
 
     targetObservation = failedObservation("boom");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2034,6 +2048,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     targetObservation = failedObservation("StaleSource");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2077,7 +2092,7 @@ describe("the empty-sessions state", () => {
     mocks.getTask.mockReturnValue(getTaskDeferred.promise);
     mocks.listSessions.mockReturnValue(listSessionsDeferred.promise);
     mocks.listArtifactsWithMetadata.mockResolvedValue([]);
-    mocks.sessionStatuses.mockResolvedValue({});
+    sessionStatuses.mockResolvedValue({});
 
     renderSeededDetail({ initialTask: fixture });
 

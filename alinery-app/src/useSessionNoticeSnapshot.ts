@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { applyNotificationClearProjection, filterSuppressedNoticeRows, notificationClearRefs, type SessionNoticeRow, sessionNoticeRows } from "./sessionAttention";
-import type { SessionListItem, SessionObservation, SessionStatusRef } from "./types";
+import { useSessionObservations } from "./sync/sessionObservation";
+import type { SessionListItem, SessionObservation } from "./types";
 
 const REFRESH_DELAY_MS = 5_000;
 export type SessionNoticeError = {
@@ -11,14 +12,14 @@ export type SessionNoticeError = {
 
 type SnapshotData = {
   items: SessionListItem[];
-  observations: Record<string, SessionObservation>;
-  rows: SessionNoticeRow[];
   loaded: boolean;
   error: SessionNoticeError | null;
   clearing: boolean;
 };
 
 export type SessionNoticeSnapshot = SnapshotData & {
+  observations: Record<string, SessionObservation>;
+  rows: SessionNoticeRow[];
   requestRefresh: () => void;
   clear: () => Promise<void>;
   clearAll: () => Promise<void>;
@@ -26,8 +27,6 @@ export type SessionNoticeSnapshot = SnapshotData & {
 
 const EMPTY_SNAPSHOT: SnapshotData = {
   items: [],
-  observations: {},
-  rows: [],
   loaded: false,
   error: null,
   clearing: false,
@@ -43,8 +42,12 @@ function currentRows(items: SessionListItem[], observations: Record<string, Sess
 
 export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot {
   const [snapshot, setSnapshot] = useState<SnapshotData>(EMPTY_SNAPSHOT);
-  const snapshotRef = useRef(snapshot);
-  snapshotRef.current = snapshot;
+  // Status is live from the daemons' streams; only the item list is fetched (and refetched).
+  const statusRefs = useMemo(() => snapshot.items.map((item) => ({ repo_path: item.repo_path, task_slug: item.task_slug, id: item.id })), [snapshot.items]);
+  const observations = useSessionObservations(statusRefs, enabled);
+  const rows = useMemo(() => currentRows(snapshot.items, observations), [snapshot.items, observations]);
+  const liveRef = useRef({ rows, observations });
+  liveRef.current = { rows, observations };
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const mounted = useRef(false);
@@ -72,21 +75,11 @@ export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot 
     void (async () => {
       try {
         const items = await ipc.listSessionItems(true, false);
-        const refs: SessionStatusRef[] = items.map((item) => ({ repo_path: item.repo_path, task_slug: item.task_slug, id: item.id }));
-        let observations: Record<string, SessionObservation> = {};
-        let error: SessionNoticeError | null = null;
-        try {
-          observations = await ipc.sessionListStatuses(refs);
-        } catch (statusError) {
-          error = { source: "load", detail: errorMessage(statusError) };
-        }
         if (mounted.current && enabledRef.current) {
           setSnapshot((previous) => ({
             items,
-            observations,
-            rows: currentRows(items, observations),
             loaded: true,
-            error,
+            error: null,
             clearing: previous.clearing,
           }));
         }
@@ -94,8 +87,6 @@ export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot 
         if (mounted.current && enabledRef.current) {
           setSnapshot((previous) => ({
             items: [],
-            observations: {},
-            rows: [],
             loaded: true,
             error: { source: "load", detail: errorMessage(itemError) },
             clearing: previous.clearing,
@@ -138,7 +129,7 @@ export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot 
   const runClear = useCallback(
     async (suppressLive: boolean) => {
       if (clearing.current) return;
-      const current = snapshotRef.current;
+      const current = liveRef.current;
       if (current.rows.length === 0) return;
       clearing.current = true;
       setSnapshot((previous) => ({ ...previous, clearing: true }));
@@ -146,13 +137,7 @@ export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot 
         await ipc.clearSessionNotifications(notificationClearRefs(current.rows, current.observations, suppressLive));
         if (!mounted.current) return;
         setSnapshot((previous) => {
-          const items = applyNotificationClearProjection(previous.items, previous.rows, previous.observations, suppressLive);
-          return {
-            ...previous,
-            items,
-            rows: currentRows(items, previous.observations),
-            error: null,
-          };
+          return { ...previous, items: applyNotificationClearProjection(previous.items, current.rows, current.observations, suppressLive), error: null };
         });
         requestRefresh();
       } catch (clearError) {
@@ -168,5 +153,5 @@ export function useSessionNoticeSnapshot(enabled = true): SessionNoticeSnapshot 
   const clear = useCallback(() => runClear(false), [runClear]);
   const clearAll = useCallback(() => runClear(true), [runClear]);
 
-  return { ...snapshot, requestRefresh, clear, clearAll };
+  return { ...snapshot, observations, rows, requestRefresh, clear, clearAll };
 }

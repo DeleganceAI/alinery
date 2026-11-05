@@ -390,7 +390,7 @@ function sessionState(row: Live) {
 
 // The store's view of a live row is exactly what `list` answers (engine playbook axis included), plus the Attention wait.
 function liveView(row: Live) {
-  return { id: row.id, taskSlug: row.taskSlug, ...sessionState({ ...row, playbook: enginePlaybook(row.id) ?? row.playbook }), wait: row.wait };
+  return { id: row.id, taskSlug: row.taskSlug, ...sessionState({ ...row, playbook: enginePlaybook(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc", wait: row.wait };
 }
 
 // S2.5: every change to a session row goes through here, so a subscriber needs no poll.

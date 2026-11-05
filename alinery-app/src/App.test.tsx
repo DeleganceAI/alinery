@@ -184,7 +184,6 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     getVersion: vi.fn(async () => "0.11.1"),
     markSessionNotificationRead: vi.fn(async () => {}),
     listSessionItems: vi.fn(),
-    sessionListStatuses: vi.fn(),
     renameSession: vi.fn(),
     listBoardTasks: vi.fn(),
     renameTask: vi.fn(),
@@ -608,7 +607,6 @@ beforeEach(() => {
   ipcMocks.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
   ipcMocks.listSessionItems.mockResolvedValue([]);
-  ipcMocks.sessionListStatuses.mockResolvedValue({});
   ipcMocks.clearSessionNotifications.mockResolvedValue(undefined);
   ipcMocks.setDockBadgeCount.mockResolvedValue(undefined);
 });
@@ -1219,7 +1217,6 @@ describe("global notification owner", () => {
   it("polls outside Notifications and does not add a view-local owner", async () => {
     await renderApp();
     await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalledWith(true, false));
-    expect(ipcMocks.sessionListStatuses).toHaveBeenCalledWith([]);
     const calls = ipcMocks.listSessionItems.mock.calls.length;
 
     await openNotifications();
@@ -1328,7 +1325,7 @@ describe("session work names", () => {
     const original = { ...globalSession, name: "Original work", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" };
     ipcMocks.listSessionItems.mockResolvedValue([original]);
     await renderApp();
-    await waitFor(() => expect(ipcMocks.sessionListStatuses).toHaveBeenCalled());
+    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Original work");
     fireEvent.click(screen.getByRole("button", { name: "Search" }));

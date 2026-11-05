@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
 import { mockIpc } from "../test/mockIpc";
+import { sessionDaemon } from "../test/sessionDaemon";
 import type { SessionMeta, SessionObservation, Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
 
@@ -39,11 +41,12 @@ const task = (over: Partial<Task> = {}): Task =>
 
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
   getTask: vi.fn(),
   listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
-  sessionStatuses: vi.fn(),
   pushAndCompareUrlForRepo: vi.fn(),
   killSessionForRepo: vi.fn(),
   renameSession: vi.fn(),
@@ -54,7 +57,6 @@ vi.mock("../ipc", () =>
     getTask: mocks.getTask,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    sessionStatuses: mocks.sessionStatuses,
     pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
     killSessionForRepo: mocks.killSessionForRepo,
     renameSession: mocks.renameSession,
@@ -66,7 +68,8 @@ beforeEach(() => {
   mocks.getTask.mockReset().mockResolvedValue(null);
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.pushAndCompareUrlForRepo.mockReset().mockResolvedValue("https://example.test/compare");
   mocks.killSessionForRepo.mockReset().mockResolvedValue(undefined);
   mocks.renameSession.mockReset();
@@ -166,9 +169,7 @@ describe("a session kill issued from task detail", () => {
         harness_resume_token: "",
       } as SessionMeta,
     ]);
-    mocks.sessionStatuses.mockResolvedValue({
-      s1: { lifecycle: { state: "live" }, state: null, checkpoint: {} },
-    } as Record<string, SessionObservation>);
+    daemon.show(repoB, "task-x", "s1", { lifecycle: { state: "live" }, state: null, checkpoint: {} } as SessionObservation);
 
     render(
       <TaskDetail

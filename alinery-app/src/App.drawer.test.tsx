@@ -31,7 +31,7 @@ const drawerRecords = vi.hoisted(() => ({ current: [] as RecordedDrawer[] }));
 const mocks = vi.hoisted(() => ({
   ensureDrawerTerminal: vi.fn(),
   killSession: vi.fn(async (_id: string, _slug: string) => {}),
-  sessionStatus: vi.fn(),
+  observationNow: vi.fn(),
   killSessionForRepo: vi.fn(async (_repo: string, _id: string, _slug: string) => {}),
   setActiveRepo: vi.fn(),
   removeRepo: vi.fn(),
@@ -52,11 +52,9 @@ vi.mock("./ipc", () =>
     listBoardTasks: async () => [],
     listTasks: async () => [],
     listSessionItems: async () => [],
-    sessionListStatuses: async () => ({}),
     ensureDrawerTerminal: mocks.ensureDrawerTerminal,
     killSession: mocks.killSession,
     killSessionForRepo: mocks.killSessionForRepo,
-    sessionStatus: mocks.sessionStatus,
     setActiveRepo: mocks.setActiveRepo,
     removeRepo: mocks.removeRepo,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
@@ -91,6 +89,7 @@ vi.mock("./TerminalDrawer", () => ({
   },
 }));
 vi.mock("./sync/hooks", () => ({ liveSessionsNow: mocks.liveSessionsNow }));
+vi.mock("./sync/sessionObservation", async (importOriginal) => ({ ...(await importOriginal<typeof import("./sync/sessionObservation")>()), observationNow: mocks.observationNow }));
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
@@ -183,7 +182,7 @@ beforeEach(() => {
   drawerRecords.current = [];
   mocks.ensureDrawerTerminal.mockReset();
   mocks.killSession.mockReset().mockResolvedValue(undefined);
-  mocks.sessionStatus.mockReset().mockRejectedValue(new Error("no status"));
+  mocks.observationNow.mockReset().mockRejectedValue(new Error("no status"));
   mocks.killSessionForRepo.mockReset().mockResolvedValue(undefined);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.removeRepo.mockReset().mockResolvedValue({ ...appConfig, active_repo: "", known_repos: ["/other"] });
@@ -369,7 +368,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     mocks.killSession.mockRejectedValueOnce(new Error("daemon busy"));
-    mocks.sessionStatus.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {} });
+    mocks.observationNow.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {} });
     requireFn(opened.onClose, "onClose")("s-1");
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("terminal 1")));
     expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1"]);
@@ -383,7 +382,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     mocks.killSession.mockRejectedValueOnce(new Error("no such session"));
-    mocks.sessionStatus.mockResolvedValue({ lifecycle: { state: "live_exited" }, state: null, checkpoint: {} });
+    mocks.observationNow.mockResolvedValue({ lifecycle: { state: "live_exited" }, state: null, checkpoint: {} });
     requireFn(opened.onClose, "onClose")("s-1");
     await expectDrawerCleared();
     expect(mocks.toastError).not.toHaveBeenCalled();
@@ -398,7 +397,7 @@ describe("App terminal drawer tabs", () => {
     mocks.killSession.mockImplementation(async (id: string) => {
       if (id === "s-1") throw new Error("daemon busy");
     });
-    mocks.sessionStatus.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {} });
+    mocks.observationNow.mockResolvedValue({ lifecycle: { state: "live" }, state: null, checkpoint: {} });
     requireFn(latestDrawer().onKillAll, "onKillAll")();
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("terminal 1")));
     expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1"]);

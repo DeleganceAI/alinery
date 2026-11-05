@@ -58,7 +58,7 @@ test("a Terminal session shows a put while it runs and a put after it exits", as
   t.meta("fix", "s1");
   await t.feed.scan();
   const seen = collect(t.store, sessionScope("fix", "s1"));
-  const row = t.row("fix", "s1");
+  const row = { ...t.row("fix", "s1"), transport: "pty" };
   t.rows.set("s1", row);
   ids.push("s1");
   startShell("s1", t.repo, join(t.repo, "s1.scrollback"), 80, 24, () => {
@@ -69,6 +69,7 @@ test("a Terminal session shows a put while it runs and a put after it exits", as
   await settle();
   const running = seen.puts.at(-1)?.value;
   expect(running?.case === "session" && running.value.status?.process).toBe("alive");
+  expect(running?.case === "session" && running.value.status?.transport).toBe("pty"); // the app picks terminal or agent view from it
   expect(running?.case === "session" && running.value.worktree).toBe(t.repo); // stored fields survive the merge
 
   writePty("s1", "exit\n");

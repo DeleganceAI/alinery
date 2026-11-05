@@ -55,6 +55,7 @@ import {
   StatusDot,
   sameArtifactListItems,
 } from "../shared";
+import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import { toast } from "../toast";
 import type {
   AppearancePrefs,
@@ -66,7 +67,6 @@ import type {
   ReviewHandoffSource,
   SessionDisplayContext,
   SessionMessageActionProvenance,
-  SessionObservation,
   Task,
   TaskExecutionReply,
 } from "../types";
@@ -278,7 +278,7 @@ export function SessionView({
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
   const hasTask = Boolean(taskSlug);
-  const [observation, setObservation] = useState<SessionObservation | null>(null);
+  const observation = useSessionObservation(intent === "history" ? "" : repoPath, taskSlug, id);
   const [terminalConnection, setTerminalConnection] = useState<SessionTerminalConnectionState>("opening");
   const [messageComposing, setMessageComposing] = useState(false);
   const [messageSending, setMessageSending] = useState(false);
@@ -436,8 +436,7 @@ export function SessionView({
     setLifecycle(null);
     if ((explicitIntent && !leftover) || intent === "history") return;
     let alive = true;
-    ipc
-      .sessionStatus(id, taskSlug || null)
+    observationNow(repoPath, taskSlug, id)
       .then((obs) => {
         if (!alive) return;
         setLifecycle(obs.lifecycle);
@@ -450,7 +449,7 @@ export function SessionView({
     return () => {
       alive = false;
     };
-  }, [explicitIntent, leftover, id, taskSlug, reclassifyTick, intent]);
+  }, [explicitIntent, leftover, id, taskSlug, repoPath, reclassifyTick, intent]);
 
   useEffect(() => {
     setArtifactReady(false);
@@ -471,7 +470,6 @@ export function SessionView({
   }, [effectiveLifecycleState, id, taskSlug, reclassifyTick]);
 
   useEffect(() => {
-    setObservation(null);
     setTerminalConnection("opening");
     setMessageComposing(false);
     setMessageSending(false);
@@ -483,23 +481,6 @@ export function SessionView({
     ompStartRef.current = null;
     handledUiRef.current.clear();
     setupOpenedRef.current = false;
-    if (intent === "history") return;
-    let alive = true;
-    const observe = () => {
-      ipc
-        .sessionStatus(id, taskSlug || null)
-        .then((next) => {
-          if (alive) setObservation(next);
-        })
-        // Keep the last observation so a transient poll error cannot flip liveRpc and wipe the transcript.
-        .catch(() => undefined);
-    };
-    observe();
-    const timer = window.setInterval(observe, 1500);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
   }, [id, taskSlug, repoPath, intent]);
 
   useEffect(() => {
@@ -1090,14 +1071,10 @@ export function SessionView({
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
     if (ompStartRef.current === id) return;
     ompStartRef.current = id;
-    void ipc
-      .startSession(taskSlug, id, repoPath)
-      .then(() => ipc.sessionStatus(id, taskSlug || null))
-      .then((next) => setObservation(next))
-      .catch((error) => {
-        setTerminalConnection("failed");
-        toast(String(error), "error");
-      });
+    void ipc.startSession(taskSlug, id, repoPath).catch((error) => {
+      setTerminalConnection("failed");
+      toast(String(error), "error");
+    });
   }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
   // The journal owns committed history. It is read straight off disk, so it works for a dead
@@ -1360,7 +1337,6 @@ export function SessionView({
     setCompletionBusy(true);
     try {
       await ipc.startSession(taskSlug, id, repoPath);
-      setObservation(await ipc.sessionStatus(id, taskSlug));
       setReclassifyTick((tick) => tick + 1);
       setExecutionView(await readTaskExecution(repoPath, taskSlug));
       setExecutionError("");
@@ -1441,7 +1417,6 @@ export function SessionView({
               setCompletionBusy(true);
               try {
                 await ipc.startSession(taskSlug, id, repoPath);
-                setObservation(await ipc.sessionStatus(id, taskSlug));
                 setReclassifyTick((tick) => tick + 1);
                 setExecutionView(await readTaskExecution(repoPath, taskSlug));
                 setExecutionError("");

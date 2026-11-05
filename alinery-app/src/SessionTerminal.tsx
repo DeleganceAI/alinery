@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { APPEARANCE_EVENT } from "./appearance";
 import { decodeChannelFrame } from "./channelFrame";
 import * as ipc from "./ipc";
+import { observationNow } from "./sync/sessionObservation";
 import { attachGpuRenderer } from "./terminalRenderer";
 import { restoreViewport, saveViewport } from "./terminalViewport";
 import type { SessionObservation } from "./types";
@@ -93,7 +94,7 @@ export function SessionTerminal({
       write: (data) => ipc.writeSession(sessionId, data),
       resize: (cols, rows) => ipc.resizeSession(sessionId, cols, rows),
       detach: (id) => ipc.detachSession(sessionId, id),
-      status: () => ipc.sessionStatus(sessionId, taskSlug || null),
+      status: async () => observationNow((await ipc.readAppConfig()).active_repo, taskSlug, sessionId),
     };
     const term = new Terminal({
       convertEol: false,

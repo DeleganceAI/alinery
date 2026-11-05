@@ -20,6 +20,7 @@ import { compactCommand, getStateCommand, type ImageContent, promptCommand } fro
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatMcpDialog } from "./ChatMcpDialog";
@@ -101,7 +102,6 @@ type ChatThreadApi = {
   abort: () => void;
   reconnect: () => void;
   loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setDraft: (value: string) => void;
   stagePaths: (paths: string[]) => void;
   stageBlobs: (files: File[]) => void;
@@ -145,7 +145,6 @@ const NO_API: ChatThreadApi = {
   abort: () => {},
   reconnect: () => {},
   loadOlder: () => {},
-  setObserved: () => {},
   setDraft: () => {},
   stagePaths: () => {},
   stageBlobs: () => {},
@@ -421,7 +420,6 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   abort: () => void;
   reconnect: () => void;
   loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
@@ -518,7 +516,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     abort: () => api.abort(),
     reconnect: () => api.reconnect(),
     loadOlder: () => api.loadOlder(),
-    setObserved: (value) => api.setObserved(value),
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
@@ -562,7 +559,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const [transcript, setTranscript] = useState<ChatTranscriptState>(NO_TRANSCRIPT);
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
-  const [observation, setObservation] = useState<SessionObservation | null>(null);
+  const observation = useSessionObservation(repo, "", id);
+  const endedRef = useRef<(() => void) | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
   const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -612,7 +610,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       id,
       attachId,
       () => {
-        ipc.chatSessionStatus(repo, id).then(
+        observationNow(repo, "", id).then(
           (next) => {
             if (cancelled || next.transport === "pty") return;
             if (next.transport === "rpc" && next.lifecycle.state === "live") setEpoch((value) => value + 1);
@@ -627,19 +625,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
         if (!cancelled) setConnection({ state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." });
       },
     );
-    const observe = () => {
-      if (!entryIsActive(entry)) return;
-      ipc
-        .chatSessionStatus(repo, id)
-        .then((next) => {
-          if (cancelled) return;
-          setObservation(next);
-          if (threadNow.session.ended_at == null && (next.lifecycle.state === "exited" || next.lifecycle.state === "live_exited")) ended();
-        })
-        .catch(() => {});
-    };
-    observe();
-    const timer = window.setInterval(observe, 1500);
+    endedRef.current = ended;
     const dropClaim = (message: string) => {
       if (!claimed || registry.pendingPrompt !== claimed) return;
       registry.pendingPrompt = null;
@@ -678,11 +664,18 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     }
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      endedRef.current = null;
       stopTranscript();
       stopClosed();
     };
   }, [epoch, repo, id]);
+
+  // A thread whose process has exited ends the attach, once per attach.
+  const stopped = observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a new attach, which may need ending again
+  useEffect(() => {
+    if (stopped && (entry.thread ?? thread).session.ended_at == null && entryIsActive(entry)) endedRef.current?.();
+  }, [stopped, epoch]);
 
   async function writeSend(
     text: string,
@@ -970,7 +963,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     abort,
     reconnect: () => setEpoch((value) => value + 1),
     loadOlder,
-    setObserved: (value) => setObservation(value),
     setDraft: (value) => {
       entry.draft = value;
       registry.touch(entry);

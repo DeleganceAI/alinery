@@ -63,7 +63,6 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   confirmDanger: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
-  sessionStatuses: vi.fn(),
   renameSession: vi.fn(),
 }));
 
@@ -75,7 +74,6 @@ vi.mock("../ipc", () =>
     getTaskExecution: mocks.getTaskExecution,
     listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    sessionStatuses: mocks.sessionStatuses,
     renameSession: mocks.renameSession,
   }),
 );
@@ -87,7 +85,6 @@ beforeEach(() => {
   mocks.listSessions.mockReset().mockResolvedValue([]);
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockResolvedValue({});
   mocks.renameSession.mockReset();
 });
 

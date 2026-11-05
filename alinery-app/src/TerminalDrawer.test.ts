@@ -1,9 +1,13 @@
+import type { Transport } from "@connectrpc/connect";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonTransport } from "./daemon/transport";
 import * as ipc from "./ipc";
 import { shellCdCommand, shellSingleQuote, TerminalDrawer } from "./TerminalDrawer";
+import { daemonHarness, scriptedSync } from "./test/daemonHarness";
+import { sessionDaemon } from "./test/sessionDaemon";
 import type { RepoScope, SessionObservation, View } from "./types";
 
 type SessionHostProps = {
@@ -21,6 +25,7 @@ const sessionHost = vi.hoisted(() => ({
 }));
 
 vi.mock("./ipc");
+vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
 vi.mock("./SessionTerminal", () => ({
   SessionTerminal: (props: SessionHostProps) => sessionHost.render(props),
 }));
@@ -37,15 +42,20 @@ sessionHost.render = (props) =>
     "data-cwd": props.cwd,
   });
 
+let daemon = sessionDaemon();
+const observation = (state: SessionObservation["lifecycle"]["state"]): SessionObservation => ({
+  lifecycle: { state } as SessionObservation["lifecycle"],
+  state: null,
+  checkpoint: {},
+});
+
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.mocked(ipc.homeDir).mockResolvedValue("/Users/test");
-  vi.mocked(ipc.sessionStatus).mockResolvedValue({
-    lifecycle: { state: "live" },
-    state: null,
-    checkpoint: {},
-  });
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+  for (const id of ["drawer-1", "drawer-2"]) daemon.show("/repo", "", id, observation("live"));
 });
 
 afterEach(() => {
@@ -370,88 +380,64 @@ describe("TerminalDrawer tab bar", () => {
   });
 });
 
-describe("TerminalDrawer exit poll", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  async function flushPoll() {
+describe("TerminalDrawer tab exit", () => {
+  async function flush() {
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 20));
     });
   }
 
-  it("reports one exited tab and does not kill the drawer", async () => {
-    vi.mocked(ipc.sessionStatus).mockImplementation(
-      async (id: string) =>
-        ({
-          lifecycle: { state: id === "drawer-2" ? "exited" : "live" },
-          state: null,
-          checkpoint: {},
-        }) as SessionObservation,
-    );
+  it("reports one exited tab, once, and does not kill the drawer", async () => {
+    daemon.show("/repo", "", "drawer-2", observation("exited"));
     const { props } = renderDrawer();
-    await flushPoll();
+    await flush();
     expect(props.onTabExited).toHaveBeenCalledTimes(1);
     expect(props.onTabExited).toHaveBeenCalledWith("drawer-2");
     expect(props.onKillAll).not.toHaveBeenCalled();
-    expect(ipc.sessionStatus).toHaveBeenCalledWith("drawer-1", "");
-    expect(ipc.sessionStatus).toHaveBeenCalledWith("drawer-2", "");
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
+    await flush();
     expect(props.onTabExited).toHaveBeenCalledTimes(1);
   });
 
+  it("reports a tab whose session exits while the drawer is open", async () => {
+    const { props } = renderDrawer();
+    await flush();
+    expect(props.onTabExited).not.toHaveBeenCalled();
+    daemon.show("/repo", "", "drawer-1", observation("live_exited"));
+    await flush();
+    expect(props.onTabExited).toHaveBeenCalledTimes(1);
+    expect(props.onTabExited).toHaveBeenCalledWith("drawer-1");
+  });
+
   it("reports an exited tab while the drawer is hidden", async () => {
-    vi.mocked(ipc.sessionStatus).mockImplementation(
-      async (id: string) =>
-        ({
-          lifecycle: { state: id === "drawer-2" ? "exited" : "live" },
-          state: null,
-          checkpoint: {},
-        }) as SessionObservation,
-    );
+    daemon.show("/repo", "", "drawer-2", observation("exited"));
     const { props } = renderDrawer({ open: false });
-    await flushPoll();
+    await flush();
     expect(props.onTabExited).toHaveBeenCalledWith("drawer-2");
     expect(props.onKillAll).not.toHaveBeenCalled();
   });
 
   it("does not treat never_started as an exit, and does report live_exited", async () => {
-    vi.mocked(ipc.sessionStatus).mockResolvedValue({
-      lifecycle: { state: "never_started" },
-      state: null,
-      checkpoint: {},
-    });
+    for (const id of ["drawer-1", "drawer-2"]) daemon.show("/repo", "", id, observation("never_started"));
     const waiting = renderDrawer();
-    await flushPoll();
-    expect(ipc.sessionStatus).toHaveBeenCalledWith("drawer-1", "");
-    expect(ipc.sessionStatus).toHaveBeenCalledWith("drawer-2", "");
+    await flush();
     expect(waiting.props.onTabExited).not.toHaveBeenCalled();
+    cleanup();
 
-    vi.mocked(ipc.sessionStatus).mockResolvedValue({
-      lifecycle: { state: "live_exited" },
-      state: null,
-      checkpoint: {},
-    });
+    for (const id of ["drawer-1", "drawer-2"]) daemon.show("/repo", "", id, observation("live_exited"));
     const exited = renderDrawer();
-    await flushPoll();
+    await flush();
     expect(exited.props.onTabExited).toHaveBeenCalledWith("drawer-1");
     expect(exited.props.onTabExited).toHaveBeenCalledWith("drawer-2");
     expect(exited.props.onKillAll).not.toHaveBeenCalled();
   });
 
-  it("ignores a rejected status instead of dropping the tab", async () => {
-    vi.mocked(ipc.sessionStatus).mockRejectedValue(new Error("daemon offline"));
+  it("drops no tab while the daemon has not answered", async () => {
+    const down = scriptedSync(async function* () {
+      throw new Error("daemon offline");
+    });
+    vi.mocked(daemonTransport).mockImplementation(() => daemonHarness({ sync: down.sync }).transport as Transport);
     const { props } = renderDrawer();
-    await flushPoll();
-    expect(ipc.sessionStatus).toHaveBeenCalledWith("drawer-1", "");
+    await flush();
     expect(props.onTabExited).not.toHaveBeenCalled();
     expect(props.onKillAll).not.toHaveBeenCalled();
   });

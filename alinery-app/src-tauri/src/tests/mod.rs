@@ -466,11 +466,3 @@ fn write_status_session(
     };
     fs::write(session_meta_path(repo, slug, id), serde_json::to_string(&meta).unwrap()).unwrap();
 }
-
-fn status_ref(repo: &Path, slug: &str, id: &str) -> super::SessionStatusRef {
-    super::SessionStatusRef {
-        repo_path: repo.display().to_string(),
-        task_slug: slug.into(),
-        id: id.into(),
-    }
-}

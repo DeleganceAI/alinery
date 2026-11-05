@@ -3,8 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { mockIpc } from "../test/mockIpc";
+import { sessionDaemon } from "../test/sessionDaemon";
 import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
@@ -20,7 +22,25 @@ const scenario = vi.hoisted(() => ({
   items: null as ArtifactListItem[] | null,
 }));
 
-const sessionStatus = vi.hoisted(() => vi.fn(async (): Promise<SessionObservation> => ({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} })));
+// The sessions the fake daemon holds. `sessionStatus.mockResolvedValue(o)` states what the daemon says
+// about the session under test (task/session in /repo); a later call is a live delta.
+let daemon = sessionDaemon();
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+function resetDaemon() {
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+  sessionStatus.mockReset();
+}
+const EXITED: SessionObservation = { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} };
+const sessionStatus = {
+  mockResolvedValue(o: SessionObservation) {
+    daemon.show("/repo", "task", "session", o);
+    return sessionStatus;
+  },
+  mockReset() {
+    return sessionStatus.mockResolvedValue(EXITED);
+  },
+};
 const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
@@ -122,7 +142,6 @@ vi.mock("../ipc", () =>
     listArtifactCommentDrafts: async () => [],
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
-    sessionStatus,
     archiveSession,
     sessionArtifactReady,
     startSession,
@@ -163,6 +182,7 @@ describe("SessionView artifact pane", () => {
   beforeEach(() => {
     scenario.itemCalls = 0;
     scenario.treeCalls = 0;
+    resetDaemon();
     vi.useFakeTimers();
     scenario.tasks = [{ ...task }];
   });
@@ -292,6 +312,7 @@ function renderSession(overrides: Partial<ComponentProps<typeof SessionView>> = 
 
 describe("session work names", () => {
   beforeEach(() => {
+    resetDaemon();
     vi.useFakeTimers();
     scenario.tasks = [{ ...task }];
     scenario.tasksPromise = null;

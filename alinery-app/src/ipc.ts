@@ -86,8 +86,6 @@ import type {
   SessionMeta,
   SessionName,
   SessionNotificationClearRef,
-  SessionObservation,
-  SessionStatusRef,
   SkillInstall,
   SshTarget,
   StagedUpdate,
@@ -336,7 +334,6 @@ export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_ab
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
-export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
 export const chatPtyAttach = (a: {
   repoPath: string;
   id: string;
@@ -389,7 +386,6 @@ export const readSessionHistory = (a: { id: string; taskSlug?: string | null; of
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
-export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
 export const sessionTranscript = (id: string) => invoke<VinculumTranscript>("session_transcript", { id });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
@@ -403,8 +399,6 @@ export const customProviderSave = (input: { id: string; name: string; baseUrl: s
   invoke<ProviderCatalog>("custom_provider_save", input);
 export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
-export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
-export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
 export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
 export const prepareReviewApprovalPrompt = (taskSlug: string, reviewArtifact: string) =>
   invoke<PreparedSessionMessageAction>("prepare_review_approval_prompt", { taskSlug, reviewArtifact });

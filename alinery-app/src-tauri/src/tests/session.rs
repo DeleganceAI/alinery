@@ -210,17 +210,6 @@ fn durable_session_discovery_preserves_offline_history_without_live_state() {
     assert!(items[0].is_playbook_step);
     assert_eq!(alinery_core::read_session_history(&repo, &task.slug, &meta.id, Some(0), Some(1024)).unwrap().data, history);
 
-    let reference = crate::SessionStatusRef {
-        repo_path: repo.display().to_string(),
-        task_slug: task.slug.clone(),
-        id: meta.id.clone(),
-    };
-    let observations = crate::session_list_statuses_with_repo_resolver(std::slice::from_ref(&reference), |_| Ok(repo.clone()));
-    let key = crate::session_list_status_key(&reference.repo_path, &reference.task_slug, &reference.id);
-    let observation = observations.get(&key).unwrap();
-    assert_eq!(observation.lifecycle, crate::LifecycleState::Orphaned);
-    assert!(observation.state.is_none());
-    assert!(observation.transport.is_none());
     assert_eq!(items[0].session.ended_at, None);
     assert_eq!(items[0].session.exit_code, None);
     assert!(crate::task_daemon_for(&repo, &task.slug, &repo.join("app.toml")).is_err());
@@ -473,136 +462,6 @@ fn bounded_observation_timeout_returns_error() {
         started.elapsed()
     );
     assert_eq!(listener.calls(), 1);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn session_list_statuses_groups_duplicate_refs_by_lane() {
-    let repo = activity_repo("session-list-groups");
-    write_status_session(&repo, "task", "a", "implement", "", Some(1), None, None, "");
-    write_status_session(&repo, "task", "b", "implement", "", Some(1), None, None, "");
-    let busy_json = "{\"sessions\":[{\"id\":\"a\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"busy\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"},{\"id\":\"b\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"idle\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"}]}\n";
-    let socket = status_list_socket(crate::current_alineryd_socket_path(&repo), Some(busy_json));
-
-    let statuses = crate::session_list_statuses_for_refs(&[status_ref(&repo, "task", "a"), status_ref(&repo, "task", "a"), status_ref(&repo, "task", "b")]);
-
-    let a = crate::session_list_status_key(&repo.display().to_string(), "task", "a");
-    let b = crate::session_list_status_key(&repo.display().to_string(), "task", "b");
-    assert_eq!(statuses.len(), 2);
-    // Session a: Busy agent → lifecycle is Live.
-    assert_eq!(statuses.get(&a).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live),);
-    assert_eq!(statuses.get(&a).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Busy),);
-    // Session b: Idle agent → lifecycle is Live.
-    assert_eq!(statuses.get(&b).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live),);
-    assert_eq!(statuses.get(&b).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Idle),);
-    assert_eq!(socket.calls(), 1);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn session_list_statuses_isolates_missing_malformed_and_timeout_lanes() {
-    for failure in ["missing", "malformed", "timeout"] {
-        let suffix = &failure[..1];
-        let healthy = activity_repo(&format!("slh-{suffix}"));
-        let failing = activity_repo(&format!("slf-{suffix}"));
-        write_status_session(&healthy, "task", "ok", "implement", "", Some(1), None, None, "");
-        write_status_session(&failing, "task", "bad", "implement", "", Some(1), None, None, "");
-        let healthy_socket = status_list_socket(
-            crate::current_alineryd_socket_path(&healthy),
-            Some(
-                "{\"sessions\":[{\"id\":\"ok\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"busy\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"}]}\n",
-            ),
-        );
-        let failing_socket = match failure {
-            "missing" => None,
-            "malformed" => Some(status_list_socket(crate::current_alineryd_socket_path(&failing), Some("{not json}\n"))),
-            "timeout" => Some(status_list_socket(crate::current_alineryd_socket_path(&failing), None)),
-            _ => unreachable!(),
-        };
-
-        let statuses = crate::session_list_statuses_for_refs(&[status_ref(&healthy, "task", "ok"), status_ref(&failing, "task", "bad")]);
-
-        let ok = crate::session_list_status_key(&healthy.display().to_string(), "task", "ok");
-        let bad = crate::session_list_status_key(&failing.display().to_string(), "task", "bad");
-        // Healthy lane: Busy agent → lifecycle is Live.
-        assert_eq!(statuses.get(&ok).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live), "{failure}");
-        assert!(
-            statuses.get(&ok).and_then(|obs| obs.state.as_ref()).is_some(),
-            "healthy session should have daemon state, {failure}"
-        );
-        // Failing lane: observation falls back to meta timestamps → Orphaned (started, no ended).
-        assert_eq!(statuses.get(&bad).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Orphaned), "{failure}");
-        assert!(
-            statuses.get(&bad).and_then(|obs| obs.state.as_ref()).is_none(),
-            "failed-lane session should have no daemon state, {failure}"
-        );
-        assert_eq!(healthy_socket.calls(), 1);
-        if let Some(socket) = failing_socket {
-            assert_eq!(socket.calls(), 1);
-        }
-        let _ = fs::remove_dir_all(healthy);
-        let _ = fs::remove_dir_all(failing);
-    }
-}
-
-#[test]
-fn session_list_statuses_routes_by_daemon_namespace() {
-    let repo = activity_repo("session-list-lanes");
-    let own_ns = crate::alineryd_socket_namespace().unwrap_or_default();
-    let lane_a = "session-list-lane-a";
-    let lane_b = "session-list-lane-b";
-    write_status_session(&repo, "task", "lane-a-session", "implement", lane_a, Some(1), None, None, "");
-    write_status_session(&repo, "task", "lane-b-session", "implement", lane_b, Some(1), None, None, "");
-    let socket_a = status_list_socket(
-        crate::route_socket_path(&repo, &own_ns, lane_a).unwrap(),
-        Some("{\"sessions\":[{\"id\":\"lane-a-session\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"busy\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"}]}\n"),
-    );
-    let socket_b = status_list_socket(
-        crate::route_socket_path(&repo, &own_ns, lane_b).unwrap(),
-        Some("{\"sessions\":[{\"id\":\"lane-b-session\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"idle\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"}]}\n"),
-    );
-
-    let statuses = crate::session_list_statuses_for_refs(&[status_ref(&repo, "task", "lane-a-session"), status_ref(&repo, "task", "lane-b-session")]);
-
-    let a = crate::session_list_status_key(&repo.display().to_string(), "task", "lane-a-session");
-    let b = crate::session_list_status_key(&repo.display().to_string(), "task", "lane-b-session");
-    assert_eq!(statuses.get(&a).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live));
-    assert_eq!(statuses.get(&a).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Busy));
-    assert_eq!(statuses.get(&b).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live));
-    assert_eq!(statuses.get(&b).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent), Some(&alinery_core::AgentState::Idle));
-    assert_eq!(socket_a.calls(), 1);
-    assert_eq!(socket_b.calls(), 1);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn session_list_statuses_artifact_alone_does_not_override_observation() {
-    // Plan TDD 3C: artifact presence must not override SessionObservation.
-    // The lifecycle stays Live/Busy even with a non-empty expected artifact.
-    let repo = activity_repo("sl-art-no-override");
-    write_status_session(&repo, "task", "artifact-session", "implement", "", Some(1), None, None, "05-done.md");
-    fs::write(crate::artifacts_dir(&repo, "task").join("05-done.md"), "# done\n").unwrap();
-    let socket = status_list_socket(
-        crate::current_alineryd_socket_path(&repo),
-        Some("{\"sessions\":[{\"id\":\"artifact-session\",\"process\":{\"state\":\"alive\"},\"agent\":{\"state\":\"busy\"},\"playbook\":{\"state\":\"in_progress\"},\"adapter\":\"omp\",\"message_adapter\":\"omp_bracketed_paste\",\"transport\":\"pty\"}]}\n"),
-    );
-
-    let statuses = crate::session_list_statuses_for_refs(&[status_ref(&repo, "task", "artifact-session")]);
-
-    let key = crate::session_list_status_key(&repo.display().to_string(), "task", "artifact-session");
-    // Observation lifecycle must be Live (daemon owns it with Busy agent).
-    assert_eq!(statuses.get(&key).map(|obs| &obs.lifecycle), Some(&crate::LifecycleState::Live));
-    // Agent must be Busy — artifact presence must not change this.
-    assert_eq!(
-        statuses.get(&key).and_then(|obs| obs.state.as_ref()).map(|s| &s.agent),
-        Some(&alinery_core::AgentState::Busy)
-    );
-    // Checkpoint is empty (no semantic completion recorded).
-    assert!(
-        statuses.get(&key).map(|obs| obs.checkpoint.phase_completed_at.is_none()).unwrap_or(false),
-        "checkpoint should be empty without a completion event"
-    );
-    assert_eq!(socket.calls(), 1);
     let _ = fs::remove_dir_all(repo);
 }
 
@@ -1102,31 +961,6 @@ fn unified_message_action_finalization_validates_all_before_mutation() {
     assert!(artifact_review_pending_path(&repo, &task.slug, "03-design.md").unwrap().exists());
     finalize_session_message_actions_for(&repo, &session.id, &task.slug, &actions).unwrap();
     let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn observation_omits_transport_when_daemon_does_not_own_id() {
-    let observation = crate::SessionObservation {
-        lifecycle: alinery_core::LifecycleState::NeverStarted,
-        state: None,
-        checkpoint: alinery_core::SemanticCheckpoint::default(),
-        transport: None,
-    };
-    let value = serde_json::to_value(&observation).unwrap();
-    let object = value.as_object().unwrap();
-    assert!(!object.contains_key("transport"));
-}
-
-#[test]
-fn observation_includes_rpc_when_live() {
-    let observation = crate::SessionObservation {
-        lifecycle: alinery_core::LifecycleState::Live,
-        state: None,
-        checkpoint: alinery_core::SemanticCheckpoint::default(),
-        transport: Some(alinery_core::SessionTransport::Rpc),
-    };
-    let value = serde_json::to_value(&observation).unwrap();
-    assert_eq!(value["transport"], "rpc");
 }
 
 fn plant_chat(
