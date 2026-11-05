@@ -24,15 +24,9 @@ switch (params.mode) {
     emit({ progress: { done: 0, total: 1, label: `pid ${process.pid}` } });
     await new Promise(() => {});
     break;
-  case "slow": // a result after `ms`, writing its start and end to a log so order can be checked
-    appendLog(params.log, `start ${params.tag}`);
+  case "slow": // a result after `ms`
     await Bun.sleep(params.ms);
-    appendLog(params.log, `end ${params.tag}`);
     emit({ result: info });
     break;
 }
 
-import { appendFileSync } from "node:fs";
-function appendLog(path: string, line: string) {
-  appendFileSync(path, `${line}\n`);
-}

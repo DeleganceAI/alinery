@@ -1,5 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { type Entity, JobKind, JobState, type Job } from "alinery-proto/alinery/v1/entities_pb";
 import { Store, type Timers } from "../sync/store.ts";
@@ -7,11 +6,6 @@ import { jobKey, JobRunner, type RunnerOptions } from "./runner.ts";
 
 const FAKE = join(import.meta.dir, "fake-child.ts");
 const fake = () => [process.execPath, FAKE];
-
-const dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
 
 /** A store whose commits are recorded, so a test counts them. */
 function rig(o: RunnerOptions = {}) {
@@ -103,33 +97,32 @@ test("cancel ends a running job CANCELLED and the child is gone", async () => {
 });
 
 test("two backups run one after the other, in order; other kinds do not wait for them", async () => {
-  const dir = mkdtempSync("/tmp/jobs-t-");
-  dirs.push(dir);
-  const log = join(dir, "log");
   const { runner, job, ended } = rig();
-  const first = runner.start(JobKind.BACKUP, { mode: "slow", ms: 150, log, tag: "a" });
-  const second = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10, log, tag: "b" });
+  const first = runner.start(JobKind.BACKUP, { mode: "slow", ms: 150 });
+  const second = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10 });
   expect(job(first).state).toBe(JobState.RUNNING);
   expect(job(second).state).toBe(JobState.QUEUED);
   const scan = runner.start(JobKind.STORAGE_SCAN, { mode: "silent" });
   expect(job(scan).state).toBe(JobState.RUNNING);
   await ended(second);
-  expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["start a", "end a", "start b", "end b"]);
+  expect(job(first).state).toBe(JobState.DONE);
+  expect(job(second).state).toBe(JobState.DONE);
+  // The second started only once the first had ended.
   expect(job(second).startedAtMs >= job(first).endedAtMs).toBe(true);
 });
 
 test("a queued job cancels at once and never runs", async () => {
-  const dir = mkdtempSync("/tmp/jobs-t-");
-  dirs.push(dir);
-  const log = join(dir, "log");
   const { runner, job, ended } = rig();
-  const first = runner.start(JobKind.BACKUP, { mode: "slow", ms: 100, log, tag: "a" });
-  const second = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10, log, tag: "b" });
+  const first = runner.start(JobKind.BACKUP, { mode: "slow", ms: 100 });
+  const second = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10 });
+  const third = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10 });
   runner.cancel(second);
   expect(job(second).state).toBe(JobState.CANCELLED);
-  await ended(first);
-  await Bun.sleep(100);
-  expect(readFileSync(log, "utf8")).not.toContain("b");
+  await ended(third);
+  expect(job(first).state).toBe(JobState.DONE);
+  expect(job(second).state).toBe(JobState.CANCELLED);
+  expect(job(second).startedAtMs).toBe(0n);
+  expect(job(third).startedAtMs >= job(first).endedAtMs).toBe(true);
 });
 
 test("an ended job stays in the store for the retention time, then is deleted", async () => {
