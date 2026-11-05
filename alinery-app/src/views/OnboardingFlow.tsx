@@ -6,7 +6,8 @@ import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
-import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
+import type { SimulatedStepStatus } from "../PlaybookGraph";
+import { PlaybookRing, promptExcerpt } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { toast } from "../toast";
 import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
@@ -56,6 +57,7 @@ export function OnboardingFlow({
   const [definitionErrors, setDefinitionErrors] = useState<Record<string, string>>({});
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
+  const [hoveredStepKey, setHoveredStepKey] = useState<string | null>(null);
   const [simStepIndex, setSimStepIndex] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [demoRevision, setDemoRevision] = useState(0);
@@ -311,6 +313,9 @@ export function OnboardingFlow({
     playbookSteps.findIndex((s) => s.key === selectedStepKey),
   );
   const selectedStep = playbookSteps[selectedStepIndex] ?? playbookSteps[0];
+  const hoveredStep = playbookSteps.find((s) => s.key === hoveredStepKey) ?? null;
+  const focusStep = hoveredStep ?? selectedStep;
+  const focusIndex = hoveredStep ? playbookSteps.indexOf(hoveredStep) : selectedStepIndex;
 
   const demoComplete = simStepIndex !== null && simStepIndex >= playbookSteps.length;
   const simStatusCopy = (() => {
@@ -535,41 +540,11 @@ export function OnboardingFlow({
 
             {activePlaybook ? (
               <div className="onboarding-playbook-stage">
-                <div className="onboarding-sim-bar">
+                <div className="onboarding-stage-head">
                   <div className="onboarding-sim-title">
-                    <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
-                    <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
+                    <h3>{activePlaybook.title}</h3>
+                    {activePlaybook.description && <p className="onboarding-sim-copy">{activePlaybook.description}</p>}
                   </div>
-                  <p className="onboarding-sim-copy">{simStatusCopy}</p>
-                  {playbookSteps.length > 0 && (
-                    <div
-                      key={demoRevision}
-                      className="onboarding-demo-progress"
-                      data-reduced-motion={reducedMotion || undefined}
-                      role="progressbar"
-                      aria-label="Playbook demo"
-                      aria-valuemin={1}
-                      aria-valuemax={playbookSteps.length}
-                      aria-valuenow={demoComplete && playing ? playbookSteps.length : selectedStepIndex + 1}
-                      aria-valuetext={demoComplete && playing ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`}
-                    >
-                      {playbookSteps.map((item) => (
-                        <span
-                          key={item.key}
-                          data-complete={simulatedStatuses[item.key] === "completed" || undefined}
-                          data-current={item.key === selectedStep?.key || undefined}
-                          data-running={item.key === currentSimStep?.key || undefined}
-                          aria-hidden="true"
-                        >
-                          <span className="onboarding-demo-progress-fill" style={{ animationDuration: `${simDuration}ms`, animationPlayState: playing ? "running" : "paused" }} />
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
-                </div>
-
-                <div className="onboarding-graph-frame">
                   <button
                     type="button"
                     className="onboarding-demo-toggle"
@@ -582,81 +557,49 @@ export function OnboardingFlow({
                     {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                     {playing ? "Pause demo" : "Resume demo"}
                   </button>
-                  <PlaybookGraph
-                    key={activePlaybook.key}
-                    title={activePlaybook.title}
-                    steps={playbookSteps}
-                    variant="definition"
-                    showInspector={false}
-                    hideToolbar={true}
-                    minScale={1}
-                    selectedStepKey={selectedStep?.key ?? null}
-                    onSelectStep={(key) => {
-                      setPlaying(false);
-                      setSelectedStepKey(key);
-                    }}
-                    simulatedStatuses={simulatedStatuses}
-                    simulationPlaying={playing && !reducedMotion}
-                    onPauseSimulation={() => setPlaying(false)}
-                  />
                 </div>
-
-                {selectedStep && (
-                  <section className="onboarding-step-inspector" aria-label={`${selectedStep.title} step contract`} data-animated={(playing && !reducedMotion) || undefined}>
-                    <div className="onboarding-step-content" key={`${activePlaybook.key}:${selectedStep.key}`}>
-                      <div className="onboarding-step-inspector-header">
-                        <div className="onboarding-step-inspector-title">
-                          <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
-                          <h3>{selectedStep.title}</h3>
-                        </div>
-                        <div className="onboarding-step-badges">
-                          <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
-                            {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                <PlaybookRing
+                  key={activePlaybook.key}
+                  steps={playbookSteps}
+                  selectedStepKey={selectedStep?.key ?? null}
+                  simulatedStatuses={simulatedStatuses}
+                  onSelectStep={(key) => {
+                    setPlaying(false);
+                    setSelectedStepKey(key);
+                  }}
+                  onHoverStep={setHoveredStepKey}
+                  progress={
+                    playbookSteps.length
+                      ? {
+                          now: demoComplete && playing ? playbookSteps.length : selectedStepIndex + 1,
+                          max: playbookSteps.length,
+                          text: demoComplete && playing ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`,
+                        }
+                      : undefined
+                  }
+                >
+                  <span className="onboarding-step-ordinal">{focusStep ? `Step ${focusIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
+                  <h4>{demoComplete && playing && !hoveredStep ? "Demo complete" : (focusStep?.title ?? activePlaybook.title)}</h4>
+                  {focusStep && (
+                    <div className="onboarding-step-badges">
+                      <span className={`pill ${focusStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
+                        {focusStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                      </span>
+                      {[...new Set(focusStep.inputs.map((input) => input.mode))]
+                        .filter((mode) => mode !== "single")
+                        .map((mode) => (
+                          <span className="pill" key={mode}>
+                            {INPUT_MODE_LABELS[mode]}
                           </span>
-                          <span className="onboarding-step-kind">{selectedStep.is_coding_step ? "Code changes" : "Artifact work"}</span>
-                        </div>
-                      </div>
-
-                      <div className="onboarding-contract-grid">
-                        <div className="onboarding-contract-col">
-                          <h4>Reads (inputs)</h4>
-                          {selectedStep.inputs.length > 0 ? (
-                            <ul className="onboarding-contract-list">
-                              {selectedStep.inputs.map((input) => (
-                                <li key={`${input.path}:${input.mode}`}>
-                                  <code>{input.path}</code>
-                                  {input.mode !== "single" && <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
-                          )}
-                        </div>
-                        <div className="onboarding-contract-col">
-                          <h4>Writes (outputs)</h4>
-                          {selectedStep.outputs.length > 0 ? (
-                            <ul className="onboarding-contract-list">
-                              {selectedStep.outputs.map((output) => (
-                                <li key={output.path}>
-                                  <code>{output.path}</code>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="onboarding-contract-empty">No declared output artifacts</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <details className="onboarding-prompt-preview">
-                        <summary>View step prompt instructions</summary>
-                        <p className="onboarding-artifact-path">Step: {selectedStep.key} · Artifacts: .alinery/tasks/&lt;slug&gt;/artifacts/</p>
-                        <pre>{selectedStep.prompt}</pre>
-                      </details>
+                        ))}
                     </div>
-                  </section>
-                )}
+                  )}
+                  <p className="onboarding-sim-copy">{hoveredStep ? promptExcerpt(hoveredStep.prompt) || "This step has no prompt text." : simStatusCopy}</p>
+                </PlaybookRing>
+                <div className="onboarding-stage-foot">
+                  <span>Hover a step to read its prompt. Click one to pause there.</span>
+                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
+                </div>
               </div>
             ) : (
               <div className="onboarding-playbook-stage">

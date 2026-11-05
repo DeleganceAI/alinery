@@ -313,9 +313,9 @@ describe("OnboardingFlow wizard", () => {
       />,
     );
     const retry = await screen.findByRole("button", { name: "Retry preview" });
-    expect(screen.queryByRole("region", { name: "Dependency graph canvas" })).toBeNull();
+    expect(screen.queryByRole("progressbar", { name: "Playbook demo" })).toBeNull();
     fireEvent.click(retry);
-    expect(await screen.findByRole("region", { name: "Dependency graph canvas" })).toBeTruthy();
+    expect(await screen.findByRole("progressbar", { name: "Playbook demo" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
@@ -373,15 +373,15 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
-  it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
+  it("pauses autoplay when selecting a ring step so its details stay in the centre", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
     await advanceDemo(2600);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
     expect(screen.getByRole("button", { name: "Resume demo" })).toBeTruthy();
     await advanceDemo(6000);
-    expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
     expect(screen.getByText("Step 4 of 7")).toBeTruthy();
     const progress = screen.getByRole("progressbar", { name: "Playbook demo" });
     expect(progress.getAttribute("aria-valuenow")).toBe("4");
@@ -417,17 +417,17 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
     await advanceDemo(2600);
     await advanceDemo(900);
-    fireEvent.click(within(screen.getByRole("region", { name: "Dependency graph canvas" })).getByRole("button", { name: "Highlight Plan" }));
-    expect(screen.getByRole("region", { name: "Plan step contract" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByRole("heading", { name: "Plan" })).toBeTruthy();
     await advanceDemo(5000);
     fireEvent.click(screen.getByRole("button", { name: "Resume demo" }));
-    expect(screen.getByRole("region", { name: "Investigate step contract" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Investigate" })).toBeTruthy();
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: "Playbook demo" }).getAttribute("aria-valuetext")).toBe("Investigate, step 2 of 7");
     await advanceDemo(1699);
     expect(screen.getByText("Step 2 of 7")).toBeTruthy();
     await advanceDemo(1);
-    expect(screen.getByRole("region", { name: "Decide step contract" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Decide" })).toBeTruthy();
   });
 
   it("starts a fresh step duration when switching playbooks during a paused partial step", async () => {
@@ -557,7 +557,7 @@ describe("OnboardingFlow wizard", () => {
     expect(ipc.ompSetupSession).not.toHaveBeenCalled();
   });
 
-  it("restarts when changing archetypes and keeps fan-out contracts inspectable", async () => {
+  it("restarts when changing archetypes and keeps fan-out modes visible in the centre", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
     await act(async () => {});
@@ -565,10 +565,9 @@ describe("OnboardingFlow wizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Academic Survey/i }));
     expect(screen.getByText("Step 1 of 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Pause demo" }));
-    const graph = screen.getByRole("region", { name: "Dependency graph canvas" });
-    fireEvent.click(within(graph).getByRole("button", { name: /Gather Candidate Sources — example 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Gather Candidate Sources" }));
     expect(screen.getByText("each — spawns parallel sessions")).toBeTruthy();
-    fireEvent.click(within(graph).getByRole("button", { name: /Deduplicate and Dispatch Sources/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Deduplicate and Dispatch Sources" }));
     expect(screen.getByText("complete — waits for all upstream outputs")).toBeTruthy();
     await advanceDemo(4000);
     expect(screen.getByText("Step 3 of 3")).toBeTruthy();
