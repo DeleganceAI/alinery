@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { Capability, ShutdownOrigin, type AdminService } from "alinery-proto/alinery/v1/admin_pb";
 import { capabilitiesOf, requireCapability } from "./auth.ts";
@@ -12,9 +11,7 @@ export type Lifecycle = { stop: () => number; exit: () => void };
 // Time for the reply to leave the socket before the process goes.
 const EXIT_DELAY_MS = 100;
 
-// The epoch is a random id per daemon start until the store (S2.1) owns it.
-export function adminService(info: DaemonInfo, lifecycle: Lifecycle): ServiceImpl<typeof AdminService> {
-  const epoch = randomUUID();
+export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: string): ServiceImpl<typeof AdminService> {
   return {
     // Needs any one capability, which every credential that passes auth holds, so it is also the
     // liveness probe.

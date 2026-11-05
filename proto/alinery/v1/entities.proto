@@ -1,0 +1,50 @@
+// proto/alinery/v1/entities.proto
+syntax = "proto3";
+package alinery.v1;
+
+message SessionRef {
+  string task_slug = 1;  // "" for taskless chat sessions, as the daemon's metaPath does today
+  string id = 2;
+}
+
+// Each entity message gets its real fields in the session that first produces it (plan 2.1.4):
+// session S2.3, execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
+// an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
+// tell one row from another.
+message Task {
+  string slug = 1;
+  string title = 2;
+}
+message Draft {}
+message Execution {}
+message Session {
+  SessionRef ref = 1;
+  string status = 2;
+}
+message Artifact {}
+message Comment {}
+message ChatThread {}
+message Job {}
+message Settings {}
+message DaemonStatus {}
+message Playbook {}
+message Attachment {}
+
+message Entity {
+  string key = 1;       // "<kind>/<task slug or _>/<id>", e.g. "session/fix-login/7f3a"
+  uint64 revision = 2;  // seq of this entity's last change; the expected_revision for writes
+  oneof value {
+    Task task = 10;
+    Draft draft = 11;
+    Execution execution = 12;
+    Session session = 13;
+    Artifact artifact = 14;
+    Comment comment = 15;
+    ChatThread chat_thread = 16;
+    Job job = 17;
+    Settings settings = 18;
+    DaemonStatus daemon_status = 19;
+    Playbook playbook = 20;
+    Attachment attachment = 21;
+  }
+}

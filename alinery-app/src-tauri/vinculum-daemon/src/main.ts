@@ -18,6 +18,7 @@ import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { serveRpc } from "./rpc/server.ts";
+import { Store } from "./sync/store.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
@@ -1097,6 +1098,7 @@ await serveRpc({
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
   lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
+  store: new Store(),
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
