@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "./daemon/transport";
 import * as ipc from "./ipc";
 import { shellCdCommand, shellSingleQuote, TerminalDrawer } from "./TerminalDrawer";
-import { daemonHarness, scriptedSync } from "./test/daemonHarness";
+import { daemonHarness, scriptedSync, untilAborted } from "./test/daemonHarness";
 import { sessionDaemon } from "./test/sessionDaemon";
 import type { RepoScope, SessionObservation, View } from "./types";
 
@@ -432,7 +432,9 @@ describe("TerminalDrawer tab exit", () => {
   });
 
   it("drops no tab while the daemon has not answered", async () => {
-    const down = scriptedSync(async function* () {
+    const down = scriptedSync(async function* (_req, _call, signal) {
+      yield* [];
+      await untilAborted(signal);
       throw new Error("daemon offline");
     });
     vi.mocked(daemonTransport).mockImplementation(() => daemonHarness({ sync: down.sync }).transport as Transport);

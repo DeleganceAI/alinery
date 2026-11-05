@@ -72,8 +72,8 @@ export function sessionDaemon() {
     return [...wild]
       .map(([id, o]) => {
         const key = `${slug}\u0000${id}`;
-        let e = wildCache.get(key);
-        if (!e) wildCache.set(key, (e = sessionEntity(slug, id, o)));
+        const e = wildCache.get(key) ?? sessionEntity(slug, id, o);
+        wildCache.set(key, e);
         return e;
       })
       .filter((e) => matches(scope, e.key));

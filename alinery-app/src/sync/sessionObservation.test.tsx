@@ -5,7 +5,7 @@ import { daemonTransport } from "../daemon/transport";
 import { StatusDot } from "../shared";
 import { daemonHarness, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
 import { sessionDaemon, sessionEntity } from "../test/sessionDaemon";
-import type { SessionObservation } from "../types";
+import type { SessionObservation, SessionState } from "../types";
 import { observationNow, observationOf, useSessionObservation } from "./sessionObservation";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -39,6 +39,7 @@ afterEach(() => {
 
 describe("observationOf", () => {
   it("reads back what the daemon stored, for every lifecycle", () => {
+    const idleState = running("idle").state as SessionState;
     const shapes: SessionObservation[] = [
       running("busy"),
       running("waiting_for_input", "ask-1"),
@@ -46,8 +47,8 @@ describe("observationOf", () => {
       { lifecycle: { state: "never_started" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
       { lifecycle: { state: "orphaned" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
       { lifecycle: { state: "interrupted" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
-      { ...running("idle"), lifecycle: { state: "live_exited" }, state: { ...running("idle").state!, process: { state: "exited", code: null } } },
-      { ...running("idle"), state: { ...running("idle").state!, playbook: { state: "failed", reason: "StaleSource" } } },
+      { ...running("idle"), lifecycle: { state: "live_exited" }, state: { ...idleState, process: { state: "exited", code: null } } },
+      { ...running("idle"), state: { ...idleState, playbook: { state: "failed", reason: "StaleSource" } } },
     ];
     for (const o of shapes) {
       const wait = o.state?.agent.state === "waiting_for_input" ? { kind: "input", correlationId: "ask-1" } : undefined;
@@ -134,6 +135,7 @@ describe("observationNow", () => {
     expect((await observationNow("/r", "task", "s1")).lifecycle).toEqual({ state: "exited", code: 3 });
 
     const silent = scriptedSync(async function* (_req, _call, signal) {
+      yield* [];
       await untilAborted(signal);
     });
     vi.mocked(daemonTransport).mockReturnValue(daemonHarness({ sync: silent.sync }).transport as Transport);
