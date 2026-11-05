@@ -7,9 +7,11 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { AdminService, Capability, ShutdownOrigin } from "alinery-proto/alinery/v1/admin_pb";
 import { ErrorDetailSchema } from "alinery-proto/alinery/v1/common_pb";
 import { takeSecretFile } from "./auth.ts";
+import { JobRunner } from "../jobs/runner.ts";
 import { Store } from "../sync/store.ts";
 import { serveRpc } from "./server.ts";
 
+const storageScan = { repo: "/repo", appConfig: "/app", namespace: "" };
 const SECRET = "ab".repeat(32);
 const info = { protocol: 25, buildId: "build-1", repoRoot: "/repo", appConfigIdentity: "identity-1" };
 const cleanup: Array<() => void> = [];
@@ -34,7 +36,7 @@ async function start(hostExecutable: string | undefined) {
   const dir = mkdtempSync("/tmp/rpc-t-");
   const socketPath = join(dir, "rpc.sock");
   const store = new Store();
-  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle, store });
+  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle, store, jobs: new JobRunner(store), storageScan });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });

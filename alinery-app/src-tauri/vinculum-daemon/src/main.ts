@@ -22,6 +22,8 @@ import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
 import { commitExecution } from "./domain/executions.ts";
 import { SessionPublisher } from "./domain/sessions.ts";
+import { runJobChild } from "./jobs/child.ts";
+import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
@@ -77,6 +79,9 @@ if (args.includes("--protocol-version")) {
   console.log(String(PROTOCOL));
   process.exit(0);
 }
+
+// A job child (plan 2.3.5) is this binary run with --job <kind>; it does nothing a daemon does.
+if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
 
 function flag(name: string): string {
   const index = args.indexOf(name);
@@ -1145,6 +1150,8 @@ await serveRpc({
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
   lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
   store,
+  jobs: new JobRunner(store),
+  storageScan: { repo, appConfig, namespace: lane },
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {

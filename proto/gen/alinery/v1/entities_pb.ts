@@ -4,8 +4,8 @@
 // @generated from file alinery/v1/entities.proto (package alinery.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
@@ -13,7 +13,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/entities.proto.
  */
 export const file_alinery_v1_entities: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIiMKBFRhc2sSDAoEc2x1ZxgBIAEoCRINCgV0aXRsZRgCIAEoCSIHCgVEcmFmdCJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIrgBCg1TZXNzaW9uU3RhdHVzEg8KB3Byb2Nlc3MYASABKAkSDQoFYWdlbnQYAiABKAkSHAoUYWdlbnRfY29ycmVsYXRpb25faWQYAyABKAkSFAoMYWdlbnRfcmVhc29uGAQgASgJEhAKCHBsYXlib29rGAUgASgJEhcKD3BsYXlib29rX3JlYXNvbhgGIAEoCRIPCgdhZGFwdGVyGAcgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgIIAEoCSJTCgtTZXNzaW9uV2FpdBIMCgRraW5kGAEgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAIgASgJEhMKBnByb21wdBgDIAEoCUgAiAEBQgkKB19wcm9tcHQi4ggKB1Nlc3Npb24SIwoDcmVmGAEgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEikKBnN0YXR1cxgCIAEoCzIZLmFsaW5lcnkudjEuU2Vzc2lvblN0YXR1cxIKCgJpZBgDIAEoCRIQCgh3b3JrdHJlZRgEIAEoCRIPCgdjcmVhdGVkGAUgASgEEhAKCGFyY2hpdmVkGAYgASgIEg4KBnBpbm5lZBgHIAEoCBINCgVwaGFzZRgIIAEoCRIPCgdoYXJuZXNzGAkgASgJEg0KBW1vZGVsGAogASgJEhAKCHBsYXlib29rGAsgASgJEhQKDGV4ZWN1dGlvbl9pZBgMIAEoCRIaChJleGVjdXRpb25fcmV2aXNpb24YDSABKAQSDwoHZ2VuZXJpYxgOIAEoCBIXCg9zdWJ0YXNrX21hbmFnZXIYDyABKAgSFAoMc3VidGFza19zbHVnGBAgASgJEhAKCGFydGlmYWN0GBEgASgJEhgKEGhhbmRvZmZfYXJ0aWZhY3QYEiABKAkSFAoMcHJvbXB0X2V4dHJhGBMgASgJEhMKBnByb21wdBgUIAEoCUgAiAEBEhcKCnN0YXJ0ZWRfYXQYFSABKARIAYgBARIeChFzdGF0dXNfY2hhbmdlZF9hdBgWIAEoBEgCiAEBEhgKC2FjdGl2aXR5X2F0GBcgASgESAOIAQESFwoPc3RhdHVzX3JldmlzaW9uGBggASgEEhUKCGVuZGVkX2F0GBkgASgESASIAQESFgoJZXhpdF9jb2RlGBogASgFSAWIAQESHAoUaGFybmVzc19yZXN1bWVfdG9rZW4YGyABKAkSFgoJcmVzdW1lX29mGBwgASgJSAaIAQESGAoQZGFlbW9uX25hbWVzcGFjZRgdIAEoCRIhChRub3RpZmljYXRpb25fcmVhZF9hdBgeIAEoBEgHiAEBEiYKGWV4aXRfbm90aWZpY2F0aW9uX3JlYWRfYXQYHyABKARICIgBARJKChhub3RpZmljYXRpb25fc3VwcHJlc3Npb24YICABKAsyIy5hbGluZXJ5LnYxLk5vdGlmaWNhdGlvblN1cHByZXNzaW9uSAmIAQESMAoIc2VtYW50aWMYISABKAsyHi5hbGluZXJ5LnYxLlNlbWFudGljQ2hlY2twb2ludBIUCgx0ZWxlbWV0cnlfaWQYIiABKAkSJQoEd2FpdBgjIAEoCzIXLmFsaW5lcnkudjEuU2Vzc2lvbldhaXRCCQoHX3Byb21wdEINCgtfc3RhcnRlZF9hdEIUChJfc3RhdHVzX2NoYW5nZWRfYXRCDgoMX2FjdGl2aXR5X2F0QgsKCV9lbmRlZF9hdEIMCgpfZXhpdF9jb2RlQgwKCl9yZXN1bWVfb2ZCFwoVX25vdGlmaWNhdGlvbl9yZWFkX2F0QhwKGl9leGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0QhsKGV9ub3RpZmljYXRpb25fc3VwcHJlc3Npb24iCgoIQXJ0aWZhY3QiCQoHQ29tbWVudCIMCgpDaGF0VGhyZWFkIgUKA0pvYiIKCghTZXR0aW5ncyJ+CgxEYWVtb25TdGF0dXMSEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSFQoNbGl2ZV9zZXNzaW9ucxgDIAEoDRIaChJob3N0X2d1YXJkX3dhcm5pbmcYBCABKAkSFwoPd2F0Y2hfZXhoYXVzdGVkGAUgASgIIgoKCFBsYXlib29rIgwKCkF0dGFjaG1lbnQioAQKBkVudGl0eRILCgNrZXkYASABKAkSEAoIcmV2aXNpb24YAiABKAQSIAoEdGFzaxgKIAEoCzIQLmFsaW5lcnkudjEuVGFza0gAEiIKBWRyYWZ0GAsgASgLMhEuYWxpbmVyeS52MS5EcmFmdEgAEioKCWV4ZWN1dGlvbhgMIAEoCzIVLmFsaW5lcnkudjEuRXhlY3V0aW9uSAASJgoHc2Vzc2lvbhgNIAEoCzITLmFsaW5lcnkudjEuU2Vzc2lvbkgAEigKCGFydGlmYWN0GA4gASgLMhQuYWxpbmVyeS52MS5BcnRpZmFjdEgAEiYKB2NvbW1lbnQYDyABKAsyEy5hbGluZXJ5LnYxLkNvbW1lbnRIABItCgtjaGF0X3RocmVhZBgQIAEoCzIWLmFsaW5lcnkudjEuQ2hhdFRocmVhZEgAEh4KA2pvYhgRIAEoCzIPLmFsaW5lcnkudjEuSm9iSAASKAoIc2V0dGluZ3MYEiABKAsyFC5hbGluZXJ5LnYxLlNldHRpbmdzSAASMQoNZGFlbW9uX3N0YXR1cxgTIAEoCzIYLmFsaW5lcnkudjEuRGFlbW9uU3RhdHVzSAASKAoIcGxheWJvb2sYFCABKAsyFC5hbGluZXJ5LnYxLlBsYXlib29rSAASLAoKYXR0YWNobWVudBgVIAEoCzIWLmFsaW5lcnkudjEuQXR0YWNobWVudEgAQgcKBXZhbHVlYgZwcm90bzM", [file_google_protobuf_struct]);
+  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIiMKBFRhc2sSDAoEc2x1ZxgBIAEoCRINCgV0aXRsZRgCIAEoCSIHCgVEcmFmdCJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIrgBCg1TZXNzaW9uU3RhdHVzEg8KB3Byb2Nlc3MYASABKAkSDQoFYWdlbnQYAiABKAkSHAoUYWdlbnRfY29ycmVsYXRpb25faWQYAyABKAkSFAoMYWdlbnRfcmVhc29uGAQgASgJEhAKCHBsYXlib29rGAUgASgJEhcKD3BsYXlib29rX3JlYXNvbhgGIAEoCRIPCgdhZGFwdGVyGAcgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgIIAEoCSJTCgtTZXNzaW9uV2FpdBIMCgRraW5kGAEgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAIgASgJEhMKBnByb21wdBgDIAEoCUgAiAEBQgkKB19wcm9tcHQi4ggKB1Nlc3Npb24SIwoDcmVmGAEgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEikKBnN0YXR1cxgCIAEoCzIZLmFsaW5lcnkudjEuU2Vzc2lvblN0YXR1cxIKCgJpZBgDIAEoCRIQCgh3b3JrdHJlZRgEIAEoCRIPCgdjcmVhdGVkGAUgASgEEhAKCGFyY2hpdmVkGAYgASgIEg4KBnBpbm5lZBgHIAEoCBINCgVwaGFzZRgIIAEoCRIPCgdoYXJuZXNzGAkgASgJEg0KBW1vZGVsGAogASgJEhAKCHBsYXlib29rGAsgASgJEhQKDGV4ZWN1dGlvbl9pZBgMIAEoCRIaChJleGVjdXRpb25fcmV2aXNpb24YDSABKAQSDwoHZ2VuZXJpYxgOIAEoCBIXCg9zdWJ0YXNrX21hbmFnZXIYDyABKAgSFAoMc3VidGFza19zbHVnGBAgASgJEhAKCGFydGlmYWN0GBEgASgJEhgKEGhhbmRvZmZfYXJ0aWZhY3QYEiABKAkSFAoMcHJvbXB0X2V4dHJhGBMgASgJEhMKBnByb21wdBgUIAEoCUgAiAEBEhcKCnN0YXJ0ZWRfYXQYFSABKARIAYgBARIeChFzdGF0dXNfY2hhbmdlZF9hdBgWIAEoBEgCiAEBEhgKC2FjdGl2aXR5X2F0GBcgASgESAOIAQESFwoPc3RhdHVzX3JldmlzaW9uGBggASgEEhUKCGVuZGVkX2F0GBkgASgESASIAQESFgoJZXhpdF9jb2RlGBogASgFSAWIAQESHAoUaGFybmVzc19yZXN1bWVfdG9rZW4YGyABKAkSFgoJcmVzdW1lX29mGBwgASgJSAaIAQESGAoQZGFlbW9uX25hbWVzcGFjZRgdIAEoCRIhChRub3RpZmljYXRpb25fcmVhZF9hdBgeIAEoBEgHiAEBEiYKGWV4aXRfbm90aWZpY2F0aW9uX3JlYWRfYXQYHyABKARICIgBARJKChhub3RpZmljYXRpb25fc3VwcHJlc3Npb24YICABKAsyIy5hbGluZXJ5LnYxLk5vdGlmaWNhdGlvblN1cHByZXNzaW9uSAmIAQESMAoIc2VtYW50aWMYISABKAsyHi5hbGluZXJ5LnYxLlNlbWFudGljQ2hlY2twb2ludBIUCgx0ZWxlbWV0cnlfaWQYIiABKAkSJQoEd2FpdBgjIAEoCzIXLmFsaW5lcnkudjEuU2Vzc2lvbldhaXRCCQoHX3Byb21wdEINCgtfc3RhcnRlZF9hdEIUChJfc3RhdHVzX2NoYW5nZWRfYXRCDgoMX2FjdGl2aXR5X2F0QgsKCV9lbmRlZF9hdEIMCgpfZXhpdF9jb2RlQgwKCl9yZXN1bWVfb2ZCFwoVX25vdGlmaWNhdGlvbl9yZWFkX2F0QhwKGl9leGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0QhsKGV9ub3RpZmljYXRpb25fc3VwcHJlc3Npb24iCgoIQXJ0aWZhY3QiCQoHQ29tbWVudCIMCgpDaGF0VGhyZWFkIvIBCgNKb2ISCgoCaWQYASABKAkSIQoEa2luZBgCIAEoDjITLmFsaW5lcnkudjEuSm9iS2luZBIjCgVzdGF0ZRgDIAEoDjIULmFsaW5lcnkudjEuSm9iU3RhdGUSJgoIcHJvZ3Jlc3MYBCABKAsyFC5hbGluZXJ5LnYxLlByb2dyZXNzEg0KBWVycm9yGAUgASgJEhUKDXN0YXJ0ZWRfYXRfbXMYBiABKAMSEwoLZW5kZWRfYXRfbXMYByABKAMSKgoHc3RvcmFnZRgLIAEoCzIXLmFsaW5lcnkudjEuU3RvcmFnZUluZm9IAEIICgZyZXN1bHQiNgoIUHJvZ3Jlc3MSDAoEZG9uZRgBIAEoBBINCgV0b3RhbBgCIAEoBBINCgVsYWJlbBgDIAEoCSKBAwoLU3RvcmFnZUluZm8SFwoPYXBwX2NvbmZpZ19wYXRoGAEgASgJEhEKCXJlcG9fcGF0aBgCIAEoCRITCgthbGluZXJ5X2RpchgDIAEoCRIYChByZXBvX2NvbmZpZ19wYXRoGAQgASgJEhYKDmhhcm5lc3Nlc19wYXRoGAUgASgJEhEKCXRhc2tzX2RpchgGIAEoCRIVCg13b3JrdHJlZXNfZGlyGAcgASgJEhwKFGFsaW5lcnlkX3NvY2tldF9wYXRoGAggASgJEhoKEmFsaW5lcnlkX2xvY2tfcGF0aBgJIAEoCRIXCg9tY3Bfc29ja2V0X3BhdGgYCiABKAkSFwoPbWNwX3N0YXR1c19wYXRoGAsgASgJEhsKE2FyY2hpdmVkX3Rhc2tfY291bnQYDCABKA0SHgoWYXJjaGl2ZWRfc2Vzc2lvbl9jb3VudBgNIAEoDRIWCg5hcmNoaXZlZF9ieXRlcxgOIAEoBBIUCgxhY3RpdmVfYnl0ZXMYDyABKAQiCgoIU2V0dGluZ3MifgoMRGFlbW9uU3RhdHVzEhAKCHByb3RvY29sGAEgASgNEhAKCGJ1aWxkX2lkGAIgASgJEhUKDWxpdmVfc2Vzc2lvbnMYAyABKA0SGgoSaG9zdF9ndWFyZF93YXJuaW5nGAQgASgJEhcKD3dhdGNoX2V4aGF1c3RlZBgFIAEoCCIKCghQbGF5Ym9vayIMCgpBdHRhY2htZW50IqAECgZFbnRpdHkSCwoDa2V5GAEgASgJEhAKCHJldmlzaW9uGAIgASgEEiAKBHRhc2sYCiABKAsyEC5hbGluZXJ5LnYxLlRhc2tIABIiCgVkcmFmdBgLIAEoCzIRLmFsaW5lcnkudjEuRHJhZnRIABIqCglleGVjdXRpb24YDCABKAsyFS5hbGluZXJ5LnYxLkV4ZWN1dGlvbkgAEiYKB3Nlc3Npb24YDSABKAsyEy5hbGluZXJ5LnYxLlNlc3Npb25IABIoCghhcnRpZmFjdBgOIAEoCzIULmFsaW5lcnkudjEuQXJ0aWZhY3RIABImCgdjb21tZW50GA8gASgLMhMuYWxpbmVyeS52MS5Db21tZW50SAASLQoLY2hhdF90aHJlYWQYECABKAsyFi5hbGluZXJ5LnYxLkNoYXRUaHJlYWRIABIeCgNqb2IYESABKAsyDy5hbGluZXJ5LnYxLkpvYkgAEigKCHNldHRpbmdzGBIgASgLMhQuYWxpbmVyeS52MS5TZXR0aW5nc0gAEjEKDWRhZW1vbl9zdGF0dXMYEyABKAsyGC5hbGluZXJ5LnYxLkRhZW1vblN0YXR1c0gAEigKCHBsYXlib29rGBQgASgLMhQuYWxpbmVyeS52MS5QbGF5Ym9va0gAEiwKCmF0dGFjaG1lbnQYFSABKAsyFi5hbGluZXJ5LnYxLkF0dGFjaG1lbnRIAEIHCgV2YWx1ZSp8CgdKb2JLaW5kEhgKFEpPQl9LSU5EX1VOU1BFQ0lGSUVEEAASGQoVSk9CX0tJTkRfU1RPUkFHRV9TQ0FOEAESEwoPSk9CX0tJTkRfQkFDS1VQEAISEgoOSk9CX0tJTkRfUFVSR0UQAxITCg9KT0JfS0lORF9JTVBPUlQQBCqVAQoISm9iU3RhdGUSGQoVSk9CX1NUQVRFX1VOU1BFQ0lGSUVEEAASFAoQSk9CX1NUQVRFX1FVRVVFRBABEhUKEUpPQl9TVEFURV9SVU5OSU5HEAISEgoOSk9CX1NUQVRFX0RPTkUQAxIUChBKT0JfU1RBVEVfRkFJTEVEEAQSFwoTSk9CX1NUQVRFX0NBTkNFTExFRBAFYgZwcm90bzM", [file_google_protobuf_struct]);
 
 /**
  * @generated from message alinery.v1.SessionRef
@@ -488,9 +488,58 @@ export const ChatThreadSchema: GenMessage<ChatThread> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 11);
 
 /**
+ * A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
+ * Progress arrives through Subscribe. The result's oneof numbers are fixed now: S4.9 adds backup = 10,
+ * purge = 12 and import = 13 beside storage.
+ *
  * @generated from message alinery.v1.Job
  */
 export type Job = Message<"alinery.v1.Job"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: alinery.v1.JobKind kind = 2;
+   */
+  kind: JobKind;
+
+  /**
+   * @generated from field: alinery.v1.JobState state = 3;
+   */
+  state: JobState;
+
+  /**
+   * @generated from field: alinery.v1.Progress progress = 4;
+   */
+  progress?: Progress | undefined;
+
+  /**
+   * @generated from field: string error = 5;
+   */
+  error: string;
+
+  /**
+   * @generated from field: int64 started_at_ms = 6;
+   */
+  startedAtMs: bigint;
+
+  /**
+   * @generated from field: int64 ended_at_ms = 7;
+   */
+  endedAtMs: bigint;
+
+  /**
+   * @generated from oneof alinery.v1.Job.result
+   */
+  result: {
+    /**
+     * @generated from field: alinery.v1.StorageInfo storage = 11;
+     */
+    value: StorageInfo;
+    case: "storage";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -499,6 +548,123 @@ export type Job = Message<"alinery.v1.Job"> & {
  */
 export const JobSchema: GenMessage<Job> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 12);
+
+/**
+ * @generated from message alinery.v1.Progress
+ */
+export type Progress = Message<"alinery.v1.Progress"> & {
+  /**
+   * @generated from field: uint64 done = 1;
+   */
+  done: bigint;
+
+  /**
+   * @generated from field: uint64 total = 2;
+   */
+  total: bigint;
+
+  /**
+   * @generated from field: string label = 3;
+   */
+  label: string;
+};
+
+/**
+ * Describes the message alinery.v1.Progress.
+ * Use `create(ProgressSchema)` to create a new message.
+ */
+export const ProgressSchema: GenMessage<Progress> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 13);
+
+/**
+ * `StorageInfo` of alinery-core storage.rs, field for field (snake_case as serde writes it), so the
+ * scan and the Rust command compare directly. `archived_bytes` is what a purge frees.
+ *
+ * @generated from message alinery.v1.StorageInfo
+ */
+export type StorageInfo = Message<"alinery.v1.StorageInfo"> & {
+  /**
+   * @generated from field: string app_config_path = 1;
+   */
+  appConfigPath: string;
+
+  /**
+   * @generated from field: string repo_path = 2;
+   */
+  repoPath: string;
+
+  /**
+   * @generated from field: string alinery_dir = 3;
+   */
+  alineryDir: string;
+
+  /**
+   * @generated from field: string repo_config_path = 4;
+   */
+  repoConfigPath: string;
+
+  /**
+   * @generated from field: string harnesses_path = 5;
+   */
+  harnessesPath: string;
+
+  /**
+   * @generated from field: string tasks_dir = 6;
+   */
+  tasksDir: string;
+
+  /**
+   * @generated from field: string worktrees_dir = 7;
+   */
+  worktreesDir: string;
+
+  /**
+   * @generated from field: string alineryd_socket_path = 8;
+   */
+  alinerydSocketPath: string;
+
+  /**
+   * @generated from field: string alineryd_lock_path = 9;
+   */
+  alinerydLockPath: string;
+
+  /**
+   * @generated from field: string mcp_socket_path = 10;
+   */
+  mcpSocketPath: string;
+
+  /**
+   * @generated from field: string mcp_status_path = 11;
+   */
+  mcpStatusPath: string;
+
+  /**
+   * @generated from field: uint32 archived_task_count = 12;
+   */
+  archivedTaskCount: number;
+
+  /**
+   * @generated from field: uint32 archived_session_count = 13;
+   */
+  archivedSessionCount: number;
+
+  /**
+   * @generated from field: uint64 archived_bytes = 14;
+   */
+  archivedBytes: bigint;
+
+  /**
+   * @generated from field: uint64 active_bytes = 15;
+   */
+  activeBytes: bigint;
+};
+
+/**
+ * Describes the message alinery.v1.StorageInfo.
+ * Use `create(StorageInfoSchema)` to create a new message.
+ */
+export const StorageInfoSchema: GenMessage<StorageInfo> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 14);
 
 /**
  * @generated from message alinery.v1.Settings
@@ -511,7 +677,7 @@ export type Settings = Message<"alinery.v1.Settings"> & {
  * Use `create(SettingsSchema)` to create a new message.
  */
 export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 13);
+  messageDesc(file_alinery_v1_entities, 15);
 
 /**
  * The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
@@ -557,7 +723,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
  * Use `create(DaemonStatusSchema)` to create a new message.
  */
 export const DaemonStatusSchema: GenMessage<DaemonStatus> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 14);
+  messageDesc(file_alinery_v1_entities, 16);
 
 /**
  * @generated from message alinery.v1.Playbook
@@ -570,7 +736,7 @@ export type Playbook = Message<"alinery.v1.Playbook"> & {
  * Use `create(PlaybookSchema)` to create a new message.
  */
 export const PlaybookSchema: GenMessage<Playbook> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 15);
+  messageDesc(file_alinery_v1_entities, 17);
 
 /**
  * @generated from message alinery.v1.Attachment
@@ -583,7 +749,7 @@ export type Attachment = Message<"alinery.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 16);
+  messageDesc(file_alinery_v1_entities, 18);
 
 /**
  * @generated from message alinery.v1.Entity
@@ -686,5 +852,82 @@ export type Entity = Message<"alinery.v1.Entity"> & {
  * Use `create(EntitySchema)` to create a new message.
  */
 export const EntitySchema: GenMessage<Entity> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 17);
+  messageDesc(file_alinery_v1_entities, 19);
+
+/**
+ * @generated from enum alinery.v1.JobKind
+ */
+export enum JobKind {
+  /**
+   * @generated from enum value: JOB_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: JOB_KIND_STORAGE_SCAN = 1;
+   */
+  STORAGE_SCAN = 1,
+
+  /**
+   * @generated from enum value: JOB_KIND_BACKUP = 2;
+   */
+  BACKUP = 2,
+
+  /**
+   * @generated from enum value: JOB_KIND_PURGE = 3;
+   */
+  PURGE = 3,
+
+  /**
+   * @generated from enum value: JOB_KIND_IMPORT = 4;
+   */
+  IMPORT = 4,
+}
+
+/**
+ * Describes the enum alinery.v1.JobKind.
+ */
+export const JobKindSchema: GenEnum<JobKind> = /*@__PURE__*/
+  enumDesc(file_alinery_v1_entities, 0);
+
+/**
+ * @generated from enum alinery.v1.JobState
+ */
+export enum JobState {
+  /**
+   * @generated from enum value: JOB_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: JOB_STATE_QUEUED = 1;
+   */
+  QUEUED = 1,
+
+  /**
+   * @generated from enum value: JOB_STATE_RUNNING = 2;
+   */
+  RUNNING = 2,
+
+  /**
+   * @generated from enum value: JOB_STATE_DONE = 3;
+   */
+  DONE = 3,
+
+  /**
+   * @generated from enum value: JOB_STATE_FAILED = 4;
+   */
+  FAILED = 4,
+
+  /**
+   * @generated from enum value: JOB_STATE_CANCELLED = 5;
+   */
+  CANCELLED = 5,
+}
+
+/**
+ * Describes the enum alinery.v1.JobState.
+ */
+export const JobStateSchema: GenEnum<JobState> = /*@__PURE__*/
+  enumDesc(file_alinery_v1_entities, 1);
 

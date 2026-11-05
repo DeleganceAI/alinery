@@ -198,9 +198,9 @@ JS
 # below allows. Add a pair only together with the user action that justifies it:
 #   terminal.ts:session-kill   the user's kill of a Terminal session
 #   mcp.ts:mcp-restart         closing an MCP child (restart, or the owning session ending)
-# S2.6 adds jobs/runner.ts:job-cancel for a user's cancel of a running job.
+#   jobs/runner.ts:job-cancel  a user's cancel of a running job (SIGTERM to its child, never a session)
 DAEMON_SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
-SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart"
+SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart jobs/runner.ts:job-cancel"
 if [ ! -f "$DAEMON_SRC/platform/process.ts" ]; then
   echo "ERROR: $DAEMON_SRC/platform/process.ts is missing — the daemon scan has drifted from the code." >&2
   exit 1

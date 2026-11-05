@@ -96,7 +96,60 @@ message Session {
 message Artifact {}
 message Comment {}
 message ChatThread {}
-message Job {}
+// A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
+// Progress arrives through Subscribe. The result's oneof numbers are fixed now: S4.9 adds backup = 10,
+// purge = 12 and import = 13 beside storage.
+message Job {
+  string id = 1;
+  JobKind kind = 2;
+  JobState state = 3;
+  Progress progress = 4;
+  string error = 5;
+  int64 started_at_ms = 6;
+  int64 ended_at_ms = 7;
+  oneof result {
+    StorageInfo storage = 11;
+  }
+}
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_STORAGE_SCAN = 1;
+  JOB_KIND_BACKUP = 2;
+  JOB_KIND_PURGE = 3;
+  JOB_KIND_IMPORT = 4;
+}
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_DONE = 3;
+  JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELLED = 5;
+}
+message Progress {
+  uint64 done = 1;
+  uint64 total = 2;
+  string label = 3;
+}
+// `StorageInfo` of alinery-core storage.rs, field for field (snake_case as serde writes it), so the
+// scan and the Rust command compare directly. `archived_bytes` is what a purge frees.
+message StorageInfo {
+  string app_config_path = 1;
+  string repo_path = 2;
+  string alinery_dir = 3;
+  string repo_config_path = 4;
+  string harnesses_path = 5;
+  string tasks_dir = 6;
+  string worktrees_dir = 7;
+  string alineryd_socket_path = 8;
+  string alineryd_lock_path = 9;
+  string mcp_socket_path = 10;
+  string mcp_status_path = 11;
+  uint32 archived_task_count = 12;
+  uint32 archived_session_count = 13;
+  uint64 archived_bytes = 14;
+  uint64 active_bytes = 15;
+}
 message Settings {}
 // The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
 // are the shell's, because only it can see them.

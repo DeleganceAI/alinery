@@ -1,0 +1,27 @@
+// proto/alinery/v1/jobs.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// One Start RPC per kind (O24 b), so a capability is per RPC. S4.9 adds StartBackup and StartPurge,
+// S4.10 StartImport. The Job entity (entities.proto) carries progress and the result.
+service JobService {
+  rpc StartStorageScan(StartStorageScanRequest) returns (StartStorageScanResponse);  // ACT
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);                      // ACT
+}
+
+message StartStorageScanRequest {
+  MutationMeta meta = 1;
+}
+message StartStorageScanResponse {
+  Applied applied = 1;
+  string job_id = 2;
+}
+message CancelJobRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message CancelJobResponse {
+  Applied applied = 1;
+}

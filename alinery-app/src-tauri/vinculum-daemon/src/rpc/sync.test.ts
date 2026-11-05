@@ -6,9 +6,11 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
 import { repoScope, task } from "../sync/testkit.ts";
+import { JobRunner } from "../jobs/runner.ts";
 import { Store } from "../sync/store.ts";
 import { serveRpc } from "./server.ts";
 
+const storageScan = { repo: "/repo", appConfig: "/app", namespace: "" };
 const SECRET = "cd".repeat(32);
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -19,7 +21,7 @@ async function start(store: Store) {
   const dir = mkdtempSync("/tmp/rpc-s-");
   const socketPath = join(dir, "rpc.sock");
   const info = { protocol: 25, buildId: "b", repoRoot: "/repo", appConfigIdentity: "i" };
-  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable: process.execPath, info, lifecycle: { stop: () => 0, exit: () => {} }, store });
+  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable: process.execPath, info, lifecycle: { stop: () => 0, exit: () => {} }, store, jobs: new JobRunner(store), storageScan });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });
