@@ -67,6 +67,18 @@ fn mcp_stem(namespace: Option<&str>) -> String {
     }
 }
 
+/// The daemon's gRPC socket (plan T1): `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
+pub fn rpc_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
+    let clean = namespace
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(48)
+        .collect::<String>();
+    let stem = if clean.is_empty() { "rpc".to_string() } else { format!("rpc-{clean}") };
+    alinery_dir(repo).join(format!("{stem}.sock"))
+}
+
 /// Reconciler transaction lock (one per repo, separate from daemon ownership).
 pub fn alineryd_reconciler_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".alineryd-reconciler.lock")

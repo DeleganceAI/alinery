@@ -1,10 +1,12 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { admin } from "./daemon/transport";
 import * as ipc from "./ipc";
 import type { DaemonStatus } from "./types";
 import { useDaemonStatus } from "./useDaemonStatus";
 
 vi.mock("./ipc", () => ({ daemonStatus: vi.fn() }));
+vi.mock("./daemon/transport", () => ({ admin: vi.fn() }));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -145,4 +147,26 @@ it.each(["resolve", "reject"])("repo switch discards obsolete %s and mismatched 
   await act(async () => mismatch.resolve({ ...status, repo: "/old", alive: 1 }));
   expect(result.current.repo).toBe("/new");
   expect(result.current.alive).toBe(2);
+});
+
+it("calls Hello once per repo open and exposes protocol and build id", async () => {
+  vi.mocked(ipc.daemonStatus).mockResolvedValue({} as DaemonStatus);
+  const hello = vi.fn().mockResolvedValue({ protocol: 25, buildId: "b-1" });
+  vi.mocked(admin).mockReturnValue({ hello } as unknown as ReturnType<typeof admin>);
+  const { result, rerender } = renderHook(({ repo }) => useDaemonStatus(repo), { initialProps: { repo: "/repo/a" } });
+  await act(async () => {});
+  expect(result.current.hello).toEqual({ protocol: 25, buildId: "b-1" });
+  expect(hello).toHaveBeenCalledTimes(1);
+  rerender({ repo: "/repo/b" });
+  expect(result.current.hello).toBeNull();
+  await act(async () => {});
+  expect(admin).toHaveBeenLastCalledWith("/repo/b");
+});
+
+it("leaves hello null when the daemon does not answer Hello", async () => {
+  vi.mocked(ipc.daemonStatus).mockResolvedValue({} as DaemonStatus);
+  vi.mocked(admin).mockReturnValue({ hello: vi.fn().mockRejectedValue(new Error("down")) } as unknown as ReturnType<typeof admin>);
+  const { result } = renderHook(() => useDaemonStatus("/repo/a"));
+  await act(async () => {});
+  expect(result.current.hello).toBeNull();
 });

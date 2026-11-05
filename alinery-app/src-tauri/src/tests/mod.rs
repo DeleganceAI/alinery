@@ -45,6 +45,7 @@ mod backup;
 mod community_playbooks;
 mod connections;
 mod daemon;
+mod daemon_rpc;
 mod git_ops;
 mod hosted;
 mod imports;

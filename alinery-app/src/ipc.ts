@@ -24,6 +24,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
 import type { SessionControls, VinculumTranscript } from "./chatTranscript";
+import type { DaemonRpc, DaemonRpcCancel } from "./daemon/bridgeFetch";
 import type {
   AccountSignOutResult,
   AccountStatus,
@@ -246,6 +247,21 @@ export const restoreBackup = (repoPath: string | null, backupPath: string) => in
 // ── daemon.rs ─────────────────────────────────────────────────────────
 export const cancelQuit = () => invoke<void>("cancel_quit");
 export const closeAllRepos = () => invoke<number>("close_all_repos");
+// daemon_rpc.rs: the webview bridge (plan 2.1.9). The body goes raw; the call and the Channel ride in headers.
+// Non-ASCII is escaped so the JSON is a legal header value.
+const asciiJson = (v: unknown) => JSON.stringify(v).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+export const daemonRpc =
+  (repo: string): DaemonRpc =>
+  async (callId, path, headers, body, onMessage) => {
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (m) => onMessage(new Uint8Array(m));
+    await invoke<void>("daemon_rpc", body, {
+      headers: { "x-alinery-rpc": asciiJson({ repo, call_id: callId, path, headers }), "x-alinery-channel": channel.toJSON() },
+    });
+  };
+export const daemonRpcCancel: DaemonRpcCancel = (callId) => {
+  invoke<void>("daemon_rpc_cancel", { callId }).catch(() => {});
+};
 export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
 export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });

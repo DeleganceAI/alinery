@@ -85,6 +85,7 @@ mod chat;
 mod community_playbooks;
 mod connections;
 mod daemon;
+mod daemon_rpc;
 mod git_ops;
 mod hosted;
 mod imports;
@@ -112,6 +113,7 @@ use chat::*;
 use community_playbooks::*;
 use connections::*;
 use daemon::*;
+use daemon_rpc::*;
 use git_ops::*;
 use hosted::*;
 use imports::*;
@@ -154,6 +156,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             read_app_config,
+            daemon_rpc,
+            daemon_rpc_cancel,
             write_appearance,
             set_active_repo,
             remove_repo,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { admin } from "./daemon/transport";
 import * as ipc from "./ipc";
 import type { DaemonStatus } from "./types";
 
@@ -22,11 +23,14 @@ const OFFLINE: DaemonStatus = {
   host_guard_warning: false,
 };
 
-export type DaemonStatusHandle = DaemonStatus & { refresh: () => void };
+// What `Hello` reports once per repo open; null until it answers or when the daemon does not (the poll still runs).
+export type DaemonHello = { protocol: number; buildId: string };
+export type DaemonStatusHandle = DaemonStatus & { refresh: () => void; hello: DaemonHello | null };
 
 // Each newer request supersedes older polls, including their failure responses.
 export function useDaemonStatus(repo: string): DaemonStatusHandle {
   const [status, setStatus] = useState<DaemonStatus>(OFFLINE);
+  const [hello, setHello] = useState<{ repo: string; hello: DaemonHello } | null>(null);
   const poll = useRef<() => void>(() => {});
   const refresh = useCallback(() => poll.current(), []);
   useEffect(() => {
@@ -45,6 +49,12 @@ export function useDaemonStatus(repo: string): DaemonStatusHandle {
         });
     };
     setStatus({ ...OFFLINE, repo });
+    if (repo) {
+      Promise.resolve()
+        .then(() => admin(repo).hello({}))
+        .then((r) => alive && setHello({ repo, hello: { protocol: r.protocol, buildId: r.buildId } }))
+        .catch(() => {});
+    }
     poll.current = tick;
     tick();
     const timer = setInterval(tick, 1500);
@@ -54,5 +64,5 @@ export function useDaemonStatus(repo: string): DaemonStatusHandle {
       clearInterval(timer);
     };
   }, [repo]);
-  return { ...(status.repo === repo ? status : { ...OFFLINE, repo }), refresh };
+  return { ...(status.repo === repo ? status : { ...OFFLINE, repo }), refresh, hello: hello?.repo === repo ? hello.hello : null };
 }
