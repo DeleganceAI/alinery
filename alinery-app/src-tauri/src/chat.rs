@@ -287,21 +287,6 @@ pub(crate) async fn chat_branch_label(app: AppHandle, state: State<'_, AppState>
 }
 
 #[tauri::command]
-pub(crate) async fn chat_transcript(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    let daemon = chat_daemon(&state, &target)?;
-    off_main_thread("chat transcript", move || {
-        // The polling read: a host round trip for the thread check would double its cost, and the
-        // daemon addresses a session by id alone.
-        if let RepoRef::Local(repo) = &target {
-            load_root_omp(repo, &id)?;
-        }
-        daemon.transcript(&id)
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn chat_prompt(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, text: String) -> Result<(), String> {
     let target = owned_target(&app, &state, &repo_path)?;
     let daemon = chat_daemon(&state, &target)?;
@@ -433,47 +418,6 @@ pub(crate) fn chat_pty_resize(app: AppHandle, state: State<'_, AppState>, repo_p
         }
         RepoRef::Remote { .. } => queue_terminal_op_to(&state, &id, chat_daemon(&state, &target)?, TerminalOp::Resize(cols, rows)),
     }
-}
-
-#[tauri::command]
-pub(crate) async fn read_chat_omp(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_path: String,
-    id: String,
-    end: Option<u64>,
-    want: Option<u64>,
-) -> Result<tauri::ipc::Response, String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    let window = off_main_thread("read chat omp", move || {
-        let state = app.state::<AppState>();
-        chat_meta(&state, &target, &id)?;
-        match target {
-            RepoRef::Local(repo) => alinery_core::read_omp_window(&repo, "", &id, end, want),
-            RepoRef::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireOmpWindow>(
-                &state,
-                &host_id,
-                RepoOp::ReadOmpWindow {
-                    repo: path.into(),
-                    slug: String::new(),
-                    session_id: id,
-                    end,
-                    want,
-                },
-            )
-            .map(Into::into),
-        }
-    })
-    .await?;
-    let mut body = serde_json::to_vec(&json!({
-        "start": window.start,
-        "end": window.end,
-        "length": window.length,
-    }))
-    .map_err(|error| error.to_string())?;
-    body.push(b'\n');
-    body.extend_from_slice(&window.data);
-    Ok(tauri::ipc::Response::new(body))
 }
 
 pub(crate) fn copy_chat_thread_attachments_in(repo: &Path, id: &str, paths: &[String]) -> Result<CopyChatAttachmentsResult, String> {

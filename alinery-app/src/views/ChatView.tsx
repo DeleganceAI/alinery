@@ -206,8 +206,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const setError = chat.setError;
   const body = chat.draft;
   const sending = chat.sending;
-  const loadingOlder = chat.loadingOlder;
-  const loadOlder = chat.loadOlder;
   const sendNowEnabled = chat.sendNowEnabled;
   const statusKind = activity.kind;
   const processLive = chat.processLive;
@@ -656,14 +654,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             />
           </div>
         ) : selected ? (
-          <ChatPane
-            entries={transcript.entries}
-            status={activity.status}
-            visibility={visibility}
-            onLoadOlder={loadOlder}
-            loadingOlder={loadingOlder}
-            atStart={transcript.fileStart === 0}
-          />
+          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />

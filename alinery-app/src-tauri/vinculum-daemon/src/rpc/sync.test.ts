@@ -21,7 +21,7 @@ async function start(store: Store) {
   const dir = mkdtempSync("/tmp/rpc-s-");
   const socketPath = join(dir, "rpc.sock");
   const info = { protocol: 25, buildId: "b", repoRoot: "/repo", appConfigIdentity: "i" };
-  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable: process.execPath, info, lifecycle: { stop: () => 0, exit: () => {} }, store, jobs: new JobRunner(store), storageScan });
+  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable: process.execPath, info, lifecycle: { stop: () => 0, exit: () => {} }, store, jobs: new JobRunner(store), storageScan, transcripts: async () => undefined });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });

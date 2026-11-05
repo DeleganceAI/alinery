@@ -17,6 +17,7 @@ import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
+import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
@@ -843,7 +844,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     reply(socket, { error: "event-rejected" });
     return;
   }
-  if (op === "transcript" || op === "prompt" || op === "abort") {
+  if (op === "prompt" || op === "abort") {
     const row = live.get(String(header.id ?? ""));
     if (!row) {
       reply(socket, { error: "unknown-session" });
@@ -853,11 +854,6 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       const conversation = await conversationFor(row);
       if (!conversation) {
         reply(socket, { error: "unknown-session" });
-        return;
-      }
-      if (op === "transcript") {
-        const transcript = await transcriptMessages(row, conversation);
-        reply(socket, { messages: formatTranscript(transcript.messages, transcript.tools), ...(await sessionControls(conversation)) });
         return;
       }
       if (op === "prompt") {
@@ -1152,6 +1148,19 @@ await serveRpc({
   store,
   jobs: new JobRunner(store),
   storageScan: { repo, appConfig, namespace: lane },
+  transcripts: async (taskSlug, id) => {
+    const row = live.get(id);
+    if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;
+    const conversation = await conversationFor(row);
+    if (!conversation) return undefined;
+    return {
+      read: async () => {
+        const { messages, tools } = await transcriptMessages(row, conversation);
+        return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation) };
+      },
+      subscribe: eventsChanges(row.harness, conversation.id, context),
+    };
+  },
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {

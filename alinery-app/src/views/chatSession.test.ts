@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { appendOptimisticUser } from "../chatTranscript";
+import { decodeOmpPage } from "../chat/ompFile";
+import { appendOptimisticUser, applyFilePage, type ChatTranscriptState } from "../chatTranscript";
 import { journalPage } from "../test/ompJournal";
-import { journalState, olderPageState, sendCommand, sendNowCommand } from "./chatSession";
+import { journalState, sendCommand, sendNowCommand } from "./chatSession";
+
+/** SessionView prepends older journal pages this way. */
+function olderPage(current: ChatTranscriptState, buffer: ArrayBuffer) {
+  const page = decodeOmpPage(buffer);
+  return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
+}
 
 describe("chatSession", () => {
   it("prompts when idle, queues a follow-up when busy, and aborts-and-prompts on send now", () => {
@@ -16,7 +23,7 @@ describe("chatSession", () => {
   it("prepends an older journal page and moves fileStart back to its start", () => {
     const loaded = journalState(journalPage(600, [["b1", "second"]]));
     expect(loaded.fileStart).toBe(600);
-    const older = olderPageState(loaded, journalPage(200, [["a1", "first"]]));
+    const older = olderPage(loaded, journalPage(200, [["a1", "first"]]));
     expect(older.fileStart).toBe(200);
     expect(older.messages.map((message) => message.rowId)).toEqual(["a1", "b1"]);
     expect(older.entries.map((entry) => entry.id)).toEqual(["f:a1", "f:b1"]);
@@ -26,7 +33,7 @@ describe("chatSession", () => {
     const live = appendOptimisticUser(journalState(journalPage(600, [["b1", "second"]])), "typing now");
     const liveRows = live.entries.filter((entry) => !entry.id.startsWith("f:"));
     expect(liveRows.length).toBeGreaterThan(0);
-    const older = olderPageState(live, journalPage(200, [["a1", "first"]]));
+    const older = olderPage(live, journalPage(200, [["a1", "first"]]));
     expect(older.entries.map((entry) => entry.id).slice(0, 2)).toEqual(["f:a1", "f:b1"]);
     expect(older.entries.slice(2)).toEqual(liveRows);
   });

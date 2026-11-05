@@ -29,6 +29,7 @@ vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 function resetDaemon() {
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+  daemon.setTranscript("session", [{ role: "user", text: "playbook prompt" }]);
   sessionStatus.mockReset();
 }
 const EXITED: SessionObservation = { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} };
@@ -44,14 +45,6 @@ const sessionStatus = {
 const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
 const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
-const sessionTranscript = vi.hoisted(() =>
-  vi.fn(
-    async () =>
-      [{ role: "user", text: "playbook prompt" }] as
-        | { role: string; text?: string; content?: unknown; id?: string }[]
-        | { messages: { role: string; text?: string; content?: unknown; id?: string }[]; model?: string; thinking?: string; thinking_levels?: string[] },
-  ),
-);
 const sessionPrompt = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionSetModel = vi.hoisted(() => vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })));
@@ -146,7 +139,6 @@ vi.mock("../ipc", () =>
     sessionArtifactReady,
     startSession,
     onStreamClosed,
-    sessionTranscript,
     sessionPrompt,
     sessionAbort,
     sessionSetModel,
@@ -901,7 +893,6 @@ describe("Vinculum session chat", () => {
   beforeEach(() => {
     scenario.tasks = [task];
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
-    sessionTranscript.mockClear();
     sessionPrompt.mockClear();
     sessionAbort.mockClear();
     sessionSetModel.mockReset().mockResolvedValue({ model: "anthropic/claude", thinking: "off", thinking_levels: [] });
@@ -914,7 +905,7 @@ describe("Vinculum session chat", () => {
     allowExecutionCompletion.mockReset();
   });
 
-  it("polls the transcript into the chat pane and does not attach OMP", async () => {
+  it("streams the transcript into the chat pane and does not attach OMP", async () => {
     renderSession({ intent: "attach" });
     expect(await screen.findByText("Vinculum")).toBeDefined();
     expect(await screen.findByText("playbook prompt")).toBeDefined();
@@ -942,13 +933,13 @@ describe("Vinculum session chat", () => {
       thinking: "high",
       thinking_levels: ["off", "low", "high"],
     };
-    sessionTranscript.mockResolvedValue(transcript);
+    daemon.setTranscript("session", transcript);
     sessionSetThinkingLevel.mockImplementation(async () => {
-      sessionTranscript.mockResolvedValue({ ...transcript, thinking: "low" });
+      daemon.setTranscript("session", { ...transcript, thinking: "low" });
       return { model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] };
     });
     sessionSetModel.mockImplementation(async () => {
-      sessionTranscript.mockResolvedValue({ ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+      daemon.setTranscript("session", { ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
       return { model: "anthropic/claude", thinking: "off", thinking_levels: [] };
     });
     providerCatalog.mockResolvedValue({

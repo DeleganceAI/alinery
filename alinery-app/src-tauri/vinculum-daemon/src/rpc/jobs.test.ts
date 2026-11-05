@@ -28,7 +28,7 @@ async function start(hostExecutable: string | undefined = process.execPath) {
   const info = { protocol: 25, buildId: "b", repoRoot: "/repo", appConfigIdentity: "i" };
   // The fake child answers {mode} from the params, which the RPC does not carry: a silent child is
   // enough to show the job was started and ended.
-  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle: { stop: () => 0, exit: () => {} }, store, jobs, storageScan: { mode: "error" } as never });
+  const net = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle: { stop: () => 0, exit: () => {} }, store, jobs, storageScan: { mode: "error" } as never, transcripts: async () => undefined });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });

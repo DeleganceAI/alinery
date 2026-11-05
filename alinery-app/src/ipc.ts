@@ -328,7 +328,6 @@ export const removeChatWorktree = (repoPath: string, sessionId: string) => invok
 export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
 export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
 export type { SessionControls, VinculumTranscript };
-export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumTranscript>("chat_transcript", { repoPath, id });
 export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
@@ -345,7 +344,6 @@ export const chatPtyAttach = (a: {
 }) => invoke<void>("chat_pty_attach", a);
 export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
 export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
-export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
@@ -386,7 +384,6 @@ export const readSessionHistory = (a: { id: string; taskSlug?: string | null; of
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
 export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
-export const sessionTranscript = (id: string) => invoke<VinculumTranscript>("session_transcript", { id });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
 export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });

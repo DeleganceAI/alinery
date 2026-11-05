@@ -1357,7 +1357,7 @@ pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClie
     }
 }
 
-/// For the commands that only need a live daemon for the active repo (write, resize, transcript,
+/// For the commands that only need a live daemon for the active repo (write, resize,
 /// prompt, ...): the local ownership check, or the remote connection check.
 pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> {
     require_active_target(state).map(|_| ())

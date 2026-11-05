@@ -36,7 +36,7 @@ async function start(hostExecutable: string | undefined) {
   const dir = mkdtempSync("/tmp/rpc-t-");
   const socketPath = join(dir, "rpc.sock");
   const store = new Store();
-  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle, store, jobs: new JobRunner(store), storageScan });
+  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle, store, jobs: new JobRunner(store), storageScan, transcripts: async () => undefined });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });

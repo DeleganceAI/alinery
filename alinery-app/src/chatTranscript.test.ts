@@ -20,7 +20,6 @@ import {
   mapHydratedMessage,
   matchingSendFailure,
   settleRefusedSend,
-  vinculumTranscriptPollMs,
 } from "./chatTranscript";
 import type { ChatMessage } from "./types";
 
@@ -1594,8 +1593,6 @@ describe("applyVinculumTranscript", () => {
     ]);
     expect(grown.entries.map((entry) => entry.id)).toEqual(ids);
     expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
-    expect(vinculumTranscriptPollMs(reply)).toBe(200);
-    expect(vinculumTranscriptPollMs([reply[0]])).toBe(1000);
   });
 
   it("keeps a committed tool call running while its slot has output", () => {

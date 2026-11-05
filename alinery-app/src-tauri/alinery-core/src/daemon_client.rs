@@ -362,7 +362,6 @@ pub mod ops {
     pub const RPC_ATTACH: &str = "rpc_attach";
     pub const RPC_WRITE: &str = "rpc_write";
     pub const OMP_SETUP: &str = "omp_setup";
-    pub const TRANSCRIPT: &str = "transcript";
     pub const PROMPT: &str = "prompt";
     pub const ABORT: &str = "abort";
     pub const SET_MODEL: &str = "set_model";
@@ -439,40 +438,6 @@ pub fn omp_setup_request() -> Value {
     json!({"op": ops::OMP_SETUP})
 }
 
-/// One stored or in-flight message. `content` is the part list the pane already maps
-/// (`thinking`, `text`, `toolCall`, `redactedThinking`, `toolResult` text). `id` is the Pi
-/// entry id, or `live` for the partial. A running tool call id stays in `running_tool_ids`
-/// after that assistant entry has committed.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptMessage {
-    #[serde(default)]
-    pub id: String,
-    pub role: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub text: String,
-    #[serde(default)]
-    pub content: Vec<Value>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub streaming: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub is_error: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub running_tool_ids: Vec<String>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-pub fn transcript_request(id: &str) -> Value {
-    json!({"op": ops::TRANSCRIPT, "id": id})
-}
-
 pub fn prompt_request(id: &str, text: &str) -> Value {
     json!({"op": ops::PROMPT, "id": id, "text": text})
 }
@@ -498,15 +463,6 @@ pub struct SessionControls {
     pub thinking: String,
     #[serde(default)]
     pub thinking_levels: Vec<String>,
-}
-
-/// Transcript poll. The three control fields sit beside `messages`, not on each one.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct TranscriptReply {
-    #[serde(default)]
-    pub messages: Vec<TranscriptMessage>,
-    #[serde(flatten)]
-    pub controls: SessionControls,
 }
 
 pub fn provider_catalog_request() -> Value {
@@ -1180,14 +1136,6 @@ impl DaemonClient {
         self.call(&open_request(request)).and_then(expect_ok)
     }
 
-    pub fn transcript(&self, id: &str) -> Result<TranscriptReply, String> {
-        let response = self.call(&transcript_request(id))?;
-        if let Some(error) = reply_error(&response) {
-            return Err(error.to_string());
-        }
-        serde_json::from_value(response).map_err(|error| error.to_string())
-    }
-
     pub fn prompt(&self, id: &str, text: &str) -> Result<(), String> {
         self.call(&prompt_request(id, text)).and_then(expect_ok)
     }
@@ -1714,7 +1662,6 @@ mod tests {
 
     #[test]
     fn vinculum_request_shapes() {
-        assert_eq!(transcript_request("s1"), json!({"op": "transcript", "id": "s1"}));
         assert_eq!(prompt_request("s1", "hello"), json!({"op": "prompt", "id": "s1", "text": "hello"}));
         assert_eq!(abort_request("s1"), json!({"op": "abort", "id": "s1"}));
         assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
@@ -1751,46 +1698,6 @@ mod tests {
         .unwrap();
         assert_eq!(status.prompt.unwrap().kind, "secret");
         assert!(matches!(status.events[0], ProviderLoginEvent::AuthUrl { .. }));
-        let messages: Vec<TranscriptMessage> = serde_json::from_value(json!([
-            {
-                "id": "e1",
-                "role": "assistant",
-                "streaming": true,
-                "runningToolIds": ["c1"],
-                "content": [
-                    {"type": "thinking", "thinking": "plan"},
-                    {"type": "redactedThinking"},
-                    {"type": "text", "text": "hello"},
-                    {"type": "toolCall", "id": "c1", "name": "read", "arguments": {"path": "a.ts"}}
-                ]
-            },
-            {
-                "id": "e2",
-                "role": "toolResult",
-                "toolName": "read",
-                "toolCallId": "c1",
-                "isError": false,
-                "content": [{"type": "text", "text": "body"}]
-            }
-        ]))
-        .unwrap();
-        assert!(messages[0].streaming);
-        assert_eq!(messages[0].running_tool_ids, vec!["c1".to_string()]);
-        assert_eq!(messages[1].tool_name.as_deref(), Some("read"));
-        assert_eq!(messages[1].tool_call_id.as_deref(), Some("c1"));
-        let replayed = serde_json::to_value(&messages[0]).unwrap();
-        assert_eq!(replayed["content"][3]["arguments"]["path"], "a.ts");
-        assert_eq!(replayed["content"][1]["type"], "redactedThinking");
-        let reply: TranscriptReply = serde_json::from_value(json!({
-            "messages": messages,
-            "model": "xai/grok-4.6",
-            "thinking": "high",
-            "thinking_levels": ["off", "high"]
-        }))
-        .unwrap();
-        assert_eq!(reply.controls.model, "xai/grok-4.6");
-        assert_eq!(reply.controls.thinking, "high");
-        assert_eq!(reply.controls.thinking_levels, vec!["off".to_string(), "high".to_string()]);
         let controls: SessionControls = serde_json::from_value(json!({"ok": true, "model": "xai/grok-4.6", "thinking": "low", "thinking_levels": ["off", "low"]})).unwrap();
         assert_eq!(controls.thinking, "low");
     }

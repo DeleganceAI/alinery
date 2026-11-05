@@ -803,13 +803,6 @@ pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, 
 }
 
 #[tauri::command]
-pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
-    require_active_repo_ready(&state)?;
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    off_main_thread("transcript", move || daemon.transcript(&id)).await
-}
-
-#[tauri::command]
 pub(crate) async fn session_prompt(state: State<'_, AppState>, id: String, text: String) -> Result<(), String> {
     require_active_repo_ready(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;

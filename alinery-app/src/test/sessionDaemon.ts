@@ -1,10 +1,13 @@
 // A fake daemon that serves Session entities over a real connect router (plan 2.5), for view tests
 // that need session status. A test states what a session looks like as the old `SessionObservation`
 // and the helper writes the entity the daemon would hold; `show` after mount is a live delta.
-import { create } from "@bufbuild/protobuf";
-import type { Transport } from "@connectrpc/connect";
+import { create, fromJson, type JsonValue, type MessageInitShape } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import type { ServiceImpl, Transport } from "@connectrpc/connect";
 import { type Entity, EntitySchema, SessionSchema } from "alinery-proto/alinery/v1/entities_pb";
+import { type SessionService, type TranscriptPartSchema, WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
+import type { VinculumMessage, VinculumTranscript } from "../chatTranscript";
 import { sessionEntityKey } from "../sync/sessionObservation";
 import type { SessionObservation } from "../types";
 import { daemonHarness, put, scriptedSync, snapshot, untilAborted } from "./daemonHarness";
@@ -43,6 +46,42 @@ export function sessionEntity(taskSlug: string, id: string, o: SessionObservatio
   return create(EntitySchema, { key: sessionEntityKey(taskSlug, id), value: { case: "session", value: session } });
 }
 
+/** The WatchTranscript frame for a transcript the test states in the pane's own shape: every item, replacing the client's list. */
+export function transcriptFrame(t: VinculumTranscript | VinculumMessage[]) {
+  const reply = Array.isArray(t) ? { messages: t } : t;
+  const part = (p: Record<string, unknown>): MessageInitShape<typeof TranscriptPartSchema> => {
+    if (p.type === "thinking") return { kind: { case: "thinking" as const, value: String(p.thinking ?? "") } };
+    if (p.type === "redactedThinking") return { kind: { case: "redactedThinking" as const, value: {} } };
+    if (p.type === "toolCall")
+      return {
+        kind: {
+          case: "toolCall" as const,
+          value: {
+            id: p.id as string | undefined,
+            name: p.name as string | undefined,
+            arguments: p.arguments === undefined ? undefined : fromJson(ValueSchema, p.arguments as JsonValue),
+          },
+        },
+      };
+    return { kind: { case: "text" as const, value: String(p.text ?? "") } };
+  };
+  return create(WatchTranscriptResponseSchema, {
+    items: reply.messages.map((m) => ({
+      id: m.id ?? "",
+      role: m.role,
+      streaming: m.streaming === true,
+      content: ((m.content as Record<string, unknown>[] | undefined) ?? [{ type: "text", text: m.text ?? "" }]).map(part),
+      toolName: m.toolName ?? "",
+      toolCallId: m.toolCallId ?? "",
+      isError: m.isError === true,
+      runningToolIds: m.runningToolIds ?? [],
+    })),
+    nextItem: BigInt(reply.messages.length),
+    replace: true,
+    controls: reply.model === undefined ? undefined : { model: reply.model, thinking: reply.thinking ?? "", thinkingLevels: reply.thinking_levels ?? [] },
+  });
+}
+
 /** Serves every repo's sessions. `transport` is what `daemonTransport` should return. */
 export function sessionDaemon() {
   const rows = new Map<string, Entity>(); // `${repo}\0${entity key}`
@@ -78,6 +117,25 @@ export function sessionDaemon() {
       })
       .filter((e) => matches(scope, e.key));
   };
+  // Transcripts by session id, in any repo. Setting one is a new frame for everyone watching it.
+  const transcripts = new Map<string, VinculumTranscript | VinculumMessage[]>();
+  const tver = { n: 0 };
+  const transcriptCalls: string[] = []; // the session id of every WatchTranscript call
+  const sessions: ServiceImpl<typeof SessionService> = {
+    async *watchTranscript(req, ctx) {
+      transcriptCalls.push(req.session?.id ?? "");
+      let seen = -1;
+      for (;;) {
+        if (tver.n !== seen) {
+          seen = tver.n;
+          const t = transcripts.get(req.session?.id ?? "");
+          if (t) yield transcriptFrame(t);
+        }
+        if (tver.n === seen) await Promise.race([untilAborted(ctx.signal), new Promise<void>((r) => live.add(r))]);
+        if (ctx.signal.aborted) return;
+      }
+    },
+  };
   const subscribed: { requests: number } = { requests: 0 };
   const transports = new Map<string, Transport>();
   const transport = (repo: string): Transport => {
@@ -103,7 +161,7 @@ export function sessionDaemon() {
           known = new Map(mine().map((e) => [e.key, e]));
         }
       });
-      t = daemonHarness({ sync }).transport as Transport;
+      t = daemonHarness({ sync, sessions }).transport as Transport;
       transports.set(repo, t);
     }
     return t;
@@ -111,6 +169,15 @@ export function sessionDaemon() {
   return {
     transport,
     subscribed,
+    transcriptCalls,
+    /** What WatchTranscript serves for one session, in any repo. Calling it again is a change the watchers receive. */
+    setTranscript(id: string, t: VinculumTranscript | VinculumMessage[]) {
+      transcripts.set(id, t);
+      tver.n += 1;
+      const wake = [...live];
+      live.clear();
+      for (const r of wake) r();
+    },
     /** One session by id alone, in any repo and under any task slug. */
     showId(id: string, o: SessionObservation) {
       wild.set(id, o);

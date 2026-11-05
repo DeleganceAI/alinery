@@ -13,7 +13,6 @@ import {
   type ChatTranscriptState,
   emptyTranscript,
   needsUiReply,
-  watchVinculumTranscript,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
@@ -21,11 +20,12 @@ import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
-import { applyPlainSend, chatTerminalIo, olderPageState, sendCommand, sendNowCommand } from "./chatSession";
+import { applyPlainSend, chatTerminalIo, sendCommand, sendNowCommand } from "./chatSession";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function threadLabel(thread: ChatThread): string {
@@ -81,7 +81,6 @@ export type ChatThreadSnapshot = {
   attachments: DraftAttachment[];
   sending: boolean;
   error: string;
-  loadingOlder: boolean;
   processLive: boolean;
   inTerminal: boolean;
   terminalIo: SessionTerminalIo | undefined;
@@ -101,7 +100,6 @@ type ChatThreadApi = {
   sendNow: (who: symbol) => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
   setDraft: (value: string) => void;
   stagePaths: (paths: string[]) => void;
   stageBlobs: (files: File[]) => void;
@@ -124,7 +122,6 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   attachments: [],
   sending: false,
   error: "",
-  loadingOlder: false,
   processLive: false,
   inTerminal: false,
   terminalIo: undefined,
@@ -144,7 +141,6 @@ const NO_API: ChatThreadApi = {
   sendNow: () => {},
   abort: () => {},
   reconnect: () => {},
-  loadOlder: () => {},
   setDraft: () => {},
   stagePaths: () => {},
   stageBlobs: () => {},
@@ -419,7 +415,6 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   sendNow: () => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
@@ -515,7 +510,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     },
     abort: () => api.abort(),
     reconnect: () => api.reconnect(),
-    loadOlder: () => api.loadOlder(),
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
@@ -566,7 +560,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const mcpListWait = useRef(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const [autoCompaction, setAutoCompactionState] = useState(entry.autoCompaction);
   const autoCompactionRef = useRef(autoCompaction);
   autoCompactionRef.current = entry.autoCompaction;
@@ -632,12 +625,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       registry.setSending(null);
       registry.setError(message);
     };
-    const stopTranscript = watchVinculumTranscript(
-      () => ipc.chatTranscript(repo, id),
-      (messages) => {
-        if (!cancelled) updateTranscript(() => applyVinculumTranscript(messages));
-      },
-    );
+    const stopTranscript = watchSessionTranscript(repo, { taskSlug: "", id }, (reply) => {
+      if (!cancelled) updateTranscript(() => applyVinculumTranscript(reply));
+    });
     if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
       setConnection({ state: "offline" });
       dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
@@ -867,24 +857,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     !pendingUiReply &&
     (entry.draft.trim().length > 0 || entry.attachments.length > 0);
 
-  const olderBusy = useRef(false);
-  const loadOlder = useCallback(() => {
-    const from = transcriptRef.current.fileStart;
-    if (olderBusy.current || from == null || from === 0) return;
-    olderBusy.current = true;
-    setLoadingOlder(true);
-    ipc
-      .readChatOmp({ repoPath: repo, id, end: from })
-      .then((buffer) => {
-        if (alive.current) updateTranscript((current) => olderPageState(current, buffer));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        olderBusy.current = false;
-        if (alive.current) setLoadingOlder(false);
-      });
-  }, [repo, id, updateTranscript]);
-
   useEffect(() => {
     const pushed = `${key}:${autoCompaction}`;
     compactionPushed.current = pushed;
@@ -962,7 +934,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     },
     abort,
     reconnect: () => setEpoch((value) => value + 1),
-    loadOlder,
     setDraft: (value) => {
       entry.draft = value;
       registry.touch(entry);
@@ -1000,7 +971,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     attachments: entry.attachments,
     sending: registry.sendingKey === key,
     error: registry.error,
-    loadingOlder,
     processLive,
     inTerminal,
     terminalIo,

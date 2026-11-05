@@ -38,12 +38,10 @@ const mocks = vi.hoisted(() => ({
   createChatThread: vi.fn(),
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
-  chatTranscript: vi.fn(async (): Promise<VinculumTranscript> => ({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] })),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async () => undefined),
   chatAbort: vi.fn(async () => undefined),
-  readChatOmp: vi.fn(),
   openUrl: vi.fn(),
   chatThreadName: vi.fn(),
   startChatThread: vi.fn(),
@@ -65,12 +63,10 @@ vi.mock("../ipc", () =>
     createChatThread: mocks.createChatThread,
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
-    chatTranscript: mocks.chatTranscript,
     chatSetModel: mocks.chatSetModel,
     chatSetThinkingLevel: mocks.chatSetThinkingLevel,
     chatPrompt: mocks.chatPrompt,
     chatAbort: mocks.chatAbort,
-    readChatOmp: mocks.readChatOmp,
     openUrl: mocks.openUrl,
     chatThreadName: mocks.chatThreadName,
     startChatThread: mocks.startChatThread,
@@ -115,6 +111,8 @@ function thread(id: string, extra: Partial<ChatThread> = {}): ChatThread {
 }
 
 const THREADS = ["s-new", "s-live", "s-wt"];
+/** What WatchTranscript serves for every thread under test. */
+const setTranscripts = (t: VinculumTranscript) => THREADS.forEach((id) => daemon.setTranscript(id, t));
 
 /** A live OMP chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
 function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
@@ -143,7 +141,7 @@ beforeEach(() => {
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
-  mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
+  setTranscripts({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
@@ -282,7 +280,7 @@ describe("ChatView", () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
     mocks.listChatThreads.mockResolvedValue([row]);
     for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
-    mocks.chatTranscript.mockResolvedValue({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
+    setTranscripts({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
     expect(await screen.findByText("seeded")).toBeTruthy();
@@ -302,13 +300,13 @@ describe("ChatView", () => {
       thinking: "high",
       thinking_levels: ["off", "low", "high"],
     };
-    mocks.chatTranscript.mockResolvedValue(transcript);
+    setTranscripts(transcript);
     mocks.chatSetThinkingLevel.mockImplementation(async () => {
-      mocks.chatTranscript.mockResolvedValue({ ...transcript, thinking: "low" });
+      setTranscripts({ ...transcript, thinking: "low" });
       return { model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] };
     });
     mocks.chatSetModel.mockImplementation(async () => {
-      mocks.chatTranscript.mockResolvedValue({ ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+      setTranscripts({ ...transcript, model: "anthropic/claude", thinking: "off", thinking_levels: [] });
       return { model: "anthropic/claude", thinking: "off", thinking_levels: [] };
     });
     render(chat());

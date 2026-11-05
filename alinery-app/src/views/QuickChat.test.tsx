@@ -21,14 +21,13 @@ vi.mock("./ProviderSetupDialog", () => ({
 }));
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatPrompt: vi.fn(),
-  chatTranscript: vi.fn(),
-  readChatOmp: vi.fn(),
   chatThreadName: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
@@ -43,8 +42,6 @@ vi.mock("../ipc", () =>
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
     chatPrompt: mocks.chatPrompt,
-    chatTranscript: mocks.chatTranscript,
-    readChatOmp: mocks.readChatOmp,
     chatThreadName: mocks.chatThreadName,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
@@ -126,10 +123,8 @@ beforeEach(() => {
   mocks.onStreamClosed.mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatPrompt.mockResolvedValue(undefined);
-  mocks.chatTranscript.mockResolvedValue([]);
-  mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
   // Every chat thread under test is a live idle OMP chat as the daemon reports it.
-  const daemon = sessionDaemon();
+  daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);
   mocks.chatThreadName.mockResolvedValue(null);
@@ -311,7 +306,7 @@ describe("QuickChat", () => {
     mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
     render(windowOf());
     await screen.findByRole("button", { name: "Attach files" });
-    await waitFor(() => expect(mocks.chatTranscript).toHaveBeenCalled());
+    await waitFor(() => expect(daemon.transcriptCalls).toContain("s-a"));
     fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
     expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
 
@@ -352,8 +347,8 @@ describe("QuickChat", () => {
     );
     const rail = await screen.findByTestId("chat-rail");
     fireEvent.click(await within(rail).findByRole("button", { name: /^Alpha/ }));
-    await waitFor(() => expect(mocks.chatTranscript).toHaveBeenCalledWith("/repos/one", "s-live"));
+    await waitFor(() => expect(daemon.transcriptCalls).toContain("s-live"));
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(mocks.chatTranscript.mock.calls.filter((call) => call[0] === "/repos/one" && call[1] === "s-live").length).toBeGreaterThan(0);
+    expect(daemon.transcriptCalls.filter((id) => id === "s-live")).toHaveLength(1);
   });
 });

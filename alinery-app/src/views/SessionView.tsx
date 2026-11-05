@@ -30,7 +30,6 @@ import {
   emptyTranscript,
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
-  watchVinculumTranscript,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
@@ -56,6 +55,7 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type {
   AppearancePrefs,
@@ -1107,18 +1107,15 @@ export function SessionView({
 
   useEffect(() => {
     if (!vinculum || !showChat) return;
-    return watchVinculumTranscript(
-      () => ipc.sessionTranscript(id),
-      (messages) => {
-        setChat(() => {
-          const next = applyVinculumTranscript(messages);
-          chatRef.current = next;
-          return next;
-        });
-        setTerminalConnection("open");
-      },
-    );
-  }, [vinculum, showChat, id]);
+    return watchSessionTranscript(repoPath, { taskSlug, id }, (reply) => {
+      setChat(() => {
+        const next = applyVinculumTranscript(reply);
+        chatRef.current = next;
+        return next;
+      });
+      setTerminalConnection("open");
+    });
+  }, [vinculum, showChat, repoPath, taskSlug, id]);
   useEffect(() => {
     let cancelled = false;
     void ipc

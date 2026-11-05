@@ -571,39 +571,6 @@ export type VinculumTranscript = {
 export const NEXT_TURN_MODEL_TITLE = "This turn keeps the model it started with. The next message uses the new one.";
 export const NEXT_TURN_THINKING_TITLE = "This turn keeps the thinking level it started with. The next message uses the new one.";
 
-export const VINCULUM_TRANSCRIPT_IDLE_MS = 1000;
-/** The daemon already folds the partial about every 100ms. Idle stays on the slow poll. */
-export const VINCULUM_TRANSCRIPT_BUSY_MS = 200;
-
-export function vinculumTranscriptPollMs(messages: readonly VinculumMessage[]): number {
-  const busy = messages.some((message) => message.streaming === true || (message.runningToolIds?.length ?? 0) > 0);
-  return busy ? VINCULUM_TRANSCRIPT_BUSY_MS : VINCULUM_TRANSCRIPT_IDLE_MS;
-}
-
-/** Poll until `stop`. A busy reply (live partial or a tool still running) shortens the next wait. */
-export function watchVinculumTranscript(load: () => Promise<VinculumMessage[] | VinculumTranscript>, apply: (reply: VinculumMessage[] | VinculumTranscript) => void): () => void {
-  let timer = 0;
-  let stopped = false;
-  const pull = () => {
-    load().then(
-      (reply) => {
-        if (stopped) return;
-        apply(reply);
-        const messages = Array.isArray(reply) ? reply : (reply.messages ?? []);
-        timer = window.setTimeout(pull, vinculumTranscriptPollMs(messages));
-      },
-      () => {
-        if (!stopped) timer = window.setTimeout(pull, VINCULUM_TRANSCRIPT_IDLE_MS);
-      },
-    );
-  };
-  pull();
-  return () => {
-    stopped = true;
-    window.clearTimeout(timer);
-  };
-}
-
 function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessage | null {
   const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
   const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);

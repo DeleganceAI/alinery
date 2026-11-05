@@ -12,12 +12,6 @@ export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
   return applyFilePage(emptyTranscript(), { start: page.start, messages: page.messages }, "initial");
 }
 
-/** An older page of the journal, prepended; the caller names the thread it asked for. */
-export function olderPageState(current: ChatTranscriptState, buffer: ArrayBuffer): ChatTranscriptState {
-  const page = decodeOmpPage(buffer);
-  return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
-}
-
 /**
  * Idle sends a prompt; a running turn queues a follow-up. Never route on "has this thread started":
  * OMP drains follow-ups only after an assistant/toolResult message, so a follow-up on an empty
