@@ -42,6 +42,7 @@ for cand in "$BUN" "${TMPDIR:-/tmp}/alinery-bun-$BUN_PIN/bin/bun" "$(command -v 
   if [ -n "$cand" ] && bun_ok "$cand"; then BUN="$cand"; break; fi
   BUN=""
 done
+export BUN
 [ -n "$BUN" ] || {
   echo "ERROR: Bun $BUN_PIN or newer is missing — run: scripts/dev-fetch-bun.sh" >&2
   exit 1
@@ -96,6 +97,7 @@ step "source gates"
 "$ROOT/scripts/tests/admin_wire_frozen_test.sh"
 "$ROOT/scripts/tests/check-no-curl.sh"
 "$ROOT/scripts/tests/check-no-auto-session-kill.sh"
+"$ROOT/scripts/tests/no_auto_session_kill_test.sh"
 "$ROOT/scripts/tests/check-ssh-spawn.sh"
 "$ROOT/scripts/tests/check-remote-routing.sh"
 "$ROOT/scripts/tests/check-remote-offload.sh"

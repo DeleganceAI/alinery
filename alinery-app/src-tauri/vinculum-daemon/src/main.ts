@@ -694,22 +694,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "shutdown") {
-    mcpHub.close();
-    releaseKeepAwake();
-    const now = Math.floor(Date.now() / 1000);
-    for (const row of live.values()) {
-      if (isPty(row.id)) killPty(row.id);
-      writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
-      row.process = "exited";
-    }
-    live.clear();
-    for (const path of [uiSocket, rpcSocket]) {
-      try {
-        unlinkSync(path);
-      } catch {
-        /* already gone */
-      }
-    }
+    stopEverything();
     socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
       socket.end();
       process.exit(0);
@@ -1079,6 +1064,30 @@ async function resumeInterrupted() {
   await Promise.all(pending);
 }
 
+/** The teardown both shutdown paths run (the JSON `shutdown` op and `AdminService.Shutdown`): ends every
+ * session and removes the sockets. Returns how many sessions were still running. */
+function stopEverything(): number {
+  mcpHub.close();
+  releaseKeepAwake();
+  const now = Math.floor(Date.now() / 1000);
+  let stopped = 0;
+  for (const row of live.values()) {
+    if (row.process !== "exited") stopped += 1;
+    if (isPty(row.id)) killPty(row.id);
+    writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
+    row.process = "exited";
+  }
+  live.clear();
+  for (const path of [uiSocket, rpcSocket]) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
+  }
+  return stopped;
+}
+
 repairSessionMetas();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
@@ -1086,6 +1095,7 @@ await serveRpc({
   secret: rpcSecret,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
+  lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
