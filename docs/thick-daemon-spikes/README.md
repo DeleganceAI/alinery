@@ -35,6 +35,12 @@ bun run gen        # optional: regenerates gen/ and runs buf lint (S0.1 below ch
 | `src/sqlite-bench.ts` | O3 (b), not adopted | `bun:sqlite` as the truth: commit cost per sync mode, import, start-up load, snapshot and export against the file scan |
 | `src/store.ts`, `src/store.test.ts` | S2.1 | The sync store: commit, ring, Subscribe frames, the property test |
 | `src/toml-roundtrip.ts` | S4.1, S4.3 | Whether `Bun.TOML.stringify` and smol-toml write the bytes Rust's `toml::to_string` does |
+| `src/echo-load.ts`, `src/echo-load-*.ts` | O5, O26 (v0.8) | PTY echo latency under durable writes, reconcile, git and `zip` in one process, and the fsync-on-a-Worker and fsync-in-a-child mitigations |
+| `exports-check.sh` | S0.1 (v0.8) | The `file:` package `exports` mapping in Bun, `bun build --compile`, `tsc` and Vite, and why `proto/` needs its own install |
+| `buf-breaking-check.sh` | O23 (v0.8) | `buf breaking` limited to `admin.proto` and `common.proto` with `--path`, against a git ref |
+| `src/mutation-queue.test.ts` | 2.3.2 (v0.8) | `withTaskMutation` with the deadline from enqueue, against the Rust lock holder |
+| `src/fd-pass.ts` | S7.1 (v0.8) | SCM_RIGHTS between two Bun processes through `bun:ffi`, with a real PTY master |
+| `src/unzip-symlink.sh`, `src/parcel-probe.ts` | S4.9, S2.3 (v0.8) | How `unzip` handles symlinks on Debian and macOS; the two cases where `@parcel/watcher` loses events on Linux |
 
 ## Rerun
 
@@ -202,3 +208,30 @@ bun $T/jsc.ts && bun build --compile $T/jsc.ts --outfile $T/jsc && $T/jsc
 ```
 
 Both print a heap size.
+
+## v0.8 spikes (2026-11-05)
+
+Put the pinned Bun 1.4.3 first on PATH: the tests spawn `bun` by name. Results are in the plan's 4.1 (rows marked v0.8).
+
+```bash
+bun src/echo-load.ts 2000 2                       # about 4 min; conditions: idle,fsync,reconcile,git,zip,all,fsync-worker,fsync-child,all-mitigated
+./exports-check.sh $T/exports                     # needs node and npm on PATH, and alinery-app/node_modules for Vite
+./buf-breaking-check.sh $T/buf                    # uses the native buf binary under node_modules/@bufbuild/
+(cd lock-rs && CARGO_TARGET_DIR=$T/lock cargo build --release --locked)
+LOCK_RS_BIN=$T/lock/release/lock-rs bun test src/mutation-queue.test.ts   # 3 pass, about 14 s
+bun src/fd-pass.ts                                # "ok":true; `bun src/fd-pass.ts bun-terminal` uses Bun.Terminal's fd
+sh src/unzip-symlink.sh $T/uz                     # macOS; outside a sandbox that blocks symlink creation
+```
+
+Linux arm64 (Docker; Colima shares only `/Users`, so copy Bun in with `docker cp`; `$BUN` is the unpacked `bun-linux-aarch64` directory):
+
+```bash
+docker run -d --name s04 --platform linux/arm64 -v $PWD:/spike:ro debian:12 sleep infinity
+docker cp $BUN s04:/bun
+docker exec s04 sh -c 'export PATH=/bun:$PATH; mkdir /w && cd /w && tar -C /spike --exclude=node_modules -cf - . | tar -xf - && bun install --frozen-lockfile && bun run src/watch.ts matrix --reps 2 --idle-seconds 30 && bun build src/watch.ts --compile --outfile /tmp/watch && /tmp/watch matrix --reps 2 --idle-seconds 30'
+docker exec s04 sh -c 'apt-get update && apt-get install -y zip unzip'
+docker exec -u <non-root user> s04 sh /spike/src/unzip-symlink.sh /tmp/uz
+docker rm -f s04
+```
+
+x64 Linux needs a native machine or a VM with AVX: Bun 1.4.3 x64 crashes under Colima's QEMU emulation, and with the JIT off it runs too slowly to measure.
