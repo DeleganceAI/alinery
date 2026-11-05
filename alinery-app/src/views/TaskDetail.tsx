@@ -1564,7 +1564,12 @@ export function TaskDetail({
                             <span className="dim" title={sessionType}>
                               {sessionType}
                             </span>
-                            {execution && <span className="pill">{sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ?? execution.lifecycle}</span>}
+                            {execution && (
+                              <span className="pill">
+                                {sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ??
+                                  execution.lifecycle}
+                              </span>
+                            )}
                             {s.archived && <span className="pill session-archived">Archived</span>}
                             {resumedBy && <span className="pill dim">Resumed</span>}
                           </div>

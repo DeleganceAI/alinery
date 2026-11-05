@@ -35,7 +35,10 @@ const scoped = (destination: string) => ({
     notifications: globalSettings.notifications,
     github: globalSettings.github,
     defaults: globalSettings.defaults,
-    provenance: { github_token: "global", defaults: { harness: "global", model: "global", thinking: "global", playbook: "global", draft_autosave: "global" } },
+    provenance: {
+      github_token: "global" as const,
+      defaults: { harness: "global" as const, model: "global" as const, thinking: "global" as const, playbook: "global" as const, draft_autosave: "global" as const },
+    },
     backup: { ...globalSettings.backup, destination },
     telemetry: globalSettings.telemetry,
   },

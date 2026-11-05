@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { collectLiveSubagents } from "./chat/subagents";
+import type { ChatEntry } from "./chat/types";
 import {
   appendHarnessNotice,
   appendOptimisticAbort,
@@ -580,7 +581,7 @@ describe("subagent envelopes", () => {
       type: "subagent_progress",
       payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
     });
-    const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
+    const finished = done.entries.find((entry): entry is Extract<ChatEntry, { type: "subagent_status" }> => entry.type === "subagent_status" && entry.subagentId === "sa-1");
     expect(finished?.id).toBe(row?.id);
     expect(finished?.status).toBe("completed");
     expect(finished?.summary).toBe("Search the repo");

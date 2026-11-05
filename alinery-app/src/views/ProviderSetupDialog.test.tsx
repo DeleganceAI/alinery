@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   readOmpModelRoles: vi.fn(),
   readModelFavorites: vi.fn(),
   hostedCatalog: vi.fn(),
+  providerCatalog: vi.fn(),
   grokKeyReady: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
@@ -40,6 +41,7 @@ function settleIpc(hosted: HostedCatalogView = emptyHosted, grok = false) {
   mocks.readOmpModelRoles.mockResolvedValue({});
   mocks.readModelFavorites.mockResolvedValue([]);
   mocks.hostedCatalog.mockResolvedValue(hosted);
+  mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
   mocks.grokKeyReady.mockResolvedValue(grok);
 }
 
@@ -71,6 +73,7 @@ describe("ProviderSetupDialog", () => {
     mocks.readOmpModelRoles.mockResolvedValue({});
     mocks.readModelFavorites.mockResolvedValue([]);
     mocks.grokKeyReady.mockResolvedValue(false);
+    mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
     mocks.hostedCatalog.mockReturnValue(
       new Promise<HostedCatalogView>((resolve) => {
         resolveHosted = resolve;
@@ -81,7 +84,7 @@ describe("ProviderSetupDialog", () => {
     await act(async () => {
       resolveHosted(readyHosted);
     });
-    expect(await screen.findByText("alinery/Qwen3.6-35B-A3B")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
     expect(screen.queryByText("Connecting…")).toBeNull();
   });
 

@@ -1359,7 +1359,7 @@ pub(crate) fn close_all_repos_blocking<R: tauri::Runtime>(app: &AppHandle<R>) ->
     state.kill_mcp();
     // `sanitize_app_config` keeps a non-empty `active_repo` inside `known_repos`, so this
     // list is the complete set of repos this app has open.
-    let known = load_app_config(&app).known_repos;
+    let known = load_app_config(app).known_repos;
     // Remote repositories are not torn down here. Their daemons and sessions belong to the
     // host, and stopping those is a separate, confirmed action; "close all" only lets go of
     // the hosts, once the local repos have closed.

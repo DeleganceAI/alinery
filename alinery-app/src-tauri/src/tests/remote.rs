@@ -159,7 +159,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     };
     call(alinery_core::repo_service::RepoOp::WriteFile {
         path: format!("{}/app.toml", session.config_dir).into(),
-        contents: render_remote_app_toml(&local, &[repo.clone()], false).unwrap(),
+        contents: render_remote_app_toml(&local, std::slice::from_ref(&repo), false).unwrap(),
     });
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
     let (client, compat, _) = ensure_remote_daemon(&session, &repo, &identity).unwrap();
@@ -324,7 +324,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         ("remote-task", "", "No sessions")
     );
     let tasks: Vec<alinery_core::Task> = remote_call(&state, &id, RepoOp::ListTasks { repo: repo.clone().into() }).unwrap();
-    assert_eq!(tasks, [task.clone()]);
+    assert_eq!(tasks, std::slice::from_ref(&task));
     let found: Option<alinery_core::Task> = remote_call(
         &state,
         &id,
@@ -2564,7 +2564,7 @@ fn probe_parses_output_after_shell_noise() {
     assert_eq!((probe.os.as_str(), probe.arch.as_str(), probe.home.as_str()), ("Linux", "x86_64", "/home/me"));
     assert_eq!(probe.glibc.as_deref(), Some("2.35"));
     assert_eq!(probe.pagesize, Some(4096));
-    assert_eq!(probe.tools["systemd-run"], true);
+    assert!(probe.tools["systemd-run"]);
     assert_eq!((probe.linger, probe.kill_user_processes), (Some(true), Some(false)));
 }
 
@@ -2713,8 +2713,10 @@ fn remote_app_toml_drops_hosts_and_other_machines_repos() {
 /// private. Everything below is set on the Mac and must not reach the host.
 #[test]
 fn remote_app_toml_carries_only_what_the_host_reads() {
-    let mut local = crate::AppConfig::default();
-    local.settings_version = 7;
+    let mut local = crate::AppConfig {
+        settings_version: 7,
+        ..Default::default()
+    };
     local.global.defaults.model = "alinery/some-model".into();
     local.global.defaults.thinking = "high".into();
     local.global.experiments.grok_api_key = "xai-shared-key".into();

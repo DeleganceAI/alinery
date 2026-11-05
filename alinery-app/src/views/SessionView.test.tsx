@@ -46,7 +46,7 @@ const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionSetModel = vi.hoisted(() => vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })));
 const sessionSetThinkingLevel = vi.hoisted(() => vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })));
 const providerCatalog = vi.hoisted(() =>
-  vi.fn(async () => {
+  vi.fn(async (): Promise<unknown> => {
     throw new Error("no catalog");
   }),
 );
@@ -2135,7 +2135,9 @@ describe("held task sessions", () => {
     scenario.tasksPromise = null;
     scenario.tasksError = null;
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
-    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true, error: "exited without completing" })]));
+    getTaskExecution.mockResolvedValue(
+      executionReply([executionRecord({ owner_session_id: "session", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true, error: "exited without completing" })]),
+    );
     renderSession({ intent: undefined, harness: "vinculum" });
     const recover = await screen.findByRole("button", { name: "Recover session" });
     expect(screen.getByText("The daemon stopped before this step was accepted. The conversation is still in the session file.")).toBeDefined();
@@ -2151,7 +2153,9 @@ describe("held task sessions", () => {
     cleanup();
     startSession.mockClear();
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
-    getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "completed", receipt_id: "execution-a", shutdown_confirmed: true })]));
+    getTaskExecution.mockResolvedValue(
+      executionReply([executionRecord({ owner_session_id: "session", lifecycle: "completed", receipt_id: "execution-a", shutdown_confirmed: true })]),
+    );
     renderSession({ intent: undefined, harness: "vinculum" });
     await screen.findByRole("button", { name: "Start fresh" });
     expect(screen.queryByRole("button", { name: "Recover session" })).toBeNull();
@@ -2280,7 +2284,7 @@ describe("Vinculum session chat", () => {
     await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
 
     fireEvent.click(screen.getByRole("button", { name: "Change model" }));
-    expect(await screen.findByText("Current session xai/grok-4.6. Apply switches this chat only.")).toBeTruthy();
+    expect(await screen.findByText("Current model: xai/grok-4.6")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "anthropic/claude" }));
     await waitFor(() => expect(sessionSetModel).toHaveBeenCalledWith("session", "anthropic/claude"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("anthropic/claude"));

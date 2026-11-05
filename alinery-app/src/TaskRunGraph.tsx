@@ -5,8 +5,8 @@ import { buildTaskRunGraph, occurrenceLabel } from "./runGraphModel";
 import { classifySessionNotice, hasAcknowledgedExit, hasUnacknowledgedExit } from "./sessionAttention";
 import { StatusDot } from "./shared";
 import type { ArtifactOccurrence, SessionMeta, SessionObservation, TaskExecutionState } from "./types";
-import { sessionTerminalLabel } from "./vinculumHarness";
 import { type PanZoomView, usePanZoom } from "./usePanZoom";
+import { sessionTerminalLabel } from "./vinculumHarness";
 import "./TaskRunGraph.css";
 
 const MIN_ZOOM = 0.01;
@@ -323,7 +323,10 @@ export function TaskRunGraph({
                   const unreadCompletion = classifySessionNotice(session, observation) === "unread_completion";
                   const exitAcknowledged = hasAcknowledgedExit(session);
                   const processLive = observation?.lifecycle.state === "live" || observation?.lifecycle.state === "live_exited";
-                  const terminalLabel = processLive || previousAttempt ? null : sessionTerminalLabel(session.harness, session.id, execution, session.ended_at != null || observation?.lifecycle.state === "exited");
+                  const terminalLabel =
+                    processLive || previousAttempt
+                      ? null
+                      : sessionTerminalLabel(session.harness, session.id, execution, session.ended_at != null || observation?.lifecycle.state === "exited");
                   const savedStatus = previousAttempt
                     ? "Previous attempt"
                     : (terminalLabel ?? execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));

@@ -398,7 +398,7 @@ fn allowed_skill_rel(rel: &str) -> bool {
 
 fn skill_prefix(names: &[String]) -> Result<String, &'static str> {
     let files: Vec<&str> = names.iter().map(|name| name.trim_end_matches('/')).filter(|name| !name.is_empty()).collect();
-    if files.iter().any(|name| *name == "SKILL.md") {
+    if files.contains(&"SKILL.md") {
         if files.iter().any(|name| !allowed_skill_rel(name)) {
             return Err("This zip is not one skill.");
         }

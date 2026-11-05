@@ -1141,7 +1141,8 @@ export function StatusDot({
   const obs = observation ?? currentPolledObs;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
   const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
-  const processLive = obs?.lifecycle.state === "live" || obs?.lifecycle.state === "live_exited" || obs?.state?.process.state === "alive" || obs?.state?.process.state === "starting";
+  const processLive =
+    obs?.lifecycle.state === "live" || obs?.lifecycle.state === "live_exited" || obs?.state?.process.state === "alive" || obs?.state?.process.state === "starting";
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1165,7 +1166,16 @@ export function StatusDot({
     );
   }
 
-  if (terminalLabel && !processLive && kind !== "busy" && kind !== "starting" && kind !== "waiting_for_input" && kind !== "waiting_for_approval") {
+  // An accepted completion the user has not opened outranks the bare "Exited" word.
+  if (
+    terminalLabel &&
+    !(unreadCompletion && terminalLabel === "Exited") &&
+    !processLive &&
+    kind !== "busy" &&
+    kind !== "starting" &&
+    kind !== "waiting_for_input" &&
+    kind !== "waiting_for_approval"
+  ) {
     const title =
       terminalLabel === "Recoverable"
         ? "This step was not accepted. The conversation is still in the session file."

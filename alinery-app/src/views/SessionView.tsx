@@ -46,7 +46,6 @@ import {
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger, confirmStopAndSwitch } from "../confirm";
 import * as ipc from "../ipc";
-import { revealPath } from "../revealPath";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import {
   abortAndPromptCommand,
@@ -70,6 +69,7 @@ import {
   setSubagentSubscriptionCommand,
   setThinkingLevelCommand,
 } from "../ompRpc";
+import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -89,7 +89,6 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { toast } from "../toast";
-import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import type {
   AppearancePrefs,
   ArtifactListItem,
@@ -107,6 +106,7 @@ import type {
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { readTaskExecution } from "../useExecutionObservation";
+import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
@@ -1799,17 +1799,7 @@ export function SessionView({
       disabled: navHistory || completionBusy,
     });
     return entries;
-  }, [
-    chat.entries,
-    completionRequestIds,
-    completionCopy,
-    liveRpc,
-    navHistory,
-    completionAvailable,
-    completionBusy,
-    grantedCompletionRequestId,
-    vinculumCompletionRequestId,
-  ]);
+  }, [chat.entries, completionRequestIds, completionCopy, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId, vinculumCompletionRequestId]);
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
@@ -2004,7 +1994,12 @@ export function SessionView({
     }
   };
 
-  const terminalLabel = sessionTerminalLabel(harness, id, execution, effectiveLifecycle?.state === "exited" || effectiveLifecycle?.state === "interrupted" || effectiveLifecycle?.state === "orphaned");
+  const terminalLabel = sessionTerminalLabel(
+    harness,
+    id,
+    execution,
+    effectiveLifecycle?.state === "exited" || effectiveLifecycle?.state === "interrupted" || effectiveLifecycle?.state === "orphaned",
+  );
   const canRecoverSession = executionAvailable && sessionIsRecoverable(harness, id, execution);
   const recoverSession = async () => {
     if (!canRecoverSession || completionBusy) return;

@@ -6,6 +6,7 @@ import uiConfirm from "../chat/fixtures/live-extension_ui_confirm.json";
 import uiWidget from "../chat/fixtures/live-extension_ui_request.json";
 import subagentLifecycle from "../chat/fixtures/live-subagent_lifecycle.json";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
+import type { VinculumTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
 import { mockIpc } from "../test/mockIpc";
 import { journalPage } from "../test/ompJournal";
@@ -40,7 +41,7 @@ const mocks = vi.hoisted(() => ({
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
   chatRpcWrite: vi.fn(),
-  chatTranscript: vi.fn(async () => [{ role: "user", text: "seeded" }]),
+  chatTranscript: vi.fn(async (): Promise<VinculumTranscript> => ({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] })),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async () => undefined),
@@ -292,7 +293,7 @@ describe("ChatView", () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
     mocks.listChatThreads.mockResolvedValue([row]);
     mocks.chatSessionStatus.mockResolvedValue(observed("idle", "alive", "rpc"));
-    mocks.chatTranscript.mockResolvedValue([{ role: "user", text: "seeded" }]);
+    mocks.chatTranscript.mockResolvedValue({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
     expect(await screen.findByText("seeded")).toBeTruthy();

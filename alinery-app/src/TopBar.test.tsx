@@ -143,9 +143,7 @@ describe("update actions", () => {
   };
   it("offers an application upgrade and no OMP update", () => {
     const onUpgrade = vi.fn();
-    render(
-      <TopBar active="kanban" scope="active" appConfig={appConfig} isDev={false} update={update} onUpgrade={onUpgrade} {...callbacks} />,
-    );
+    render(<TopBar active="kanban" scope="active" appConfig={appConfig} isDev={false} update={update} onUpgrade={onUpgrade} {...callbacks} />);
     expect(screen.queryByRole("button", { name: /OMP update/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to 0.11.0" }));
     expect(onUpgrade).toHaveBeenCalledOnce();

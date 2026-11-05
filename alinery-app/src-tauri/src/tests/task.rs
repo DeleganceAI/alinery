@@ -325,9 +325,7 @@ fn durable_discovery_reports_task_scoped_storage_errors() {
         } else {
             fs::remove_file(path).unwrap();
         }
-        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
-            .err()
-            .expect("board must report unreadable durable data");
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string()).expect_err("board must report unreadable durable data");
         let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
             .err()
             .expect("session discovery must report unreadable durable data");
@@ -341,9 +339,7 @@ fn durable_discovery_reports_task_scoped_storage_errors() {
     }
     for path in [session_meta_path(&repo, &task.slug, "corrupt"), task_dir(&repo, &task.slug).join("task.md")] {
         fs::write(&path, "invalid saved metadata").unwrap();
-        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string())
-            .err()
-            .expect("corrupt metadata must not silently remove a row");
+        let board_error = board_tasks_for_repo(&repo, &repo.display().to_string()).expect_err("corrupt metadata must not silently remove a row");
         let session_error = session_list_items_for_repo(&repo, &repo.display().to_string(), false)
             .err()
             .expect("corrupt metadata must not silently remove a session");
