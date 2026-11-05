@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
   killSessionForRepo: vi.fn(async (_repo: string, _id: string, _slug: string) => {}),
   setActiveRepo: vi.fn(),
   removeRepo: vi.fn(),
-  repoLiveSessions: vi.fn(async () => 0),
+  liveSessionsNow: vi.fn(async (_repo: string) => 0),
   readAppConfig: vi.fn(),
   confirmDanger: vi.fn(async () => true),
   toast: vi.fn(),
@@ -59,7 +59,6 @@ vi.mock("./ipc", () =>
     sessionStatus: mocks.sessionStatus,
     setActiveRepo: mocks.setActiveRepo,
     removeRepo: mocks.removeRepo,
-    repoLiveSessions: mocks.repoLiveSessions,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as never,
   }),
@@ -91,6 +90,7 @@ vi.mock("./TerminalDrawer", () => ({
     return null;
   },
 }));
+vi.mock("./sync/hooks", () => ({ liveSessionsNow: mocks.liveSessionsNow }));
 vi.mock("./BackgroundFX", () => ({ BackgroundFX: () => null }));
 vi.mock("./Boot", () => ({ Boot: () => null }));
 vi.mock("./HotkeyBar", () => ({ HotkeyBar: () => null }));
@@ -187,7 +187,7 @@ beforeEach(() => {
   mocks.killSessionForRepo.mockReset().mockResolvedValue(undefined);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.removeRepo.mockReset().mockResolvedValue({ ...appConfig, active_repo: "", known_repos: ["/other"] });
-  mocks.repoLiveSessions.mockReset().mockResolvedValue(0);
+  mocks.liveSessionsNow.mockReset().mockResolvedValue(0);
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.toast.mockReset();

@@ -159,6 +159,10 @@ message DaemonStatus {
   uint32 live_sessions = 3;  // sessions whose process is not exited
   string host_guard_warning = 4;  // "" until S4.1 adds the host-tool check
   bool watch_exhausted = 5;  // inotify ran out of watches (ENOSPC); the 30 s reconcile keeps the store right
+  // Agent-state counts over live sessions (S3.1): the status dot's busy/waiting colour needs them with no poll.
+  uint32 busy = 6;
+  uint32 waiting_for_input = 7;
+  uint32 waiting_for_approval = 8;
 }
 message Playbook {}
 message Attachment {}

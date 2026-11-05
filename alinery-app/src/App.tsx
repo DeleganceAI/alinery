@@ -40,6 +40,7 @@ import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { liveSessionsNow } from "./sync/hooks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -128,7 +129,7 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 
 // Live (running + idle) sessions on a repo's daemon — the number every loss-of-work
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
-const liveSessions = (repo: string) => ipc.repoLiveSessions(repo).catch(() => 0);
+const liveSessions = (repo: string) => liveSessionsNow(repo);
 
 type SearchData = { tasks: BoardTask[]; sessions: SessionListItem[] };
 const EMPTY_SEARCH_DATA: SearchData = { tasks: [], sessions: [] };

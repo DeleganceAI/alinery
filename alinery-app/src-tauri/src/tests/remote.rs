@@ -1884,13 +1884,11 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
     };
     let before = daemons(&session);
     assert!(!before.trim().is_empty());
-    assert_eq!(crate::live_sessions_in(&state, &key), 0, "a connected remote repo is counted through its daemon");
 
     state.begin_quit();
     assert_eq!(crate::close_all_repos_blocking(&handle).unwrap(), 0, "no local repo, and no failure for the remote one");
     assert_eq!(state.remotes.status(&id).state, "idle");
     assert!(state.daemon_for(Path::new(&key)).is_none());
-    assert_eq!(crate::live_sessions_in(&state, &key), 0, "an offline remote repo reads as zero");
 
     state.cancel_quit();
     connect_and_attach(&handle, &id, false).unwrap();
@@ -1901,37 +1899,6 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
     if let Ok(dir) = handle.path().app_config_dir() {
         let _ = std::fs::remove_dir_all(dir);
     }
-}
-
-/// A conflict's sessions are what the close and stop dialogs count when the daemon itself cannot be asked.
-#[test]
-fn a_conflicted_remote_daemon_is_counted_from_what_the_conflict_saw() {
-    let state = crate::AppState::default();
-    let key = "alinery+ssh://box-1/srv/app";
-    assert_eq!(crate::live_sessions_in(&state, key), 0);
-    let owner = |impact| crate::DaemonOwnerConflict {
-        lane: String::new(),
-        pid: None,
-        protocol: Some(22),
-        build_id: None,
-        app_config_identity: None,
-        impact,
-        takeover_unavailable: None,
-    };
-    let session = |id: &str| crate::TakeoverSession { id: id.into(), name: None };
-    state.set_daemon_conflict(
-        Path::new(key),
-        crate::DaemonConflict {
-            repo: key.into(),
-            app_protocol: 24,
-            app_config_identity: "current".into(),
-            owners: vec![owner(crate::TakeoverImpact::Known {
-                sessions: vec![session("a"), session("b")],
-            })],
-            issues: Vec::new(),
-        },
-    );
-    assert_eq!(crate::live_sessions_in(&state, key), 2);
 }
 
 /// A daemon this app cannot use (here: started with other settings, so another identity) is reported as

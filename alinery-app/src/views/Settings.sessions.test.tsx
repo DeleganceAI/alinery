@@ -73,7 +73,6 @@ vi.mock("../ipc", () =>
     readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
     writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
     storageInfo: () => new Promise(() => {}),
-    repoLiveSessions: async () => 0,
     listHarnessModels: async () => [],
     listHarnessModelsForRepo: async () => [],
     getVersion: async () => "0.0.0",
@@ -81,6 +80,7 @@ vi.mock("../ipc", () =>
   }),
 );
 
+vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({}) }));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
 vi.mock("./ProviderSetupDialog", () => ({

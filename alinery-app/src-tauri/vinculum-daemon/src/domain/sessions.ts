@@ -41,11 +41,11 @@ export function withLive(entity: Entity, live: LiveSession | undefined): Entity 
 export const daemonStatusKey = "daemon/_/status";
 
 /** The daemon's half of `DaemonStatus`. The store drops a put equal to the stored row, so calling this on every session change costs nothing when the count held. */
-export function commitDaemonStatus(store: Store, info: { protocol: number; buildId: string; liveSessions: number; hostGuardWarning?: string; watchExhausted?: boolean }): void {
+export function commitDaemonStatus(store: Store, info: { protocol: number; buildId: string; liveSessions: number; hostGuardWarning?: string; watchExhausted?: boolean; busy?: number; waitingForInput?: number; waitingForApproval?: number }): void {
   store.commit([
     create(EntitySchema, {
       key: daemonStatusKey,
-      value: { case: "daemonStatus", value: create(DaemonStatusSchema, { protocol: info.protocol, buildId: info.buildId, liveSessions: info.liveSessions, hostGuardWarning: info.hostGuardWarning ?? "", watchExhausted: info.watchExhausted ?? false }) },
+      value: { case: "daemonStatus", value: create(DaemonStatusSchema, { protocol: info.protocol, buildId: info.buildId, liveSessions: info.liveSessions, hostGuardWarning: info.hostGuardWarning ?? "", watchExhausted: info.watchExhausted ?? false, busy: info.busy ?? 0, waitingForInput: info.waitingForInput ?? 0, waitingForApproval: info.waitingForApproval ?? 0 }) },
     }),
   ]);
 }
@@ -81,7 +81,16 @@ export class SessionPublisher {
 
   commitStatus(): void {
     let liveSessions = 0;
-    for (const row of this.liveRows()) if (row.process.state !== "exited" && row.id !== "__omp-setup__") liveSessions += 1;
-    commitDaemonStatus(this.store, { protocol: this.info.protocol, buildId: this.info.buildId, liveSessions, watchExhausted: this.info.watchExhausted?.() });
+    let busy = 0;
+    let waitingForInput = 0;
+    let waitingForApproval = 0;
+    for (const row of this.liveRows()) {
+      if (row.process.state === "exited" || row.id === "__omp-setup__") continue;
+      liveSessions += 1;
+      if (row.agent.state === "busy") busy += 1;
+      else if (row.agent.state === "waiting_for_input") waitingForInput += 1;
+      else if (row.agent.state === "waiting_for_approval") waitingForApproval += 1;
+    }
+    commitDaemonStatus(this.store, { protocol: this.info.protocol, buildId: this.info.buildId, liveSessions, watchExhausted: this.info.watchExhausted?.(), busy, waitingForInput, waitingForApproval });
   }
 }

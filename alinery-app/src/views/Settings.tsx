@@ -30,6 +30,7 @@ import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { useLiveSessionsByRepo } from "../sync/hooks";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -58,6 +59,8 @@ import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } fro
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { VinculumCustomizations } from "./VinculumCustomizations";
+
+const NO_REPOS: string[] = [];
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -336,28 +339,10 @@ export function Settings({
   // or every open repository under "All repositories". The footer's daemon poll only knows
   // the ACTIVE repo, so the loss-of-work numbers come from a per-repo probe instead.
   const sessionTargets = useMemo(() => (scope.kind === "repo" ? (scope.repoPath ? [scope.repoPath] : []) : repoOptions), [scope, repoOptions]);
-  const [liveByRepo, setLiveByRepo] = useState<Record<string, number>>({});
   const [sessionsBusy, setSessionsBusy] = useState(false);
 
-  // Unreachable daemon ⇒ 0 (the command swallows that), so a repo never disappears from the list.
-  const probeLiveSessions = (targets: string[]) =>
-    Promise.all(targets.map((repo) => ipc.repoLiveSessions(repo).then((live) => [repo, live] as const))).then((pairs) => Object.fromEntries(pairs));
-
-  useEffect(() => {
-    if (activeSection !== "harness") return;
-    let alive = true;
-    const tick = () =>
-      probeLiveSessions(sessionTargets)
-        .then((next) => alive && setLiveByRepo(next))
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, sessionTargets]);
+  // Each repo's stream keeps the count current; an unreachable daemon reads 0, so a repo never disappears from the list.
+  const liveByRepo = useLiveSessionsByRepo(activeSection === "harness" ? sessionTargets : NO_REPOS);
 
   useEffect(() => {
     ipc
@@ -820,9 +805,6 @@ export function Settings({
       }
     }
     setSessionsBusy(false);
-    probeLiveSessions(repos)
-      .then(setLiveByRepo)
-      .catch(() => {});
     const stopped = repos.length - problems.length;
     if (problems.length === 0) {
       report(`Sessions stopped for ${label}; daemon${repos.length === 1 ? "" : "s"} restarted`);

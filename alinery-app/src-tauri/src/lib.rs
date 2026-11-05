@@ -338,7 +338,6 @@ pub fn run() {
             set_dock_badge_count,
             notify_session_attention,
             stop_daemon,
-            repo_live_sessions,
             close_all_repos,
             cancel_quit,
             mcp_status,

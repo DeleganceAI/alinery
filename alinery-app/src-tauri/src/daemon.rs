@@ -1314,36 +1314,6 @@ pub(crate) async fn stop_daemon(app: AppHandle, path: Option<String>) -> Result<
     .map_err(|error| format!("stop daemon task: {error}"))?
 }
 
-/// Live sessions on this app's lane, for explicit close/stop warnings. Not ownership proof. A remote
-/// repo is counted through its forwarded daemon (or, when that daemon is a conflict, from what the
-/// conflict saw), and reads 0 while its host is not connected.
-pub(crate) fn live_sessions_in(state: &AppState, path: &str) -> u32 {
-    let path = path.trim();
-    if is_remote_repo_key(path) {
-        let key = Path::new(path);
-        return match (state.daemon_for(key), state.daemon_conflict(key)) {
-            (Some(client), _) => client.live_session_count(),
-            (None, Some(conflict)) => conflict
-                .owners
-                .iter()
-                .map(|owner| match &owner.impact {
-                    TakeoverImpact::Known { sessions } => sessions.len() as u32,
-                    TakeoverImpact::Unknown { .. } => 0,
-                })
-                .sum(),
-            (None, None) => 0,
-        };
-    }
-    connect_current_daemon(Path::new(path)).map_or(0, |client| client.live_session_count())
-}
-
-#[tauri::command]
-pub(crate) async fn repo_live_sessions(app: AppHandle, path: String) -> u32 {
-    tauri::async_runtime::spawn_blocking(move || live_sessions_in(&app.state::<AppState>(), &path))
-        .await
-        .unwrap_or(0)
-}
-
 // DELIBERATE TEARDOWN ORIGIN (B4). Stop one repo's daemon and sessions without deciding
 // when the app-level repository ownership ends. `remove_repo` releases the flock only
 // after delisting succeeds; `close_all_repos` releases each successfully closed repo.

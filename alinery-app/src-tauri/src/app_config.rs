@@ -496,7 +496,7 @@ pub(crate) fn remove_repo_from_config(mut cfg: AppConfig, target: &str) -> Resul
 /// only after the app config no longer lists it.
 ///
 /// The delist-only promise this docstring used to carry is retired. Teardown is still
-/// deliberate — the UI confirms with the live session count first (`repo_live_sessions`),
+/// deliberate — the UI confirms with the live session count first (the `daemon/_/status` entity),
 /// and cancelling never reaches this command. Removing the *active* repo also clears the
 /// active selection; picking the next one is the caller's job so daemon/MCP bring-up
 /// lives only in `set_active_repo`.

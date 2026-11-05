@@ -161,3 +161,17 @@ test("daemon status reports an exhausted watcher", () => {
   p.commitStatus();
   expect(flag()).toBe(true);
 });
+
+test("daemon/_/status counts busy and waiting sessions, and leaves exited ones out", async () => {
+  const t = rig();
+  for (const [id, agent] of [["a", "busy"], ["b", "waiting_for_input"], ["c", "waiting_for_approval"], ["d", "busy"]] as const) {
+    const row = t.row("x", id);
+    row.agent = { state: agent };
+    t.rows.set(id, row);
+  }
+  t.rows.get("d")!.process = { state: "exited" };
+  t.publisher.commitStatus();
+  const e = t.store.get(daemonStatusKey);
+  const v = e?.value.case === "daemonStatus" ? e.value.value : undefined;
+  expect([v?.liveSessions, v?.busy, v?.waitingForInput, v?.waitingForApproval]).toEqual([3, 1, 1, 1]);
+});
