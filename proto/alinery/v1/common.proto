@@ -1,0 +1,23 @@
+syntax = "proto3";
+package alinery.v1;
+
+// Position in one daemon's change stream. A cursor from another epoch is stale.
+message Cursor {
+  string epoch = 1;
+  uint64 seq = 2;
+}
+
+message MutationMeta {
+  string client_id = 1;
+  string mutation_id = 2;
+}
+
+message Applied {
+  Cursor cursor = 1;
+}
+
+message ErrorDetail {
+  string code = 1;
+  string message = 2;
+  map<string, string> fields = 3;
+}

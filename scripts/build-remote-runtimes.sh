@@ -67,6 +67,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$OUT"
 rm -f "$OUT"/*.tar.gz "$OUT/manifest.json"
 
+"$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && bun install --frozen-lockfile || bun install)
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps --manifest-path "$TAURI/Cargo.toml" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory')"
 

@@ -46,7 +46,7 @@ fi
 # an up-to-date output short-circuits both.
 if [ "$FORCE" = 0 ] && [ -f "$DEST" ]; then
   stale=0
-  for input in "$PIN_FILE" "$PKG/package.json" "$PKG"/src/*.ts; do
+  for input in "$PIN_FILE" "$PKG/package.json" "$PKG"/src/*.ts "$ROOT"/proto/gen/alinery/v1/*.ts; do
     if [ "$input" -nt "$DEST" ]; then
       stale=1
     fi
@@ -76,6 +76,7 @@ fi
 GOT="$("$BUN" --version)"
 version_ok "$GOT" "$PIN" || { echo "ERROR: Bun $GOT is older than $PIN" >&2; exit 1; }
 
+"$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && "$BUN" install --frozen-lockfile || "$BUN" install)
 "$BUN" build "$PKG/src/main.ts" --compile --outfile "$DEST"
 chmod +x "$DEST"

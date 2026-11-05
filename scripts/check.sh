@@ -33,6 +33,23 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*" >&2; }
   exit 1
 }
 
+# Bun runs the daemon's and the playbook engine's tests. Same search order as
+# dev-fetch-bun.sh, minus the download: $BUN, the copy it installs, then PATH.
+BUN_PIN="$(tr -d '[:space:]' < "$ROOT/scripts/bun-pin.txt")"
+bun_ok() { [ -x "$1" ] && [ "$(printf '%s\n%s\n' "$BUN_PIN" "$("$1" --version)" | sort -V | head -n1)" = "$BUN_PIN" ]; }
+BUN="${BUN:-}"
+for cand in "$BUN" "${TMPDIR:-/tmp}/alinery-bun-$BUN_PIN/bin/bun" "$(command -v bun || true)"; do
+  if [ -n "$cand" ] && bun_ok "$cand"; then BUN="$cand"; break; fi
+  BUN=""
+done
+[ -n "$BUN" ] || {
+  echo "ERROR: Bun $BUN_PIN or newer is missing — run: scripts/dev-fetch-bun.sh" >&2
+  exit 1
+}
+
+# proto/ needs its own node_modules before the app or the daemon resolve alinery-proto.
+"$ROOT/scripts/install-proto.sh" --with-dev
+
 # ---------- frontend ----------
 step "frontend: biome (lint + format)"
 (cd "$APP" && npm run --silent lint)
@@ -45,6 +62,18 @@ step "frontend: vitest"
 
 step "frontend: omp extension (node --test)"
 (cd "$APP" && npm run --silent test:omp-extension)
+
+# ---------- bun ----------
+step "proto: bun test"
+(cd "$ROOT/proto" && "$BUN" test)
+
+step "daemon: bun test"
+[ -d "$TAURI/vinculum-daemon/node_modules" ] || (cd "$TAURI/vinculum-daemon" && "$BUN" install --frozen-lockfile)
+(cd "$TAURI/vinculum-daemon" && "$BUN" test)
+
+step "playbook engine: bun test"
+[ -d "$ROOT/playbook-engine/node_modules" ] || (cd "$ROOT/playbook-engine" && "$BUN" install --frozen-lockfile)
+(cd "$ROOT/playbook-engine" && "$BUN" test)
 
 # ---------- rust ----------
 step "rust: sidecars"
@@ -62,6 +91,7 @@ step "rust: tests (--workspace)"
 # ---------- source-invariant gates ----------
 step "source gates"
 "$ROOT/scripts/tests/check-git-env-scrub.sh"
+"$ROOT/scripts/tests/check-proto-gen.sh"
 "$ROOT/scripts/tests/check-no-curl.sh"
 "$ROOT/scripts/tests/check-no-auto-session-kill.sh"
 "$ROOT/scripts/tests/check-ssh-spawn.sh"
