@@ -1,12 +1,13 @@
 import "../onboarding.css";
-import { ArrowRight, Check, Coffee, FolderPlus, GitFork, Hand, Layers, Pause, Play, ShieldCheck, Workflow, X, Zap } from "lucide-react";
+import { ArrowRight, Check, Coffee, FolderPlus, GitFork, Hand, Layers, ShieldCheck, Workflow, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingOrb } from "thinking-orbs";
 import { ORB_SPEED } from "../Indicators";
 import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
-import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
+import { PlaybookLibraryLink } from "../PlaybookLibraryLink";
+import { PlaybookRing, promptExcerpt } from "../PlaybookRing";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { toast } from "../toast";
 import type { AccountStatus, AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
@@ -56,20 +57,6 @@ export function OnboardingFlow({
   const [definitionErrors, setDefinitionErrors] = useState<Record<string, string>>({});
   const [definitionRefresh, setDefinitionRefresh] = useState(0);
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
-  const [simStepIndex, setSimStepIndex] = useState<number | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [demoRevision, setDemoRevision] = useState(0);
-  const demoClock = useRef({ key: "", elapsed: 0 });
-  const selectionFromKeyboard = useRef(false);
-  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
-
-  useEffect(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!media) return;
-    const update = () => setReducedMotion(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
 
   // Step 02: model readiness state
   const [repoConfig, setRepoConfig] = useState<Config | null>(null);
@@ -223,62 +210,11 @@ export function OnboardingFlow({
     await onAddRepo();
   };
 
-  const handleSelectArchetype = (key: string, fromKeyboard = false) => {
-    selectionFromKeyboard.current = fromKeyboard;
+  const handleSelectArchetype = (key: string) => {
     setSelectedArchetypeKey(key);
     const nextDef = liveDefinitions[key];
     setSelectedStepKey(nextDef?.step[0]?.key ?? null);
-    setSimStepIndex(0);
-    if (key === selectedArchetypeKey) setDemoRevision((value) => value + 1);
-    setPlaying(!reducedMotion && !fromKeyboard);
   };
-
-  const simulatedStatuses = useMemo<Record<string, SimulatedStepStatus>>(() => {
-    if (simStepIndex === null) return {};
-    const statuses: Record<string, SimulatedStepStatus> = {};
-    playbookSteps.forEach((s, index) => {
-      if (index < simStepIndex) {
-        statuses[s.key] = "completed";
-      } else if (index === simStepIndex) {
-        statuses[s.key] = s.auto_advance_default ? "running" : "waiting_for_approval";
-      } else {
-        statuses[s.key] = "idle";
-      }
-    });
-    return statuses;
-  }, [playbookSteps, simStepIndex]);
-
-  const currentSimStep = simStepIndex !== null && simStepIndex < playbookSteps.length ? playbookSteps[simStepIndex] : null;
-  const simDuration = simStepIndex !== null && simStepIndex >= playbookSteps.length ? 2800 : currentSimStep?.auto_advance_default ? 2600 : 3800;
-  // This preview only changes local state; real checkpoint approval remains explicit.
-  useEffect(() => {
-    setDemoRevision((value) => value + 1);
-    setSimStepIndex(playbookSteps.length ? 0 : null);
-    setSelectedStepKey(playbookSteps[0]?.key ?? null);
-    setPlaying(step === "playbooks" && !reducedMotion && !selectionFromKeyboard.current);
-    selectionFromKeyboard.current = false;
-  }, [step, appConfig.active_repo, selectedArchetypeKey, playbookSteps, reducedMotion]);
-
-  useEffect(() => {
-    if (step !== "playbooks" || !playing || simStepIndex === null || playbookSteps.length === 0) return;
-    const complete = simStepIndex >= playbookSteps.length;
-    const key = `${demoRevision}:${simStepIndex}`;
-    if (demoClock.current.key !== key) demoClock.current = { key, elapsed: 0 };
-    const clock = demoClock.current;
-    const startedAt = performance.now();
-    const timer = window.setTimeout(
-      () => {
-        const next = complete ? 0 : simStepIndex + 1;
-        setSimStepIndex(next);
-        if (playbookSteps[next]) setSelectedStepKey(playbookSteps[next].key);
-      },
-      Math.max(0, simDuration - clock.elapsed),
-    );
-    return () => {
-      window.clearTimeout(timer);
-      clock.elapsed = Math.min(simDuration, clock.elapsed + performance.now() - startedAt);
-    };
-  }, [step, appConfig.active_repo, selectedArchetypeKey, playing, simStepIndex, simDuration, playbookSteps, demoRevision]);
 
   const handleCommitDefaultModel = (nextModel: string) => {
     setModelError("");
@@ -311,16 +247,6 @@ export function OnboardingFlow({
     playbookSteps.findIndex((s) => s.key === selectedStepKey),
   );
   const selectedStep = playbookSteps[selectedStepIndex] ?? playbookSteps[0];
-
-  const demoComplete = simStepIndex !== null && simStepIndex >= playbookSteps.length;
-  const simStatusCopy = (() => {
-    if (demoComplete && playing) return "Every step is complete. The preview will loop again.";
-    if (!selectedStep) return "Select a step to see how work moves through the playbook.";
-    if (!selectedStep.auto_advance_default) return "Real runs wait for your approval. This preview continues automatically.";
-    if (selectedStep.inputs.some((input) => input.mode === "each")) return "Each matching artifact starts a parallel session. Their results feed the next step.";
-    if (selectedStep.inputs.some((input) => input.mode === "complete")) return "This step waits for every upstream result before bringing the work together.";
-    return "The agent creates an artifact, then hands the work to the next step.";
-  })();
 
   return (
     <div className="view scroll onboarding-view" data-testid="onboarding-flow">
@@ -461,7 +387,7 @@ export function OnboardingFlow({
                             ? 0
                             : EXAMPLE_ARCHETYPES.length - 1
                           : (currentIdx + delta + EXAMPLE_ARCHETYPES.length) % EXAMPLE_ARCHETYPES.length;
-                  handleSelectArchetype(EXAMPLE_ARCHETYPES[nextIdx].reference.key, true);
+                  handleSelectArchetype(EXAMPLE_ARCHETYPES[nextIdx].reference.key);
                   event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[nextIdx]?.focus();
                 }}
               >
@@ -535,128 +461,54 @@ export function OnboardingFlow({
 
             {activePlaybook ? (
               <div className="onboarding-playbook-stage">
-                <div className="onboarding-sim-bar">
+                <div className="onboarding-stage-head">
                   <div className="onboarding-sim-title">
-                    <span className="onboarding-step-ordinal">{selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}</span>
-                    <h3>{demoComplete && playing ? "Demo complete" : (selectedStep?.title ?? activePlaybook.title)}</h3>
+                    <h3>{activePlaybook.title}</h3>
+                    {activePlaybook.description && <p className="onboarding-sim-copy">{activePlaybook.description}</p>}
                   </div>
-                  <p className="onboarding-sim-copy">{simStatusCopy}</p>
-                  {playbookSteps.length > 0 && (
-                    <div
-                      key={demoRevision}
-                      className="onboarding-demo-progress"
-                      data-reduced-motion={reducedMotion || undefined}
-                      role="progressbar"
-                      aria-label="Playbook demo"
-                      aria-valuemin={1}
-                      aria-valuemax={playbookSteps.length}
-                      aria-valuenow={demoComplete && playing ? playbookSteps.length : selectedStepIndex + 1}
-                      aria-valuetext={demoComplete && playing ? "Demo complete" : `${selectedStep?.title}, step ${selectedStepIndex + 1} of ${playbookSteps.length}`}
-                    >
-                      {playbookSteps.map((item) => (
-                        <span
-                          key={item.key}
-                          data-complete={simulatedStatuses[item.key] === "completed" || undefined}
-                          data-current={item.key === selectedStep?.key || undefined}
-                          data-running={item.key === currentSimStep?.key || undefined}
-                          aria-hidden="true"
-                        >
-                          <span className="onboarding-demo-progress-fill" style={{ animationDuration: `${simDuration}ms`, animationPlayState: playing ? "running" : "paused" }} />
-                        </span>
-                      ))}
+                  <PlaybookLibraryLink className="small" playbook={selectedArchetype.reference}>
+                    Explore in the Playbook Library
+                  </PlaybookLibraryLink>
+                </div>
+                <PlaybookRing
+                  key={activePlaybook.key}
+                  steps={playbookSteps}
+                  selectedStepKey={selectedStep?.key ?? null}
+                  onSelectStep={setSelectedStepKey}
+                  onHoverStep={(key) => {
+                    // Hover sticks: the centre keeps the last step the pointer visited.
+                    if (key) setSelectedStepKey(key);
+                  }}
+                >
+                  <span className="onboarding-step-ordinal onboarding-knockout">
+                    {selectedStep ? `Step ${selectedStepIndex + 1} of ${playbookSteps.length}` : "Playbook preview"}
+                  </span>
+                  <h4>
+                    <span className="onboarding-knockout">{selectedStep?.title ?? activePlaybook.title}</span>
+                  </h4>
+                  {selectedStep && (
+                    <div className="onboarding-step-badges">
+                      <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
+                        {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
+                      </span>
+                      {[...new Set(selectedStep.inputs.map((input) => input.mode))]
+                        .filter((mode) => mode !== "single")
+                        .map((mode) => (
+                          <span className="pill" key={mode}>
+                            {INPUT_MODE_LABELS[mode]}
+                          </span>
+                        ))}
                     </div>
                   )}
-                  <span className="onboarding-demo-caption">Demo only · No agents are running.</span>
+                  <p className="onboarding-sim-copy">
+                    <span className="onboarding-knockout">
+                      {selectedStep ? promptExcerpt(selectedStep.prompt) || "This step has no prompt text." : "Hover or click a step to read its prompt."}
+                    </span>
+                  </p>
+                </PlaybookRing>
+                <div className="onboarding-stage-foot">
+                  <span>Hover or click a step to read its prompt.</span>
                 </div>
-
-                <div className="onboarding-graph-frame">
-                  <button
-                    type="button"
-                    className="onboarding-demo-toggle"
-                    onClick={() => {
-                      if (!playing && currentSimStep) setSelectedStepKey(currentSimStep.key);
-                      setPlaying((value) => !value);
-                    }}
-                    disabled={!playbookSteps.length}
-                  >
-                    {playing ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
-                    {playing ? "Pause demo" : "Resume demo"}
-                  </button>
-                  <PlaybookGraph
-                    key={activePlaybook.key}
-                    title={activePlaybook.title}
-                    steps={playbookSteps}
-                    variant="definition"
-                    showInspector={false}
-                    hideToolbar={true}
-                    minScale={1}
-                    selectedStepKey={selectedStep?.key ?? null}
-                    onSelectStep={(key) => {
-                      setPlaying(false);
-                      setSelectedStepKey(key);
-                    }}
-                    simulatedStatuses={simulatedStatuses}
-                    simulationPlaying={playing && !reducedMotion}
-                    onPauseSimulation={() => setPlaying(false)}
-                  />
-                </div>
-
-                {selectedStep && (
-                  <section className="onboarding-step-inspector" aria-label={`${selectedStep.title} step contract`} data-animated={(playing && !reducedMotion) || undefined}>
-                    <div className="onboarding-step-content" key={`${activePlaybook.key}:${selectedStep.key}`}>
-                      <div className="onboarding-step-inspector-header">
-                        <div className="onboarding-step-inspector-title">
-                          <span className="onboarding-step-ordinal">Step 0{selectedStepIndex + 1}</span>
-                          <h3>{selectedStep.title}</h3>
-                        </div>
-                        <div className="onboarding-step-badges">
-                          <span className={`pill ${selectedStep.auto_advance_default ? "onboarding-pill-accent" : "onboarding-pill-warning"}`}>
-                            {selectedStep.auto_advance_default ? "Auto-advances" : "Human checkpoint"}
-                          </span>
-                          <span className="onboarding-step-kind">{selectedStep.is_coding_step ? "Code changes" : "Artifact work"}</span>
-                        </div>
-                      </div>
-
-                      <div className="onboarding-contract-grid">
-                        <div className="onboarding-contract-col">
-                          <h4>Reads (inputs)</h4>
-                          {selectedStep.inputs.length > 0 ? (
-                            <ul className="onboarding-contract-list">
-                              {selectedStep.inputs.map((input) => (
-                                <li key={`${input.path}:${input.mode}`}>
-                                  <code>{input.path}</code>
-                                  {input.mode !== "single" && <span className="pill">{INPUT_MODE_LABELS[input.mode]}</span>}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="onboarding-contract-empty">Reads initial task ticket (ticket.md)</p>
-                          )}
-                        </div>
-                        <div className="onboarding-contract-col">
-                          <h4>Writes (outputs)</h4>
-                          {selectedStep.outputs.length > 0 ? (
-                            <ul className="onboarding-contract-list">
-                              {selectedStep.outputs.map((output) => (
-                                <li key={output.path}>
-                                  <code>{output.path}</code>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="onboarding-contract-empty">No declared output artifacts</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <details className="onboarding-prompt-preview">
-                        <summary>View step prompt instructions</summary>
-                        <p className="onboarding-artifact-path">Step: {selectedStep.key} · Artifacts: .alinery/tasks/&lt;slug&gt;/artifacts/</p>
-                        <pre>{selectedStep.prompt}</pre>
-                      </details>
-                    </div>
-                  </section>
-                )}
               </div>
             ) : (
               <div className="onboarding-playbook-stage">
