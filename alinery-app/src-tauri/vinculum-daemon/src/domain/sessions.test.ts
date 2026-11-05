@@ -146,3 +146,18 @@ test("a session with no live row has no status", async () => {
   const e = t.store.get("session/fix/s1")?.value;
   expect(e?.case === "session" && e.value.status).toBeUndefined();
 });
+
+test("daemon status reports an exhausted watcher", () => {
+  const t = rig();
+  let exhausted = false;
+  const p = new SessionPublisher(t.store, t.feed, () => t.rows.values(), { protocol: 25, buildId: "test", watchExhausted: () => exhausted });
+  p.commitStatus();
+  const flag = () => {
+    const e = t.store.get(daemonStatusKey)?.value;
+    return e?.case === "daemonStatus" && e.value.watchExhausted;
+  };
+  expect(flag()).toBe(false);
+  exhausted = true;
+  p.commitStatus();
+  expect(flag()).toBe(true);
+});

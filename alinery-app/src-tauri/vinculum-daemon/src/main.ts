@@ -132,7 +132,7 @@ const lane = namespace;
 const identity = appConfigIdentity(appConfig);
 const store = new Store();
 const feed = new Feed(store, join(repo, ".alinery"), (entity) => publisher.decorate(entity));
-const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId });
+const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId, watchExhausted: () => watcher.status.enospc });
 acquireOwnership(repo, lane, identity);
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
 const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
@@ -1133,9 +1133,9 @@ repairSessionMetas();
 // Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
 // then does the RPC server listen, so a first Subscribe never sees a half-built store.
 await feed.scan();
-publisher.commitStatus();
 const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line) });
 watcher.start();
+publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({

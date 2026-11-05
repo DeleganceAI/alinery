@@ -41,11 +41,11 @@ export function withLive(entity: Entity, live: LiveSession | undefined): Entity 
 export const daemonStatusKey = "daemon/_/status";
 
 /** The daemon's half of `DaemonStatus`. The store drops a put equal to the stored row, so calling this on every session change costs nothing when the count held. */
-export function commitDaemonStatus(store: Store, info: { protocol: number; buildId: string; liveSessions: number; hostGuardWarning?: string }): void {
+export function commitDaemonStatus(store: Store, info: { protocol: number; buildId: string; liveSessions: number; hostGuardWarning?: string; watchExhausted?: boolean }): void {
   store.commit([
     create(EntitySchema, {
       key: daemonStatusKey,
-      value: { case: "daemonStatus", value: create(DaemonStatusSchema, { protocol: info.protocol, buildId: info.buildId, liveSessions: info.liveSessions, hostGuardWarning: info.hostGuardWarning ?? "" }) },
+      value: { case: "daemonStatus", value: create(DaemonStatusSchema, { protocol: info.protocol, buildId: info.buildId, liveSessions: info.liveSessions, hostGuardWarning: info.hostGuardWarning ?? "", watchExhausted: info.watchExhausted ?? false }) },
     }),
   ]);
 }
@@ -62,7 +62,7 @@ export class SessionPublisher {
     private readonly store: Store,
     private readonly feed: Feed,
     private readonly liveRows: () => Iterable<LiveRow>,
-    private readonly info: { protocol: number; buildId: string },
+    private readonly info: { protocol: number; buildId: string; watchExhausted?: () => boolean },
     private readonly log: (line: string) => void = console.error,
   ) {}
 
@@ -82,6 +82,6 @@ export class SessionPublisher {
   commitStatus(): void {
     let liveSessions = 0;
     for (const row of this.liveRows()) if (row.process.state !== "exited" && row.id !== "__omp-setup__") liveSessions += 1;
-    commitDaemonStatus(this.store, { ...this.info, liveSessions });
+    commitDaemonStatus(this.store, { protocol: this.info.protocol, buildId: this.info.buildId, liveSessions, watchExhausted: this.info.watchExhausted?.() });
   }
 }
