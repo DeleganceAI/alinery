@@ -1,9 +1,8 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Socket } from "node:net";
 import { expect, test } from "bun:test";
-import { attachShell, killPty, startShell, writePty } from "./terminal.ts";
+import { killPty, startShell, subscribeOutput, writePty, type OutputFrame } from "./terminal.ts";
 
 test("a no-harness shell can be written, detached, and reattached from scrollback", async () => {
   const dir = mkdtempSync(join(tmpdir(), "vinculum-pty-"));
@@ -23,22 +22,11 @@ test("a no-harness shell can be written, detached, and reattached from scrollbac
     await Bun.sleep(40);
   }
   expect(text).toContain("vinculum-pty-ok");
-  const chunks: Buffer[] = [];
-  const socket = {
-    writableLength: 0,
-    write(data: Buffer | string) {
-      chunks.push(Buffer.from(data));
-      return true;
-    },
-    on() {
-      return this;
-    },
-    destroy() {},
-    end() {},
-  } as unknown as Socket;
-  expect(attachShell(id, socket, 7, 80, 24)).toBe(true);
-  const replay = Buffer.concat(chunks).toString("utf8");
-  expect(replay.startsWith('{"ok":true}\n')).toBe(true);
+  const frames: OutputFrame[] = [];
+  const sub = subscribeOutput(id, 0, (f) => frames.push(f));
+  expect(sub).toBeDefined();
+  const replay = Buffer.concat(sub!.frames.map((f) => ("data" in f ? f.data : Buffer.alloc(0)))).toString("utf8");
   expect(replay).toContain("vinculum-pty-ok");
+  sub!.unsubscribe();
   killPty(id);
 });

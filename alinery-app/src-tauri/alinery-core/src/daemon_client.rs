@@ -352,10 +352,7 @@ pub mod ops {
     pub const ATTACH: &str = "attach";
     pub const SPAWN: &str = "spawn";
     pub const RESUME: &str = "resume";
-    pub const DETACH: &str = "detach";
-    pub const WRITE: &str = "write";
     pub const SEND_MESSAGE: &str = "send_message";
-    pub const RESIZE: &str = "resize";
     pub const STATUS: &str = "status";
     pub const KILL: &str = "kill";
     pub const RESTATE: &str = "restate";
@@ -392,16 +389,8 @@ pub fn shutdown_request() -> Value {
     json!({"op": ops::SHUTDOWN})
 }
 
-pub fn write_request(id: &str, data: &str) -> Value {
-    json!({"op": ops::WRITE, "id": id, "data": data})
-}
-
 pub fn send_message_header(id: &str, body_bytes: usize) -> Value {
     json!({"op": ops::SEND_MESSAGE, "id": id, "body_bytes": body_bytes})
-}
-
-pub fn resize_request(id: &str, cols: u16, rows: u16) -> Value {
-    json!({"op": ops::RESIZE, "id": id, "cols": cols, "rows": rows})
 }
 
 pub fn kill_request(id: &str) -> Value {
@@ -410,10 +399,6 @@ pub fn kill_request(id: &str) -> Value {
 
 pub fn status_request(id: &str) -> Value {
     json!({"op": ops::STATUS, "id": id})
-}
-
-pub fn detach_request(id: &str, attach_id: u64) -> Value {
-    json!({"op": ops::DETACH, "id": id, "attach_id": attach_id})
 }
 
 pub fn spawn_request(id: &str, task_slug: &str) -> Value {
@@ -631,7 +616,6 @@ pub struct OpenRequest<'a> {
     pub task_slug: Option<&'a str>,
     pub phase: Option<&'a str>,
     pub model: Option<&'a str>,
-    pub attach_id: u64,
     pub resume_token: Option<&'a str>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
@@ -645,7 +629,6 @@ pub fn open_request(request: &OpenRequest<'_>) -> Value {
         "task_slug": request.task_slug,
         "phase": request.phase,
         "model": request.model,
-        "attach_id": request.attach_id,
         "resume_token": request.resume_token,
         "cols": request.cols,
         "rows": request.rows,
@@ -1099,14 +1082,6 @@ impl DaemonClient {
             .unwrap_or(0)
     }
 
-    pub fn detach_session(&self, id: &str, attach_id: u64) -> Result<(), String> {
-        self.call(&detach_request(id, attach_id)).and_then(expect_ok)
-    }
-
-    pub fn write_session(&self, id: &str, data: &str) -> Result<(), String> {
-        self.call(&write_request(id, data)).and_then(expect_ok)
-    }
-
     pub fn send_message(&self, id: &str, body: &str) -> Result<(), String> {
         let mut stream = self.send(&send_message_header(id, body.len())).map_err(|error| unknown_message_delivery(&error))?;
         stream.write_all(body.as_bytes()).map_err(|error| unknown_message_delivery(&error.to_string()))?;
@@ -1117,10 +1092,6 @@ impl DaemonClient {
         })?;
         let response: Value = serde_json::from_str(&line).map_err(|error| unknown_message_delivery(&format!("malformed daemon reply: {error}")))?;
         expect_message_send(response)
-    }
-
-    pub fn resize_session(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        self.call(&resize_request(id, cols, rows)).and_then(expect_ok)
     }
 
     pub fn session_status_observed(&self, id: &str) -> Result<Option<LiveSessionStatus>, String> {
@@ -1628,13 +1599,10 @@ mod tests {
         assert_eq!(shutdown_request()["op"], "shutdown");
         assert_eq!(version_request()["op"], "version");
         assert_eq!(list_request()["op"], "list");
-        assert_eq!(write_request("s1", "hi")["data"], "hi");
         assert_eq!(send_message_header("s1", 7)["op"], "send_message");
         assert_eq!(send_message_header("s1", 7)["body_bytes"], 7);
-        assert_eq!(resize_request("s1", 80, 24)["cols"], 80);
         assert_eq!(kill_request("s1")["id"], "s1");
         assert_eq!(status_request("s1")["op"], "status");
-        assert_eq!(detach_request("s1", 7)["attach_id"], 7);
         assert_eq!(spawn_request("s1", "slug")["task_slug"], "slug");
 
         let exact = DaemonVersionReply {
@@ -1745,7 +1713,6 @@ mod tests {
             task_slug: Some("slug"),
             phase: None,
             model: None,
-            attach_id: 3,
             resume_token: Some("token"),
             cols: Some(80),
             rows: Some(24),
@@ -1764,7 +1731,6 @@ mod tests {
             task_slug: Some("slug"),
             phase: Some("research"),
             model: Some("sonnet"),
-            attach_id: 1,
             resume_token: None,
             cols: None,
             rows: None,

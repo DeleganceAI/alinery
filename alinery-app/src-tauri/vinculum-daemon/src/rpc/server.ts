@@ -8,6 +8,7 @@ import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
+import { TerminalService } from "alinery-proto/alinery/v1/terminal_pb";
 import { adminService, type DaemonInfo, type Lifecycle } from "./admin.ts";
 import { credentials, PEER_CLASSES, type PeerClass } from "./auth.ts";
 import { addService } from "./grpc.ts";
@@ -18,17 +19,19 @@ import type { Store } from "../sync/store.ts";
 import { jobService } from "./jobs.ts";
 import { sessionService, type Transcripts } from "./sessions.ts";
 import { syncService } from "./sync.ts";
+import { terminalService } from "./terminal.ts";
 import { peerExecutable, samePath } from "./peer.ts";
 
-type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts };
+type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService> };
 
-function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts }: Hosted) {
+function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal }: Hosted) {
   const server = new grpc.Server();
   const values = (header: Headers) => credentials(header, peer, secret);
   addService(server, AdminService, adminService(info, lifecycle, store.epoch), values);
   addService(server, SyncService, syncService(store), values);
   addService(server, JobService, jobService(jobs, dedupe, store, storageScan), values);
   addService(server, SessionService, sessionService(transcripts), values);
+  addService(server, TerminalService, terminal, values);
   return server.createConnectionInjector(grpc.ServerCredentials.createInsecure());
 }
 
@@ -39,11 +42,11 @@ function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable:
   return peer && samePath(peer, hostExecutable) ? "shell" : "other";
 }
 
-export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts };
+export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number };
 
 export function serveRpc(options: RpcOptions): Promise<NetServer> {
-  // One dedupe for all three peer classes: a client's retry lands on a new connection, not a new class.
-  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe() };
+  // One dedupe and one attach table for all three peer classes: a client's retry lands on a new connection, not a new class.
+  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs) };
   const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info, options.lifecycle, hosted)]));
   const net = createNetServer((sock) => {
     sock.on("error", () => {});

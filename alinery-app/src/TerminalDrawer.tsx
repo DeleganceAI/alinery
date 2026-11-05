@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
 import { sessionObservationKey, useSessionObservations } from "./sync/sessionObservation";
+import { writeTerminal } from "./sync/terminal";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
@@ -84,9 +85,8 @@ export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope
 }
 
 function CdHereButton({ sessionId, target }: { sessionId: string | null; target: string }) {
-  const [busy, setBusy] = useState(false);
   const dest = target.trim();
-  const ready = Boolean(sessionId && dest && !busy);
+  const ready = Boolean(sessionId && dest);
   return (
     <button
       type="button"
@@ -96,10 +96,7 @@ function CdHereButton({ sessionId, target }: { sessionId: string | null; target:
       aria-label={dest ? `cd here: ${dest}` : "cd here (resolving path)"}
       onClick={() => {
         if (!sessionId || !dest) return;
-        setBusy(true);
-        void Promise.resolve(ipc.writeSession(sessionId, shellCdCommand(dest)))
-          .catch(() => {})
-          .finally(() => setBusy(false));
+        writeTerminal(sessionId, shellCdCommand(dest));
       }}
     >
       <CornerDownRight size={16} strokeWidth={1.5} aria-hidden="true" />

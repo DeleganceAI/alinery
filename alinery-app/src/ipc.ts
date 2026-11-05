@@ -332,18 +332,6 @@ export const chatPrompt = (repoPath: string, id: string, text: string) => invoke
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
-export const chatPtyAttach = (a: {
-  repoPath: string;
-  id: string;
-  attachId: number;
-  streamToken: number;
-  cols?: number | null;
-  rows?: number | null;
-  onBytes: Channel<ArrayBuffer>;
-}) => invoke<void>("chat_pty_attach", a);
-export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
-export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
@@ -355,7 +343,6 @@ export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: strin
 export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
   invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
-export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
@@ -367,8 +354,6 @@ export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) =
 export const openSession = (a: {
   id: string;
   cwd: string;
-  attachId: number;
-  streamToken: number;
   taskSlug?: string | null;
   phase?: string | null;
   model?: string | null;
@@ -376,13 +361,11 @@ export const openSession = (a: {
   resumeToken?: string | null;
   cols?: number | null;
   rows?: number | null;
-  onBytes: Channel<ArrayBuffer>;
 }) => invoke<void>("open_session", a);
 // Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
 // the wire, and a per-byte JS array before a single row can be parsed).
 export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<ArrayBuffer>("read_session_history", a);
 export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
-export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
 export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
@@ -396,7 +379,6 @@ export const customProviderSave = (input: { id: string; name: string; baseUrl: s
   invoke<ProviderCatalog>("custom_provider_save", input);
 export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
-export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
 export const prepareReviewApprovalPrompt = (taskSlug: string, reviewArtifact: string) =>
   invoke<PreparedSessionMessageAction>("prepare_review_approval_prompt", { taskSlug, reviewArtifact });
 export const finalizeSessionMessageActions = (id: string, taskSlug: string, actions: SessionMessageActionProvenance[]) =>
@@ -505,15 +487,6 @@ export const installVinculumSkill = (sourcePath: string, replace: boolean) => in
 export const deleteVinculumSkill = (name: string) => invoke<void>("delete_vinculum_skill", { name });
 export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
 
-// One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
-// chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.
-let attachIdSeq = 1;
-export const nextAttachId = () => attachIdSeq++;
-
-const STREAM_RECOVERY_WINDOW_MS = 30_000;
-const STREAM_RECOVERY_MAX = 6;
-const streamCloses = new Map<string, number[]>();
-
 /**
  * A remote host was connected (the first time, or brought back after it dropped). A pane that lost
  * its stream while the host was away rejoins here. Returns the unlisten.
@@ -523,36 +496,6 @@ export function onRemoteHostConnected(handler: () => void): () => void {
   let stop: (() => void) | null = null;
   void listen("remote_host_connected", () => {
     if (!disposed) handler();
-  }).then((unlisten) => {
-    if (disposed) unlisten();
-    else stop = unlisten;
-  });
-  return () => {
-    disposed = true;
-    stop?.();
-  };
-}
-
-/**
- * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client
- * more than 2 MB behind (so it can never block OMP), the socket failed or ended, or the view's
- * channel closed. The event carries no cause, so a view says the connection closed, never why.
- * Without a listener the view keeps showing a running turn that never prints again while OMP works
- * on. `onClosed` fires for this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX
- * closes in 30s, so a stream that keeps closing stops instead of re-reading the journal in a loop.
- * Returns the unlisten.
- */
-export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
-  let disposed = false;
-  let stop: (() => void) | null = null;
-  void listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
-    if (disposed || event.payload.id !== id || event.payload.attach_id !== attachId) return;
-    const now = Date.now();
-    const recent = (streamCloses.get(id) ?? []).filter((at) => now - at < STREAM_RECOVERY_WINDOW_MS);
-    recent.push(now);
-    streamCloses.set(id, recent);
-    if (recent.length > STREAM_RECOVERY_MAX) onGiveUp();
-    else onClosed();
   }).then((unlisten) => {
     if (disposed) unlisten();
     else stop = unlisten;

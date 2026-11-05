@@ -25,8 +25,6 @@ let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
-  onStreamClosed: vi.fn(),
-  chatDetach: vi.fn(),
   chatPrompt: vi.fn(),
   chatThreadName: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
@@ -39,8 +37,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
-    onStreamClosed: mocks.onStreamClosed,
-    chatDetach: mocks.chatDetach,
     chatPrompt: mocks.chatPrompt,
     chatThreadName: mocks.chatThreadName,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
@@ -120,8 +116,6 @@ beforeEach(() => {
   setViewport(VIEW_W, VIEW_H);
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
   mocks.listChatThreads.mockResolvedValue([]);
-  mocks.onStreamClosed.mockReturnValue(() => {});
-  mocks.chatDetach.mockResolvedValue(undefined);
   mocks.chatPrompt.mockResolvedValue(undefined);
   // Every chat thread under test is a live idle OMP chat as the daemon reports it.
   daemon = sessionDaemon();

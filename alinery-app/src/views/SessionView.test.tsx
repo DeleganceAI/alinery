@@ -44,7 +44,6 @@ const sessionStatus = {
 };
 const sessionArtifactReady = vi.hoisted(() => vi.fn(async () => false));
 const startSession = vi.hoisted(() => vi.fn(async () => undefined));
-const onStreamClosed = vi.hoisted(() => vi.fn((_id: string, _attachId: number, _onClosed: () => void, _onGiveUp: () => void) => () => {}));
 const sessionPrompt = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionAbort = vi.hoisted(() => vi.fn(async () => undefined));
 const sessionSetModel = vi.hoisted(() => vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })));
@@ -54,7 +53,6 @@ const providerCatalog = vi.hoisted(() =>
     throw new Error("no catalog");
   }),
 );
-const detachSession = vi.hoisted(() => vi.fn(async () => undefined));
 const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
 const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
@@ -138,13 +136,11 @@ vi.mock("../ipc", () =>
     archiveSession,
     sessionArtifactReady,
     startSession,
-    onStreamClosed,
     sessionPrompt,
     sessionAbort,
     sessionSetModel,
     sessionSetThinkingLevel,
     providerCatalog,
-    detachSession,
     readOmpModelRoles,
     writeOmpModelRoles,
     openUrl,

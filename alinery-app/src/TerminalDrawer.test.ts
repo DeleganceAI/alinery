@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "./daemon/transport";
 import * as ipc from "./ipc";
+import { writeTerminal } from "./sync/terminal";
 import { shellCdCommand, shellSingleQuote, TerminalDrawer } from "./TerminalDrawer";
 import { daemonHarness, scriptedSync, untilAborted } from "./test/daemonHarness";
 import { sessionDaemon } from "./test/sessionDaemon";
@@ -25,6 +26,7 @@ const sessionHost = vi.hoisted(() => ({
 }));
 
 vi.mock("./ipc");
+vi.mock("./sync/terminal", () => ({ writeTerminal: vi.fn() }));
 vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
 vi.mock("./SessionTerminal", () => ({
   SessionTerminal: (props: SessionHostProps) => sessionHost.render(props),
@@ -336,17 +338,17 @@ describe("TerminalDrawer tab bar", () => {
     const cdHere = await screen.findByRole("button", { name: "cd here: /repo" });
     expect(cdHere.getAttribute("title")).toBe("cd here: /repo");
     fireEvent.click(cdHere);
-    expect(ipc.writeSession).toHaveBeenCalledTimes(1);
-    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
-    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-2", expect.anything());
+    expect(writeTerminal).toHaveBeenCalledTimes(1);
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
+    expect(writeTerminal).not.toHaveBeenCalledWith("drawer-2", expect.anything());
 
     cleanup();
-    vi.mocked(ipc.writeSession).mockClear();
+    vi.mocked(writeTerminal).mockClear();
     const other = renderDrawer({ activeId: "drawer-2" });
     fireEvent.click(await screen.findByRole("button", { name: "cd here: /repo" }));
-    expect(ipc.writeSession).toHaveBeenCalledTimes(1);
-    expect(ipc.writeSession).toHaveBeenCalledWith("drawer-2", shellCdCommand("/repo"));
-    expect(ipc.writeSession).not.toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
+    expect(writeTerminal).toHaveBeenCalledTimes(1);
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-2", shellCdCommand("/repo"));
+    expect(writeTerminal).not.toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo"));
     expect(other.props.onSelect).not.toHaveBeenCalled();
   });
 
@@ -361,7 +363,7 @@ describe("TerminalDrawer tab bar", () => {
     const missing = await screen.findByRole("button", { name: "cd here: /repo" });
     expect(missing.hasAttribute("disabled")).toBe(true);
     fireEvent.click(missing);
-    expect(ipc.writeSession).not.toHaveBeenCalled();
+    expect(writeTerminal).not.toHaveBeenCalled();
   });
 
   it("hides chrome without unmounting the active terminal", () => {

@@ -2,10 +2,10 @@
 //! repo's daemon as one HTTP/2 stream, and streams the answer back on a `Channel`.
 //!
 //! The shell knows neither gRPC nor protobuf here. It moves headers, data and trailers, adds the
-//! bearer token (the webview never sees it), and batches frames the way `pump_session_stream` does.
+//! bearer token (the webview never sees it), and batches frames so a chatty stream is not one Channel message per read.
 //! Frame format on the Channel: `[u32 LE len][u8 kind][payload]`, `len` counting the kind byte; one
 //! message holds one or more frames, then zeros up to 1 KiB (Tauri sends smaller raw bodies through
-//! `webview.eval`, `session.rs` `frame_session_channel_bytes`). A zero length ends the message.
+//! `webview.eval`). A zero length ends the message.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

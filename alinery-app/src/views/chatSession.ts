@@ -2,7 +2,6 @@ import type { UserRowAttachment } from "../chat/attachments";
 import { decodeOmpPage } from "../chat/ompFile";
 import { applySendPlan } from "../chat/send";
 import { applyFilePage, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
-import * as ipc from "../ipc";
 import { abortAndPromptCommand, followUpCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { observationNow } from "../sync/sessionObservation";
@@ -31,13 +30,11 @@ export function sendNowCommand(text: string, images?: ImageContent[]) {
   return abortAndPromptCommand(text, undefined, images);
 }
 
-/** The terminal hatch's daemon calls, scoped to the thread's own repo instead of the active one. */
+/** The terminal hatch's daemon calls, scoped to the thread's own repo instead of the active one. It only attaches: the thread's shell is already running. */
 export function chatTerminalIo(repoPath: string, id: string): SessionTerminalIo {
   return {
-    open: (args) => ipc.chatPtyAttach({ repoPath, id, attachId: args.attachId, streamToken: args.streamToken, cols: args.cols, rows: args.rows, onBytes: args.onBytes }),
-    write: (data) => ipc.chatPtyWrite(repoPath, id, data),
-    resize: (cols, rows) => ipc.chatPtyResize(repoPath, id, cols, rows),
-    detach: (attachId) => ipc.chatDetach(repoPath, id, attachId),
+    open: async () => {},
+    repo: async () => repoPath,
     status: () => observationNow(repoPath, "", id),
   };
 }

@@ -446,52 +446,6 @@ pub(crate) async fn allow_execution_completion(
     .map_err(|error| format!("allow execution completion task: {error}"))?
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn open_daemon_session(
-    client: &DaemonClient,
-    id: &str,
-    cwd: &str,
-    task_slug: Option<&str>,
-    phase: Option<&str>,
-    model: Option<&str>,
-    attach_id: u64,
-    stream_token: u64,
-    intent: &str,
-    resume_token: Option<&str>,
-    cols: Option<u16>,
-    rows: Option<u16>,
-    on_bytes: Channel<InvokeResponseBody>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let mut stream = client.send(&daemon_client::open_request(&daemon_client::OpenRequest {
-        intent,
-        id,
-        cwd,
-        task_slug,
-        phase,
-        model,
-        attach_id,
-        resume_token,
-        cols,
-        rows,
-    }))?;
-    // A wedged daemon must not read as a dead one: the handshake shares the control budget.
-    let line = read_socket_line(&mut stream).map_err(|error| match error {
-        SocketReadError::Closed => "daemon closed".to_string(),
-        SocketReadError::TimedOut => format!("daemon not responding after {}", format_daemon_timeout(DAEMON_CONTROL_TIMEOUT)),
-    })?;
-    let response: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if let Some(error) = daemon_client::reply_error(&response) {
-        return Err(error.to_string());
-    }
-    let event_id = id.to_string();
-    std::thread::spawn(move || {
-        pump_session_stream(stream, |bytes| on_bytes.send(InvokeResponseBody::Raw(frame_session_channel_bytes(bytes))).is_ok());
-        let _ = app.emit("session_stream_closed", json!({ "id": event_id, "attach_id": attach_id, "stream_token": stream_token }));
-    });
-    Ok(())
-}
-
 pub(crate) fn passive_session_statuses(repo: &Path, expected_app_config_identity: &str) -> Result<Vec<DaemonSessionStatus>, String> {
     let client = DaemonClient::connect_path(current_alineryd_socket_path(repo))?;
     classify_connected_daemon(&client, repo, expected_app_config_identity).map_err(|error| error.to_string())?;

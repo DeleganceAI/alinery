@@ -19,7 +19,7 @@ import { compactCommand, getStateCommand, type ImageContent, promptCommand } fro
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
-import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
@@ -587,7 +587,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   useEffect(() => {
     const threadNow = entry.thread ?? thread;
     compactionPushed.current = `${key}:${autoCompactionRef.current}`;
-    const attachId = ipc.nextAttachId();
     const claimed = registry.pendingPrompt?.key === key ? registry.pendingPrompt : null;
     let cancelled = false;
     registry.setError((current) => (current === "cannot continue" ? "" : current));
@@ -599,25 +598,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       setConnection({ state: "offline" });
       for (const sub of entry.subs.values()) void Promise.resolve(sub.onReload()).catch(() => {});
     };
-    const stopClosed = ipc.onStreamClosed(
-      id,
-      attachId,
-      () => {
-        observationNow(repo, "", id).then(
-          (next) => {
-            if (cancelled || next.transport === "pty") return;
-            if (next.transport === "rpc" && next.lifecycle.state === "live") setEpoch((value) => value + 1);
-            else ended();
-          },
-          () => {
-            if (!cancelled) setEpoch((value) => value + 1);
-          },
-        );
-      },
-      () => {
-        if (!cancelled) setConnection({ state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." });
-      },
-    );
     endedRef.current = ended;
     const dropClaim = (message: string) => {
       if (!claimed || registry.pendingPrompt !== claimed) return;
@@ -656,7 +636,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       cancelled = true;
       endedRef.current = null;
       stopTranscript();
-      stopClosed();
     };
   }, [epoch, repo, id]);
 

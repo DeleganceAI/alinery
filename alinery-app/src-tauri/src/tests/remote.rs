@@ -836,33 +836,21 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         })
         .unwrap();
     let terminal = created.session.id.clone();
-    let stream = client
-        .send(&alinery_core::daemon_client::open_request(&alinery_core::daemon_client::OpenRequest {
+    // The shell starts over the forward. Its bytes travel on TerminalService, not on this socket
+    // (vinculum-daemon/src/rpc/terminal.test.ts).
+    client
+        .resume_session(&alinery_core::daemon_client::OpenRequest {
             intent: alinery_core::daemon_client::ops::SPAWN,
             id: &terminal,
             cwd: &repo,
             task_slug: Some(""),
             phase: None,
             model: None,
-            attach_id: 1,
             resume_token: None,
             cols: Some(80),
             rows: Some(24),
-        }))
+        })
         .unwrap();
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
-    let mut reader = std::io::BufReader::new(stream);
-    let mut handshake = String::new();
-    std::io::BufRead::read_line(&mut reader, &mut handshake).unwrap();
-    assert!(handshake.contains("\"ok\":true"), "{handshake}");
-    client.write_session(&terminal, "echo alinery-$((40+2))\n").unwrap();
-    let mut seen = Vec::new();
-    let mut buffer = [0u8; 4096];
-    while !String::from_utf8_lossy(&seen).contains("alinery-42") {
-        let read = std::io::Read::read(&mut reader, &mut buffer).expect("the terminal answered through the forward");
-        assert!(read > 0, "the stream closed before the command ran: {}", String::from_utf8_lossy(&seen));
-        seen.extend_from_slice(&buffer[..read]);
-    }
 
     // Scrollback reads come back from the host as base64 and decode to the exact bytes, including
     // bytes that are not valid UTF-8. (Task sessions only: a taskless drawer has no history.)

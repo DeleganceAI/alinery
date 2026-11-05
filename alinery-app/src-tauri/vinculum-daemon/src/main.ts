@@ -28,7 +28,7 @@ import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
-import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
+import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
@@ -744,7 +744,6 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
       const cols = Number(header.cols ?? 0);
       const rows = Number(header.rows ?? 0);
-      const attachId = Number(header.attach_id ?? 0);
       if (!hasPty(id)) {
         if (op === "attach") {
           reply(socket, { error: "unknown-session" });
@@ -780,11 +779,8 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       }
       const row = live.get(id);
       if (row && row.process !== "exited") row.process = "alive";
-      if (!attachShell(id, socket, attachId, cols, rows)) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      kept.add(socket);
+      // The bytes come from TerminalService.Attach (rpc/terminal.ts); this op only starts the shell.
+      reply(socket, { ok: true });
       return;
     }
     if (op !== "attach" && id && !live.has(id)) {
@@ -806,37 +802,25 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     reply(socket, { ok: true }, true);
     return;
   }
-  if (op === "detach" || op === "kill") {
+  if (op === "kill") {
     const id = String(header.id ?? "");
-    if (op === "detach") detachPty(id, Number(header.attach_id ?? 0));
-    if (op === "kill") {
-      if (isPty(id)) killPty(id);
-      const row = live.get(id);
-      if (row) {
-        const harness = row.harness;
-        try {
-          if (harness) void harness.close(context);
-        } catch {
-          /* already closed */
-        }
-        writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
-        live.delete(id);
-        commitSession(row.taskSlug, id);
+    if (isPty(id)) killPty(id);
+    const row = live.get(id);
+    if (row) {
+      const harness = row.harness;
+      try {
+        if (harness) void harness.close(context);
+      } catch {
+        /* already closed */
       }
+      writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
+      live.delete(id);
+      commitSession(row.taskSlug, id);
     }
     reply(socket, { ok: true });
     return;
   }
-  if (op === "write" || op === "resize" || op === "send_message") {
-    const id = String(header.id ?? "");
-    if (op === "write" && writePty(id, String(header.data ?? ""))) {
-      reply(socket, { ok: true });
-      return;
-    }
-    if (op === "resize" && resizePty(id, Number(header.cols ?? 0), Number(header.rows ?? 0))) {
-      reply(socket, { ok: true });
-      return;
-    }
+  if (op === "send_message") {
     reply(socket, { error: "unsupported" });
     return;
   }

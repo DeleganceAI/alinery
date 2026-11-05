@@ -36,8 +36,6 @@ function executionBatch(single: ExecutionStub) {
   );
 }
 
-let attachIds = 0;
-
 export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: ExecutionStub } = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
     [
@@ -51,9 +49,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
       ),
     ],
     ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
-    ["onStreamClosed", vi.fn(() => () => {})],
     ["onRemoteHostConnected", vi.fn(() => () => {})],
-    ["nextAttachId", vi.fn(() => ++attachIds)],
     [
       "getTaskExecution",
       vi.fn(

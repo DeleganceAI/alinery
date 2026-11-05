@@ -44,7 +44,9 @@ mod backup_queue;
 use alinery_core::daemon_client;
 #[cfg(test)]
 use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
-use alinery_core::daemon_client::{format_daemon_timeout, read_socket_line, DaemonClient, DaemonSessionStatus, SocketReadError, DAEMON_CONTROL_TIMEOUT};
+#[cfg(test)]
+use alinery_core::daemon_client::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT};
+use alinery_core::daemon_client::{read_socket_line, DaemonClient, DaemonSessionStatus};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
@@ -70,7 +72,6 @@ pub use alinery_core::{
 #[cfg(test)]
 use alinery_core::{configure_detached_process, file_content_id};
 pub(crate) use alinery_core::{write_bytes_atomic, write_owner_only_bytes};
-use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
@@ -215,10 +216,6 @@ pub fn run() {
             chat_abort,
             chat_set_model,
             chat_set_thinking_level,
-            chat_detach,
-            chat_pty_attach,
-            chat_pty_write,
-            chat_pty_resize,
             list_sessions,
             rename_session,
             rename_task,
@@ -290,11 +287,8 @@ pub fn run() {
             clear_artifact_review_pending,
             clear_artifact_review_pending_for_repo,
             open_session,
-            detach_session,
-            write_session,
             prepare_review_approval_prompt,
             finalize_session_message_actions,
-            resize_session,
             session_prompt,
             session_abort,
             session_set_model,

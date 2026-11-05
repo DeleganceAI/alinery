@@ -352,68 +352,6 @@ pub(crate) async fn archive_session_for_repo(app: AppHandle, state: State<'_, Ap
 
 // Default derived via #[derive(Default)] on struct (Mutex<Option<T>> defaults to None)
 
-pub(crate) const SESSION_CHANNEL_BATCH_BYTES: usize = 16 * 1024;
-pub(crate) const SESSION_CHANNEL_FLUSH_AFTER: Duration = Duration::from_millis(8);
-pub(crate) const SESSION_CHANNEL_HEADER_BYTES: usize = size_of::<u32>();
-pub(crate) const TAURI_RAW_FETCH_MIN_BYTES: usize = 1024;
-
-// Tauri 2.11 routes raw bodies shorter than 1 KiB through `webview.eval`, compiling a fresh
-// JavaScript array literal for every message. Frame and pad the app-only channel body so even an
-// idle-flushed short batch takes Tauri's binary fetch path; the frontend strips this envelope.
-pub(crate) fn frame_session_channel_bytes(bytes: Vec<u8>) -> Vec<u8> {
-    let payload_len = u32::try_from(bytes.len()).expect("session channel batch exceeds u32");
-    let frame_len = (SESSION_CHANNEL_HEADER_BYTES + bytes.len()).max(TAURI_RAW_FETCH_MIN_BYTES);
-    let mut framed = Vec::with_capacity(frame_len);
-    framed.extend_from_slice(&payload_len.to_le_bytes());
-    framed.extend_from_slice(&bytes);
-    framed.resize(frame_len, 0);
-    framed
-}
-
-// Tauri delivers raw channel bodies below 1 KiB through `webview.eval` as JavaScript array
-// literals. Chatty TUIs emit many sub-KiB PTY reads, so forwarding each read independently can
-// saturate WebKit's main thread even when the byte rate is modest. Briefly coalesce consecutive
-// reads here; this thread may block without affecting alineryd's PTY reader or other clients.
-pub(crate) fn pump_session_stream(mut stream: UnixStream, mut send: impl FnMut(Vec<u8>) -> bool) {
-    let _ = stream.set_read_timeout(Some(SESSION_CHANNEL_FLUSH_AFTER));
-    let mut read_buf = [0u8; 8192];
-    let mut pending = Vec::with_capacity(SESSION_CHANNEL_BATCH_BYTES);
-
-    loop {
-        match stream.read(&mut read_buf) {
-            Ok(0) => {
-                if !pending.is_empty() {
-                    let _ = send(pending);
-                }
-                break;
-            }
-            Ok(n) => {
-                pending.extend_from_slice(&read_buf[..n]);
-                if pending.len() >= SESSION_CHANNEL_BATCH_BYTES {
-                    let batch = std::mem::replace(&mut pending, Vec::with_capacity(SESSION_CHANNEL_BATCH_BYTES));
-                    if !send(batch) {
-                        break;
-                    }
-                }
-            }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                if !pending.is_empty() {
-                    let batch = std::mem::replace(&mut pending, Vec::with_capacity(SESSION_CHANNEL_BATCH_BYTES));
-                    if !send(batch) {
-                        break;
-                    }
-                }
-            }
-            Err(_) => {
-                if !pending.is_empty() {
-                    let _ = send(pending);
-                }
-                break;
-            }
-        }
-    }
-}
-
 // Root (taskless) drawer open guard. Used only when task_slug is empty: allow when
 // existing meta is no-harness, or when no meta exists yet (the only remaining root
 // session type is the drawer). Meta wins when present. Harness is not on the wire.
@@ -469,11 +407,10 @@ pub(crate) async fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result
     .await
 }
 
-// Open a session: REATTACH if its pty is still running (replay scrollback, then go
-// live), else spawn a fresh harness in `cwd`. This is what lets a session keep
-// running in the background — switching away no longer kills it, and switching
-// back shows the same process at its current screen, not a fresh one. Distinct ids
-// coexist: the "bag of cheap sessions", many ptys alive at once.
+// Start a session: spawn (or resume) a harness in `cwd` unless its pty is still running. The bytes
+// are not this command's business: the webview attaches with TerminalService.Attach, so a session
+// keeps running in the background and switching back shows the same process at its current screen.
+// Distinct ids coexist: the "bag of cheap sessions", many ptys alive at once.
 // M4: the spawn is GENERIC over the registry — which binary/args/env and how the seeded
 // prompt is delivered come from the session's harness (read from its meta), not hardcoded.
 #[allow(clippy::too_many_arguments)]
@@ -482,8 +419,6 @@ pub(crate) async fn open_session(
     app: AppHandle,
     id: String,
     cwd: String,
-    attach_id: u64,
-    stream_token: u64,
     task_slug: Option<String>,
     phase: Option<String>,
     model: Option<String>,
@@ -491,12 +426,11 @@ pub(crate) async fn open_session(
     resume_token: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
-    on_bytes: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
     let intent = intent.unwrap_or_else(|| daemon_client::ops::SPAWN.to_string());
     // Both stretches that wait on a task read, a launch lookup or the daemon (over ssh for a remote repo) run on
     // the blocking pool; the hosted-inference refresh between them is its own awaited step.
-    let (target, slug, harness, session_model) = {
+    let (slug, harness, session_model) = {
         let (app, id, model, intent) = (app.clone(), id.clone(), model.clone(), intent.clone());
         off_main_thread("open session", move || {
             let state = app.state::<AppState>();
@@ -585,153 +519,26 @@ pub(crate) async fn open_session(
                     }
                 }
             }
-            Ok((target, slug, harness, session_model))
+            Ok((slug, harness, session_model))
         })
         .await?
     };
     refresh_hosted_inference_before_open(app.clone(), &intent, &harness, &session_model).await?;
     off_main_thread("open session", move || {
-        let daemon = {
-            let state = app.state::<AppState>();
-            match &target {
-                ActiveRepo::Local(repo) if intent == daemon_client::ops::ATTACH => client_for_session(&state, repo, &slug, &id)?,
-                _ => state.daemon().ok_or("daemon not connected")?,
-            }
-        };
-        open_daemon_session(
-            &daemon,
-            &id,
-            &cwd,
-            Some(&slug),
-            phase.as_deref(),
-            model.as_deref(),
-            attach_id,
-            stream_token,
-            &intent,
-            resume_token.as_deref(),
+        let daemon = app.state::<AppState>().daemon().ok_or("daemon not connected")?;
+        daemon.resume_session(&daemon_client::OpenRequest {
+            intent: &intent,
+            id: &id,
+            cwd: &cwd,
+            task_slug: Some(&slug),
+            phase: phase.as_deref(),
+            model: model.as_deref(),
+            resume_token: resume_token.as_deref(),
             cols,
             rows,
-            on_bytes,
-            app,
-        )
+        })
     })
     .await
-}
-
-// Detach the frontend without killing the pty: the session keeps running in the
-// background (scrollback keeps filling) until you reopen it. Called when a terminal
-// pane unmounts so the reader stops forwarding to a torn-down channel. Only clears
-// the sink if `attach_id` still matches the current attach — a stale detach racing a
-// newer open_session is a no-op, so it can't clobber the live sink (freeze the feed).
-#[tauri::command]
-pub(crate) fn detach_session(state: State<'_, AppState>, id: String, attach_id: u64) -> Result<(), String> {
-    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
-        let queued = queue_terminal_op(&state, &id, TerminalOp::Detach(attach_id));
-        // The worker finishes what is queued, then ends; a later attach starts a new queue.
-        drop_terminal_queue(&state, &id);
-        return queued;
-    }
-    // Route cache only (no task_slug on this command). Miss → own lane.
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    match daemon.detach_session(&id, attach_id) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            state.clear_session_route(&id);
-            let own = state.daemon().ok_or_else(|| e.clone())?;
-            if own.socket_path == daemon.socket_path {
-                return Err(e);
-            }
-            own.detach_session(&id, attach_id)
-        }
-    }
-}
-
-/// One step of a remote terminal. The frontend fires these without awaiting, and each is a daemon call over
-/// the ssh forward (about 2 RTT). On the main thread that freezes the window per keystroke; on a thread pool
-/// the keystrokes could overtake each other. So a remote session gets one queue and one thread, which keeps
-/// them in order. A local session's call is a local socket and stays direct.
-pub(crate) enum TerminalOp {
-    Write(String),
-    Resize(u16, u16),
-    Detach(u64),
-}
-
-/// Queue `op` for the remote session `id`, aimed at the daemon the session belongs to now.
-fn queue_terminal_op(state: &AppState, id: &str, op: TerminalOp) -> Result<(), String> {
-    let daemon = cached_or_own_client(state, id).ok_or("daemon not connected")?;
-    queue_terminal_op_to(state, id, daemon, op)
-}
-
-/// `queue_terminal_op` for a session whose daemon the caller already resolved (a chat thread's).
-pub(crate) fn queue_terminal_op_to(state: &AppState, id: &str, daemon: DaemonClient, op: TerminalOp) -> Result<(), String> {
-    let mut queues = state.terminal_queues.lock().unwrap_or_else(|e| e.into_inner());
-    let mut item = (daemon, op);
-    // A worker only goes away if it panicked; start a fresh one once rather than lose the input.
-    for _ in 0..2 {
-        let sender = queues.entry(id.to_string()).or_insert_with(|| spawn_terminal_worker(id.to_string()));
-        match sender.send(item) {
-            Ok(()) => return Ok(()),
-            Err(returned) => {
-                item = returned.0;
-                queues.remove(id);
-            }
-        }
-    }
-    Err("terminal input queue is not running".into())
-}
-
-/// Let the session's worker finish what is queued and exit.
-pub(crate) fn drop_terminal_queue(state: &AppState, id: &str) {
-    state.terminal_queues.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
-}
-
-fn spawn_terminal_worker(id: String) -> std::sync::mpsc::Sender<(DaemonClient, TerminalOp)> {
-    let (sender, receiver) = std::sync::mpsc::channel::<(DaemonClient, TerminalOp)>();
-    std::thread::spawn(move || {
-        let mut held = None;
-        while let Some((daemon, op)) = held.take().or_else(|| receiver.recv().ok()) {
-            // The frontend discards these results (a dead link shows in the connection state), so a failure
-            // only ends this call.
-            let _ = match op {
-                TerminalOp::Write(mut data) => {
-                    // What was typed while the last call was in flight goes out as one write.
-                    while let Ok(next) = receiver.try_recv() {
-                        match next.1 {
-                            TerminalOp::Write(more) => data.push_str(&more),
-                            _ => {
-                                held = Some(next);
-                                break;
-                            }
-                        }
-                    }
-                    daemon.write_session(&id, &data)
-                }
-                TerminalOp::Resize(cols, rows) => daemon.resize_session(&id, cols, rows),
-                TerminalOp::Detach(attach_id) => daemon.detach_session(&id, attach_id),
-            };
-        }
-    });
-    sender
-}
-
-// Frontend keystrokes -> pty. No-op if the session isn't registered yet.
-#[tauri::command]
-pub(crate) fn write_session(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
-    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
-        return queue_terminal_op(&state, &id, TerminalOp::Write(data));
-    }
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    match daemon.write_session(&id, &data) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            state.clear_session_route(&id);
-            let own = state.daemon().ok_or_else(|| e.clone())?;
-            if own.socket_path == daemon.socket_path {
-                return Err(e);
-            }
-            own.write_session(&id, &data)
-        }
-    }
 }
 
 #[tauri::command]
@@ -780,26 +587,6 @@ pub(crate) async fn finalize_session_message_actions(
         ),
     })
     .await
-}
-
-// Resize the pty so the TUI reflows. No-op if the session isn't registered yet.
-#[tauri::command]
-pub(crate) fn resize_session(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    if let ActiveRepo::Remote { .. } = require_active_target(&state)? {
-        return queue_terminal_op(&state, &id, TerminalOp::Resize(cols, rows));
-    }
-    let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
-    match daemon.resize_session(&id, cols, rows) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            state.clear_session_route(&id);
-            let own = state.daemon().ok_or_else(|| e.clone())?;
-            if own.socket_path == daemon.socket_path {
-                return Err(e);
-            }
-            own.resize_session(&id, cols, rows)
-        }
-    }
 }
 
 #[tauri::command]

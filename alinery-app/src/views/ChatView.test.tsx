@@ -36,8 +36,6 @@ const mocks = vi.hoisted(() => ({
   setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
   createChatThread: vi.fn(),
-  onStreamClosed: vi.fn(),
-  chatDetach: vi.fn(),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async () => undefined),
@@ -61,8 +59,6 @@ vi.mock("../ipc", () =>
     setChatPinned: mocks.setChatPinned,
     resumeChatThread: mocks.resumeChatThread,
     createChatThread: mocks.createChatThread,
-    onStreamClosed: mocks.onStreamClosed,
-    chatDetach: mocks.chatDetach,
     chatSetModel: mocks.chatSetModel,
     chatSetThinkingLevel: mocks.chatSetThinkingLevel,
     chatPrompt: mocks.chatPrompt,
@@ -141,8 +137,6 @@ afterEach(() => {
 beforeEach(() => {
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
-  mocks.onStreamClosed.mockReset().mockReturnValue(() => {});
-  mocks.chatDetach.mockResolvedValue(undefined);
   setTranscripts({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.archiveChatThread.mockResolvedValue(undefined);

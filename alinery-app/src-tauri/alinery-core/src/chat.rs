@@ -318,7 +318,6 @@ pub fn resume_chat_thread_in(repo: &Path, predecessor_id: &str, daemon: Option<&
         task_slug: Some(""),
         phase: None,
         model: None,
-        attach_id: 0,
         resume_token: Some(&token),
         cols: None,
         rows: None,
