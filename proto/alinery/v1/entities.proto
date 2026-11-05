@@ -38,9 +38,27 @@ message NotificationSuppression {
   string notice = 1;  // waiting_for_input, waiting_for_approval or failure
   string occurrence = 2;
 }
+// The live state `sessionState` reports (main.ts): process, agent and playbook axes, as the `list` and
+// `status` ops carry them. Not on disk; the daemon fills it while the session is live.
+message SessionStatus {
+  string process = 1;  // starting, alive or exited
+  string agent = 2;    // idle, busy, waiting_for_input, waiting_for_approval, ...
+  string agent_correlation_id = 3;
+  string agent_reason = 4;
+  string playbook = 5;
+  string playbook_reason = 6;
+  string adapter = 7;
+  string message_adapter = 8;
+}
+// The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
+message SessionWait {
+  string kind = 1;  // input or approval
+  string correlation_id = 2;
+  optional string prompt = 3;
+}
 message Session {
   SessionRef ref = 1;
-  string status = 2;
+  SessionStatus status = 2;  // unset for a session with no live runner
   string id = 3;
   string worktree = 4;
   uint64 created = 5;
@@ -73,13 +91,21 @@ message Session {
   optional NotificationSuppression notification_suppression = 32;
   SemanticCheckpoint semantic = 33;
   string telemetry_id = 34;
+  SessionWait wait = 35;  // unset when the agent waits for nothing
 }
 message Artifact {}
 message Comment {}
 message ChatThread {}
 message Job {}
 message Settings {}
-message DaemonStatus {}
+// The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
+// are the shell's, because only it can see them.
+message DaemonStatus {
+  uint32 protocol = 1;
+  string build_id = 2;
+  uint32 live_sessions = 3;  // sessions whose process is not exited
+  string host_guard_warning = 4;  // "" until S4.1 adds the host-tool check
+}
 message Playbook {}
 message Attachment {}
 

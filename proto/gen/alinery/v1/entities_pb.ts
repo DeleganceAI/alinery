@@ -13,7 +13,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/entities.proto.
  */
 export const file_alinery_v1_entities: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIiMKBFRhc2sSDAoEc2x1ZxgBIAEoCRINCgV0aXRsZRgCIAEoCSIHCgVEcmFmdCJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIqAICgdTZXNzaW9uEiMKA3JlZhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIOCgZzdGF0dXMYAiABKAkSCgoCaWQYAyABKAkSEAoId29ya3RyZWUYBCABKAkSDwoHY3JlYXRlZBgFIAEoBBIQCghhcmNoaXZlZBgGIAEoCBIOCgZwaW5uZWQYByABKAgSDQoFcGhhc2UYCCABKAkSDwoHaGFybmVzcxgJIAEoCRINCgVtb2RlbBgKIAEoCRIQCghwbGF5Ym9vaxgLIAEoCRIUCgxleGVjdXRpb25faWQYDCABKAkSGgoSZXhlY3V0aW9uX3JldmlzaW9uGA0gASgEEg8KB2dlbmVyaWMYDiABKAgSFwoPc3VidGFza19tYW5hZ2VyGA8gASgIEhQKDHN1YnRhc2tfc2x1ZxgQIAEoCRIQCghhcnRpZmFjdBgRIAEoCRIYChBoYW5kb2ZmX2FydGlmYWN0GBIgASgJEhQKDHByb21wdF9leHRyYRgTIAEoCRITCgZwcm9tcHQYFCABKAlIAIgBARIXCgpzdGFydGVkX2F0GBUgASgESAGIAQESHgoRc3RhdHVzX2NoYW5nZWRfYXQYFiABKARIAogBARIYCgthY3Rpdml0eV9hdBgXIAEoBEgDiAEBEhcKD3N0YXR1c19yZXZpc2lvbhgYIAEoBBIVCghlbmRlZF9hdBgZIAEoBEgEiAEBEhYKCWV4aXRfY29kZRgaIAEoBUgFiAEBEhwKFGhhcm5lc3NfcmVzdW1lX3Rva2VuGBsgASgJEhYKCXJlc3VtZV9vZhgcIAEoCUgGiAEBEhgKEGRhZW1vbl9uYW1lc3BhY2UYHSABKAkSIQoUbm90aWZpY2F0aW9uX3JlYWRfYXQYHiABKARIB4gBARImChlleGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0GB8gASgESAiIAQESSgoYbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uGCAgASgLMiMuYWxpbmVyeS52MS5Ob3RpZmljYXRpb25TdXBwcmVzc2lvbkgJiAEBEjAKCHNlbWFudGljGCEgASgLMh4uYWxpbmVyeS52MS5TZW1hbnRpY0NoZWNrcG9pbnQSFAoMdGVsZW1ldHJ5X2lkGCIgASgJQgkKB19wcm9tcHRCDQoLX3N0YXJ0ZWRfYXRCFAoSX3N0YXR1c19jaGFuZ2VkX2F0Qg4KDF9hY3Rpdml0eV9hdEILCglfZW5kZWRfYXRCDAoKX2V4aXRfY29kZUIMCgpfcmVzdW1lX29mQhcKFV9ub3RpZmljYXRpb25fcmVhZF9hdEIcChpfZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdEIbChlfbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uIgoKCEFydGlmYWN0IgkKB0NvbW1lbnQiDAoKQ2hhdFRocmVhZCIFCgNKb2IiCgoIU2V0dGluZ3MiDgoMRGFlbW9uU3RhdHVzIgoKCFBsYXlib29rIgwKCkF0dGFjaG1lbnQioAQKBkVudGl0eRILCgNrZXkYASABKAkSEAoIcmV2aXNpb24YAiABKAQSIAoEdGFzaxgKIAEoCzIQLmFsaW5lcnkudjEuVGFza0gAEiIKBWRyYWZ0GAsgASgLMhEuYWxpbmVyeS52MS5EcmFmdEgAEioKCWV4ZWN1dGlvbhgMIAEoCzIVLmFsaW5lcnkudjEuRXhlY3V0aW9uSAASJgoHc2Vzc2lvbhgNIAEoCzITLmFsaW5lcnkudjEuU2Vzc2lvbkgAEigKCGFydGlmYWN0GA4gASgLMhQuYWxpbmVyeS52MS5BcnRpZmFjdEgAEiYKB2NvbW1lbnQYDyABKAsyEy5hbGluZXJ5LnYxLkNvbW1lbnRIABItCgtjaGF0X3RocmVhZBgQIAEoCzIWLmFsaW5lcnkudjEuQ2hhdFRocmVhZEgAEh4KA2pvYhgRIAEoCzIPLmFsaW5lcnkudjEuSm9iSAASKAoIc2V0dGluZ3MYEiABKAsyFC5hbGluZXJ5LnYxLlNldHRpbmdzSAASMQoNZGFlbW9uX3N0YXR1cxgTIAEoCzIYLmFsaW5lcnkudjEuRGFlbW9uU3RhdHVzSAASKAoIcGxheWJvb2sYFCABKAsyFC5hbGluZXJ5LnYxLlBsYXlib29rSAASLAoKYXR0YWNobWVudBgVIAEoCzIWLmFsaW5lcnkudjEuQXR0YWNobWVudEgAQgcKBXZhbHVlYgZwcm90bzM", [file_google_protobuf_struct]);
+  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIiMKBFRhc2sSDAoEc2x1ZxgBIAEoCRINCgV0aXRsZRgCIAEoCSIHCgVEcmFmdCJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIrgBCg1TZXNzaW9uU3RhdHVzEg8KB3Byb2Nlc3MYASABKAkSDQoFYWdlbnQYAiABKAkSHAoUYWdlbnRfY29ycmVsYXRpb25faWQYAyABKAkSFAoMYWdlbnRfcmVhc29uGAQgASgJEhAKCHBsYXlib29rGAUgASgJEhcKD3BsYXlib29rX3JlYXNvbhgGIAEoCRIPCgdhZGFwdGVyGAcgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgIIAEoCSJTCgtTZXNzaW9uV2FpdBIMCgRraW5kGAEgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAIgASgJEhMKBnByb21wdBgDIAEoCUgAiAEBQgkKB19wcm9tcHQi4ggKB1Nlc3Npb24SIwoDcmVmGAEgASgLMhYuYWxpbmVyeS52MS5TZXNzaW9uUmVmEikKBnN0YXR1cxgCIAEoCzIZLmFsaW5lcnkudjEuU2Vzc2lvblN0YXR1cxIKCgJpZBgDIAEoCRIQCgh3b3JrdHJlZRgEIAEoCRIPCgdjcmVhdGVkGAUgASgEEhAKCGFyY2hpdmVkGAYgASgIEg4KBnBpbm5lZBgHIAEoCBINCgVwaGFzZRgIIAEoCRIPCgdoYXJuZXNzGAkgASgJEg0KBW1vZGVsGAogASgJEhAKCHBsYXlib29rGAsgASgJEhQKDGV4ZWN1dGlvbl9pZBgMIAEoCRIaChJleGVjdXRpb25fcmV2aXNpb24YDSABKAQSDwoHZ2VuZXJpYxgOIAEoCBIXCg9zdWJ0YXNrX21hbmFnZXIYDyABKAgSFAoMc3VidGFza19zbHVnGBAgASgJEhAKCGFydGlmYWN0GBEgASgJEhgKEGhhbmRvZmZfYXJ0aWZhY3QYEiABKAkSFAoMcHJvbXB0X2V4dHJhGBMgASgJEhMKBnByb21wdBgUIAEoCUgAiAEBEhcKCnN0YXJ0ZWRfYXQYFSABKARIAYgBARIeChFzdGF0dXNfY2hhbmdlZF9hdBgWIAEoBEgCiAEBEhgKC2FjdGl2aXR5X2F0GBcgASgESAOIAQESFwoPc3RhdHVzX3JldmlzaW9uGBggASgEEhUKCGVuZGVkX2F0GBkgASgESASIAQESFgoJZXhpdF9jb2RlGBogASgFSAWIAQESHAoUaGFybmVzc19yZXN1bWVfdG9rZW4YGyABKAkSFgoJcmVzdW1lX29mGBwgASgJSAaIAQESGAoQZGFlbW9uX25hbWVzcGFjZRgdIAEoCRIhChRub3RpZmljYXRpb25fcmVhZF9hdBgeIAEoBEgHiAEBEiYKGWV4aXRfbm90aWZpY2F0aW9uX3JlYWRfYXQYHyABKARICIgBARJKChhub3RpZmljYXRpb25fc3VwcHJlc3Npb24YICABKAsyIy5hbGluZXJ5LnYxLk5vdGlmaWNhdGlvblN1cHByZXNzaW9uSAmIAQESMAoIc2VtYW50aWMYISABKAsyHi5hbGluZXJ5LnYxLlNlbWFudGljQ2hlY2twb2ludBIUCgx0ZWxlbWV0cnlfaWQYIiABKAkSJQoEd2FpdBgjIAEoCzIXLmFsaW5lcnkudjEuU2Vzc2lvbldhaXRCCQoHX3Byb21wdEINCgtfc3RhcnRlZF9hdEIUChJfc3RhdHVzX2NoYW5nZWRfYXRCDgoMX2FjdGl2aXR5X2F0QgsKCV9lbmRlZF9hdEIMCgpfZXhpdF9jb2RlQgwKCl9yZXN1bWVfb2ZCFwoVX25vdGlmaWNhdGlvbl9yZWFkX2F0QhwKGl9leGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0QhsKGV9ub3RpZmljYXRpb25fc3VwcHJlc3Npb24iCgoIQXJ0aWZhY3QiCQoHQ29tbWVudCIMCgpDaGF0VGhyZWFkIgUKA0pvYiIKCghTZXR0aW5ncyJlCgxEYWVtb25TdGF0dXMSEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSFQoNbGl2ZV9zZXNzaW9ucxgDIAEoDRIaChJob3N0X2d1YXJkX3dhcm5pbmcYBCABKAkiCgoIUGxheWJvb2siDAoKQXR0YWNobWVudCKgBAoGRW50aXR5EgsKA2tleRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoBBIgCgR0YXNrGAogASgLMhAuYWxpbmVyeS52MS5UYXNrSAASIgoFZHJhZnQYCyABKAsyES5hbGluZXJ5LnYxLkRyYWZ0SAASKgoJZXhlY3V0aW9uGAwgASgLMhUuYWxpbmVyeS52MS5FeGVjdXRpb25IABImCgdzZXNzaW9uGA0gASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAASKAoIYXJ0aWZhY3QYDiABKAsyFC5hbGluZXJ5LnYxLkFydGlmYWN0SAASJgoHY29tbWVudBgPIAEoCzITLmFsaW5lcnkudjEuQ29tbWVudEgAEi0KC2NoYXRfdGhyZWFkGBAgASgLMhYuYWxpbmVyeS52MS5DaGF0VGhyZWFkSAASHgoDam9iGBEgASgLMg8uYWxpbmVyeS52MS5Kb2JIABIoCghzZXR0aW5ncxgSIAEoCzIULmFsaW5lcnkudjEuU2V0dGluZ3NIABIxCg1kYWVtb25fc3RhdHVzGBMgASgLMhguYWxpbmVyeS52MS5EYWVtb25TdGF0dXNIABIoCghwbGF5Ym9vaxgUIAEoCzIULmFsaW5lcnkudjEuUGxheWJvb2tIABIsCgphdHRhY2htZW50GBUgASgLMhYuYWxpbmVyeS52MS5BdHRhY2htZW50SABCBwoFdmFsdWViBnByb3RvMw", [file_google_protobuf_struct]);
 
 /**
  * @generated from message alinery.v1.SessionRef
@@ -166,6 +166,96 @@ export const NotificationSuppressionSchema: GenMessage<NotificationSuppression> 
   messageDesc(file_alinery_v1_entities, 5);
 
 /**
+ * The live state `sessionState` reports (main.ts): process, agent and playbook axes, as the `list` and
+ * `status` ops carry them. Not on disk; the daemon fills it while the session is live.
+ *
+ * @generated from message alinery.v1.SessionStatus
+ */
+export type SessionStatus = Message<"alinery.v1.SessionStatus"> & {
+  /**
+   * starting, alive or exited
+   *
+   * @generated from field: string process = 1;
+   */
+  process: string;
+
+  /**
+   * idle, busy, waiting_for_input, waiting_for_approval, ...
+   *
+   * @generated from field: string agent = 2;
+   */
+  agent: string;
+
+  /**
+   * @generated from field: string agent_correlation_id = 3;
+   */
+  agentCorrelationId: string;
+
+  /**
+   * @generated from field: string agent_reason = 4;
+   */
+  agentReason: string;
+
+  /**
+   * @generated from field: string playbook = 5;
+   */
+  playbook: string;
+
+  /**
+   * @generated from field: string playbook_reason = 6;
+   */
+  playbookReason: string;
+
+  /**
+   * @generated from field: string adapter = 7;
+   */
+  adapter: string;
+
+  /**
+   * @generated from field: string message_adapter = 8;
+   */
+  messageAdapter: string;
+};
+
+/**
+ * Describes the message alinery.v1.SessionStatus.
+ * Use `create(SessionStatusSchema)` to create a new message.
+ */
+export const SessionStatusSchema: GenMessage<SessionStatus> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 6);
+
+/**
+ * The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
+ *
+ * @generated from message alinery.v1.SessionWait
+ */
+export type SessionWait = Message<"alinery.v1.SessionWait"> & {
+  /**
+   * input or approval
+   *
+   * @generated from field: string kind = 1;
+   */
+  kind: string;
+
+  /**
+   * @generated from field: string correlation_id = 2;
+   */
+  correlationId: string;
+
+  /**
+   * @generated from field: optional string prompt = 3;
+   */
+  prompt?: string | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.SessionWait.
+ * Use `create(SessionWaitSchema)` to create a new message.
+ */
+export const SessionWaitSchema: GenMessage<SessionWait> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 7);
+
+/**
  * @generated from message alinery.v1.Session
  */
 export type Session = Message<"alinery.v1.Session"> & {
@@ -175,9 +265,11 @@ export type Session = Message<"alinery.v1.Session"> & {
   ref?: SessionRef | undefined;
 
   /**
-   * @generated from field: string status = 2;
+   * unset for a session with no live runner
+   *
+   * @generated from field: alinery.v1.SessionStatus status = 2;
    */
-  status: string;
+  status?: SessionStatus | undefined;
 
   /**
    * @generated from field: string id = 3;
@@ -340,6 +432,13 @@ export type Session = Message<"alinery.v1.Session"> & {
    * @generated from field: string telemetry_id = 34;
    */
   telemetryId: string;
+
+  /**
+   * unset when the agent waits for nothing
+   *
+   * @generated from field: alinery.v1.SessionWait wait = 35;
+   */
+  wait?: SessionWait | undefined;
 };
 
 /**
@@ -347,7 +446,7 @@ export type Session = Message<"alinery.v1.Session"> & {
  * Use `create(SessionSchema)` to create a new message.
  */
 export const SessionSchema: GenMessage<Session> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 6);
+  messageDesc(file_alinery_v1_entities, 8);
 
 /**
  * @generated from message alinery.v1.Artifact
@@ -360,7 +459,7 @@ export type Artifact = Message<"alinery.v1.Artifact"> & {
  * Use `create(ArtifactSchema)` to create a new message.
  */
 export const ArtifactSchema: GenMessage<Artifact> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 7);
+  messageDesc(file_alinery_v1_entities, 9);
 
 /**
  * @generated from message alinery.v1.Comment
@@ -373,7 +472,7 @@ export type Comment = Message<"alinery.v1.Comment"> & {
  * Use `create(CommentSchema)` to create a new message.
  */
 export const CommentSchema: GenMessage<Comment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 8);
+  messageDesc(file_alinery_v1_entities, 10);
 
 /**
  * @generated from message alinery.v1.ChatThread
@@ -386,7 +485,7 @@ export type ChatThread = Message<"alinery.v1.ChatThread"> & {
  * Use `create(ChatThreadSchema)` to create a new message.
  */
 export const ChatThreadSchema: GenMessage<ChatThread> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 9);
+  messageDesc(file_alinery_v1_entities, 11);
 
 /**
  * @generated from message alinery.v1.Job
@@ -399,7 +498,7 @@ export type Job = Message<"alinery.v1.Job"> & {
  * Use `create(JobSchema)` to create a new message.
  */
 export const JobSchema: GenMessage<Job> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 10);
+  messageDesc(file_alinery_v1_entities, 12);
 
 /**
  * @generated from message alinery.v1.Settings
@@ -412,12 +511,38 @@ export type Settings = Message<"alinery.v1.Settings"> & {
  * Use `create(SettingsSchema)` to create a new message.
  */
 export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 11);
+  messageDesc(file_alinery_v1_entities, 13);
 
 /**
+ * The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
+ * are the shell's, because only it can see them.
+ *
  * @generated from message alinery.v1.DaemonStatus
  */
 export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
+  /**
+   * @generated from field: uint32 protocol = 1;
+   */
+  protocol: number;
+
+  /**
+   * @generated from field: string build_id = 2;
+   */
+  buildId: string;
+
+  /**
+   * sessions whose process is not exited
+   *
+   * @generated from field: uint32 live_sessions = 3;
+   */
+  liveSessions: number;
+
+  /**
+   * "" until S4.1 adds the host-tool check
+   *
+   * @generated from field: string host_guard_warning = 4;
+   */
+  hostGuardWarning: string;
 };
 
 /**
@@ -425,7 +550,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
  * Use `create(DaemonStatusSchema)` to create a new message.
  */
 export const DaemonStatusSchema: GenMessage<DaemonStatus> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 12);
+  messageDesc(file_alinery_v1_entities, 14);
 
 /**
  * @generated from message alinery.v1.Playbook
@@ -438,7 +563,7 @@ export type Playbook = Message<"alinery.v1.Playbook"> & {
  * Use `create(PlaybookSchema)` to create a new message.
  */
 export const PlaybookSchema: GenMessage<Playbook> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 13);
+  messageDesc(file_alinery_v1_entities, 15);
 
 /**
  * @generated from message alinery.v1.Attachment
@@ -451,7 +576,7 @@ export type Attachment = Message<"alinery.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 14);
+  messageDesc(file_alinery_v1_entities, 16);
 
 /**
  * @generated from message alinery.v1.Entity
@@ -554,5 +679,5 @@ export type Entity = Message<"alinery.v1.Entity"> & {
  * Use `create(EntitySchema)` to create a new message.
  */
 export const EntitySchema: GenMessage<Entity> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 15);
+  messageDesc(file_alinery_v1_entities, 17);
 

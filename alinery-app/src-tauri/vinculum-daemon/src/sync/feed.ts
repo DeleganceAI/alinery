@@ -2,6 +2,7 @@
 // commits the result: a put (the store drops it when nothing changed) or a delete. It trusts no
 // event's kind: the answer is whatever the file is now. `scan()` runs every path through the same
 // parsers at start, and `reconcile()` is the 30 s pass that covers missed events.
+import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { route } from "./parsers/index.ts";
@@ -18,6 +19,8 @@ export class Feed {
   constructor(
     readonly store: Store,
     readonly alinery: string,
+    /** Applied to each entity before it is committed: the live state a file cannot hold (S2.5). */
+    private readonly decorate: (entity: Entity) => Entity = (e) => e,
   ) {}
 
   /** One path at a time per file, so a slow read can't land after a newer one. */
@@ -43,7 +46,7 @@ export class Feed {
     }
     const entity = await r.parser.parse(abs, r.m);
     this.tracked.set(rel, { key: r.key, mtimeMs: s.mtimeMs, size: s.size });
-    if (entity) this.store.commit([entity]);
+    if (entity) this.store.commit([this.decorate(entity)]);
     else this.store.commit([], [r.key]);
   }
 

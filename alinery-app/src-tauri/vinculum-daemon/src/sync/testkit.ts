@@ -9,7 +9,7 @@ import type { Store, Timers } from "./store.ts";
 export const task = (slug: string, title = "", id = slug): Entity =>
   create(EntitySchema, { key: `task/${slug}/${id}`, value: { case: "task", value: { slug, title } } });
 export const session = (slug: string, id: string, status: string): Entity =>
-  create(EntitySchema, { key: `session/${slug || "_"}/${id}`, value: { case: "session", value: { ref: { taskSlug: slug, id }, status } } });
+  create(EntitySchema, { key: `session/${slug || "_"}/${id}`, value: { case: "session", value: { ref: { taskSlug: slug, id }, status: { process: status } } } });
 
 export const repoScope = create(ScopeSchema, { kind: { case: "repo", value: {} } });
 export const taskScope = (slug: string) => create(ScopeSchema, { kind: { case: "task", value: { slug } } });

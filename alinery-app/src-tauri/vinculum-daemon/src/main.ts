@@ -21,6 +21,7 @@ import { serveRpc } from "./rpc/server.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
 import { commitExecution } from "./domain/executions.ts";
+import { SessionPublisher } from "./domain/sessions.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
@@ -67,6 +68,7 @@ type Live = {
   executionId: string;
   titledBucket: number;
   titleInFlight: boolean;
+  wait?: { kind: string; correlationId: string; prompt?: string };
 };
 
 const live = new Map<string, Live>();
@@ -128,6 +130,9 @@ if (!sources.hosted && !sources.grok) {
 
 const lane = namespace;
 const identity = appConfigIdentity(appConfig);
+const store = new Store();
+const feed = new Feed(store, join(repo, ".alinery"), (entity) => publisher.decorate(entity));
+const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId });
 acquireOwnership(repo, lane, identity);
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
 const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
@@ -345,6 +350,7 @@ function startRecordedShell(id: string, taskSlug: string) {
     const row = live.get(id);
     if (row) row.process = "exited";
     writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+    commitSession(taskSlug, id);
   });
   if (!live.has(id)) {
     live.set(id, {
@@ -361,6 +367,7 @@ function startRecordedShell(id: string, taskSlug: string) {
       titledBucket: 0,
       titleInFlight: false,
     });
+    commitSession(taskSlug, id);
   }
 }
 
@@ -374,6 +381,16 @@ function sessionState(row: Live) {
     adapter: "omp",
     message_adapter: "unsupported",
   };
+}
+
+// The store's view of a live row is exactly what `list` answers (engine playbook axis included), plus the Attention wait.
+function liveView(row: Live) {
+  return { id: row.id, taskSlug: row.taskSlug, ...sessionState({ ...row, playbook: enginePlaybook(row.id) ?? row.playbook }), wait: row.wait };
+}
+
+// S2.5: every change to a session row goes through here, so a subscriber needs no poll.
+function commitSession(taskSlug: string, id: string) {
+  publisher.changed(taskSlug, id);
 }
 
 async function openSession(id: string, taskSlug: string, model: string, prompt = "") {
@@ -395,6 +412,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     titleInFlight: false,
   };
   live.set(id, row);
+  commitSession(taskSlug, id);
   const meta = readMeta(taskSlug, id);
   if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "vinculum", harness_resume_token: "" });
   if (typeof meta.ended_at === "number") writeMeta(taskSlug, id, { ended_at: null, exit_code: null });
@@ -445,6 +463,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   if (exists) harness.resume();
   await seedPrompt(root, prompt);
   row.process = "alive";
+  commitSession(taskSlug, id);
   return row;
 }
 
@@ -524,6 +543,7 @@ async function maybeTitleChat(row: Live) {
     const outcome = suggestSessionName(repo, "", row.id, name);
     if ("error" in outcome) return;
     row.titledBucket = bucket;
+    commitSession(row.taskSlug, row.id);
   } catch (error) {
     console.error(`chat title failed for ${row.id}: ${error}`);
   } finally {
@@ -567,17 +587,21 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
         state: value.wait.kind === "approval" ? "waiting_for_approval" : "waiting_for_input",
         correlation_id: value.wait.correlationId,
       };
-      return;
+      row.wait = value.wait;
+    } else {
+      row.wait = undefined;
+      if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
+        row.agent = { state: row.liveRun ? "busy" : "idle" };
+      }
     }
-    if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
-      row.agent = { state: row.liveRun ? "busy" : "idle" };
-    }
+    commitSession(row.taskSlug, row.id);
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
     const running = Boolean(value?.run);
     const finished = row.liveRun && !running;
     row.liveRun = running;
     if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: running ? "busy" : "idle" };
+    commitSession(row.taskSlug, row.id);
     if (finished && !row.taskSlug) void maybeTitleChat(row);
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value) => {
@@ -619,6 +643,7 @@ function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
   if (reply.outcome === "waiting_for_input") row.agent = { state: "waiting_for_input", correlation_id: String(reply.correlation_id ?? "") };
   if (reply.outcome === "accepted") row.agent = { state: "idle" };
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
+  commitSession(row.taskSlug, row.id);
 }
 
 async function requestPhase(api: { conversationId: string; env?: unknown }) {
@@ -729,6 +754,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
           const row = live.get(id);
           if (row) row.process = "exited";
           writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+          commitSession(taskSlug, id);
         });
         if (!live.has(id)) {
           live.set(id, {
@@ -743,6 +769,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
             seenNonce: "",
             executionId: "",
           });
+          commitSession(taskSlug, id);
         }
       }
       const row = live.get(id);
@@ -764,7 +791,10 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       const model = String(header.model ?? "");
       void openSession(id, taskSlug, model).catch((error) => {
         const row = live.get(id);
-        if (row) row.playbook = { state: "failed", reason: String(error) };
+        if (row) {
+          row.playbook = { state: "failed", reason: String(error) };
+          commitSession(row.taskSlug, id);
+        }
       });
     }
     reply(socket, { ok: true }, true);
@@ -785,6 +815,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         }
         writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
         live.delete(id);
+        commitSession(row.taskSlug, id);
       }
     }
     reply(socket, { ok: true });
@@ -848,6 +879,8 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       }
       if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
         row.agent = { state: row.liveRun ? "busy" : "idle" };
+        row.wait = undefined;
+        commitSession(row.taskSlug, row.id);
       }
       reply(socket, { ok: true });
     } catch (error) {
@@ -1083,7 +1116,9 @@ function stopEverything(): number {
     writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
     row.process = "exited";
   }
+  const stoppedRows = [...live.values()];
   live.clear();
+  for (const row of stoppedRows) commitSession(row.taskSlug, row.id);
   for (const path of [uiSocket, rpcSocket]) {
     try {
       unlinkSync(path);
@@ -1097,9 +1132,8 @@ function stopEverything(): number {
 repairSessionMetas();
 // Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
 // then does the RPC server listen, so a first Subscribe never sees a half-built store.
-const store = new Store();
-const feed = new Feed(store, join(repo, ".alinery"));
 await feed.scan();
+publisher.commitStatus();
 const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line) });
 watcher.start();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
@@ -1114,7 +1148,11 @@ await serveRpc({
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
-    executionChanged: (taskSlug) => commitExecution(store, repo, taskSlug, lane, identity),
+    executionChanged: (taskSlug) => {
+      commitExecution(store, repo, taskSlug, lane, identity);
+      // The engine owns the playbook axis of a task's sessions, so they move with the execution.
+      for (const row of live.values()) if (row.taskSlug === taskSlug) commitSession(taskSlug, row.id);
+    },
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
     status(id) {
       return Promise.resolve(sessionHarnessStatus(live.get(id)));
@@ -1141,6 +1179,7 @@ server.listen(uiSocket, () => {
       }
       row.process = "exited";
       writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
+      commitSession(row.taskSlug, row.id);
     },
     bind(id, executionId) {
       const row = live.get(id);
