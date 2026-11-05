@@ -1,0 +1,35 @@
+{
+  "session/fix-login/s1": {
+    "archived": false,
+    "artifact": "",
+    "created": 1700000000,
+    "daemon_namespace": "",
+    "ended_at": null,
+    "execution_id": "",
+    "execution_revision": 0,
+    "exit_code": null,
+    "exit_notification_read_at": null,
+    "generic": false,
+    "handoff_artifact": "",
+    "harness": "",
+    "harness_resume_token": "",
+    "id": "s1",
+    "model": "",
+    "notification_read_at": null,
+    "phase": "",
+    "pinned": false,
+    "playbook": "",
+    "prompt": null,
+    "prompt_extra": "",
+    "resume_of": null,
+    "semantic": {
+      "omp_session_id": null,
+      "omp_turn_id": null,
+      "phase_completed_at": null
+    },
+    "started_at": null,
+    "status_changed_at": null,
+    "status_revision": 0,
+    "worktree": "/w/t"
+  }
+}

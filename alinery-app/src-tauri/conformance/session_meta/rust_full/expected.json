@@ -1,0 +1,43 @@
+{
+  "session/fix-login/a1": {
+    "activity_at": 1700000004,
+    "archived": true,
+    "artifact": "03-plan.md",
+    "created": 1700000001,
+    "daemon_namespace": "ns",
+    "ended_at": 1700000005,
+    "execution_id": "ex-1",
+    "execution_revision": 7,
+    "exit_code": -1,
+    "exit_notification_read_at": 1700000007,
+    "generic": false,
+    "handoff_artifact": "04-x.md",
+    "harness": "vinculum",
+    "harness_resume_token": "tok",
+    "id": "a1",
+    "model": "anthropic/claude",
+    "notification_read_at": 1700000006,
+    "notification_suppression": {
+      "notice": "waiting_for_approval",
+      "occurrence": "occ-1"
+    },
+    "phase": "build",
+    "pinned": true,
+    "playbook": "superdevelop",
+    "prompt": "go",
+    "prompt_extra": "be careful",
+    "resume_of": "a0",
+    "semantic": {
+      "omp_session_id": "omp-1",
+      "omp_turn_id": 3,
+      "phase_completed_at": 1700000008
+    },
+    "started_at": 1700000002,
+    "status_changed_at": 1700000003,
+    "status_revision": 9,
+    "subtask_manager": true,
+    "subtask_slug": "child",
+    "telemetry_id": "tel-1",
+    "worktree": "/w/fix-login"
+  }
+}

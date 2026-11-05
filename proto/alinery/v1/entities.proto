@@ -8,7 +8,7 @@ message SessionRef {
 }
 
 // Each entity message gets its real fields in the session that first produces it (plan 2.1.4):
-// session S2.3, execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
+// session meta S2.3 (status and attention S2.5), execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
 // an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
 // tell one row from another.
 message Task {
@@ -17,9 +17,53 @@ message Task {
 }
 message Draft {}
 message Execution {}
+// Fields 3 and up are `SessionMeta` (alinery-core types.rs), named as in the meta.json the daemon and
+// Rust both write, so the parser (S2.3) and Rust's serde output compare field by field. `ref` comes
+// from the file's path; `status` is the live state, which S2.5 fills.
+message SemanticCheckpoint {
+  optional uint64 phase_completed_at = 1;
+  optional string omp_session_id = 2;
+  optional uint64 omp_turn_id = 3;
+}
+message NotificationSuppression {
+  string notice = 1;  // waiting_for_input, waiting_for_approval or failure
+  string occurrence = 2;
+}
 message Session {
   SessionRef ref = 1;
   string status = 2;
+  string id = 3;
+  string worktree = 4;
+  uint64 created = 5;
+  bool archived = 6;
+  bool pinned = 7;
+  string phase = 8;
+  string harness = 9;
+  string model = 10;
+  string playbook = 11;
+  string execution_id = 12;
+  uint64 execution_revision = 13;
+  bool generic = 14;
+  bool subtask_manager = 15;
+  string subtask_slug = 16;
+  string artifact = 17;
+  string handoff_artifact = 18;
+  string prompt_extra = 19;
+  optional string prompt = 20;  // set (even to "") is the exact fresh-spawn prompt; unset derives it
+  optional uint64 started_at = 21;
+  optional uint64 status_changed_at = 22;
+  optional uint64 activity_at = 23;
+  uint64 status_revision = 24;
+  optional uint64 ended_at = 25;
+  optional int32 exit_code = 26;
+  string harness_resume_token = 27;
+  optional string resume_of = 28;
+  string daemon_namespace = 29;
+  optional uint64 notification_read_at = 30;
+  optional uint64 exit_notification_read_at = 31;
+  optional NotificationSuppression notification_suppression = 32;
+  SemanticCheckpoint semantic = 33;
+  string telemetry_id = 34;
 }
 message Artifact {}
 message Comment {}

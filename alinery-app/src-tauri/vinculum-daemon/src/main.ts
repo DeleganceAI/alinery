@@ -18,7 +18,10 @@ import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { serveRpc } from "./rpc/server.ts";
+import { Feed } from "./sync/feed.ts";
+import { Reconciler } from "./sync/reconcile.ts";
 import { Store } from "./sync/store.ts";
+import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
@@ -1091,6 +1094,14 @@ function stopEverything(): number {
 }
 
 repairSessionMetas();
+// Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
+// then does the RPC server listen, so a first Subscribe never sees a half-built store.
+const store = new Store();
+const feed = new Feed(store, join(repo, ".alinery"));
+await feed.scan();
+const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line) });
+watcher.start();
+new Reconciler(feed, { log: (line) => console.error(line) }).start();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
   socketPath: rpcSocket,
@@ -1098,7 +1109,7 @@ await serveRpc({
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
   lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
-  store: new Store(),
+  store,
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
