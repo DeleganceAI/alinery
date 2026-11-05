@@ -8,7 +8,7 @@ service AdminService {
 
 message HelloRequest {
   string client_id = 1;
-  string client_kind = 2;
+  string client_kind = 2;  // "desktop", "mcp"
   uint32 protocol = 3;
 }
 
@@ -18,18 +18,19 @@ message HelloResponse {
   string epoch = 3;
   repeated Capability capabilities = 4;
   string repo_root = 5;
-  string app_config_identity = 6;
+  string app_config_identity = 6;  // ensure_daemon reuses only on protocol and identity match
 }
 
 enum Capability {
   CAPABILITY_UNSPECIFIED = 0;
-  CAPABILITY_VIEW = 1;
-  CAPABILITY_ACT = 2;
-  CAPABILITY_APPROVE = 3;
-  CAPABILITY_ADMIN = 4;
-  CAPABILITY_AGENT = 5;
+  CAPABILITY_VIEW = 1;     // read entities, read-only terminal attach
+  CAPABILITY_ACT = 2;      // commands, terminal input
+  CAPABILITY_APPROVE = 3;  // approvals, auto-approve
+  CAPABILITY_ADMIN = 4;    // Shutdown, daemon-wide settings
+  CAPABILITY_AGENT = 5;    // MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
 }
 
+// Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
 enum ShutdownOrigin {
   SHUTDOWN_ORIGIN_UNSPECIFIED = 0;
   SHUTDOWN_ORIGIN_STOP_DAEMON = 1;

@@ -14,5 +14,6 @@ test("alinery-proto resolves in the daemon and round-trips a HelloResponse", () 
   });
   const back = fromBinary(HelloResponseSchema, toBinary(HelloResponseSchema, sent));
   expect(equals(HelloResponseSchema, sent, back)).toBe(true);
+  expect(back.appConfigIdentity).toBe("i");
   expect(ShutdownOrigin.CONFIRMED_TAKEOVER).toBe(4);
 });

@@ -22,6 +22,8 @@ export type HelloRequest = Message<"alinery.v1.HelloRequest"> & {
   clientId: string;
 
   /**
+   * "desktop", "mcp"
+   *
    * @generated from field: string client_kind = 2;
    */
   clientKind: string;
@@ -69,6 +71,8 @@ export type HelloResponse = Message<"alinery.v1.HelloResponse"> & {
   repoRoot: string;
 
   /**
+   * ensure_daemon reuses only on protocol and identity match
+   *
    * @generated from field: string app_config_identity = 6;
    */
   appConfigIdentity: string;
@@ -130,26 +134,36 @@ export enum Capability {
   UNSPECIFIED = 0,
 
   /**
+   * read entities, read-only terminal attach
+   *
    * @generated from enum value: CAPABILITY_VIEW = 1;
    */
   VIEW = 1,
 
   /**
+   * commands, terminal input
+   *
    * @generated from enum value: CAPABILITY_ACT = 2;
    */
   ACT = 2,
 
   /**
+   * approvals, auto-approve
+   *
    * @generated from enum value: CAPABILITY_APPROVE = 3;
    */
   APPROVE = 3,
 
   /**
+   * Shutdown, daemon-wide settings
+   *
    * @generated from enum value: CAPABILITY_ADMIN = 4;
    */
   ADMIN = 4,
 
   /**
+   * MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
+   *
    * @generated from enum value: CAPABILITY_AGENT = 5;
    */
   AGENT = 5,
@@ -162,6 +176,8 @@ export const CapabilitySchema: GenEnum<Capability> = /*@__PURE__*/
   enumDesc(file_alinery_v1_admin, 0);
 
 /**
+ * Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
+ *
  * @generated from enum alinery.v1.ShutdownOrigin
  */
 export enum ShutdownOrigin {

@@ -16,6 +16,7 @@ describe("alinery-proto", () => {
     });
     const back = fromBinary(HelloResponseSchema, toBinary(HelloResponseSchema, sent));
     expect(equals(HelloResponseSchema, sent, back)).toBe(true);
+    expect(back.appConfigIdentity).toBe("i");
     expect(back.capabilities).toEqual([Capability.VIEW, Capability.ADMIN]);
   });
 
