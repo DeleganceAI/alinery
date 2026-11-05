@@ -112,7 +112,9 @@ function thread(id: string, extra: Partial<ChatThread> = {}): ChatThread {
 
 const THREADS = ["s-new", "s-live", "s-wt"];
 /** What WatchTranscript serves for every thread under test. */
-const setTranscripts = (t: VinculumTranscript) => THREADS.forEach((id) => daemon.setTranscript(id, t));
+const setTranscripts = (t: VinculumTranscript) => {
+  for (const id of THREADS) daemon.setTranscript(id, t);
+};
 
 /** A live OMP chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
 function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
