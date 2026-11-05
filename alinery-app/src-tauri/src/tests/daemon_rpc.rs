@@ -1,9 +1,10 @@
 //! The webview bridge against a stand-in daemon: a hyper HTTP/2 server on a temp unix socket.
 
 use super::*;
-use crate::daemon_rpc::{resolve, Bridge, Call};
+use crate::daemon_rpc::{hello, resolve, Bridge, Call, Hello};
 use bytes::Bytes;
 use http::HeaderMap;
+use http_body_util::BodyExt;
 use hyper::body::{Body, Frame, Incoming};
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
@@ -78,6 +79,24 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
     match req.uri().path() {
         "/unary" => {
             tx.send(Frame::data(Bytes::from_static(b"hello"))).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        "/echo" => {
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            tx.send(Frame::data(sent)).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        // protocol 25, build_id "b-1", epoch "e-7", capabilities [1, 2] (packed), repo_root "/r".
+        "/alinery.v1.AdminService/Hello" => {
+            let mut message = vec![0x08, 25, 0x12, 3];
+            message.extend_from_slice(b"b-1");
+            message.extend_from_slice(&[0x1a, 3]);
+            message.extend_from_slice(b"e-7");
+            message.extend_from_slice(&[0x22, 2, 1, 2, 0x2a, 2]);
+            message.extend_from_slice(b"/r");
+            let mut body = vec![0, 0, 0, 0, message.len() as u8];
+            body.extend_from_slice(&message);
+            tx.send(Frame::data(Bytes::from(body))).unwrap();
             tx.send(trailers("0")).unwrap();
         }
         "/trailers-only" => {
@@ -365,6 +384,51 @@ fn resolve_refuses_an_unknown_key_without_touching_the_filesystem() {
     for key in ["", "relative/repo", "alinery+ssh://", "alinery+ssh://host-only"] {
         assert!(resolve(key, cfg, None).is_err(), "{key:?} must not resolve");
     }
-    let remote = resolve("alinery+ssh://host-1/home/me/repo", cfg, None).unwrap_err();
-    assert!(remote.contains("remote"), "{remote}");
+}
+
+#[test]
+fn resolve_maps_a_remote_key_to_its_ssh_forward_and_the_token_this_app_kept_for_it() {
+    let cfg = Path::new("/nonexistent-alinery-config");
+    let (socket, secret) = resolve("alinery+ssh://host-1/home/me/repo", cfg, Some("ignored-lane")).unwrap();
+    let (forward, remote) = crate::remote::rpc_forward("host-1", "/home/me/repo").unwrap();
+    assert_eq!(socket, forward);
+    assert_eq!(remote, "/home/me/repo/.alinery/rpc.sock", "the host's daemon has no lane");
+    assert_ne!(
+        forward,
+        crate::remote::repo_forward("host-1", "/home/me/repo").unwrap().0,
+        "the RPC socket rides its own forward, not the JSON-lines one"
+    );
+    assert_eq!(secret, crate::daemon::rpc_secret_path(&cfg.join("remote").join("host-1"), "/home/me/repo", ""));
+    assert_ne!(secret, crate::daemon::rpc_secret_path(&cfg.join("remote").join("host-2"), "/home/me/repo", ""));
+}
+
+#[tokio::test]
+async fn unary_sends_one_enveloped_message_and_returns_the_reply_message() {
+    let (bridge, server) = (Bridge::default(), serve().await);
+    // The stand-in echoes the request body, envelope included: the reply is "abc" only if the shell
+    // wrapped it as one uncompressed message and unwrapped the same on the way back.
+    let reply = bridge.unary(&server.socket, "tok", "/echo", b"abc").await.unwrap();
+    assert_eq!(reply, b"abc");
+}
+
+#[tokio::test]
+async fn unary_reads_a_non_zero_grpc_status_from_a_trailers_only_answer() {
+    let (bridge, server) = (Bridge::default(), serve().await);
+    let error = bridge.unary(&server.socket, "tok", "/trailers-only", b"").await.unwrap_err();
+    assert!(error.contains("grpc-status 16"), "{error}");
+}
+
+#[tokio::test]
+async fn hello_decodes_the_fields_the_shell_reads_and_skips_the_rest() {
+    let server = serve().await;
+    assert_eq!(
+        hello(&server.socket, "tok").await.unwrap(),
+        Hello {
+            protocol: 25,
+            build_id: "b-1".into(),
+            epoch: "e-7".into()
+        }
+    );
+    let gone = hello(&server.socket.with_file_name("none.sock"), "tok").await.unwrap_err();
+    assert!(gone.contains("connect"), "{gone}");
 }

@@ -1101,10 +1101,32 @@ fn new_ui_secret() -> String {
 }
 
 /// The local forwarded socket and the host's daemon socket it reaches, for one repo.
-fn repo_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
+pub(crate) fn repo_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
     let remote_socket = alinery_core::alineryd_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
     let local = forward_socket(&control_dir(alinery_core::effective_uid()), host_id, &remote_socket)?;
     Ok((local, remote_socket))
+}
+
+/// The same for the daemon's RPC socket (a second forward on the same master).
+pub(crate) fn rpc_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
+    let remote_socket = alinery_core::rpc_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
+    let local = forward_socket(&control_dir(alinery_core::effective_uid()), host_id, &remote_socket)?;
+    Ok((local, remote_socket))
+}
+
+/// Open the RPC forward and ask the daemon `Hello` through it. Re-requesting a forward that exists is harmless.
+fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result<crate::daemon_rpc::Hello, String> {
+    let (local, remote_socket) = rpc_forward(&session.conn.host_id, repo_path)?;
+    let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, repo_path, "")).map_err(|e| format!("no RPC token for this daemon: {e}"))?;
+    let deadline = Instant::now() + wait;
+    loop {
+        let _ = session.conn.forward(&local, &remote_socket);
+        match tauri::async_runtime::block_on(crate::daemon_rpc::hello(&local, token.trim())) {
+            Ok(hello) => return Ok(hello),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => std::thread::sleep(Duration::from_millis(200)),
+        }
+    }
 }
 
 /// Bring up (or reconnect to) a remote repo's daemon: forward its socket, start the daemon
@@ -1122,7 +1144,8 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         let _ = session.conn.forward(&local, &remote_socket);
         version = answers(&client);
     }
-    if version.is_none() {
+    let started = version.is_none();
+    if started {
         let repo_hash = crate::daemon::fnv1a64_hex(repo_path);
         let runtime = runtime_dir(&session.root, &session.runtime_hash);
         // The secret goes to the host in a file only the daemon reads, and is kept here before the
@@ -1177,6 +1200,13 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         }
     }
     let version = version.ok_or("the daemon did not start on the host; see its log under the remote config directory")?;
+    // The RPC socket rides a second forward. A daemon this app just started must answer Hello there
+    // (it holds the token we gave it); one already running may have been started elsewhere, with a
+    // token this Mac does not have, so a failure there is left for the first call to report.
+    let probe = rpc_hello(session, repo_path, if started { Duration::from_secs(15) } else { Duration::ZERO });
+    if let (true, Err(error)) = (started, probe) {
+        return Err(format!("the daemon started but did not answer Hello on its RPC socket: {error}"));
+    }
     // An unusable daemon is returned, not refused: the caller records it as a conflict and the
     // user decides whether to replace it (`stop_remote_daemon`).
     let compat = daemon_client::classify_version_reply(&version, &session.runtime_hash, app_config_identity);

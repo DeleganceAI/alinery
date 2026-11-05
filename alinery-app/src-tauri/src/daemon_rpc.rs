@@ -157,6 +157,45 @@ impl Bridge {
         }
     }
 
+    /// One unary call for the shell's own use: `message` is the protobuf body, the answer is the
+    /// protobuf body of the reply. A non-zero `grpc-status` (in the trailers, or in the head of a
+    /// trailers-only answer) is an error naming the status.
+    pub(crate) async fn unary(&self, socket: &Path, token: &str, path: &str, message: &[u8]) -> Result<Vec<u8>, String> {
+        let mut body = vec![0u8];
+        body.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        body.extend_from_slice(message);
+        let call = Call {
+            id: String::new(),
+            owner: String::new(),
+            path: path.to_string(),
+            headers: vec![("content-type".into(), "application/grpc+proto".into())],
+            body,
+        };
+        let mut res = self.request(socket, token, &call).await?;
+        let header = |map: &http::HeaderMap, name: &str| map.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
+        let (mut status, mut detail) = (header(res.headers(), "grpc-status"), header(res.headers(), "grpc-message"));
+        let mut data = Vec::new();
+        while let Some(frame) = res.frame().await {
+            let frame = frame.map_err(|e| e.to_string())?;
+            if let Some(chunk) = frame.data_ref() {
+                data.extend_from_slice(chunk);
+            } else if let Some(trailers) = frame.trailers_ref() {
+                status = header(trailers, "grpc-status").or(status);
+                detail = header(trailers, "grpc-message").or(detail);
+            }
+        }
+        match status.as_deref() {
+            Some("0") => {}
+            Some(code) => return Err(format!("grpc-status {code}: {}", detail.unwrap_or_default())),
+            None => return Err("the daemon answered without a grpc-status".into()),
+        }
+        let len = data.get(1..5).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+        match (data.first(), len) {
+            (Some(0), Some(len)) if data.len() == 5 + len => Ok(data[5..].to_vec()),
+            _ => Err("the daemon's reply was not one uncompressed gRPC message".into()),
+        }
+    }
+
     async fn drive<F: FnMut(Vec<u8>) -> bool>(&self, socket: &Path, token: &str, call: &Call, out: &mut Out<F>) -> Outcome {
         macro_rules! check {
             ($sent:expr) => {
@@ -266,8 +305,11 @@ pub(crate) fn resolve(repo_key: &str, app_config_dir: &Path, lane: Option<&str>)
     match RepoRef::parse(repo_key)? {
         RepoRef::Local(repo) if repo.is_absolute() => Ok((alinery_core::rpc_socket_path(&repo, lane), rpc_secret_path(app_config_dir, repo_key, lane.unwrap_or("")))),
         RepoRef::Local(_) => Err(format!("not an absolute repository path: {repo_key}")),
-        // The ssh forward of the RPC socket arrives with S1.3.
-        RepoRef::Remote { .. } => Err("remote repositories reach the daemon RPC socket in a later release".into()),
+        // The ssh forward's local end; the token is the copy this app kept when it started the daemon there.
+        RepoRef::Remote { host_id, path } => Ok((
+            crate::remote::rpc_forward(&host_id, &path)?.0,
+            rpc_secret_path(&app_config_dir.join("remote").join(&host_id), &path, ""),
+        )),
     }
 }
 
@@ -328,4 +370,72 @@ fn watch_window(webview: &Webview, label: &str) {
 #[tauri::command]
 pub(crate) fn daemon_rpc_cancel(call_id: String) {
     BRIDGE.cancel(&call_id);
+}
+
+/// What `AdminService.Hello` answers that the shell reads.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Hello {
+    pub protocol: u32,
+    pub build_id: String,
+    pub epoch: String,
+}
+
+/// Hello through the bridge path: the RPC liveness probe (over a forward a connect alone proves
+/// nothing, plan 2.1.3). The two messages are encoded by hand; S1.4 replaces this with its prost
+/// structs and golden test.
+pub(crate) async fn hello(socket: &Path, token: &str) -> Result<Hello, String> {
+    let id = b"alinery-shell";
+    let mut request = vec![0x0a, id.len() as u8];
+    request.extend_from_slice(id);
+    request.extend_from_slice(&[0x12, 7]);
+    request.extend_from_slice(b"desktop");
+    request.push(0x18);
+    request.push(alinery_core::PROTOCOL_VERSION as u8);
+    let reply = tokio::time::timeout(Duration::from_secs(10), BRIDGE.unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
+        .await
+        .map_err(|_| "Hello timed out".to_string())??;
+    decode_hello(&reply)
+}
+
+fn decode_hello(mut bytes: &[u8]) -> Result<Hello, String> {
+    fn varint(bytes: &mut &[u8]) -> Result<u64, String> {
+        let (mut value, mut shift) = (0u64, 0);
+        loop {
+            let (&byte, rest) = bytes.split_first().ok_or("truncated Hello")?;
+            *bytes = rest;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Ok(value);
+            }
+            shift += 7;
+        }
+    }
+    let mut hello = Hello {
+        protocol: 0,
+        build_id: String::new(),
+        epoch: String::new(),
+    };
+    while !bytes.is_empty() {
+        let tag = varint(&mut bytes)?;
+        match tag & 7 {
+            0 => {
+                let value = varint(&mut bytes)?;
+                if tag >> 3 == 1 {
+                    hello.protocol = value as u32;
+                }
+            }
+            2 => {
+                let len = varint(&mut bytes)? as usize;
+                let (field, rest) = bytes.split_at_checked(len).ok_or("truncated Hello")?;
+                bytes = rest;
+                match tag >> 3 {
+                    2 => hello.build_id = String::from_utf8_lossy(field).into_owned(),
+                    3 => hello.epoch = String::from_utf8_lossy(field).into_owned(),
+                    _ => {}
+                }
+            }
+            other => return Err(format!("unexpected wire type {other} in Hello")),
+        }
+    }
+    Ok(hello)
 }

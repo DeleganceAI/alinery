@@ -203,6 +203,20 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     let before = daemons(&session);
     assert!(!before.trim().is_empty());
 
+    // The RPC socket rides its own forward: Hello through the bridge path, with the token this Mac kept.
+    let hello_now = |session: &RemoteSession| {
+        let (local, _) = rpc_forward(&session.conn.host_id, &repo).unwrap();
+        let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "")).unwrap();
+        tauri::async_runtime::block_on(crate::daemon_rpc::hello(&local, token.trim())).unwrap()
+    };
+    let first_hello = hello_now(&session);
+    assert_eq!(first_hello.protocol, alinery_core::PROTOCOL_VERSION);
+    assert!(!first_hello.epoch.is_empty() && !first_hello.build_id.is_empty(), "{first_hello:?}");
+    let (rpc_local, _) = rpc_forward(&session.conn.host_id, &repo).unwrap();
+    assert_ne!(rpc_local, repo_forward(&session.conn.host_id, &repo).unwrap().0);
+    let wrong = tauri::async_runtime::block_on(crate::daemon_rpc::hello(&rpc_local, "x".repeat(64).as_str())).unwrap_err();
+    assert!(wrong.contains("grpc-status 16"), "a wrong token is UNAUTHENTICATED, not a transport failure: {wrong}");
+
     // Dropping the channel and the master (a disconnect) leaves the daemon alone.
     session.conn.exit_master();
     drop(session);
@@ -211,6 +225,11 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     let (_, compat, _) = ensure_remote_daemon(&again, &repo, &identity).unwrap();
     assert!(compat.usable());
     assert_eq!(daemons(&again), before, "reconnecting must not start a second daemon");
+    assert_eq!(
+        hello_now(&again).epoch,
+        first_hello.epoch,
+        "Hello after the reconnect reaches the same daemon, not a new one"
+    );
     // The claim died with the old channel, so a new channel can take it.
     assert_eq!(
         again
