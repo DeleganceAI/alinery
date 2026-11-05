@@ -16,6 +16,8 @@ export type SessionHooks = {
   send(id: string, text: string): Promise<void>;
   stop(id: string): Promise<void>;
   bind(id: string, executionId: string): void;
+  /** A task's playbook engine logged an event, so its execution entity may have changed (S2.4). */
+  executionChanged?(taskSlug: string): void;
 };
 
 export type PlaybookView = { state: string; reason?: string };
@@ -279,6 +281,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     playbook: parsed.playbook,
     harness: harnessFor(slug, hooks, taskDir),
     logPath,
+    onEvent: () => hooks?.executionChanged?.(slug),
     artifactsDir: join(taskDir, "artifacts"),
     cwd,
     maxLiveSessions: () => liveSessionCap(readExecutionFile(taskDir)?.max_live_sessions),

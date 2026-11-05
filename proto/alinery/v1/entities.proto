@@ -2,6 +2,8 @@
 syntax = "proto3";
 package alinery.v1;
 
+import "google/protobuf/struct.proto";
+
 message SessionRef {
   string task_slug = 1;  // "" for taskless chat sessions, as the daemon's metaPath does today
   string id = 2;
@@ -16,7 +18,14 @@ message Task {
   string title = 2;
 }
 message Draft {}
-message Execution {}
+// One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
+// definition) in JSON form. S4.2 replaces the two Structs with typed fields when it moves the state
+// into execution.json; until then the entity and the RPC read are built by the same function.
+message Execution {
+  string slug = 1;
+  google.protobuf.Struct state = 2;
+  google.protobuf.Struct definition = 3;
+}
 // Fields 3 and up are `SessionMeta` (alinery-core types.rs), named as in the meta.json the daemon and
 // Rust both write, so the parser (S2.3) and Rust's serde output compare field by field. `ref` comes
 // from the file's path; `status` is the live state, which S2.5 fills.

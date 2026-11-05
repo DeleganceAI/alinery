@@ -20,6 +20,7 @@ import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { serveRpc } from "./rpc/server.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
+import { commitExecution } from "./domain/executions.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
@@ -1113,6 +1114,7 @@ await serveRpc({
 });
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
+    executionChanged: (taskSlug) => commitExecution(store, repo, taskSlug, lane, identity),
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
     status(id) {
       return Promise.resolve(sessionHarnessStatus(live.get(id)));

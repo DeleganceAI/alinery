@@ -35,6 +35,8 @@ import { type Ambiguity, appendLog, apply, type Event, type Execution, fold, typ
 
 export interface EngineOptions {
   playbook: Playbook;
+  /** Called after every logged event is applied. An exception is logged and never fails the engine. */
+  onEvent?: (ev: Event, state: State) => void;
   harness: Harness;
   /** Append-only JSONL event log for this task. Created on first write. */
   logPath: string;
@@ -312,6 +314,11 @@ export class Engine {
   #append(ev: Event): void {
     appendLog(this.#opts.logPath, ev);
     apply(this.#state, ev);
+    try {
+      this.#opts.onEvent?.(ev, this.#state);
+    } catch (err) {
+      console.error(`engine onEvent (${ev.t}): ${message(err)}`);
+    }
   }
 }
 
