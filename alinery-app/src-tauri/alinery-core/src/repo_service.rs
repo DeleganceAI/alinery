@@ -561,6 +561,9 @@ pub enum RepoOp {
         /// forward. The daemon reads it and deletes it before it listens.
         #[serde(default)]
         ui_secret_file: Option<PathBuf>,
+        /// The same for the RPC socket's bearer token (`--rpc-secret-file`).
+        #[serde(default)]
+        rpc_secret_file: Option<PathBuf>,
     },
 }
 
@@ -961,6 +964,7 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             launch,
             unit,
             ui_secret_file,
+            rpc_secret_file,
         } => spawn_daemon(
             &repo,
             &app_config,
@@ -972,6 +976,7 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             launch,
             unit.as_deref(),
             ui_secret_file.as_deref(),
+            rpc_secret_file.as_deref(),
         )
         .map(|()| Value::Null),
     }
@@ -1007,6 +1012,7 @@ fn spawn_daemon(
     launch: Launch,
     unit: Option<&str>,
     ui_secret_file: Option<&Path>,
+    rpc_secret_file: Option<&Path>,
 ) -> Result<(), String> {
     use std::process::{Command, Stdio};
     if let Some(parent) = log.parent() {
@@ -1018,7 +1024,7 @@ fn spawn_daemon(
         .open(log)
         .map_err(|error| format!("open {}: {error}", log.display()))?;
     let log_again = log_file.try_clone().map_err(|error| error.to_string())?;
-    let mut daemon = crate::daemon_command(binary, repo, app_config, build_id.as_ref(), namespace, None);
+    let mut daemon = crate::daemon_command(binary, repo, app_config, build_id.as_ref(), namespace, None, rpc_secret_file);
     if let Some(library) = ownership_lib {
         daemon.env("ALINERY_OWNERSHIP_LIB", library);
     }
@@ -1577,6 +1583,7 @@ mod tests {
                 launch: Launch::SystemdRun,
                 unit: Some("alinery-daemon-abc".into()),
                 ui_secret_file: Some("/srv/c/ui-secrets/abc.secret".into()),
+                rpc_secret_file: Some("/srv/c/ui-secrets/abc.rpc".into()),
             },
         ];
         for (id, op) in ops.into_iter().enumerate() {
@@ -1877,6 +1884,7 @@ mod tests {
             launch: Launch::Direct,
             unit: None,
             ui_secret_file: Some(root.join("ui.secret")),
+            rpc_secret_file: Some(root.join("rpc.secret")),
         })
         .unwrap();
         let mut text = String::new();
@@ -1892,6 +1900,7 @@ mod tests {
         assert!(text.contains("--socket-namespace ns"), "{text}");
         assert!(text.contains("lib: /opt/lib.so"), "{text}");
         assert!(text.contains(&format!("--ui-secret-file {}", root.join("ui.secret").display())), "{text}");
+        assert!(text.contains(&format!("--rpc-secret-file {}", root.join("rpc.secret").display())), "{text}");
         assert!(run(RepoOp::SpawnDaemon {
             launch: Launch::SystemdRun,
             unit: None,
@@ -1903,6 +1912,7 @@ mod tests {
             ownership_lib: None,
             log,
             ui_secret_file: None,
+            rpc_secret_file: None,
         })
         .is_err());
         fs::remove_dir_all(root).unwrap();

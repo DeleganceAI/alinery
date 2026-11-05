@@ -1,0 +1,49 @@
+// The RPC socket (T1, plan 2.1.8): grpc-js over HTTP/2 with prior knowledge on `<repo>/.alinery/rpc[-ns].sock`.
+// A grpc-js handler can't see its connection's socket, so the peer check runs once per connection,
+// at accept, on our own node:net listener, and picks the server built for that peer class.
+import { rmSync } from "node:fs";
+import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import * as grpc from "@grpc/grpc-js";
+import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import { adminService, type DaemonInfo } from "./admin.ts";
+import { credentials, PEER_CLASSES, type PeerClass } from "./auth.ts";
+import { addService } from "./grpc.ts";
+import { peerExecutable, samePath } from "./peer.ts";
+
+function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo) {
+  const server = new grpc.Server();
+  const values = (header: Headers) => credentials(header, peer, secret);
+  addService(server, AdminService, adminService(info), values);
+  return server.createConnectionInjector(grpc.ServerCredentials.createInsecure());
+}
+
+/** Without a host executable the daemon was started over ssh and every peer is sshd. */
+function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable: string | undefined): PeerClass {
+  if (!hostExecutable) return "ssh";
+  const peer = peerExecutable(socket);
+  return peer && samePath(peer, hostExecutable) ? "shell" : "other";
+}
+
+export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo };
+
+export function serveRpc(options: RpcOptions): Promise<NetServer> {
+  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info)]));
+  const net = createNetServer((sock) => {
+    sock.on("error", () => {});
+    servers.get(peerClass(sock, options.hostExecutable))!.injectConnection(sock);
+  });
+  rmSync(options.socketPath, { force: true });
+  // bind(2) gives a socket 0777 minus the umask, and a chmod after listen would leave a window, so
+  // the umask is 0177 (mode 0600) around listen. Bun binds synchronously inside listen(); the umask
+  // is process-wide, so it is put back before anything else runs.
+  const previous = process.umask(0o177);
+  try {
+    net.listen(options.socketPath);
+  } finally {
+    process.umask(previous);
+  }
+  return new Promise((resolve, reject) => {
+    net.once("error", reject);
+    net.once("listening", () => resolve(net));
+  });
+}

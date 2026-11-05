@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type Socket } from "node:net";
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync, readlinkSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
@@ -14,6 +14,9 @@ import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarn
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
+import { takeSecretFile } from "./rpc/auth.ts";
+import { peerExecutable, samePath } from "./rpc/peer.ts";
+import { serveRpc } from "./rpc/server.ts";
 import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
@@ -23,7 +26,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 24;
+const PROTOCOL = 25;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -92,6 +95,11 @@ if (uiSecretFile) {
   }
 }
 
+// The RPC bearer token (R8) comes the same way: a file the app wrote, read and deleted before the
+// daemon listens or resumes anything, then held only in memory.
+const rpcSecretFile = flag("--rpc-secret-file");
+const rpcSecret = rpcSecretFile ? takeSecretFile(rpcSecretFile) : Buffer.alloc(0);
+
 function uiSecretMatches(given: unknown): boolean {
   if (uiSecret.length < 32 || typeof given !== "string") return false;
   const expected = Buffer.from(uiSecret);
@@ -116,6 +124,7 @@ const lane = namespace;
 const identity = appConfigIdentity(appConfig);
 acquireOwnership(repo, lane, identity);
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
+const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
 try {
   unlinkSync(uiSocket);
 } catch {
@@ -649,80 +658,6 @@ function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknow
   return { error: "task execution ownership mismatch" };
 }
 
-function socketFd(socket: Socket): number | null {
-  const record: unknown = socket;
-  if (!record || typeof record !== "object" || !("_handle" in record)) return null;
-  const handle = record._handle;
-  if (!handle || typeof handle !== "object" || !("fd" in handle) || typeof handle.fd !== "number") return null;
-  return handle.fd;
-}
-
-// libSystem has no getpeerid. Match alinery-core peer_process_id: getpeereid, then LOCAL_PEERPID.
-const SOL_LOCAL = 0;
-const LOCAL_PEERPID = 0x002;
-const SOL_SOCKET = 1;
-const SO_PEERCRED = 17;
-
-function peerExecutable(socket: Socket): string | null {
-  const fd = socketFd(socket);
-  if (fd == null) return null;
-  try {
-    if (process.platform === "darwin") return darwinPeerExecutable(fd);
-    if (process.platform === "linux") return linuxPeerExecutable(fd);
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function darwinPeerExecutable(fd: number): string | null {
-  const libc = dlopen("libSystem.B.dylib", {
-    getpeereid: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    geteuid: { args: [], returns: FFIType.u32 },
-    proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-  });
-  const uid = Buffer.alloc(4);
-  const gid = Buffer.alloc(4);
-  if (libc.symbols.getpeereid(fd, ptr(uid), ptr(gid)) !== 0) return null;
-  if (uid.readUInt32LE(0) !== libc.symbols.geteuid()) return null;
-  const pid = Buffer.alloc(4);
-  const size = Buffer.alloc(4);
-  size.writeUInt32LE(4, 0);
-  if (libc.symbols.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, ptr(pid), ptr(size)) !== 0) return null;
-  if (size.readUInt32LE(0) !== 4) return null;
-  const pidNum = pid.readInt32LE(0);
-  if (pidNum <= 0) return null;
-  const path = Buffer.alloc(4096);
-  const length = libc.symbols.proc_pidpath(pidNum, ptr(path), path.length);
-  if (length <= 0) return null;
-  return path.subarray(0, length).toString().replace(/\0+$/, "");
-}
-
-function linuxPeerExecutable(fd: number): string | null {
-  const libc = dlopen("libc.so.6", {
-    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    geteuid: { args: [], returns: FFIType.u32 },
-  });
-  const cred = Buffer.alloc(12);
-  const size = Buffer.alloc(4);
-  size.writeUInt32LE(12, 0);
-  if (libc.symbols.getsockopt(fd, SOL_SOCKET, SO_PEERCRED, ptr(cred), ptr(size)) !== 0) return null;
-  if (size.readUInt32LE(0) < 12) return null;
-  const pidNum = cred.readInt32LE(0);
-  const peerUid = cred.readUInt32LE(4);
-  if (pidNum <= 0 || peerUid !== libc.symbols.geteuid()) return null;
-  return readlinkSync(`/proc/${pidNum}/exe`);
-}
-function samePath(left: string, right: string): boolean {
-  if (left === right) return true;
-  try {
-    return realpathSync(left) === realpathSync(right);
-  } catch {
-    return false;
-  }
-}
-
 const kept = new WeakSet<Socket>();
 const uiAuthorized = new WeakSet<Socket>();
 
@@ -768,10 +703,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
       row.process = "exited";
     }
     live.clear();
-    try {
-      unlinkSync(uiSocket);
-    } catch {
-      /* already gone */
+    for (const path of [uiSocket, rpcSocket]) {
+      try {
+        unlinkSync(path);
+      } catch {
+        /* already gone */
+      }
     }
     socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
       socket.end();
@@ -1143,6 +1080,13 @@ async function resumeInterrupted() {
 }
 
 repairSessionMetas();
+// Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
+await serveRpc({
+  socketPath: rpcSocket,
+  secret: rpcSecret,
+  hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
+  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
+});
 server.listen(uiSocket, () => {
   void resumeInterrupted().then(() => startGraphs(repo, {
     open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),

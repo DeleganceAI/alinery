@@ -1060,6 +1060,36 @@ pub(crate) fn fnv1a64_hex(input: &str) -> String {
     format!("{hash:016x}")
 }
 
+/// A fresh bearer token for a daemon's RPC socket: 32 random bytes, hex (plan 2.1.10).
+pub(crate) fn new_rpc_secret() -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut urandom| urandom.read_exact(&mut bytes))
+        .map_err(|error| format!("read random bytes: {error}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Where this app keeps the token of the daemon it started for `repo` on `lane` ("" is the product
+/// lane): one owner-only file each, so two repos starting at once never rewrite a shared file.
+/// A relaunched app reads it to talk to a daemon that outlived it. `dir` is the app config
+/// directory, or `remote/<host-id>` under it for a remote repo.
+pub(crate) fn rpc_secret_path(dir: &Path, repo: &str, lane: &str) -> PathBuf {
+    dir.join("rpc-secrets").join(format!("{}.secret", fnv1a64_hex(&format!("{repo}\n{lane}"))))
+}
+
+/// Write the copy the app keeps (before the daemon exists, so a successful start never lacks it).
+pub(crate) fn store_rpc_secret(dir: &Path, repo: &str, lane: &str, secret: &str) -> Result<(), String> {
+    alinery_core::write_owner_only_bytes(&rpc_secret_path(dir, repo, lane), secret.as_bytes())
+}
+
+/// The hand-off file a local daemon reads and deletes before it listens (`--rpc-secret-file`).
+pub(crate) fn write_rpc_secret_handoff(secret: &str) -> Result<PathBuf, String> {
+    let path = std::env::temp_dir().join(format!("alinery-rpc-{}.secret", uuid::Uuid::new_v4().simple()));
+    alinery_core::write_owner_only_bytes(&path, secret.as_bytes())?;
+    Ok(path)
+}
+
 pub(crate) fn current_alineryd_socket_path(repo: &Path) -> PathBuf {
     alineryd_socket_path(repo, alineryd_socket_namespace().as_deref())
 }

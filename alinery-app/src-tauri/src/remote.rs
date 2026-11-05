@@ -1137,6 +1137,17 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
             },
             SERVICE_TIMEOUT,
         )?;
+        // The RPC token travels the same way, and its copy is kept per repo and lane (the remote lane is "").
+        let rpc_secret = crate::daemon::new_rpc_secret()?;
+        let rpc_secret_file = format!("{}/ui-secrets/{}.rpc", session.config_dir, &repo_hash[..12]);
+        crate::daemon::store_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
+        session.channel.call(
+            RepoOp::WriteFile {
+                path: rpc_secret_file.clone().into(),
+                contents: rpc_secret,
+            },
+            SERVICE_TIMEOUT,
+        )?;
         let (launch, unit) = match session.launcher {
             Launcher::SystemdRun => (Launch::SystemdRun, Some(format!("alinery-daemon-{}", &repo_hash[..12]))),
             Launcher::Setsid | Launcher::Nohup => (Launch::Direct, None),
@@ -1153,6 +1164,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
                 launch,
                 unit,
                 ui_secret_file: Some(secret_file.into()),
+                rpc_secret_file: Some(rpc_secret_file.into()),
             },
             SERVICE_TIMEOUT,
         )?;

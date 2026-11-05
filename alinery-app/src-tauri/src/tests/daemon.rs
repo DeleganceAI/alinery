@@ -2028,3 +2028,36 @@ fn replacement_start_failure_preserves_history_without_restarting_owner() {
     assert!(!alinery_core::alineryd_socket_path(&repo.0, Some("old")).exists());
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
 }
+
+#[test]
+fn rpc_secrets_are_random_hex_kept_per_repo_and_lane_and_handed_off_owner_only() {
+    use crate::daemon::{new_rpc_secret, rpc_secret_path, store_rpc_secret, write_rpc_secret_handoff};
+    use std::os::unix::fs::PermissionsExt;
+    let (a, b) = (new_rpc_secret().unwrap(), new_rpc_secret().unwrap());
+    assert!(a.len() == 64 && a.bytes().all(|c| c.is_ascii_hexdigit()), "{a}");
+    assert_ne!(a, b);
+
+    let dir = std::env::temp_dir().join(format!("alinery-rpc-secrets-{}", uuid::Uuid::new_v4().simple()));
+    let paths = [
+        rpc_secret_path(&dir, "/repo/a", ""),
+        rpc_secret_path(&dir, "/repo/a", "d0123"),
+        rpc_secret_path(&dir, "/repo/b", ""),
+    ];
+    assert_eq!(paths.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "{paths:?}");
+    store_rpc_secret(&dir, "/repo/a", "", &a).unwrap();
+    store_rpc_secret(&dir, "/repo/b", "", &b).unwrap();
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), a);
+    assert_eq!(fs::read_to_string(&paths[2]).unwrap(), b);
+    assert!(!paths[1].exists());
+    assert_eq!(fs::metadata(&paths[0]).unwrap().permissions().mode() & 0o777, 0o600);
+    // A restart replaces the copy with the new daemon's token.
+    store_rpc_secret(&dir, "/repo/a", "", &b).unwrap();
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), b);
+
+    let handoff = write_rpc_secret_handoff(&a).unwrap();
+    assert_eq!(fs::read_to_string(&handoff).unwrap(), a);
+    assert_eq!(fs::metadata(&handoff).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_ne!(handoff, write_rpc_secret_handoff(&a).unwrap());
+    fs::remove_file(handoff).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}

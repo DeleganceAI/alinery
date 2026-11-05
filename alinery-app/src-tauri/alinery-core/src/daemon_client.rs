@@ -180,13 +180,14 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 current).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 and 25 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
 /// Protocol 18 dropped the OMP process ops. Shutdown is still
-/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 daemon's handler
-/// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that.
+/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 and 25 daemons' handler
+/// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
+/// socket and left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.
@@ -1468,7 +1469,18 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
 /// The one recipe for launching the daemon, locally or (through the repo service) on a remote
 /// host: arguments, login-shell PATH, the Grok key, detachment and null stdio. Callers add
 /// anything host-specific (such as the ownership library) and spawn it.
-pub fn daemon_command(binary: &Path, repo: &Path, app_config: &Path, build_id: &std::ffi::OsStr, namespace: Option<&str>, host_executable: Option<&Path>) -> Command {
+///
+/// `rpc_secret_file` is a file holding the bearer token for the daemon's RPC socket; the daemon
+/// reads it and deletes it before it listens (`--rpc-secret-file`).
+pub fn daemon_command(
+    binary: &Path,
+    repo: &Path,
+    app_config: &Path,
+    build_id: &std::ffi::OsStr,
+    namespace: Option<&str>,
+    host_executable: Option<&Path>,
+    rpc_secret_file: Option<&Path>,
+) -> Command {
     let mut command = Command::new(binary);
     command
         .arg("--repo")
@@ -1485,6 +1497,9 @@ pub fn daemon_command(binary: &Path, repo: &Path, app_config: &Path, build_id: &
     if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
         command.arg("--socket-namespace").arg(namespace);
     }
+    if let Some(file) = rpc_secret_file {
+        command.arg("--rpc-secret-file").arg(file);
+    }
     let grok_key = crate::load_global_settings(app_config).experiments.grok_api_key;
     if !grok_key.trim().is_empty() {
         command.env("XAI_API_KEY", grok_key.trim());
@@ -1495,7 +1510,7 @@ pub fn daemon_command(binary: &Path, repo: &Path, app_config: &Path, build_id: &
 
 pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
     let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
-    daemon_command(&daemon, repo, app_config, daemon_binary_build_id().as_ref(), namespace, host_executable)
+    daemon_command(&daemon, repo, app_config, daemon_binary_build_id().as_ref(), namespace, host_executable, None)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
@@ -2179,5 +2194,31 @@ mod tests {
         assert_eq!(near["definition"].as_str().unwrap().len(), playbook.len());
         near_server.join().unwrap();
         let _ = fs::remove_file(&near_path);
+    }
+
+    #[test]
+    fn daemon_command_passes_the_rpc_secret_file_after_the_lane_and_only_when_given() {
+        let args = |secret: Option<&Path>| -> Vec<String> {
+            daemon_command(Path::new("/d"), Path::new("/r"), Path::new("/c/app.toml"), "b".as_ref(), Some("ns"), None, secret)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            args(Some(Path::new("/t/rpc.secret"))),
+            [
+                "--repo",
+                "/r",
+                "--app-config",
+                "/c/app.toml",
+                "--build-id",
+                "b",
+                "--socket-namespace",
+                "ns",
+                "--rpc-secret-file",
+                "/t/rpc.secret"
+            ]
+        );
+        assert!(!args(None).iter().any(|arg| arg == "--rpc-secret-file"));
     }
 }

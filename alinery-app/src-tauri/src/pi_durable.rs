@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager};
 
 use alinery_core::daemon_client::{self, daemon_command};
 
-use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon};
+use crate::daemon::{alineryd_socket_namespace, canonical_host_executable, connect_current_daemon, new_rpc_secret, store_rpc_secret, write_rpc_secret_handoff};
 use crate::paths::{app_config_path, is_local_repo_dir};
 use crate::state::AppState;
 
@@ -39,18 +39,34 @@ fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
     let library = ownership_library().ok_or("ownership library not found beside the app")?;
     let namespace = alineryd_socket_namespace();
     let host_executable = canonical_host_executable(std::env::current_exe());
-    daemon_command(
+    // The token is kept before the daemon exists, as for a remote daemon, so a started daemon never
+    // lacks its copy. The daemon deletes the hand-off file once it has read it.
+    let secret = new_rpc_secret()?;
+    store_rpc_secret(
+        alinery_core::app_config_dir_of(app_config).ok_or("app config root unavailable")?,
+        &repo.to_string_lossy(),
+        namespace.as_deref().unwrap_or(""),
+        &secret,
+    )?;
+    let handoff = write_rpc_secret_handoff(&secret)?;
+    let spawned = daemon_command(
         &binary,
         repo,
         app_config,
         binary.file_name().unwrap_or_default(),
         namespace.as_deref(),
         host_executable.as_deref(),
+        Some(&handoff),
     )
     .env("ALINERY_OWNERSHIP_LIB", library)
-    .spawn()
-    .map(|_| ())
-    .map_err(|error| format!("spawn {}: {error}", binary.display()))
+    .spawn();
+    match spawned {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&handoff);
+            Err(format!("spawn {}: {error}", binary.display()))
+        }
+    }
 }
 
 /// Start Vinculum. Does not start release `alineryd`.

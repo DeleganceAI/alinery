@@ -1976,6 +1976,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
                 launch: alinery_core::repo_service::Launch::Direct,
                 unit: None,
                 ui_secret_file: None,
+                rpc_secret_file: None,
             },
             Duration::from_secs(30),
         )
