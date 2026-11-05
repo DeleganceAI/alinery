@@ -14,6 +14,8 @@
 # A behavioural test alone would pass against a re-introduced *conditional* kill, which
 # is exactly how the original bug shipped — hence a source-level check.
 #
+# The same holds on the daemon side: see the S2.2 block below.
+#
 # Run: ./scripts/tests/check-no-auto-session-kill.sh   (wired into scripts/release.sh)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -189,6 +191,45 @@ for (const dir of ["src", "mcp/src", "alinery-core/src"]) {
   }
 }
 JS
+
+# The daemon side (plan S2.2). A child process is signalled from one file, platform/process.ts, so
+# `.kill(` and `process.kill(` may appear nowhere else under vinculum-daemon/src (tests excepted), and
+# every `signalChild(child, signal, "reason")` call names its reason and sits in a file the pair
+# below allows. Add a pair only together with the user action that justifies it:
+#   terminal.ts:session-kill   the user's kill of a Terminal session
+#   mcp.ts:mcp-restart         closing an MCP child (restart, or the owning session ending)
+# S2.6 adds jobs/runner.ts:job-cancel for a user's cancel of a running job.
+DAEMON_SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
+SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart"
+if [ ! -f "$DAEMON_SRC/platform/process.ts" ]; then
+  echo "ERROR: $DAEMON_SRC/platform/process.ts is missing — the daemon scan has drifted from the code." >&2
+  exit 1
+fi
+daemon_files="$(find "$DAEMON_SRC" -name '*.ts' ! -name '*.test.ts' ! -path "$DAEMON_SRC/platform/process.ts")"
+raw_kills="$(echo "$daemon_files" | xargs grep -nE '\.kill\(' | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' || true)"
+if [ -n "$raw_kills" ]; then
+  echo "ERROR: send signals to children through signalChild in platform/process.ts, never .kill( directly:" >&2
+  echo "$raw_kills" >&2
+  status=1
+fi
+signal_calls="$(echo "$daemon_files" | xargs grep -nE 'signalChild\(' | grep -vE ':[0-9]+:[[:space:]]*(//|\*|import )' || true)"
+if [ -z "$signal_calls" ]; then
+  echo "ERROR: found no signalChild callers at all — the match pattern has drifted from the code." >&2
+  exit 1
+fi
+while IFS= read -r call; do
+  file="${call%%:*}"
+  rel="${file#"$DAEMON_SRC"/}"
+  reason="$(echo "$call" | sed -nE 's/.*signalChild\([^)]*"([a-z-]+)"\).*/\1/p')"
+  case " $SIGNAL_ALLOWED " in
+    *" $rel:$reason "*) echo "ok       $rel signalChild ($reason)" ;;
+    *)
+      echo "ERROR: $rel calls signalChild without an allowlisted reason (got '${reason:-none}'):" >&2
+      echo "       $call" >&2
+      status=1
+      ;;
+  esac
+done <<<"$signal_calls"
 
 case " $senders " in
   *" ensure_daemon "*)

@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { signalChild, spawnDetached } from "./platform/process.ts";
 
 /** Must match `OMP_ENV_ALLOWLIST` in alinery-core. A stdio MCP child gets only these, then its own env. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
@@ -243,7 +244,7 @@ function allowlistedEnv(extra: Record<string, string>): Record<string, string> {
 }
 
 function spawnStdio(spec: StdioSpec): Endpoint {
-  const proc = Bun.spawn([spec.command, ...spec.args], {
+  const proc = spawnDetached([spec.command, ...spec.args], {
     cwd: spec.cwd,
     env: allowlistedEnv(spec.env),
     stdin: "pipe",
@@ -319,11 +320,7 @@ function spawnStdio(spec: StdioSpec): Endpoint {
   const endpoint: Endpoint = {
     alive: () => !failed && proc.exitCode === null,
     close: () => {
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
+      signalChild(proc, "SIGTERM", "mcp-restart");
     },
     async list() {
       await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "alinery-vinculum", version: "1" } });

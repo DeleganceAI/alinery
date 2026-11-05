@@ -3,6 +3,7 @@ import { dlopen, FFIType, type Pointer, read } from "bun:ffi";
 import { closeSync, constants, fstatSync, openSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+const LOCK_SH = 1;
 const LOCK_EX = 2;
 const LOCK_NB = 4;
 const LOCK_UN = 8;
@@ -39,10 +40,14 @@ export class LockHandle {
   }
 }
 
-/** lockfile.rs try_lock_exclusive. Never flock without LOCK_NB: it would block the event loop. */
-export function tryLockExclusive(path: string): LockHandle | null {
+/**
+ * lockfile.rs try_lock_exclusive. Never flock without LOCK_NB: it would block the event loop.
+ * `afterOpen` runs between the open and the flock, so a test can replace the file there.
+ */
+export function tryLockExclusive(path: string, afterOpen?: () => void): LockHandle | null {
   for (let attempt = 0; attempt < 5; attempt++) {
     const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
+    afterOpen?.();
     const err = flockErrno(fd, LOCK_EX | LOCK_NB);
     if (err !== 0) {
       closeSync(fd);
@@ -56,6 +61,27 @@ export function tryLockExclusive(path: string): LockHandle | null {
     closeSync(fd);
   }
   throw new Error(`lock file kept being replaced underneath: ${path}`);
+}
+
+/**
+ * lockfile.rs is_locked_by_other: is `path` held exclusively by someone else? A shared probe, so it
+ * never competes with an owner's claim. A path that cannot be opened is not held.
+ */
+export function isLockedByOther(path: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600);
+  } catch {
+    return false;
+  }
+  try {
+    const err = flockErrno(fd, LOCK_SH | LOCK_NB);
+    if (err !== 0) return err === EWOULDBLOCK;
+    libc.symbols.flock(fd, LOCK_UN);
+    return false;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,10 +109,11 @@ const queues = new Map<string, Promise<unknown>>(); // per repo: serializes call
 
 /**
  * with_task_mutation_lock: a process queue, then the flock on `.alinery/.task-mutation.lock`.
- * `fn` is synchronous on purpose, so a slow client cannot hold the repo lock. The deadline starts at
- * enqueue, so N callers behind a long hold all fail `repo_busy` together.
+ * `fn` does no client I/O while the flock is held, so a slow client cannot hold the repo lock. It may
+ * return a promise only to await a durable write's sync (writeDurable), which the disk bounds. The
+ * deadline starts at enqueue, so N callers behind a long hold all fail `repo_busy` together.
  */
-export function withTaskMutation<T>(repo: string, op: string, fn: () => T): Promise<T> {
+export function withTaskMutation<T>(repo: string, op: string, fn: () => T | Promise<T>): Promise<T> {
   const prev = queues.get(repo) ?? Promise.resolve();
   const deadline = Date.now() + TASK_MUTATION_WAIT_MS;
   const run = prev
@@ -95,7 +122,7 @@ export function withTaskMutation<T>(repo: string, op: string, fn: () => T): Prom
       const lock = await waitForLock(taskMutationLockPath(repo), Math.max(0, deadline - Date.now()));
       if (!lock) throw new DomainError("repo_busy", `task mutation busy during ${op}`);
       try {
-        return fn();
+        return await fn();
       } finally {
         lock.release();
       }

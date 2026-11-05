@@ -1,31 +1,55 @@
 // Every daemon file write goes through here (check-daemon-fs-writes.sh). Mirrors alinery-core/src/fs_atomic.rs.
-import { dlopen, FFIType } from "bun:ffi";
-import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 
 let tmpSeq = 0;
 
-// Rust's File::sync_all is fcntl(F_FULLFSYNC) on Apple targets; Bun's fsyncSync is plain fsync(2).
-// fcntl is variadic and bun:ffi has no variadic calls: this two-argument binding is valid only for
-// a command with no third argument, such as F_FULLFSYNC.
-const F_FULLFSYNC = 51;
-const darwin = process.platform === "darwin";
-const fcntl = darwin ? dlopen("libSystem.B.dylib", { fcntl: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } }).symbols.fcntl : null;
+// The syncs of writeDurable run on one long-lived Worker (O26 a); see fsync-worker.ts.
+let worker: Worker | undefined;
+let syncSeq = 0;
+let syncsIssued = 0;
+const waiting = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
 
-function fullSync(fd: number) {
-  if (fcntl) {
-    if (fcntl(fd, F_FULLFSYNC) !== 0) throw new Error("fcntl(F_FULLFSYNC) failed");
-  } else {
-    fsyncSync(fd);
-  }
+function syncWorker(): Worker {
+  if (worker) return worker;
+  // In the compiled daemon every module's import.meta.url is the entry's, so the worker (a second
+  // entry point of the build, see dev-fetch-bun.sh) is addressed inside the embedded filesystem.
+  const compiled = import.meta.url.includes("/$bunfs/");
+  const created = new Worker(compiled ? "/$bunfs/root/platform/fsync-worker.js" : new URL("./fsync-worker.ts", import.meta.url));
+  created.onmessage = (event: MessageEvent<{ id: number; syncs: number; error?: string }>) => {
+    const { id, syncs, error } = event.data;
+    syncsIssued = syncs;
+    const wait = waiting.get(id);
+    waiting.delete(id);
+    if (error) wait?.reject(new Error(error));
+    else wait?.resolve();
+  };
+  created.onerror = (event) => {
+    worker = undefined;
+    for (const wait of waiting.values()) wait.reject(new Error(`fsync worker failed: ${event.message}`));
+    waiting.clear();
+  };
+  created.unref(); // an idle worker must not keep the daemon alive
+  worker = created;
+  return created;
 }
 
-function writeTemp(path: string, data: string | Uint8Array, mode: number, sync: boolean): string {
+function fullSync(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const id = syncSeq++;
+    waiting.set(id, { resolve, reject });
+    syncWorker().postMessage({ id, paths: [path] });
+  });
+}
+
+/** How many full syncs the worker has issued since it started (a test reads this). */
+export const fullSyncsIssued = () => syncsIssued;
+
+function writeTemp(path: string, data: string | Uint8Array, mode: number): string {
   const tmp = `${path}.tmp.${process.pid}.${process.hrtime.bigint()}.${tmpSeq++}`;
   const fd = openSync(tmp, "wx", mode);
   try {
     writeSync(fd, data);
-    if (sync) fullSync(fd);
   } finally {
     closeSync(fd);
   }
@@ -34,18 +58,25 @@ function writeTemp(path: string, data: string | Uint8Array, mode: number, sync: 
 
 /** fs_atomic.rs write_bytes_atomic: temp file in the same directory, then rename. */
 export function writeAtomic(path: string, data: string | Uint8Array, mode = 0o644) {
-  renameSync(writeTemp(path, data, mode, false), path);
+  renameSync(writeTemp(path, data, mode), path);
 }
 
-/** fs_atomic.rs write_bytes_durable: as writeAtomic, plus a full sync of the file and its directory. */
-export function writeDurable(path: string, data: string | Uint8Array, mode = 0o644) {
-  renameSync(writeTemp(path, data, mode, true), path);
-  const dir = openSync(dirname(path), "r");
+/**
+ * fs_atomic.rs write_bytes_durable: as writeAtomic, plus a full sync of the file before the rename
+ * and of its directory after, the same order as Rust. Write and rename run here; the syncs run on the
+ * fsync Worker, and the returned promise settles when both are on disk. A caller inside
+ * withTaskMutation awaits it with the flock held; the wait is bounded by the disk, not by a client.
+ */
+export async function writeDurable(path: string, data: string | Uint8Array, mode = 0o644): Promise<void> {
+  const tmp = writeTemp(path, data, mode);
   try {
-    fullSync(dir);
-  } finally {
-    closeSync(dir);
+    await fullSync(tmp);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
   }
+  renameSync(tmp, path);
+  await fullSync(dirname(path));
 }
 
 /** 0700 directory for anything secret. */

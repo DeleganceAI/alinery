@@ -78,7 +78,7 @@ version_ok "$GOT" "$PIN" || { echo "ERROR: Bun $GOT is older than $PIN" >&2; exi
 
 "$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && "$BUN" install --frozen-lockfile || "$BUN" install)
-"$BUN" build "$PKG/src/main.ts" --compile --outfile "$DEST"
+"$BUN" build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --outfile "$DEST"
 chmod +x "$DEST"
 BYTES="$(wc -c < "$DEST" | tr -d ' ')"
 START="$(python3 - <<PY

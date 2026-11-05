@@ -78,7 +78,7 @@ for entry in "${TARGETS[@]}"; do
   mkdir -p "$dir"
   echo "== $triple"
 
-  bun build "$PKG/src/main.ts" --compile --target="$bun_target" --outfile "$dir/alinery-vinculum-daemon"
+  bun build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --target="$bun_target" --outfile "$dir/alinery-vinculum-daemon"
   cargo zigbuild --release -p alinery-core -p alinery-mcp --manifest-path "$TAURI/Cargo.toml" --target "$triple.$GLIBC_FLOOR"
   cp "$TARGET_DIR/$triple/release/libalinery_core.so" "$dir/libalinery_core.so"
   cp "$TARGET_DIR/$triple/release/alinery-mcp" "$dir/alinery-mcp"

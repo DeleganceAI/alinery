@@ -3,6 +3,7 @@
 import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Socket } from "node:net";
+import { signalChild, spawnDetached } from "./platform/process.ts";
 
 const REPLAY_BYTES = 8 * 1024 * 1024;
 const CLIENT_BACKLOG = 2 * 1024 * 1024;
@@ -124,7 +125,7 @@ export function startShell(id: string, cwd: string, scrollback: string, cols: nu
       fanout(shell, Buffer.from(data));
     },
   });
-  const proc = Bun.spawn([shellPath, "-i"], {
+  const proc = spawnDetached([shellPath, "-i"], {
     cwd,
     env: process.env,
     terminal,
@@ -194,11 +195,7 @@ export function killPty(id: string) {
   const shell = shells.get(id);
   if (!shell) return;
   shell.exited = true;
-  try {
-    shell.proc.kill();
-  } catch {
-    /* already dead */
-  }
+  signalChild(shell.proc, "SIGTERM", "session-kill");
   try {
     shell.terminal.close();
   } catch {
