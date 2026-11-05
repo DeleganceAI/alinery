@@ -373,6 +373,27 @@ describe("OnboardingFlow wizard", () => {
     await act(async () => {});
   });
 
+  it("lays out the onboarding playbook from left to right", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(482);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(242);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1424);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(112);
+    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+      const definition = previewDefinition(reference.key, "Superdevelop");
+      definition.step = definition.step.map((step, index, all) => ({ ...step, inputs: index ? [{ path: all[index - 1].outputs[0].path, mode: "complete" as const }] : [] }));
+      return { source: { reference, path: null }, definition, source_text: "", modified_at_ms: null };
+    });
+    render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);
+    const graph = await screen.findByRole("group", { name: "Graph steps" });
+    const clarify = within(graph).getByRole("button", { name: "Highlight Clarify" });
+    const plan = within(graph).getByRole("button", { name: "Highlight Plan" });
+    expect(Number.parseFloat(plan.style.left.replace(/[^0-9.]/g, ""))).toBeGreaterThan(Number.parseFloat(clarify.style.left.replace(/[^0-9.]/g, "")));
+    // Simulation hides zoom controls, so auto-fit must not make its labels unreadable.
+    const canvas = graph.closest<HTMLElement>(".playbook-definition-canvas");
+    expect(canvas?.style.transform).toBe("scale(1)");
+  });
+
   it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
     vi.useFakeTimers();
     render(<OnboardingFlow {...flowProps()} initialStep="playbooks" />);

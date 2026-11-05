@@ -204,6 +204,94 @@ afterEach(() => {
   taskMutationGuard.release();
 });
 
+function additionalContextDisclosure() {
+  const disclosure = screen.getByText("Additional context").closest("details");
+  if (!disclosure) throw new Error("Additional context disclosure is missing");
+  return disclosure;
+}
+
+describe("task form layout", () => {
+  it("reveals incoming draft context once and preserves manual disclosure choices during editing", async () => {
+    const loaded = deferred<ipc.DraftAttachments>();
+    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
+    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("# Draft\nSaved description\n## Evidence & Pointers\nSaved evidence");
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const disclosure = additionalContextDisclosure();
+    await waitFor(() => expect(screen.getByLabelText("Evidence / pointers")).toHaveProperty("value", "Saved evidence"));
+    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(screen.getByText("Additional context"));
+    expect(disclosure.open).toBe(false);
+    await act(async () => loaded.resolve({ entries: ["/saved.pdf"], images: [] }));
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "Edited name" } });
+    fireEvent.change(screen.getByLabelText("Evidence / pointers"), { target: { value: "Edited evidence" } });
+    expect(disclosure.open).toBe(false);
+    // Native manual expansion remains open even after all optional content is removed.
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove /saved.pdf" }));
+    fireEvent.change(screen.getByLabelText("Evidence / pointers"), { target: { value: "" } });
+    expect(disclosure.open).toBe(true);
+  });
+
+  it("reveals asynchronous draft-load errors once after a manual collapse", async () => {
+    const loaded = deferred<ipc.DraftAttachments>();
+    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
+    render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const disclosure = additionalContextDisclosure();
+    disclosure.open = false;
+    await act(async () => loaded.reject(new Error("unreadable snapshot")));
+    expect(disclosure.open).toBe(true);
+    expect(within(disclosure).getByRole("alert").textContent).toContain("Couldn't load draft attachments");
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "Edited name" } });
+    expect(disclosure.open).toBe(false);
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+  });
+
+  it("groups optional context and advanced settings in disclosures", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    expect(screen.getByText("Additional context").closest("details")?.open).toBe(false);
+    expect(screen.getByText("Advanced settings").closest("details")?.open).toBe(false);
+    await screen.findByLabelText("Build model");
+    expect(screen.getByText("Step settings").closest("details")?.open).toBe(false);
+    expect(screen.getByRole("button", { name: "Create task" }).closest("footer")).not.toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Start eligible sessions after creation" }).closest("footer")).not.toBeNull();
+    fireEvent.click(screen.getByText("Advanced settings"));
+    expect(screen.getByPlaceholderText("task-slug")).toBeTruthy();
+  });
+  it("labels the brief fields and makes the write task mode clear", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    expect(screen.getByRole("button", { name: "Write task" })).toBeTruthy();
+    expect(screen.getByLabelText("Task name")).toBeTruthy();
+    expect(screen.getByLabelText("Description")).toBeTruthy();
+    expect(screen.getByLabelText("Attachment paths or URLs")).toBeTruthy();
+  });
+
+  it("labels import sources and announces the selected mode", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const modes = within(screen.getByRole("group", { name: "Task source" }));
+    expect(modes.getByRole("button", { name: "Write task" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(modes.getByRole("button", { name: "Linear" }));
+    expect(modes.getByRole("button", { name: "Linear" }).getAttribute("aria-pressed")).toBe("true");
+    expect(modes.getByRole("button", { name: "Write task" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByLabelText("Linear ticket ID or URL")).toBeTruthy();
+    fireEvent.click(modes.getByRole("button", { name: "GitHub" }));
+    expect(modes.getByRole("button", { name: "GitHub" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByLabelText("GitHub issue or pull request")).toBeTruthy();
+  });
+
+  it("reveals an invalid restored session limit without repeatedly overriding manual collapse", async () => {
+    render(<CreateTaskPage initialDraft={{ ...draftTask, max_live_sessions: 0 }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const disclosure = screen.getByText("Advanced settings").closest("details");
+    await waitFor(() => expect(disclosure?.open).toBe(true));
+    expect(screen.getByRole("button", { name: "Create task" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByText("Advanced settings"));
+    fireEvent.change(screen.getByLabelText("Task name"), { target: { value: "Edit while invalid" } });
+    expect(disclosure?.open).toBe(false);
+  });
+});
+
 describe("provider imports", () => {
   it("does not inspect providers while opening the task form", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -1230,6 +1318,25 @@ describe("Linear description images", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
   };
 
+  it("reveals incoming import errors even without successful attachments", async () => {
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce({ ...ticket, images: [] });
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    await screen.findByRole("region", { name: /workflow preview$/ });
+    beginImport();
+    await screen.findByText(imageError);
+    const disclosure = additionalContextDisclosure();
+    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Edited import" } });
+    expect(disclosure.open).toBe(false);
+    vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce({ ...ticket, images: [] });
+    beginImport();
+    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Edited after repeated failure" } });
+    expect(disclosure.open).toBe(false);
+  });
+
   it("submits successful images first while preserving surrounding text, failed links, and URL attachments", async () => {
     vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
     vi.mocked(ipc.prepareTaskAttachments).mockResolvedValueOnce({
@@ -1927,6 +2034,30 @@ describe("clipboard task attachments", () => {
     fireEvent(target, event);
     return event;
   };
+
+  it("reveals incoming paste and preview errors without reopening on unrelated edits", async () => {
+    await openForm();
+    const disclosure = additionalContextDisclosure();
+    const target = screen.getByLabelText("Description");
+    paste(target, [new File([], "empty.png", { type: "image/png" })]);
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(target, { target: { value: "Edited description" } });
+    expect(disclosure.open).toBe(false);
+    paste(target, [new File([], "empty.png", { type: "image/png" })]);
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(target, { target: { value: "Edited after repeated failure" } });
+    expect(disclosure.open).toBe(false);
+    paste(target, [new File([new Uint8Array([1])], "image.png", { type: "image/png" })]);
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.error(screen.getByRole("img", { hidden: true }));
+    expect(disclosure.open).toBe(true);
+    fireEvent.click(screen.getByText("Additional context"));
+    fireEvent.change(target, { target: { value: "Another edit" } });
+    expect(disclosure.open).toBe(false);
+  });
 
   it("restores autosaved pasted image bytes on reopen and persists image-only removal", async () => {
     let saved: ipc.DraftAttachments = { entries: [], images: [] };

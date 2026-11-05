@@ -1793,40 +1793,87 @@ main {
   overflow-wrap: anywhere;
 }
 .createpage-with-preview {
-  /* Keep the form and preview centered; the left gutter belongs to the scroller. */
-  padding: 0 max(32px, calc((100% - 1256px) / 2)) 0 0;
+  container: create-task / inline-size;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
-.create-form-panel {
+.create-content {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(280px, 420px);
+  justify-content: center;
+  align-items: start;
+  gap: 32px;
   flex: 1;
-  min-width: 0;
-  height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  padding: 32px 16px 24px 32px;
+  overflow: auto;
+  padding: 32px;
+  scrollbar-gutter: stable;
+}
+.create-form-panel {
+  min-width: 0;
 }
 .create-form-panel .createform-page {
-  margin-left: auto;
-  padding-right: 8px;
+  width: 100%;
+  gap: 20px;
 }
 .create-preview-panel {
-  width: min(420px, 36vw);
-  min-width: 280px;
-  max-height: calc(100% - 56px);
-  margin: 32px 0 24px;
-  flex-shrink: 0;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
 }
-.create-preview-panel > * {
+.create-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px max(32px, calc((100% - 1212px) / 2));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.create-footer-context {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.create-footer .create-actions {
   flex-shrink: 0;
+}
+.create-disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.create-disclosure > summary {
+  cursor: pointer;
+  padding: 12px;
+  color: var(--text-strong);
+}
+.create-disclosure > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-md);
+}
+.create-disclosure-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+.createpage-with-preview .worktree-row {
+  flex-wrap: wrap;
+}
+.createpage-with-preview .worktree-row > span {
+  flex-basis: 100%;
 }
 .playbook-panel-controls {
   display: grid;
@@ -2320,30 +2367,40 @@ main {
   max-width: 100px;
   overflow-wrap: anywhere;
 }
-@media (max-width: 980px) {
+@container create-task (max-width: 980px) {
+  .create-content {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 24px;
+  }
+  .create-footer {
+    padding-inline: 24px;
+  }
+}
+@container create-task (max-width: 600px) {
+  .create-content {
+    padding: 20px 16px;
+  }
   .create-repository-source {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-@media (max-width: 760px) {
-  .createpage-with-preview {
+  .create-footer {
     flex-direction: column;
     align-items: stretch;
-    padding: 0;
+    padding: 12px 16px;
+    gap: 10px;
   }
-  .create-form-panel {
-    padding: 24px 16px 16px;
+  .create-footer .create-actions {
+    justify-content: flex-end;
   }
-  .createform-page {
+  .createform-page .tab {
+    padding-inline: 12px;
+  }
+  .attachments-field .crow {
+    flex-wrap: wrap;
+  }
+  .attachments-field .crow .field-input {
     width: 100%;
-    flex: 1;
-  }
-  .create-preview-panel {
-    max-height: 45%;
-    min-height: 180px;
-    min-width: 0;
-    width: auto;
-    margin: 0 16px 24px;
   }
 }
 /* inset inputs (shared) */
