@@ -62,7 +62,9 @@ fn rust_readers_match_expected_json() {
             if update {
                 fs::write(&expected_path, serde_json::to_string_pretty(&actual).unwrap() + "\n").unwrap();
             } else {
-                let expected: Value = serde_json::from_str(&fs::read_to_string(&expected_path).unwrap_or_else(|_| panic!("{} missing; run with UPDATE_FIXTURES=1", expected_path.display()))).unwrap();
+                let expected: Value =
+                    serde_json::from_str(&fs::read_to_string(&expected_path).unwrap_or_else(|_| panic!("{} missing; run with UPDATE_FIXTURES=1", expected_path.display())))
+                        .unwrap();
                 assert_eq!(actual, expected, "{domain_name}/{}", case.file_name().to_string_lossy());
             }
             cases += 1;
