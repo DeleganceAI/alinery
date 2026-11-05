@@ -1505,7 +1505,7 @@ Status: **done, 09ecc96 and 28f79e0** (two commits: a staging slip put the `main
 
 ### S2.1 Store and Subscribe
 
-Status: **done, @CODE@** (code and tests; `check.sh` passes). Left for you: nothing; the over-the-bridge check is S3.1's.
+Status: **done, cf7ecd7** (code and tests; `check.sh` passes). Left for you: nothing; the over-the-bridge check is S3.1's.
 
 **Goal.** `SyncService.Subscribe` serves any scope from an in-memory store: snapshot, ring replay, live deltas, backpressure and heartbeats. Only tests commit to the store in this session; S2.3 to S2.6 connect the real feeds.
 
@@ -2623,7 +2623,7 @@ README suggestions (README is human-edited; nothing here edits it):
   - S1.3 (3e1e054): a remote repo's `rpc.sock` rides a second ssh forward; `daemon_rpc` resolves remote keys; `ensure_remote_daemon` probes it with `Hello` (`Bridge::unary`, hand-encoded messages until S1.4). The live remote cases are written but not run (no runtime bundle). Details in 4.1.
   - S1.4 (09ecc96, 28f79e0): `AdminService.Shutdown` carries its `ShutdownOrigin`; the five teardown functions call `daemon_rpc::shutdown_daemon` and fall back to the JSON `shutdown` op only for a daemon with no reachable `rpc.sock`; prost structs and a golden test (`proto/golden/`); the gate checks the enum's callers and has its own test.
   - P1 review fix: a start no longer overwrites the kept RPC token. `store_pending_rpc_secret` (local `start_pi_daemon`, remote `ensure_remote_daemon`) writes `<token>.pending`; `daemon_rpc::rpc_token` (bridge, `shutdown_daemon`, `rpc_hello`) renames it over the kept file only after Hello succeeds with it, and otherwise keeps using the kept token, so a second daemon that exits on the ownership lock cannot lock the app out of the live one (UNAUTHENTICATED on Stop daemon). A daemon with a pending token that has not started yet is reached with the kept token until it answers.
-  - S2.1 (@CODE@): `SyncService.Subscribe` on the RPC socket from an in-memory `Store` (ring of 10,000 changes, bounded per-subscriber queue, 16 ms coalescing, 15 s heartbeats, `MustRefetch` on overflow), `Dedupe`, `entities.proto` and `sync.proto`, `Hello.epoch` from the store. Nothing commits to the store yet. Details and measurements in 4.1.
+  - S2.1 (cf7ecd7): `SyncService.Subscribe` on the RPC socket from an in-memory `Store` (ring of 10,000 changes, bounded per-subscriber queue, 16 ms coalescing, 15 s heartbeats, `MustRefetch` on overflow), `Dedupe`, `entities.proto` and `sync.proto`, `Hello.epoch` from the store. Nothing commits to the store yet. Details and measurements in 4.1.
   - S0.6 (87b2135): dead OMP-RPC chat mode, 7 stubs and `playbook_scheduler.rs` deleted (about 9,900 lines); `platform/fs.ts` and `platform/lock.ts`; every daemon write atomic; R1 fixed; `check-daemon-fs-writes.sh`. Details in 4.1.
 - v0.8, 2026-11-05: spikes run before the build, code in `docs/thick-daemon-spikes/`:
   - PTY echo under load (O5) raised O26: on the main thread `F_FULLFSYNC` stalls the PTYs, and a fsync-only Worker fixes it (the user decided (a) the same day; O7 stands for everything else).
