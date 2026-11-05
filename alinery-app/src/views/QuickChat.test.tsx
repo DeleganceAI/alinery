@@ -22,10 +22,8 @@ const mocks = vi.hoisted(() => ({
   listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
   chatSessionStatus: vi.fn(),
-  chatRpcAttach: vi.fn(),
   onStreamClosed: vi.fn(),
   chatDetach: vi.fn(),
-  chatRpcWrite: vi.fn(),
   chatPrompt: vi.fn(),
   chatTranscript: vi.fn(),
   readChatOmp: vi.fn(),
@@ -42,10 +40,8 @@ vi.mock("../ipc", () =>
     listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
     chatSessionStatus: mocks.chatSessionStatus,
-    chatRpcAttach: mocks.chatRpcAttach,
     onStreamClosed: mocks.onStreamClosed,
     chatDetach: mocks.chatDetach,
-    chatRpcWrite: mocks.chatRpcWrite,
     chatPrompt: mocks.chatPrompt,
     chatTranscript: mocks.chatTranscript,
     readChatOmp: mocks.readChatOmp,
@@ -129,10 +125,8 @@ beforeEach(() => {
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
   mocks.listChatThreads.mockResolvedValue([]);
   mocks.chatSessionStatus.mockResolvedValue(observed());
-  mocks.chatRpcAttach.mockResolvedValue(undefined);
   mocks.onStreamClosed.mockReturnValue(() => {});
   mocks.chatDetach.mockResolvedValue(undefined);
-  mocks.chatRpcWrite.mockResolvedValue(undefined);
   mocks.chatPrompt.mockResolvedValue(undefined);
   mocks.chatTranscript.mockResolvedValue([]);
   mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
@@ -359,7 +353,6 @@ describe("QuickChat", () => {
     fireEvent.click(await within(rail).findByRole("button", { name: /^Alpha/ }));
     await waitFor(() => expect(mocks.chatTranscript).toHaveBeenCalledWith("/repos/one", "s-live"));
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(mocks.chatRpcAttach).not.toHaveBeenCalled();
     expect(mocks.chatTranscript.mock.calls.filter((call) => call[0] === "/repos/one" && call[1] === "s-live").length).toBeGreaterThan(0);
   });
 });

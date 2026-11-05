@@ -104,7 +104,6 @@ beforeEach(() => {
     },
     telemetry: { enabled: false, prompted: false, install_id: "", endpoint: "" },
   });
-  vi.spyOn(ipc, "ompSetupSession").mockResolvedValue("setup-session-1");
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
   vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
   vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
@@ -180,31 +179,6 @@ describe("OnboardingFlow wizard", () => {
     expect(persisted.github).toEqual(original.github);
     expect(persisted.backup).toEqual(original.backup);
     expect(persisted.defaults).toEqual({ ...original.defaults, model: model || null });
-  });
-
-  it("leaves no unattached setup runtime after visiting model setup without opening accounts", async () => {
-    const unattached = new Set<string>();
-    vi.mocked(ipc.ompSetupSession).mockImplementation(async () => {
-      unattached.add("unattached-setup");
-      return "unattached-setup";
-    });
-    const view = render(
-      <OnboardingFlow
-        appConfig={baseConfig}
-        repoError=""
-        initialStep="models"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
-        onOpenProviderSetup={vi.fn()}
-        onCompleteToWorkspace={vi.fn()}
-        onOpenCreateWithPlaybook={vi.fn()}
-        onLaunchStarterTask={vi.fn(async () => {})}
-      />,
-    );
-    await act(async () => {});
-    view.unmount();
-    expect([...unattached]).toEqual([]);
   });
 
   it("shows a failed preview without fabricated steps and reloads it on retry", async () => {

@@ -1,24 +1,9 @@
 import type { UserRowAttachment } from "../chat/attachments";
 import { decodeOmpPage } from "../chat/ompFile";
-import { queuedCountFromGetState, trimQueuedFollowUps } from "../chat/queue";
 import { applySendPlan } from "../chat/send";
-import { applyFilePage, applyRpcLine, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
+import { applyFilePage, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
 import * as ipc from "../ipc";
-import {
-  abortAndPromptCommand,
-  abortCommand,
-  followUpCommand,
-  getAvailableCommandsCommand,
-  getAvailableModelsCommand,
-  getStateCommand,
-  getSubagentsCommand,
-  type ImageContent,
-  negotiateProtocolCommand,
-  promptCommand,
-  setAutoCompactionCommand,
-  setModelCommand,
-  setSubagentSubscriptionCommand,
-} from "../ompRpc";
+import { abortAndPromptCommand, followUpCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 
 export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
@@ -30,71 +15,6 @@ export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
 export function olderPageState(current: ChatTranscriptState, buffer: ArrayBuffer): ChatTranscriptState {
   const page = decodeOmpPage(buffer);
   return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
-}
-
-/**
- * The journal's tail, then older pages back to `through`, the oldest row of the transcript being
- * replaced (null: the tail alone). A page begins after the first newline in the window the daemon
- * reads, and `through` is a row's first byte, so a window of exactly the gap would begin after that
- * row's own end and miss it. One byte more opens on the newline ending the row before, and the page
- * starts on `through`. The daemon caps a window, so a long gap takes several steps; a page that
- * does not move back ends the loop.
- */
-export async function readJournalThrough(read: (end?: number, want?: number) => Promise<ArrayBuffer>, through: number | null): Promise<ChatTranscriptState> {
-  let state = journalState(await read());
-  while (through !== null && state.fileStart !== null && state.fileStart > through) {
-    const from = state.fileStart;
-    state = olderPageState(state, await read(from, from - through + 1));
-    if (state.fileStart !== null && state.fileStart >= from) break;
-  }
-  return state;
-}
-
-export function parseChatLine(line: string): unknown {
-  try {
-    return JSON.parse(line) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/** One RPC line into the transcript. A `get_state` reply also drops follow-up rows OMP no longer holds. */
-export function applyChatValue(state: ChatTranscriptState, value: unknown): ChatTranscriptState {
-  if (value === undefined) return state;
-  try {
-    const next = applyRpcLine(state, value);
-    const queued = queuedCountFromGetState(value);
-    return queued === undefined ? next : { ...next, entries: trimQueuedFollowUps(next.entries, queued) };
-  } catch {
-    return state;
-  }
-}
-
-/**
- * OMP streams no queue changes, so re-read `get_state` once a follow-up lands or a turn ends, as task
- * sessions do. Without it a delivered follow-up keeps its "queued" row beside the delivered copy.
- */
-export function queueRefreshCommand(value: unknown) {
-  const rec = value !== null && typeof value === "object" ? (value as { type?: unknown; success?: unknown; command?: unknown }) : null;
-  if (!rec) return null;
-  const queueMoved =
-    (rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) || rec.type === "turn_end" || rec.type === "agent_end";
-  return queueMoved ? getStateCommand() : null;
-}
-
-export function attachHandshake(autoCompaction: boolean) {
-  // The command catalog too: OMP sends available_commands_update once at startup, and the daemon's
-  // replay drops it after the first turn, so only an explicit ask fills the `/` list on reattach.
-  // Subscribe before get_subagents so rows that finished during the gap still arrive as events.
-  return [
-    negotiateProtocolCommand(),
-    getAvailableCommandsCommand(),
-    getStateCommand(),
-    setAutoCompactionCommand(autoCompaction),
-    setSubagentSubscriptionCommand("events"),
-    getSubagentsCommand(),
-    getAvailableModelsCommand(),
-  ];
 }
 
 /**
@@ -114,14 +34,6 @@ export function applyPlainSend(state: ChatTranscriptState, text: string, busy: b
 /** Send now: abort the running turn and prompt with this text instead of queueing it. */
 export function sendNowCommand(text: string, images?: ImageContent[]) {
   return abortAndPromptCommand(text, undefined, images);
-}
-
-export function abortTurnCommand() {
-  return abortCommand();
-}
-
-export function applyModelCommand(provider: string, modelId: string) {
-  return setModelCommand(provider, modelId);
 }
 
 /** The terminal hatch's daemon calls, scoped to the thread's own repo instead of the active one. */

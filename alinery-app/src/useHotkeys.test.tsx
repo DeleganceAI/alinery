@@ -1,6 +1,6 @@
 import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfirmHost, confirmStopAndSwitch } from "./confirm";
+import { ConfirmHost, confirmDanger } from "./confirm";
 import type * as IpcFixtures from "./test/mockIpc";
 import { type Handlers, useHotkeys } from "./useHotkeys";
 
@@ -91,7 +91,7 @@ describe("useHotkeys", () => {
     );
     let answer!: Promise<boolean>;
     act(() => {
-      answer = confirmStopAndSwitch("pty");
+      answer = confirmDanger("Switch to Terminal?", "Stop the agent’s current work and switch to Terminal?", "Stop and switch");
     });
     const dialog = screen.getByRole("alertdialog", { name: "Switch to Terminal?" });
     const cancel = screen.getByText("Cancel", { selector: "button" });

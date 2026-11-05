@@ -358,26 +358,6 @@ pub(crate) async fn chat_set_thinking_level(
 }
 
 #[tauri::command]
-pub(crate) async fn chat_rpc_write(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, payload: Value) -> Result<(), String> {
-    let _ = (app, state, repo_path, id, payload);
-    Err("OMP process sessions are not available".into())
-}
-
-#[tauri::command]
-pub(crate) async fn chat_rpc_attach(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_path: String,
-    id: String,
-    attach_id: u64,
-    stream_token: u64,
-    on_line: Channel<String>,
-) -> Result<(), String> {
-    let _ = (app, state, repo_path, id, attach_id, stream_token, on_line);
-    Err("OMP process sessions are not available".into())
-}
-
-#[tauri::command]
 pub(crate) async fn chat_detach(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, attach_id: u64) -> Result<(), String> {
     let target = owned_target(&app, &state, &repo_path)?;
     let daemon = chat_daemon(&state, &target)?;
@@ -412,15 +392,6 @@ pub(crate) async fn chat_session_status(app: AppHandle, state: State<'_, AppStat
         })
     })
     .await
-}
-
-/// The chat's terminal hatch: respawn the thread's OMP on the same journal over the other transport
-/// (`pty` = the OMP TUI, `rpc` = back to chat). The generic restate is bound to the active repo;
-/// a chat thread can live in any known repo.
-#[tauri::command]
-pub(crate) async fn chat_restate(app: AppHandle, state: State<'_, AppState>, repo_path: String, id: String, transport: String) -> Result<(), String> {
-    let _ = (app, state, repo_path, id, transport);
-    Err("OMP process sessions are not available".into())
 }
 
 /// Attach the terminal view to a thread that is in its PTY transport. Attach only: it never spawns.

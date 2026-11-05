@@ -5,9 +5,6 @@ import type { HostedCatalogView } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 const mocks = vi.hoisted(() => ({
-  ompSetupSession: vi.fn(),
-  rpcAttachSession: vi.fn(),
-  rpcWriteSession: vi.fn(),
   readOmpModelRoles: vi.fn(),
   readModelFavorites: vi.fn(),
   hostedCatalog: vi.fn(),
@@ -55,10 +52,6 @@ describe("ProviderSetupDialog", () => {
     settleIpc(readyHosted);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
-    expect(screen.queryByText(/OMP process sessions are not available/)).toBeNull();
-    expect(mocks.ompSetupSession).not.toHaveBeenCalled();
-    expect(mocks.rpcAttachSession).not.toHaveBeenCalled();
-    expect(mocks.rpcWriteSession).not.toHaveBeenCalled();
   });
 
   it("adds Grok models when a key is saved", async () => {
@@ -93,7 +86,6 @@ describe("ProviderSetupDialog", () => {
     const onClose = vi.fn();
     render(<ProviderSetupDialog mode="auto" onClose={onClose} />);
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
-    expect(mocks.ompSetupSession).not.toHaveBeenCalled();
   });
 
   it("refreshes entitlement after Alinery sign-in before reloading the catalog", async () => {

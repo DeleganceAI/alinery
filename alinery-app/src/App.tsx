@@ -24,7 +24,6 @@ import { ThinkingOrb } from "thinking-orbs";
 import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
-import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
@@ -228,7 +227,6 @@ export default function App() {
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
-  const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
@@ -1811,16 +1809,6 @@ export default function App() {
                     setSessionMessageDrafts((current) => {
                       const next = new Map(current);
                       next.set(key, draft);
-                      return next;
-                    });
-                  }}
-                  queuedFollowUps={sessionQueuedFollowUps.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? []}
-                  onQueuedFollowUpsChange={(items) => {
-                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
-                    setSessionQueuedFollowUps((current) => {
-                      const next = new Map(current);
-                      if (items.length === 0) next.delete(key);
-                      else next.set(key, items);
                       return next;
                     });
                   }}

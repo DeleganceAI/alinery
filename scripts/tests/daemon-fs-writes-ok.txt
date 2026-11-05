@@ -1,0 +1,6 @@
+# Lines in vinculum-daemon/src allowed to write a file outside platform/fs.ts. One regular expression per line,
+# matched against the "path:line:text" hit, so name the file. See scripts/tests/check-daemon-fs-writes.sh.
+#
+# The session scrollback is an append-only log of every PTY byte, not a replace: there is nothing to
+# make atomic, no old file to keep.
+terminal\.ts:[0-9]*:.*appendFileSync(shell\.scrollback, data);

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type Socket } from "node:net";
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
@@ -14,6 +14,7 @@ import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarn
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
+import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -301,7 +302,7 @@ function writeMeta(taskSlug: string, id: string, patch: Record<string, unknown>)
   mkdirSync(dirname(path), { recursive: true });
   const worktree = taskSlug ? taskWorktree(repo, taskSlug) : repo;
   const next = completeSessionMeta(readMeta(taskSlug, id), patch, id, worktree, Math.floor(Date.now() / 1000));
-  writeFileSync(path, JSON.stringify(next));
+  writeAtomic(path, JSON.stringify(next));
 }
 
 // Files already on disk from a writer that omitted SessionMeta's required fields.

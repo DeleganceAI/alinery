@@ -336,10 +336,8 @@ export const chatPrompt = (repoPath: string, id: string, text: string) => invoke
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
 export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
 export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
-export const chatRestate = (repoPath: string, id: string, transport: "pty" | "rpc") => invoke<void>("chat_restate", { repoPath, id, transport });
 export const chatPtyAttach = (a: {
   repoPath: string;
   id: string;
@@ -352,11 +350,6 @@ export const chatPtyAttach = (a: {
 export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
 export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
 export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
-export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
-  const onLine = new Channel<string>();
-  onLine.onmessage = a.onLine;
-  return invoke<void>("chat_rpc_attach", { repoPath: a.repoPath, id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
-};
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
@@ -414,15 +407,6 @@ export const sessionAbort = (id: string) => invoke<void>("session_abort", { id }
 export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
 export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
 export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
-export const restateSession = (id: string, transport: "pty" | "rpc") => invoke<void>("restate_session", { id, transport });
-export const rpcWriteSession = (id: string, payload: unknown) => invoke<void>("rpc_write_session", { id, payload });
-/** Bring up (or reuse) the reserved setup session and get its id. Attach to it like any session. */
-export const ompSetupSession = () => invoke<string>("omp_setup_session");
-export const rpcAttachSession = (a: { id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
-  const onLine = new Channel<string>();
-  onLine.onmessage = a.onLine;
-  return invoke<void>("rpc_attach_session", { id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
-};
 export const prepareReviewApprovalPrompt = (taskSlug: string, reviewArtifact: string) =>
   invoke<PreparedSessionMessageAction>("prepare_review_approval_prompt", { taskSlug, reviewArtifact });
 export const finalizeSessionMessageActions = (id: string, taskSlug: string, actions: SessionMessageActionProvenance[]) =>

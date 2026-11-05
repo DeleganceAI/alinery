@@ -15,7 +15,6 @@ import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatPane } from "./ChatPane";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 import { ThinkingSelect } from "./ThinkingSelect";
@@ -229,7 +228,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const sending = chat.sending;
   const loadingOlder = chat.loadingOlder;
   const loadOlder = chat.loadOlder;
-  const uiPrompt = chat.prompt;
   const sendNowEnabled = chat.sendNowEnabled;
   const statusKind = activity.kind;
   const processLive = chat.processLive;
@@ -682,7 +680,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             entries={transcript.entries}
             status={activity.status}
             visibility={visibility}
-            onApprove={chat.approve}
             onLoadOlder={loadOlder}
             loadingOlder={loadingOlder}
             atStart={transcript.fileStart === 0}
@@ -717,9 +714,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
               </button>
             ) : null}
           </div>
-        ) : null}
-        {!inTerminal && uiPrompt ? (
-          <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void chat.reply(uiPrompt.id, value)} onCancel={() => void chat.cancelUi(uiPrompt.id)} />
         ) : null}
         {/* No composer without a thread: drafts are per thread, so the box would swallow every keystroke. */}
         {inTerminal || !selected ? null : (

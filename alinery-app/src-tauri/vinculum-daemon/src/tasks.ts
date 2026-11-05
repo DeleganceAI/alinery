@@ -2,8 +2,10 @@
 // the app decodes. Create and subtask call alinery-core. The helper is not asked.
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
+import { writeAtomic } from "./platform/fs.ts";
+import { withTaskMutation } from "./platform/lock.ts";
 import { engineExecutions, engineSnapshot, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import { type Execution, occurrences, type State } from "playbook-engine/src/state.ts";
@@ -250,7 +252,7 @@ async function overlayStart(repo: string, reply: Request, requested: boolean): P
     await runTask(slug);
   } catch (error) {
     return {
-      ...materializeSessions(repo, reply),
+      ...(await materializeSessions(repo, reply)),
       start: "failed",
       errors: [{ stage: "launch", code: "launch_failed", message: String(error) }],
     };
@@ -347,14 +349,17 @@ function reservedExecution(id: string, step: string, sessionId: string, harness:
   };
 }
 
-function addExecution(repo: string, slug: string, execution: Record<string, unknown>) {
-  const path = join(repo, ".alinery", "tasks", slug, "execution.json");
-  const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown> };
-  state.executions = { ...(state.executions ?? {}), [String(execution.id)]: execution };
-  writeFileSync(path, JSON.stringify(state));
+// Read, append and write under the task-mutation flock, so a concurrent writer (another call here, or Rust) is not lost.
+export function addExecution(repo: string, slug: string, execution: Record<string, unknown>): Promise<void> {
+  return withTaskMutation(repo, "add_execution", () => {
+    const path = join(repo, ".alinery", "tasks", slug, "execution.json");
+    const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown> };
+    state.executions = { ...(state.executions ?? {}), [String(execution.id)]: execution };
+    writeAtomic(path, JSON.stringify(state));
+  });
 }
 
-function materializeSessions(repo: string, reply: Request): Request {
+async function materializeSessions(repo: string, reply: Request): Promise<Request> {
   if (reply.creation !== "ready") return reply;
   const task = reply.task as { slug?: string; worktree?: string } | undefined;
   const slug = task?.slug ?? "";
@@ -366,7 +371,8 @@ function materializeSessions(repo: string, reply: Request): Request {
   const worktree = String(task?.worktree || taskWorktree(repo, slug));
   const dir = join(repo, ".alinery", "tasks", slug, "sessions");
   mkdirSync(dir, { recursive: true });
-  const sessions = parsed.playbook.steps.map((step) => {
+  const sessions: Record<string, unknown>[] = [];
+  for (const step of parsed.playbook.steps) {
     const id = randomUUID();
     const executionId = randomUUID();
     const harness = step.harness || parsed.playbook?.defaultHarness || "omp";
@@ -380,10 +386,10 @@ function materializeSessions(repo: string, reply: Request): Request {
       model,
       execution_id: executionId,
     };
-    writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
-    addExecution(repo, slug, reservedExecution(executionId, step.key, id, harness, model, false));
-    return meta;
-  });
+    writeAtomic(join(dir, `${id}.meta.json`), JSON.stringify(meta));
+    await addExecution(repo, slug, reservedExecution(executionId, step.key, id, harness, model, false));
+    sessions.push(meta);
+  }
   return { ...reply, sessions };
 }
 
@@ -417,7 +423,7 @@ export async function createExecutionSession(
     };
     const dir = join(repo, ".alinery", "tasks", slug, "sessions");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
+    writeAtomic(join(dir, `${id}.meta.json`), JSON.stringify(meta));
     return { session: meta, execution: null, start: "not_requested", errors: [] };
   }
   if (target.kind === "primary" && !request.start) {
@@ -439,9 +445,9 @@ export async function createExecutionSession(
     };
     const dir = join(repo, ".alinery", "tasks", slug, "sessions");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
+    writeAtomic(join(dir, `${id}.meta.json`), JSON.stringify(meta));
     const execution = reservedExecution(executionId, String(target.step_key ?? ""), id, harness, model, false);
-    addExecution(repo, slug, execution);
+    await addExecution(repo, slug, execution);
     return { session: meta, execution, start: "not_requested", errors: [] };
   }
   if (target.kind === "primary") {
@@ -458,7 +464,7 @@ export async function createExecutionSession(
   const meta = { id, worktree: repo, created: Math.floor(Date.now() / 1000), harness: recordedHarness(target.harness), model, generic: true, prompt };
   const dir = slug ? join(repo, ".alinery", "tasks", slug, "sessions") : join(repo, ".alinery", "sessions");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${id}.meta.json`), JSON.stringify(meta));
+  writeAtomic(join(dir, `${id}.meta.json`), JSON.stringify(meta));
   if (request.start) await openSession(id, slug, model, prompt);
   return { session: meta, execution: null, start: request.start ? "started" : "not_requested", errors: [] };
 }

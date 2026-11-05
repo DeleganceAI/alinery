@@ -39,7 +39,6 @@ const ipcSpies = vi.hoisted(() => ({
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
-  rpcWriteSession: vi.fn(),
   sessionAbort: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
@@ -95,7 +94,6 @@ vi.mock("../ipc", () =>
     createSessionForRepo: ipcSpies.createSessionForRepo,
     restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
-    rpcWriteSession: ipcSpies.rpcWriteSession,
     sessionAbort: ipcSpies.sessionAbort,
     renameSession: ipcSpies.renameSession,
     renameTask: ipcSpies.renameTask,
@@ -272,7 +270,6 @@ beforeEach(() => {
   ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
-  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
   ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));

@@ -14,64 +14,31 @@ import { CopyArtifactButton, CopyTextButton } from "../chat/CopyMessage";
 import { formatContextUsage } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
-import { settleOpenUrl as settleBrowserUrl } from "../chat/openUrl";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { useProviderAccess } from "../chat/providerAccess";
-import { isInteractivePromptLoginError, shouldOfferProviderSetup } from "../chat/providers";
-import { latestQueuedFollowUp, type QueuedFollowUp, queuedCountFromGetState, queuedTextsNotInEntries, reconcileQueuedFollowUps } from "../chat/queue";
-import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "../chat/send";
-import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
-import type { ChatEntry, SessionChatStatus } from "../chat/types";
+import { shouldOfferProviderSetup } from "../chat/providers";
+import type { ProvidersDialogTab } from "../chat/slash";
+import type { SessionChatStatus } from "../chat/types";
 import { chatVisibilityFromAppearance } from "../chat/visibility";
 import {
   appendOptimisticAbort,
   appendOptimisticUser,
   applyFilePage,
-  applyRpcLine,
   applySessionControls,
   applyVinculumTranscript,
   type ChatTranscriptState,
-  carryOver,
-  dismissPendingUi,
   emptyTranscript,
-  isPresentationUi,
-  matchingSendFailure,
-  matchingSendSuccess,
   NEXT_TURN_MODEL_TITLE,
   NEXT_TURN_THINKING_TITLE,
-  needsUiReply,
-  settleRefusedSend,
   watchVinculumTranscript,
 } from "../chatTranscript";
 import { completionPrompt } from "../completionPrompt";
-import { confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-import {
-  abortAndPromptCommand,
-  abortCommand,
-  cancelExtensionUi,
-  compactCommand,
-  extensionUiConfirm,
-  extensionUiValue,
-  followUpCommand,
-  getAvailableCommandsCommand,
-  getAvailableModelsCommand,
-  getLoginProvidersCommand,
-  getStateCommand,
-  getSubagentsCommand,
-  type ImageContent,
-  loginCommand,
-  negotiateProtocolCommand,
-  promptCommand,
-  setAutoCompactionCommand,
-  setModelCommand,
-  setSubagentSubscriptionCommand,
-  setThinkingLevelCommand,
-} from "../ompRpc";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
-import { appendGeneratedText, canAbortChatSession, isTurnActive, OMP_INTERRUPT_DATA, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
+import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
 import {
   ArtifactProvenanceBadges,
@@ -107,12 +74,8 @@ import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { readTaskExecution } from "../useExecutionObservation";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
-import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
-import { ChatToolsDialog } from "./ChatToolsDialog";
-import { readJournalThrough } from "./chatSession";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
 import { ThinkingSelect } from "./ThinkingSelect";
@@ -152,8 +115,6 @@ export function SessionView({
   appearance,
   messageDraft,
   onMessageDraftChange,
-  queuedFollowUps = [],
-  onQueuedFollowUpsChange,
   onAppearanceChange,
   onBack,
   onStartFresh,
@@ -177,8 +138,6 @@ export function SessionView({
   appearance: AppearancePrefs;
   messageDraft: SessionMessageDraft;
   onMessageDraftChange: (draft: SessionMessageDraft) => void;
-  queuedFollowUps?: QueuedFollowUp[];
-  onQueuedFollowUpsChange?: (items: QueuedFollowUp[]) => void;
   onAppearanceChange: (next: AppearancePrefs) => void;
   onBack: () => void;
   onStartFresh: () => void;
@@ -312,8 +271,6 @@ export function SessionView({
   const executionAvailable = executionView?.live?.status === "available" && !executionError;
   const [completionBusy, setCompletionBusy] = useState(false);
   const [dismissedCompletionId, setDismissedCompletionId] = useState("");
-  const [completionGrant, setCompletionGrant] = useState<{ sessionId: string; requestId: string } | null>(null);
-  const grantedCompletionRequestId = completionGrant?.sessionId === id ? completionGrant.requestId : null;
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
   const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
@@ -335,43 +292,15 @@ export function SessionView({
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [grokReady, setGrokReady] = useState(false);
-  const [loginBusy, setLoginBusy] = useState<string | null>(null);
-  const [livePromotedIds, setLivePromotedIds] = useState<string[]>([]);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
-  const [chatAttachEpoch, setChatAttachEpoch] = useState(0);
   const ompStartRef = useRef<string | null>(null);
-  const ompSeedRef = useRef<{ id: string; done: Promise<unknown> } | null>(null);
-  // The session the RPC stream last attached to: a later attach for the same id is a reattach.
-  const rpcAttachedRef = useRef<string | null>(null);
-  const preferredViewAppliedRef = useRef<string | null>(null);
   const handledUiRef = useRef(new Set<string>());
-  const mcpListWaitRef = useRef(false);
-  const modelApplyRef = useRef(false);
-  const loginApplyRef = useRef<string | null>(null);
-  // Armed by startChatLogin, consumed by the first `open_url` that follows. See the drain effect.
-  const loginOpenUrlRef = useRef<string | null>(null);
   const setupOpenedRef = useRef(false);
-  const [viewBusy, setViewBusy] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const archivePending = useRef(false);
   const [dropping, setDropping] = useState(false);
   const attachmentSeq = useRef(0);
-  // Last model send whose stdin write was acked but whose OMP response has not landed yet.
-  // Cleared on matching success/failure or turn_start; used to restore the draft if OMP refuses.
-  const pendingSendRef = useRef<{
-    commandId: string;
-    draft: string;
-    actions: SessionMessageDraft["pendingActions"];
-    entryId: string;
-    attachments: DraftAttachment[];
-    /** Also in `queuedFollowUpsRef`, which a refusal must leave. */
-    queued?: boolean;
-  } | null>(null);
   const chatRef = useRef(chat);
   chatRef.current = chat;
-  const queuedFollowUpsRef = useRef(queuedFollowUps);
-  queuedFollowUpsRef.current = queuedFollowUps;
 
   const handleTerminalConnectionState = useCallback((state: SessionTerminalConnectionState) => setTerminalConnection(state), []);
   const messageDraftRef = useRef(messageDraft);
@@ -551,40 +480,19 @@ export function SessionView({
     setModelDialog(null);
     setModelError(null);
     setModelRoles({});
-    setLoginBusy(null);
-    setLivePromotedIds([]);
-    setToolsOpen(false);
-    setMcpDialog(null);
     ompStartRef.current = null;
-    ompSeedRef.current = null;
-    preferredViewAppliedRef.current = null;
     handledUiRef.current.clear();
-    pendingSendRef.current = null;
-    mcpListWaitRef.current = false;
-    modelApplyRef.current = false;
-    loginApplyRef.current = null;
-    loginOpenUrlRef.current = null;
     setupOpenedRef.current = false;
-    setViewBusy(false);
     if (intent === "history") return;
     let alive = true;
-    let pollFailures = 0;
     const observe = () => {
       ipc
         .sessionStatus(id, taskSlug || null)
         .then((next) => {
-          if (!alive) return;
-          const recovering = pollFailures > 0;
-          pollFailures = 0;
-          setObservation(next);
-          if (recovering) setChatAttachEpoch((epoch) => epoch + 1);
+          if (alive) setObservation(next);
         })
-        .catch(() => {
-          // Keep the last observation so a transient poll error cannot flip liveRpc
-          // and wipe the transcript. Count the miss so a later success can re-attach
-          // without clearing entries (dead socket / daemon restart).
-          if (alive) pollFailures += 1;
-        });
+        // Keep the last observation so a transient poll error cannot flip liveRpc and wipe the transcript.
+        .catch(() => undefined);
     };
     observe();
     const timer = window.setInterval(observe, 1500);
@@ -1018,57 +926,6 @@ export function SessionView({
     }
   };
 
-  const dispatchChatPlan = async (
-    plan: ReturnType<typeof planChatSend>,
-    busy: boolean,
-    extras?: { message?: string; images?: ImageContent[] },
-  ): Promise<{ commandId: string } | null> => {
-    const dispatch = plan.dispatch;
-    switch (dispatch.kind) {
-      case "open-providers":
-        setModelError(null);
-        setModelDialog({ tab: dispatch.tab, preselect: dispatch.args, setup: false });
-        void ipc
-          .readOmpModelRoles()
-          .then(setModelRoles)
-          .catch(() => undefined);
-        void ipc
-          .hostedCatalog()
-          .then(setHosted)
-          .catch(() => setHosted(null))
-          .finally(() => setHostedLoaded(true));
-        await ipc.rpcWriteSession(id, getLoginProvidersCommand()).catch(() => undefined);
-        await ipc.rpcWriteSession(id, getAvailableModelsCommand()).catch(() => undefined);
-        await ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
-        return null;
-      case "hatch":
-        toast(dispatch.reason, "info");
-        return null;
-      case "get-tools":
-        await ipc.rpcWriteSession(id, getStateCommand());
-        setToolsOpen(true);
-        return null;
-      case "mcp-list":
-        mcpListWaitRef.current = true;
-        await ipc.rpcWriteSession(id, promptCommand("/mcp list"));
-        return null;
-      case "compact":
-        await ipc.rpcWriteSession(id, compactCommand(dispatch.customInstructions));
-        return null;
-      case "mcp-prompt":
-      case "compact-mode":
-      case "prompt":
-      case "unknown-prompt":
-      case "plain": {
-        const message = extras?.message ?? dispatch.message;
-        const images = extras?.images;
-        const command = busy ? followUpCommand(message, undefined, images) : promptCommand(message, undefined, images);
-        await ipc.rpcWriteSession(id, command);
-        return plan.invokesModel ? { commandId: command.id } : null;
-      }
-    }
-  };
-
   const sendCurrentMessage = async (text?: string) => {
     const caption = (text ?? messageDraftRef.current.body).trim();
     const attachments = messageDraftRef.current.attachments ?? [];
@@ -1091,44 +948,13 @@ export function SessionView({
     setMessageSending(true);
     setMessageError("");
     try {
-      if (transport === "rpc" && vinculum) {
+      if (transport === "rpc") {
         const message = attachments.length > 0 ? (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message : caption;
         if (attachments.length > 0) refreshAttachmentArtifacts();
         await ipc.sessionPrompt(id, message);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
-        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
-      } else if (transport === "rpc") {
-        let extras: { message?: string; images?: ImageContent[] } | undefined;
-        let queuedAttachments = attachments;
-        if (attachments.length > 0) {
-          const prepared = await prepareChatSend(taskSlug, repoPath, caption, attachments);
-          extras = { message: prepared.message, images: prepared.images };
-          queuedAttachments = prepared.copied;
-          refreshAttachmentArtifacts();
-        }
-        const plan = planChatSend(caption, chatRef.current.commands, busy);
-        const sent = await dispatchChatPlan(plan, busy, extras);
-        const rowAttachments = draftToRowAttachments(attachments);
-        const applied = applySendPlan(chatRef.current, caption, plan, rowAttachments.length > 0 ? rowAttachments : undefined);
-        chatRef.current = applied.state;
-        setChat(applied.state);
-        if (sent && applied.entryId) {
-          pendingSendRef.current = {
-            commandId: sent.commandId,
-            draft: caption,
-            actions,
-            entryId: applied.entryId,
-            attachments,
-            queued: busy && plan.optimisticKind === "follow_up",
-          };
-        }
-        if (busy && plan.optimisticKind === "follow_up") {
-          const nextQueue = [...queuedFollowUpsRef.current, { text: caption, attachments: queuedAttachments }];
-          queuedFollowUpsRef.current = nextQueue;
-          onQueuedFollowUpsChange?.(nextQueue);
-        }
         updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       }
       if (actions.length > 0) {
@@ -1148,15 +974,10 @@ export function SessionView({
   };
 
   const sendNow = async () => {
-    const draftBody = messageDraftRef.current.body.trim();
-    const draftAttachments = messageDraftRef.current.attachments ?? [];
-    const usingDraft = draftBody.length > 0 || draftAttachments.length > 0;
-    const queued = latestQueuedFollowUp(queuedFollowUpsRef.current);
-    const caption = usingDraft ? draftBody : (queued?.text ?? "");
-    const attachments = usingDraft ? draftAttachments : (queued?.attachments ?? []);
+    const caption = messageDraftRef.current.body.trim();
+    const attachments = messageDraftRef.current.attachments ?? [];
     if (messageSending || (caption.length === 0 && attachments.length === 0)) return;
-    const transport = observation?.transport;
-    if (transport !== "rpc") {
+    if (observation?.transport !== "rpc") {
       setMessageError("The session is still connecting.");
       return;
     }
@@ -1164,50 +985,17 @@ export function SessionView({
     setMessageError("");
     try {
       let message = caption;
-      let images: ImageContent[] | undefined;
-      let pendingAttachments = attachments;
       if (attachments.length > 0) {
-        const prepared = await prepareChatSend(taskSlug, repoPath, caption, attachments);
-        message = prepared.message;
-        images = prepared.images;
-        pendingAttachments = prepared.copied;
+        message = (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message;
         refreshAttachmentArtifacts();
       }
-      const command = vinculum ? null : abortAndPromptCommand(message, undefined, images);
-      if (vinculum) {
-        await ipc.sessionAbort(id);
-        await ipc.sessionPrompt(id, message);
-      } else if (command) {
-        await ipc.rpcWriteSession(id, command);
-      }
+      await ipc.sessionAbort(id);
+      await ipc.sessionPrompt(id, message);
       const rowAttachments = draftToRowAttachments(attachments);
-      if (usingDraft) {
-        updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
-        const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
-        chatRef.current = next;
-        setChat(next);
-        const entryId = next.entries[next.entries.length - 1]?.id;
-        if (entryId && command) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
-      } else {
-        const remaining = queuedFollowUpsRef.current.slice(0, -1);
-        onQueuedFollowUpsChange?.(remaining);
-        setChat((current) => {
-          const entries = [...current.entries];
-          let entryId: string | undefined;
-          for (let i = entries.length - 1; i >= 0; i -= 1) {
-            const entry = entries[i];
-            if (entry?.type === "follow_up" && entry.text === caption) {
-              entries[i] = { ...entry, type: "prompt" };
-              entryId = entry.id;
-              break;
-            }
-          }
-          const next = { ...current, entries };
-          chatRef.current = next;
-          if (entryId && command) pendingSendRef.current = { commandId: command.id, draft: caption, actions: [], entryId, attachments: pendingAttachments };
-          return next;
-        });
-      }
+      updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
+      const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
+      chatRef.current = next;
+      setChat(next);
     } catch (error) {
       toast.error(String(error));
       setMessageError(String(error));
@@ -1297,7 +1085,6 @@ export function SessionView({
   const ompCoding = vinculum && !leftover && !navHistory && !showPanel;
   const showChat = ompCoding && Boolean(termIntent) && !livePty;
   const showPtyTerminal = Boolean(termIntent) && !showChat;
-  const showHatch = !vinculum && ompCoding && observation?.lifecycle.state === "live" && (liveRpc || livePty);
   const showChatComposer = showChat && composerEligible;
   useEffect(() => {
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
@@ -1313,25 +1100,6 @@ export function SessionView({
       });
   }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
-  // Fresh OMP starts as RPC. If Settings prefers Terminal, restate once after the session is live.
-  useEffect(() => {
-    if (vinculum || !ompCoding || observation?.lifecycle.state !== "live") return;
-    if (termIntent !== "spawn" && termIntent !== "resume") return;
-    if (!observation.transport || preferredViewAppliedRef.current === id) return;
-    const want = appearance.session_default_view === "terminal" ? "pty" : "rpc";
-    preferredViewAppliedRef.current = id;
-    if (observation.transport === want) return;
-    setViewBusy(true);
-    void ipc
-      .restateSession(id, want)
-      .then(() => ipc.sessionStatus(id, taskSlug || null))
-      .then((next) => {
-        setObservation(next);
-      })
-      .catch((error) => toast(String(error), "error"))
-      .finally(() => setViewBusy(false));
-  }, [vinculum, ompCoding, observation?.lifecycle.state, observation?.transport, termIntent, id, taskSlug, appearance.session_default_view]);
-
   // The journal owns committed history. It is read straight off disk, so it works for a dead
   // session with no daemon, it survives a busy OMP that refuses RPC history, and it still holds
   // the turns compaction dropped from OMP's context.
@@ -1344,22 +1112,6 @@ export function SessionView({
     },
     [id, taskSlug],
   );
-
-  // One seed per session, shared by both callers: the effect below (which covers a dead session,
-  // where no attach ever happens) and the RPC attach, which must not open the socket until the
-  // page has landed. Holding the promise rather than a boolean is what makes that ordering real —
-  // a flag would let the attach skip ahead of a load that is still in flight.
-  const seedOmpJournal = useCallback(() => {
-    if (ompSeedRef.current?.id === id) return ompSeedRef.current.done;
-    const done = loadOmpPage("initial").catch(() => undefined);
-    ompSeedRef.current = { id, done };
-    return done;
-  }, [id, loadOmpPage]);
-
-  useEffect(() => {
-    if (vinculum || !isVinculumHarness(harness)) return;
-    void seedOmpJournal();
-  }, [vinculum, harness, seedOmpJournal]);
 
   const olderBusy = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -1391,258 +1143,6 @@ export function SessionView({
     );
   }, [vinculum, showChat, id]);
   useEffect(() => {
-    if (vinculum || !liveRpc) return;
-    let cancelled = false;
-    const attachId = ipc.nextAttachId();
-    // Live stream closed mid-turn (see `ipc.onStreamClosed`): reattach while still live in RPC.
-    const stopClosed = ipc.onStreamClosed(
-      id,
-      attachId,
-      () => {
-        ipc.sessionStatus(id, taskSlug || null).then(
-          (next) => {
-            if (!cancelled && next.transport === "rpc" && next.lifecycle.state === "live") setChatAttachEpoch((epoch) => epoch + 1);
-          },
-          // Unreadable status: reattach anyway; the attach itself reports a dead session.
-          () => {
-            if (!cancelled) setChatAttachEpoch((epoch) => epoch + 1);
-          },
-        );
-      },
-      () => {
-        if (!cancelled) setTerminalConnection("failed");
-      },
-    );
-    // The session-id effect already clears the transcript on a real session change. Do not
-    // emptyTranscript() here: a liveRpc flap would wipe visible history. The poll catch above
-    // keeps the last observation so a transient error does not re-enter; a later successful
-    // poll after a failure bumps chatAttachEpoch to re-attach without clearing entries.
-
-    setTerminalConnection("opening");
-    const apply = (line: string) => {
-      if (cancelled) return;
-      try {
-        const value: unknown = JSON.parse(line);
-        const pending = pendingSendRef.current;
-        const refused = pending ? matchingSendFailure(value, pending.commandId) : null;
-        if (refused !== null && pending) {
-          pendingSendRef.current = null;
-          // The composer takes the text back unless something else is being written there: then the row
-          // stays, marked not sent, and neither message is lost.
-          const draft = messageDraftRef.current;
-          const blank = draft.body.trim() === "" && (draft.attachments ?? []).length === 0 && draft.pendingActions.length === 0;
-          const restore = blank || (draft.body !== "" && draft.body === pending.draft);
-          setChat((current) => {
-            const next = settleRefusedSend(applyRpcLine(current, value), pending.entryId, pending.draft, restore);
-            chatRef.current = next;
-            return next;
-          });
-          if (restore) updateMessageDraft({ body: pending.draft, pendingActions: pending.actions, attachments: pending.attachments });
-          if (pending.queued) {
-            // OMP never queued it, and a reattach would otherwise re-add its row from this list.
-            const at = queuedFollowUpsRef.current.map((item) => item.text).lastIndexOf(pending.draft);
-            if (at >= 0) {
-              const remaining = queuedFollowUpsRef.current.filter((_, index) => index !== at);
-              queuedFollowUpsRef.current = remaining;
-              onQueuedFollowUpsChange?.(remaining);
-            }
-          }
-          toast.error(refused);
-          setMessageError(refused);
-        } else {
-          if (pending && (matchingSendSuccess(value, pending.commandId) || (typeof value === "object" && value !== null && "type" in value && value.type === "turn_start"))) {
-            revokeDraftPreviewUrls(pending.attachments);
-            pendingSendRef.current = null;
-          }
-          setChat((current) => {
-            let next = applyRpcLine(current, value);
-            const count = queuedCountFromGetState(value);
-            if (typeof count === "number") {
-              const reconciled = reconcileQueuedFollowUps(queuedFollowUpsRef.current, count);
-              queuedFollowUpsRef.current = reconciled.texts;
-              onQueuedFollowUpsChange?.(reconciled.texts);
-              const texts = reconciled.texts.map((item) => item.text);
-              next = {
-                ...next,
-                entries: next.entries.filter((entry) => entry.type !== "follow_up" || texts.includes(entry.text)),
-              };
-            }
-            chatRef.current = next;
-            return next;
-          });
-          const rec = value as { type?: string; success?: boolean; command?: string };
-          if (
-            rpcProcessLive &&
-            ((rec.type === "response" && rec.success === true && (rec.command === "follow_up" || rec.command === "abort_and_prompt")) ||
-              rec.type === "turn_end" ||
-              rec.type === "agent_end")
-          ) {
-            void ipc.rpcWriteSession(id, getStateCommand()).catch(() => undefined);
-          }
-        }
-        if (mcpListWaitRef.current) {
-          const listed = commandOutputText(value);
-          if (listed !== null) {
-            mcpListWaitRef.current = false;
-            const parsed = parseMcpListOutput(listed);
-            setMcpDialog(parsed === "empty" ? { rows: [], empty: true } : { rows: parsed, empty: false });
-          }
-        }
-        if (modelApplyRef.current) {
-          const reply = setModelReply(value);
-          if (reply) {
-            modelApplyRef.current = false;
-            if (reply.ok) {
-              setModelDialog(null);
-              setModelError(null);
-            } else {
-              setModelError(reply.error ?? "Could not set model.");
-            }
-          }
-        }
-        if (loginApplyRef.current) {
-          const reply = loginReply(value);
-          if (reply) {
-            const providerId = loginApplyRef.current;
-            loginApplyRef.current = null;
-            loginOpenUrlRef.current = null;
-            setLoginBusy(null);
-            if (reply.ok) {
-              setModelError(null);
-              void ipc.rpcWriteSession(id, getLoginProvidersCommand()).catch(() => undefined);
-              void ipc.rpcWriteSession(id, getAvailableModelsCommand()).catch(() => undefined);
-            } else if (isInteractivePromptLoginError(reply.error)) {
-              setLivePromotedIds((prev) => (prev.includes(providerId) ? prev : [...prev, providerId]));
-              setModelError(reply.error ?? "This provider needs Terminal /login.");
-            } else {
-              setModelError(reply.error ?? "Login failed.");
-            }
-          }
-        }
-      } catch {
-        /* ignore non-JSON */
-      }
-    };
-    // A reattach (dropped stream, back from Terminal) rebuilds from a fresh journal read, as chat does.
-    // The first seed is stale by then: turns that closed while detached are in neither it nor the
-    // replay, and a turn left open in the old transcript reads Running forever.
-    const reattach = rpcAttachedRef.current === id;
-    rpcAttachedRef.current = id;
-    const journal = reattach
-      ? readJournalThrough((end, want) => ipc.readSessionOmp({ id, taskSlug: taskSlug || null, end: end ?? null, want }), chatRef.current.fileStart)
-          .then((built) => {
-            if (cancelled) return;
-            setChat((current) => {
-              const next = carryOver(current, built);
-              chatRef.current = next;
-              return next;
-            });
-          })
-          .catch(() => undefined)
-      : seedOmpJournal();
-    void journal
-      .then(() => {
-        if (cancelled) return;
-        const missing = queuedTextsNotInEntries(
-          queuedFollowUpsRef.current.map((item) => item.text),
-          chatRef.current.entries,
-        );
-        if (missing.length > 0) {
-          setChat((current) => {
-            let next = current;
-            for (const text of missing) next = appendOptimisticUser(next, text, "follow_up");
-            chatRef.current = next;
-            return next;
-          });
-        }
-        // A detach sent before this attach lands is lost, so detach again once it has, as chat does.
-        return ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply }).then(() => {
-          if (cancelled) void ipc.detachSession(id, attachId).catch(() => undefined);
-        });
-      })
-
-      .then(async () => {
-        if (cancelled) return;
-        setTerminalConnection("open");
-        if (!rpcProcessLive) return;
-        // No wait for `ready`: OMP emits it once at spawn, so on any established session the old
-        // 2s deadline always expired in full and told us nothing. History no longer depends on it
-        // either — it was read from the journal before this attach began.
-        await ipc.rpcWriteSession(id, negotiateProtocolCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getAvailableCommandsCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getStateCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompactionRef.current));
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, setSubagentSubscriptionCommand("events"));
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getSubagentsCommand());
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getLoginProvidersCommand());
-
-        if (cancelled) return;
-        await ipc.rpcWriteSession(id, getAvailableModelsCommand());
-        void ipc.readOmpModelRoles().then((roles) => {
-          if (!cancelled) setModelRoles(roles);
-        });
-      })
-      .catch(async (error) => {
-        if (cancelled) return;
-        try {
-          const next = await ipc.sessionStatus(id, taskSlug || null);
-          if (cancelled) return;
-          setObservation(next);
-          if (next.lifecycle.state === "live_exited" || next.lifecycle.state === "exited" || next.state?.process.state === "exited") return;
-        } catch {
-          // Without a confirmed exit, preserve the original connection error.
-        }
-        if (!cancelled) {
-          setTerminalConnection("failed");
-          toast(String(error), "error");
-        }
-      });
-    return () => {
-      cancelled = true;
-      stopClosed();
-      void ipc.detachSession(id, attachId);
-    };
-  }, [liveRpc, rpcProcessLive, id, taskSlug, seedOmpJournal, chatAttachEpoch]);
-  useEffect(() => {
-    if (vinculum || !rpcProcessLive) return;
-    void ipc.rpcWriteSession(id, setAutoCompactionCommand(chatAutoCompaction)).catch(() => undefined);
-  }, [vinculum, chatAutoCompaction, rpcProcessLive, id]);
-  const settleOpenUrl = async (requestId: string, raw: string | undefined) => {
-    try {
-      await settleBrowserUrl(id, requestId, raw, (error) => toast(error, "error"));
-      setChat((current) => dismissPendingUi(current, requestId));
-    } catch (error) {
-      toast(String(error), "error");
-    }
-  };
-  useEffect(() => {
-    if (!rpcProcessLive) return;
-    for (const request of chat.pendingUi) {
-      if (handledUiRef.current.has(request.id)) continue;
-      if (isPresentationUi(request.method)) {
-        handledUiRef.current.add(request.id);
-        void ipc.rpcWriteSession(id, cancelExtensionUi(request.id)).catch(() => undefined);
-        continue;
-      }
-      // Clicking "Sign in" IS the consent for the link that click produces: OMP answers `login`
-      // with the loopback `open_url`, and its approval row would render behind the accounts
-      // dialog, which is `showModal()` — inert, so the button cannot be clicked and the login
-      // dead-ends. Consuming the ref keeps that to the first link after a login the user started;
-      // anything unsolicited still has to be approved.
-      if (request.method === "open_url" && loginOpenUrlRef.current) {
-        loginOpenUrlRef.current = null;
-        handledUiRef.current.add(request.id);
-        void settleOpenUrl(request.id, request.launchUrl || request.url);
-      }
-    }
-  }, [rpcProcessLive, chat.pendingUi, id]);
-  useEffect(() => {
     let cancelled = false;
     void ipc
       .hostedCatalog()
@@ -1666,9 +1166,7 @@ export function SessionView({
     };
   }, []);
   useEffect(() => {
-    // `get_login_providers` goes out on every attach, including a re-attach to a session that is
-    // mid-turn, so `busy` is what keeps the dialog off a running agent. It returns without arming
-    // the ref, so the effect re-runs when the turn closes and offers setup then.
+    // `busy` keeps the dialog off a running agent; the effect re-runs when the turn closes and offers setup then.
     if (!hostedLoaded) return;
     const offer = shouldOfferProviderSetup({
       connected: rpcProcessLive,
@@ -1678,8 +1176,8 @@ export function SessionView({
         turnOpen: chat.turnOpen,
         agentState: observation?.state?.agent?.state,
       }),
-      providers: vinculum ? providerAccess.loginProviders : (chat.sessionMeta.loginProviders ?? []),
-      models: vinculum ? providerAccess.models : (chat.sessionMeta.models ?? []),
+      providers: providerAccess.loginProviders,
+      models: providerAccess.models,
       currentModel: chat.sessionMeta.model,
       hostedReady: hosted?.ready === true,
     });
@@ -1689,16 +1187,13 @@ export function SessionView({
     setModelDialog({ tab: "accounts", preselect: "", setup: true });
   }, [
     rpcProcessLive,
-    chat.sessionMeta.loginProviders,
     chat.sessionMeta.model,
-    chat.sessionMeta.models,
     chat.pendingTurn,
     chat.turnOpen,
     observation?.state?.agent?.state,
     modelDialog,
     hosted,
     hostedLoaded,
-    vinculum,
     providerAccess.loginProviders,
     providerAccess.models,
   ]);
@@ -1714,81 +1209,29 @@ export function SessionView({
     sending: messageSending,
     interrupting: messageInterrupting,
   };
-  // Chat is the only surface that reaches this now, so it is RPC-only. A live PTY aborts through
-  // switchTransport's OMP_INTERRUPT_DATA write instead.
   const interruptCurrentSession = async () => {
     if (!liveRpc || !canAbortChatSession(messageReadiness)) return;
     setMessageInterrupting(true);
     setMessageError("");
     try {
       setChat((current) => appendOptimisticAbort(current));
-      if (vinculum) await ipc.sessionAbort(id);
-      else await ipc.rpcWriteSession(id, abortCommand());
+      await ipc.sessionAbort(id);
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
     } finally {
       setMessageInterrupting(false);
     }
   };
-  const switchTransport = async (target: "pty" | "rpc"): Promise<boolean> => {
-    if (observation?.transport === target) return true;
-    if (viewBusy) return false;
-    // Same predicate as send routing: a pending or open turn must warn even when the 1.5s
-    // observation poll still reports idle.
-    const active = isTurnActive({
-      pendingTurn: chatRef.current.pendingTurn,
-      turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
-    });
-    if (active) {
-      if (!(await confirmStopAndSwitch(target))) return false;
-      if (liveRpc) await ipc.rpcWriteSession(id, abortCommand()).catch(() => undefined);
-      else await ipc.writeSession(id, OMP_INTERRUPT_DATA).catch(() => undefined);
-    }
-    setViewBusy(true);
-    try {
-      await ipc.restateSession(id, target);
-      await ipc.sessionStatus(id, taskSlug || null).then((next) => setObservation(next));
-      return true;
-    } catch (error) {
-      toast(String(error), "error");
-      return false;
-    } finally {
-      setViewBusy(false);
-    }
-  };
 
-  const pendingUiReply = chat.pendingUi.some((request) => needsUiReply(request.method));
-  const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
-  // The reserved confirm title from the run-local extension selects this UI action, not
-  // authority. Always show our own consequences and grant only through authenticated IPC.
-  const completionRequestIds = useMemo(
-    () => new Set(chat.pendingUi.filter((request) => request.method === "confirm" && request.title === "Allow this session to complete").map((request) => request.id)),
-    [chat.pendingUi],
-  );
   const completionCopy = useMemo(() => completionPrompt(executionView?.definition, execution), [executionView?.definition, execution]);
   // Vinculum has no extension confirm card. The locked execution itself is the request.
   const vinculumCompletionRequestId =
     vinculum && completionAvailable && execution?.permission.kind === "locked" && dismissedCompletionId !== `vinculum-completion:${execution.id}`
       ? `vinculum-completion:${execution.id}`
       : "";
+  const chatVisibility = useMemo(() => chatVisibilityFromAppearance(appearance), [appearance]);
   const chatEntries = useMemo(() => {
-    const entries = chat.entries.map(
-      (entry): ChatEntry =>
-        entry.type === "approval" && completionRequestIds.has(entry.requestId)
-          ? {
-              ...entry,
-              ...completionCopy,
-              detail:
-                grantedCompletionRequestId === entry.requestId
-                  ? "You already chose to finish this step, but the reply did not reach the agent. Retry the handoff to let the agent finish; this does not grant permission again."
-                  : completionCopy.detail,
-              allowLabel: grantedCompletionRequestId === entry.requestId ? "Retry handoff" : completionCopy.allowLabel,
-              disabled: !liveRpc || navHistory || !completionAvailable || completionBusy,
-              denyDisabled: grantedCompletionRequestId === entry.requestId,
-            }
-          : entry,
-    );
+    const entries = [...chat.entries];
     if (!vinculumCompletionRequestId) return entries;
     entries.push({
       id: vinculumCompletionRequestId,
@@ -1799,26 +1242,22 @@ export function SessionView({
       disabled: navHistory || completionBusy,
     });
     return entries;
-  }, [chat.entries, completionRequestIds, completionCopy, liveRpc, navHistory, completionAvailable, completionBusy, grantedCompletionRequestId, vinculumCompletionRequestId]);
+  }, [chat.entries, completionCopy, navHistory, completionBusy, vinculumCompletionRequestId]);
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
     agentState: observedState?.agent?.state,
   });
-  const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting || pendingUiReply ? "waiting_approval" : turnActive ? "running" : "idle";
+  const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
-  // A real approval card sets `pendingUiReply`, which already switches the composer to waiting and hides Stop.
-  // Vinculum's finish card is not one of those requests, so Stop stays available and the composer still sends.
   const composerCanAbort = canAbortChatSession(messageReadiness);
   const sendNowEnabled =
     turnActive &&
     agentState !== "waiting_for_input" &&
     agentState !== "waiting_for_approval" &&
     !chat.sessionMeta.isCompacting &&
-    !pendingUiReply &&
-    (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0 || latestQueuedFollowUp(queuedFollowUps) !== undefined);
-  const uiPrompt = chat.pendingUi.find((request) => request.method === "select" || request.method === "input" || request.method === "editor");
-  const queuedMeta = chat.sessionMeta.queuedMessageCount ?? queuedFollowUps.length;
+    (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
+  const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
   const chatMetaHead = chat.sessionMeta.model || model;
   const chatMetaTail = [
     `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
@@ -1828,40 +1267,18 @@ export function SessionView({
     .filter((part) => part && part.length > 0)
     .join(" · ");
   const pickThinking = (level: string) => {
-    if (vinculum) {
-      void ipc.sessionSetThinkingLevel(id, level).then(
-        (controls) => {
-          setChat((current) => {
-            const next = applySessionControls(current, controls);
-            chatRef.current = next;
-            return next;
-          });
-        },
-        (error) => toast(String(error), "error"),
-      );
-      return;
-    }
-    void ipc.rpcWriteSession(id, setThinkingLevelCommand(level)).catch((error) => toast(String(error), "error"));
+    void ipc.sessionSetThinkingLevel(id, level).then(
+      (controls) => {
+        setChat((current) => {
+          const next = applySessionControls(current, controls);
+          chatRef.current = next;
+          return next;
+        });
+      },
+      (error) => toast(String(error), "error"),
+    );
   };
 
-  const replyExtensionValue = async (requestId: string, value: string) => {
-    handledUiRef.current.add(requestId);
-    try {
-      await ipc.rpcWriteSession(id, extensionUiValue(requestId, value));
-      setChat((current) => dismissPendingUi(current, requestId));
-    } catch (error) {
-      toast(String(error), "error");
-    }
-  };
-  const cancelExtensionPrompt = async (requestId: string) => {
-    handledUiRef.current.add(requestId);
-    try {
-      await ipc.rpcWriteSession(id, cancelExtensionUi(requestId));
-      setChat((current) => dismissPendingUi(current, requestId));
-    } catch (error) {
-      toast(String(error), "error");
-    }
-  };
   const approveChat = async (requestId: string, allow: boolean) => {
     // The row stays mounted across the await, so without this a double-click sends two responses.
     if (handledUiRef.current.has(requestId)) return;
@@ -1889,43 +1306,6 @@ export function SessionView({
       }
       return;
     }
-    const request = chatRef.current.pendingUi.find((pending) => pending.id === requestId);
-    if (completionRequestIds.has(requestId)) {
-      if (!liveRpc || navHistory || !completionAvailable || completionBusy || !execution || (!allow && grantedCompletionRequestId === requestId)) {
-        handledUiRef.current.delete(requestId);
-        return;
-      }
-      setCompletionBusy(true);
-      try {
-        if (allow && grantedCompletionRequestId !== requestId) {
-          await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
-          setCompletionGrant({ sessionId: id, requestId });
-          setExecutionView(await readTaskExecution(repoPath, taskSlug));
-        }
-        // Do not release the waiting tool until the grant is durably acknowledged.
-        await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
-        setChat((current) => dismissPendingUi(current, requestId));
-        setExecutionError("");
-      } catch (error) {
-        handledUiRef.current.delete(requestId);
-        setExecutionError(String(error));
-      } finally {
-        setCompletionBusy(false);
-      }
-      return;
-    }
-    // Allowing an `open_url` means "did it open", not "was it permitted", so it goes through the
-    // same settle path the login auto-open uses. Declining is a plain false — nothing is opened.
-    if (allow && request?.method === "open_url") {
-      await settleOpenUrl(requestId, request.launchUrl || request.url);
-      return;
-    }
-    try {
-      await ipc.rpcWriteSession(id, extensionUiConfirm(requestId, allow));
-      setChat((current) => dismissPendingUi(current, requestId));
-    } catch (error) {
-      toast(String(error), "error");
-    }
   };
   // approveChat is rebuilt every render, so a useCallback keyed on it would be no more stable
   // than the arrow it replaces. The ref keeps one identity for the life of the component while
@@ -1935,52 +1315,26 @@ export function SessionView({
   const onApproveChat = useCallback((requestId: string, allow: boolean) => void approveChatRef.current(requestId, allow), []);
 
   const applyChatModel = async (provider: string, modelId: string) => {
-    if (vinculum) {
-      setModelError(null);
-      try {
-        const controls = await ipc.sessionSetModel(id, `${provider}/${modelId}`);
-        setChat((current) => {
-          const next = applySessionControls(current, controls);
-          chatRef.current = next;
-          return next;
-        });
-        setModelDialog(null);
-      } catch (error) {
-        setModelError(String(error));
-      }
-      return;
-    }
     setModelError(null);
-    modelApplyRef.current = true;
     try {
-      await ipc.rpcWriteSession(id, setModelCommand(provider, modelId));
+      const controls = await ipc.sessionSetModel(id, `${provider}/${modelId}`);
+      setChat((current) => {
+        const next = applySessionControls(current, controls);
+        chatRef.current = next;
+        return next;
+      });
+      setModelDialog(null);
     } catch (error) {
-      modelApplyRef.current = false;
       setModelError(String(error));
     }
   };
   const startChatLogin = async (providerId: string) => {
-    if (vinculum) {
-      const row = providerAccess.loginProviders.find((provider) => provider.id === providerId);
-      if (row?.apiKey && row.oauth) {
-        providerAccess.choose(row);
-        return;
-      }
-      await providerAccess.start(providerId, row?.oauth && !row.apiKey ? "oauth" : "api_key");
+    const row = providerAccess.loginProviders.find((provider) => provider.id === providerId);
+    if (row?.apiKey && row.oauth) {
+      providerAccess.choose(row);
       return;
     }
-    setModelError(null);
-    setLoginBusy(providerId);
-    loginApplyRef.current = providerId;
-    loginOpenUrlRef.current = providerId;
-    try {
-      await ipc.rpcWriteSession(id, loginCommand(providerId));
-    } catch (error) {
-      loginApplyRef.current = null;
-      loginOpenUrlRef.current = null;
-      setLoginBusy(null);
-      setModelError(String(error));
-    }
+    await providerAccess.start(providerId, row?.oauth && !row.apiKey ? "oauth" : "api_key");
   };
   const assignModelRole = async (role: string, model: string | null) => {
     const next = { ...modelRoles };
@@ -2071,16 +1425,6 @@ export function SessionView({
         <span className="session-path dim mono">
           {id} · {cwd}
         </span>
-        {showHatch && (
-          <div className="chat-hatch session-view-hatch" role="group" aria-label="Session view">
-            <button type="button" className={liveRpc ? "active" : ""} aria-pressed={liveRpc} disabled={viewBusy} onClick={() => void switchTransport("rpc")}>
-              Chat
-            </button>
-            <button type="button" className={livePty ? "active" : ""} aria-pressed={livePty} disabled={viewBusy} onClick={() => void switchTransport("pty")}>
-              Terminal
-            </button>
-          </div>
-        )}
         <CopyTextButton text={cwd} label="worktree path" />
       </div>
       {finalizedNotice && <InlineStatus tone="warning">{finalizedNotice}</InlineStatus>}
@@ -2151,9 +1495,9 @@ export function SessionView({
       )}
       <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
         <div className="termhost" ref={termhostRef}>
-          {(viewBusy || (ompCoding && Boolean(termIntent) && !liveRpc && !livePty)) && (
+          {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
             <div className="session-view-loading" role="status" aria-live="polite">
-              <LoadingState label={viewBusy ? "Switching view…" : "Opening session…"} state="connecting" />
+              <LoadingState label="Opening session…" state="connecting" />
             </div>
           )}
           {navHistory && (
@@ -2200,23 +1544,19 @@ export function SessionView({
                   {chatVisibility.showMeta ? (
                     <div className="chat-meta">
                       <div>
-                        {vinculum ? (
-                          <button
-                            type="button"
-                            className="btn ghost small"
-                            aria-label="Change model"
-                            title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
-                            onClick={() => {
-                              setModelError(null);
-                              setModelDialog({ tab: "models", preselect: "", setup: false });
-                            }}
-                          >
-                            {chatMetaHead || "Model"}
-                          </button>
-                        ) : chatMetaHead ? (
-                          chatMetaHead
-                        ) : null}
-                        {chatMetaHead || vinculum ? " · " : null}
+                        <button
+                          type="button"
+                          className="btn ghost small"
+                          aria-label="Change model"
+                          title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
+                          onClick={() => {
+                            setModelError(null);
+                            setModelDialog({ tab: "models", preselect: "", setup: false });
+                          }}
+                        >
+                          {chatMetaHead || "Model"}
+                        </button>
+                        {" · "}
                         {chat.sessionMeta.thinking ? (
                           <>
                             <ThinkingSelect
@@ -2246,13 +1586,6 @@ export function SessionView({
                   </div>
                   {showChatComposer ? (
                     <>
-                      {uiPrompt ? (
-                        <ChatExtensionPrompt
-                          request={uiPrompt}
-                          onSubmit={(value) => void replyExtensionValue(uiPrompt.id, value)}
-                          onCancel={() => void cancelExtensionPrompt(uiPrompt.id)}
-                        />
-                      ) : null}
                       <ChatComposer
                         body={messageDraft.body}
                         status={chatStatus}
@@ -2361,21 +1694,21 @@ export function SessionView({
             <ChatModelDialog
               tab={modelDialog.tab}
               setup={modelDialog.setup}
-              models={vinculum ? providerAccess.models : (chat.sessionMeta.models ?? [])}
+              models={providerAccess.models}
               current={chat.sessionMeta.model}
               preselect={modelDialog.preselect}
-              loginProviders={vinculum ? providerAccess.loginProviders : (chat.sessionMeta.loginProviders ?? [])}
-              livePromotedIds={livePromotedIds}
+              loginProviders={providerAccess.loginProviders}
+              livePromotedIds={[]}
               configuredIds={providerAccess.custom.map((row) => row.id)}
               modelRoles={modelRoles}
               hosted={hosted}
               grok={grokReady}
               error={modelError || providerAccess.error}
-              loginBusy={vinculum ? providerAccess.busy : loginBusy}
+              loginBusy={providerAccess.busy}
               onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
               onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
               onLogin={(providerId) => void startChatLogin(providerId)}
-              onLogout={vinculum ? (providerId) => void providerAccess.logout(providerId) : undefined}
+              onLogout={(providerId) => void providerAccess.logout(providerId)}
               onAssignRole={(role, model) => void assignModelRole(role, model)}
               onSignIn={() => {
                 void ipc
@@ -2399,26 +1732,11 @@ export function SessionView({
                 void providerAccess.cancel();
                 setModelDialog(null);
                 setModelError(null);
-                setLoginBusy(null);
-                loginApplyRef.current = null;
-                loginOpenUrlRef.current = null;
               }}
-              footer={vinculum ? <CustomEndpointForm access={providerAccess} /> : null}
+              footer={<CustomEndpointForm access={providerAccess} />}
             >
-              {vinculum ? <ProviderAccessPanel access={providerAccess} /> : null}
+              <ProviderAccessPanel access={providerAccess} />
             </ChatModelDialog>
-          )}
-          {toolsOpen && <ChatToolsDialog tools={chat.sessionMeta.dumpTools ?? []} onClose={() => setToolsOpen(false)} />}
-          {mcpDialog && (
-            <ChatMcpDialog
-              rows={mcpDialog.rows}
-              empty={mcpDialog.empty}
-              onPrompt={(message) => {
-                setMcpDialog(null);
-                void sendCurrentMessage(message);
-              }}
-              onClose={() => setMcpDialog(null)}
-            />
           )}
           {!navHistory && !termIntent && !showPanel && (
             <div className="sap-loading">

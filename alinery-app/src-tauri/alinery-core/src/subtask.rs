@@ -1113,10 +1113,6 @@ mod tests {
         assert!(child.linear_id.is_empty() && child.github_issue.is_empty() && child.pr_url.is_empty() && child.requested_slug.is_empty());
         assert_eq!(read_task(&repo, "a").unwrap().active_subtask, "b");
         assert_eq!(created.provisioning.creation, "ready");
-        let mut state = crate::execution::read_execution_state(&repo, "b").unwrap();
-        let definition = crate::execution::read_task_playbook(&repo, "b", &state).unwrap();
-        let roots = crate::playbook_scheduler::reconcile_graph(&definition, &mut state).unwrap();
-        assert_eq!(roots.iter().map(|root| root.step_key.as_str()).collect::<BTreeSet<_>>(), BTreeSet::from(["left", "right"]));
         assert_eq!(fs::read(crate::execution::task_playbook_path(&repo, "b").unwrap()).unwrap(), retained_source().as_bytes());
         assert!(fs::read_to_string(artifacts_dir(&repo, "b").join("00-ticket.md"))
             .unwrap()

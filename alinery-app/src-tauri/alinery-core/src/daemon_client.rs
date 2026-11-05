@@ -1180,14 +1180,6 @@ impl DaemonClient {
         self.call(&open_request(request)).and_then(expect_ok)
     }
 
-    pub fn restate_session(&self, id: &str, transport: &str) -> Result<(), String> {
-        self.call(&restate_request(id, transport)).and_then(expect_ok)
-    }
-
-    pub fn rpc_write_session(&self, id: &str, payload: &Value) -> Result<(), String> {
-        self.call(&rpc_write_request(id, payload)).and_then(expect_ok)
-    }
-
     pub fn transcript(&self, id: &str) -> Result<TranscriptReply, String> {
         let response = self.call(&transcript_request(id))?;
         if let Some(error) = reply_error(&response) {

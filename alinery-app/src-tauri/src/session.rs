@@ -1155,23 +1155,6 @@ fn session_statuses_blocking(app: &AppHandle, active: &Result<RepoRef, String>, 
 }
 
 #[tauri::command]
-pub(crate) fn restate_session(state: State<'_, AppState>, id: String, transport: String) -> Result<(), String> {
-    let _ = (state, id, transport);
-    Err("OMP process sessions are not available".into())
-}
-
-/// Bring up the reserved setup session and return its id.
-///
-/// The dialog that follows uses the ordinary `rpc_attach_session` / `rpc_write_session` commands
-/// against that id -- `cached_or_own_client` has no route for it, so it falls through to the
-/// active repo's daemon, which is the one that owns it.
-#[tauri::command]
-pub(crate) fn omp_setup_session(state: State<'_, AppState>) -> Result<String, String> {
-    let _ = state;
-    Err("OMP process sessions are not available".into())
-}
-
-#[tauri::command]
 pub(crate) async fn session_transcript(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::TranscriptReply, String> {
     require_active_repo_ready(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;
@@ -1265,18 +1248,6 @@ pub(crate) async fn custom_provider_save(
 pub(crate) async fn custom_provider_delete(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
     let daemon = active_daemon(&state)?;
     off_main_thread("custom provider delete", move || daemon.custom_provider_delete(&id)).await
-}
-
-#[tauri::command]
-pub(crate) async fn rpc_write_session(state: State<'_, AppState>, id: String, payload: Value) -> Result<(), String> {
-    let _ = (state, id, payload);
-    Err("OMP process sessions are not available".into())
-}
-
-#[tauri::command]
-pub(crate) async fn rpc_attach_session(state: State<'_, AppState>, app: AppHandle, id: String, attach_id: u64, stream_token: u64, on_line: Channel<String>) -> Result<(), String> {
-    let _ = (state, app, id, attach_id, stream_token, on_line);
-    Err("OMP process sessions are not available".into())
 }
 
 /// Daemon socket I/O waits up to DAEMON_CONTROL_TIMEOUT (a daemon blocked writing a full OMP

@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { resetGraphs } from "./graph.ts";
-import { completeSessionMeta, completionPermission, getTaskExecution } from "./tasks.ts";
+import { holderBinary, holdFromRust } from "./platform/rustHolder.ts";
+import { addExecution, completeSessionMeta, completionPermission, getTaskExecution } from "./tasks.ts";
 
 test("a session born without a meta file still has the fields SessionMeta requires", () => {
   const born = completeSessionMeta({ id: "s" }, { started_at: 10, harness: "omp", harness_resume_token: "", model: "alinery/x" }, "s", "/wt", 10);
@@ -130,4 +131,47 @@ describe("task execution reply", () => {
     expect(reply.state.executions.placeholder).toMatchObject({ id: "placeholder", owner_session_id: "kept" });
     expect(reply.state.occurrences["rust-seed"]).toMatchObject({ producer_execution_id: null, relative_path: "00-ticket.md" });
   });
+});
+
+describe("addExecution under the task-mutation lock", () => {
+  beforeAll(() => void holderBinary(), 120_000);
+  const setup = () => {
+    const repo = mkdtempSync(join(tmpdir(), "daemon-exec-"));
+    mkdirSync(join(repo, ".alinery", "tasks", "t"), { recursive: true });
+    writeFileSync(join(repo, ".alinery", "tasks", "t", "execution.json"), JSON.stringify({ executions: {} }));
+    return repo;
+  };
+  const count = (repo: string) => Object.keys(JSON.parse(readFileSync(join(repo, ".alinery", "tasks", "t", "execution.json"), "utf8")).executions).length;
+  const burst = (repo: string) => Array.from({ length: 50 }, (_, i) => addExecution(repo, "t", { id: `e${i}` }));
+  const lockPath = (repo: string) => join(repo, ".alinery", ".task-mutation.lock");
+
+  test("50 concurrent calls on one task end with 50 entries", async () => {
+    const repo = setup();
+    await Promise.all(burst(repo));
+    expect(count(repo)).toBe(50);
+  });
+
+  test("with a Rust process holding the lock for 500 ms, all 50 land after it releases", async () => {
+    const repo = setup();
+    const holder = await holdFromRust(lockPath(repo));
+    const calls = Promise.all(burst(repo));
+    await Bun.sleep(500);
+    expect(count(repo)).toBe(0);
+    await holder.release();
+    await calls;
+    expect(count(repo)).toBe(50);
+  }, 60_000);
+
+  test("with a 5 s hold, all 50 fail repo_busy within about 2 s of the first call", async () => {
+    const repo = setup();
+    const holder = await holdFromRust(lockPath(repo));
+    const started = Date.now();
+    const results = await Promise.allSettled(burst(repo));
+    const elapsed = Date.now() - started;
+    await holder.release();
+    expect(results.every((r) => r.status === "rejected" && (r.reason as { code?: string }).code === "repo_busy")).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(1_900);
+    expect(elapsed).toBeLessThan(2_600);
+    expect(count(repo)).toBe(0);
+  }, 60_000);
 });

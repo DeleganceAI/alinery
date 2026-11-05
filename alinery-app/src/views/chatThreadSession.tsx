@@ -13,7 +13,6 @@ import {
   type ChatTranscriptState,
   emptyTranscript,
   needsUiReply,
-  type PendingUi,
   watchVinculumTranscript,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
@@ -27,7 +26,6 @@ import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 import { applyPlainSend, chatTerminalIo, olderPageState, sendCommand, sendNowCommand } from "./chatSession";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
-import { useChatUiReplies } from "./useChatUiReplies";
 
 export function threadLabel(thread: ChatThread): string {
   if (thread.name) return thread.name;
@@ -92,7 +90,6 @@ export type ChatThreadSnapshot = {
   blocked: boolean;
   disconnected: string | null;
   sendNowEnabled: boolean;
-  prompt: PendingUi | undefined;
   providersDialog: { tab: ProvidersDialogTab; preselect: string } | null;
   toolsOpen: boolean;
   mcpDialog: { rows: McpServerRow[]; empty: boolean } | null;
@@ -113,9 +110,6 @@ type ChatThreadApi = {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
   applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
@@ -140,7 +134,6 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   blocked: false,
   disconnected: null,
   sendNowEnabled: false,
-  prompt: undefined,
   providersDialog: null,
   toolsOpen: false,
   mcpDialog: null,
@@ -161,9 +154,6 @@ const NO_API: ChatThreadApi = {
   setProvidersDialog: () => {},
   setToolsOpen: () => {},
   setMcpDialog: () => {},
-  approve: () => {},
-  reply: () => {},
-  cancelUi: () => {},
   applyControls: () => {},
 };
 
@@ -435,9 +425,6 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
   applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
@@ -507,14 +494,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const entry = key ? registry.entries.get(key) : undefined;
   const api = entry?.api ?? NO_API;
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
-  // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
-  // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback(
-    (id: string, allow: boolean) => {
-      entry?.api.approve(id, allow);
-    },
-    [entry],
-  );
   return {
     ...snap,
     error,
@@ -543,9 +522,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
-    approve,
-    reply: (id, value) => api.reply(id, value),
-    cancelUi: (id) => api.cancelUi(id),
     applyControls: (controls) => api.applyControls(controls),
   };
 }
@@ -886,14 +862,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   const activity = chatActivity(observation, transcript);
   const processLive = observation?.state?.process.state === "alive";
-  const ui = useChatUiReplies({
-    repo,
-    id,
-    live: processLive,
-    transcript,
-    setTranscript: updateTranscript,
-    onError: (message) => registry.setError(message),
-  });
   const inTerminal = processLive && observation?.transport === "pty";
   const terminalIo = useMemo(() => chatTerminalIo(repo, id), [repo, id]);
   const agentState = observation?.state?.agent?.state;
@@ -1028,9 +996,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     setProvidersDialog,
     setToolsOpen,
     setMcpDialog,
-    approve: ui.approve,
-    reply: ui.reply,
-    cancelUi: ui.cancel,
     applyControls: (controls) => updateTranscript((current) => applySessionControls(current, controls)),
   };
 
@@ -1053,7 +1018,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     blocked: registry.error === "cannot continue",
     disconnected: connection.state === "failed" && !inTerminal ? connection.detail : null,
     sendNowEnabled,
-    prompt: ui.prompt,
     providersDialog,
     toolsOpen,
     mcpDialog,

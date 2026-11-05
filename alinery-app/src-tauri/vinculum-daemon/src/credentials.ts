@@ -1,5 +1,6 @@
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeOwnerOnly } from "./platform/fs.ts";
 import type { CreateModelsOptions } from "@earendil-works/pi-ai/models";
 
 /** One credential per provider. The shape is whatever Pi stored; this file does not interpret it. */
@@ -39,8 +40,7 @@ export function openCredentialStore(path: string): Store {
 
   const writeAll = (all: Record<string, Credential>) => {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(all), { mode: 0o600 });
-    chmodSync(path, 0o600);
+    writeOwnerOnly(path, JSON.stringify(all));
   };
 
   return {

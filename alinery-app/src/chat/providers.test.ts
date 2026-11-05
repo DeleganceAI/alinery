@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  HOSTED_PROVIDER,
-  isInteractivePromptLoginError,
-  type LoginProvider,
-  mergeGrokModels,
-  mergeHostedModels,
-  needsProviderSetup,
-  partitionProviders,
-  shouldOfferProviderSetup,
-} from "./providers";
+import { HOSTED_PROVIDER, type LoginProvider, mergeGrokModels, mergeHostedModels, needsProviderSetup, partitionProviders, shouldOfferProviderSetup } from "./providers";
 
 const providers = (rows: Partial<LoginProvider>[]): LoginProvider[] =>
   rows.map((r, i) => ({
@@ -178,12 +169,5 @@ describe("mergeHostedModels", () => {
       { provider: HOSTED_PROVIDER, id: "Qwen3.6-35B-A3B" },
       { provider: "xai", id: "grok" },
     ]);
-  });
-});
-
-describe("isInteractivePromptLoginError", () => {
-  it("matches the OMP RPC rejection sentence", () => {
-    expect(isInteractivePromptLoginError("Provider requires interactive prompts which are not supported in RPC mode. Use the terminal UI to log in.")).toBe(true);
-    expect(isInteractivePromptLoginError("nope")).toBe(false);
   });
 });

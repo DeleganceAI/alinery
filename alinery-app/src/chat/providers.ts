@@ -68,8 +68,6 @@ export function loginProvidersFromCatalog(catalog: ProviderCatalog | null): Logi
   }));
 }
 
-export const INTERACTIVE_PROMPT_ERROR = /requires interactive prompts which are not supported in RPC mode/i;
-
 export type AdvancedProviderRow = {
   id: string;
   name: string;
@@ -164,10 +162,6 @@ export function hostedPrice(hosted: HostedCatalogView | null | undefined, provid
   if (provider !== HOSTED_PROVIDER || !hosted) return undefined;
   const row = hosted.models.find((m) => m.id === id);
   return row?.price ?? undefined;
-}
-
-export function isInteractivePromptLoginError(error: string | undefined | null): boolean {
-  return typeof error === "string" && INTERACTIVE_PROMPT_ERROR.test(error);
 }
 
 export type SetupOfferInput = {

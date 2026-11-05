@@ -7,7 +7,6 @@ import * as ipc from "../ipc";
 import { toast } from "../toast";
 import type { ChatThread } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatPane } from "./ChatPane";
 import { repoLabel } from "./ChatView";
 import { threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
@@ -446,7 +445,6 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
                 entries={chat.transcript.entries}
                 status={chat.activity.status}
                 visibility={paneVisibility}
-                onApprove={chat.approve}
                 onLoadOlder={chat.loadOlder}
                 loadingOlder={chat.loadingOlder}
                 atStart={chat.transcript.fileStart === 0}
@@ -464,19 +462,6 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
               <div className="chat-banner" role="alert">
                 <span>{chat.error}</span>
               </div>
-            ) : null}
-            {!chat.inTerminal && chat.prompt ? (
-              <ChatExtensionPrompt
-                request={chat.prompt}
-                onSubmit={(value) => {
-                  const id = chat.prompt?.id;
-                  if (id) void chat.reply(id, value);
-                }}
-                onCancel={() => {
-                  const id = chat.prompt?.id;
-                  if (id) void chat.cancelUi(id);
-                }}
-              />
             ) : null}
             {chat.inTerminal || !resolved ? null : (
               <ChatComposer

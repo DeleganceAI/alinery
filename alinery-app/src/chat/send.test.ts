@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptyTranscript } from "../chatTranscript";
-import { applySendPlan, commandOutputText, loginReply, planChatSend, setModelReply } from "./send";
+import { applySendPlan, planChatSend } from "./send";
 import type { ChatCommand } from "./types";
 
 const catalog: ChatCommand[] = [
@@ -80,32 +80,5 @@ describe("planChatSend", () => {
     const plan = planChatSend("/logout", catalog, false);
     const next = applySendPlan(emptyTranscript(), "/logout", plan).state;
     expect(next.entries.map((e) => e.type)).toEqual(["slash", "harness"]);
-  });
-});
-
-describe("commandOutputText", () => {
-  it("reads command_output text for /mcp list parsing", () => {
-    expect(commandOutputText({ type: "command_output", text: "brave | stdio | enabled | user" })).toBe("brave | stdio | enabled | user");
-    expect(commandOutputText({ type: "notice", text: "x" })).toBeNull();
-  });
-});
-
-describe("setModelReply", () => {
-  it("keeps a failed set_model in the dialog", () => {
-    expect(setModelReply({ type: "response", command: "set_model", success: false, error: "unknown" })).toEqual({
-      ok: false,
-      error: "unknown",
-    });
-    expect(setModelReply({ type: "response", command: "set_model", success: true })).toEqual({ ok: true });
-  });
-});
-
-describe("loginReply", () => {
-  it("parses login success and failure", () => {
-    expect(loginReply({ type: "response", command: "login", success: true, data: { providerId: "anthropic" } })).toEqual({
-      ok: true,
-      providerId: "anthropic",
-    });
-    expect(loginReply({ type: "response", command: "login", success: false, error: "nope" })).toEqual({ ok: false, error: "nope" });
   });
 });
