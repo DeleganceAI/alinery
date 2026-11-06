@@ -33,6 +33,7 @@ import { parsers } from "./sync/parsers/index.ts";
 import { settingsParser } from "./sync/parsers/settings.ts";
 import { telemetrySender } from "./platform/telemetry.ts";
 import { SessionPublisher } from "./domain/sessions.ts";
+import { runHostService } from "./hostService/serve.ts";
 import { runJobChild, runRestoreBackup } from "./jobs/child.ts";
 import { BackupHost } from "./jobs/backupHost.ts";
 import { JobRunner } from "./jobs/runner.ts";
@@ -104,6 +105,8 @@ if (args.includes("--protocol-version")) {
 if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
 // The MCP server (plan S5.1, O10 b) is this binary run with --mcp: a client of a daemon, never one itself.
 if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL));
+// The host service (plan S5.2, O15 b) is this binary run with --host-service: the work a host needs while no daemon runs.
+if (args.includes("--host-service")) process.exit(await runHostService(args));
 // The restore of a backup (S4.9) is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
 if (args.includes("--restore-backup")) process.exit(await runRestoreBackup(args[args.indexOf("--restore-backup") + 1] ?? "", args[args.indexOf("--restore-backup") + 2] ?? ""));
 

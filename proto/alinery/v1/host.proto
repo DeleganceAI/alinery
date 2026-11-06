@@ -1,0 +1,162 @@
+// proto/alinery/v1/host.proto
+syntax = "proto3";
+package alinery.v1;
+
+// The host service (S5.2, O15 b): `alinery-vinculum-daemon --host-service`, the work a host needs while no daemon runs. The
+// shell talks to it over ONE ssh channel per host (stdin and stdout of that process), not over the daemon's socket, so there
+// is no `service` here: gRPC needs HTTP/2 and a stdio pipe has none. A request is a HostRequest, a reply is a HostReply with
+// the same id, and both travel as `[u32 big-endian length][message]`.
+//
+// Start of the stream: the service prints the line `alinery-host-service/1` and a newline, then frames. The client skips
+// whatever a login shell printed before that line (rc-file noise), and reads frames after it. The first frame is
+// HostReply{id: 0, hello}, sent unprompted; requests use ids from 1. Replies may arrive in any order; each request is
+// handled on its own, so a slow git call never holds up a ping.
+//
+// This is not daemon wire and needs no PROTOCOL_VERSION: the runtime that serves it is installed by content hash beside the
+// daemon, so it is always the app's own build. No request here reads or writes a repository's tasks; those are the daemon's.
+message HostRequest {
+  uint64 id = 1;
+  oneof call {
+    HostPing ping = 2;
+    HostClaimRepo claim_repo = 3;
+    HostReleaseRepo release_repo = 4;
+    HostClassify classify = 5;
+    HostInit init = 6;
+    HostListDir list_dir = 7;
+    HostWriteFile write_file = 8;
+    HostSyncCredentials sync_credentials = 9;
+    HostRemoveFile remove_file = 10;
+    HostBackupVerify backup_verify = 11;
+    HostBackupRestore backup_restore = 12;
+    HostWaitDaemonGone wait_daemon_gone = 13;
+    HostSpawnDaemon spawn_daemon = 14;
+  }
+}
+
+message HostReply {
+  uint64 id = 1;
+  oneof body {
+    string error = 2;  // the sentence to show; no code, the shell only displays it (a held claim is HostClaimReply.claimed = false)
+    HostHello hello = 3;
+    HostDone done = 4;  // success with nothing to say: ping, release, write, remove, verify, restore, wait, spawn
+    HostClaimReply claim = 5;
+    HostFolderReply folder = 6;
+    HostInitReply init = 7;
+    HostListing listing = 8;
+    HostErased erased = 9;
+  }
+}
+
+message HostDone {}
+
+message HostHello {
+  string runtime = 1;  // the app version this binary was built for
+  uint32 pid = 2;
+}
+
+message HostPing {}
+
+// Hold `<repo>/.alinery/.alinery-app.lock` for the life of the service process, as the local `claim_repo` does. The lock must
+// outlive the call; the kernel lets it go when the ssh channel dies.
+message HostClaimRepo { string repo = 1; }
+message HostClaimReply { bool claimed = 1; }
+message HostReleaseRepo { string repo = 1; }
+
+// What a picked folder is: a git checkout (`path` is its root), a folder with no git entry that may be initialized (`path` is
+// its canonical path), or one that must be left alone (`message` says why).
+message HostClassify { string path = 1; }
+message HostFolderReply {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_CHECKOUT = 1;
+    KIND_ABSENT = 2;
+    KIND_REFUSED = 3;
+  }
+  Kind kind = 1;
+  string path = 2;
+  string message = 3;
+}
+
+// `git init` in a folder that classified as absent. A folder that became a checkout meanwhile is not initialized again.
+message HostInit { string path = 1; }
+message HostInitReply {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_INITIALIZED = 1;
+    KIND_ALREADY_CHECKOUT = 2;
+  }
+  Kind kind = 1;
+  string root = 2;
+}
+
+// Subdirectories of `path`, sorted by name, at most 2000. Files are not listed: this feeds a folder picker.
+message HostListDir {
+  string path = 1;
+  bool show_hidden = 2;
+}
+message HostListing {
+  message Entry {
+    string name = 1;
+    bool git = 2;
+    bool symlink = 3;
+  }
+  string path = 1;
+  repeated Entry entries = 2;
+  bool truncated = 3;
+}
+
+// Atomic, owner-only write; parent directories are created.
+message HostWriteFile {
+  string path = 1;
+  string contents = 2;
+}
+
+// Change the provider credentials at `path`. `set` maps a provider id to that credential as JSON text (the shape is Pi's, and
+// is not interpreted here); `remove` drops API keys the app copied earlier (a sign-in made on the host is kept);
+// `erase_oauth` drops every browser sign-in, once. The reply names the sign-ins erased.
+message HostSyncCredentials {
+  string path = 1;
+  map<string, string> set = 2;
+  repeated string remove = 3;
+  bool erase_oauth = 4;
+}
+message HostErased { repeated string providers = 1; }
+
+// Delete a file this app wrote earlier. A missing file is not an error.
+message HostRemoveFile { string path = 1; }
+
+// Check that an archive belongs to the repo, before anything is stopped to restore it: a refused archive must not cost the
+// host's live sessions.
+message HostBackupVerify {
+  string repo = 1;
+  string backup_path = 2;
+}
+// Replace the repo's curated Alinery data with an archive. The caller has stopped the daemon.
+message HostBackupRestore {
+  string repo = 1;
+  string backup_path = 2;
+}
+
+// Return once the repo's daemon has released its socket and process lock. Sent after a confirmed shutdown so a replacement can
+// start; it stops nothing itself.
+message HostWaitDaemonGone { string repo = 1; }
+
+// Start the daemon detached so it outlives the ssh session that asked.
+message HostSpawnDaemon {
+  enum Launch {
+    LAUNCH_UNSPECIFIED = 0;
+    LAUNCH_DIRECT = 1;      // a detached child
+    LAUNCH_SYSTEMD_RUN = 2;  // a transient user unit; survives logout only when the user is lingering
+  }
+  string repo = 1;
+  string app_config = 2;
+  string binary = 3;
+  string build_id = 4;
+  string namespace = 5;
+  string log = 6;
+  Launch launch = 7;
+  string unit = 8;               // systemd unit name; required for LAUNCH_SYSTEMD_RUN
+  string ui_secret_file = 9;     // the daemon reads and deletes it before it listens
+  string rpc_secret_file = 10;   // the same for the RPC socket's bearer token
+  string app_version = 11;       // the version a telemetry event carries (--app-version)
+}

@@ -65,7 +65,7 @@ function lease(path: string): LockHandle {
 }
 
 /** `connect_for_ownership_probe`: a connection is a candidate owner, not a verified process. Nothing is sent. */
-function socketReachable(path: string): Promise<boolean> {
+export function socketReachable(path: string): Promise<boolean> {
   let stat: ReturnType<typeof lstatSync> | undefined;
   try {
     stat = lstat(path);
