@@ -19,6 +19,7 @@ type CoreLib = {
     alinery_provision_task: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_set_session_name: (repo: ReturnType<typeof ptr>, taskSlug: ReturnType<typeof ptr>, sessionId: ReturnType<typeof ptr>, name: ReturnType<typeof ptr>) => number | null;
+    alinery_record_worktree: (dir: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
     alinery_string_free: (reply: number | null) => void;
   };
 };
@@ -44,6 +45,7 @@ function core(): CoreLib {
     alinery_provision_task: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_set_session_name: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
+    alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
   }) as CoreLib;
   return coreLib;
@@ -63,6 +65,17 @@ export function suggestSessionName(repo: string, slug: string, id: string, name:
   if (reply) lib.symbols.alinery_string_free(reply);
   if (!text) return { error: "empty session name reply" };
   return JSON.parse(text) as SessionNameReply;
+}
+
+/** Keeps the working tree's files (uncommitted ones too) alive under a ref for one execution. Undefined outside git. */
+export function recordWorktree(dir: string, execId: string): { ref: string; tree: string } | undefined {
+  const lib = core();
+  const reply = lib.symbols.alinery_record_worktree(cstr(dir), cstr(execId));
+  const text = reply ? new CString(reply).toString() : "";
+  if (reply) lib.symbols.alinery_string_free(reply);
+  const body = (text ? JSON.parse(text) : { error: "empty worktree reply" }) as { ref?: string; tree?: string; error?: string };
+  if (body.error) throw new Error(body.error);
+  return body.ref && body.tree ? { ref: body.ref, tree: body.tree } : undefined;
 }
 
 function coreCall(op: "alinery_provision_task" | "alinery_create_subtask", repo: string, lane: string, identity: string, request: string): Request {
@@ -245,7 +258,8 @@ function reservedExecution(id: string, step: string, sessionId: string, harness:
 export function addExecution(repo: string, slug: string, execution: Record<string, unknown>): Promise<void> {
   return withTaskMutation(repo, "add_execution", () => {
     const path = executionPath(repo, slug);
-    const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown>; engine?: unknown };
+    const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown>; engine?: unknown; revision?: number };
+    state.revision = (typeof state.revision === "number" ? state.revision : 0) + 1;
     state.executions = { ...(state.executions ?? {}), [String(execution.id)]: execution };
     // Marks the task as this daemon's, so the records are not taken for the old runner's (O21). An old log has its own mark.
     if (!state.engine && !existsSync(join(dirname(path), "engine.jsonl"))) state.engine = EMPTY_ENGINE;

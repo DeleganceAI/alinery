@@ -84,15 +84,17 @@ export function mergedRecords(file: Json, state: State, repo: string, slug: stri
 /**
  * Store the whole engine State in `execution.json`, under the task-mutation lock and with a durable write
  * (2.3.2). The Rust-shaped `executions` and `occurrences` maps are rewritten from it, so a Rust reader sees
- * the engine's executions under their own ids. Serializes `state` before it first waits.
+ * the engine's executions under their own ids. Both halves of the write come from one deep copy of `state`
+ * taken before the first wait, so a state that moves on while the lock is awaited cannot split them.
  */
 export function saveEngineState(repo: string, slug: string, state: State): Promise<void> {
   const dir = taskDir(repo, slug);
-  const engine = mapPaths(stateToJson(state), relativeTo(dir));
+  const frozen = stateFromJson(JSON.parse(JSON.stringify(stateToJson(state))) as StateJson);
+  const engine = mapPaths(stateToJson(frozen), relativeTo(dir));
   return withTaskMutation(repo, "engine_save", async () => {
     const file = JSON.parse(readFileSync(executionPath(repo, slug), "utf8")) as Json;
     file.engine = engine;
-    Object.assign(file, mergedRecords(file, state, repo, slug));
+    Object.assign(file, mergedRecords(file, frozen, repo, slug));
     file.revision = (typeof file.revision === "number" ? file.revision : 0) + 1;
     await writeDurable(executionPath(repo, slug), JSON.stringify(file));
   });

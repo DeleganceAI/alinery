@@ -11,6 +11,7 @@ import type { Execution } from "playbook-engine/src/state.ts";
 import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./domain/executionStore.ts";
 import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
+import { recordWorktree } from "./tasks.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
@@ -276,6 +277,15 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     save: (state) => saveEngineState(repo, slug, state),
     onSaved: () => hooks?.executionChanged?.(slug),
     historyDir: historyDir(repo, slug),
+    // A failed record (git missing, a damaged repository) must not fail the acceptance it documents.
+    recordWorktree: (execution) => {
+      try {
+        return recordWorktree(cwd, execution.id);
+      } catch (error) {
+        console.error(`vinculum: ${slug} ${execution.id} worktree not recorded: ${error}`);
+        return undefined;
+      }
+    },
     artifactsDir: join(taskDir, "artifacts"),
     cwd,
     maxLiveSessions: () => liveSessionCap(readExecutionFile(taskDir)?.max_live_sessions),

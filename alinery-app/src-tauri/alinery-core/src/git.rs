@@ -373,6 +373,62 @@ pub fn abbrev_ref(dir: &Path) -> Result<String, String> {
     Ok(label)
 }
 
+/// A tree and ref that keep the working tree's current files (uncommitted ones included)
+/// alive for the history of one execution (O27). `Ok(None)` when `dir` is not in a git
+/// working tree. Built on a temporary index so the user's index, HEAD and branch are
+/// untouched; the ref is `refs/alinery/executions/<exec_id>`, which survives `git gc`.
+pub fn record_worktree_tree(dir: &Path, exec_id: &str) -> Result<Option<(String, String)>, String> {
+    if exec_id.is_empty() || !exec_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("execution id {exec_id:?} cannot name a ref"));
+    }
+    let run = |cmd: &mut Command| -> Result<String, String> {
+        let out = cmd.output().map_err(|error| error.to_string())?;
+        if !out.status.success() {
+            return Err(format!("git: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    if !matches!(rev_parse_show_toplevel(dir), ToplevelProbe::Root(_)) {
+        return Ok(None);
+    }
+    let git_dir = PathBuf::from(run(git_cmd(dir).args(["rev-parse", "--absolute-git-dir"]))?);
+    let index = git_dir.join(format!("alinery-exec-index-{exec_id}"));
+    let result = (|| {
+        let on_index = |cmd: &mut Command| cmd.env("GIT_INDEX_FILE", &index).output();
+        let head = run(git_cmd(dir).args(["rev-parse", "--verify", "-q", "HEAD^{commit}"])).ok();
+        let step = |args: &[&str]| -> Result<String, String> {
+            let mut cmd = git_cmd(dir);
+            cmd.args(args);
+            let out = on_index(&mut cmd).map_err(|error| error.to_string())?;
+            if !out.status.success() {
+                return Err(format!("git: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        if head.is_some() {
+            step(&["read-tree", "HEAD"])?;
+        }
+        step(&["add", "-A"])?;
+        let tree = step(&["write-tree"])?;
+        let mut commit = git_cmd(dir);
+        commit
+            .args(["commit-tree", &tree, "-m", &format!("alinery execution {exec_id}")])
+            .env("GIT_AUTHOR_NAME", "alinery")
+            .env("GIT_AUTHOR_EMAIL", "alinery@localhost")
+            .env("GIT_COMMITTER_NAME", "alinery")
+            .env("GIT_COMMITTER_EMAIL", "alinery@localhost");
+        if let Some(parent) = &head {
+            commit.args(["-p", parent]);
+        }
+        let commit = run(&mut commit)?;
+        let reference = format!("refs/alinery/executions/{exec_id}");
+        run(git_cmd(dir).args(["update-ref", &reference, &commit]))?;
+        Ok(Some((reference, tree)))
+    })();
+    let _ = std::fs::remove_file(&index);
+    result
+}
+
 /// Canonicalized top-level directory of the Git working tree containing `path`. The single
 /// place that turns an arbitrary caller-supplied path into a trustworthy repo identity —
 /// `git rev-parse --show-toplevel` rejects anything that is not a real, locally accessible
@@ -1056,5 +1112,59 @@ mod tests {
             std::fs::set_permissions(root.join("bin/git"), std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         root
+    }
+
+    fn git_out(repo: &Path, args: &[&str]) -> String {
+        let out = git_cmd(repo)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn a_recorded_worktree_keeps_uncommitted_files_and_leaves_the_users_index_alone() {
+        let repo = unique_repo("record");
+        std::fs::write(repo.join("a.txt"), "first").unwrap();
+        git_out(&repo, &["add", "-A"]);
+        git_out(&repo, &["commit", "-q", "-m", "one"]);
+        let head = git_out(&repo, &["rev-parse", "HEAD"]);
+        // Uncommitted: a modified tracked file and a new untracked one, as a coding step leaves them.
+        std::fs::write(repo.join("a.txt"), "second").unwrap();
+        std::fs::write(repo.join("b.txt"), "new").unwrap();
+        let (reference, tree) = record_worktree_tree(&repo, "e1").unwrap().expect("a git working tree");
+        assert_eq!(reference, "refs/alinery/executions/e1");
+        assert_eq!(git_out(&repo, &["rev-parse", &format!("{reference}^{{tree}}")]), tree);
+        assert_eq!(git_out(&repo, &["show", &format!("{tree}:a.txt")]), "second");
+        assert_eq!(git_out(&repo, &["show", &format!("{tree}:b.txt")]), "new");
+        // HEAD and the real index are untouched: b.txt is still untracked, a.txt still unstaged.
+        assert_eq!(git_out(&repo, &["rev-parse", "HEAD"]), head);
+        assert_eq!(git_out(&repo, &["diff", "--cached", "--name-only"]), "", "nothing was staged");
+        assert_eq!(git_out(&repo, &["ls-files", "--others", "--exclude-standard"]), "b.txt");
+        assert!(!repo
+            .join(".git")
+            .read_dir()
+            .unwrap()
+            .any(|e| e.unwrap().file_name().to_string_lossy().starts_with("alinery-exec-index")));
+        // The tree outlives the files and a gc: the ref keeps it.
+        std::fs::remove_file(repo.join("b.txt")).unwrap();
+        git_out(&repo, &["checkout", "--", "a.txt"]);
+        git_out(&repo, &["gc", "-q", "--prune=now"]);
+        assert_eq!(git_out(&repo, &["cat-file", "-t", &tree]), "tree");
+        assert_eq!(git_out(&repo, &["show", &format!("{tree}:b.txt")]), "new");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn recording_a_worktree_outside_git_is_none_and_a_bad_id_is_refused() {
+        let dir = unique_repo_dir_only("record-none");
+        assert_eq!(record_worktree_tree(&dir, "e1").unwrap(), None);
+        assert!(record_worktree_tree(&dir, "../x").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

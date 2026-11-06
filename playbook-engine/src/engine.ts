@@ -204,8 +204,9 @@ export class Engine {
     if (this.#live().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
     if (step.isCodingStep && this.#codingHeld()) throw new Error('another coding execution holds the worktree');
     const launch = this.#launchFor(e, step);
+    const consumed = this.#consumedFor(e);
     const sessionId = e.sessionId ? await this.#opts.harness.resume(e.sessionId, launch) : await this.#opts.harness.start(launch);
-    this.#append({ t: 'resumed', execId, sessionId, ...this.#consumedFor(e) });
+    this.#append({ t: 'resumed', execId, sessionId, ...consumed });
     await this.flush();
   }
 
@@ -263,8 +264,10 @@ export class Engine {
       if (step.isCodingStep && this.#codingHeld()) continue;
       mkdirSync(e.outDir, { recursive: true });
       try {
+        // Captured before the agent exists, so it cannot touch an input first.
+        const consumed = this.#consumedFor(e);
         const sessionId = await this.#opts.harness.start(this.#launchFor(e, step));
-        this.#append({ t: 'started', execId: e.id, sessionId, ...this.#consumedFor(e) });
+        this.#append({ t: 'started', execId: e.id, sessionId, ...consumed });
       } catch (err) {
         this.#append({ t: 'failed', execId: e.id, reason: `launch failed: ${message(err)}` });
       }

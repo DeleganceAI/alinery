@@ -205,6 +205,38 @@ describe("a task from before this change", () => {
   });
 });
 
+describe("writers and the file's revision", () => {
+  test("a manual record bumps revision like an engine save", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-revision-"));
+    forkJoin(repo, "t", { revision: 7 });
+    await addExecution(repo, "t", { id: "manual-1" });
+    expect(JSON.parse(readFileSync(executionPath(repo, "t"), "utf8")).revision).toBe(8);
+    await saveEngineState(repo, "t", { seeds: [], executions: new Map(), ambiguities: [] });
+    expect(JSON.parse(readFileSync(executionPath(repo, "t"), "utf8")).revision).toBe(9);
+  });
+
+  test("a state that changes while the save waits for the lock does not split the write", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-frozen-"));
+    forkJoin(repo, "t");
+    const dir = join(repo, ".alinery", "tasks", "t");
+    const state: State = { seeds: [], executions: new Map(), ambiguities: [] };
+    const execution = { id: "e1", step: "seed", depth: 1, inputs: {}, outDir: join(dir, "artifacts", "1-seed-1"), origin: null, automatic: true, status: "reserved" } as unknown as State["executions"] extends Map<string, infer E> ? E : never;
+    state.executions.set("e1", execution);
+    const holder = await holdFromRust(join(repo, ".alinery", ".task-mutation.lock"));
+    const saving = saveEngineState(repo, "t", state);
+    await Bun.sleep(50);
+    // The engine moves on while the save is still queued: the saved file must show one state, not two.
+    state.executions.set("e2", { ...execution, id: "e2" });
+    (execution as { status: string }).status = "failed";
+    await holder.release();
+    await saving;
+    const file = JSON.parse(readFileSync(executionPath(repo, "t"), "utf8"));
+    expect(file.engine.executions.map((row: { id: string; status: string }) => [row.id, row.status])).toEqual([["e1", "reserved"]]);
+    expect(Object.keys(file.executions)).toEqual(["e1"]);
+    expect(file.executions.e1.status).not.toBe("failed");
+  }, 30_000);
+});
+
 describe("the task-mutation lock", () => {
   beforeAll(() => void holderBinary(), 120_000);
   test("addExecution waits for a Rust holder and returns within 100 ms of its release", async () => {

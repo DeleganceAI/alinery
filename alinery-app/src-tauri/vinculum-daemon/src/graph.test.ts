@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { completeSession, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -229,4 +229,58 @@ describe("playbook host", () => {
     expect(hooks.opened).toHaveLength(before);
     expect(engineExecutions("ended")[0]?.status).toBe("failed");
   });
+});
+
+describe("a coding step records its worktree", () => {
+  const tauri = new URL("../../", import.meta.url).pathname;
+  beforeAll(() => {
+    const build = Bun.spawnSync(["cargo", "build", "-p", "alinery-core"], { cwd: tauri, stderr: "inherit" });
+    if (build.exitCode !== 0) throw new Error("cargo build of alinery-core failed");
+    process.env.ALINERY_OWNERSHIP_LIB = join(tauri, "target", "debug", process.platform === "darwin" ? "libalinery_core.dylib" : "libalinery_core.so");
+  }, 300_000);
+  afterAll(() => {
+    delete process.env.ALINERY_OWNERSHIP_LIB;
+  });
+
+  test("accepting a coding step keeps the working files under a ref, and a step outside git still accepts", async () => {
+    const env = { PATH: process.env.PATH ?? "", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    const git = (repo: string, ...args: string[]) => {
+      const result = Bun.spawnSync(["git", ...args], { cwd: repo, env });
+      if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
+      return result.stdout.toString().trim();
+    };
+    const coding = (flag: boolean) =>
+      `[[step]]\nkey = "work"\ntitle = "Work"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "out.md" }]\nmodel = ""\nharness = ""\nis_coding_step = ${flag}\nauto_advance_default = true`;
+    const accept = async (repo: string, slug: string, isCoding: boolean) => {
+      const hooks = recordingHooks();
+      resetGraphs();
+      prepareGraphs(repo, hooks);
+      taskFixture(repo, slug, { approve: true, steps: coding(isCoding) });
+      await tickGraphs();
+      const execution = engineExecutions(slug)[0];
+      writeFileSync(join(execution.outDir, "out.md"), "done");
+      const reply = await completeSession(hooks.opened[0].id);
+      expect(reply?.outcome).toBe("accepted");
+      return engineExecutions(slug)[0];
+    };
+
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-worktree-"));
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "a.txt"), "first");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "one");
+    writeFileSync(join(repo, "a.txt"), "uncommitted edit");
+    const accepted = await accept(repo, "coding", true);
+    const recorded = accepted.manifest?.worktree;
+    expect(recorded?.ref).toBe(`refs/alinery/executions/${accepted.id}`);
+    expect(git(repo, "show", `${recorded?.tree}:a.txt`)).toBe("uncommitted edit");
+    expect(git(repo, "rev-parse", `${recorded?.ref}^{tree}`)).toBe(recorded?.tree ?? "");
+    // Not a coding step: nothing is recorded.
+    const other = mkdtempSync(join(tmpdir(), "vinculum-worktree-plain-"));
+    git(other, "init", "-q", "-b", "main");
+    expect((await accept(other, "plain", false)).manifest?.worktree).toBeUndefined();
+    // A coding step in a directory that is not a git working tree is accepted with no record.
+    const bare = mkdtempSync(join(tmpdir(), "vinculum-worktree-nogit-"));
+    expect((await accept(bare, "nogit", true)).manifest?.worktree).toBeUndefined();
+  }, 120_000);
 });

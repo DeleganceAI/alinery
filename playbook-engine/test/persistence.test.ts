@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Engine } from '../src/engine.ts';
@@ -176,7 +176,7 @@ test('history: a 200 MB file is stored byte for byte', { timeout: 120_000 }, asy
 });
 
 function readSyncAll(fd: number, buf: Buffer): number {
-  return require('node:fs').readSync(fd, buf, 0, buf.length, null);
+  return readSync(fd, buf, 0, buf.length, null);
 }
 
 test('history: a coding step records its worktree tree under a ref, and it survives a restart', async () => {
@@ -222,6 +222,26 @@ test('history: a coding step records its worktree tree under a ref, and it survi
   assert.deepEqual(engine.state.executions.get('e1')!.manifest!.worktree, recorded);
   assert.equal(git('cat-file', '-t', recorded.tree), 'tree');
   assert.equal(git('rev-parse', `${recorded.ref}^{tree}`), recorded.tree);
+});
+
+test('history: the inputs are captured before the agent is started, so a launch that edits one cannot change what was recorded', async () => {
+  const dir = taskDir();
+  const ticket = join(dir.root, 'ticket.md');
+  const harness = new FakeHarness(async (launch) => {
+    for (const path of Object.values(launch.outputs)) writeText(path, 'done');
+  });
+  const start = harness.start.bind(harness);
+  harness.start = async (launch: Launch) => {
+    writeText(ticket, 'edited while the agent was launching');
+    return start(launch);
+  };
+  const engine = Engine.open({ playbook: playbook([step('only', { inputs: [input('ticket.md')], outputs: [out('o.md')] })]), harness, cwd: dir.root, artifactsDir: dir.artifactsDir, historyDir: dir.historyDir, ...fileStore(dir.statePath) });
+  writeText(ticket, 'the task');
+  engine.seed([{ role: 'ticket.md', path: ticket }]);
+  await engine.tick();
+  await engine.flush();
+  const consumed = engine.state.executions.get('e1')!.manifest!.consumed[0]!;
+  assert.equal(consumed.sha256, createHash('sha256').update('the task').digest('hex'));
 });
 
 test('a state converted to JSON and back is the same state', () => {
