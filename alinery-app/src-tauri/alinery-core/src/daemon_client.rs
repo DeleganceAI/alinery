@@ -178,13 +178,13 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
 /// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 37 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
 /// Protocol 18 dropped the OMP process ops. Shutdown is still
-/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 37 daemons' handler
+/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 38 daemons' handler
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
-/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` and 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire), and each left this op alone.
+/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire) and 38 `AdminService.MintToken` and the three sub-task calls the MCP server makes, and each left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
     matches!(
         protocol,
-        Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37)
+        Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38)
     )
 }
 

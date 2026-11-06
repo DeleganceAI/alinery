@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { normalize } from "../sync/testkit.ts";
+import { BUNDLED_PLAYBOOKS } from "./bundledPlaybooks.ts";
 import {
   BUNDLED_PLAYBOOK_KEYS,
   clearOverride,
@@ -148,12 +149,14 @@ describe("parsing", () => {
     expect(parseOverrides('[mystery]\nx = 1\n[defaults]\nmodel = "m"\n')?.defaults?.model).toBe("m");
     expect(parseGlobal("[global.defaults]\ndraft_autosave = 1\n")).toBeUndefined();
   });
-  test("the bundled playbook list is BUNDLED_PLAYBOOKS in alinery-core", () => {
-    const source = readFileSync(resolve(import.meta.dir, "../../../alinery-core/src/playbook_library.rs"), "utf8");
-    const block = source.slice(source.indexOf("pub const BUNDLED_PLAYBOOKS"), source.indexOf("];", source.indexOf("pub const BUNDLED_PLAYBOOKS")));
-    const keys = [...block.matchAll(/\("([a-z0-9-]+)",\s*include_str!/g)].map((m) => m[1]);
+  test("the bundled playbook list is bundledPlaybooks.ts, and the shell's copy in alinery-core types.rs is the same list", () => {
+    const keys = BUNDLED_PLAYBOOKS.map(([key]) => key);
     expect(keys.length).toBeGreaterThan(5);
-    expect([...BUNDLED_PLAYBOOK_KEYS].sort()).toEqual(keys.sort());
+    expect([...BUNDLED_PLAYBOOK_KEYS].sort()).toEqual([...keys].sort());
+    const source = readFileSync(resolve(import.meta.dir, "../../../alinery-core/src/types.rs"), "utf8");
+    const start = source.indexOf("const LEGACY_BUNDLED_PLAYBOOK_KEYS");
+    const rust = [...source.slice(start, source.indexOf("];", start)).matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1]);
+    expect(rust.sort()).toEqual([...keys].sort());
   });
   test("a missing config.toml is the defaults, an app.toml with a bad value is an error row", () => {
     expect(serdeShape(settingsEntity({}))).toMatchObject({ effective: { defaults: { playbook: { scope: "bundled", key: "superdevelop" } } } });
