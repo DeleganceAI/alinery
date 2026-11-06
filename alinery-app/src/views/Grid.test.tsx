@@ -8,7 +8,6 @@ import type {
   BoardTask,
   ExecutionLifecycle,
   ExecutionRecord,
-  KanbanColumn,
   NormalizedStep,
   PlaybookRef,
   PullRequestSnapshot,
@@ -89,11 +88,6 @@ const tasks = [
   }),
 ];
 
-const columns: KanbanColumn[] = [
-  { key: "research-design", title: "Research & Design" },
-  { key: "implementation", title: "Implementation" },
-  { key: "review", title: "Review" },
-];
 const step = (key: string, title: string): NormalizedStep => ({
   key,
   title,
@@ -182,9 +176,7 @@ const taskExecutions: Record<string, TaskExecutionReply> = {
 };
 
 const ipcMock = vi.hoisted(() => ({
-  listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
-  readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
   archiveTaskForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
@@ -193,6 +185,9 @@ const ipcMock = vi.hoisted(() => ({
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () => ipcMock);
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+const playbookMock = vi.hoisted(() => ({ readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>() }));
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookMock }));
 vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), archiveTaskForRepo: ipcMock.archiveTaskForRepo }));
 fakeExecution.source = (slug, repo) => ipcMock.getTaskExecution(slug, repo);
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
@@ -214,10 +209,9 @@ beforeEach(() => {
   window.localStorage.clear();
   fakeBoard.reset();
   fakeBoard.set({ tasks: tasks });
-  ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => taskExecutions[`${repoPath}:${slug}`] ?? retainedExecution([step("implementation", "Implementation")]));
-  ipcMock.readPlaybook.mockImplementation(async (reference) => ({
+  playbookMock.readPlaybook.mockImplementation(async (reference) => ({
     source: { reference, path: null },
     definition: retainedExecution([step("research", "Research"), step("design", "Design"), step("implementation", "Implementation")]).definition,
     source_text: "",
@@ -386,7 +380,7 @@ describe("configurable task grid", () => {
   it("keeps declared empty columns in playbook order when the execution daemon is unavailable", async () => {
     fakeBoard.set({ tasks: [tasks[0]] });
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution daemon unavailable"));
-    ipcMock.readPlaybook.mockResolvedValue({
+    playbookMock.readPlaybook.mockResolvedValue({
       source: { reference: { scope: "bundled", key: "superdevelop" }, path: null },
       definition: retainedExecution([step("replacement", "Library replacement")]).definition,
       source_text: "",
@@ -423,7 +417,7 @@ describe("configurable task grid", () => {
     });
     fakeBoard.set({ tasks: [task] });
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
-    ipcMock.readPlaybook.mockImplementation(async (requested, repoPath) => ({
+    playbookMock.readPlaybook.mockImplementation(async (requested, repoPath) => ({
       source: { reference: requested, path: null },
       definition: retainedExecution(
         requested.scope === scope && requested.key === "legacy-workflow" && repoPath === task.repo_path
@@ -465,9 +459,9 @@ describe("configurable task grid", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Research column; use left and right arrow keys" }), { key: "ArrowRight" });
     expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
     fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
-    expect(columnNames()).toEqual(["Research & Design", "Implementation", "Review"]);
+    expect(columnNames()).toEqual(["Research & Design", "Planning", "Implementation", "Review"]);
     fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Review column; use left and right arrow keys" }), { key: "ArrowLeft" });
-    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    expect(columnNames()).toEqual(["Research & Design", "Planning", "Review", "Implementation"]);
     fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "stage" } });
     expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
     fireEvent.change(screen.getByLabelText("New preset name"), { target: { value: "Ordered columns" } });
@@ -481,7 +475,7 @@ describe("configurable task grid", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset column order" }));
     expect(columnNames()).toEqual(["Research", "Design", "Implementation"]);
     fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
-    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    expect(columnNames()).toEqual(["Research & Design", "Planning", "Review", "Implementation"]);
     second.unmount();
 
     render(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} storageKey="another-column-order" />);
@@ -490,7 +484,7 @@ describe("configurable task grid", () => {
     fireEvent.change(screen.getByLabelText("Preset"), { target: { value: presetId } });
     expect(columnNames()).toEqual(["Design", "Research", "Implementation"]);
     fireEvent.change(screen.getByLabelText("Group by"), { target: { value: "column" } });
-    expect(columnNames()).toEqual(["Research & Design", "Review", "Implementation"]);
+    expect(columnNames()).toEqual(["Research & Design", "Planning", "Review", "Implementation"]);
   });
 
   it("reorders columns by pointer, ignores cancelled drags, and restores the saved order", async () => {

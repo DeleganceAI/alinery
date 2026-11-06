@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
+import { KANBAN_COLUMNS } from "../kanbanColumns";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
@@ -68,8 +68,7 @@ export function Kanban({
   onOpenActiveSession: (task: BoardTask, session: TaskActivitySession) => void;
   onCreate: () => void;
 }) {
-  const [baseColumns, setBaseColumns] = useState<KanbanColumn[]>([]);
-  const [columnsLoaded, setColumnsLoaded] = useState(false);
+  const baseColumns = KANBAN_COLUMNS;
   const [selectedTaskKey, setSelectedTaskKey] = useState("");
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -81,7 +80,7 @@ export function Kanban({
   // only tasks are archived has work to come back to, so it is not gated.
   const taskTotal = board.tasks.length;
   const [err, setErr] = useState<ErrState>(null);
-  const loaded = board.loaded && columnsLoaded;
+  const loaded = board.loaded;
   const { columns, byColumn } = useMemo(() => {
     const tasks = board.tasks.filter((task) => showArchived || !task.archived);
     const cols = [...baseColumns];
@@ -101,15 +100,6 @@ export function Kanban({
   useEffect(() => {
     boardRef.current?.querySelector(".card.sel")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [selectedTaskKey]);
-
-  // The columns are playbook configuration, read once; the tasks arrive on the repo streams.
-  useEffect(() => {
-    ipc
-      .listKanbanColumns(allRepos)
-      .then((cols) => setBaseColumns(cols))
-      .catch((e) => setErr({ msg: "Couldn't load the board.", detail: String(e) }))
-      .finally(() => setColumnsLoaded(true));
-  }, [allRepos]);
 
   useEffect(() => {
     void import("../views/TaskDetail");

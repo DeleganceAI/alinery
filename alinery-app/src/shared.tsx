@@ -24,7 +24,6 @@ import type {
   ExecutionAvailability,
   ExecutionRecord,
   GridViewDefinition,
-  KanbanColumn,
   LifecycleState,
   PickerPreferences,
   PlaybookCandidate,
@@ -295,16 +294,6 @@ export function sameBoardBuckets(left: Record<string, BoardTask[]>, right: Recor
     keys.every((key) => {
       const next = right[key];
       return next !== undefined && sameBoardTasks(left[key], next);
-    })
-  );
-}
-
-export function sameKanbanColumns(left: KanbanColumn[], right: KanbanColumn[]) {
-  return (
-    left.length === right.length &&
-    left.every((column, index) => {
-      const other = right[index];
-      return column.key === other.key && column.title === other.title;
     })
   );
 }

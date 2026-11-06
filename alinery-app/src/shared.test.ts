@@ -13,7 +13,6 @@ import {
   repoName,
   SessionTimestamp,
   sameBoardTasks,
-  sameKanbanColumns,
   sameLifecycleMaps,
   sameSessionMetas,
   sameTask,
@@ -21,7 +20,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "./shared";
-import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type { ArtifactTreeNode, BoardTask, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
@@ -275,21 +274,6 @@ describe("re-render comparators", () => {
     const manager = { ...meta(), subtask_manager: true, subtask_slug: "child" } as SessionMeta;
     expect(sameSessionMetas([meta()], [manager])).toBe(false);
     expect(sameSessionMetas([manager], [{ ...manager, subtask_slug: "other-child" } as SessionMeta])).toBe(false);
-  });
-
-  it("sameKanbanColumns notices a renamed or reordered column", () => {
-    const a: KanbanColumn[] = [
-      { key: "a", title: "A" },
-      { key: "b", title: "B" },
-    ] as KanbanColumn[];
-    expect(sameKanbanColumns(a, [...a])).toBe(true);
-    expect(
-      sameKanbanColumns(a, [
-        { key: "a", title: "Renamed" },
-        { key: "b", title: "B" },
-      ] as KanbanColumn[]),
-    ).toBe(false);
-    expect(sameKanbanColumns(a, [a[1], a[0]])).toBe(false);
   });
 
   it("sameBoardTasks notices a phase move, which is the whole point of the board", () => {

@@ -11,12 +11,14 @@ import {
   writeSavedOnboardingStep,
 } from "../onboarding";
 import { fakeBoard } from "../test/boardHooks";
-import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides } from "../types";
+import type { AppConfig, BoardTask, NormalizedPlaybook, NormalizedStep, PlaybookRef, RepoOverrides, ScopedPlaybook } from "../types";
 import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
 
 const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
+const playbookMock = vi.hoisted(() => ({ readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>() }));
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookMock }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
@@ -66,7 +68,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  vi.spyOn(ipc, "readPlaybook").mockImplementation(async (reference) => {
+  playbookMock.readPlaybook.mockImplementation(async (reference) => {
     const found = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === reference.key) ?? CURATED_PLAYBOOK_ARCHETYPES[0];
     return {
       source: { reference: found.reference, path: null },
@@ -186,7 +188,7 @@ describe("OnboardingFlow wizard", () => {
 
   it("shows a failed preview without fabricated steps and reloads it on retry", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    vi.mocked(ipc.readPlaybook).mockRejectedValueOnce(new Error("Bundled definition could not be read"));
+    playbookMock.readPlaybook.mockRejectedValueOnce(new Error("Bundled definition could not be read"));
     render(
       <OnboardingFlow
         appConfig={baseConfig}
@@ -385,14 +387,7 @@ describe("OnboardingFlow wizard", () => {
 });
 
 describe("Empty Grid Playbook Starter Gate", () => {
-  const columns: KanbanColumn[] = [
-    { key: "planning", title: "Planning" },
-    { key: "implementation", title: "Implementation" },
-    { key: "review", title: "Review" },
-  ];
-
   beforeEach(() => {
-    vi.spyOn(ipc, "listKanbanColumns").mockResolvedValue(columns);
     vi.spyOn(ipc, "listTaskPullRequests").mockResolvedValue({});
   });
 

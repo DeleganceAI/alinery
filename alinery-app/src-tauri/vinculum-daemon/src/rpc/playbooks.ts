@@ -89,8 +89,9 @@ export function definitionFromWire(d: PlaybookDefinition): PlaybookDocument {
   };
 }
 
-function readResponse(found: Scoped): MessageInitShape<typeof ReadPlaybookResponseSchema> {
+function readResponse(found: Scoped, revision: bigint): MessageInitShape<typeof ReadPlaybookResponseSchema> {
   return {
+    revision,
     reference: { scope: found.source.reference.scope, key: found.source.reference.key },
     path: found.source.path ?? undefined,
     definition: definitionToWire(found.definition),
@@ -152,7 +153,12 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
   return {
     readPlaybook: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
-      return domain(() => readResponse(refused(() => resolvePlaybook(roots(), refOf(req.reference)))));
+      return domain(() => {
+        const reference = refOf(req.reference);
+        const found = refused(() => resolvePlaybook(roots(), reference));
+        d.projector.refresh(); // the revision is the row as the files are now
+        return readResponse(found, store.get(playbookKey(reference.scope, reference.key))?.revision ?? 0n);
+      });
     },
     validatePlaybook: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
@@ -171,7 +177,7 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
         mutate("save_playbook", playbookKey(target.scope, target.key), req.expectedRevision, async () => {
           const saved = await savePlaybook(roots(), target, req.source, req.overwrite);
           d.projector.refresh();
-          return { applied: applied(), saved: readResponse(saved) };
+          return { applied: applied(), saved: readResponse(saved, store.get(playbookKey(target.scope, target.key))?.revision ?? 0n) };
         }),
       );
     },

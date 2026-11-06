@@ -44,6 +44,11 @@ vi.mock("../ipc", () =>
   }),
 );
 
+// The playbook library is the daemon's PlaybookService (sync/playbooks); the default-playbook picker reads an empty catalog here.
+vi.mock("../sync/playbooks", async (actual) => ({
+  ...(await actual<typeof import("../sync/playbooks")>()),
+  listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
+}));
 vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 
 import * as ipc from "../ipc";

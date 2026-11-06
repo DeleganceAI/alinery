@@ -32,6 +32,7 @@ import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
 import { useLiveSessionsByRepo } from "../sync/hooks";
 import { useOverlay } from "../sync/overlay";
+import { listPlaybookCatalog } from "../sync/playbooks";
 import { clearRepoOverride, SettingsConflict, useRepoSettings, writeRepoOverrides } from "../sync/settings";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
@@ -364,8 +365,7 @@ export function Settings({
     let alive = true;
     setPlaybookCatalog(null);
     setPlaybookError("");
-    ipc
-      .listPlaybookCatalog(selectedRepo || undefined)
+    listPlaybookCatalog(selectedRepo || undefined)
       .then((catalog) => {
         if (!alive) return;
         setPlaybookCatalog(catalog);

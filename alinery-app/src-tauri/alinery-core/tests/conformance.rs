@@ -612,7 +612,6 @@ fn artifact_comments(case: &Path) -> Value {
     serde_json::json!({ "steps": answers, "files": files })
 }
 
-
 /// The text a playbook step names: `source` literally, else the case's `fixture` (or `fixture2`, `base`) with the `replace`
 /// pairs applied to their first occurrence, the `replace_all` pairs to every one, then `append`. The daemon's `sourceOf` does the same.
 fn playbook_source(command: &Value, step: &Value) -> String {
@@ -652,7 +651,11 @@ fn playbook_scrub(value: Value, scratch: &Path) -> Value {
         Value::Object(map) => Value::Object(
             map.into_iter()
                 .map(|(key, v)| {
-                    let v = if key == "modified_at_ms" && !v.is_null() { Value::from("MTIME") } else { playbook_scrub(v, scratch) };
+                    let v = if key == "modified_at_ms" && !v.is_null() {
+                        Value::from("MTIME")
+                    } else {
+                        playbook_scrub(v, scratch)
+                    };
                     (key, v)
                 })
                 .collect(),
@@ -750,7 +753,11 @@ fn playbook(case: &Path) -> Value {
                 Err(error) => serde_json::json!({ "error": error }),
             },
             "save" => {
-                let source = if step["bundled"].is_object() { bundled_source(step) } else { playbook_source(&command, step) };
+                let source = if step["bundled"].is_object() {
+                    bundled_source(step)
+                } else {
+                    playbook_source(&command, step)
+                };
                 let request = lib::SavePlaybookRequest {
                     target: playbook_ref(&step["target"]),
                     source,
@@ -808,7 +815,10 @@ fn playbook(case: &Path) -> Value {
             } else if path.is_dir() {
                 collect(&path, root, files);
             } else {
-                files.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned().into());
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_string_lossy().into_owned(),
+                    String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned().into(),
+                );
             }
         }
     }

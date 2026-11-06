@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import type * as Ipc from "../ipc";
-import type { PlaybookCatalog, TaskExecutionReply } from "../types";
+import type { TaskExecutionReply } from "../types";
 import { fakeExecution } from "./executionFeed";
 
 /**
@@ -25,16 +25,6 @@ type ExecutionStub = (taskSlug: string, repoPath?: string) => Promise<TaskExecut
 
 export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: ExecutionStub } = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
-    [
-      "listPlaybookCatalog",
-      vi.fn(
-        async (): Promise<PlaybookCatalog> => ({
-          candidates: [],
-          picker_preferences: { order: [], entries: [] },
-          diagnostics: [],
-        }),
-      ),
-    ],
     ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
     ["onRemoteHostConnected", vi.fn(() => () => {})],
     [

@@ -432,6 +432,16 @@ pub(crate) async fn list_community_playbooks(q: Option<String>, cursor: Option<S
 }
 
 #[tauri::command]
+pub(crate) async fn forget_community_import(app: AppHandle, repo_path: String, key: String) -> Result<(), String> {
+    off_main_thread("forget community import", move || {
+        owned_library(&app, &repo_path, |lib| {
+            forget_import_before_delete(&lib.roots, &PlaybookRef { scope: PlaybookScope::Repo, key }).map_err(|error| error.to_string())
+        })?
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn list_community_imports(app: AppHandle, repo_path: String) -> Result<CommunityImportList, String> {
     off_main_thread("list community imports", move || {
         owned_library(&app, &repo_path, |lib| {
@@ -913,16 +923,15 @@ where
     }
 }
 
-pub(crate) fn delete_playbook_keeping_imports(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
+/// A repo playbook's import record goes before its definition does (the daemon deletes the file, S4.6). A registry that cannot be
+/// read stops the delete, and a retry after a failed removal finds the record already gone instead of failing on a record it can
+/// no longer repair.
+pub(crate) fn forget_import_before_delete(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
     if reference.scope != PlaybookScope::Repo {
-        return library::delete_playbook(roots, reference);
+        return Ok(());
     }
-    // Registry first, definition second. A registry that cannot be read must not cost the
-    // user the file, and a retry after a failed removal finds the record already gone
-    // instead of failing on an already-deleted playbook it can no longer repair.
     read_community_imports(&roots.repo_dir).map_err(|message| PlaybookSaveError::Io { message })?;
-    forget_repo_import(roots, &reference.key).map_err(|message| PlaybookSaveError::Io { message })?;
-    library::delete_playbook(roots, reference)
+    forget_repo_import(roots, &reference.key).map_err(|message| PlaybookSaveError::Io { message })
 }
 
 fn refresh_for(auth_path: PathBuf) -> impl FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError> {

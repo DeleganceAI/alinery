@@ -63,6 +63,9 @@ message ReadPlaybookResponse {
   PlaybookDefinition definition = 3;
   string source_text = 4;
   optional uint64 modified_at_ms = 5;
+  // The definition row's revision as the daemon holds it (0: no row, e.g. a bundled playbook that was deleted). A save that replaces
+  // this file sends it back as `expected_revision`.
+  uint64 revision = 6;
 }
 
 message ValidatePlaybookRequest {

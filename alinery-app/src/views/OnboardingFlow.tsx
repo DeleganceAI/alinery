@@ -1,12 +1,12 @@
 import "../onboarding.css";
 import { ArrowRight, FolderOpen, FolderPlus, Layers, Play, RotateCcw, Server, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import * as ipc from "../ipc";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
 import { repoDisplayPath } from "../remoteRepo";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
+import { NoLibraryHost, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig, readRepoSettings, writeRepoOverrides } from "../sync/settings";
 import type { AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
 
@@ -117,10 +117,11 @@ export function OnboardingFlow({
     void Promise.all(
       CURATED_PLAYBOOK_ARCHETYPES.map(async ({ reference }) => {
         try {
-          const scoped = await ipc.readPlaybook(reference, appConfig.active_repo || undefined);
+          const scoped = await readPlaybook(reference, appConfig.active_repo || undefined);
           return { key: reference.key, definition: scoped.definition, error: "" };
         } catch (error) {
-          return { key: reference.key, definition: null, error: String(error) };
+          // Before any repository is open there is no daemon to read the bundled playbooks from: say so, not "NoLibraryHost: ...".
+          return { key: reference.key, definition: null, error: error instanceof NoLibraryHost ? error.message : String(error) };
         }
       }),
     ).then((results) => {

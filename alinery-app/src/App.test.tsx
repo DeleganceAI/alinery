@@ -14,6 +14,7 @@ import type {
   CreateTaskResult,
   NotificationPrefs,
   PlaybookCatalog,
+  PlaybookRef,
   ReviewHandoffResult,
   ScopedPlaybook,
   SessionListItem,
@@ -186,9 +187,15 @@ const sessionWrites = vi.hoisted(() => ({
 }));
 vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), ...sessionWrites }));
 
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+const playbookMocks = vi.hoisted(() => ({
+  listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
+  readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>(() => Promise.reject(new Error("Unstubbed readPlaybook call"))),
+}));
+vi.mock("./sync/playbooks", async (actual) => ({ ...(await actual<typeof import("./sync/playbooks")>()), ...playbookMocks }));
+
 const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   const ipcMocks = {
-    listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
     getCurrentWindow: vi.fn(() => ({
       destroy: vi.fn(),
       onCloseRequested: vi.fn(async () => () => {}),
@@ -599,7 +606,7 @@ beforeEach(() => {
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
   sessionWrites.createSession.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
   sessionWrites.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
-  ipcMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
+  playbookMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
   sessionWrites.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
   sessionWrites.clearSessionNotifications.mockResolvedValue(undefined);
@@ -631,7 +638,7 @@ describe("onboarding gate", () => {
   ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
     window.localStorage.removeItem("alinery.onboardingCompleted.v1");
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => ({
+    vi.mocked(playbookMocks.readPlaybook).mockImplementation(async (reference) => ({
       source: { reference, path: null },
       source_text: `+++\nversion = 2\nkey = "${reference.key}"\ntitle = "${reference.key}"\ndefault_harness = "omp"\n[[step]]\nkey = "inspect"\ntitle = "Inspect"\noutputs = [{ path = "result.md" }]\nauto_advance_default = false\n+++\n# Inspect\nInspect the work.`,
       modified_at_ms: null,
@@ -885,12 +892,12 @@ describe("Playbooks navigation", () => {
         ],
       },
     }));
-    ipcMocks.listPlaybookCatalog.mockResolvedValue({
+    playbookMocks.listPlaybookCatalog.mockResolvedValue({
       candidates: sources.map((source) => ({ source: source.source, title: source.definition.title, description: "", modified_at_ms: null, diagnostics: [] })),
       picker_preferences: { order: [], entries: [] },
       diagnostics: [],
     });
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+    vi.mocked(playbookMocks.readPlaybook).mockImplementation(async (reference) => {
       const source = sources.find((source) => source.source.reference.scope === reference.scope);
       if (!source) throw new Error("Unknown preview scope");
       return source;

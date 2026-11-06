@@ -11,7 +11,6 @@ vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 let daemon = sessionDaemon();
 vi.mock("../ipc", () =>
   mockIpc({
-    listKanbanColumns: async () => [],
     listTaskPullRequests: async () => ({}),
   }),
 );

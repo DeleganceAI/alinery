@@ -417,8 +417,8 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert_eq!(crate::remote_github_token(&app_config, &state, &host_id, host_path.as_ref()).unwrap(), "host-token");
 
-    // Repo-scope playbooks: the library code runs on a scratch copy of the host's files and only
-    // what changed goes back, with host paths in what the UI sees.
+    // The community import registry's view of a remote repo's playbooks (S4.10 retires it): the library code runs on a scratch copy of
+    // the host's files and only what changed goes back. The playbook library itself is the host daemon's PlaybookService since S4.6.
     {
         use alinery_core::playbook::{PlaybookRef, PlaybookScope};
         use alinery_core::playbook_library as library;
@@ -429,8 +429,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         };
         let source = include_str!("../../playbooks/one-shot/playbook.md");
         let tree = || remote_call::<Vec<alinery_core::playbook_tree::TreeFile>>(&state, &id, RepoOp::ReadPlaybookTree { repo: repo.clone().into() }).unwrap();
-        let catalog =
-            |library_at: Option<crate::RepoRef>| crate::with_library_at(&app_config, &state, library_at, |lib| lib.rehome(library::load_playbook_catalog(&lib.roots))).unwrap();
+        let catalog = |library_at: Option<crate::RepoRef>| crate::with_library_at(&app_config, &state, library_at, |lib| library::load_playbook_catalog(&lib.roots)).unwrap();
         let save = |overwrite: bool, text: &str| {
             crate::with_library_at(&app_config, &state, remote.clone(), |lib| {
                 lib.require_owned(&state).unwrap();
@@ -442,7 +441,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
                         overwrite,
                     },
                 )
-                .map(|saved| lib.rehome(saved))
             })
         };
 
@@ -451,9 +449,8 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         assert!(empty.candidates.iter().any(|candidate| candidate.source.reference.scope == PlaybookScope::Bundled));
         assert!(!empty.candidates.iter().any(|candidate| candidate.source.reference.scope == PlaybookScope::Repo));
 
-        let saved = save(false, source).unwrap().unwrap();
+        save(false, source).unwrap().unwrap();
         let host_file = format!("{repo}/.alinery/playbooks/one-shot/playbook.md");
-        assert_eq!(saved.source.path.as_deref(), Some(Path::new(&host_file)), "the scratch path is not shown");
         assert_eq!(
             tree().iter().map(|file| file.path.as_str()).collect::<Vec<_>>(),
             [".alinery/playbooks/one-shot/playbook.md"]
@@ -469,9 +466,8 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             .iter()
             .find(|candidate| candidate.source.reference == reference)
             .expect("the repo playbook is listed");
-        assert_eq!(candidate.source.path.as_deref(), Some(Path::new(&host_file)));
         assert!(candidate.title.is_some() && candidate.modified_at_ms.is_some());
-        let read = crate::with_library_at(&app_config, &state, remote.clone(), |lib| lib.rehome(library::resolve_playbook(&lib.roots, &reference)))
+        let read = crate::with_library_at(&app_config, &state, remote.clone(), |lib| library::resolve_playbook(&lib.roots, &reference))
             .unwrap()
             .unwrap();
         assert_eq!(read.definition.key, "one-shot");

@@ -137,13 +137,20 @@ const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, sele
 vi.mock("../ipc", () =>
   mockIpc({
     taskSourceBranchesForRepo,
-    listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
-    readPlaybook: vi.fn(),
     connectionStatuses: vi.fn(async () => []),
     listHarnessModelsForRepo: vi.fn(async () => []),
     getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
+
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+type PlaybookReads = typeof import("../sync/playbooks");
+const playbookReads = vi.hoisted(() => ({
+  listPlaybookCatalog: vi.fn<PlaybookReads["listPlaybookCatalog"]>(),
+  readPlaybook: vi.fn<PlaybookReads["readPlaybook"]>(),
+  savePlaybookPickerPreferences: vi.fn<PlaybookReads["savePlaybookPickerPreferences"]>(),
+}));
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookReads }));
 
 // The task writes live in sync/tasks (the daemon's TaskService, DraftService and BlobService), not in ipc.
 type TaskWrites = typeof import("../sync/tasks");
@@ -202,9 +209,9 @@ beforeEach(() => {
     head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
     selected: selectedBaseRef == null ? null : { base_ref: selectedBaseRef, available: ["refs/heads/main", "refs/heads/release"].includes(selectedBaseRef) },
   }));
-  vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
+  vi.mocked(playbookReads.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
   vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
-  vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+  vi.mocked(playbookReads.readPlaybook).mockImplementation(async (reference) => {
     const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
     if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
     return structuredClone(source);
@@ -336,7 +343,7 @@ describe("scoped playbook selection", () => {
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
     if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "Repository SuperDevelop graph" });
     expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
@@ -346,7 +353,7 @@ describe("scoped playbook selection", () => {
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
     });
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
     expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     expect(sessionWrites.createSession).not.toHaveBeenCalled();
@@ -375,7 +382,7 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
     expect(screen.queryByRole("region", { name: /graph$/ })).toBeNull();
-    expect(ipc.readPlaybook).not.toHaveBeenCalled();
+    expect(playbookReads.readPlaybook).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
@@ -420,7 +427,7 @@ describe("scoped playbook selection", () => {
         last_imported_at_ms: null,
       })),
     };
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop graph" });
     const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
@@ -441,7 +448,7 @@ describe("scoped playbook selection", () => {
       order: [sources[0].source.reference],
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop graph" });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Preserved draft" } });
@@ -481,7 +488,7 @@ describe("scoped playbook selection", () => {
   it("opens an unconfigured repository in the searchable library including legacy-hidden choices", async () => {
     const unconfigured = structuredClone(catalog);
     unconfigured.picker_preferences.entries = [{ reference: sources[1].source.reference, hidden: true, collapsed: false, badge: null, color: null, last_imported_at_ms: null }];
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(unconfigured);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(unconfigured);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("searchbox", { name: "Search playbooks" });
     const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
@@ -507,7 +514,7 @@ describe("scoped playbook selection", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
     await screen.findByRole("checkbox", { name: "Build" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
-    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(playbookReads.listPlaybookCatalog).toHaveBeenCalledTimes(3));
     await screen.findByRole("checkbox", { name: "Build" });
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
@@ -533,14 +540,14 @@ describe("scoped playbook selection", () => {
     const revised = structuredClone(original);
     revised.source_text = "revised bundled/superdevelop source\n";
     revised.definition.step = [build, { ...build, key: "keep", title: "Keep" }, { ...build, key: "added", title: "Added" }];
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(original);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(original);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
 
     const buildChoice = await screen.findByRole("checkbox", { name: "Build" });
     expect(buildChoice).toHaveProperty("checked", true);
     fireEvent.click(buildChoice);
     expect(screen.getByRole("checkbox", { name: "Removed" })).toHaveProperty("checked", true);
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(revised);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(revised);
     fireEvent.click(screen.getByRole("button", { name: "Refresh playbooks" }));
 
     expect(await screen.findByRole("checkbox", { name: "Added" })).toHaveProperty("checked", false);
@@ -695,7 +702,7 @@ describe("per-step default model", () => {
   it("keeps a playbook step pin when the task model changes", async () => {
     const pinned = structuredClone(sources[0]);
     pinned.definition.step[0].model = "step-pin";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(pinned);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(stepModel.value).toBe("step-pin");
@@ -708,7 +715,7 @@ describe("per-step default model", () => {
   it("keeps a playbook-wide model when the task model changes", async () => {
     const wide = structuredClone(sources[0]);
     wide.definition.default_model = "playbook-wide";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(wide);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(wide);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(stepModel.value).toBe("playbook-wide");
@@ -771,7 +778,7 @@ describe("per-step default model", () => {
       { ...second.definition.step[0], key: "added", title: "Added", model: "new-pin" },
     ];
     second.definition.section_order = ["keep", "added"];
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? second : first));
+    vi.mocked(playbookReads.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? second : first));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
     fireEvent.change(await screen.findByLabelText("Keep model"), { target: { value: "kept-override" } });
@@ -792,7 +799,7 @@ describe("per-step default model", () => {
       { ...restored.definition.step[0], key: "build", title: "Build", model: "" },
       { ...restored.definition.step[0], key: "review", title: "Review", model: "review-pin" },
     ];
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(restored);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(restored);
     render(
       <CreateTaskPage
         activeRepo="/repo"
@@ -812,7 +819,7 @@ describe("per-step default model", () => {
   it("does not fill a step box from the remembered model", async () => {
     const pinned = structuredClone(sources[0]);
     pinned.definition.step[0].model = "step-pin";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(pinned);
     vi.stubGlobal("localStorage", { getItem: (key: string) => (key.includes("lastmodel") ? "remembered-model" : null), setItem: () => {} });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, KanbanColumn, PullRequestSnapshot, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, PullRequestSnapshot, TaskActivitySummary } from "../types";
 import { Kanban } from "./Kanban";
 
 // Template for a component test in this codebase. Three things make it work:
@@ -14,13 +14,6 @@ import { Kanban } from "./Kanban";
 //      undefined and failing somewhere unrelated.
 //   3. Everything the component reaches for is data, so assertions are about behaviour
 //      ("this task is in that column") rather than about markup.
-
-const columns: KanbanColumn[] = [
-  { key: "todo-draft", title: "Todo / Draft" },
-  { key: "research-design", title: "Research & Design" },
-  { key: "in-review", title: "In Review" },
-  { key: "implementation", title: "Implementation" },
-] as KanbanColumn[];
 
 const task = (over: Partial<BoardTask>): BoardTask =>
   ({
@@ -54,11 +47,11 @@ const task = (over: Partial<BoardTask>): BoardTask =>
 
 const tasks = [
   task({ name: "Designing", slug: "designing", current_column_key: "research-design" }),
-  task({ name: "Parent", slug: "parent", active_subtask: "child", current_column_key: "todo-draft" }),
+  task({ name: "Parent", slug: "parent", active_subtask: "child", current_column_key: "planning" }),
   task({ name: "Child", slug: "child", parent_task: "parent", current_column_key: "research-design" }),
-  task({ name: "Reviewing", slug: "designing", repo_path: "/other", current_column_key: "in-review" }),
-  task({ name: "Archived one", slug: "archived-one", archived: true, current_column_key: "in-review" }),
-  // A column key the backend returned but list_kanban_columns did not.
+  task({ name: "Reviewing", slug: "designing", repo_path: "/other", current_column_key: "review" }),
+  task({ name: "Archived one", slug: "archived-one", archived: true, current_column_key: "review" }),
+  // A column key the backend returned but the board does not know.
   task({ name: "Bespoke", slug: "bespoke", current_column_key: "custom", current_column_title: "Custom Phase" }),
 ];
 
@@ -72,7 +65,6 @@ const setBoard = (rows: BoardTask[]) => {
 
 const ipcMocks = vi.hoisted(() => ({
   archiveTaskForRepo: vi.fn(),
-  listKanbanColumns: vi.fn(),
   listTaskPullRequests: vi.fn(),
   openUrl: vi.fn(),
   removeWorktreeForRepo: vi.fn(),
@@ -83,7 +75,6 @@ vi.mock("../ipc", () => mockIpc(ipcMocks));
 vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), archiveTaskForRepo: ipcMocks.archiveTaskForRepo }));
 
 beforeEach(() => {
-  ipcMocks.listKanbanColumns.mockImplementation(async () => columns);
   setBoard(tasks);
   ipcMocks.listTaskPullRequests.mockResolvedValue({});
   ipcMocks.openUrl.mockResolvedValue(undefined);
@@ -112,7 +103,7 @@ describe("Kanban board placement", () => {
 
     await waitFor(() => expect(screen.getByText("Designing")).toBeDefined());
     expect(cardsUnder("Research & Design")).toEqual(["Designing"]);
-    expect(cardsUnder("In Review")).toEqual(["Reviewing"]);
+    expect(cardsUnder("Review")).toEqual(["Reviewing"]);
   });
 
   it("hides archived tasks until asked", async () => {
@@ -120,13 +111,13 @@ describe("Kanban board placement", () => {
     render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Reviewing")).toBeDefined());
-    expect(cardsUnder("In Review")).not.toContain("Archived one");
+    expect(cardsUnder("Review")).not.toContain("Archived one");
 
     await act(async () => {
       fireEvent.click(screen.getByLabelText("Show archived"));
     });
 
-    await waitFor(() => expect(cardsUnder("In Review")).toContain("Archived one"));
+    await waitFor(() => expect(cardsUnder("Review")).toContain("Archived one"));
   });
 
   it("gates the board when no task exists", async () => {
@@ -141,15 +132,15 @@ describe("Kanban board placement", () => {
   // one. Deriving it from the rendered cards would lock a repo out of its own board
   // the moment its only tasks were archived.
   it("does not gate a board whose only tasks are archived", async () => {
-    setBoard([task({ name: "Archived only", slug: "archived-only", archived: true, current_column_key: "in-review" })]);
+    setBoard([task({ name: "Archived only", slug: "archived-only", archived: true, current_column_key: "review" })]);
     const { Kanban } = await import("./Kanban");
     render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
-    await waitFor(() => expect(screen.getByText("In Review")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Review")).toBeDefined());
     expect(screen.queryByText("The board starts with a task")).toBeNull();
   });
 
-  // A task can carry a column key that list_kanban_columns never returned — a playbook
+  // A task can carry a column key that the board never lists — a playbook
   // edited after the task was created. Dropping it would make the task vanish from the
   // board with no error anywhere.
   it("invents a column for a task whose column the playbook no longer defines", async () => {
@@ -170,9 +161,9 @@ describe("Kanban board placement", () => {
 
   it("hides columns emptied by child and archive visibility without breaking column navigation", async () => {
     setBoard([
-      task({ name: "Parent", slug: "parent", current_column_key: "todo-draft" }),
+      task({ name: "Parent", slug: "parent", current_column_key: "planning" }),
       task({ name: "Child", slug: "child", parent_task: "parent", current_column_key: "research-design" }),
-      task({ name: "Archived", slug: "archived", archived: true, current_column_key: "in-review" }),
+      task({ name: "Archived", slug: "archived", archived: true, current_column_key: "review" }),
       task({ name: "Implementing", slug: "implementing", current_column_key: "implementation" }),
     ]);
     const onOpen = vi.fn();
@@ -193,7 +184,7 @@ describe("Kanban board placement", () => {
     await screen.findByText("Parent");
     fireEvent.click(screen.getByLabelText("Show empty columns"));
     expect(screen.queryByText("Research & Design")).toBeNull();
-    expect(screen.queryByText("In Review")).toBeNull();
+    expect(screen.queryByText("Review")).toBeNull();
     expect(cardsUnder("Implementation")).toEqual(["Implementing"]);
 
     await navReady(() => nav);
@@ -207,15 +198,15 @@ describe("Kanban board placement", () => {
     fireEvent.click(screen.getByLabelText("Show children"));
     expect(cardsUnder("Research & Design")).toEqual(["Child"]);
     fireEvent.click(screen.getByLabelText("Show archived"));
-    await waitFor(() => expect(cardsUnder("In Review")).toEqual(["Archived"]));
+    await waitFor(() => expect(cardsUnder("Review")).toEqual(["Archived"]));
 
     fireEvent.click(screen.getByLabelText("Show children"));
     fireEvent.click(screen.getByLabelText("Show archived"));
-    await waitFor(() => expect(screen.queryByText("In Review")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Review")).toBeNull());
     expect(screen.queryByText("Research & Design")).toBeNull();
     fireEvent.click(screen.getByLabelText("Show empty columns"));
     expect(cardsUnder("Research & Design")).toEqual([]);
-    expect(cardsUnder("In Review")).toEqual([]);
+    expect(cardsUnder("Review")).toEqual([]);
   });
 });
 
@@ -474,6 +465,8 @@ describe("duplicate selection", () => {
     act(() => requireNav(nav).duplicateSelected());
     expect(onDuplicate).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "designing", repo_path: "/r" }));
 
+    // Research & Design, then Planning (the parent), then past the empty Implementation to Review (the other repository's card).
+    act(() => requireNav(nav).moveCol(1));
     act(() => requireNav(nav).moveCol(1));
     act(() => requireNav(nav).duplicateSelected());
     expect(onDuplicate).toHaveBeenLastCalledWith(expect.objectContaining({ slug: "designing", repo_path: "/other" }));

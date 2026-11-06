@@ -1,7 +1,7 @@
 import "../onboarding.css";
 import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
-import * as ipc from "../ipc";
+import { KANBAN_COLUMNS } from "../kanbanColumns";
 import { CURATED_PLAYBOOK_ARCHETYPES, type StarterTaskPreset } from "../onboarding";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
@@ -12,13 +12,13 @@ import {
   InlineStatus,
   RepoLinkNotices,
   repoName,
-  sameKanbanColumns,
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
 import { useRepoBoard } from "../sync/board";
 import { readTaskExecutions } from "../sync/execution";
+import { readPlaybook } from "../sync/playbooks";
 import type { BoardNav, BoardTask, KanbanColumn, PlaybookRef, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
@@ -805,7 +805,6 @@ export function Grid(props: GridProps) {
 
 function ScopedGrid({
   active = true,
-  allRepos,
   repoPaths,
   onOpen,
   onDuplicate = () => {},
@@ -821,12 +820,11 @@ function ScopedGrid({
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
   const board = useRepoBoard(repoPaths);
   const tasks = board.tasks;
-  const [columns, setColumns] = useState<KanbanColumn[]>([]);
-  const [columnsLoaded, setColumnsLoaded] = useState(false);
+  const columns = KANBAN_COLUMNS;
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [librarySteps, setLibrarySteps] = useState<Record<string, BoardTask["playbook_steps"]>>({});
   const [definitionErr, setDefinitionErr] = useState("");
-  const loaded = board.loaded && columnsLoaded;
+  const loaded = board.loaded;
   const [err, setErr] = useState("");
   const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
   const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
@@ -884,15 +882,6 @@ function ScopedGrid({
     }
   }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, columnOrder, hiddenTaskIds, hiddenGroupKeys]);
 
-  // The columns are playbook configuration, read once; the tasks arrive on the repo streams.
-  useEffect(() => {
-    ipc
-      .listKanbanColumns(allRepos)
-      .then((next) => setColumns((current) => (sameKanbanColumns(current, next) ? current : next)))
-      .catch((error) => setErr(String(error)))
-      .finally(() => setColumnsLoaded(true));
-  }, [allRepos]);
-
   const libraryRefs = useMemo(() => {
     const refs = new Map<string, BoardTask>();
     for (const task of tasks) {
@@ -908,7 +897,7 @@ function ScopedGrid({
     void Promise.all(
       libraryRefs.map(async ([key, task]) => {
         try {
-          const playbook = await ipc.readPlaybook(task.playbook_ref ?? { scope: "bundled", key: task.playbook }, task.repo_path);
+          const playbook = await readPlaybook(task.playbook_ref ?? { scope: "bundled", key: task.playbook }, task.repo_path);
           return { key, steps: playbook.definition.step, error: "" };
         } catch (error) {
           return { key, steps: [], error: `${task.repo_path}:${task.playbook}: ${String(error)}` };

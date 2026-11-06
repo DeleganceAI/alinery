@@ -44,14 +44,9 @@ import type {
   GlobalSettings,
   HostedCatalogView,
   ImportResult,
-  KanbanColumn,
   LinearTicket,
   McpStatus,
-  NormalizedPlaybook,
-  PickerPreferences,
-  PlaybookCatalog,
   PlaybookRef,
-  PlaybookValidation,
   PreviewResult,
   PublishResult,
   PullRequestSnapshot,
@@ -59,8 +54,6 @@ import type {
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
-  SavePlaybookRequest,
-  ScopedPlaybook,
   SessionMeta,
   SkillInstall,
   SshTarget,
@@ -265,15 +258,8 @@ export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
-export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });
-export const listPlaybookCatalog = (repoPath?: string) => invoke<PlaybookCatalog>("list_playbook_catalog", { repoPath });
-export const readPlaybook = (reference: PlaybookRef, repoPath?: string) => invoke<ScopedPlaybook>("read_playbook", { reference, repoPath });
-export const validatePlaybookSource = (source: string) => invoke<PlaybookValidation>("validate_playbook_source", { source });
-export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
-export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
-export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
-export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
-export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
+/** A repo playbook leaves the community import registry with its file; the library itself is the daemon's PlaybookService (sync/playbooks.ts). */
+export const forgetCommunityImport = (repoPath: string, key: string) => invoke<void>("forget_community_import", { repoPath, key });
 export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
 export const listMyCommunityPlaybooks = () => invoke<CommunityMineResult>("list_my_community_playbooks");
 export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);

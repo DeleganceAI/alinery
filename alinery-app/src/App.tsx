@@ -42,6 +42,7 @@ import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDr
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
+import { readPlaybook } from "./sync/playbooks";
 import { observationNow } from "./sync/sessionObservation";
 import { createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
 import { readEffectiveConfig } from "./sync/settings";
@@ -1051,7 +1052,7 @@ export default function App() {
     flushSync(() => setBusy("create"));
     await afterPaint();
     try {
-      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
+      const [scoped, repoCfg] = await Promise.all([readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
       const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
       const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
       const model = scoped.definition.default_model || repoCfg.defaults?.model || "";

@@ -4,7 +4,7 @@
 //! or to the production Supabase host.
 use super::*;
 use crate::{
-    community_download_status_with, delete_playbook_keeping_imports, import_community_playbook_with, list_community_playbooks_with, list_my_community_playbooks_with,
+    community_download_status_with, forget_import_before_delete, import_community_playbook_with, list_community_playbooks_with, list_my_community_playbooks_with,
     preview_community_playbook_with, publish_community_playbook_with, read_community_imports, registry_path, update_community_import_with, write_community_imports, CommunityHttp,
     CommunityHttpRequest, CommunityHttpResponse, CommunityImportRecord, ImportResult, MineResult, PreviewResult, PublishResult, UpdateResult,
 };
@@ -914,7 +914,7 @@ fn delete_repo_playbook_forgets_import() {
     let path = playbook_file(&repo, "test");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, desktop_fixture()).unwrap();
-    delete_playbook_keeping_imports(
+    forget_import_before_delete(
         &roots,
         &PlaybookRef {
             scope: PlaybookScope::Repo,
@@ -924,7 +924,7 @@ fn delete_repo_playbook_forgets_import() {
     .unwrap();
     assert!(read_community_imports(&repo).unwrap().iter().all(|record| record.local_key != "test"));
     let before = fs::read(registry_path(&repo)).unwrap();
-    delete_playbook_keeping_imports(
+    forget_import_before_delete(
         &roots,
         &PlaybookRef {
             scope: PlaybookScope::Global,
@@ -1000,7 +1000,7 @@ fn delete_keeps_the_definition_when_the_registry_cannot_be_read() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, desktop_fixture()).unwrap();
     fs::write(registry_path(&repo), b"not = [valid").unwrap();
-    let result = delete_playbook_keeping_imports(
+    let result = forget_import_before_delete(
         &roots,
         &PlaybookRef {
             scope: PlaybookScope::Repo,

@@ -9,8 +9,10 @@ import { Settings } from "./Settings";
 const mocks = vi.hoisted(() => ({
   readGlobalSettings: vi.fn(),
   writeGlobalSettings: vi.fn(),
+}));
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+const playbooks = vi.hoisted(() => ({
   listPlaybookCatalog: vi.fn(),
-  readPlaybookPickerPreferences: vi.fn(),
   savePlaybookPickerPreferences: vi.fn(),
 }));
 vi.mock("../ipc", async () => {
@@ -18,6 +20,7 @@ vi.mock("../ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
   return mockIpc(mocks);
 });
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbooks }));
 
 const base: GlobalSettings = {
   notifications: {
@@ -76,9 +79,8 @@ beforeEach(() => {
     saved = structuredClone(next);
     return saved;
   });
-  mocks.listPlaybookCatalog.mockImplementation(async () => structuredClone(catalog));
-  mocks.readPlaybookPickerPreferences.mockImplementation(async () => structuredClone(preferences));
-  mocks.savePlaybookPickerPreferences.mockImplementation(async (next: PickerPreferences) => {
+  playbooks.listPlaybookCatalog.mockImplementation(async () => structuredClone(catalog));
+  playbooks.savePlaybookPickerPreferences.mockImplementation(async (next: PickerPreferences) => {
     preferences = structuredClone(next);
   });
 });
@@ -115,7 +117,7 @@ describe("Scoped playbook settings", () => {
     await screen.findByRole("option", { name: "Shared — global/shared" });
     expect((screen.getByLabelText("Default playbook") as HTMLSelectElement).value).toBe("global/shared");
     expect(saved.defaults.playbook).toEqual({ scope: "global", key: "shared" });
-    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbooks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 
   it("shows invalid choices without replacing the invalid default", async () => {
@@ -155,7 +157,6 @@ describe("Scoped playbook settings", () => {
     fireEvent.change(select, { target: { value: "repo/shared" } });
     await waitFor(() => expect(saved.defaults.playbook).toEqual({ scope: "repo", key: "shared" }));
     expect(preferences).toEqual(originalPreferences);
-    expect(mocks.readPlaybookPickerPreferences).not.toHaveBeenCalled();
-    expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbooks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 });

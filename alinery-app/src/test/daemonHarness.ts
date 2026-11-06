@@ -9,6 +9,7 @@ import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import { type Cursor, CursorSchema } from "alinery-proto/alinery/v1/common_pb";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
+import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { type SubscribeRequest, type SubscribeResponse, SubscribeResponseSchema, SyncService } from "alinery-proto/alinery/v1/sync_pb";
@@ -21,6 +22,7 @@ export type Services = {
   settings: ServiceImpl<typeof SettingsService>;
   execution: ServiceImpl<typeof ExecutionService>;
   artifacts: Partial<ServiceImpl<typeof ArtifactService>>;
+  playbooks: Partial<ServiceImpl<typeof PlaybookService>>;
 };
 
 export function daemonHarness(services: Partial<Services>) {
@@ -32,6 +34,7 @@ export function daemonHarness(services: Partial<Services>) {
     if (services.settings) router.service(SettingsService, services.settings);
     if (services.execution) router.service(ExecutionService, services.execution);
     if (services.artifacts) router.service(ArtifactService, services.artifacts);
+    if (services.playbooks) router.service(PlaybookService, services.playbooks);
   });
   return { transport };
 }

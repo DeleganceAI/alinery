@@ -35,8 +35,10 @@ const community = vi.hoisted(() => ({
 }));
 vi.mock("../ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
-  return mockIpc({ ...mocks, ...community });
+  return mockIpc({ ...community });
 });
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...mocks }));
 const definition: NormalizedPlaybook = {
   version: 2,
   key: "review",

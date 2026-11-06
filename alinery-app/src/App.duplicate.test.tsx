@@ -93,6 +93,10 @@ const mocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(async () => () => {}),
 }));
 
+vi.mock("./sync/playbooks", async (actual) => ({
+  ...(await actual<typeof import("./sync/playbooks")>()),
+  listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
+}));
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), duplicateTaskForRepo: mocks.duplicateTaskForRepo }));
 vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig: mocks.readEffectiveConfig }));
@@ -102,7 +106,6 @@ vi.mock("./ipc", () =>
     getVersion: async () => "0.9.10",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
-    listKanbanColumns: async () => [],
     setActiveRepo: mocks.setActiveRepo,
     pickRepoDialog: mocks.pickRepoDialog,
     classifyPickedFolder: mocks.classifyPickedFolder,
@@ -114,7 +117,6 @@ vi.mock("./ipc", () =>
       head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
       selected: null,
     }),
-    listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
     listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
   }),

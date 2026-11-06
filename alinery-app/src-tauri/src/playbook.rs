@@ -1,9 +1,7 @@
-//! Canonical scope-qualified playbook library commands. Runtime task definitions are daemon-owned.
+//! The files of a playbook library for the community import registry (`community_playbooks.rs`, S4.10). The library itself
+//! (catalog, read, save, delete, picker, validate, render) is the daemon's `PlaybookService` since S4.6.
 use crate::*;
-use alinery_core::playbook::{parse_playbook_md, render_playbook_md, NormalizedPlaybook, PlaybookRef, PlaybookScope, PlaybookValidationError};
-use alinery_core::playbook_library::{
-    self as library, PickerPreferences, PlaybookCatalog, PlaybookLoadError, PlaybookRoots, PlaybookSaveError, PlaybookSource, SavePlaybookRequest, ScopedPlaybook,
-};
+use alinery_core::playbook_library::PlaybookRoots;
 
 /// Where a command finds its playbook files. Bundled and global playbooks are always on this
 /// machine. A repo's own playbooks are in place for a local repo; for a repo on another machine they
@@ -16,9 +14,6 @@ pub(crate) struct Library {
 
 struct RemoteLibrary {
     host_id: String,
-    /// The scratch copy of the repo, and the host path it stands for.
-    stage_repo: String,
-    host_path: String,
 }
 
 impl Library {
@@ -33,22 +28,6 @@ impl Library {
             (_, Some(remote)) => connected_session(state, &remote.host_id).map(|_| ()),
             _ => Ok(()),
         }
-    }
-
-    /// Point any path in `value` that names the scratch copy at the host's file instead.
-    pub(crate) fn rehome<T: Serialize + serde::de::DeserializeOwned>(&self, value: T) -> T {
-        fn swap(json: &mut Value, from: &str, to: &str) {
-            match json {
-                Value::String(text) if text.contains(from) => *text = text.replace(from, to),
-                Value::Array(items) => items.iter_mut().for_each(|item| swap(item, from, to)),
-                Value::Object(map) => map.values_mut().for_each(|item| swap(item, from, to)),
-                _ => {}
-            }
-        }
-        let Some(remote) = &self.remote else { return value };
-        let Ok(mut json) = serde_json::to_value(&value) else { return value };
-        swap(&mut json, &remote.stage_repo, &remote.host_path);
-        serde_json::from_value(json).unwrap_or(value)
     }
 }
 
@@ -103,11 +82,7 @@ pub(crate) fn with_library_at<T>(app_config: &Path, state: &AppState, target: Op
                     repo_dir: stage_repo.clone(),
                 },
                 local_repo: None,
-                remote: Some(RemoteLibrary {
-                    host_id: host_id.clone(),
-                    stage_repo: stage_repo.display().to_string(),
-                    host_path: path.clone(),
-                }),
+                remote: Some(RemoteLibrary { host_id: host_id.clone() }),
             };
             let result = work(&library);
             let changes = alinery_core::playbook_tree::changes_since(&stage_repo, &before)?;
@@ -118,146 +93,3 @@ pub(crate) fn with_library_at<T>(app_config: &Path, state: &AppState, target: Op
         }
     }
 }
-
-#[tauri::command]
-pub(crate) async fn list_playbook_catalog(app: AppHandle, repo_path: Option<String>) -> Result<PlaybookCatalog, String> {
-    // Parsing every playbook is disk work. Keep it off the webview thread so New Task can paint.
-    off_main_thread("list playbook catalog", move || {
-        with_library(&app, repo_path.as_deref(), |lib| lib.rehome(library::load_playbook_catalog(&lib.roots)))
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn read_playbook(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookLoadError> {
-    let io_error = |reference: &PlaybookRef, message: String| PlaybookLoadError::Io {
-        source: PlaybookSource {
-            reference: reference.clone(),
-            path: None,
-        },
-        message,
-    };
-    // Only a repo-scoped playbook is in the repo; the others never need a copy of it.
-    let repo_path = repo_path.filter(|_| reference.scope == PlaybookScope::Repo);
-    let for_errors = reference.clone();
-    tauri::async_runtime::spawn_blocking(move || with_library(&app, repo_path.as_deref(), |lib| lib.rehome(library::resolve_playbook(&lib.roots, &reference))))
-        .await
-        .map_err(|error| io_error(&for_errors, error.to_string()))?
-        .map_err(|message| io_error(&for_errors, message))?
-}
-
-#[derive(Serialize)]
-pub(crate) struct PlaybookValidation {
-    definition: Option<NormalizedPlaybook>,
-    diagnostics: Vec<PlaybookValidationError>,
-}
-
-#[tauri::command]
-pub(crate) fn validate_playbook_source(source: String) -> PlaybookValidation {
-    match parse_playbook_md(&source) {
-        Ok(definition) => PlaybookValidation {
-            definition: Some(definition),
-            diagnostics: Vec::new(),
-        },
-        Err(diagnostics) => PlaybookValidation { definition: None, diagnostics },
-    }
-}
-
-#[tauri::command]
-pub(crate) fn render_playbook_source(definition: NormalizedPlaybook) -> String {
-    render_playbook_md(&definition)
-}
-
-fn save_io(message: impl ToString) -> PlaybookSaveError {
-    PlaybookSaveError::Io { message: message.to_string() }
-}
-
-#[tauri::command]
-pub(crate) async fn save_playbook_source(app: AppHandle, request: SavePlaybookRequest, repo_path: Option<String>) -> Result<ScopedPlaybook, PlaybookSaveError> {
-    let repo_scope = request.target.scope == PlaybookScope::Repo;
-    let repo_path = repo_path.filter(|_| repo_scope);
-    tauri::async_runtime::spawn_blocking(move || {
-        with_library(&app, repo_path.as_deref(), |lib| {
-            if repo_scope {
-                if !lib.has_repo() {
-                    return Err(save_io("select a repository before saving a repo playbook"));
-                }
-                lib.require_owned(&app.state::<AppState>()).map_err(save_io)?;
-            }
-            library::save_playbook(&lib.roots, request).map(|saved| lib.rehome(saved))
-        })
-    })
-    .await
-    .map_err(save_io)?
-    .map_err(save_io)?
-}
-
-#[tauri::command]
-pub(crate) async fn delete_playbook_source(app: AppHandle, reference: PlaybookRef, repo_path: Option<String>) -> Result<(), PlaybookSaveError> {
-    let repo_scope = reference.scope == PlaybookScope::Repo;
-    let repo_path = repo_path.filter(|_| repo_scope);
-    tauri::async_runtime::spawn_blocking(move || {
-        with_library(&app, repo_path.as_deref(), |lib| {
-            if repo_scope {
-                if !lib.has_repo() {
-                    return Err(save_io("select a repository before deleting a repo playbook"));
-                }
-                lib.require_owned(&app.state::<AppState>()).map_err(save_io)?;
-            }
-            delete_playbook_keeping_imports(&lib.roots, &reference)
-        })
-    })
-    .await
-    .map_err(save_io)?
-    .map_err(save_io)?
-}
-
-#[tauri::command]
-pub(crate) async fn read_playbook_picker_preferences(app: AppHandle, repo_path: Option<String>) -> Result<PickerPreferences, String> {
-    off_main_thread("read playbook picker preferences", move || {
-        with_library(&app, repo_path.as_deref(), |lib| library::load_picker_preferences(&lib.roots))?
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn save_playbook_picker_preferences(app: AppHandle, preferences: PickerPreferences, repo_path: Option<String>) -> Result<(), PlaybookSaveError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        with_library(&app, repo_path.as_deref(), |lib| {
-            if lib.has_repo() {
-                lib.require_owned(&app.state::<AppState>()).map_err(save_io)?;
-            }
-            library::save_picker_preferences(&lib.roots, &preferences)
-        })
-    })
-    .await
-    .map_err(save_io)?
-    .map_err(save_io)?
-}
-
-#[derive(Serialize, Clone)]
-pub(crate) struct KanbanColumn {
-    pub(crate) key: String,
-    pub(crate) title: String,
-}
-
-#[tauri::command]
-pub(crate) fn list_kanban_columns(_app: AppHandle, all_repos: bool) -> Result<Vec<KanbanColumn>, String> {
-    if !all_repos {
-        let _ = active_repo_ref()?;
-    }
-    Ok(KANBAN_COLUMNS
-        .iter()
-        .map(|(key, title)| KanbanColumn {
-            key: (*key).into(),
-            title: (*title).into(),
-        })
-        .collect())
-}
-
-pub(crate) const KANBAN_COLUMNS: &[(&str, &str)] = &[
-    ("research-design", "Research & Design"),
-    ("planning", "Planning"),
-    ("implementation", "Implementation"),
-    ("review", "Review"),
-];
