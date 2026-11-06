@@ -6,7 +6,7 @@
 //   bun golden.ts            writes golden/admin.json
 import { mkdirSync, writeFileSync } from "node:fs";
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
-import { EnsureReadyRequestSchema } from "./gen/alinery/v1/settings_pb";
+import { EnsureReadyRequestSchema, WriteHostedInferenceRequestSchema, WriteHostedInferenceResponseSchema } from "./gen/alinery/v1/settings_pb";
 import { Capability, HelloRequestSchema, HelloResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
 
 const hex = <D extends DescMessage>(schema: D, init: MessageInitShape<D>) => Buffer.from(toBinary(schema, create(schema, init))).toString("hex");
@@ -24,6 +24,8 @@ const golden = {
     appConfigIdentity: "identity-1",
   }),
   EnsureReadyRequest: hex(EnsureReadyRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-1" } }),
+  WriteHostedInferenceRequest: hex(WriteHostedInferenceRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-2" }, inferenceJson: '{"token":"inf_x"}' }),
+  WriteHostedInferenceResponse: hex(WriteHostedInferenceResponseSchema, {}),
 };
 
 mkdirSync(new URL("./golden", import.meta.url), { recursive: true });

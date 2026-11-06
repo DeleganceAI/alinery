@@ -1418,6 +1418,63 @@ fn attach_host_repos<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, se
             }
         }
     }
+    push_hosted_inference(app, host_id);
+}
+
+/// Plan S4.11 (R-S4.11-5): the hosted token reaches a host's daemon as a settings write, not only as the
+/// `inference.json` that `sync_config` pushes at connect (a file that goes stale between connects). One call
+/// per host is enough: every daemon on a host shares its app-config directory. A host that was not
+/// offered the hosted models, or a local file that is not there, is left alone; a daemon this app cannot
+/// call (a conflict, or none yet) is logged and the connect-time file stays what it has.
+pub(crate) fn push_hosted_inference<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str) {
+    let config = load_app_config(app);
+    let wanted = config
+        .remote_hosts
+        .get(host_id)
+        .and_then(|host| host.sharing.as_ref())
+        .is_some_and(|sharing| sharing.reviewed && sharing.shared.iter().any(|item| item == SHARE_HOSTED));
+    let Ok(app_config) = app_config_path(app) else { return };
+    let Some(session) = app.state::<AppState>().remotes.session(host_id).filter(|session| session.channel.is_alive()) else {
+        return;
+    };
+    let Ok(body) = std::fs::read_to_string(alinery_core::inference_path(&alinery_core::pairing_config_dir(&app_config))) else {
+        return;
+    };
+    if !wanted {
+        return;
+    }
+    let mut last = None;
+    for key in &config.known_repos {
+        let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(key) else { continue };
+        if id != host_id {
+            continue;
+        }
+        let sent = rpc_forward(host_id, &path).and_then(|(local, remote_socket)| {
+            let _ = session.conn.forward(&local, &remote_socket);
+            crate::daemon_rpc::write_hosted_inference_at(&local, &crate::daemon::rpc_secret_path(&session.secrets_dir, &path, ""), &body)
+        });
+        match sent {
+            Ok(()) => return,
+            Err(error) => last = Some(error),
+        }
+    }
+    if let Some(error) = last {
+        alinery_core::append_exception(
+            &app_config,
+            &format!(
+                "app.remote-hosted-inference-failed host={} err={}",
+                alinery_core::quote_log_value(host_id),
+                alinery_core::quote_log_value(&error)
+            ),
+        );
+    }
+}
+
+/// `push_hosted_inference` to every host with a remote repository, after the background refresh.
+pub(crate) fn push_hosted_inference_to_hosts<R: tauri::Runtime>(app: &AppHandle<R>) {
+    for host_id in remote_host_ids(&load_app_config(app).known_repos) {
+        push_hosted_inference(app, &host_id);
+    }
 }
 
 /// `set_active_repo` for a remote key: it must be known and its host connected.

@@ -3,6 +3,7 @@
 use super::*;
 use crate::daemon_rpc::{
     hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse,
+    WriteHostedInferenceRequest, WriteHostedInferenceResponse,
 };
 use bytes::Bytes;
 use http::HeaderMap;
@@ -63,6 +64,9 @@ impl Drop for Feed {
 
 /// Every EnsureReady any stand-in received: the Authorization header, then the decoded request.
 static ENSURE_READY: Mutex<Vec<(String, EnsureReadyRequest)>> = Mutex::new(Vec::new());
+
+/// Every WriteHostedInference any stand-in received: the Authorization header, then the decoded request.
+static HOSTED_WRITES: Mutex<Vec<(String, WriteHostedInferenceRequest)>> = Mutex::new(Vec::new());
 
 /// Every Shutdown any stand-in received: the Authorization header, then the decoded request.
 static SHUTDOWNS: Mutex<Vec<(String, ShutdownRequest)>> = Mutex::new(Vec::new());
@@ -152,6 +156,14 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
             let mut body = vec![0, 0, 0, 0, message.len() as u8];
             body.extend_from_slice(&message);
             tx.send(Frame::data(Bytes::from(body))).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        "/alinery.v1.SettingsService/WriteHostedInference" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            HOSTED_WRITES.lock().unwrap().push((token, WriteHostedInferenceRequest::decode(&sent[5..]).unwrap()));
+            // The empty `WriteHostedInferenceResponse`.
+            tx.send(Frame::data(Bytes::from_static(&[0, 0, 0, 0, 0]))).unwrap();
             tx.send(trailers("0")).unwrap();
         }
         "/trailers-only" => {
@@ -558,6 +570,19 @@ fn golden_ensure_ready_request_decodes_field_by_field_and_encodes_back_to_the_sa
     assert_eq!(request.encode_to_vec(), bytes);
 }
 
+#[test]
+fn golden_write_hosted_inference_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("WriteHostedInferenceRequest");
+    let request = WriteHostedInferenceRequest::decode(bytes.as_slice()).unwrap();
+    let meta = request.meta.clone().expect("WriteHostedInferenceRequest.meta");
+    assert_eq!(meta.client_id, "client-1", "MutationMeta.client_id");
+    assert_eq!(meta.mutation_id, "mutation-2", "MutationMeta.mutation_id");
+    assert_eq!(request.inference_json, r#"{"token":"inf_x"}"#, "WriteHostedInferenceRequest.inference_json");
+    assert_eq!(request.encode_to_vec(), bytes);
+    let reply = golden("WriteHostedInferenceResponse");
+    assert_eq!(WriteHostedInferenceResponse::decode(reply.as_slice()).unwrap().encode_to_vec(), reply);
+}
+
 /// A repo whose `.alinery/rpc[-lane].sock` is served by a stand-in, with the token this app would have
 /// kept for it. Plain `#[test]`, because `shutdown_daemon` blocks on the app's own runtime.
 struct Teardown {
@@ -622,6 +647,34 @@ fn ensure_repo_ready_calls_repo_service_with_the_kept_token_and_a_fresh_mutation
     let ids: Vec<_> = calls.iter().map(|r| r.meta.clone().unwrap()).collect();
     assert!(ids.iter().all(|m| m.client_id == "alinery-shell" && !m.mutation_id.is_empty()), "{ids:?}");
     assert_ne!(ids[0].mutation_id, ids[1].mutation_id, "a second ask is a new mutation, not a retry");
+}
+
+#[test]
+fn write_hosted_inference_sends_the_file_body_with_the_kept_token_and_a_fresh_mutation_id() {
+    let t = teardown_fixture(crate::daemon::alineryd_socket_namespace().as_deref(), "hosted-token");
+    let key = t.repo.display().to_string();
+    let (socket, secret_path) = resolve(
+        &key,
+        alinery_core::app_config_dir_of(&t.app_config).unwrap(),
+        crate::daemon::alineryd_socket_namespace().as_deref(),
+    )
+    .unwrap();
+    crate::daemon_rpc::write_hosted_inference_at(&socket, &secret_path, r#"{"token":"inf_a"}"#).unwrap();
+    crate::daemon_rpc::write_hosted_inference_at(&socket, &secret_path, r#"{"token":"inf_b"}"#).unwrap();
+    let calls: Vec<_> = HOSTED_WRITES
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(token, _)| token == "Bearer hosted-token")
+        .map(|(_, r)| r.clone())
+        .collect();
+    assert_eq!(
+        calls.iter().map(|r| r.inference_json.as_str()).collect::<Vec<_>>(),
+        [r#"{"token":"inf_a"}"#, r#"{"token":"inf_b"}"#]
+    );
+    let ids: Vec<_> = calls.iter().map(|r| r.meta.clone().unwrap()).collect();
+    assert!(ids.iter().all(|m| m.client_id == "alinery-shell" && !m.mutation_id.is_empty()), "{ids:?}");
+    assert_ne!(ids[0].mutation_id, ids[1].mutation_id);
 }
 
 #[test]

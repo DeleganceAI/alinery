@@ -475,6 +475,18 @@ pub(crate) struct EnsureReadyRequest {
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct EnsureReadyResponse {}
 
+/// proto/alinery/v1/settings.proto `WriteHostedInference` (ADMIN, S4.11 / R-S4.11-5). The reply is empty.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct WriteHostedInferenceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub meta: Option<MutationMeta>,
+    #[prost(string, tag = "2")]
+    pub inference_json: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct WriteHostedInferenceResponse {}
+
 /// One unary call on the bridge's pooled connection to `socket`, with the messages typed.
 pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(socket: &Path, token: &str, path: &str, request: &Req) -> Result<Res, String> {
     let reply = BRIDGE.unary(socket, token, path, &request.encode_to_vec()).await?;
@@ -511,6 +523,28 @@ pub(crate) fn ensure_repo_ready_at(socket: &Path, committed_token: &Path) -> Res
         )
         .await
         .map_err(|_| "EnsureReady timed out".to_string())??;
+        Ok(())
+    })
+}
+
+/// `SettingsService.WriteHostedInference` (plan S4.11, R-S4.11-5): hand the daemon on `socket` the hosted-inference
+/// file this app just refreshed, so the daemon writes it on its own host. Blocking; the callers are off the main thread.
+pub(crate) fn write_hosted_inference_at(socket: &Path, committed_token: &Path, inference_json: &str) -> Result<(), String> {
+    tauri::async_runtime::block_on(async {
+        let token = rpc_token(socket, committed_token).await?;
+        let request = WriteHostedInferenceRequest {
+            meta: Some(MutationMeta {
+                client_id: "alinery-shell".into(),
+                mutation_id: uuid::Uuid::new_v4().to_string(),
+            }),
+            inference_json: inference_json.into(),
+        };
+        tokio::time::timeout(
+            DAEMON_CONTROL_TIMEOUT,
+            unary::<_, WriteHostedInferenceResponse>(socket, &token, "/alinery.v1.SettingsService/WriteHostedInference", &request),
+        )
+        .await
+        .map_err(|_| "WriteHostedInference timed out".to_string())??;
         Ok(())
     })
 }

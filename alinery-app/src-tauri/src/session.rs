@@ -72,6 +72,7 @@ pub(crate) fn spawn_pi_hosted_refresh(app: AppHandle) {
         std::thread::sleep(PI_DURABLE_HOSTED_REFRESH);
         let Ok(app_config) = app_config_path(&app) else { continue };
         let _ = alinery_core::ensure_hosted_inference_for_spawn(&app_config);
+        crate::remote::push_hosted_inference_to_hosts(&app);
     });
 }
 
@@ -79,9 +80,17 @@ pub(crate) async fn refresh_hosted_inference_before_open(app: AppHandle, intent:
     if !hosted_refresh_needed(intent, harness, model) {
         return Ok(());
     }
-    tauri::async_runtime::spawn_blocking(move || refresh_hosted_inference_for_spawn(&app))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        refresh_hosted_inference_for_spawn(&app)?;
+        // A remote repo's daemon reads the token on its own host: hand it the fresh one before it spawns (a failure is
+        // logged there). Only the active repo's host waits here; the 30-minute refresh and each connect cover the rest.
+        if let Ok(RepoRef::Remote { host_id, .. }) = active_repo_ref() {
+            crate::remote::push_hosted_inference(&app, &host_id);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

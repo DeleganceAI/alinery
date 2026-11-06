@@ -13,6 +13,7 @@ import { parsers } from "../sync/parsers/index.ts";
 import { settingsParser } from "../sync/parsers/settings.ts";
 import { Store } from "../sync/store.ts";
 import { settingsKey } from "../domain/settings.ts";
+import { readInference } from "../provider.ts";
 import { serveRpc } from "./server.ts";
 
 const SECRET = "ab".repeat(32);
@@ -50,6 +51,7 @@ async function start(hostExecutable: string | undefined = process.execPath) {
   const auth = `Bearer ${SECRET}`;
   await feed.scan();
   return {
+    dir,
     repo,
     alinery,
     store,
@@ -155,4 +157,36 @@ test("EnsureReady creates what is missing, and a second call changes nothing", a
   expect(["config.toml", "harnesses.toml"].map((f) => statSync(join(alinery, f)).mtimeMs)).toEqual(mtimes);
   expect(statSync(join(repo, ".gitignore")).mtimeMs).toBe(ignore);
   expect(store.cursor().seq).toBe(seq);
+});
+
+const inference = (token: string) => JSON.stringify({ token, expires_at: 4102444800, session_id: "s", minted_at: 1, catalog: { provider: "alinery", default_model: "m", base_url: "https://x/v1", plans_url: "", models: [{ id: "m", name: "M", context_window: 1, max_tokens: 1, thinking: { levels: ["low"] } }] } });
+
+test("WriteHostedInference writes inference.json owner-only beside the app config, byte for byte, and a later write replaces it", async () => {
+  const { settings, dir } = await start();
+  const file = join(dir, "inference.json");
+  await settings().writeHostedInference({ meta: meta("h1"), inferenceJson: inference("inf_one") });
+  expect(readFileSync(file, "utf8")).toBe(inference("inf_one"));
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  await settings().writeHostedInference({ meta: meta("h2"), inferenceJson: inference("inf_two") });
+  expect(readFileSync(file, "utf8")).toBe(inference("inf_two"));
+  // The daemon's own provider reads what was written.
+  expect(readInference(join(dir, "app.toml"))?.token).toBe("inf_two");
+});
+
+test("WriteHostedInference refuses a body the provider could not use, and leaves the good file alone", async () => {
+  const { settings, dir } = await start();
+  const file = join(dir, "inference.json");
+  await settings().writeHostedInference({ meta: meta("h1"), inferenceJson: inference("inf_good") });
+  for (const [i, bad] of ["not json", "{}", JSON.stringify({ token: "", expires_at: 1, catalog: { base_url: "u", models: [] } }), JSON.stringify({ token: "t", expires_at: "1", catalog: { base_url: "u", models: [] } }), JSON.stringify({ token: "t", expires_at: 1, catalog: { base_url: "u" } })].entries())
+    expect(await code(settings().writeHostedInference({ meta: meta(`b${i}`), inferenceJson: bad }))).toBe(Code.InvalidArgument);
+  expect(readFileSync(file, "utf8")).toBe(inference("inf_good"));
+});
+
+test("WriteHostedInference is ADMIN: a token-less caller and a local non-shell peer (VIEW, ACT) are refused and nothing is written", async () => {
+  const anon = await start();
+  expect(await code(anon.settings(null).writeHostedInference({ meta: meta("h1"), inferenceJson: inference("t") }))).toBe(Code.PermissionDenied);
+  const other = await start("/bin/not-the-shell");
+  expect(await code(other.settings().writeHostedInference({ meta: meta("h2"), inferenceJson: inference("t") }))).toBe(Code.PermissionDenied);
+  expect(existsSync(join(other.dir, "inference.json"))).toBe(false);
+  expect(existsSync(join(anon.dir, "inference.json"))).toBe(false);
 });

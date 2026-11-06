@@ -1,11 +1,14 @@
 // SettingsService and RepoService (plan S4.1): the repository's `config.toml` writes and the repository's
 // first-use setup. The read side is the `settings/_/repo` entity, so these return only `Applied`.
 import { Code, type ServiceImpl } from "@connectrpc/connect";
+import { join } from "node:path";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { RepoOverrides } from "alinery-proto/alinery/v1/entities_pb";
 import type { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { clearOverride, emptyOverrides, ensureRepoReady, overridesOf, settingsKey, writeOverridesFile } from "../domain/settings.ts";
+import { writeOwnerOnly } from "../platform/fs.ts";
 import { withTaskMutation } from "../platform/lock.ts";
+import { pairingConfigDir } from "../provider.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import { SETTINGS_PATHS } from "../sync/parsers/settings.ts";
@@ -22,6 +25,25 @@ export type SettingsDeps = {
 };
 
 const CONFIG = "config.toml";
+
+/** The hosted-inference file as the daemon's own provider reads it (`provider.ts` `InferenceFile`): refuse anything it could not use, before it replaces a good file. */
+function hostedInferenceBody(text: string): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw fail(Code.InvalidArgument, "invalid_argument", "inference_json is not JSON");
+  }
+  const file = value as { token?: unknown; expires_at?: unknown; catalog?: { base_url?: unknown; models?: unknown } } | null;
+  const ok =
+    typeof file?.token === "string" &&
+    file.token !== "" &&
+    typeof file.expires_at === "number" &&
+    typeof file.catalog?.base_url === "string" &&
+    Array.isArray(file.catalog.models);
+  if (!ok) throw fail(Code.InvalidArgument, "invalid_argument", "inference_json needs a token, an expires_at and a catalog with base_url and models");
+  return text;
+}
 
 // A write is serialized with every other writer of this repository (the task-mutation lock), and the file is re-read
 // into the store under that lock, so `expected_revision` is checked against the file as it is now, not as the
@@ -41,6 +63,17 @@ export function settingsService(d: SettingsDeps, dedupe: Dedupe, store: Store): 
       }),
     );
   return {
+    // The hosted token is a credential: ADMIN, owner-only, and the daemon's own host is the only place it is written.
+    // It is not repo state, so it takes no repository lock and no store refresh; the provider re-reads the file on each lookup.
+    writeHostedInference: (req, ctx) => {
+      requireCapability(ctx, Capability.ADMIN);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(() => {
+          writeOwnerOnly(join(pairingConfigDir(d.appConfig), "inference.json"), hostedInferenceBody(req.inferenceJson));
+          return {};
+        }),
+      );
+    },
     writeOverrides: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () => mutate("write_overrides", req.expectedRevision, () => req.overrides ?? emptyOverrides()));

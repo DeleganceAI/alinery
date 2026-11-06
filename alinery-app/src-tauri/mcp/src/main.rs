@@ -1951,10 +1951,9 @@ mod tests {
     fn invalid_creation_defaults_and_caps_have_no_provisioning_side_effects() {
         let repo = unique_repo("invalid-create");
         let config = repo.join("app.toml");
-        for configured in [
-            "[global.defaults]\nplaybook = 'superdevelop'\n",
-            "[global.defaults.playbook]\nscope = 'repo'\nkey = 'absent'\n",
-        ] {
+        // Both defaults must be refused before a daemon is contacted: a bare-string playbook is accepted by the strict reader,
+        // so it reached `ensure_compatible_daemon` and left a daemon running per test run (R-S4.11-12).
+        for configured in ["[global.defaults]\nplaybook = 5\n", "[global.defaults.playbook]\nscope = 'repo'\nkey = 'absent'\n"] {
             std::fs::write(&config, configured).unwrap();
             let result = handle_tool_call(json!({"name":"alinery_create_task","arguments":{"name":"Invalid"}}), repo.to_str().unwrap(), Some(&config));
             assert!(text_content(&result).starts_with("error:"), "{result}");

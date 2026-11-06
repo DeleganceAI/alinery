@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/settings.proto.
  */
 export const file_alinery_v1_settings: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIogBChVXcml0ZU92ZXJyaWRlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiwKCW92ZXJyaWRlcxgCIAEoCzIZLmFsaW5lcnkudjEuUmVwb092ZXJyaWRlcxIZChFleHBlY3RlZF9yZXZpc2lvbhgDIAEoBCI+ChZXcml0ZU92ZXJyaWRlc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiaAoUQ2xlYXJPdmVycmlkZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEg0KBWZpZWxkGAIgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAMgASgEIj0KFUNsZWFyT3ZlcnJpZGVSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIjwKEkVuc3VyZVJlYWR5UmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGEiOwoTRW5zdXJlUmVhZHlSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkMsABCg9TZXR0aW5nc1NlcnZpY2USVwoOV3JpdGVPdmVycmlkZXMSIS5hbGluZXJ5LnYxLldyaXRlT3ZlcnJpZGVzUmVxdWVzdBoiLmFsaW5lcnkudjEuV3JpdGVPdmVycmlkZXNSZXNwb25zZRJUCg1DbGVhck92ZXJyaWRlEiAuYWxpbmVyeS52MS5DbGVhck92ZXJyaWRlUmVxdWVzdBohLmFsaW5lcnkudjEuQ2xlYXJPdmVycmlkZVJlc3BvbnNlMl0KC1JlcG9TZXJ2aWNlEk4KC0Vuc3VyZVJlYWR5Eh4uYWxpbmVyeS52MS5FbnN1cmVSZWFkeVJlcXVlc3QaHy5hbGluZXJ5LnYxLkVuc3VyZVJlYWR5UmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities]);
+  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIogBChVXcml0ZU92ZXJyaWRlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiwKCW92ZXJyaWRlcxgCIAEoCzIZLmFsaW5lcnkudjEuUmVwb092ZXJyaWRlcxIZChFleHBlY3RlZF9yZXZpc2lvbhgDIAEoBCI+ChZXcml0ZU92ZXJyaWRlc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiaAoUQ2xlYXJPdmVycmlkZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEg0KBWZpZWxkGAIgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAMgASgEIj0KFUNsZWFyT3ZlcnJpZGVSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIl0KG1dyaXRlSG9zdGVkSW5mZXJlbmNlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESFgoOaW5mZXJlbmNlX2pzb24YAiABKAkiHgocV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXNwb25zZSI8ChJFbnN1cmVSZWFkeVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIjsKE0Vuc3VyZVJlYWR5UmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDKrAgoPU2V0dGluZ3NTZXJ2aWNlElcKDldyaXRlT3ZlcnJpZGVzEiEuYWxpbmVyeS52MS5Xcml0ZU92ZXJyaWRlc1JlcXVlc3QaIi5hbGluZXJ5LnYxLldyaXRlT3ZlcnJpZGVzUmVzcG9uc2USVAoNQ2xlYXJPdmVycmlkZRIgLmFsaW5lcnkudjEuQ2xlYXJPdmVycmlkZVJlcXVlc3QaIS5hbGluZXJ5LnYxLkNsZWFyT3ZlcnJpZGVSZXNwb25zZRJpChRXcml0ZUhvc3RlZEluZmVyZW5jZRInLmFsaW5lcnkudjEuV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXF1ZXN0GiguYWxpbmVyeS52MS5Xcml0ZUhvc3RlZEluZmVyZW5jZVJlc3BvbnNlMl0KC1JlcG9TZXJ2aWNlEk4KC0Vuc3VyZVJlYWR5Eh4uYWxpbmVyeS52MS5FbnN1cmVSZWFkeVJlcXVlc3QaHy5hbGluZXJ5LnYxLkVuc3VyZVJlYWR5UmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities]);
 
 /**
  * @generated from message alinery.v1.WriteOverridesRequest
@@ -113,6 +113,46 @@ export const ClearOverrideResponseSchema: GenMessage<ClearOverrideResponse> = /*
   messageDesc(file_alinery_v1_settings, 3);
 
 /**
+ * The hosted-inference credential (S4.11, R-S4.11-5). The shell mints and refreshes the token (it holds the account)
+ * and sends the whole `inference.json` here; the daemon writes it, owner-only, beside its own app config, so a
+ * daemon on another host gets a fresh token without a file push. ADMIN: it is a credential. The body must parse
+ * as an inference file (a token, an expiry, a catalog); anything else is INVALID_ARGUMENT and nothing is written.
+ *
+ * @generated from message alinery.v1.WriteHostedInferenceRequest
+ */
+export type WriteHostedInferenceRequest = Message<"alinery.v1.WriteHostedInferenceRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string inference_json = 2;
+   */
+  inferenceJson: string;
+};
+
+/**
+ * Describes the message alinery.v1.WriteHostedInferenceRequest.
+ * Use `create(WriteHostedInferenceRequestSchema)` to create a new message.
+ */
+export const WriteHostedInferenceRequestSchema: GenMessage<WriteHostedInferenceRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 4);
+
+/**
+ * @generated from message alinery.v1.WriteHostedInferenceResponse
+ */
+export type WriteHostedInferenceResponse = Message<"alinery.v1.WriteHostedInferenceResponse"> & {
+};
+
+/**
+ * Describes the message alinery.v1.WriteHostedInferenceResponse.
+ * Use `create(WriteHostedInferenceResponseSchema)` to create a new message.
+ */
+export const WriteHostedInferenceResponseSchema: GenMessage<WriteHostedInferenceResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 5);
+
+/**
  * Idempotent: `.alinery/`, the `.gitignore` entry, `harnesses.toml` and `config.toml`, each created only when missing.
  *
  * @generated from message alinery.v1.EnsureReadyRequest
@@ -129,7 +169,7 @@ export type EnsureReadyRequest = Message<"alinery.v1.EnsureReadyRequest"> & {
  * Use `create(EnsureReadyRequestSchema)` to create a new message.
  */
 export const EnsureReadyRequestSchema: GenMessage<EnsureReadyRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 4);
+  messageDesc(file_alinery_v1_settings, 6);
 
 /**
  * @generated from message alinery.v1.EnsureReadyResponse
@@ -146,7 +186,7 @@ export type EnsureReadyResponse = Message<"alinery.v1.EnsureReadyResponse"> & {
  * Use `create(EnsureReadyResponseSchema)` to create a new message.
  */
 export const EnsureReadyResponseSchema: GenMessage<EnsureReadyResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 5);
+  messageDesc(file_alinery_v1_settings, 7);
 
 /**
  * Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
@@ -174,6 +214,16 @@ export const SettingsService: GenService<{
     methodKind: "unary";
     input: typeof ClearOverrideRequestSchema;
     output: typeof ClearOverrideResponseSchema;
+  },
+  /**
+   * ADMIN
+   *
+   * @generated from rpc alinery.v1.SettingsService.WriteHostedInference
+   */
+  writeHostedInference: {
+    methodKind: "unary";
+    input: typeof WriteHostedInferenceRequestSchema;
+    output: typeof WriteHostedInferenceResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_settings, 0);
