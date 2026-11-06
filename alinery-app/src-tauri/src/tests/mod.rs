@@ -55,10 +55,6 @@ mod update;
 // never stomp on each other's active repo.
 static ACTIVE_REPO_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-// settings and omp_update both mutate ALINERY_OMP_PATH. Separate mutexes do not
-// serialize each other, so parallel lib tests were clobbering the path.
-pub(crate) static OMP_ENV_LOCK: Mutex<()> = Mutex::new(());
-
 pub(crate) use alinery_core::http::accept_for_test;
 
 // Real `git init` + one empty commit so `git checkout -b` has a HEAD to fork from.

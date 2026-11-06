@@ -42,7 +42,6 @@ vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    listHarnessModelsForRepo: async () => [],
   }),
 );
 

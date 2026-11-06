@@ -196,59 +196,9 @@ fn active_daemon(state: &AppState) -> Result<alinery_core::daemon_client::Daemon
 }
 
 #[tauri::command]
-pub(crate) async fn provider_catalog(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("provider catalog", move || daemon.provider_catalog()).await
-}
-
-#[tauri::command]
 pub(crate) async fn vinculum_customizations(state: State<'_, AppState>) -> Result<alinery_core::daemon_client::VinculumCustomizations, String> {
     let daemon = active_daemon(&state)?;
     off_main_thread("vinculum customizations", move || daemon.vinculum_customizations()).await
-}
-
-#[tauri::command]
-pub(crate) async fn provider_logout(state: State<'_, AppState>, provider: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("provider logout", move || daemon.provider_logout(&provider)).await
-}
-
-#[tauri::command]
-pub(crate) async fn provider_login_start(state: State<'_, AppState>, provider: String, method: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("provider login", move || daemon.provider_login_start(&provider, &method)).await
-}
-
-#[tauri::command]
-pub(crate) async fn provider_login_poll(state: State<'_, AppState>, login_id: String) -> Result<alinery_core::daemon_client::ProviderLoginStatus, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("provider login poll", move || daemon.provider_login_poll(&login_id)).await
-}
-
-#[tauri::command]
-pub(crate) async fn provider_login_reply(state: State<'_, AppState>, login_id: String, value: String, cancel: bool) -> Result<(), String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("provider login reply", move || daemon.provider_login_reply(&login_id, &value, cancel)).await
-}
-
-#[tauri::command]
-pub(crate) async fn custom_provider_save(
-    state: State<'_, AppState>,
-    id: String,
-    name: String,
-    base_url: String,
-    api_key: String,
-    keep_key: bool,
-    models: Vec<String>,
-) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("custom provider", move || daemon.custom_provider_save(&id, &name, &base_url, &api_key, keep_key, &models)).await
-}
-
-#[tauri::command]
-pub(crate) async fn custom_provider_delete(state: State<'_, AppState>, id: String) -> Result<alinery_core::daemon_client::ProviderCatalog, String> {
-    let daemon = active_daemon(&state)?;
-    off_main_thread("custom provider delete", move || daemon.custom_provider_delete(&id)).await
 }
 
 /// Hosted inference is refreshed on this machine before the daemon spawns a hosted-model chat thread: the daemon

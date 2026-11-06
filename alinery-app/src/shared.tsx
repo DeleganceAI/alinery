@@ -13,6 +13,7 @@ import { deriveModelRows } from "./modelFavorites";
 import { parseRemoteRepo, repoDisplayPath } from "./remoteRepo";
 import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
 import { useTaskActivityMap } from "./sync/board";
+import { listModels } from "./sync/providers";
 import { killSession } from "./sync/sessions";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
@@ -1239,7 +1240,7 @@ export function StatusMarker({
 // A parent that already batches status may provide `live`; standalone uses retain their poller.
 // `repoPath` makes the kill repository-explicit; omitting it (the drawer's root session, which
 // has no per-repo identity) falls back to the active-repo command — same idiom as
-// listHarnessModelsForRepo below.
+// the model list's optional repository (`listModels`).
 export function KillButton({
   id,
   slug,
@@ -1498,9 +1499,8 @@ export function ModelInput({
     const request = ++discoveryRequestRef.current;
     waitingDiscoveryRef.current = null;
     setBusy(true);
-    // Was a runtime-selected command name plus a matching payload shape. Neither the
-    // command nor its arguments were reachable by any static check that way.
-    (repoPath ? ipc.listHarnessModelsForRepo(repoPath, harness) : ipc.listHarnessModels(harness))
+    // The daemon of `repoPath` (else the active repository) lists its own host's models.
+    listModels(harness, repoPath)
       .then((next) => {
         if (discoveryRequestRef.current !== request) return;
         setModels(next);

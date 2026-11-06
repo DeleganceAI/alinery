@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   accountRefresh: vi.fn(),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
+// The catalog is the host daemon's ProviderService (sync/providers).
+vi.mock("../sync/providers", () => ({ providerCatalog: mocks.providerCatalog }));
 // The model roles are the host daemon's (sync/agent).
 vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
 

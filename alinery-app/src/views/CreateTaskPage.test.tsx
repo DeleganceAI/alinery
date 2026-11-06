@@ -137,11 +137,13 @@ const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, sele
 vi.mock("../ipc", () =>
   mockIpc({
     connectionStatuses: vi.fn(async () => []),
-    listHarnessModelsForRepo: vi.fn(async () => []),
     getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
 
+const listModels = vi.hoisted(() => vi.fn(async () => [] as string[]));
+// The model list is the daemon's ProviderService (sync/providers), not ipc.
+vi.mock("../sync/providers", () => ({ listModels }));
 // The source branches are the daemon's GitService (sync/git), not ipc.
 vi.mock("../sync/git", () => ({ taskSourceBranchesForRepo }));
 // The import's repository facts (origin URL, token override) come from the daemon (sync/imports.test.ts); here the request is what the page sends.
@@ -242,7 +244,7 @@ describe("provider imports", () => {
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
 
     expect(ipc.connectionStatuses).not.toHaveBeenCalled();
-    expect(ipc.listHarnessModelsForRepo).not.toHaveBeenCalled();
+    expect(listModels).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Initial harness")).toBeNull();
     expect(screen.queryByLabelText("Harness")).toBeNull();
     expect(screen.getByRole("button", { name: "GitHub" })).toBeDefined();

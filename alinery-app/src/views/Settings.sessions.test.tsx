@@ -69,8 +69,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: mocks.readGlobalSettings,
     writeGlobalSettings: mocks.writeGlobalSettings,
-    listHarnessModels: async () => [],
-    listHarnessModelsForRepo: async () => [],
     getVersion: async () => "0.0.0",
     writeAppearance: mocks.writeAppearance,
   }),

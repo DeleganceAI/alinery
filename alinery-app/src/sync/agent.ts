@@ -2,35 +2,19 @@
 // for an outside AI. The directory is the daemon's on every host, so a repository on another machine shows and edits that machine's.
 // Which daemon: the repository a call names; with none, the active repository, else the first local one the app knows. What stays on
 // this machine is the Finder window and the file picker (`ipc`); a picked skill reaches the daemon as a staged upload.
-import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import { createClient } from "@connectrpc/connect";
 import { AgentService } from "alinery-proto/alinery/v1/agent_pb";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
 import type { SkillInstall, VinculumCustomizations } from "../types";
+import { agentHost, call } from "./hostCall";
 import { newMutationMeta } from "./mutation";
-import { NoLibraryHost } from "./playbooks";
 import { upload } from "./tasks";
 
+export { agentHost };
+
 const agent = (host: string) => createClient(AgentService, daemonTransport(host));
-
-async function call<T>(f: () => Promise<T>): Promise<T> {
-  try {
-    return await f();
-  } catch (e) {
-    const err = ConnectError.from(e);
-    throw new Error(err.code === Code.Unavailable && err.rawMessage === "" ? "the daemon is not reachable" : err.rawMessage);
-  }
-}
-
-/** The repository whose host's agent directory a call without a repository means. */
-export async function agentHost(repo?: string): Promise<string> {
-  if (repo) return repo;
-  const config = await ipc.readAppConfig();
-  const host = config.active_repo || config.known_repos.find((known) => !isRemoteRepo(known));
-  if (!host) throw new NoLibraryHost();
-  return host;
-}
 
 /** True when the directory is on this machine, so the Finder can show it. */
 export const agentDirIsLocal = (host: string) => !isRemoteRepo(host);

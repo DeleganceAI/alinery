@@ -20,6 +20,7 @@ vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import(
 const playbookMock = vi.hoisted(() => ({ readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>() }));
 vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookMock }));
 vi.mock("../sync/git", () => ({ listTaskPullRequests: async () => ({}) }));
+vi.mock("../sync/providers", () => ({ listModels: async () => ["anthropic/claude-sonnet-4-5"] }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
@@ -113,8 +114,6 @@ beforeEach(() => {
     telemetry: { enabled: false, prompted: false, install_id: "", endpoint: "" },
   });
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
-  vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
-  vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
 });
 
 afterEach(() => {

@@ -913,7 +913,8 @@ pub fn clear_local_harness_overrides(repo: &Path) -> Result<(), String> {
 }
 
 // `models_cmd` is the one harness field that is executed as a shell pipeline rather than as an
-// argv (see `list_harness_models_in`, which runs it under `$SHELL -ilc`). `.alinery/harnesses.toml`
+// argv (the shell ran it under `$SHELL -ilc` until S4.12 moved model lists to the daemon, which runs no
+// pipeline; the guard stays so the field cannot become one again). `.alinery/harnesses.toml`
 // lives inside the repository, so it arrives with a clone — an untrusted repo that could set this
 // field would get arbitrary execution the moment the model picker refreshed, with no launch and no
 // prompt. A repo may still overlay every other field; it just cannot supply the shell string.

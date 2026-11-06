@@ -54,7 +54,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 36;
+const PROTOCOL = 37;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -946,65 +946,6 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     }
     return;
   }
-  if (
-    op === "provider_catalog" ||
-    op === "provider_logout" ||
-    op === "provider_login_start" ||
-    op === "provider_login_poll" ||
-    op === "provider_login_reply" ||
-    op === "custom_provider_save" ||
-    op === "custom_provider_delete"
-  ) {
-    try {
-      if (op === "provider_catalog") {
-        reply(socket, await providers.catalog());
-        return;
-      }
-      if (op === "provider_logout") {
-        reply(socket, await providers.logout(typeof header.provider === "string" ? header.provider : ""));
-        return;
-      }
-      if (op === "provider_login_start") {
-        const method = header.method === "oauth" ? "oauth" : header.method === "api_key" ? "api_key" : "";
-        if (!method) {
-          reply(socket, { error: "login method must be api_key or oauth" });
-          return;
-        }
-        reply(socket, providers.startLogin(typeof header.provider === "string" ? header.provider : "", method));
-        return;
-      }
-      if (op === "provider_login_poll") {
-        reply(socket, providers.pollLogin(typeof header.login_id === "string" ? header.login_id : ""));
-        return;
-      }
-      if (op === "provider_login_reply") {
-        const loginId = typeof header.login_id === "string" ? header.login_id : "";
-        if (header.cancel === true) providers.cancelLogin(loginId);
-        else providers.replyLogin(loginId, typeof header.value === "string" ? header.value : "");
-        reply(socket, { ok: true });
-        return;
-      }
-      if (op === "custom_provider_delete") {
-        reply(socket, await providers.deleteCustom(typeof header.id === "string" ? header.id : ""));
-        return;
-      }
-      const typedKey = typeof header.api_key === "string" ? header.api_key.trim() : "";
-      reply(
-        socket,
-        await providers.saveCustom({
-          id: typeof header.id === "string" ? header.id : "",
-          name: typeof header.name === "string" ? header.name : "",
-          baseUrl: typeof header.base_url === "string" ? header.base_url : "",
-          apiKey: typedKey || undefined,
-          clearKey: !typedKey && header.keep_key !== true,
-          models: Array.isArray(header.models) ? header.models.filter((model): model is string => typeof model === "string") : [],
-        }),
-      );
-    } catch (error) {
-      reply(socket, { error: error instanceof Error ? error.message : String(error) });
-    }
-    return;
-  }
   if (op === "ui_control") {
     const host = process.env.ALINERY_HOST_EXECUTABLE;
     if (!uiSecretMatches(header.secret)) {
@@ -1250,6 +1191,7 @@ await serveRpc({
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
   agent: { appConfig, blobs: taskDeps.blobs },
+  providers: { providers, repo, appConfig },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);

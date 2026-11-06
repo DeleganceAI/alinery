@@ -122,7 +122,6 @@ vi.mock("./ipc", () =>
     initPickedFolder: mocks.initPickedFolder,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
-    listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
   }),
 );

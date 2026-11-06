@@ -175,14 +175,14 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 36 current).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 37 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
 /// Protocol 18 dropped the OMP process ops. Shutdown is still
-/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 36 daemons' handler
+/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 37 daemons' handler
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
-/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls and 36 `SettingsService.WriteHostedInference`, and each left this op alone.
+/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` and 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire), and each left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.
@@ -358,13 +358,6 @@ pub mod ops {
     pub const ABORT: &str = "abort";
     pub const SET_MODEL: &str = "set_model";
     pub const SET_THINKING_LEVEL: &str = "set_thinking_level";
-    pub const PROVIDER_CATALOG: &str = "provider_catalog";
-    pub const PROVIDER_LOGOUT: &str = "provider_logout";
-    pub const PROVIDER_LOGIN_START: &str = "provider_login_start";
-    pub const PROVIDER_LOGIN_POLL: &str = "provider_login_poll";
-    pub const PROVIDER_LOGIN_REPLY: &str = "provider_login_reply";
-    pub const CUSTOM_PROVIDER_SAVE: &str = "custom_provider_save";
-    pub const CUSTOM_PROVIDER_DELETE: &str = "custom_provider_delete";
     pub const VINCULUM_CUSTOMIZATIONS: &str = "vinculum_customizations";
 }
 
@@ -451,30 +444,6 @@ pub struct SessionControls {
     pub thinking_levels: Vec<String>,
 }
 
-pub fn provider_catalog_request() -> Value {
-    json!({"op": ops::PROVIDER_CATALOG})
-}
-
-pub fn provider_logout_request(provider: &str) -> Value {
-    json!({"op": ops::PROVIDER_LOGOUT, "provider": provider})
-}
-
-pub fn provider_login_start_request(provider: &str, method: &str) -> Value {
-    json!({"op": ops::PROVIDER_LOGIN_START, "provider": provider, "method": method})
-}
-
-pub fn provider_login_poll_request(login_id: &str) -> Value {
-    json!({"op": ops::PROVIDER_LOGIN_POLL, "login_id": login_id})
-}
-
-pub fn provider_login_reply_request(login_id: &str, value: &str, cancel: bool) -> Value {
-    json!({"op": ops::PROVIDER_LOGIN_REPLY, "login_id": login_id, "value": value, "cancel": cancel})
-}
-
-pub fn custom_provider_save_request(id: &str, name: &str, base_url: &str, api_key: &str, keep_key: bool, models: &[String]) -> Value {
-    json!({"op": ops::CUSTOM_PROVIDER_SAVE, "id": id, "name": name, "base_url": base_url, "api_key": api_key, "keep_key": keep_key, "models": models})
-}
-
 pub fn vinculum_customizations_request() -> Value {
     json!({"op": ops::VINCULUM_CUSTOMIZATIONS})
 }
@@ -493,121 +462,6 @@ pub struct VinculumMcpServer {
 pub struct VinculumCustomizations {
     pub tools: Vec<String>,
     pub servers: Vec<VinculumMcpServer>,
-}
-
-pub fn custom_provider_delete_request(id: &str) -> Value {
-    json!({"op": ops::CUSTOM_PROVIDER_DELETE, "id": id})
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLoginRow {
-    pub id: String,
-    pub name: String,
-    pub authenticated: bool,
-    #[serde(default)]
-    pub stored: bool,
-    pub api_key: bool,
-    pub oauth: bool,
-    #[serde(default)]
-    pub api_key_name: String,
-    #[serde(default)]
-    pub oauth_name: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderModelRow {
-    pub provider: String,
-    pub id: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CustomProviderRow {
-    pub id: String,
-    pub name: String,
-    pub base_url: String,
-    pub has_key: bool,
-    pub models: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderCatalog {
-    pub providers: Vec<ProviderLoginRow>,
-    pub models: Vec<ProviderModelRow>,
-    #[serde(default)]
-    pub custom: Vec<CustomProviderRow>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLoginOption {
-    pub id: String,
-    pub label: String,
-    #[serde(default)]
-    pub description: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLoginPrompt {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub message: String,
-    #[serde(default)]
-    pub placeholder: String,
-    #[serde(default)]
-    pub options: Vec<ProviderLoginOption>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ProviderLoginEvent {
-    Info {
-        message: String,
-        #[serde(default)]
-        links: Vec<ProviderLoginLink>,
-    },
-    AuthUrl {
-        url: String,
-        #[serde(default)]
-        instructions: String,
-    },
-    DeviceCode {
-        #[serde(rename = "userCode")]
-        user_code: String,
-        #[serde(rename = "verificationUri")]
-        verification_uri: String,
-        #[serde(default, rename = "intervalSeconds")]
-        interval_seconds: Option<u64>,
-        #[serde(default, rename = "expiresInSeconds")]
-        expires_in_seconds: Option<u64>,
-    },
-    Progress {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct ProviderLoginLink {
-    pub url: String,
-    #[serde(default)]
-    pub label: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLoginStatus {
-    pub login_id: String,
-    pub status: String,
-    #[serde(default)]
-    pub prompt: Option<ProviderLoginPrompt>,
-    #[serde(default)]
-    pub events: Vec<ProviderLoginEvent>,
-    #[serde(default)]
-    pub failure: String,
 }
 
 pub struct OpenRequest<'a> {
@@ -1132,34 +986,6 @@ impl DaemonClient {
         session_controls(self.call(&as_chat(set_thinking_level_request(id, level)))?)
     }
 
-    pub fn provider_catalog(&self) -> Result<ProviderCatalog, String> {
-        typed_reply(self.call(&provider_catalog_request())?)
-    }
-
-    pub fn provider_logout(&self, provider: &str) -> Result<ProviderCatalog, String> {
-        typed_reply(self.call(&provider_logout_request(provider))?)
-    }
-
-    pub fn provider_login_start(&self, provider: &str, method: &str) -> Result<ProviderLoginStatus, String> {
-        typed_reply(self.call(&provider_login_start_request(provider, method))?)
-    }
-
-    pub fn provider_login_poll(&self, login_id: &str) -> Result<ProviderLoginStatus, String> {
-        typed_reply(self.call(&provider_login_poll_request(login_id))?)
-    }
-
-    pub fn provider_login_reply(&self, login_id: &str, value: &str, cancel: bool) -> Result<(), String> {
-        self.call(&provider_login_reply_request(login_id, value, cancel)).and_then(expect_ok)
-    }
-
-    pub fn custom_provider_save(&self, id: &str, name: &str, base_url: &str, api_key: &str, keep_key: bool, models: &[String]) -> Result<ProviderCatalog, String> {
-        typed_reply(self.call(&custom_provider_save_request(id, name, base_url, api_key, keep_key, models))?)
-    }
-
-    pub fn custom_provider_delete(&self, id: &str) -> Result<ProviderCatalog, String> {
-        typed_reply(self.call(&custom_provider_delete_request(id))?)
-    }
-
     pub fn vinculum_customizations(&self) -> Result<VinculumCustomizations, String> {
         typed_reply(self.call(&vinculum_customizations_request())?)
     }
@@ -1646,7 +1472,6 @@ mod tests {
         assert_eq!(abort_request("s1"), json!({"op": "abort", "id": "s1"}));
         assert_eq!(set_model_request("s1", "xai/grok-4.6"), json!({"op": "set_model", "id": "s1", "model": "xai/grok-4.6"}));
         assert_eq!(set_thinking_level_request("s1", "high"), json!({"op": "set_thinking_level", "id": "s1", "level": "high"}));
-        assert_eq!(provider_catalog_request(), json!({"op": "provider_catalog"}));
         assert_eq!(vinculum_customizations_request(), json!({"op": "vinculum_customizations"}));
         let customizations: VinculumCustomizations = serde_json::from_value(json!({
             "tools": ["read", "bash"],
@@ -1655,29 +1480,6 @@ mod tests {
         .unwrap();
         assert!(customizations.servers[0].builtin);
         assert_eq!(customizations.servers[0].error.as_deref(), Some("bundled alinery-mcp was not found"));
-        assert_eq!(
-            provider_login_start_request("anthropic", "oauth"),
-            json!({"op": "provider_login_start", "provider": "anthropic", "method": "oauth"})
-        );
-        assert_eq!(provider_login_reply_request("login", "secret", false)["cancel"], false);
-        let catalog: ProviderCatalog = serde_json::from_value(json!({
-            "providers": [{"id": "groq", "name": "Groq", "authenticated": false, "apiKey": true, "oauth": false}],
-            "models": [{"provider": "alinery", "id": "DeepSeek-V4.1-Flash"}],
-            "custom": [{"id": "local", "name": "Local", "baseUrl": "http://127.0.0.1:11434/v1", "hasKey": false, "models": ["llama"]}]
-        }))
-        .unwrap();
-        assert_eq!(catalog.providers[0].id, "groq");
-        assert!(catalog.providers[0].api_key);
-        assert_eq!(catalog.custom[0].base_url, "http://127.0.0.1:11434/v1");
-        let status: ProviderLoginStatus = serde_json::from_value(json!({
-            "loginId": "l1",
-            "status": "prompt",
-            "prompt": {"type": "secret", "message": "Enter Groq API key"},
-            "events": [{"type": "auth_url", "url": "https://example.com/device"}]
-        }))
-        .unwrap();
-        assert_eq!(status.prompt.unwrap().kind, "secret");
-        assert!(matches!(status.events[0], ProviderLoginEvent::AuthUrl { .. }));
         let controls: SessionControls = serde_json::from_value(json!({"ok": true, "model": "xai/grok-4.6", "thinking": "low", "thinking_levels": ["off", "low"]})).unwrap();
         assert_eq!(controls.thinking, "low");
     }

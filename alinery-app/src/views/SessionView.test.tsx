@@ -116,6 +116,8 @@ const initialTree: ArtifactTreeNode[] = [
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../sync/agent", () => ({ writeModelRoles }));
+// The provider catalog and sign-in are the host daemon's ProviderService (sync/providers), not ipc.
+vi.mock("../sync/providers", () => ({ providerCatalog, listModels: async () => [] }));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
@@ -128,7 +130,6 @@ vi.mock("../ipc", () =>
     sessionAbort,
     sessionSetModel,
     sessionSetThinkingLevel,
-    providerCatalog,
     openUrl,
     pickAttachmentFilesDialog,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),

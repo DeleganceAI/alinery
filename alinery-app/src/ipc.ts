@@ -22,7 +22,6 @@
 // Add a wrapper when a view needs one, not before.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
 import type { SessionControls, VinculumTranscript } from "./chatTranscript";
 import type { DaemonRpc, DaemonRpcCancel } from "./daemon/bridgeFetch";
 import type {
@@ -197,20 +196,10 @@ export const openSession = (a: {
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
 export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
-export const providerCatalog = () => invoke<ProviderCatalog>("provider_catalog");
-export const providerLogout = (provider: string) => invoke<ProviderCatalog>("provider_logout", { provider });
-export const providerLoginStart = (provider: string, method: "api_key" | "oauth") => invoke<ProviderLoginStatus>("provider_login_start", { provider, method });
-export const providerLoginPoll = (loginId: string) => invoke<ProviderLoginStatus>("provider_login_poll", { loginId });
-export const providerLoginReply = (loginId: string, value: string, cancel: boolean) => invoke<void>("provider_login_reply", { loginId, value, cancel });
-export const customProviderSave = (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) =>
-  invoke<ProviderCatalog>("custom_provider_save", input);
-export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 
 // ── settings.rs ───────────────────────────────────────────────────────
-export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
 export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
-export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
 export const readGlobalSettings = () => invoke<GlobalSettings>("read_global_settings");
 export const readModelFavorites = (harness: string) => invoke<string[]>("read_model_favorites", { harness });
 export const setModelFavorite = (harness: string, model: string, favorite: boolean) => invoke<string[]>("set_model_favorite", { harness, model, favorite });

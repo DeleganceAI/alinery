@@ -13,6 +13,7 @@ import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb"
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
+import { ProviderService } from "alinery-proto/alinery/v1/providers_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { type SubscribeRequest, type SubscribeResponse, SubscribeResponseSchema, SyncService } from "alinery-proto/alinery/v1/sync_pb";
@@ -29,6 +30,7 @@ export type Services = {
   jobs: Partial<ServiceImpl<typeof JobService>>;
   backups: Partial<ServiceImpl<typeof BackupService>>;
   agent: Partial<ServiceImpl<typeof AgentService>>;
+  providers: Partial<ServiceImpl<typeof ProviderService>>;
 };
 
 export function daemonHarness(services: Partial<Services>) {
@@ -44,6 +46,7 @@ export function daemonHarness(services: Partial<Services>) {
     if (services.jobs) router.service(JobService, services.jobs);
     if (services.backups) router.service(BackupService, services.backups);
     if (services.agent) router.service(AgentService, services.agent);
+    if (services.providers) router.service(ProviderService, services.providers);
   });
   return { transport };
 }

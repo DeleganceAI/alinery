@@ -924,7 +924,6 @@ describe("Playbooks navigation", () => {
       head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
       selected: null,
     });
-    vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
     vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
