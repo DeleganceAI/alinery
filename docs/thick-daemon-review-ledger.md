@@ -551,6 +551,84 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Accept 1 and the two `RepoOp`s:** unchanged, R-S4.4-1 and R-S4.4-2.
 - **Files:** `vinculum-daemon/src/domain/chat.ts`, `rpc/chat.ts`, `domain/chat.test.ts`, `rpc/sessionWrites.test.ts`.
 
+### R-S4.5-1: artifacts, attachments, comments, drafts and pending marks are per-task entity rows
+- **Kind:** decision (the plan: "artifact metadata and comments are entities in the task scope").
+- **What:** in the task scope the daemon publishes `artifact/<slug>/<name>` (with `position`, the playbook order, and the `handoffs` records), `attachment/<slug>/<name>`, `comment/<slug>/<artifact>/<id>`, `comment_draft/<slug>/<artifact>/<anchor>`, `review_pending/<slug>/<artifact>` and `artifact_tree/<slug>/<slug>`. The `ArtifactProjector` (`vinculum-daemon/src/domain/artifactProjector.ts`) recomputes a task's rows whenever the watcher reports a change under its `artifacts/` or the comment files, and the daemon's own writes call `Feed.onChanged` so a write is visible before the watcher fires. The scan never sees `artifacts/attachments/` for the artifact rows (attachments are their own rows). The frontend reads them with `useTaskArtifacts(repo, slug)` and keeps the old row shapes (`ArtifactItem`, `ArtifactComment`...), so views changed little.
+- **Options:** (a) one `artifacts` entity per task holding a list; (b) per-artifact rows (chosen); (c) leave the scan as a RepoOp. (b) lets a single comment or artifact change be one put and keeps `expected_revision` per row.
+- **Reverse:** merge the rows into one entity in the projector and the mappers in `sync/artifacts.ts`; the conformance cases (`artifact_list`, `artifact_tree`, `artifact_comments`) pin the content.
+- **Files:** `vinculum-daemon/src/domain/artifact*.ts`, `artifactProjector.ts`, `alinery-app/src/sync/artifacts.ts`, `proto/alinery/v1/{entities,artifacts}.proto`.
+
+### R-S4.5-2: `ArtifactService` writes are ACT calls that settle before they reply
+- **Kind:** decision (migration rule on writes; 2.2.7).
+- **What:** `AddComment`, `SaveCommentDraft`, `DeleteCommentDraft`, `SendReview`, `ClearReviewPending`, `PrepareCommentsPrompt`, `PrepareReviewApproval`, `FinalizeMessageActions`, `InstallReviewHandoff`, `RecordOutboundHandoff` all take a `MutationMeta`, write, refresh the task's rows, and reply with `Applied{cursor}`; the frontend then waits with `whenReaches(replica, cursor)` (exported from `sync/execution.ts`) so a view that shows the result of a write sees it. A draft save may carry `expected_revision`; a stale one is ABORTED, which `sync/artifacts.ts` turns into `ArtifactConflict`. The two prompt calls are ACT, not reads, because they stamp the pending review state they hand back.
+- **Files:** `vinculum-daemon/src/rpc/artifacts.ts`, `rpc/artifacts.test.ts`, `alinery-app/src/sync/artifacts.ts`.
+
+### R-S4.5-3: `ReadBlob` for artifacts, tree nodes and step objects
+- **Kind:** decision and note.
+- **What:** `BlobService.ReadBlob` takes three more targets: `artifact` (task, name), `artifactNode` (task, node id; the tree's id maps to a file under the task) and `stepObject` (task, execution id, sha256). Frames are at most 64 KiB (`ARTIFACT_FRAME_BYTES`, WA; other blob targets keep `CHUNK_BYTES`, 256 KiB), so a 20 MB file is about 320 frames. A symlink on the way, or a node that stopped being a regular file, is PERMISSION_DENIED (`DomainError("permission_denied")`, mapped in `rpc/errors.ts`) in `artifactFiles.ts`, `artifactTree.ts` and the step-object resolver. A step object whose bytes were pruned (archive, O27) answers NOT_FOUND with the message "pruned". The frontend assembles frames in `readArtifactText`, `readNodeText`, `readNodeBytes` and `readStepObject`.
+- **Files:** `vinculum-daemon/src/rpc/blobs.ts`, `domain/blobs.ts`, `rpc/artifacts.test.ts`, `alinery-app/src/sync/artifacts.ts`.
+
+### R-S4.5-4: three differences from the Rust scans, each deliberate
+- **Kind:** deviation (small, listed so the conformance cases are read with them in mind).
+- **1. The execution-driven artifact list.** `listArtifactsWithExecution` (`domain/artifactList.ts`) is a line-for-line port of `list_artifacts_with_execution_metadata`, but the Rust function was handed a `TaskExecutionState` that the Rust loader had validated, including the playbook definition identity recorded in `execution.json`. The TypeScript projector passes the records as the engine holds them (`getTaskExecution`, S4.2) and performs no identity re-check of its own. If the two ever disagree the list is built from the engine's state. Provisional: say so if you want the check ported.
+- **2. `pendingStatus` deletes a stale pending file on read.** The Rust `artifact_review_pending_status_for` already removed a pending marker whose artifact hash no longer matched; the TypeScript projector does the same inside the scan, so a read has a side effect on disk. Kept so the conformance case (`artifact_comments/lifecycle`) stays identical on both sides.
+- **3. The projector keeps the previous rows when a part cannot be read.** A comment file that is mid-write or unreadable (a half-written JSON) leaves the task's old comment rows in place and logs, rather than publishing an empty set that every window would show as "all comments deleted". The next change event tries again.
+- **Files:** `vinculum-daemon/src/domain/artifacts.ts`, `artifactProjector.ts`, `conformance/artifact_*`.
+
+### R-S4.5-5: the review handoff is orchestrated by the frontend across two daemons
+- **Kind:** decision (the plan: "review handoff and send become one daemon command each"; not met literally, a handoff needs two).
+- **What:** a handoff moves a review between two repos, each with its own daemon. The page (`sendReviewHandoff` in `sync/artifacts.ts`) reads the source artifact's text from the source's `ReadBlob`, calls `InstallReviewHandoff` on the target's daemon (which writes `review-handoff-NNN.md`, the inbound record, and starts the target session), then calls `RecordOutboundHandoff` on the source's. The same-machine rule and the source-archived rule are checked in the frontend before either call (`sameMachine`, replacing the shell's `same_machine`), because neither daemon can see the other's repo. A cross-machine handoff is refused with "both repositories must be on the same machine".
+- **Options:** (a) the target daemon dials the source daemon (a daemon-to-daemon wire we do not have); (b) frontend orchestration (chosen); (c) keep a shell command (not allowed by Exit).
+- **Reverse:** (a) needs a peer socket path in the target daemon; the install request already carries `source_text`, so the wire would shrink.
+- **Files:** `alinery-app/src/sync/artifacts.ts`, `vinculum-daemon/src/domain/handoff.ts`, `rpc/artifacts.ts`.
+
+### R-S4.5-6: handoff errors are listed, not thrown, after the target has its session
+- **Kind:** behaviour note.
+- **What:** `InstallReviewHandoff` replies with `started.errors` (the session start) and a separate `errors` list for the inbound record; `RecordOutboundHandoff` failing after the install is not rolled back (the target already has its artifact and session). The page result lists it as an `outbound_handoff_record` error beside the others, which `ReviewHandoffPage` shows, as it showed the shell's partial results. The tests pin this (`artifacts.test.tsx`: "a failed outbound record is listed beside the other errors, and the target keeps its session").
+- **Files:** `alinery-app/src/sync/artifacts.ts`, `views/ReviewHandoffPage.tsx`.
+
+### R-S4.5-7: the three telemetry events are sent by the daemon with source `alineryd`
+- **Kind:** note.
+- **What:** `artifact.comment_add`, `artifact.review_send` and `artifact.review_handoff` (with `target_phase` and `harness`) are recorded in `rpc/artifacts.ts` through `platform/telemetry.ts`. The handoff event is recorded by the **target** daemon, since that is the one that starts the session. The Rust `TelemetrySource::App` senders in the deleted `artifacts.rs` are gone. Conformance cases pin the records.
+- **Files:** `vinculum-daemon/src/rpc/artifacts.ts`, `platform/telemetry.ts`, `conformance/telemetry/*`.
+
+### R-S4.5-8: `PROTOCOL_VERSION` 30
+- **Kind:** note. The wire gained `ArtifactService`, three `BlobService` targets and the artifact entities. `audited_shutdown_protocol` accepts 30 (the `shutdown` op is unchanged). A host on 29 shows the daemon-conflict banner until restarted from it. The remote runtimes need a rebuild before the live remote tests mean anything. `check-protocol-version-bump.sh` reports 25 to 30.
+- **Files:** `alinery-core/src/{protocol,daemon_client}.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.5-9: Show in folder is done in the frontend from `reveal_path`, not by a shell command on a `BlobRef`
+- **Kind:** deviation from the Build bullet ("`artifact_node_path` and `artifact_comment_markdown_path_for` become a shell reveal of a `BlobRef`, hidden for remote repos"). Provisional.
+- **What:** the daemon already serves `reveal_path` (relative to `.alinery/`). The page asks for the host path of an artifact, a comment file or an attachment from `alineryFilePath` / `attachmentFilePath` (built on the repo path and the slug) and passes it to `revealPath`, which for a remote repo **copies the host path** to the clipboard and otherwise calls `ipc.revealItemInDir`. So no new Tauri command was needed and the three reveal commands (`attachment_path`, `artifact_node_path`, `artifact_comment_markdown_path_for`) are gone. A remote repo is not hidden: the button copies the path, which is what `revealPath` already did for the other views.
+- **Why:** a new command would only restate `revealItemInDir`, and the shell would have to keep a repo resolver for it.
+- **Reverse:** hide the button where `repoRef(...).kind === "remote"` (one condition in TaskDetail and the tree).
+- **Files:** `alinery-app/src/sync/artifacts.ts`, `revealPath.ts`, `views/TaskDetail.tsx`, `ArtifactTree.tsx`.
+
+### R-S4.5-10: the "after an artifact change" auto-backup no longer fires. A known gap until S4.9
+- **Kind:** regression, accepted for now; **needs your decision if you want it kept in the meantime.** Provisional.
+- **What:** the deleted `artifacts.rs` published `BackupTrigger::PostArtifactChange` (to `publish_auto_backup` locally and `publish_remote_backup` for a remote repo) after comment add, review send, archive of comments and pending clears. The daemon's artifact writes do not publish it; the backup queue is still in the shell until S4.9 ("the backup queue leaves the shell"). The remaining callers of the trigger are `backup_queue.rs` tests. The other two automatic triggers are unchanged. A user who relies on "back up after an artifact change" gets fewer backups until S4.9.
+- **Options:** (a) accept the gap until S4.9, which gives the daemon the queue (chosen); (b) a small shell command `publish_post_artifact_backup(repo)` that the frontend calls after the five write calls (about 30 lines, thrown away in S4.9); (c) have `ArtifactService` call back into the app (a wire from daemon to app we do not have).
+- **Why (a):** no wire change, nothing to unpick in S4.9, and the trigger is off by default. **Reverse:** do (b).
+- **Files:** `src/backup.rs`, `src/backup_queue.rs`, `vinculum-daemon/src/rpc/artifacts.ts`. Check: L-S4.5-e.
+
+### R-S4.5-11: what was deleted, what stayed, and one test seam
+- **Kind:** note (the Exit says "the 17 artifact and comment variants, the 25 commands and three pollers are gone").
+- **Counts differ from the plan's.** The shell lost **29 Tauri commands** (the 25 artifact ones, plus `prepare_review_approval_prompt` and `finalize_session_message_actions` which S4.4 left for this session, and `read_attachment_image` which S4.3 left) and **20 `RepoOp` variants** (not 17: the plan's list stopped at `SendReviewHandoff` and missed the attachment, tree-node and path variants). The enum, `run()` arms and round-trip test lost the same 20.
+- **Kept:** the `alinery-core` functions (`artifact_tree.rs`, `artifact_comments.rs`, the artifact half of `shared.rs`) stay as the Rust reference the conformance runners call and for `alinery-mcp` until S5.1 (same rule as R-S4.4-10). `owned_target` moved into `paths.rs` from the deleted module (other commands use it). `AGENTS.md` lost the `artifacts.rs` module row and `list_artifacts` from the commands list.
+- **Test seam:** the stalled-host live test used `list_artifacts` as "a command that must offload"; with it gone it uses `subtask_state`, now generic over the Tauri runtime so the test can call it with a mock handle (`<R: tauri::Runtime>(app: AppHandle<R>, ...)`). No behaviour change.
+- **Pollers:** the three pollers (`SessionView.tsx:719`, `:736` and `TaskDetail.tsx:580`) and the finalized-actions refresh are gone. `TaskDetail` keeps one 3 s poll, for `subtaskState`, which is S4.8's.
+- **Files:** `src/{lib,paths,session,task,remote,subtask}.rs`, `alinery-core/src/repo_service.rs`, `src/tests/*`.
+
+### R-S4.5-12: draft saves from the UI do not send `expected_revision`
+- **Kind:** note. The RPC supports it (Aborted -> `ArtifactConflict`, tested), the hook `useArtifactCommentDrafts` merges the live rows with a local overlay and saves without it, so two windows editing the same draft are last-writer-wins, as before. Turning it on needs a conflict UI the plan does not specify.
+- **Files:** `alinery-app/src/useArtifactCommentDrafts.ts`, `sync/artifacts.ts`.
+
+### R-S4.5-13: tests removed, gates, environment and flaky notes
+- **Removed Rust app tests** (they called deleted commands): all of `src/tests/artifacts.rs`, the artifact and handoff blocks in `tests/remote.rs` (including the retained-duplicate scratch block), the attachment-image and approval-prompt tests in `tests/session.rs` and `tests/task.rs`, and `retained_duplicate_fixture`. Coverage moved to the daemon (`rpc/artifacts.test.ts` (which also holds the `ReadBlob` and step-snapshot tests)), the conformance cases and `sync/artifacts.test.tsx`.
+- **Gates:** no allowlist entry named a removed command; `check-ipc-commands.sh` now counts 132 used of 136 registered.
+- **Environment:** a stale debug sidecar (`target/debug/alinery-vinculum-daemon` built before the protocol bump) fails `tests::daemon::two_legacy_owners_require_two_confirmations` with "binary not found beside the app" / a refused attach; `scripts/copy-sidecar.sh debug` fixes it. `check.sh` does that itself. The daemon's `node_modules/alinery-proto` is a copied directory, so after a proto regen run `rsync -a proto/gen/ alinery-app/src-tauri/vinculum-daemon/node_modules/alinery-proto/gen/` before `bun test`.
+- **Flaky tests:** none observed in this session (R-FLAKE-1 did not trip).
+- **Suggested README text (not edited):** after S4.5 the README's task paragraph could say that a task's artifacts, comments and review state are kept and watched by the repo's daemon, so a comment or an agent-written file shows in every window within a second, and a repository on another machine keeps them on that machine; a review can be sent only to a repository on the same machine.
+
 ---
 
 ## E. Known flaky tests

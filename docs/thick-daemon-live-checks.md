@@ -395,6 +395,55 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 29 (a host still on 28 shows the daemon-conflict banner and Restart daemon); the thread's worktree exists on the host under `.alinery/chat-worktrees/<id>` and is gone after the archive; the session list updates without a reload.
 - **Status:** open
 
+### L-S4.5-a: Show in folder for an artifact, a comment file and an attachment
+
+- **Session:** S4.5. Plan: S4.5 Build ("shell reveal of a `BlobRef`"); ledger R-S4.5-9.
+- **Steps:** Task detail on a local repo: use *Show in folder* on an artifact, on the archived comment file of a reviewed artifact, and on an attachment. Then on a remote repo (L-S1.3-b host): the same three.
+- **Expected:** local, Finder opens with the file selected, each time. Remote, nothing is revealed: the host path is copied to the clipboard and the page says so (the plan said the button is hidden for a remote repo; it is kept and copies the path instead, R-S4.5-9).
+- **Status:** open
+
+### L-S4.5-b: A review handoff across two real repositories
+
+- **Session:** S4.5. Plan: S4.5 Build ("review handoff and send become one daemon command each"); ledger R-S4.5-5, R-S4.5-6.
+- **Steps:** open two local repos in the app. In repo A, finish a review artifact in a task and use *Send to another repository* with a task in repo B, a target phase and a prompt note. Then repeat with a target in a repo on a remote host, and with the source task archived.
+- **Expected:** B's task gets `review-handoff-001.md` and a new session in the chosen phase that starts with the handoff text; both tasks list the handoff (inbound on B, outbound on A) in their artifact rows, with no reload. Local-to-remote is refused with a message that both repos must be on the same machine, before either daemon is asked. An archived source is refused. If A's daemon is stopped between the install and the outbound record, B keeps its session and the page lists an `outbound_handoff_record` error.
+- **Status:** open
+
+### L-S4.5-c: A comment or a draft from another window shows up live
+
+- **Session:** S4.5. Plan: S4.5 Tests ("a comment from another client appears with no poll").
+- **Steps:** open the same task in two windows of the same repo (or the app and a second app instance on a remote host). Add a line comment in one; start typing a draft comment in the other, then send the review from the first.
+- **Expected:** the comment, the draft and the pending-review marker appear in the other window within a second, with no 3 s lag and no reload. Sending the review archives the comment file, clears the comments, and the pending marker goes in both windows. Saving the same draft from both windows keeps the last writer's text (the UI sends no `expected_revision`, R-S4.5-12).
+- **Status:** open
+
+### L-S4.5-d: An agent's file write, a pasted attachment and an image node in the real app
+
+- **Session:** S4.5. Plan: S4.5 Accept 2 (the test passes; this is the view).
+- **Steps:** in a running task, `cp` a file to `.alinery/tasks/<slug>/artifacts/03-plan.md` from a shell. Open the artifact tree of a task that has a rendered image or HTML node and open it; open a PNG attachment and a text attachment (Task detail and the create page's attachment chips).
+- **Expected:** the artifact appears in the task's list within about a second and renders; node images and attachment previews load (bytes arrive through `ReadBlob`, no `read_attachment_image` command exists any more); a 20 MB file opens without freezing the window.
+- **Status:** open
+
+### L-S4.5-e: The "after an artifact change" auto-backup trigger no longer fires
+
+- **Session:** S4.5. Plan: S4.9; ledger R-S4.5-10. **A known gap, not a defect to fix in S4.5.**
+- **Steps:** in Settings, turn on automatic backups with the *after an artifact change* trigger and a destination. Add a comment, send a review, clear a pending review.
+- **Expected today:** no backup is queued by these writes (the trigger fired from the deleted `artifacts.rs`; the only callers left are `backup_queue.rs` tests). The other two triggers (before archive, after push or commit) still fire. After S4.9 the daemon's artifact writes must publish `PostArtifactChange` again; then this check should show one debounced backup per burst of changes.
+- **Status:** open (expected to fail until S4.9)
+
+### L-S4.5-f: Step history is readable, then pruned on archive
+
+- **Session:** S4.5. Plan: S4.5 Accept 3, O27. **The test passes; no view reads it yet.**
+- **Steps:** none in the UI. `readStepObject` (in `sync/artifacts.ts`) is called by no view; the daemon test `rpc/artifacts.test.ts` covers a step snapshot read after an edit and a restart, a symlink in `objects/` (PERMISSION_DENIED) and a pruned object (NOT_FOUND "pruned"). Re-run that test after any change to `BlobService`.
+- **Expected:** the history view that O27 asks for is a later session's UI; nothing to look at yet.
+- **Status:** open (nothing to run in the app)
+
+### L-S4.5-g: The Linux runtime with protocol 30
+
+- **Session:** S4.5. Plan: S4.5 (remote hosts); ledger R-S4.5-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b. The stall test (`tests::remote::live`) now asks `subtask_state`, not `list_artifacts` (L-S4.4-f's text is stale on this). Then on a remote repo: add a comment, save and delete a draft, send a review, open an artifact and an attachment.
+- **Expected:** the live tests pass against protocol 30 (a host on 29 shows the daemon-conflict banner and Restart daemon); every artifact view works on the remote repo through the repo's daemon, with the file reads served as `ReadBlob` frames over the forward.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
