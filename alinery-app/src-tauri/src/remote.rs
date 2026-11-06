@@ -2058,9 +2058,7 @@ impl RemoteManager {
     /// A `failed` status the supervisor will not retry. A wanted host with a retryable error is only
     /// between the drop and the next tick (or the end of an attempt and `reconnect_finished`).
     pub(crate) fn gave_up(&self, host_id: &str, status: &RemoteStatus) -> bool {
-        status.state == "failed"
-            && (!self.wanted.lock().unwrap_or_else(|e| e.into_inner()).contains(host_id)
-                || !status.error.as_deref().is_none_or(worth_retrying))
+        status.state == "failed" && (!self.wanted.lock().unwrap_or_else(|e| e.into_inner()).contains(host_id) || !status.error.as_deref().is_none_or(worth_retrying))
     }
 
     pub(crate) fn session(&self, host_id: &str) -> Option<std::sync::Arc<RemoteSession>> {

@@ -971,6 +971,12 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Fix:** the wait is now 600 x 50 ms (30 s) and the child is held in a kill-on-drop guard, so a panic cannot leak it. Reversal: restore the 100-iteration loop and the explicit `kill`/`wait`.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon_rpc.rs` (`a_takeover_is_bound_to_the_process_it_was_confirmed_for`).
 
+### R-FLAKE-3: `tests::daemon::takeover_*` (`TakeoverPeer::start`)
+- **Kind:** flaky (fixed).
+- **What:** same pattern as R-FLAKE-2. `TakeoverPeer::start` re-executes the test binary as a legacy daemon peer and waited 5 s for it to answer `version`. In the P6 review `takeover_reconfirms_changed_names_and_presented_version` failed with "legacy peer did not become queryable" in every full `cargo test -p alinery-app --lib` run and in `check.sh` (twice), and passed alone (3 of 3) and under `-- tests::daemon::`. The sibling `TakeoverPeer` Drop only closed stdin, so a peer that never reached its listen loop was waited on forever or leaked.
+- **Fix:** the wait is 30 s, and `Drop` waits at most 10 s after closing stdin, then kills the child. Reversal: restore `Duration::from_secs(5)` and the plain `wait()`.
+- **Files:** `alinery-app/src-tauri/src/tests/daemon.rs` (`TakeoverPeer`).
+
 ---
 
 ## F. Unverified claims
@@ -1397,7 +1403,7 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 
 ### R-S6.2-2: when the setup screen takes the whole window
 - **Kind:** decision.
-- **What:** `shouldShowSetup(cfg, hosts)` is true when there is no active repo or no known repo, false when any local repo is known, and otherwise (only remote repos known) true only when the active remote repo's host state is `failed`. A host that is `connecting`, `reconnecting` or `needs access` keeps the board and its banners, so a flaky link does not throw the user to a setup screen; a refused login or changed host key (the supervisor gives up, state `failed`) does. Add repository and Add remote repository from the top bar, the command palette and the busy banner open the same screen as a dialog (`setupTab` state; the remote button opens the SSH tab).
+- **What:** `shouldShowSetup(cfg, hosts)` is true when there is no active repo or no known repo, false when any local repo is known, and otherwise (only remote repos known) true only when the active remote repo's host has `gave_up` (see R-S6.2-8: a bare `failed` state was not enough). A host that is `connecting`, `reconnecting` or `needs access` keeps the board and its banners, so a flaky link does not throw the user to a setup screen; a refused login or changed host key (the supervisor gives up) does. Add repository and Add remote repository from the top bar, the command palette and the busy banner open the same screen as a dialog (`setupTab` state; the remote button opens the SSH tab).
 - **Reverse:** `shouldShowSetup` is the one place.
 - **Files:** `alinery-app/src/setup.ts`, `alinery-app/src/App.tsx`.
 
@@ -1426,3 +1432,10 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **Kind:** unverified.
 - **What:** (a) The setup screen, the dialog and the connecting flow are exercised with `mockIpc` in jsdom; no real window, trust prompt or ssh ran (L-S6.2-a, -b, -d). (b) The CSS added to `onboarding.css` (`.setup-tabs`, `.setup-folder-row`, `.setup-connect`, `.setup-fix-command`) was never rendered. (c) Only the missing-tool kind has a live test (a host without git, L-S6.2-c); the other kinds are covered by the unit test that every kind serializes with its fields and by vitest wording. (d) The 500 ms phase polling in `hostConnect.ts` reads `remoteHosts`; there is no host event for phases, so a very fast connect may show no intermediate phase. (e) The live test moves `/usr/bin/git` inside the throwaway container and puts it back in a drop guard; a killed test run leaves the container without git until `run.sh stop` and `start`. (f) `live_test_destination...` calls `test_ssh_args` with parsed arguments because `parse_destination` refuses `UserKnownHostsFile`; the destination parser itself is covered by the existing unit tests.
 - **README suggestion (human only):** the getting-started text can describe the first-run screen: choose This computer or SSH, add an SSH connection with Test connection, pick a folder, then the three-step walkthrough.
+
+### R-S6.2-8: P6 review, "failed" is not "given up"
+- **Kind:** fix of R-S6.2-2 (the rule held in its text but not in the code).
+- **What:** `RemoteManager::status()` reports `failed` (error `DISCONNECTED`) for a connected host whose channel died, until the 1 s supervisor tick marks it `reconnecting`, and `connect_host` sets `failed` at the end of every failed attempt before `reconnect_finished` sets `reconnecting`. The page polls every 3 s, so `shouldShowSetup` on `state === "failed"` could flash the full-window setup screen over the board on a link drop. `RemoteHostView.gave_up` is now computed by `RemoteManager::gave_up`: state `failed` and (the host is not wanted, or the error is one `worth_retrying` refuses: unknown or changed host key, refused login). A host whose first connect failed (never wanted) is given up on, as before. `shouldShowSetup` reads `gave_up`. Tests: `a_failed_host_is_given_up_on_only_when_nothing_will_retry_it` (Rust, the DISCONNECTED window included) and the rewritten `setup.test.ts` cases.
+- **Reverse:** drop `gave_up` from `RemoteHostView`/`types.ts` and test `state === "failed"` in `shouldShowSetup`.
+- **Files:** `alinery-app/src-tauri/src/remote.rs`, `alinery-app/src/setup.ts`, `alinery-app/src/types.ts`, tests.
+- **Unverified:** the window itself is a few seconds at most and was not observed in a real app; L-S6.2-d now watches the board for 90 s with the container stopped.
