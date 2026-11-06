@@ -8,12 +8,16 @@ import { extname, join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import { chatAttachmentsDir, loadChat } from "./chat.ts";
+import { artifactFilePath, resolveArtifactEntry } from "./artifactFiles.ts";
+import { resolveNode } from "./artifactTree.ts";
 import { alineryDir, attachmentsDir, safeComponent, taskDir } from "./taskFiles.ts";
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENT_SET_BYTES = 100 * 1024 * 1024;
 /** The size a client should cut chunks to (WA 256 KiB). */
 export const CHUNK_BYTES = 256 * 1024;
+/** Artifact bodies and step snapshots leave in smaller frames (WA, S4.5): a reader renders as the first ones arrive. */
+export const ARTIFACT_FRAME_BYTES = 64 * 1024;
 
 export type UploadTarget = { kind: "attachment"; taskSlug: string; name: string } | { kind: "chat"; threadId: string; name: string } | { kind: "staged"; name: string };
 
@@ -134,7 +138,7 @@ export class BlobStore {
 
 // ---- reads -------------------------------------------------------------------------------------------------
 
-export type BlobBytes = { total: number; contentType: string; read: (offset: number, length: number) => Uint8Array };
+export type BlobBytes = { total: number; contentType: string; read: (offset: number, length: number) => Uint8Array; /** Bytes per frame when not `CHUNK_BYTES`. */ frame?: number };
 
 /** An attachment's file: a regular file inside the task's attachments directory, never a link. */
 export function attachmentBlob(repo: string, taskSlug: string, name: string): BlobBytes {
@@ -143,17 +147,18 @@ export function attachmentBlob(repo: string, taskSlug: string, name: string): Bl
   return regularFileBlob(join(attachmentsDir(repo, taskSlug), name), name);
 }
 
-function regularFileBlob(path: string, name: string): BlobBytes {
+function regularFileBlob(path: string, name: string, what = "attachment", frame?: number): BlobBytes {
   let st: ReturnType<typeof lstatSync>;
   try {
     st = lstatSync(path);
   } catch {
-    throw new DomainError("not_found", `attachment not found: ${name}`);
+    throw new DomainError("not_found", `${what} not found: ${name}`);
   }
-  if (!st.isFile()) throw new DomainError("not_found", `attachment not found: ${name}`);
+  if (!st.isFile()) throw new DomainError("not_found", `${what} not found: ${name}`);
   return {
     total: st.size,
     contentType: contentType(name),
+    ...(frame ? { frame } : {}),
     read: (offset, length) => {
       const fd = openSync(path, "r");
       try {
@@ -165,6 +170,31 @@ function regularFileBlob(path: string, name: string): BlobBytes {
       }
     },
   };
+}
+
+/** A file in a task's `artifacts/` (not the two reserved namespaces). A link on the way is PERMISSION_DENIED, a missing file NOT_FOUND. */
+export function artifactBlob(repo: string, taskSlug: string, name: string): BlobBytes {
+  return regularFileBlob(artifactFilePath(repo, taskSlug, name), name, "artifact", ARTIFACT_FRAME_BYTES);
+}
+
+/** A file node of a task's artifact tree, named by the id its tree row carries; attachments of the tree are readable here too. */
+export function artifactNodeBlob(repo: string, taskSlug: string, nodeId: string): BlobBytes {
+  const { node, path } = resolveNode(repo, taskSlug, nodeId);
+  return regularFileBlob(path, node.label, "artifact", ARTIFACT_FRAME_BYTES);
+}
+
+/**
+ * A file an execution kept (O27): `executions/<execution_id>/objects/<sha256>`. A link anywhere on the way is
+ * PERMISSION_DENIED. An archived task's `objects/` is gone: NOT_FOUND, and the message says it was pruned.
+ */
+export function stepObjectBlob(repo: string, taskSlug: string, executionId: string, sha256: string): BlobBytes {
+  if (safeComponent(taskSlug) !== taskSlug) throw new DomainError("invalid_argument", "invalid task slug");
+  if (safeComponent(executionId) !== executionId) throw new DomainError("invalid_argument", "invalid execution id");
+  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new DomainError("invalid_argument", "sha256 must be 64 lowercase hex digits");
+  const root = join(taskDir(repo, taskSlug), "executions");
+  const path = resolveArtifactEntry(root, `${executionId}/objects/${sha256}`, false);
+  if (!existsSync(join(root, executionId, "objects"))) throw new DomainError("not_found", `pruned: the step snapshots of ${executionId} were removed when the task was archived`);
+  return regularFileBlob(path, sha256, "step snapshot", ARTIFACT_FRAME_BYTES);
 }
 
 /** A file in a chat thread's attachments directory: the thread must exist, the name is one component, the file a regular file. */

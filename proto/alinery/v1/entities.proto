@@ -183,8 +183,74 @@ message Session {
   // shell shows the OS notification; the text comes from here, so it reads no meta file.
   string attention_label = 39;
 }
-message Artifact {}
-message Comment {}
+// A review handoff's sidecar (`<artifact>.handoff.json`, `.handoff-NNN.json`), as `ReviewHandoffRecord` writes it.
+message HandoffRecord {
+  uint32 version = 1;
+  string direction = 2;  // outbound or inbound
+  string source_repo_path = 3;
+  string target_repo_path = 4;
+  string source_task = 5;
+  string source_session = 6;
+  string source_artifact = 7;
+  string target_task = 8;
+  string target_artifact = 9;
+  string target_session = 10;
+  string target_phase = 11;
+  uint64 created_at_ms = 12;
+}
+// One row of a task's artifact list (`artifact/<slug>/<name>`, S4.5), as `board::artifacts_with_metadata` made it: the visible
+// files, and the files an execution has yet to write (no `modified_at_ms`). `position` is the row's place in that list's order.
+message Artifact {
+  string slug = 1;
+  string name = 2;  // relative to the task's artifacts directory
+  optional uint64 modified_at_ms = 3;
+  string playbook_step = 4;
+  string session_id = 5;
+  repeated HandoffRecord handoffs = 6;
+  optional string execution_id = 7;
+  optional string step_key = 8;
+  optional string logical_path = 9;
+  optional uint64 depth = 10;
+  optional uint64 discriminator = 11;
+  optional bool accepted = 12;
+  uint32 position = 13;
+}
+// A human review comment (`comment/<slug>/<artifact>/<id>`), from `<artifact>.comments.json`.
+message Comment {
+  string slug = 1;
+  string id = 2;
+  string artifact = 3;
+  string anchor_id = 4;
+  string anchor_kind = 5;
+  string anchor_label = 6;
+  string anchor_excerpt = 7;
+  uint32 line_start = 8;
+  uint32 line_end = 9;
+  string body = 10;
+  uint64 created_at_ms = 11;
+}
+// A comment not yet added (`comment_draft/<slug>/<artifact>/<anchor_id>`), from `artifact-comment-drafts.json`.
+// `stale`: the artifact changed since the draft was saved.
+message CommentDraft {
+  string slug = 1;
+  string artifact = 2;
+  string anchor_id = 3;
+  string anchor_kind = 4;
+  string anchor_label = 5;
+  string anchor_excerpt = 6;
+  uint32 line_start = 7;
+  uint32 line_end = 8;
+  string body = 9;
+  string artifact_hash = 10;
+  uint64 updated_at_ms = 11;
+  bool stale = 12;
+}
+// A review sent for an artifact and not yet answered (`review_pending/<slug>/<artifact>`): the artifact is unchanged since.
+message ReviewPending {
+  string slug = 1;
+  string artifact = 2;
+  string review = 3;  // the review file's name
+}
 // A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
 message ChatThread {
   string id = 1;
@@ -375,7 +441,31 @@ message DaemonStatus {
   uint32 waiting_for_approval = 8;
 }
 message Playbook {}
-message Attachment {}
+// A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
+message Attachment {
+  string slug = 1;
+  string name = 2;
+  optional uint64 modified_at_ms = 3;
+  uint32 position = 4;
+}
+// One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
+// parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
+// an attachment only; a client names a file by `id` (BlobService `ArtifactNodeBlob`), never by that path.
+message ArtifactTreeNode {
+  string id = 1;
+  string kind = 2;
+  string label = 3;
+  string owner_task_slug = 4;
+  string source = 5;
+  repeated ArtifactTreeNode children = 6;
+  string reveal_path = 7;
+}
+// The tree as one task sees it (`artifact_tree/<slug>/<slug>`): its own artifacts and attachments, its parent's as context,
+// its active child's, and the snapshots of finished sub-tasks. One row, because a node's id depends on the viewer.
+message ArtifactTree {
+  string slug = 1;
+  repeated ArtifactTreeNode nodes = 2;
+}
 
 message Entity {
   string key = 1;       // "<kind>/<task slug or _>/<id>", e.g. "session/fix-login/7f3a"
@@ -393,5 +483,8 @@ message Entity {
     DaemonStatus daemon_status = 19;
     Playbook playbook = 20;
     Attachment attachment = 21;
+    CommentDraft comment_draft = 22;
+    ReviewPending review_pending = 23;
+    ArtifactTree artifact_tree = 24;
   }
 }

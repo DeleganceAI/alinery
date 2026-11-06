@@ -13,7 +13,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/entities.proto.
  */
 export const file_alinery_v1_entities: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIikKC1BsYXlib29rUmVmEg0KBXNjb3BlGAEgASgJEgsKA2tleRgCIAEoCSIvCg1MYXVuY2hDaG9pY2VzEg8KB2hhcm5lc3MYASABKAkSDQoFbW9kZWwYAiABKAkiPwoOUmVsYXRlZFRhc2tSZWYSEQoJcmVwb19wYXRoGAEgASgJEgwKBHNsdWcYAiABKAkSDAoEbmFtZRgDIAEoCSInCglCb2FyZFN0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJIukBCg9Cb2FyZFByb2plY3Rpb24SFQoNc2Vzc2lvbl9jb3VudBgBIAEoBBIWCg50b3RhbF9zZXNzaW9ucxgCIAEoBBIWCg5wbGF5Ym9va190aXRsZRgDIAEoCRItCg5wbGF5Ym9va19zdGVwcxgEIAMoCzIVLmFsaW5lcnkudjEuQm9hcmRTdGVwEg8KB3VwZGF0ZWQYBSABKAQSFQoNY3VycmVudF9waGFzZRgGIAEoCRIaChJjdXJyZW50X3N0ZXBfdGl0bGUYByABKAkSHAoUbGF0ZXN0X3Nlc3Npb25fdGl0bGUYCCABKAkimQEKE1Rhc2tBY3Rpdml0eVNlc3Npb24SCgoCaWQYASABKAkSEAoId29ya3RyZWUYAiABKAkSDQoFcGhhc2UYAyABKAkSDwoHaGFybmVzcxgEIAEoCRINCgVtb2RlbBgFIAEoCRIQCghwbGF5Ym9vaxgGIAEoCRIPCgdnZW5lcmljGAcgASgIEhIKCnN0ZXBfdGl0bGUYCCABKAkibwoMVGFza0FjdGl2aXR5Eg4KBnN0YXR1cxgBIAEoCRI8Cg5hY3RpdmVfc2Vzc2lvbhgCIAEoCzIfLmFsaW5lcnkudjEuVGFza0FjdGl2aXR5U2Vzc2lvbkgAiAEBQhEKD19hY3RpdmVfc2Vzc2lvbiLMBgoEVGFzaxIMCgRzbHVnGAEgASgJEgwKBG5hbWUYAiABKAkSFgoOcmVxdWVzdGVkX3NsdWcYAyABKAkSDgoGYnJhbmNoGAQgASgJEhAKCHdvcmt0cmVlGAUgASgJEhQKDGhhc193b3JrdHJlZRgGIAEoCBIPCgdjcmVhdGVkGAcgASgEEhAKCGFyY2hpdmVkGAggASgIEg4KBnByX3VybBgJIAEoCRIRCglsaW5lYXJfaWQYCiABKAkSFAoMZ2l0aHViX2lzc3VlGAsgASgJEhAKCHBsYXlib29rGAwgASgJEhYKDmVuZ2luZV92ZXJzaW9uGA0gASgNEjIKDHBsYXlib29rX3JlZhgOIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWZIAIgBARIZChFtYXhfbGl2ZV9zZXNzaW9ucxgPIAEoDRIyCg9sYXVuY2hfZGVmYXVsdHMYECABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXMSFAoMYXV0b19hZHZhbmNlGBEgAygJEhgKEGF1dG9fYXBwcm92ZV9hbGwYEiABKAgSNQoLc3RlcF9tb2RlbHMYEyADKAsyIC5hbGluZXJ5LnYxLlRhc2suU3RlcE1vZGVsc0VudHJ5EhMKC3BhcmVudF90YXNrGBQgASgJEhYKDmFjdGl2ZV9zdWJ0YXNrGBUgASgJEhcKD3N1YnRhc2tfb3V0Y29tZRgWIAEoCRINCgVkcmFmdBgXIAEoCBIbCg5kcmFmdF9iYXNlX3JlZhgYIAEoCUgBiAEBEjEKDXJlbGF0ZWRfdGFza3MYGSADKAsyGi5hbGluZXJ5LnYxLlJlbGF0ZWRUYXNrUmVmEhQKDHRlbGVtZXRyeV9pZBgaIAEoCRIqCgVib2FyZBgoIAEoCzIbLmFsaW5lcnkudjEuQm9hcmRQcm9qZWN0aW9uEioKCGFjdGl2aXR5GCkgASgLMhguYWxpbmVyeS52MS5UYXNrQWN0aXZpdHkaMQoPU3RlcE1vZGVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDwoNX3BsYXlib29rX3JlZkIRCg9fZHJhZnRfYmFzZV9yZWYiPwoORHJhZnRJbWFnZUluZm8SDAoEbmFtZRgBIAEoCRIRCgltaW1lX3R5cGUYAiABKAkSDAoEc2l6ZRgDIAEoBCJSCgVEcmFmdBIMCgRzbHVnGAEgASgJEg8KB2VudHJpZXMYAiADKAkSKgoGaW1hZ2VzGAMgAygLMhouYWxpbmVyeS52MS5EcmFmdEltYWdlSW5mbyJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIssBCg1TZXNzaW9uU3RhdHVzEg8KB3Byb2Nlc3MYASABKAkSDQoFYWdlbnQYAiABKAkSHAoUYWdlbnRfY29ycmVsYXRpb25faWQYAyABKAkSFAoMYWdlbnRfcmVhc29uGAQgASgJEhAKCHBsYXlib29rGAUgASgJEhcKD3BsYXlib29rX3JlYXNvbhgGIAEoCRIPCgdhZGFwdGVyGAcgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgIIAEoCRIRCgl0cmFuc3BvcnQYCSABKAkiUwoLU2Vzc2lvbldhaXQSDAoEa2luZBgBIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgCIAEoCRITCgZwcm9tcHQYAyABKAlIAIgBAUIJCgdfcHJvbXB0ItQJCgdTZXNzaW9uEiMKA3JlZhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIpCgZzdGF0dXMYAiABKAsyGS5hbGluZXJ5LnYxLlNlc3Npb25TdGF0dXMSCgoCaWQYAyABKAkSEAoId29ya3RyZWUYBCABKAkSDwoHY3JlYXRlZBgFIAEoBBIQCghhcmNoaXZlZBgGIAEoCBIOCgZwaW5uZWQYByABKAgSDQoFcGhhc2UYCCABKAkSDwoHaGFybmVzcxgJIAEoCRINCgVtb2RlbBgKIAEoCRIQCghwbGF5Ym9vaxgLIAEoCRIUCgxleGVjdXRpb25faWQYDCABKAkSGgoSZXhlY3V0aW9uX3JldmlzaW9uGA0gASgEEg8KB2dlbmVyaWMYDiABKAgSFwoPc3VidGFza19tYW5hZ2VyGA8gASgIEhQKDHN1YnRhc2tfc2x1ZxgQIAEoCRIQCghhcnRpZmFjdBgRIAEoCRIYChBoYW5kb2ZmX2FydGlmYWN0GBIgASgJEhQKDHByb21wdF9leHRyYRgTIAEoCRITCgZwcm9tcHQYFCABKAlIAIgBARIXCgpzdGFydGVkX2F0GBUgASgESAGIAQESHgoRc3RhdHVzX2NoYW5nZWRfYXQYFiABKARIAogBARIYCgthY3Rpdml0eV9hdBgXIAEoBEgDiAEBEhcKD3N0YXR1c19yZXZpc2lvbhgYIAEoBBIVCghlbmRlZF9hdBgZIAEoBEgEiAEBEhYKCWV4aXRfY29kZRgaIAEoBUgFiAEBEhwKFGhhcm5lc3NfcmVzdW1lX3Rva2VuGBsgASgJEhYKCXJlc3VtZV9vZhgcIAEoCUgGiAEBEhgKEGRhZW1vbl9uYW1lc3BhY2UYHSABKAkSIQoUbm90aWZpY2F0aW9uX3JlYWRfYXQYHiABKARIB4gBARImChlleGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0GB8gASgESAiIAQESSgoYbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uGCAgASgLMiMuYWxpbmVyeS52MS5Ob3RpZmljYXRpb25TdXBwcmVzc2lvbkgJiAEBEjAKCHNlbWFudGljGCEgASgLMh4uYWxpbmVyeS52MS5TZW1hbnRpY0NoZWNrcG9pbnQSFAoMdGVsZW1ldHJ5X2lkGCIgASgJEiUKBHdhaXQYIyABKAsyFy5hbGluZXJ5LnYxLlNlc3Npb25XYWl0EhEKBG5hbWUYJCABKAlICogBARITCgtuYW1lX3NvdXJjZRglIAEoCRIXCgpuYW1lX2Vycm9yGCYgASgJSAuIAQESFwoPYXR0ZW50aW9uX2xhYmVsGCcgASgJQgkKB19wcm9tcHRCDQoLX3N0YXJ0ZWRfYXRCFAoSX3N0YXR1c19jaGFuZ2VkX2F0Qg4KDF9hY3Rpdml0eV9hdEILCglfZW5kZWRfYXRCDAoKX2V4aXRfY29kZUIMCgpfcmVzdW1lX29mQhcKFV9ub3RpZmljYXRpb25fcmVhZF9hdEIcChpfZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdEIbChlfbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uQgcKBV9uYW1lQg0KC19uYW1lX2Vycm9yIgoKCEFydGlmYWN0IgkKB0NvbW1lbnQiVAoKQ2hhdFRocmVhZBIKCgJpZBgBIAEoCRIUCgxicmFuY2hfbGFiZWwYAiABKAkSEAoIY2hlY2tvdXQYAyABKAgSEgoKc3VwZXJzZWRlZBgEIAEoCCLyAQoDSm9iEgoKAmlkGAEgASgJEiEKBGtpbmQYAiABKA4yEy5hbGluZXJ5LnYxLkpvYktpbmQSIwoFc3RhdGUYAyABKA4yFC5hbGluZXJ5LnYxLkpvYlN0YXRlEiYKCHByb2dyZXNzGAQgASgLMhQuYWxpbmVyeS52MS5Qcm9ncmVzcxINCgVlcnJvchgFIAEoCRIVCg1zdGFydGVkX2F0X21zGAYgASgDEhMKC2VuZGVkX2F0X21zGAcgASgDEioKB3N0b3JhZ2UYCyABKAsyFy5hbGluZXJ5LnYxLlN0b3JhZ2VJbmZvSABCCAoGcmVzdWx0IjYKCFByb2dyZXNzEgwKBGRvbmUYASABKAQSDQoFdG90YWwYAiABKAQSDQoFbGFiZWwYAyABKAkigQMKC1N0b3JhZ2VJbmZvEhcKD2FwcF9jb25maWdfcGF0aBgBIAEoCRIRCglyZXBvX3BhdGgYAiABKAkSEwoLYWxpbmVyeV9kaXIYAyABKAkSGAoQcmVwb19jb25maWdfcGF0aBgEIAEoCRIWCg5oYXJuZXNzZXNfcGF0aBgFIAEoCRIRCgl0YXNrc19kaXIYBiABKAkSFQoNd29ya3RyZWVzX2RpchgHIAEoCRIcChRhbGluZXJ5ZF9zb2NrZXRfcGF0aBgIIAEoCRIaChJhbGluZXJ5ZF9sb2NrX3BhdGgYCSABKAkSFwoPbWNwX3NvY2tldF9wYXRoGAogASgJEhcKD21jcF9zdGF0dXNfcGF0aBgLIAEoCRIbChNhcmNoaXZlZF90YXNrX2NvdW50GAwgASgNEh4KFmFyY2hpdmVkX3Nlc3Npb25fY291bnQYDSABKA0SFgoOYXJjaGl2ZWRfYnl0ZXMYDiABKAQSFAoMYWN0aXZlX2J5dGVzGA8gASgEIucBChFOb3RpZmljYXRpb25QcmVmcxIPCgdlbmFibGVkGAEgASgIEg0KBXNvdW5kGAIgASgIEg4KBmJvdW5jZRgDIAEoCBIOCgZiYW5uZXIYBCABKAgSEgoKZG9ja19iYWRnZRgFIAEoCBIeChZkb2NrX2JhZGdlX2lucHV0X3dhaXRzGAYgASgIEiEKGWRvY2tfYmFkZ2VfYXBwcm92YWxfd2FpdHMYByABKAgSGwoTZG9ja19iYWRnZV9mYWlsdXJlcxgIIAEoCBIeChZkb2NrX2JhZGdlX2NvbXBsZXRpb25zGAkgASgIIq4BCg5CYWNrdXBTZXR0aW5ncxITCgtkZXN0aW5hdGlvbhgBIAEoCRIPCgdlbmFibGVkGAIgASgIEhEKCXJldGVudGlvbhgDIAEoDRIbChN0cmlnZ2VyX3ByZV9hcmNoaXZlGAQgASgIEiQKHHRyaWdnZXJfcG9zdF9hcnRpZmFjdF9jaGFuZ2UYBSABKAgSIAoYdHJpZ2dlcl9wb3N0X3B1c2hfY29tbWl0GAYgASgIIlkKDlRlbGVtZXRyeVByZWZzEg8KB2VuYWJsZWQYASABKAgSEAoIcHJvbXB0ZWQYAiABKAgSEgoKaW5zdGFsbF9pZBgDIAEoCRIQCghlbmRwb2ludBgEIAEoCSKEAQoNSGFybmVzc0Nob2ljZRIPCgdoYXJuZXNzGAEgASgJEg0KBW1vZGVsGAIgASgJEhAKCHRoaW5raW5nGAMgASgJEikKCHBsYXlib29rGAQgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIWCg5kcmFmdF9hdXRvc2F2ZRgFIAEoCCL1AQoQQ2hvaWNlUHJvdmVuYW5jZRIqCgdoYXJuZXNzGAEgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEigKBW1vZGVsGAIgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEisKCHRoaW5raW5nGAMgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEisKCHBsYXlib29rGAQgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEjEKDmRyYWZ0X2F1dG9zYXZlGAUgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlItYCChFFZmZlY3RpdmVTZXR0aW5ncxI0Cg1ub3RpZmljYXRpb25zGAEgASgLMh0uYWxpbmVyeS52MS5Ob3RpZmljYXRpb25QcmVmcxIUCgxnaXRodWJfdG9rZW4YAiABKAkSKwoIZGVmYXVsdHMYAyABKAsyGS5hbGluZXJ5LnYxLkhhcm5lc3NDaG9pY2USNgoTZ2l0aHViX3Rva2VuX3NvdXJjZRgEIAEoDjIZLmFsaW5lcnkudjEuU2V0dGluZ1NvdXJjZRI1Cg9kZWZhdWx0c19zb3VyY2UYBSABKAsyHC5hbGluZXJ5LnYxLkNob2ljZVByb3ZlbmFuY2USKgoGYmFja3VwGAYgASgLMhouYWxpbmVyeS52MS5CYWNrdXBTZXR0aW5ncxItCgl0ZWxlbWV0cnkYByABKAsyGi5hbGluZXJ5LnYxLlRlbGVtZXRyeVByZWZzIjMKE1JlcG9HaXRIdWJPdmVycmlkZXMSEgoFdG9rZW4YASABKAlIAIgBAUIICgZfdG9rZW4i6AEKFVJlcG9EZWZhdWx0c092ZXJyaWRlcxIUCgdoYXJuZXNzGAEgASgJSACIAQESEgoFbW9kZWwYAiABKAlIAYgBARIVCgh0aGlua2luZxgDIAEoCUgCiAEBEi4KCHBsYXlib29rGAQgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZkgDiAEBEhsKDmRyYWZ0X2F1dG9zYXZlGAUgASgISASIAQFCCgoIX2hhcm5lc3NCCAoGX21vZGVsQgsKCV90aGlua2luZ0ILCglfcGxheWJvb2tCEQoPX2RyYWZ0X2F1dG9zYXZlItECChNSZXBvQmFja3VwT3ZlcnJpZGVzEhgKC2Rlc3RpbmF0aW9uGAEgASgJSACIAQESFAoHZW5hYmxlZBgCIAEoCEgBiAEBEhYKCXJldGVudGlvbhgDIAEoDUgCiAEBEiAKE3RyaWdnZXJfcHJlX2FyY2hpdmUYBCABKAhIA4gBARIpChx0cmlnZ2VyX3Bvc3RfYXJ0aWZhY3RfY2hhbmdlGAUgASgISASIAQESJQoYdHJpZ2dlcl9wb3N0X3B1c2hfY29tbWl0GAYgASgISAWIAQFCDgoMX2Rlc3RpbmF0aW9uQgoKCF9lbmFibGVkQgwKCl9yZXRlbnRpb25CFgoUX3RyaWdnZXJfcHJlX2FyY2hpdmVCHwodX3RyaWdnZXJfcG9zdF9hcnRpZmFjdF9jaGFuZ2VCGwoZX3RyaWdnZXJfcG9zdF9wdXNoX2NvbW1pdCKmAQoNUmVwb092ZXJyaWRlcxIvCgZnaXRodWIYASABKAsyHy5hbGluZXJ5LnYxLlJlcG9HaXRIdWJPdmVycmlkZXMSMwoIZGVmYXVsdHMYAiABKAsyIS5hbGluZXJ5LnYxLlJlcG9EZWZhdWx0c092ZXJyaWRlcxIvCgZiYWNrdXAYAyABKAsyHy5hbGluZXJ5LnYxLlJlcG9CYWNrdXBPdmVycmlkZXMiXQoNSGFybmVzc1Jlc3VtZRIPCgdlbmFibGVkGAEgASgIEhEKCWlkX3NvdXJjZRgCIAEoCRITCgtsYXVuY2hfYXJncxgDIAMoCRITCgtyZXN1bWVfYXJncxgEIAMoCSLjAgoHSGFybmVzcxILCgNrZXkYASABKAkSDAoEbmFtZRgCIAEoCRIOCgZiaW5hcnkYAyABKAkSDAoEYXJncxgEIAMoCRIRCgltb2RlbF9hcmcYBSADKAkSEgoKcHJvbXB0X2FyZxgGIAMoCRIpCgNlbnYYByADKAsyHC5hbGluZXJ5LnYxLkhhcm5lc3MuRW52RW50cnkSGAoQcHJvbXB0X2luamVjdGlvbhgIIAEoCRIPCgdhZGFwdGVyGAkgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgKIAEoCRIOCgZtb2RlbHMYCyADKAkSEgoKbW9kZWxzX2NtZBgMIAEoCRIuCgZyZXN1bWUYDSABKAsyGS5hbGluZXJ5LnYxLkhhcm5lc3NSZXN1bWVIAIgBARoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQgkKB19yZXN1bWUiYwoQRWZmZWN0aXZlSGFybmVzcxIkCgdoYXJuZXNzGAEgASgLMhMuYWxpbmVyeS52MS5IYXJuZXNzEikKBnNvdXJjZRgCIAEoDjIZLmFsaW5lcnkudjEuU2V0dGluZ1NvdXJjZSKqAQoIU2V0dGluZ3MSLAoJb3ZlcnJpZGVzGAEgASgLMhkuYWxpbmVyeS52MS5SZXBvT3ZlcnJpZGVzEjAKCWVmZmVjdGl2ZRgCIAEoCzIdLmFsaW5lcnkudjEuRWZmZWN0aXZlU2V0dGluZ3MSLwoJaGFybmVzc2VzGAMgAygLMhwuYWxpbmVyeS52MS5FZmZlY3RpdmVIYXJuZXNzEg0KBWVycm9yGAQgASgJIsUBCgxEYWVtb25TdGF0dXMSEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSFQoNbGl2ZV9zZXNzaW9ucxgDIAEoDRIaChJob3N0X2d1YXJkX3dhcm5pbmcYBCABKAkSFwoPd2F0Y2hfZXhoYXVzdGVkGAUgASgIEgwKBGJ1c3kYBiABKA0SGQoRd2FpdGluZ19mb3JfaW5wdXQYByABKA0SHAoUd2FpdGluZ19mb3JfYXBwcm92YWwYCCABKA0iCgoIUGxheWJvb2siDAoKQXR0YWNobWVudCKgBAoGRW50aXR5EgsKA2tleRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoBBIgCgR0YXNrGAogASgLMhAuYWxpbmVyeS52MS5UYXNrSAASIgoFZHJhZnQYCyABKAsyES5hbGluZXJ5LnYxLkRyYWZ0SAASKgoJZXhlY3V0aW9uGAwgASgLMhUuYWxpbmVyeS52MS5FeGVjdXRpb25IABImCgdzZXNzaW9uGA0gASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAASKAoIYXJ0aWZhY3QYDiABKAsyFC5hbGluZXJ5LnYxLkFydGlmYWN0SAASJgoHY29tbWVudBgPIAEoCzITLmFsaW5lcnkudjEuQ29tbWVudEgAEi0KC2NoYXRfdGhyZWFkGBAgASgLMhYuYWxpbmVyeS52MS5DaGF0VGhyZWFkSAASHgoDam9iGBEgASgLMg8uYWxpbmVyeS52MS5Kb2JIABIoCghzZXR0aW5ncxgSIAEoCzIULmFsaW5lcnkudjEuU2V0dGluZ3NIABIxCg1kYWVtb25fc3RhdHVzGBMgASgLMhguYWxpbmVyeS52MS5EYWVtb25TdGF0dXNIABIoCghwbGF5Ym9vaxgUIAEoCzIULmFsaW5lcnkudjEuUGxheWJvb2tIABIsCgphdHRhY2htZW50GBUgASgLMhYuYWxpbmVyeS52MS5BdHRhY2htZW50SABCBwoFdmFsdWUqfAoHSm9iS2luZBIYChRKT0JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUpPQl9LSU5EX1NUT1JBR0VfU0NBThABEhMKD0pPQl9LSU5EX0JBQ0tVUBACEhIKDkpPQl9LSU5EX1BVUkdFEAMSEwoPSk9CX0tJTkRfSU1QT1JUEAQqlQEKCEpvYlN0YXRlEhkKFUpPQl9TVEFURV9VTlNQRUNJRklFRBAAEhQKEEpPQl9TVEFURV9RVUVVRUQQARIVChFKT0JfU1RBVEVfUlVOTklORxACEhIKDkpPQl9TVEFURV9ET05FEAMSFAoQSk9CX1NUQVRFX0ZBSUxFRBAEEhcKE0pPQl9TVEFURV9DQU5DRUxMRUQQBSppCg1TZXR0aW5nU291cmNlEh4KGlNFVFRJTkdfU09VUkNFX1VOU1BFQ0lGSUVEEAASGQoVU0VUVElOR19TT1VSQ0VfR0xPQkFMEAESHQoZU0VUVElOR19TT1VSQ0VfUkVQT1NJVE9SWRACYgZwcm90bzM", [file_google_protobuf_struct]);
+  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIikKC1BsYXlib29rUmVmEg0KBXNjb3BlGAEgASgJEgsKA2tleRgCIAEoCSIvCg1MYXVuY2hDaG9pY2VzEg8KB2hhcm5lc3MYASABKAkSDQoFbW9kZWwYAiABKAkiPwoOUmVsYXRlZFRhc2tSZWYSEQoJcmVwb19wYXRoGAEgASgJEgwKBHNsdWcYAiABKAkSDAoEbmFtZRgDIAEoCSInCglCb2FyZFN0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJIukBCg9Cb2FyZFByb2plY3Rpb24SFQoNc2Vzc2lvbl9jb3VudBgBIAEoBBIWCg50b3RhbF9zZXNzaW9ucxgCIAEoBBIWCg5wbGF5Ym9va190aXRsZRgDIAEoCRItCg5wbGF5Ym9va19zdGVwcxgEIAMoCzIVLmFsaW5lcnkudjEuQm9hcmRTdGVwEg8KB3VwZGF0ZWQYBSABKAQSFQoNY3VycmVudF9waGFzZRgGIAEoCRIaChJjdXJyZW50X3N0ZXBfdGl0bGUYByABKAkSHAoUbGF0ZXN0X3Nlc3Npb25fdGl0bGUYCCABKAkimQEKE1Rhc2tBY3Rpdml0eVNlc3Npb24SCgoCaWQYASABKAkSEAoId29ya3RyZWUYAiABKAkSDQoFcGhhc2UYAyABKAkSDwoHaGFybmVzcxgEIAEoCRINCgVtb2RlbBgFIAEoCRIQCghwbGF5Ym9vaxgGIAEoCRIPCgdnZW5lcmljGAcgASgIEhIKCnN0ZXBfdGl0bGUYCCABKAkibwoMVGFza0FjdGl2aXR5Eg4KBnN0YXR1cxgBIAEoCRI8Cg5hY3RpdmVfc2Vzc2lvbhgCIAEoCzIfLmFsaW5lcnkudjEuVGFza0FjdGl2aXR5U2Vzc2lvbkgAiAEBQhEKD19hY3RpdmVfc2Vzc2lvbiLMBgoEVGFzaxIMCgRzbHVnGAEgASgJEgwKBG5hbWUYAiABKAkSFgoOcmVxdWVzdGVkX3NsdWcYAyABKAkSDgoGYnJhbmNoGAQgASgJEhAKCHdvcmt0cmVlGAUgASgJEhQKDGhhc193b3JrdHJlZRgGIAEoCBIPCgdjcmVhdGVkGAcgASgEEhAKCGFyY2hpdmVkGAggASgIEg4KBnByX3VybBgJIAEoCRIRCglsaW5lYXJfaWQYCiABKAkSFAoMZ2l0aHViX2lzc3VlGAsgASgJEhAKCHBsYXlib29rGAwgASgJEhYKDmVuZ2luZV92ZXJzaW9uGA0gASgNEjIKDHBsYXlib29rX3JlZhgOIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWZIAIgBARIZChFtYXhfbGl2ZV9zZXNzaW9ucxgPIAEoDRIyCg9sYXVuY2hfZGVmYXVsdHMYECABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXMSFAoMYXV0b19hZHZhbmNlGBEgAygJEhgKEGF1dG9fYXBwcm92ZV9hbGwYEiABKAgSNQoLc3RlcF9tb2RlbHMYEyADKAsyIC5hbGluZXJ5LnYxLlRhc2suU3RlcE1vZGVsc0VudHJ5EhMKC3BhcmVudF90YXNrGBQgASgJEhYKDmFjdGl2ZV9zdWJ0YXNrGBUgASgJEhcKD3N1YnRhc2tfb3V0Y29tZRgWIAEoCRINCgVkcmFmdBgXIAEoCBIbCg5kcmFmdF9iYXNlX3JlZhgYIAEoCUgBiAEBEjEKDXJlbGF0ZWRfdGFza3MYGSADKAsyGi5hbGluZXJ5LnYxLlJlbGF0ZWRUYXNrUmVmEhQKDHRlbGVtZXRyeV9pZBgaIAEoCRIqCgVib2FyZBgoIAEoCzIbLmFsaW5lcnkudjEuQm9hcmRQcm9qZWN0aW9uEioKCGFjdGl2aXR5GCkgASgLMhguYWxpbmVyeS52MS5UYXNrQWN0aXZpdHkaMQoPU3RlcE1vZGVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDwoNX3BsYXlib29rX3JlZkIRCg9fZHJhZnRfYmFzZV9yZWYiPwoORHJhZnRJbWFnZUluZm8SDAoEbmFtZRgBIAEoCRIRCgltaW1lX3R5cGUYAiABKAkSDAoEc2l6ZRgDIAEoBCJSCgVEcmFmdBIMCgRzbHVnGAEgASgJEg8KB2VudHJpZXMYAiADKAkSKgoGaW1hZ2VzGAMgAygLMhouYWxpbmVyeS52MS5EcmFmdEltYWdlSW5mbyJuCglFeGVjdXRpb24SDAoEc2x1ZxgBIAEoCRImCgVzdGF0ZRgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSKwoKZGVmaW5pdGlvbhgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QipgEKElNlbWFudGljQ2hlY2twb2ludBIfChJwaGFzZV9jb21wbGV0ZWRfYXQYASABKARIAIgBARIbCg5vbXBfc2Vzc2lvbl9pZBgCIAEoCUgBiAEBEhgKC29tcF90dXJuX2lkGAMgASgESAKIAQFCFQoTX3BoYXNlX2NvbXBsZXRlZF9hdEIRCg9fb21wX3Nlc3Npb25faWRCDgoMX29tcF90dXJuX2lkIj0KF05vdGlmaWNhdGlvblN1cHByZXNzaW9uEg4KBm5vdGljZRgBIAEoCRISCgpvY2N1cnJlbmNlGAIgASgJIssBCg1TZXNzaW9uU3RhdHVzEg8KB3Byb2Nlc3MYASABKAkSDQoFYWdlbnQYAiABKAkSHAoUYWdlbnRfY29ycmVsYXRpb25faWQYAyABKAkSFAoMYWdlbnRfcmVhc29uGAQgASgJEhAKCHBsYXlib29rGAUgASgJEhcKD3BsYXlib29rX3JlYXNvbhgGIAEoCRIPCgdhZGFwdGVyGAcgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgIIAEoCRIRCgl0cmFuc3BvcnQYCSABKAkiUwoLU2Vzc2lvbldhaXQSDAoEa2luZBgBIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgCIAEoCRITCgZwcm9tcHQYAyABKAlIAIgBAUIJCgdfcHJvbXB0ItQJCgdTZXNzaW9uEiMKA3JlZhgBIAEoCzIWLmFsaW5lcnkudjEuU2Vzc2lvblJlZhIpCgZzdGF0dXMYAiABKAsyGS5hbGluZXJ5LnYxLlNlc3Npb25TdGF0dXMSCgoCaWQYAyABKAkSEAoId29ya3RyZWUYBCABKAkSDwoHY3JlYXRlZBgFIAEoBBIQCghhcmNoaXZlZBgGIAEoCBIOCgZwaW5uZWQYByABKAgSDQoFcGhhc2UYCCABKAkSDwoHaGFybmVzcxgJIAEoCRINCgVtb2RlbBgKIAEoCRIQCghwbGF5Ym9vaxgLIAEoCRIUCgxleGVjdXRpb25faWQYDCABKAkSGgoSZXhlY3V0aW9uX3JldmlzaW9uGA0gASgEEg8KB2dlbmVyaWMYDiABKAgSFwoPc3VidGFza19tYW5hZ2VyGA8gASgIEhQKDHN1YnRhc2tfc2x1ZxgQIAEoCRIQCghhcnRpZmFjdBgRIAEoCRIYChBoYW5kb2ZmX2FydGlmYWN0GBIgASgJEhQKDHByb21wdF9leHRyYRgTIAEoCRITCgZwcm9tcHQYFCABKAlIAIgBARIXCgpzdGFydGVkX2F0GBUgASgESAGIAQESHgoRc3RhdHVzX2NoYW5nZWRfYXQYFiABKARIAogBARIYCgthY3Rpdml0eV9hdBgXIAEoBEgDiAEBEhcKD3N0YXR1c19yZXZpc2lvbhgYIAEoBBIVCghlbmRlZF9hdBgZIAEoBEgEiAEBEhYKCWV4aXRfY29kZRgaIAEoBUgFiAEBEhwKFGhhcm5lc3NfcmVzdW1lX3Rva2VuGBsgASgJEhYKCXJlc3VtZV9vZhgcIAEoCUgGiAEBEhgKEGRhZW1vbl9uYW1lc3BhY2UYHSABKAkSIQoUbm90aWZpY2F0aW9uX3JlYWRfYXQYHiABKARIB4gBARImChlleGl0X25vdGlmaWNhdGlvbl9yZWFkX2F0GB8gASgESAiIAQESSgoYbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uGCAgASgLMiMuYWxpbmVyeS52MS5Ob3RpZmljYXRpb25TdXBwcmVzc2lvbkgJiAEBEjAKCHNlbWFudGljGCEgASgLMh4uYWxpbmVyeS52MS5TZW1hbnRpY0NoZWNrcG9pbnQSFAoMdGVsZW1ldHJ5X2lkGCIgASgJEiUKBHdhaXQYIyABKAsyFy5hbGluZXJ5LnYxLlNlc3Npb25XYWl0EhEKBG5hbWUYJCABKAlICogBARITCgtuYW1lX3NvdXJjZRglIAEoCRIXCgpuYW1lX2Vycm9yGCYgASgJSAuIAQESFwoPYXR0ZW50aW9uX2xhYmVsGCcgASgJQgkKB19wcm9tcHRCDQoLX3N0YXJ0ZWRfYXRCFAoSX3N0YXR1c19jaGFuZ2VkX2F0Qg4KDF9hY3Rpdml0eV9hdEILCglfZW5kZWRfYXRCDAoKX2V4aXRfY29kZUIMCgpfcmVzdW1lX29mQhcKFV9ub3RpZmljYXRpb25fcmVhZF9hdEIcChpfZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdEIbChlfbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uQgcKBV9uYW1lQg0KC19uYW1lX2Vycm9yIqACCg1IYW5kb2ZmUmVjb3JkEg8KB3ZlcnNpb24YASABKA0SEQoJZGlyZWN0aW9uGAIgASgJEhgKEHNvdXJjZV9yZXBvX3BhdGgYAyABKAkSGAoQdGFyZ2V0X3JlcG9fcGF0aBgEIAEoCRITCgtzb3VyY2VfdGFzaxgFIAEoCRIWCg5zb3VyY2Vfc2Vzc2lvbhgGIAEoCRIXCg9zb3VyY2VfYXJ0aWZhY3QYByABKAkSEwoLdGFyZ2V0X3Rhc2sYCCABKAkSFwoPdGFyZ2V0X2FydGlmYWN0GAkgASgJEhYKDnRhcmdldF9zZXNzaW9uGAogASgJEhQKDHRhcmdldF9waGFzZRgLIAEoCRIVCg1jcmVhdGVkX2F0X21zGAwgASgEIqwDCghBcnRpZmFjdBIMCgRzbHVnGAEgASgJEgwKBG5hbWUYAiABKAkSGwoObW9kaWZpZWRfYXRfbXMYAyABKARIAIgBARIVCg1wbGF5Ym9va19zdGVwGAQgASgJEhIKCnNlc3Npb25faWQYBSABKAkSKwoIaGFuZG9mZnMYBiADKAsyGS5hbGluZXJ5LnYxLkhhbmRvZmZSZWNvcmQSGQoMZXhlY3V0aW9uX2lkGAcgASgJSAGIAQESFQoIc3RlcF9rZXkYCCABKAlIAogBARIZCgxsb2dpY2FsX3BhdGgYCSABKAlIA4gBARISCgVkZXB0aBgKIAEoBEgEiAEBEhoKDWRpc2NyaW1pbmF0b3IYCyABKARIBYgBARIVCghhY2NlcHRlZBgMIAEoCEgGiAEBEhAKCHBvc2l0aW9uGA0gASgNQhEKD19tb2RpZmllZF9hdF9tc0IPCg1fZXhlY3V0aW9uX2lkQgsKCV9zdGVwX2tleUIPCg1fbG9naWNhbF9wYXRoQggKBl9kZXB0aEIQCg5fZGlzY3JpbWluYXRvckILCglfYWNjZXB0ZWQi1gEKB0NvbW1lbnQSDAoEc2x1ZxgBIAEoCRIKCgJpZBgCIAEoCRIQCghhcnRpZmFjdBgDIAEoCRIRCglhbmNob3JfaWQYBCABKAkSEwoLYW5jaG9yX2tpbmQYBSABKAkSFAoMYW5jaG9yX2xhYmVsGAYgASgJEhYKDmFuY2hvcl9leGNlcnB0GAcgASgJEhIKCmxpbmVfc3RhcnQYCCABKA0SEAoIbGluZV9lbmQYCSABKA0SDAoEYm9keRgKIAEoCRIVCg1jcmVhdGVkX2F0X21zGAsgASgEIvUBCgxDb21tZW50RHJhZnQSDAoEc2x1ZxgBIAEoCRIQCghhcnRpZmFjdBgCIAEoCRIRCglhbmNob3JfaWQYAyABKAkSEwoLYW5jaG9yX2tpbmQYBCABKAkSFAoMYW5jaG9yX2xhYmVsGAUgASgJEhYKDmFuY2hvcl9leGNlcnB0GAYgASgJEhIKCmxpbmVfc3RhcnQYByABKA0SEAoIbGluZV9lbmQYCCABKA0SDAoEYm9keRgJIAEoCRIVCg1hcnRpZmFjdF9oYXNoGAogASgJEhUKDXVwZGF0ZWRfYXRfbXMYCyABKAQSDQoFc3RhbGUYDCABKAgiPwoNUmV2aWV3UGVuZGluZxIMCgRzbHVnGAEgASgJEhAKCGFydGlmYWN0GAIgASgJEg4KBnJldmlldxgDIAEoCSJUCgpDaGF0VGhyZWFkEgoKAmlkGAEgASgJEhQKDGJyYW5jaF9sYWJlbBgCIAEoCRIQCghjaGVja291dBgDIAEoCBISCgpzdXBlcnNlZGVkGAQgASgIIvIBCgNKb2ISCgoCaWQYASABKAkSIQoEa2luZBgCIAEoDjITLmFsaW5lcnkudjEuSm9iS2luZBIjCgVzdGF0ZRgDIAEoDjIULmFsaW5lcnkudjEuSm9iU3RhdGUSJgoIcHJvZ3Jlc3MYBCABKAsyFC5hbGluZXJ5LnYxLlByb2dyZXNzEg0KBWVycm9yGAUgASgJEhUKDXN0YXJ0ZWRfYXRfbXMYBiABKAMSEwoLZW5kZWRfYXRfbXMYByABKAMSKgoHc3RvcmFnZRgLIAEoCzIXLmFsaW5lcnkudjEuU3RvcmFnZUluZm9IAEIICgZyZXN1bHQiNgoIUHJvZ3Jlc3MSDAoEZG9uZRgBIAEoBBINCgV0b3RhbBgCIAEoBBINCgVsYWJlbBgDIAEoCSKBAwoLU3RvcmFnZUluZm8SFwoPYXBwX2NvbmZpZ19wYXRoGAEgASgJEhEKCXJlcG9fcGF0aBgCIAEoCRITCgthbGluZXJ5X2RpchgDIAEoCRIYChByZXBvX2NvbmZpZ19wYXRoGAQgASgJEhYKDmhhcm5lc3Nlc19wYXRoGAUgASgJEhEKCXRhc2tzX2RpchgGIAEoCRIVCg13b3JrdHJlZXNfZGlyGAcgASgJEhwKFGFsaW5lcnlkX3NvY2tldF9wYXRoGAggASgJEhoKEmFsaW5lcnlkX2xvY2tfcGF0aBgJIAEoCRIXCg9tY3Bfc29ja2V0X3BhdGgYCiABKAkSFwoPbWNwX3N0YXR1c19wYXRoGAsgASgJEhsKE2FyY2hpdmVkX3Rhc2tfY291bnQYDCABKA0SHgoWYXJjaGl2ZWRfc2Vzc2lvbl9jb3VudBgNIAEoDRIWCg5hcmNoaXZlZF9ieXRlcxgOIAEoBBIUCgxhY3RpdmVfYnl0ZXMYDyABKAQi5wEKEU5vdGlmaWNhdGlvblByZWZzEg8KB2VuYWJsZWQYASABKAgSDQoFc291bmQYAiABKAgSDgoGYm91bmNlGAMgASgIEg4KBmJhbm5lchgEIAEoCBISCgpkb2NrX2JhZGdlGAUgASgIEh4KFmRvY2tfYmFkZ2VfaW5wdXRfd2FpdHMYBiABKAgSIQoZZG9ja19iYWRnZV9hcHByb3ZhbF93YWl0cxgHIAEoCBIbChNkb2NrX2JhZGdlX2ZhaWx1cmVzGAggASgIEh4KFmRvY2tfYmFkZ2VfY29tcGxldGlvbnMYCSABKAgirgEKDkJhY2t1cFNldHRpbmdzEhMKC2Rlc3RpbmF0aW9uGAEgASgJEg8KB2VuYWJsZWQYAiABKAgSEQoJcmV0ZW50aW9uGAMgASgNEhsKE3RyaWdnZXJfcHJlX2FyY2hpdmUYBCABKAgSJAocdHJpZ2dlcl9wb3N0X2FydGlmYWN0X2NoYW5nZRgFIAEoCBIgChh0cmlnZ2VyX3Bvc3RfcHVzaF9jb21taXQYBiABKAgiWQoOVGVsZW1ldHJ5UHJlZnMSDwoHZW5hYmxlZBgBIAEoCBIQCghwcm9tcHRlZBgCIAEoCBISCgppbnN0YWxsX2lkGAMgASgJEhAKCGVuZHBvaW50GAQgASgJIoQBCg1IYXJuZXNzQ2hvaWNlEg8KB2hhcm5lc3MYASABKAkSDQoFbW9kZWwYAiABKAkSEAoIdGhpbmtpbmcYAyABKAkSKQoIcGxheWJvb2sYBCABKAsyFy5hbGluZXJ5LnYxLlBsYXlib29rUmVmEhYKDmRyYWZ0X2F1dG9zYXZlGAUgASgIIvUBChBDaG9pY2VQcm92ZW5hbmNlEioKB2hhcm5lc3MYASABKA4yGS5hbGluZXJ5LnYxLlNldHRpbmdTb3VyY2USKAoFbW9kZWwYAiABKA4yGS5hbGluZXJ5LnYxLlNldHRpbmdTb3VyY2USKwoIdGhpbmtpbmcYAyABKA4yGS5hbGluZXJ5LnYxLlNldHRpbmdTb3VyY2USKwoIcGxheWJvb2sYBCABKA4yGS5hbGluZXJ5LnYxLlNldHRpbmdTb3VyY2USMQoOZHJhZnRfYXV0b3NhdmUYBSABKA4yGS5hbGluZXJ5LnYxLlNldHRpbmdTb3VyY2Ui1gIKEUVmZmVjdGl2ZVNldHRpbmdzEjQKDW5vdGlmaWNhdGlvbnMYASABKAsyHS5hbGluZXJ5LnYxLk5vdGlmaWNhdGlvblByZWZzEhQKDGdpdGh1Yl90b2tlbhgCIAEoCRIrCghkZWZhdWx0cxgDIAEoCzIZLmFsaW5lcnkudjEuSGFybmVzc0Nob2ljZRI2ChNnaXRodWJfdG9rZW5fc291cmNlGAQgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEjUKD2RlZmF1bHRzX3NvdXJjZRgFIAEoCzIcLmFsaW5lcnkudjEuQ2hvaWNlUHJvdmVuYW5jZRIqCgZiYWNrdXAYBiABKAsyGi5hbGluZXJ5LnYxLkJhY2t1cFNldHRpbmdzEi0KCXRlbGVtZXRyeRgHIAEoCzIaLmFsaW5lcnkudjEuVGVsZW1ldHJ5UHJlZnMiMwoTUmVwb0dpdEh1Yk92ZXJyaWRlcxISCgV0b2tlbhgBIAEoCUgAiAEBQggKBl90b2tlbiLoAQoVUmVwb0RlZmF1bHRzT3ZlcnJpZGVzEhQKB2hhcm5lc3MYASABKAlIAIgBARISCgVtb2RlbBgCIAEoCUgBiAEBEhUKCHRoaW5raW5nGAMgASgJSAKIAQESLgoIcGxheWJvb2sYBCABKAsyFy5hbGluZXJ5LnYxLlBsYXlib29rUmVmSAOIAQESGwoOZHJhZnRfYXV0b3NhdmUYBSABKAhIBIgBAUIKCghfaGFybmVzc0IICgZfbW9kZWxCCwoJX3RoaW5raW5nQgsKCV9wbGF5Ym9va0IRCg9fZHJhZnRfYXV0b3NhdmUi0QIKE1JlcG9CYWNrdXBPdmVycmlkZXMSGAoLZGVzdGluYXRpb24YASABKAlIAIgBARIUCgdlbmFibGVkGAIgASgISAGIAQESFgoJcmV0ZW50aW9uGAMgASgNSAKIAQESIAoTdHJpZ2dlcl9wcmVfYXJjaGl2ZRgEIAEoCEgDiAEBEikKHHRyaWdnZXJfcG9zdF9hcnRpZmFjdF9jaGFuZ2UYBSABKAhIBIgBARIlChh0cmlnZ2VyX3Bvc3RfcHVzaF9jb21taXQYBiABKAhIBYgBAUIOCgxfZGVzdGluYXRpb25CCgoIX2VuYWJsZWRCDAoKX3JldGVudGlvbkIWChRfdHJpZ2dlcl9wcmVfYXJjaGl2ZUIfCh1fdHJpZ2dlcl9wb3N0X2FydGlmYWN0X2NoYW5nZUIbChlfdHJpZ2dlcl9wb3N0X3B1c2hfY29tbWl0IqYBCg1SZXBvT3ZlcnJpZGVzEi8KBmdpdGh1YhgBIAEoCzIfLmFsaW5lcnkudjEuUmVwb0dpdEh1Yk92ZXJyaWRlcxIzCghkZWZhdWx0cxgCIAEoCzIhLmFsaW5lcnkudjEuUmVwb0RlZmF1bHRzT3ZlcnJpZGVzEi8KBmJhY2t1cBgDIAEoCzIfLmFsaW5lcnkudjEuUmVwb0JhY2t1cE92ZXJyaWRlcyJdCg1IYXJuZXNzUmVzdW1lEg8KB2VuYWJsZWQYASABKAgSEQoJaWRfc291cmNlGAIgASgJEhMKC2xhdW5jaF9hcmdzGAMgAygJEhMKC3Jlc3VtZV9hcmdzGAQgAygJIuMCCgdIYXJuZXNzEgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJEg4KBmJpbmFyeRgDIAEoCRIMCgRhcmdzGAQgAygJEhEKCW1vZGVsX2FyZxgFIAMoCRISCgpwcm9tcHRfYXJnGAYgAygJEikKA2VudhgHIAMoCzIcLmFsaW5lcnkudjEuSGFybmVzcy5FbnZFbnRyeRIYChBwcm9tcHRfaW5qZWN0aW9uGAggASgJEg8KB2FkYXB0ZXIYCSABKAkSFwoPbWVzc2FnZV9hZGFwdGVyGAogASgJEg4KBm1vZGVscxgLIAMoCRISCgptb2RlbHNfY21kGAwgASgJEi4KBnJlc3VtZRgNIAEoCzIZLmFsaW5lcnkudjEuSGFybmVzc1Jlc3VtZUgAiAEBGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCCQoHX3Jlc3VtZSJjChBFZmZlY3RpdmVIYXJuZXNzEiQKB2hhcm5lc3MYASABKAsyEy5hbGluZXJ5LnYxLkhhcm5lc3MSKQoGc291cmNlGAIgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlIqoBCghTZXR0aW5ncxIsCglvdmVycmlkZXMYASABKAsyGS5hbGluZXJ5LnYxLlJlcG9PdmVycmlkZXMSMAoJZWZmZWN0aXZlGAIgASgLMh0uYWxpbmVyeS52MS5FZmZlY3RpdmVTZXR0aW5ncxIvCgloYXJuZXNzZXMYAyADKAsyHC5hbGluZXJ5LnYxLkVmZmVjdGl2ZUhhcm5lc3MSDQoFZXJyb3IYBCABKAkixQEKDERhZW1vblN0YXR1cxIQCghwcm90b2NvbBgBIAEoDRIQCghidWlsZF9pZBgCIAEoCRIVCg1saXZlX3Nlc3Npb25zGAMgASgNEhoKEmhvc3RfZ3VhcmRfd2FybmluZxgEIAEoCRIXCg93YXRjaF9leGhhdXN0ZWQYBSABKAgSDAoEYnVzeRgGIAEoDRIZChF3YWl0aW5nX2Zvcl9pbnB1dBgHIAEoDRIcChR3YWl0aW5nX2Zvcl9hcHByb3ZhbBgIIAEoDSIKCghQbGF5Ym9vayJqCgpBdHRhY2htZW50EgwKBHNsdWcYASABKAkSDAoEbmFtZRgCIAEoCRIbCg5tb2RpZmllZF9hdF9tcxgDIAEoBEgAiAEBEhAKCHBvc2l0aW9uGAQgASgNQhEKD19tb2RpZmllZF9hdF9tcyKpAQoQQXJ0aWZhY3RUcmVlTm9kZRIKCgJpZBgBIAEoCRIMCgRraW5kGAIgASgJEg0KBWxhYmVsGAMgASgJEhcKD293bmVyX3Rhc2tfc2x1ZxgEIAEoCRIOCgZzb3VyY2UYBSABKAkSLgoIY2hpbGRyZW4YBiADKAsyHC5hbGluZXJ5LnYxLkFydGlmYWN0VHJlZU5vZGUSEwoLcmV2ZWFsX3BhdGgYByABKAkiSQoMQXJ0aWZhY3RUcmVlEgwKBHNsdWcYASABKAkSKwoFbm9kZXMYAiADKAsyHC5hbGluZXJ5LnYxLkFydGlmYWN0VHJlZU5vZGUiuwUKBkVudGl0eRILCgNrZXkYASABKAkSEAoIcmV2aXNpb24YAiABKAQSIAoEdGFzaxgKIAEoCzIQLmFsaW5lcnkudjEuVGFza0gAEiIKBWRyYWZ0GAsgASgLMhEuYWxpbmVyeS52MS5EcmFmdEgAEioKCWV4ZWN1dGlvbhgMIAEoCzIVLmFsaW5lcnkudjEuRXhlY3V0aW9uSAASJgoHc2Vzc2lvbhgNIAEoCzITLmFsaW5lcnkudjEuU2Vzc2lvbkgAEigKCGFydGlmYWN0GA4gASgLMhQuYWxpbmVyeS52MS5BcnRpZmFjdEgAEiYKB2NvbW1lbnQYDyABKAsyEy5hbGluZXJ5LnYxLkNvbW1lbnRIABItCgtjaGF0X3RocmVhZBgQIAEoCzIWLmFsaW5lcnkudjEuQ2hhdFRocmVhZEgAEh4KA2pvYhgRIAEoCzIPLmFsaW5lcnkudjEuSm9iSAASKAoIc2V0dGluZ3MYEiABKAsyFC5hbGluZXJ5LnYxLlNldHRpbmdzSAASMQoNZGFlbW9uX3N0YXR1cxgTIAEoCzIYLmFsaW5lcnkudjEuRGFlbW9uU3RhdHVzSAASKAoIcGxheWJvb2sYFCABKAsyFC5hbGluZXJ5LnYxLlBsYXlib29rSAASLAoKYXR0YWNobWVudBgVIAEoCzIWLmFsaW5lcnkudjEuQXR0YWNobWVudEgAEjEKDWNvbW1lbnRfZHJhZnQYFiABKAsyGC5hbGluZXJ5LnYxLkNvbW1lbnREcmFmdEgAEjMKDnJldmlld19wZW5kaW5nGBcgASgLMhkuYWxpbmVyeS52MS5SZXZpZXdQZW5kaW5nSAASMQoNYXJ0aWZhY3RfdHJlZRgYIAEoCzIYLmFsaW5lcnkudjEuQXJ0aWZhY3RUcmVlSABCBwoFdmFsdWUqfAoHSm9iS2luZBIYChRKT0JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUpPQl9LSU5EX1NUT1JBR0VfU0NBThABEhMKD0pPQl9LSU5EX0JBQ0tVUBACEhIKDkpPQl9LSU5EX1BVUkdFEAMSEwoPSk9CX0tJTkRfSU1QT1JUEAQqlQEKCEpvYlN0YXRlEhkKFUpPQl9TVEFURV9VTlNQRUNJRklFRBAAEhQKEEpPQl9TVEFURV9RVUVVRUQQARIVChFKT0JfU1RBVEVfUlVOTklORxACEhIKDkpPQl9TVEFURV9ET05FEAMSFAoQSk9CX1NUQVRFX0ZBSUxFRBAEEhcKE0pPQl9TVEFURV9DQU5DRUxMRUQQBSppCg1TZXR0aW5nU291cmNlEh4KGlNFVFRJTkdfU09VUkNFX1VOU1BFQ0lGSUVEEAASGQoVU0VUVElOR19TT1VSQ0VfR0xPQkFMEAESHQoZU0VUVElOR19TT1VSQ0VfUkVQT1NJVE9SWRACYgZwcm90bzM", [file_google_protobuf_struct]);
 
 /**
  * @generated from message alinery.v1.SessionRef
@@ -891,9 +891,154 @@ export const SessionSchema: GenMessage<Session> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 16);
 
 /**
+ * A review handoff's sidecar (`<artifact>.handoff.json`, `.handoff-NNN.json`), as `ReviewHandoffRecord` writes it.
+ *
+ * @generated from message alinery.v1.HandoffRecord
+ */
+export type HandoffRecord = Message<"alinery.v1.HandoffRecord"> & {
+  /**
+   * @generated from field: uint32 version = 1;
+   */
+  version: number;
+
+  /**
+   * outbound or inbound
+   *
+   * @generated from field: string direction = 2;
+   */
+  direction: string;
+
+  /**
+   * @generated from field: string source_repo_path = 3;
+   */
+  sourceRepoPath: string;
+
+  /**
+   * @generated from field: string target_repo_path = 4;
+   */
+  targetRepoPath: string;
+
+  /**
+   * @generated from field: string source_task = 5;
+   */
+  sourceTask: string;
+
+  /**
+   * @generated from field: string source_session = 6;
+   */
+  sourceSession: string;
+
+  /**
+   * @generated from field: string source_artifact = 7;
+   */
+  sourceArtifact: string;
+
+  /**
+   * @generated from field: string target_task = 8;
+   */
+  targetTask: string;
+
+  /**
+   * @generated from field: string target_artifact = 9;
+   */
+  targetArtifact: string;
+
+  /**
+   * @generated from field: string target_session = 10;
+   */
+  targetSession: string;
+
+  /**
+   * @generated from field: string target_phase = 11;
+   */
+  targetPhase: string;
+
+  /**
+   * @generated from field: uint64 created_at_ms = 12;
+   */
+  createdAtMs: bigint;
+};
+
+/**
+ * Describes the message alinery.v1.HandoffRecord.
+ * Use `create(HandoffRecordSchema)` to create a new message.
+ */
+export const HandoffRecordSchema: GenMessage<HandoffRecord> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 17);
+
+/**
+ * One row of a task's artifact list (`artifact/<slug>/<name>`, S4.5), as `board::artifacts_with_metadata` made it: the visible
+ * files, and the files an execution has yet to write (no `modified_at_ms`). `position` is the row's place in that list's order.
+ *
  * @generated from message alinery.v1.Artifact
  */
 export type Artifact = Message<"alinery.v1.Artifact"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * relative to the task's artifacts directory
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: optional uint64 modified_at_ms = 3;
+   */
+  modifiedAtMs?: bigint | undefined;
+
+  /**
+   * @generated from field: string playbook_step = 4;
+   */
+  playbookStep: string;
+
+  /**
+   * @generated from field: string session_id = 5;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: repeated alinery.v1.HandoffRecord handoffs = 6;
+   */
+  handoffs: HandoffRecord[];
+
+  /**
+   * @generated from field: optional string execution_id = 7;
+   */
+  executionId?: string | undefined;
+
+  /**
+   * @generated from field: optional string step_key = 8;
+   */
+  stepKey?: string | undefined;
+
+  /**
+   * @generated from field: optional string logical_path = 9;
+   */
+  logicalPath?: string | undefined;
+
+  /**
+   * @generated from field: optional uint64 depth = 10;
+   */
+  depth?: bigint | undefined;
+
+  /**
+   * @generated from field: optional uint64 discriminator = 11;
+   */
+  discriminator?: bigint | undefined;
+
+  /**
+   * @generated from field: optional bool accepted = 12;
+   */
+  accepted?: boolean | undefined;
+
+  /**
+   * @generated from field: uint32 position = 13;
+   */
+  position: number;
 };
 
 /**
@@ -901,12 +1046,68 @@ export type Artifact = Message<"alinery.v1.Artifact"> & {
  * Use `create(ArtifactSchema)` to create a new message.
  */
 export const ArtifactSchema: GenMessage<Artifact> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 17);
+  messageDesc(file_alinery_v1_entities, 18);
 
 /**
+ * A human review comment (`comment/<slug>/<artifact>/<id>`), from `<artifact>.comments.json`.
+ *
  * @generated from message alinery.v1.Comment
  */
 export type Comment = Message<"alinery.v1.Comment"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: string id = 2;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string artifact = 3;
+   */
+  artifact: string;
+
+  /**
+   * @generated from field: string anchor_id = 4;
+   */
+  anchorId: string;
+
+  /**
+   * @generated from field: string anchor_kind = 5;
+   */
+  anchorKind: string;
+
+  /**
+   * @generated from field: string anchor_label = 6;
+   */
+  anchorLabel: string;
+
+  /**
+   * @generated from field: string anchor_excerpt = 7;
+   */
+  anchorExcerpt: string;
+
+  /**
+   * @generated from field: uint32 line_start = 8;
+   */
+  lineStart: number;
+
+  /**
+   * @generated from field: uint32 line_end = 9;
+   */
+  lineEnd: number;
+
+  /**
+   * @generated from field: string body = 10;
+   */
+  body: string;
+
+  /**
+   * @generated from field: uint64 created_at_ms = 11;
+   */
+  createdAtMs: bigint;
 };
 
 /**
@@ -914,7 +1115,113 @@ export type Comment = Message<"alinery.v1.Comment"> & {
  * Use `create(CommentSchema)` to create a new message.
  */
 export const CommentSchema: GenMessage<Comment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 18);
+  messageDesc(file_alinery_v1_entities, 19);
+
+/**
+ * A comment not yet added (`comment_draft/<slug>/<artifact>/<anchor_id>`), from `artifact-comment-drafts.json`.
+ * `stale`: the artifact changed since the draft was saved.
+ *
+ * @generated from message alinery.v1.CommentDraft
+ */
+export type CommentDraft = Message<"alinery.v1.CommentDraft"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: string artifact = 2;
+   */
+  artifact: string;
+
+  /**
+   * @generated from field: string anchor_id = 3;
+   */
+  anchorId: string;
+
+  /**
+   * @generated from field: string anchor_kind = 4;
+   */
+  anchorKind: string;
+
+  /**
+   * @generated from field: string anchor_label = 5;
+   */
+  anchorLabel: string;
+
+  /**
+   * @generated from field: string anchor_excerpt = 6;
+   */
+  anchorExcerpt: string;
+
+  /**
+   * @generated from field: uint32 line_start = 7;
+   */
+  lineStart: number;
+
+  /**
+   * @generated from field: uint32 line_end = 8;
+   */
+  lineEnd: number;
+
+  /**
+   * @generated from field: string body = 9;
+   */
+  body: string;
+
+  /**
+   * @generated from field: string artifact_hash = 10;
+   */
+  artifactHash: string;
+
+  /**
+   * @generated from field: uint64 updated_at_ms = 11;
+   */
+  updatedAtMs: bigint;
+
+  /**
+   * @generated from field: bool stale = 12;
+   */
+  stale: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.CommentDraft.
+ * Use `create(CommentDraftSchema)` to create a new message.
+ */
+export const CommentDraftSchema: GenMessage<CommentDraft> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 20);
+
+/**
+ * A review sent for an artifact and not yet answered (`review_pending/<slug>/<artifact>`): the artifact is unchanged since.
+ *
+ * @generated from message alinery.v1.ReviewPending
+ */
+export type ReviewPending = Message<"alinery.v1.ReviewPending"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: string artifact = 2;
+   */
+  artifact: string;
+
+  /**
+   * the review file's name
+   *
+   * @generated from field: string review = 3;
+   */
+  review: string;
+};
+
+/**
+ * Describes the message alinery.v1.ReviewPending.
+ * Use `create(ReviewPendingSchema)` to create a new message.
+ */
+export const ReviewPendingSchema: GenMessage<ReviewPending> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 21);
 
 /**
  * A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
@@ -954,7 +1261,7 @@ export type ChatThread = Message<"alinery.v1.ChatThread"> & {
  * Use `create(ChatThreadSchema)` to create a new message.
  */
 export const ChatThreadSchema: GenMessage<ChatThread> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 19);
+  messageDesc(file_alinery_v1_entities, 22);
 
 /**
  * A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
@@ -1016,7 +1323,7 @@ export type Job = Message<"alinery.v1.Job"> & {
  * Use `create(JobSchema)` to create a new message.
  */
 export const JobSchema: GenMessage<Job> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 20);
+  messageDesc(file_alinery_v1_entities, 23);
 
 /**
  * @generated from message alinery.v1.Progress
@@ -1043,7 +1350,7 @@ export type Progress = Message<"alinery.v1.Progress"> & {
  * Use `create(ProgressSchema)` to create a new message.
  */
 export const ProgressSchema: GenMessage<Progress> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 21);
+  messageDesc(file_alinery_v1_entities, 24);
 
 /**
  * `StorageInfo` of alinery-core storage.rs, field for field (snake_case as serde writes it), so the
@@ -1133,7 +1440,7 @@ export type StorageInfo = Message<"alinery.v1.StorageInfo"> & {
  * Use `create(StorageInfoSchema)` to create a new message.
  */
 export const StorageInfoSchema: GenMessage<StorageInfo> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 22);
+  messageDesc(file_alinery_v1_entities, 25);
 
 /**
  * @generated from message alinery.v1.NotificationPrefs
@@ -1190,7 +1497,7 @@ export type NotificationPrefs = Message<"alinery.v1.NotificationPrefs"> & {
  * Use `create(NotificationPrefsSchema)` to create a new message.
  */
 export const NotificationPrefsSchema: GenMessage<NotificationPrefs> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 23);
+  messageDesc(file_alinery_v1_entities, 26);
 
 /**
  * @generated from message alinery.v1.BackupSettings
@@ -1232,7 +1539,7 @@ export type BackupSettings = Message<"alinery.v1.BackupSettings"> & {
  * Use `create(BackupSettingsSchema)` to create a new message.
  */
 export const BackupSettingsSchema: GenMessage<BackupSettings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 24);
+  messageDesc(file_alinery_v1_entities, 27);
 
 /**
  * @generated from message alinery.v1.TelemetryPrefs
@@ -1264,7 +1571,7 @@ export type TelemetryPrefs = Message<"alinery.v1.TelemetryPrefs"> & {
  * Use `create(TelemetryPrefsSchema)` to create a new message.
  */
 export const TelemetryPrefsSchema: GenMessage<TelemetryPrefs> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 25);
+  messageDesc(file_alinery_v1_entities, 28);
 
 /**
  * @generated from message alinery.v1.HarnessChoice
@@ -1301,7 +1608,7 @@ export type HarnessChoice = Message<"alinery.v1.HarnessChoice"> & {
  * Use `create(HarnessChoiceSchema)` to create a new message.
  */
 export const HarnessChoiceSchema: GenMessage<HarnessChoice> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 26);
+  messageDesc(file_alinery_v1_entities, 29);
 
 /**
  * @generated from message alinery.v1.ChoiceProvenance
@@ -1338,7 +1645,7 @@ export type ChoiceProvenance = Message<"alinery.v1.ChoiceProvenance"> & {
  * Use `create(ChoiceProvenanceSchema)` to create a new message.
  */
 export const ChoiceProvenanceSchema: GenMessage<ChoiceProvenance> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 27);
+  messageDesc(file_alinery_v1_entities, 30);
 
 /**
  * `EffectiveConfig` (alinery-core types.rs): the global tier with the repository's overrides over it, and
@@ -1388,7 +1695,7 @@ export type EffectiveSettings = Message<"alinery.v1.EffectiveSettings"> & {
  * Use `create(EffectiveSettingsSchema)` to create a new message.
  */
 export const EffectiveSettingsSchema: GenMessage<EffectiveSettings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 28);
+  messageDesc(file_alinery_v1_entities, 31);
 
 /**
  * The repository's `config.toml`, field for field. An unset field inherits the global value; a field
@@ -1408,7 +1715,7 @@ export type RepoGitHubOverrides = Message<"alinery.v1.RepoGitHubOverrides"> & {
  * Use `create(RepoGitHubOverridesSchema)` to create a new message.
  */
 export const RepoGitHubOverridesSchema: GenMessage<RepoGitHubOverrides> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 29);
+  messageDesc(file_alinery_v1_entities, 32);
 
 /**
  * @generated from message alinery.v1.RepoDefaultsOverrides
@@ -1445,7 +1752,7 @@ export type RepoDefaultsOverrides = Message<"alinery.v1.RepoDefaultsOverrides"> 
  * Use `create(RepoDefaultsOverridesSchema)` to create a new message.
  */
 export const RepoDefaultsOverridesSchema: GenMessage<RepoDefaultsOverrides> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 30);
+  messageDesc(file_alinery_v1_entities, 33);
 
 /**
  * @generated from message alinery.v1.RepoBackupOverrides
@@ -1489,7 +1796,7 @@ export type RepoBackupOverrides = Message<"alinery.v1.RepoBackupOverrides"> & {
  * Use `create(RepoBackupOverridesSchema)` to create a new message.
  */
 export const RepoBackupOverridesSchema: GenMessage<RepoBackupOverrides> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 31);
+  messageDesc(file_alinery_v1_entities, 34);
 
 /**
  * @generated from message alinery.v1.RepoOverrides
@@ -1516,7 +1823,7 @@ export type RepoOverrides = Message<"alinery.v1.RepoOverrides"> & {
  * Use `create(RepoOverridesSchema)` to create a new message.
  */
 export const RepoOverridesSchema: GenMessage<RepoOverrides> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 32);
+  messageDesc(file_alinery_v1_entities, 35);
 
 /**
  * @generated from message alinery.v1.HarnessResume
@@ -1548,7 +1855,7 @@ export type HarnessResume = Message<"alinery.v1.HarnessResume"> & {
  * Use `create(HarnessResumeSchema)` to create a new message.
  */
 export const HarnessResumeSchema: GenMessage<HarnessResume> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 33);
+  messageDesc(file_alinery_v1_entities, 36);
 
 /**
  * @generated from message alinery.v1.Harness
@@ -1629,7 +1936,7 @@ export type Harness = Message<"alinery.v1.Harness"> & {
  * Use `create(HarnessSchema)` to create a new message.
  */
 export const HarnessSchema: GenMessage<Harness> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 34);
+  messageDesc(file_alinery_v1_entities, 37);
 
 /**
  * @generated from message alinery.v1.EffectiveHarness
@@ -1651,7 +1958,7 @@ export type EffectiveHarness = Message<"alinery.v1.EffectiveHarness"> & {
  * Use `create(EffectiveHarnessSchema)` to create a new message.
  */
 export const EffectiveHarnessSchema: GenMessage<EffectiveHarness> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 35);
+  messageDesc(file_alinery_v1_entities, 38);
 
 /**
  * `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
@@ -1687,7 +1994,7 @@ export type Settings = Message<"alinery.v1.Settings"> & {
  * Use `create(SettingsSchema)` to create a new message.
  */
 export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 36);
+  messageDesc(file_alinery_v1_entities, 39);
 
 /**
  * The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
@@ -1750,7 +2057,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
  * Use `create(DaemonStatusSchema)` to create a new message.
  */
 export const DaemonStatusSchema: GenMessage<DaemonStatus> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 37);
+  messageDesc(file_alinery_v1_entities, 40);
 
 /**
  * @generated from message alinery.v1.Playbook
@@ -1763,12 +2070,33 @@ export type Playbook = Message<"alinery.v1.Playbook"> & {
  * Use `create(PlaybookSchema)` to create a new message.
  */
 export const PlaybookSchema: GenMessage<Playbook> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 38);
+  messageDesc(file_alinery_v1_entities, 41);
 
 /**
+ * A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
+ *
  * @generated from message alinery.v1.Attachment
  */
 export type Attachment = Message<"alinery.v1.Attachment"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: optional uint64 modified_at_ms = 3;
+   */
+  modifiedAtMs?: bigint | undefined;
+
+  /**
+   * @generated from field: uint32 position = 4;
+   */
+  position: number;
 };
 
 /**
@@ -1776,7 +2104,83 @@ export type Attachment = Message<"alinery.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 39);
+  messageDesc(file_alinery_v1_entities, 42);
+
+/**
+ * One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
+ * parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
+ * an attachment only; a client names a file by `id` (BlobService `ArtifactNodeBlob`), never by that path.
+ *
+ * @generated from message alinery.v1.ArtifactTreeNode
+ */
+export type ArtifactTreeNode = Message<"alinery.v1.ArtifactTreeNode"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string kind = 2;
+   */
+  kind: string;
+
+  /**
+   * @generated from field: string label = 3;
+   */
+  label: string;
+
+  /**
+   * @generated from field: string owner_task_slug = 4;
+   */
+  ownerTaskSlug: string;
+
+  /**
+   * @generated from field: string source = 5;
+   */
+  source: string;
+
+  /**
+   * @generated from field: repeated alinery.v1.ArtifactTreeNode children = 6;
+   */
+  children: ArtifactTreeNode[];
+
+  /**
+   * @generated from field: string reveal_path = 7;
+   */
+  revealPath: string;
+};
+
+/**
+ * Describes the message alinery.v1.ArtifactTreeNode.
+ * Use `create(ArtifactTreeNodeSchema)` to create a new message.
+ */
+export const ArtifactTreeNodeSchema: GenMessage<ArtifactTreeNode> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 43);
+
+/**
+ * The tree as one task sees it (`artifact_tree/<slug>/<slug>`): its own artifacts and attachments, its parent's as context,
+ * its active child's, and the snapshots of finished sub-tasks. One row, because a node's id depends on the viewer.
+ *
+ * @generated from message alinery.v1.ArtifactTree
+ */
+export type ArtifactTree = Message<"alinery.v1.ArtifactTree"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: repeated alinery.v1.ArtifactTreeNode nodes = 2;
+   */
+  nodes: ArtifactTreeNode[];
+};
+
+/**
+ * Describes the message alinery.v1.ArtifactTree.
+ * Use `create(ArtifactTreeSchema)` to create a new message.
+ */
+export const ArtifactTreeSchema: GenMessage<ArtifactTree> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 44);
 
 /**
  * @generated from message alinery.v1.Entity
@@ -1871,6 +2275,24 @@ export type Entity = Message<"alinery.v1.Entity"> & {
      */
     value: Attachment;
     case: "attachment";
+  } | {
+    /**
+     * @generated from field: alinery.v1.CommentDraft comment_draft = 22;
+     */
+    value: CommentDraft;
+    case: "commentDraft";
+  } | {
+    /**
+     * @generated from field: alinery.v1.ReviewPending review_pending = 23;
+     */
+    value: ReviewPending;
+    case: "reviewPending";
+  } | {
+    /**
+     * @generated from field: alinery.v1.ArtifactTree artifact_tree = 24;
+     */
+    value: ArtifactTree;
+    case: "artifactTree";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1879,7 +2301,7 @@ export type Entity = Message<"alinery.v1.Entity"> & {
  * Use `create(EntitySchema)` to create a new message.
  */
 export const EntitySchema: GenMessage<Entity> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 40);
+  messageDesc(file_alinery_v1_entities, 45);
 
 /**
  * @generated from enum alinery.v1.JobKind

@@ -15,6 +15,8 @@ type Tracked = { key: string; mtimeMs: number; size: number };
 
 export class Feed {
   readonly tracked = new Map<string, Tracked>(); // by path relative to `.alinery/`
+  /** Told of every path a `refresh` re-read, matched by a parser or not: rows that derive from a whole directory (S4.5). */
+  onChanged?: (rel: string) => void;
   private readonly chains = new Map<string, Promise<void>>();
 
   constructor(
@@ -36,6 +38,7 @@ export class Feed {
   async refresh(rel: string): Promise<void> {
     await this.reread(rel);
     for (const d of this.dependents(rel)) await this.reread(d).catch(() => {});
+    this.onChanged?.(rel);
   }
 
   /** One read at a time per row, so a slow read can't land after a newer one (several paths may feed one row). */

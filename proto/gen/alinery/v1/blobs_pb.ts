@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/blobs.proto.
  */
 export const file_alinery_v1_blobs: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2Jsb2JzLnByb3RvEgphbGluZXJ5LnYxIjEKDkF0dGFjaG1lbnRCbG9iEhEKCXRhc2tfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIi0KClN0YWdlZEJsb2ISDAoEbmFtZRgBIAEoCRIRCgl1cGxvYWRfaWQYAiABKAkiMgoORHJhZnRJbWFnZUJsb2ISEgoKZHJhZnRfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIjUKEkNoYXRBdHRhY2htZW50QmxvYhIRCgl0aHJlYWRfaWQYASABKAkSDAoEbmFtZRgCIAEoCSLdAQoHQmxvYlJlZhIwCgphdHRhY2htZW50GAIgASgLMhouYWxpbmVyeS52MS5BdHRhY2htZW50QmxvYkgAEjkKD2NoYXRfYXR0YWNobWVudBgDIAEoCzIeLmFsaW5lcnkudjEuQ2hhdEF0dGFjaG1lbnRCbG9iSAASKAoGc3RhZ2VkGAUgASgLMhYuYWxpbmVyeS52MS5TdGFnZWRCbG9iSAASMQoLZHJhZnRfaW1hZ2UYBiABKAsyGi5hbGluZXJ5LnYxLkRyYWZ0SW1hZ2VCbG9iSABCCAoGdGFyZ2V0IlMKD1JlYWRCbG9iUmVxdWVzdBIgCgNyZWYYASABKAsyEy5hbGluZXJ5LnYxLkJsb2JSZWYSDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBCJVChBSZWFkQmxvYlJlc3BvbnNlEgwKBGRhdGEYASABKAwSDgoGb2Zmc2V0GAIgASgEEg0KBXRvdGFsGAMgASgEEhQKDGNvbnRlbnRfdHlwZRgEIAEoCSJ/ChJCZWdpblVwbG9hZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiMKBnRhcmdldBgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZhIMCgRzaXplGAMgASgEEg4KBnNoYTI1NhgEIAEoCSI8ChNCZWdpblVwbG9hZFJlc3BvbnNlEhEKCXVwbG9hZF9pZBgBIAEoCRISCgpjaHVua19zaXplGAIgASgNIkUKElVwbG9hZENodW5rUmVxdWVzdBIRCgl1cGxvYWRfaWQYASABKAkSDgoGb2Zmc2V0GAIgASgEEgwKBGRhdGEYAyABKAwiFQoTVXBsb2FkQ2h1bmtSZXNwb25zZSIoChNDb21taXRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCSJeChRDb21taXRVcGxvYWRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEiAKA3JlZhgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZjLJAgoLQmxvYlNlcnZpY2USRwoIUmVhZEJsb2ISGy5hbGluZXJ5LnYxLlJlYWRCbG9iUmVxdWVzdBocLmFsaW5lcnkudjEuUmVhZEJsb2JSZXNwb25zZTABEk4KC0JlZ2luVXBsb2FkEh4uYWxpbmVyeS52MS5CZWdpblVwbG9hZFJlcXVlc3QaHy5hbGluZXJ5LnYxLkJlZ2luVXBsb2FkUmVzcG9uc2USTgoLVXBsb2FkQ2h1bmsSHi5hbGluZXJ5LnYxLlVwbG9hZENodW5rUmVxdWVzdBofLmFsaW5lcnkudjEuVXBsb2FkQ2h1bmtSZXNwb25zZRJRCgxDb21taXRVcGxvYWQSHy5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlcXVlc3QaIC5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
+  fileDesc("ChZhbGluZXJ5L3YxL2Jsb2JzLnByb3RvEgphbGluZXJ5LnYxIjEKDkF0dGFjaG1lbnRCbG9iEhEKCXRhc2tfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIi0KClN0YWdlZEJsb2ISDAoEbmFtZRgBIAEoCRIRCgl1cGxvYWRfaWQYAiABKAkiMgoORHJhZnRJbWFnZUJsb2ISEgoKZHJhZnRfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIjUKEkNoYXRBdHRhY2htZW50QmxvYhIRCgl0aHJlYWRfaWQYASABKAkSDAoEbmFtZRgCIAEoCSIvCgxBcnRpZmFjdEJsb2ISEQoJdGFza19zbHVnGAEgASgJEgwKBG5hbWUYAiABKAkiNgoQQXJ0aWZhY3ROb2RlQmxvYhIRCgl0YXNrX3NsdWcYASABKAkSDwoHbm9kZV9pZBgCIAEoCSJJCg5TdGVwT2JqZWN0QmxvYhIRCgl0YXNrX3NsdWcYASABKAkSFAoMZXhlY3V0aW9uX2lkGAIgASgJEg4KBnNoYTI1NhgDIAEoCSL1AgoHQmxvYlJlZhIwCgphdHRhY2htZW50GAIgASgLMhouYWxpbmVyeS52MS5BdHRhY2htZW50QmxvYkgAEjkKD2NoYXRfYXR0YWNobWVudBgDIAEoCzIeLmFsaW5lcnkudjEuQ2hhdEF0dGFjaG1lbnRCbG9iSAASKAoGc3RhZ2VkGAUgASgLMhYuYWxpbmVyeS52MS5TdGFnZWRCbG9iSAASMQoLZHJhZnRfaW1hZ2UYBiABKAsyGi5hbGluZXJ5LnYxLkRyYWZ0SW1hZ2VCbG9iSAASLAoIYXJ0aWZhY3QYByABKAsyGC5hbGluZXJ5LnYxLkFydGlmYWN0QmxvYkgAEjUKDWFydGlmYWN0X25vZGUYCCABKAsyHC5hbGluZXJ5LnYxLkFydGlmYWN0Tm9kZUJsb2JIABIxCgtzdGVwX29iamVjdBgJIAEoCzIaLmFsaW5lcnkudjEuU3RlcE9iamVjdEJsb2JIAEIICgZ0YXJnZXQiUwoPUmVhZEJsb2JSZXF1ZXN0EiAKA3JlZhgBIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZhIOCgZvZmZzZXQYAiABKAQSDgoGbGVuZ3RoGAMgASgEIlUKEFJlYWRCbG9iUmVzcG9uc2USDAoEZGF0YRgBIAEoDBIOCgZvZmZzZXQYAiABKAQSDQoFdG90YWwYAyABKAQSFAoMY29udGVudF90eXBlGAQgASgJIn8KEkJlZ2luVXBsb2FkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESIwoGdGFyZ2V0GAIgASgLMhMuYWxpbmVyeS52MS5CbG9iUmVmEgwKBHNpemUYAyABKAQSDgoGc2hhMjU2GAQgASgJIjwKE0JlZ2luVXBsb2FkUmVzcG9uc2USEQoJdXBsb2FkX2lkGAEgASgJEhIKCmNodW5rX3NpemUYAiABKA0iRQoSVXBsb2FkQ2h1bmtSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCRIOCgZvZmZzZXQYAiABKAQSDAoEZGF0YRgDIAEoDCIVChNVcGxvYWRDaHVua1Jlc3BvbnNlIigKE0NvbW1pdFVwbG9hZFJlcXVlc3QSEQoJdXBsb2FkX2lkGAEgASgJIl4KFENvbW1pdFVwbG9hZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSIAoDcmVmGAIgASgLMhMuYWxpbmVyeS52MS5CbG9iUmVmMskCCgtCbG9iU2VydmljZRJHCghSZWFkQmxvYhIbLmFsaW5lcnkudjEuUmVhZEJsb2JSZXF1ZXN0GhwuYWxpbmVyeS52MS5SZWFkQmxvYlJlc3BvbnNlMAESTgoLQmVnaW5VcGxvYWQSHi5hbGluZXJ5LnYxLkJlZ2luVXBsb2FkUmVxdWVzdBofLmFsaW5lcnkudjEuQmVnaW5VcGxvYWRSZXNwb25zZRJOCgtVcGxvYWRDaHVuaxIeLmFsaW5lcnkudjEuVXBsb2FkQ2h1bmtSZXF1ZXN0Gh8uYWxpbmVyeS52MS5VcGxvYWRDaHVua1Jlc3BvbnNlElEKDENvbW1pdFVwbG9hZBIfLmFsaW5lcnkudjEuQ29tbWl0VXBsb2FkUmVxdWVzdBogLmFsaW5lcnkudjEuQ29tbWl0VXBsb2FkUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.AttachmentBlob
@@ -120,6 +120,91 @@ export const ChatAttachmentBlobSchema: GenMessage<ChatAttachmentBlob> = /*@__PUR
   messageDesc(file_alinery_v1_blobs, 3);
 
 /**
+ * A file in the task's `artifacts/` (not `attachments/` or `subtasks/`). The daemon refuses a link on the way.
+ *
+ * @generated from message alinery.v1.ArtifactBlob
+ */
+export type ArtifactBlob = Message<"alinery.v1.ArtifactBlob"> & {
+  /**
+   * @generated from field: string task_slug = 1;
+   */
+  taskSlug: string;
+
+  /**
+   * relative to artifacts/, forward slashes
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message alinery.v1.ArtifactBlob.
+ * Use `create(ArtifactBlobSchema)` to create a new message.
+ */
+export const ArtifactBlobSchema: GenMessage<ArtifactBlob> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_blobs, 4);
+
+/**
+ * A file node of the task's artifact tree: its own, its parent's or active child's, a sub-task snapshot's, or an attachment of
+ * any of them. The node is named by the id the tree row carries.
+ *
+ * @generated from message alinery.v1.ArtifactNodeBlob
+ */
+export type ArtifactNodeBlob = Message<"alinery.v1.ArtifactNodeBlob"> & {
+  /**
+   * the task whose tree holds the node
+   *
+   * @generated from field: string task_slug = 1;
+   */
+  taskSlug: string;
+
+  /**
+   * @generated from field: string node_id = 2;
+   */
+  nodeId: string;
+};
+
+/**
+ * Describes the message alinery.v1.ArtifactNodeBlob.
+ * Use `create(ArtifactNodeBlobSchema)` to create a new message.
+ */
+export const ArtifactNodeBlobSchema: GenMessage<ArtifactNodeBlob> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_blobs, 5);
+
+/**
+ * A file an execution kept when it started or finished (O27): `tasks/<slug>/executions/<execution_id>/objects/<sha256>`, read-only.
+ * The manifest in the execution's engine state names the hashes. Gone when the task is archived (NOT_FOUND).
+ *
+ * @generated from message alinery.v1.StepObjectBlob
+ */
+export type StepObjectBlob = Message<"alinery.v1.StepObjectBlob"> & {
+  /**
+   * @generated from field: string task_slug = 1;
+   */
+  taskSlug: string;
+
+  /**
+   * @generated from field: string execution_id = 2;
+   */
+  executionId: string;
+
+  /**
+   * 64 lowercase hex digits
+   *
+   * @generated from field: string sha256 = 3;
+   */
+  sha256: string;
+};
+
+/**
+ * Describes the message alinery.v1.StepObjectBlob.
+ * Use `create(StepObjectBlobSchema)` to create a new message.
+ */
+export const StepObjectBlobSchema: GenMessage<StepObjectBlob> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_blobs, 6);
+
+/**
  * @generated from message alinery.v1.BlobRef
  */
 export type BlobRef = Message<"alinery.v1.BlobRef"> & {
@@ -150,6 +235,24 @@ export type BlobRef = Message<"alinery.v1.BlobRef"> & {
      */
     value: DraftImageBlob;
     case: "draftImage";
+  } | {
+    /**
+     * @generated from field: alinery.v1.ArtifactBlob artifact = 7;
+     */
+    value: ArtifactBlob;
+    case: "artifact";
+  } | {
+    /**
+     * @generated from field: alinery.v1.ArtifactNodeBlob artifact_node = 8;
+     */
+    value: ArtifactNodeBlob;
+    case: "artifactNode";
+  } | {
+    /**
+     * @generated from field: alinery.v1.StepObjectBlob step_object = 9;
+     */
+    value: StepObjectBlob;
+    case: "stepObject";
   } | { case: undefined; value?: undefined };
 };
 
@@ -158,7 +261,7 @@ export type BlobRef = Message<"alinery.v1.BlobRef"> & {
  * Use `create(BlobRefSchema)` to create a new message.
  */
 export const BlobRefSchema: GenMessage<BlobRef> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 4);
+  messageDesc(file_alinery_v1_blobs, 7);
 
 /**
  * @generated from message alinery.v1.ReadBlobRequest
@@ -187,7 +290,7 @@ export type ReadBlobRequest = Message<"alinery.v1.ReadBlobRequest"> & {
  * Use `create(ReadBlobRequestSchema)` to create a new message.
  */
 export const ReadBlobRequestSchema: GenMessage<ReadBlobRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 5);
+  messageDesc(file_alinery_v1_blobs, 8);
 
 /**
  * @generated from message alinery.v1.ReadBlobResponse
@@ -223,7 +326,7 @@ export type ReadBlobResponse = Message<"alinery.v1.ReadBlobResponse"> & {
  * Use `create(ReadBlobResponseSchema)` to create a new message.
  */
 export const ReadBlobResponseSchema: GenMessage<ReadBlobResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 6);
+  messageDesc(file_alinery_v1_blobs, 9);
 
 /**
  * @generated from message alinery.v1.BeginUploadRequest
@@ -257,7 +360,7 @@ export type BeginUploadRequest = Message<"alinery.v1.BeginUploadRequest"> & {
  * Use `create(BeginUploadRequestSchema)` to create a new message.
  */
 export const BeginUploadRequestSchema: GenMessage<BeginUploadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 7);
+  messageDesc(file_alinery_v1_blobs, 10);
 
 /**
  * @generated from message alinery.v1.BeginUploadResponse
@@ -279,7 +382,7 @@ export type BeginUploadResponse = Message<"alinery.v1.BeginUploadResponse"> & {
  * Use `create(BeginUploadResponseSchema)` to create a new message.
  */
 export const BeginUploadResponseSchema: GenMessage<BeginUploadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 8);
+  messageDesc(file_alinery_v1_blobs, 11);
 
 /**
  * @generated from message alinery.v1.UploadChunkRequest
@@ -308,7 +411,7 @@ export type UploadChunkRequest = Message<"alinery.v1.UploadChunkRequest"> & {
  * Use `create(UploadChunkRequestSchema)` to create a new message.
  */
 export const UploadChunkRequestSchema: GenMessage<UploadChunkRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 9);
+  messageDesc(file_alinery_v1_blobs, 12);
 
 /**
  * @generated from message alinery.v1.UploadChunkResponse
@@ -321,7 +424,7 @@ export type UploadChunkResponse = Message<"alinery.v1.UploadChunkResponse"> & {
  * Use `create(UploadChunkResponseSchema)` to create a new message.
  */
 export const UploadChunkResponseSchema: GenMessage<UploadChunkResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 10);
+  messageDesc(file_alinery_v1_blobs, 13);
 
 /**
  * @generated from message alinery.v1.CommitUploadRequest
@@ -338,7 +441,7 @@ export type CommitUploadRequest = Message<"alinery.v1.CommitUploadRequest"> & {
  * Use `create(CommitUploadRequestSchema)` to create a new message.
  */
 export const CommitUploadRequestSchema: GenMessage<CommitUploadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 11);
+  messageDesc(file_alinery_v1_blobs, 14);
 
 /**
  * @generated from message alinery.v1.CommitUploadResponse
@@ -362,12 +465,12 @@ export type CommitUploadResponse = Message<"alinery.v1.CommitUploadResponse"> & 
  * Use `create(CommitUploadResponseSchema)` to create a new message.
  */
 export const CommitUploadResponseSchema: GenMessage<CommitUploadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 12);
+  messageDesc(file_alinery_v1_blobs, 15);
 
 /**
  * Blobs never take a path from the client. A `BlobRef` names the thing and the daemon resolves and checks the path,
  * so a client cannot read or write outside `.alinery/`. S4.3 builds the upload half and the reads of attachments and
- * draft images; S4.5 adds artifact bodies.
+ * draft images; S4.5 adds artifact bodies, tree nodes and the files a step kept.
  *
  * @generated from service alinery.v1.BlobService
  */

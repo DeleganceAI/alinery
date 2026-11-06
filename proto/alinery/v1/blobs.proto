@@ -6,7 +6,7 @@ import "alinery/v1/common.proto";
 
 // Blobs never take a path from the client. A `BlobRef` names the thing and the daemon resolves and checks the path,
 // so a client cannot read or write outside `.alinery/`. S4.3 builds the upload half and the reads of attachments and
-// draft images; S4.5 adds artifact bodies.
+// draft images; S4.5 adds artifact bodies, tree nodes and the files a step kept.
 service BlobService {
   rpc ReadBlob(ReadBlobRequest) returns (stream ReadBlobResponse);   // VIEW
   rpc BeginUpload(BeginUploadRequest) returns (BeginUploadResponse);  // ACT
@@ -36,12 +36,34 @@ message ChatAttachmentBlob {
   string name = 2;
 }
 
+// A file in the task's `artifacts/` (not `attachments/` or `subtasks/`). The daemon refuses a link on the way.
+message ArtifactBlob {
+  string task_slug = 1;
+  string name = 2;  // relative to artifacts/, forward slashes
+}
+// A file node of the task's artifact tree: its own, its parent's or active child's, a sub-task snapshot's, or an attachment of
+// any of them. The node is named by the id the tree row carries.
+message ArtifactNodeBlob {
+  string task_slug = 1;  // the task whose tree holds the node
+  string node_id = 2;
+}
+// A file an execution kept when it started or finished (O27): `tasks/<slug>/executions/<execution_id>/objects/<sha256>`, read-only.
+// The manifest in the execution's engine state names the hashes. Gone when the task is archived (NOT_FOUND).
+message StepObjectBlob {
+  string task_slug = 1;
+  string execution_id = 2;
+  string sha256 = 3;  // 64 lowercase hex digits
+}
+
 message BlobRef {
   oneof target {
     AttachmentBlob attachment = 2;
     ChatAttachmentBlob chat_attachment = 3;
     StagedBlob staged = 5;
     DraftImageBlob draft_image = 6;
+    ArtifactBlob artifact = 7;
+    ArtifactNodeBlob artifact_node = 8;
+    StepObjectBlob step_object = 9;
   }
 }
 

@@ -3,7 +3,7 @@
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { BlobRef, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
-import { attachmentBlob, type BlobBytes, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, type UploadTarget } from "../domain/blobs.ts";
+import { artifactBlob, artifactNodeBlob, attachmentBlob, type BlobBytes, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, stepObjectBlob, type UploadTarget } from "../domain/blobs.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
@@ -24,6 +24,9 @@ function resolve(repo: string, ref: BlobRef | undefined): BlobBytes {
   if (t?.case === "attachment") return attachmentBlob(repo, t.value.taskSlug, t.value.name);
   if (t?.case === "chatAttachment") return chatAttachmentBlob(repo, t.value.threadId, t.value.name);
   if (t?.case === "draftImage") return draftImageBlob(repo, t.value.draftSlug, t.value.name);
+  if (t?.case === "artifact") return artifactBlob(repo, t.value.taskSlug, t.value.name);
+  if (t?.case === "artifactNode") return artifactNodeBlob(repo, t.value.taskSlug, t.value.nodeId);
+  if (t?.case === "stepObject") return stepObjectBlob(repo, t.value.taskSlug, t.value.executionId, t.value.sha256);
   throw fail(Code.InvalidArgument, "invalid_argument", "this blob cannot be read");
 }
 
@@ -39,8 +42,9 @@ export function blobService(d: BlobDeps, dedupe: Dedupe, store: Store): ServiceI
         yield { data: new Uint8Array(0), offset: BigInt(start), total: BigInt(blob.total), contentType: blob.contentType };
         return;
       }
-      for (let at = start; at < end; at += CHUNK_BYTES) {
-        const data = blob.read(at, Math.min(CHUNK_BYTES, end - at));
+      const frame = blob.frame ?? CHUNK_BYTES;
+      for (let at = start; at < end; at += frame) {
+        const data = blob.read(at, Math.min(frame, end - at));
         yield { data, offset: BigInt(at), total: BigInt(blob.total), contentType: blob.contentType };
       }
     },

@@ -5,6 +5,7 @@ import { rmSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import * as grpc from "@grpc/grpc-js";
 import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
 import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
@@ -21,6 +22,7 @@ import type { JobRunner } from "../jobs/runner.ts";
 import type { StorageParams } from "../jobs/storage.ts";
 import { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
+import { type ArtifactDeps, artifactService } from "./artifacts.ts";
 import { blobService } from "./blobs.ts";
 import { executionService } from "./executions.ts";
 import { jobService } from "./jobs.ts";
@@ -34,9 +36,9 @@ import { peerExecutable, samePath } from "./peer.ts";
 
 const MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
 
-type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl };
+type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps };
 
-function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions }: Hosted) {
+function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions, artifacts }: Hosted) {
   // A draft carries its pasted images in one message (up to the 100 MB attachment set); grpc-js defaults to 4 MiB.
   const server = new grpc.Server({ "grpc.max_receive_message_length": MAX_MESSAGE_BYTES });
   const values = (header: Headers) => credentials(header, peer, secret);
@@ -56,6 +58,7 @@ function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle
     addService(server, DraftService, draftService(tasks, dedupe, store), values);
     addService(server, BlobService, blobService(tasks, dedupe, store), values);
   }
+  if (artifacts) addService(server, ArtifactService, artifactService(artifacts, dedupe, store), values);
   return server.createConnectionInjector(grpc.ServerCredentials.createInsecure());
 }
 
@@ -66,11 +69,11 @@ function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable:
   return peer && samePath(peer, hostExecutable) ? "shell" : "other";
 }
 
-export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl };
+export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps };
 
 export function serveRpc(options: RpcOptions): Promise<NetServer> {
   // One dedupe and one attach table for all three peer classes: a client's retry lands on a new connection, not a new class.
-  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks, sessions: options.sessions };
+  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks, sessions: options.sessions, artifacts: options.artifacts };
   const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info, options.lifecycle, hosted)]));
   const net = createNetServer((sock) => {
     sock.on("error", () => {});

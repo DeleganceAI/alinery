@@ -44,7 +44,10 @@ export type TelemetryEvent =
   | { event: "task.draft_delete"; source: TelemetrySource; taskId: string }
   | { event: "task.archive"; source: TelemetrySource; taskId: string }
   | { event: "session.archive"; source: TelemetrySource; killedLive: boolean; sessionId: string; taskId: string }
-  | { event: "session.kill"; source: TelemetrySource; sessionId: string; taskId: string };
+  | { event: "session.kill"; source: TelemetrySource; sessionId: string; taskId: string }
+  | { event: "artifact.comment_add"; source: TelemetrySource }
+  | { event: "artifact.review_send"; source: TelemetrySource }
+  | { event: "artifact.review_handoff"; source: TelemetrySource; targetPhase: string; harness: string };
 
 /** telemetry.rs `insert_id`: the opaque per-task id goes on the wire when there is one. */
 const withId = (taskId: string) => (taskId ? { task_id: taskId } : {});
@@ -62,6 +65,11 @@ function eventProps(e: TelemetryEvent): Record<string, unknown> {
       return { source: e.source, killed_live: e.killedLive, ...(e.sessionId ? { session_id: e.sessionId } : {}), ...withId(e.taskId) };
     case "session.kill":
       return { source: e.source, ...(e.sessionId ? { session_id: e.sessionId } : {}), ...withId(e.taskId) };
+    case "artifact.comment_add":
+    case "artifact.review_send":
+      return { source: e.source };
+    case "artifact.review_handoff":
+      return { source: e.source, target_phase: sanitizePhase(e.targetPhase), harness: sanitizeHarness(e.harness) };
   }
 }
 
