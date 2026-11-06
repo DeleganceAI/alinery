@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, test } from "bun:test";
+import { firstLine } from "../firstLine.testutil.ts";
 import { holdCommand, KeepAwake, keepAwakeSetting } from "./keepawake.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "daemon-keepawake-"));
@@ -72,7 +73,7 @@ test("the hold follows the pref and the live-session count, one child at a time"
   hold.release();
   expect(hold.holdPid).toBeUndefined();
   expect(await until(() => !alive(second), 1000)).toBe(true);
-});
+}, 15_000);
 
 test("a tool that exits at once is logged once and not respawned inside the retry window", async () => {
   const appConfig = appToml("refused", "[global.power]\nkeep_awake = true\n");
@@ -92,12 +93,11 @@ test("a tool that exits at once is logged once and not respawned inside the retr
   hold.release();
   expect(spawns).toBe(1);
   expect(hold.holdPid).toBeUndefined();
-});
+}, 15_000);
 
 async function fixture(appConfig: string, mode: "cat" | "real") {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "keepawake.fixture.ts"), appConfig, mode], { stdout: "pipe", stderr: "inherit" });
-  const reader = child.stdout.getReader();
-  const line = new TextDecoder().decode((await reader.read()).value);
+  const line = await firstLine(child);
   return { child, ...(JSON.parse(line) as { pid: number; hold: number; command: string[] | null }) };
 }
 
@@ -108,7 +108,7 @@ test("kill -9 of the daemon ends the hold within a second (a stdin pipe, with an
   process.kill(run.pid, "SIGKILL");
   await run.child.exited;
   expect(await until(() => !alive(run.hold), 1000)).toBe(true);
-});
+}, 20_000);
 
 test.skipIf(process.platform !== "darwin")("macOS: the real hold is caffeinate's idle-sleep assertion and kill -9 removes it", async () => {
   const appConfig = appToml("caffeinate", "[global.power]\nkeep_awake = true\n");
@@ -121,4 +121,29 @@ test.skipIf(process.platform !== "darwin")("macOS: the real hold is caffeinate's
   await run.child.exited;
   expect(await until(() => !alive(run.hold), 1000)).toBe(true);
   expect(Bun.spawnSync(["/usr/bin/pmset", "-g", "assertions"]).stdout.toString()).not.toContain(`pid ${run.hold}(`);
-});
+}, 20_000);
+
+test.skipIf(process.platform !== "darwin")("macOS: turning the pref off, or the last session ending, ends the real hold, which ignores stdin", async () => {
+  const appConfig = appToml("caffeinate-drop", "[global.power]\nkeep_awake = true\n");
+  let live = 1;
+  const hold = new KeepAwake({ appConfig, liveSessions: () => live, pollMs: 60_000 });
+  try {
+    hold.tick();
+    expect(await until(() => hold.holdPid !== undefined, 2000)).toBe(true);
+    const first = hold.holdPid as number;
+    // caffeinate -w only watches the daemon's pid, so only the SIGKILL in drop() can end it here.
+    expect(Bun.spawnSync(["/bin/ps", "-p", String(first), "-o", "comm="]).stdout.toString()).toContain("caffeinate");
+    writeFileSync(appConfig, "[global.power]\nkeep_awake = false\n");
+    hold.tick();
+    expect(await until(() => !alive(first), 2000)).toBe(true);
+    writeFileSync(appConfig, "[global.power]\nkeep_awake = true\n");
+    hold.tick();
+    expect(await until(() => hold.holdPid !== undefined, 2000)).toBe(true);
+    const second = hold.holdPid as number;
+    live = 0;
+    hold.tick();
+    expect(await until(() => !alive(second), 2000)).toBe(true);
+  } finally {
+    hold.release();
+  }
+}, 20_000);

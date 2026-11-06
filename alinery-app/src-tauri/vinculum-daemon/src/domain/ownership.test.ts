@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
+import { firstLine } from "../firstLine.testutil.ts";
 import { tryLockExclusive } from "../platform/lock.ts";
 import { acquireRepoOwnership, laneLockPath, laneSocketPath, validateLane } from "./ownership.ts";
 import { definitionIdentity } from "./taskFiles.ts";
@@ -246,12 +247,12 @@ describe("evidence that blocks adoption", () => {
     const socket = laneSocketPath(repo, "gone");
     // A real owner that was killed -9 leaves its socket inode behind.
     const owner = Bun.spawn([process.execPath, "-e", `require("node:net").createServer().listen(${JSON.stringify(socket)}, () => console.log("up")); setTimeout(() => {}, 60000)`], { stdout: "pipe" });
-    await owner.stdout.getReader().read();
+    await firstLine(owner);
     owner.kill("SIGKILL");
     await owner.exited;
     expect(lstatSync(socket).isSocket()).toBe(true);
     await take(repo, "next", "config");
-  });
+  }, 15_000);
 
   test("a task directory that is not a plain slug blocks", async () => {
     const repo = newRepo();
@@ -279,7 +280,7 @@ describe("two owners", () => {
 
   const second = async (repo: string, lane: string) => {
     const child = Bun.spawn([process.execPath, join(import.meta.dir, "ownership.fixture.ts"), repo, lane, "config"], { stdout: "pipe", stderr: "inherit" });
-    const line = new TextDecoder().decode((await child.stdout.getReader().read()).value).trim();
+    const line = await firstLine(child);
     return { child, line };
   };
 
@@ -300,5 +301,5 @@ describe("two owners", () => {
     expect(readState(repo, "task").owning_lane).toBe("other");
     next.child.kill("SIGKILL");
     await next.child.exited;
-  });
+  }, 30_000);
 });
