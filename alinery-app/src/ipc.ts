@@ -42,7 +42,6 @@ import type {
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
-  Config,
   ConnectionStatus,
   CreateExecutionSessionReply,
   CreateExecutionSessionRequest,
@@ -73,11 +72,9 @@ import type {
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
-  RepoOverrides,
   ReviewHandoffResult,
   SavePlaybookRequest,
   ScopedPlaybook,
-  ScopedSettings,
   SessionMessageActionProvenance,
   SessionMeta,
   SessionName,
@@ -376,20 +373,15 @@ export const finalizeSessionMessageActions = (id: string, taskSlug: string, acti
   invoke<void>("finalize_session_message_actions", { id, taskSlug, actions });
 
 // ── settings.rs ───────────────────────────────────────────────────────
-export const clearRepoOverrideForRepo = (repoPath: string, field: string) => invoke<ScopedSettings>("clear_repo_override_for_repo", { repoPath, field });
 export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
 export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
 export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
 export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
-export const readConfig = () => invoke<Config>("read_config");
-export const readConfigForRepo = (repoPath: string) => invoke<Config>("read_config_for_repo", { repoPath });
 export const readGlobalSettings = () => invoke<GlobalSettings>("read_global_settings");
 export const readModelFavorites = (harness: string) => invoke<string[]>("read_model_favorites", { harness });
-export const readScopedSettingsForRepo = (repoPath: string) => invoke<ScopedSettings>("read_scoped_settings_for_repo", { repoPath });
 export const storageInfo = (repoPath: string) => invoke<StorageInfo>("storage_info", { repoPath });
 export const setModelFavorite = (harness: string, model: string, favorite: boolean) => invoke<string[]>("set_model_favorite", { harness, model, favorite });
 export const writeGlobalSettings = (global: GlobalSettings) => invoke<GlobalSettings>("write_global_settings", { global });
-export const writeRepoOverridesForRepo = (repoPath: string, overrides: RepoOverrides) => invoke<ScopedSettings>("write_repo_overrides_for_repo", { repoPath, overrides });
 
 // ── task.rs ───────────────────────────────────────────────────────────
 export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });

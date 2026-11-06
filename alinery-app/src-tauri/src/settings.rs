@@ -99,60 +99,17 @@ pub(crate) async fn list_harness_models_for_repo(app: AppHandle, repo_path: Stri
 // layer: absent fields inherit, present blank strings are intentional values.
 pub(crate) type Config = alinery_core::EffectiveConfig;
 
-pub(crate) const DEFAULT_CONFIG_TOML: &str = include_str!("../config.default.toml");
-
-pub(crate) fn config_toml_path(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("config.toml")
-}
-
-pub(crate) fn ensure_config_toml(repo: &Path) -> Result<(), String> {
-    let p = config_toml_path(repo);
-    if p.exists() {
-        return Ok(());
-    }
-    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
-    fs::write(&p, DEFAULT_CONFIG_TOML).map_err(|e| format!("write {}: {e}", p.display()))
-}
-
 pub(crate) fn load_config_with_app_path(app_config: &Path, repo: &Path) -> Config {
-    let _ = ensure_config_toml(repo);
     let global = alinery_core::load_global_settings(app_config);
     let overrides = alinery_core::load_repo_overrides(repo);
     alinery_core::resolve_effective_config(&global, &overrides)
 }
 
-/// A repository's `config.toml` override layer: read in place for a local repo, from its host for a remote one.
-pub(crate) fn read_overrides(state: &AppState, target: &RepoRef) -> Result<alinery_core::RepoOverrides, String> {
-    match target {
-        RepoRef::Local(repo) => alinery_core::load_repo_overrides_strict(repo),
-        RepoRef::Remote { host_id, path } => remote_call(state, host_id, RepoOp::ReadRepoOverrides { repo: path.into() }),
-    }
-}
-
-pub(crate) fn write_overrides(app_config: &Path, state: &AppState, target: &RepoRef, overrides: &alinery_core::RepoOverrides) -> Result<(), String> {
-    match target {
-        RepoRef::Local(repo) => alinery_core::write_repo_overrides(Some(app_config), repo, overrides),
-        RepoRef::Remote { host_id, path } => remote_call(
-            state,
-            host_id,
-            RepoOp::WriteRepoOverrides {
-                repo: path.into(),
-                app_config: host_app_config(state, host_id)?,
-                overrides: overrides.clone(),
-            },
-        ),
-    }
-}
-
-/// Global settings from this machine's `app.toml` merged with the repository's overrides, wherever those live.
-pub(crate) fn scoped_for(app_config: &Path, state: &AppState, target: &RepoRef) -> Result<alinery_core::ScopedSettings, String> {
-    match target {
-        RepoRef::Local(repo) => {
-            ensure_config_toml(repo)?;
-            alinery_core::read_scoped_settings_strict(app_config, repo)
-        }
-        remote => alinery_core::scoped_settings_with(app_config, read_overrides(state, remote)?),
-    }
+/// The GitHub token in force for a remote repo: its host's `config.toml` override over this machine's global one.
+/// The import itself runs here with this machine's credentials, so this is the one repo-settings read the shell keeps (S4.10).
+pub(crate) fn remote_github_token(app_config: &Path, state: &AppState, host_id: &str, path: &Path) -> Result<String, String> {
+    let overrides: alinery_core::RepoOverrides = remote_call(state, host_id, RepoOp::ReadRepoOverrides { repo: path.into() })?;
+    Ok(alinery_core::scoped_settings_with(app_config, overrides)?.effective.github.token)
 }
 
 pub(crate) fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
@@ -160,18 +117,6 @@ pub(crate) fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
         ActiveRepo::Local(repo) => RepoRef::Local(repo),
         ActiveRepo::Remote { host_id, path } => RepoRef::Remote { host_id, path },
     })
-}
-
-#[tauri::command]
-pub(crate) async fn read_config(app: AppHandle) -> Result<Config, String> {
-    let target = active_repo_ref()?;
-    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
-}
-
-#[tauri::command]
-pub(crate) async fn read_config_for_repo(app: AppHandle, repo_path: String) -> Result<Config, String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    off_main_thread("read config", move || Ok(scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)?.effective)).await
 }
 
 #[tauri::command]
@@ -255,71 +200,6 @@ pub(crate) fn write_global_settings(app: AppHandle, global: alinery_core::Global
         );
     }
     Ok(next)
-}
-
-#[tauri::command]
-pub(crate) async fn read_scoped_settings_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::ScopedSettings, String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    off_main_thread("read settings", move || scoped_for(&app_config_path(&app)?, &app.state::<AppState>(), &target)).await
-}
-
-#[tauri::command]
-pub(crate) async fn read_repo_overrides_for_repo(app: AppHandle, repo_path: String) -> Result<alinery_core::RepoOverrides, String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    off_main_thread("read repo overrides", move || read_overrides(&app.state::<AppState>(), &target)).await
-}
-
-fn emit_repo_settings_change(app: &AppHandle) {
-    emit(
-        app,
-        alinery_core::TelemetryEvent::SettingsChange {
-            source: alinery_core::TelemetrySource::App,
-            scope: alinery_core::SettingsChangeScope::Repo,
-        },
-    );
-}
-
-#[tauri::command]
-pub(crate) async fn write_repo_overrides_for_repo(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_path: String,
-    overrides: alinery_core::RepoOverrides,
-) -> Result<alinery_core::ScopedSettings, String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    off_main_thread("write repo overrides", move || {
-        let state = app.state::<AppState>();
-        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
-        emit_repo_settings_change(&app);
-        scoped_for(&app_config_path(&app)?, &state, &target)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn clear_repo_override_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, field: String) -> Result<alinery_core::ScopedSettings, String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    off_main_thread("clear repo override", move || {
-        let state = app.state::<AppState>();
-        let mut overrides = read_overrides(&state, &target)?;
-        alinery_core::clear_repo_override(&mut overrides, &field)?;
-        write_overrides(&app_config_path(&app)?, &state, &target, &overrides)?;
-        emit_repo_settings_change(&app);
-        scoped_for(&app_config_path(&app)?, &state, &target)
-    })
-    .await
-}
-
-// Compatibility command: active-repo writes now replace only that repository's override layer.
-#[tauri::command]
-pub(crate) async fn write_config(app: AppHandle, state: State<'_, AppState>, config: alinery_core::RepoOverrides) -> Result<(), String> {
-    let target = owned_active_target(&state)?;
-    off_main_thread("write config", move || {
-        write_overrides(&app_config_path(&app)?, &app.state::<AppState>(), &target, &config)?;
-        emit_repo_settings_change(&app);
-        Ok(())
-    })
-    .await
 }
 
 #[tauri::command]

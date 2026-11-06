@@ -339,15 +339,10 @@ pub enum RepoOp {
         repo: PathBuf,
         source_slug: String,
     },
-    /// The repository's `config.toml` override layer (empty when the file is absent).
+    /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
+    /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
     ReadRepoOverrides {
         repo: PathBuf,
-    },
-    /// Replaces the override layer; `app_config` is where the settings audit line is logged.
-    WriteRepoOverrides {
-        repo: PathBuf,
-        app_config: PathBuf,
-        overrides: crate::RepoOverrides,
     },
     SessionArtifactReady {
         repo: PathBuf,
@@ -803,7 +798,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::RestoreTask { repo, slug } => crate::restore_task(&repo, &slug).map(|()| Value::Null),
         RepoOp::DuplicateTaskPackage { repo, source_slug } => to_value(crate::task_creation::duplicate_task_package(&repo, &source_slug)?),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
-        RepoOp::WriteRepoOverrides { repo, app_config, overrides } => crate::write_repo_overrides(Some(&app_config), &repo, &overrides).map(|()| Value::Null),
         RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
         RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
         RepoOp::WriteDraft {
@@ -1285,11 +1279,6 @@ mod tests {
                 source_slug: "t".into(),
             },
             RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
-            RepoOp::WriteRepoOverrides {
-                repo: "/srv/a".into(),
-                app_config: "/c/app.toml".into(),
-                overrides: crate::RepoOverrides::default(),
-            },
             RepoOp::SessionArtifactReady {
                 repo: "/srv/a".into(),
                 slug: "t".into(),

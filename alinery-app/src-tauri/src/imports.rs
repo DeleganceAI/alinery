@@ -623,7 +623,7 @@ async fn import_github_at(app: AppHandle, target: RepoRef, reference: String) ->
         RepoRef::Remote { host_id, path } => {
             let state = app.state::<AppState>();
             let origin: Option<String> = remote_call(&state, host_id, RepoOp::GitOriginUrl { repo: path.into() })?;
-            let token = scoped_for(&app_config, &state, &target)?.effective.github.token;
+            let token = remote_github_token(&app_config, &state, host_id, path.as_ref())?;
             import_github_with_context(&app_config, &reference, origin.as_deref().and_then(github_repo_from_remote), &token)
         }
     })

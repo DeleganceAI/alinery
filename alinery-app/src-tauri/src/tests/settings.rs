@@ -394,7 +394,7 @@ dock_badge_completions = false
 
 #[test]
 fn default_config_parses_as_partial_repo_overrides() {
-    let repo_overrides: RepoOverrides = toml::from_str(DEFAULT_CONFIG_TOML).expect("bundled repo config must parse");
+    let repo_overrides: RepoOverrides = toml::from_str(alinery_core::DEFAULT_CONFIG_TOML).expect("bundled repo config must parse");
     assert_eq!(repo_overrides.github.token, None);
     assert_eq!(repo_overrides.defaults.model, None);
 

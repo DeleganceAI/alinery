@@ -24,7 +24,7 @@ pub(crate) use super::{
     sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback,
     with_access_token_retry, worktree_exists_for, worktrees_dir, write_draft_in_with_slug, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig,
     AppState, AppearancePrefs, ArtifactCommentDraftsFile, ArtifactCommentsFile, AuthAttempt, AuthRetryError, BackupSlot, Command, DesktopCreditsView, LinearTokenError,
-    OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, DEFAULT_CONFIG_TOML, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
+    OAuthCallback, SessionMessageActionProvenance, SessionMeta, SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
 };
 pub(crate) use alinery_core::git_top_level;
 pub(crate) use alinery_core::task_creation::{unique_attachment_name, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_SET_BYTES};

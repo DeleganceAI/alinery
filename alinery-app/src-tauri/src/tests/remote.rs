@@ -1165,20 +1165,24 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     assert_eq!(serde_json::to_value(&package).unwrap(), serde_json::to_value(&local).unwrap());
     let _ = std::fs::remove_dir_all(&scratch);
 
-    // Repository settings: the override layer lives in the host's config.toml, the global layer here.
-    let target = crate::RepoRef::parse(&key).unwrap();
+    // The GitHub import's token for a remote repo: the host's `config.toml` override over this machine's global one.
     let app_config = crate::app_config_path(&handle).unwrap();
-    assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
-    let mut overrides = alinery_core::RepoOverrides::default();
-    overrides.defaults.model = Some("host-model".into());
-    overrides.defaults.harness = Some("omp".into());
-    crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
-    assert_eq!(crate::read_overrides(&state, &target).unwrap(), overrides);
-    let scoped = crate::scoped_for(&app_config, &state, &target).unwrap();
-    assert_eq!(scoped.overrides, overrides);
-    alinery_core::clear_repo_override(&mut overrides, "defaults.model").unwrap();
-    crate::write_overrides(&app_config, &state, &target, &overrides).unwrap();
-    assert_eq!(crate::read_overrides(&state, &target).unwrap(), alinery_core::RepoOverrides::default());
+    let (host_id, host_path) = match crate::RepoRef::parse(&key).unwrap() {
+        crate::RepoRef::Remote { host_id, path } => (host_id, path),
+        crate::RepoRef::Local(_) => unreachable!("the key is a remote key"),
+    };
+    let global_token = alinery_core::load_global_settings(&app_config).github.token;
+    assert_eq!(crate::remote_github_token(&app_config, &state, &host_id, host_path.as_ref()).unwrap(), global_token);
+    remote_call::<()>(
+        &state,
+        &id,
+        RepoOp::WriteFile {
+            path: format!("{repo}/.alinery/config.toml").into(),
+            contents: "[github]\ntoken = \"host-token\"\n".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(crate::remote_github_token(&app_config, &state, &host_id, host_path.as_ref()).unwrap(), "host-token");
 
     // The sessions list, artifact readiness, notification clearing and task activity
     // all read the host's files; live states come through the forward.
