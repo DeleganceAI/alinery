@@ -34,7 +34,12 @@ import { runJobChild } from "./jobs/child.ts";
 import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
-import { completeSessionMeta, getTaskExecution, materializeSessions, overlayStart, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
+import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, ownershipLibrary, startSession, taskOp, taskWorktree } from "./tasks.ts";
+import { ChatPublisher, type ChatSessions, loadChat } from "./domain/chat.ts";
+import { setSessionName } from "./domain/sessionOps.ts";
+import { readTask } from "./domain/taskFiles.ts";
+import { DomainError } from "./platform/lock.ts";
+import type { SessionControl } from "./rpc/sessions.ts";
 import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
@@ -43,7 +48,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 28;
+const PROTOCOL = 29;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -225,9 +230,13 @@ const sessionNameTool = defineTool({
   execute: async (args, api) => {
     const row = sessionForCall(api.env, api.conversationId);
     if (!row?.taskSlug) return { output: [{ type: "text", text: "Only a task session can name itself this way." }], isError: true };
-    const outcome = suggestSessionName(repo, row.taskSlug, row.id, args.name);
-    if ("error" in outcome) return { output: [{ type: "text", text: outcome.error }], isError: true };
-    return { output: [{ type: "text", text: `Session name: ${outcome.value.name}` }] };
+    try {
+      const outcome = await setSessionName(repo, row.taskSlug, row.id, args.name, "auto");
+      await feed.refresh(`tasks/${row.taskSlug}/sessions/${row.id}.name.json`);
+      return { output: [{ type: "text", text: `Session name: ${outcome.value.name}` }] };
+    } catch (error) {
+      return { output: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+    }
   },
 });
 
@@ -557,8 +566,7 @@ async function maybeTitleChat(row: Live) {
     ]);
     const name = cleanChatTitle(reply);
     if (!name) return;
-    const outcome = suggestSessionName(repo, "", row.id, name);
-    if ("error" in outcome) return;
+    await setSessionName(repo, "", row.id, name, "auto");
     row.titledBucket = bucket;
     commitSession(row.taskSlug, row.id);
   } catch (error) {
@@ -706,6 +714,103 @@ function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknow
   return { error: "task execution ownership mismatch" };
 }
 
+/** Ends a session's process and stamps its exit; the same for the `kill` op and `SessionService.KillSession`. */
+function killSession(id: string) {
+  if (isPty(id)) killPty(id);
+  const row = live.get(id);
+  if (!row) return;
+  try {
+    if (row.harness) void row.harness.close(context);
+  } catch {
+    /* already closed */
+  }
+  writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
+  live.delete(id);
+  commitSession(row.taskSlug, id);
+}
+
+/**
+ * `spawn`, `attach` and `resume`: starts or rejoins a session's process. Answers `{ ok: true }` or the refusal; the
+ * socket op and `SessionService.ResumeSession` / the chat runner both go through it.
+ */
+async function openOp(op: string, header: Record<string, unknown>): Promise<{ answer: Record<string, unknown>; keep: boolean }> {
+  const id = String(header.id ?? "");
+  const taskSlug = String(header.task_slug ?? "");
+  let metaHarness: string | undefined;
+  try {
+    metaHarness = String((JSON.parse(readFileSync(metaPath(taskSlug, id), "utf8")) as Record<string, unknown>).harness ?? "");
+  } catch {
+    /* no readable meta: the root-session rule allows it, and a task session is checked below */
+  }
+  const refusal = openPreflight(repo, taskSlug, metaHarness);
+  if (refusal) {
+    return { answer: { error: refusal }, keep: false };
+  }
+  if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+    const cols = Number(header.cols ?? 0);
+    const rows = Number(header.rows ?? 0);
+    if (!hasPty(id)) {
+      if (op === "attach") {
+        return { answer: { error: "unknown-session" }, keep: false };
+      }
+      const owned = await taskOpenAllowed(taskSlug);
+      if (!owned.ok) {
+        return { answer: ownershipRefusal(owned.reply), keep: false };
+      }
+      const cwd = String(header.cwd ?? repo);
+      startShell(id, cwd || repo, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), cols, rows, () => {
+        const row = live.get(id);
+        if (row) row.process = "exited";
+        writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+        commitSession(taskSlug, id);
+      });
+      if (!live.has(id)) {
+        live.set(id, {
+          id,
+          taskSlug,
+          process: "alive",
+          agent: { state: "idle" },
+          playbook: { state: "in_progress" },
+          harness: null,
+          conversationId: "",
+          liveRun: false,
+          seenNonce: "",
+          executionId: "",
+        });
+        commitSession(taskSlug, id);
+      }
+    }
+    const row = live.get(id);
+    if (row && row.process !== "exited") row.process = "alive";
+    // The bytes come from TerminalService.Attach (rpc/terminal.ts); this op only starts the shell.
+    return { answer: { ok: true }, keep: false };
+  }
+  if (op !== "attach" && id && !live.has(id)) {
+    const owned = await taskOpenAllowed(taskSlug);
+    if (!owned.ok) {
+      return { answer: ownershipRefusal(owned.reply), keep: false };
+    }
+    const model = String(header.model ?? "");
+    void openSession(id, taskSlug, model).catch((error) => {
+      const row = live.get(id);
+      if (row) {
+        row.playbook = { state: "failed", reason: String(error) };
+        commitSession(row.taskSlug, id);
+      }
+    });
+  }
+  return { answer: { ok: true }, keep: true };
+}
+
+/** The process of a session just created or started: a recorded terminal gets its shell, anything else its harness. */
+function openCreated(id: string, taskSlug: string, model: string, prompt: string): Promise<void> {
+  if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+    startRecordedShell(id, taskSlug);
+    return Promise.resolve();
+  }
+  return openSession(id, taskSlug, model, prompt).then(() => undefined);
+}
+
 const kept = new WeakSet<Socket>();
 
 function reply(socket: Socket, value: unknown, keep = false) {
@@ -749,95 +854,12 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     return;
   }
   if (op === "spawn" || op === "attach" || op === "resume") {
-    const id = String(header.id ?? "");
-    const taskSlug = String(header.task_slug ?? "");
-    let metaHarness: string | undefined;
-    try {
-      metaHarness = String((JSON.parse(readFileSync(metaPath(taskSlug, id), "utf8")) as Record<string, unknown>).harness ?? "");
-    } catch {
-      /* no readable meta: the root-session rule allows it, and a task session is checked below */
-    }
-    const refusal = openPreflight(repo, taskSlug, metaHarness);
-    if (refusal) {
-      reply(socket, { error: refusal });
-      return;
-    }
-    if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
-      const cols = Number(header.cols ?? 0);
-      const rows = Number(header.rows ?? 0);
-      if (!hasPty(id)) {
-        if (op === "attach") {
-          reply(socket, { error: "unknown-session" });
-          return;
-        }
-        const owned = await taskOpenAllowed(taskSlug);
-        if (!owned.ok) {
-          reply(socket, ownershipRefusal(owned.reply));
-          return;
-        }
-        const cwd = String(header.cwd ?? repo);
-        startShell(id, cwd || repo, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), cols, rows, () => {
-          const row = live.get(id);
-          if (row) row.process = "exited";
-          writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
-          commitSession(taskSlug, id);
-        });
-        if (!live.has(id)) {
-          live.set(id, {
-            id,
-            taskSlug,
-            process: "alive",
-            agent: { state: "idle" },
-            playbook: { state: "in_progress" },
-            harness: null,
-            conversationId: "",
-            liveRun: false,
-            seenNonce: "",
-            executionId: "",
-          });
-          commitSession(taskSlug, id);
-        }
-      }
-      const row = live.get(id);
-      if (row && row.process !== "exited") row.process = "alive";
-      // The bytes come from TerminalService.Attach (rpc/terminal.ts); this op only starts the shell.
-      reply(socket, { ok: true });
-      return;
-    }
-    if (op !== "attach" && id && !live.has(id)) {
-      const taskSlug = String(header.task_slug ?? "");
-      const owned = await taskOpenAllowed(taskSlug);
-      if (!owned.ok) {
-        reply(socket, ownershipRefusal(owned.reply));
-        return;
-      }
-      const model = String(header.model ?? "");
-      void openSession(id, taskSlug, model).catch((error) => {
-        const row = live.get(id);
-        if (row) {
-          row.playbook = { state: "failed", reason: String(error) };
-          commitSession(row.taskSlug, id);
-        }
-      });
-    }
-    reply(socket, { ok: true }, true);
+    const { answer, keep } = await openOp(op, header);
+    reply(socket, answer, keep);
     return;
   }
   if (op === "kill") {
-    const id = String(header.id ?? "");
-    if (isPty(id)) killPty(id);
-    const row = live.get(id);
-    if (row) {
-      const harness = row.harness;
-      try {
-        if (harness) void harness.close(context);
-      } catch {
-        /* already closed */
-      }
-      writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
-      live.delete(id);
-      commitSession(row.taskSlug, id);
-    }
+    killSession(String(header.id ?? ""));
     reply(socket, { ok: true });
     return;
   }
@@ -848,6 +870,15 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   if (op === "event") {
     reply(socket, { error: "event-rejected" });
     return;
+  }
+  // The chat commands name a thread, and a thread is a root Vinculum session (`require_chat_thread`, now here).
+  if ((op === "prompt" || op === "abort" || op === "set_model" || op === "set_thinking_level") && header.chat === true) {
+    try {
+      loadChat(repo, String(header.id ?? ""));
+    } catch (error) {
+      reply(socket, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
   }
   if (op === "prompt" || op === "abort") {
     const row = live.get(String(header.id ?? ""));
@@ -1015,13 +1046,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   }
   if (["get_task_execution", "create_execution_session", "start_session", "create_subtask"].includes(op)) {
     try {
-      reply(socket, (await taskOp(repo, lane, identity, op, header, (id, taskSlug, model, prompt) => {
-        if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
-          startRecordedShell(id, taskSlug);
-          return Promise.resolve();
-        }
-        return openSession(id, taskSlug, model, prompt).then(() => undefined);
-      })) ?? { error: "unhandled" });
+      reply(socket, (await taskOp(repo, lane, identity, op, header, openCreated)) ?? { error: "unhandled" });
     } catch (error) {
       reply(socket, { error: String(error) });
     }
@@ -1155,6 +1180,39 @@ const taskDeps: TaskDeps = {
     };
   },
 };
+// Session writes and chat threads (S4.4): the processes stay with this file, the files and the store with the domain code.
+const chat = new ChatPublisher(store, repo);
+const runner: ChatSessions = {
+  create: (request) => createExecutionSession(repo, request, openCreated),
+  start: (request) => startSession(repo, request, openCreated),
+  async open(header) {
+    const { answer } = await openOp(String(header.op ?? "resume"), header);
+    if (typeof answer.error === "string") throw new DomainError("failed_precondition", answer.error);
+  },
+  isRunning: (id) => {
+    const row = live.get(id);
+    return row !== undefined && row.process !== "exited";
+  },
+  kill: killSession,
+};
+const sessionControl: SessionControl = {
+  repo,
+  refresh: (rel) => feed.refresh(rel),
+  telemetry,
+  chat,
+  runner,
+  telemetryIds: (slug, id) => {
+    let session = "";
+    try {
+      session = String((JSON.parse(readFileSync(metaPath(slug, id), "utf8")) as Record<string, unknown>).telemetry_id ?? "");
+    } catch {
+      /* a session without a readable meta has no id to report */
+    }
+    return { session, task: slug ? String(readTask(repo, slug)?.telemetry_id ?? "") : "" };
+  },
+};
+await chat.refreshAll();
+setInterval(() => void chat.refreshAll(), 30_000).unref();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
   socketPath: rpcSocket,
@@ -1167,6 +1225,7 @@ await serveRpc({
   storageScan: { repo, appConfig, namespace: lane },
   settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
   tasks: taskDeps,
+  sessions: sessionControl,
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
     if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;

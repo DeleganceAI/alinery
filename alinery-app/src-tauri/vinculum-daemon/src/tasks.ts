@@ -17,7 +17,6 @@ type Request = Record<string, unknown>;
 type CoreLib = {
   symbols: {
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
-    alinery_set_session_name: (repo: ReturnType<typeof ptr>, taskSlug: ReturnType<typeof ptr>, sessionId: ReturnType<typeof ptr>, name: ReturnType<typeof ptr>) => number | null;
     alinery_record_worktree: (dir: ReturnType<typeof ptr>, slug: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
     alinery_string_free: (reply: number | null) => void;
   };
@@ -42,7 +41,6 @@ function core(): CoreLib {
   const library = ownershipLibrary();
   coreLib = dlopen(library, {
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
-    alinery_set_session_name: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
   }) as CoreLib;
@@ -51,18 +49,6 @@ function core(): CoreLib {
 
 function cstr(value: string) {
   return ptr(Buffer.from(`${value}\0`));
-}
-
-export type SessionNameReply = { error: string } | { status: "saved" | "unchanged"; value: { name: string; source: "auto" | "user" } };
-
-/** Automatic name only. A human rename stays on the app command, and this call will not replace it. */
-export function suggestSessionName(repo: string, slug: string, id: string, name: string): SessionNameReply {
-  const lib = core();
-  const reply = lib.symbols.alinery_set_session_name(cstr(repo), cstr(slug), cstr(id), cstr(name));
-  const text = reply ? new CString(reply).toString() : "";
-  if (reply) lib.symbols.alinery_string_free(reply);
-  if (!text) return { error: "empty session name reply" };
-  return JSON.parse(text) as SessionNameReply;
 }
 
 /** Keeps the working tree's files (uncommitted ones too) alive under `refs/alinery/executions/<slug>/<execId>` for one execution. Undefined outside git. */

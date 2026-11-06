@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { fold, readLog, type State } from "playbook-engine/src/state.ts";
 import { completeSession, engineExecutions, forgetTask, type SessionHooks, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
 import { holdFromRust, holderBinary } from "../platform/rustHolder.ts";
-import { addExecution, getTaskExecution, suggestSessionName } from "../tasks.ts";
+import { setSessionName } from "./sessionOps.ts";
+import { addExecution, getTaskExecution } from "../tasks.ts";
 import { provisionTask } from "./tasks.ts";
 import { executionPath, historyDir, loadEngineState, saveEngineState } from "./executionStore.ts";
 
@@ -368,8 +369,7 @@ describe("Rust and TypeScript writers on one repository", () => {
         // Rust reads execution.json through the typed struct: a record it cannot parse would fail here.
         await addExecution(repo, slug, { ...rustRecord(`m-${round}`), owner_session_id: session });
         manual++;
-        const reply = suggestSessionName(repo, slug, session, `Probe ${round}`);
-        expect("error" in reply ? reply.error : reply.status).toBe("saved");
+        expect((await setSessionName(repo, slug, session, `Probe ${round}`, "auto")).status).toBe("saved");
         probes++;
       } else {
         const other = await provision(repo, `other-${round}`);
@@ -387,8 +387,7 @@ describe("Rust and TypeScript writers on one repository", () => {
     expect([saves, manual, probes, provisioned].every((n) => n > 5)).toBe(true);
     // The engine's execution is readable by Rust under its own id.
     writeFileSync(join(dir, "sessions", "S.meta.json"), JSON.stringify({ id: "S", worktree: repo, created: 1, harness: "vinculum", execution_id: "e1" }));
-    const reply = suggestSessionName(repo, slug, "S", "Engine session");
-    expect("error" in reply ? reply.error : reply.status).toBe("saved");
+    expect((await setSessionName(repo, slug, "S", "Engine session", "auto")).status).toBe("saved");
     expect(statSync(executionPath(repo, slug)).size).toBeGreaterThan(0);
   }, 300_000);
 });

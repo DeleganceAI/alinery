@@ -6,9 +6,10 @@
 import { clone, create } from "@bufbuild/protobuf";
 import { DaemonStatusSchema, type Entity, EntitySchema, SessionStatusSchema, SessionWaitSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { lstatSync, openSync, readSync, closeSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Feed } from "../sync/feed.ts";
 import type { Store } from "../sync/store.ts";
+import { readTask } from "./taskFiles.ts";
 
 export type LiveSession = {
   process: { state: string };
@@ -120,8 +121,15 @@ export class SessionPublisher {
     const [, slug, id] = entity.key.split("/");
     let out = withLive(entity, undefined);
     for (const row of this.liveRows()) if (row.id === id && (row.taskSlug || "_") === slug) out = withLive(entity, row);
-    return this.withName(out, slug, id);
+    return this.withLabel(this.withName(out, slug, id), slug);
   };
+
+  /** What an attention notification calls the session: its task's name, else the slug, else "session". */
+  private withLabel(entity: Entity, slug: string): Entity {
+    if (entity.value.case !== "session") return entity;
+    entity.value.value.attentionLabel = slug === "_" ? "session" : (readTask(dirname(this.feed.alinery), slug)?.name ?? slug);
+    return entity;
+  }
 
   /** The session's display name from `<id>.name.json`, or the error Rust shows for a file it refuses. */
   private withName(entity: Entity, slug: string, id: string): Entity {

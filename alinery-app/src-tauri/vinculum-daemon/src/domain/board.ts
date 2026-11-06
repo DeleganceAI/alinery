@@ -188,7 +188,19 @@ export class BoardProjector {
    * from moves that task, and so every task above it (a parent's activity follows its active subtask); a
    * task.md moves the tasks above it.
    */
+  private sessionMetas(slug: string): string[] {
+    try {
+      return readdirSync(join(this.alinery, "tasks", slug, "sessions"))
+        .filter((name) => name.endsWith(".meta.json"))
+        .map((name) => `tasks/${slug}/sessions/${name}`);
+    } catch {
+      return [];
+    }
+  }
+
   dependents = (rel: string): string[] => {
+    const root = rel.match(/^sessions\/([^/]+)\.name\.json$/);
+    if (root) return [`sessions/${root[1]}.meta.json`];
     const m = rel.match(/^tasks\/([^/]+)\/(.+)$/);
     if (!m) return [];
     const name = m[2].match(/^sessions\/([^/]+)\.name\.json$/);
@@ -196,6 +208,8 @@ export class BoardProjector {
     const input = TASK_INPUT.test(m[2]);
     if (!input && m[2] !== "task.md") return [];
     const out = input ? [`tasks/${m[1]}/task.md`] : [];
+    // A task's name is what its sessions' attention notifications call them.
+    if (m[2] === "task.md") out.push(...this.sessionMetas(m[1]));
     const seen = new Set([m[1]]);
     for (let parent = this.taskOf(m[1])?.parentTask; parent && !seen.has(parent); parent = this.taskOf(parent)?.parentTask) {
       seen.add(parent);

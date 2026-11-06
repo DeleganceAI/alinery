@@ -42,7 +42,9 @@ export type TelemetryEvent =
   | { event: "settings.change"; source: TelemetrySource; scope: SettingsChangeScope }
   | { event: "task.draft_create"; source: TelemetrySource; hasWorktree: boolean; playbook: string; taskId: string }
   | { event: "task.draft_delete"; source: TelemetrySource; taskId: string }
-  | { event: "task.archive"; source: TelemetrySource; taskId: string };
+  | { event: "task.archive"; source: TelemetrySource; taskId: string }
+  | { event: "session.archive"; source: TelemetrySource; killedLive: boolean; sessionId: string; taskId: string }
+  | { event: "session.kill"; source: TelemetrySource; sessionId: string; taskId: string };
 
 /** telemetry.rs `insert_id`: the opaque per-task id goes on the wire when there is one. */
 const withId = (taskId: string) => (taskId ? { task_id: taskId } : {});
@@ -56,6 +58,10 @@ function eventProps(e: TelemetryEvent): Record<string, unknown> {
     case "task.draft_delete":
     case "task.archive":
       return { source: e.source, ...withId(e.taskId) };
+    case "session.archive":
+      return { source: e.source, killed_live: e.killedLive, ...(e.sessionId ? { session_id: e.sessionId } : {}), ...withId(e.taskId) };
+    case "session.kill":
+      return { source: e.source, ...(e.sessionId ? { session_id: e.sessionId } : {}), ...withId(e.taskId) };
   }
 }
 

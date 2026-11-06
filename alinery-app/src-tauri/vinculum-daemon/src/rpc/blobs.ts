@@ -3,7 +3,7 @@
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { BlobRef, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
-import { attachmentBlob, type BlobBytes, type BlobStore, CHUNK_BYTES, draftImageBlob, type UploadTarget } from "../domain/blobs.ts";
+import { attachmentBlob, type BlobBytes, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, type UploadTarget } from "../domain/blobs.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
@@ -14,13 +14,15 @@ export type BlobDeps = { repo: string; blobs: BlobStore };
 function targetOf(ref: BlobRef | undefined): UploadTarget {
   const t = ref?.target;
   if (t?.case === "attachment") return { kind: "attachment", taskSlug: t.value.taskSlug, name: t.value.name };
+  if (t?.case === "chatAttachment") return { kind: "chat", threadId: t.value.threadId, name: t.value.name };
   if (t?.case === "staged") return { kind: "staged", name: t.value.name };
-  throw fail(Code.InvalidArgument, "invalid_argument", "an upload target is an attachment or a staged file");
+  throw fail(Code.InvalidArgument, "invalid_argument", "an upload target is an attachment, a chat attachment or a staged file");
 }
 
 function resolve(repo: string, ref: BlobRef | undefined): BlobBytes {
   const t = ref?.target;
   if (t?.case === "attachment") return attachmentBlob(repo, t.value.taskSlug, t.value.name);
+  if (t?.case === "chatAttachment") return chatAttachmentBlob(repo, t.value.threadId, t.value.name);
   if (t?.case === "draftImage") return draftImageBlob(repo, t.value.draftSlug, t.value.name);
   throw fail(Code.InvalidArgument, "invalid_argument", "this blob cannot be read");
 }
@@ -63,7 +65,9 @@ export function blobService(d: BlobDeps, dedupe: Dedupe, store: Store): ServiceI
         const target =
           done.kind === "attachment"
             ? ({ case: "attachment", value: { taskSlug: done.taskSlug, name: done.name } } as const)
-            : ({ case: "staged", value: { name: done.name, uploadId: done.uploadId } } as const);
+            : done.kind === "chat"
+              ? ({ case: "chatAttachment", value: { threadId: done.threadId, name: done.name } } as const)
+              : ({ case: "staged", value: { name: done.name, uploadId: done.uploadId } } as const);
         return { applied: { cursor: store.cursor() }, ref: { target } };
       });
     },

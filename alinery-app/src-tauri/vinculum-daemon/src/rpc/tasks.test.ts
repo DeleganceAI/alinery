@@ -63,7 +63,7 @@ const meta = () => ({ clientId: "c1", mutationId: `m${++n}` });
 const code = async (call: Promise<unknown>) => ConnectError.from(await call.then(() => null, (e) => e)).code;
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-async function upload(c: Ctx, target: { case: "attachment"; value: { taskSlug: string; name: string } } | { case: "staged"; value: { name: string } }, bytes: Uint8Array, chunk = 64 * 1024) {
+async function upload(c: Ctx, target: { case: "attachment"; value: { taskSlug: string; name: string } } | { case: "chatAttachment"; value: { threadId: string; name: string } } | { case: "staged"; value: { name: string } }, bytes: Uint8Array, chunk = 64 * 1024) {
   const begun = await c.blobs.beginUpload({ meta: meta(), target: { target }, size: BigInt(bytes.length), sha256: sha(bytes) });
   for (let at = 0; at < bytes.length; at += chunk) await c.blobs.uploadChunk({ uploadId: begun.uploadId, offset: BigInt(at), data: bytes.subarray(at, at + chunk) });
   return c.blobs.commitUpload({ uploadId: begun.uploadId });
@@ -280,4 +280,24 @@ test("a draft is written, shows its images through the entity and ReadBlob, and 
   expect(existsSync(join(c.alinery, "tasks", other))).toBe(false);
   expect(c.store.get(taskKey(other))).toBeUndefined();
   expect(c.events.map((e) => e.event)).toEqual(["task.draft_create", "task.draft_create", "task.draft_delete"]);
+});
+
+test("a chat thread's attachment uploads into its attachments directory, reads back, and needs a thread that exists", async () => {
+  const c = await start();
+  const sessions = join(c.alinery, "sessions");
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, "c1.meta.json"), JSON.stringify({ id: "c1", harness: "vinculum", generic: true, worktree: c.repo }));
+  writeFileSync(join(sessions, "plain.meta.json"), JSON.stringify({ id: "plain", harness: "no-harness", generic: true, worktree: c.repo }));
+  const bytes = randomBytes(150_000);
+  const done = await upload(c, { case: "chatAttachment", value: { threadId: "c1", name: "shot.png" } }, bytes);
+  expect(done.ref?.target).toMatchObject({ case: "chatAttachment", value: { threadId: "c1", name: "shot.png" } });
+  expect(sha(readFileSync(join(sessions, "c1.attachments", "shot.png")))).toBe(sha(bytes));
+  let got = Buffer.alloc(0);
+  for await (const part of c.blobs.readBlob({ ref: { target: { case: "chatAttachment", value: { threadId: "c1", name: "shot.png" } } } })) got = Buffer.concat([got, part.data]);
+  expect(sha(got)).toBe(sha(bytes));
+  const refused = (threadId: string, name: string) => code(upload(c, { case: "chatAttachment", value: { threadId, name } }, bytes));
+  expect(await refused("missing", "a.png")).toBe(Code.NotFound);
+  expect(await refused("plain", "a.png")).toBe(Code.InvalidArgument);
+  expect(await refused("c1", "../a.png")).toBe(Code.InvalidArgument);
+  expect(existsSync(join(sessions, "plain.attachments"))).toBe(false);
 });

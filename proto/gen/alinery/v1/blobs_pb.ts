@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/blobs.proto.
  */
 export const file_alinery_v1_blobs: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2Jsb2JzLnByb3RvEgphbGluZXJ5LnYxIjEKDkF0dGFjaG1lbnRCbG9iEhEKCXRhc2tfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIi0KClN0YWdlZEJsb2ISDAoEbmFtZRgBIAEoCRIRCgl1cGxvYWRfaWQYAiABKAkiMgoORHJhZnRJbWFnZUJsb2ISEgoKZHJhZnRfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIqIBCgdCbG9iUmVmEjAKCmF0dGFjaG1lbnQYAiABKAsyGi5hbGluZXJ5LnYxLkF0dGFjaG1lbnRCbG9iSAASKAoGc3RhZ2VkGAUgASgLMhYuYWxpbmVyeS52MS5TdGFnZWRCbG9iSAASMQoLZHJhZnRfaW1hZ2UYBiABKAsyGi5hbGluZXJ5LnYxLkRyYWZ0SW1hZ2VCbG9iSABCCAoGdGFyZ2V0IlMKD1JlYWRCbG9iUmVxdWVzdBIgCgNyZWYYASABKAsyEy5hbGluZXJ5LnYxLkJsb2JSZWYSDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBCJVChBSZWFkQmxvYlJlc3BvbnNlEgwKBGRhdGEYASABKAwSDgoGb2Zmc2V0GAIgASgEEg0KBXRvdGFsGAMgASgEEhQKDGNvbnRlbnRfdHlwZRgEIAEoCSJ/ChJCZWdpblVwbG9hZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiMKBnRhcmdldBgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZhIMCgRzaXplGAMgASgEEg4KBnNoYTI1NhgEIAEoCSI8ChNCZWdpblVwbG9hZFJlc3BvbnNlEhEKCXVwbG9hZF9pZBgBIAEoCRISCgpjaHVua19zaXplGAIgASgNIkUKElVwbG9hZENodW5rUmVxdWVzdBIRCgl1cGxvYWRfaWQYASABKAkSDgoGb2Zmc2V0GAIgASgEEgwKBGRhdGEYAyABKAwiFQoTVXBsb2FkQ2h1bmtSZXNwb25zZSIoChNDb21taXRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCSJeChRDb21taXRVcGxvYWRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEiAKA3JlZhgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZjLJAgoLQmxvYlNlcnZpY2USRwoIUmVhZEJsb2ISGy5hbGluZXJ5LnYxLlJlYWRCbG9iUmVxdWVzdBocLmFsaW5lcnkudjEuUmVhZEJsb2JSZXNwb25zZTABEk4KC0JlZ2luVXBsb2FkEh4uYWxpbmVyeS52MS5CZWdpblVwbG9hZFJlcXVlc3QaHy5hbGluZXJ5LnYxLkJlZ2luVXBsb2FkUmVzcG9uc2USTgoLVXBsb2FkQ2h1bmsSHi5hbGluZXJ5LnYxLlVwbG9hZENodW5rUmVxdWVzdBofLmFsaW5lcnkudjEuVXBsb2FkQ2h1bmtSZXNwb25zZRJRCgxDb21taXRVcGxvYWQSHy5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlcXVlc3QaIC5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
+  fileDesc("ChZhbGluZXJ5L3YxL2Jsb2JzLnByb3RvEgphbGluZXJ5LnYxIjEKDkF0dGFjaG1lbnRCbG9iEhEKCXRhc2tfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIi0KClN0YWdlZEJsb2ISDAoEbmFtZRgBIAEoCRIRCgl1cGxvYWRfaWQYAiABKAkiMgoORHJhZnRJbWFnZUJsb2ISEgoKZHJhZnRfc2x1ZxgBIAEoCRIMCgRuYW1lGAIgASgJIjUKEkNoYXRBdHRhY2htZW50QmxvYhIRCgl0aHJlYWRfaWQYASABKAkSDAoEbmFtZRgCIAEoCSLdAQoHQmxvYlJlZhIwCgphdHRhY2htZW50GAIgASgLMhouYWxpbmVyeS52MS5BdHRhY2htZW50QmxvYkgAEjkKD2NoYXRfYXR0YWNobWVudBgDIAEoCzIeLmFsaW5lcnkudjEuQ2hhdEF0dGFjaG1lbnRCbG9iSAASKAoGc3RhZ2VkGAUgASgLMhYuYWxpbmVyeS52MS5TdGFnZWRCbG9iSAASMQoLZHJhZnRfaW1hZ2UYBiABKAsyGi5hbGluZXJ5LnYxLkRyYWZ0SW1hZ2VCbG9iSABCCAoGdGFyZ2V0IlMKD1JlYWRCbG9iUmVxdWVzdBIgCgNyZWYYASABKAsyEy5hbGluZXJ5LnYxLkJsb2JSZWYSDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBCJVChBSZWFkQmxvYlJlc3BvbnNlEgwKBGRhdGEYASABKAwSDgoGb2Zmc2V0GAIgASgEEg0KBXRvdGFsGAMgASgEEhQKDGNvbnRlbnRfdHlwZRgEIAEoCSJ/ChJCZWdpblVwbG9hZFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiMKBnRhcmdldBgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZhIMCgRzaXplGAMgASgEEg4KBnNoYTI1NhgEIAEoCSI8ChNCZWdpblVwbG9hZFJlc3BvbnNlEhEKCXVwbG9hZF9pZBgBIAEoCRISCgpjaHVua19zaXplGAIgASgNIkUKElVwbG9hZENodW5rUmVxdWVzdBIRCgl1cGxvYWRfaWQYASABKAkSDgoGb2Zmc2V0GAIgASgEEgwKBGRhdGEYAyABKAwiFQoTVXBsb2FkQ2h1bmtSZXNwb25zZSIoChNDb21taXRVcGxvYWRSZXF1ZXN0EhEKCXVwbG9hZF9pZBgBIAEoCSJeChRDb21taXRVcGxvYWRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEiAKA3JlZhgCIAEoCzITLmFsaW5lcnkudjEuQmxvYlJlZjLJAgoLQmxvYlNlcnZpY2USRwoIUmVhZEJsb2ISGy5hbGluZXJ5LnYxLlJlYWRCbG9iUmVxdWVzdBocLmFsaW5lcnkudjEuUmVhZEJsb2JSZXNwb25zZTABEk4KC0JlZ2luVXBsb2FkEh4uYWxpbmVyeS52MS5CZWdpblVwbG9hZFJlcXVlc3QaHy5hbGluZXJ5LnYxLkJlZ2luVXBsb2FkUmVzcG9uc2USTgoLVXBsb2FkQ2h1bmsSHi5hbGluZXJ5LnYxLlVwbG9hZENodW5rUmVxdWVzdBofLmFsaW5lcnkudjEuVXBsb2FkQ2h1bmtSZXNwb25zZRJRCgxDb21taXRVcGxvYWQSHy5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlcXVlc3QaIC5hbGluZXJ5LnYxLkNvbW1pdFVwbG9hZFJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.AttachmentBlob
@@ -96,6 +96,30 @@ export const DraftImageBlobSchema: GenMessage<DraftImageBlob> = /*@__PURE__*/
   messageDesc(file_alinery_v1_blobs, 2);
 
 /**
+ * A file in a chat thread's `<id>.attachments` directory.
+ *
+ * @generated from message alinery.v1.ChatAttachmentBlob
+ */
+export type ChatAttachmentBlob = Message<"alinery.v1.ChatAttachmentBlob"> & {
+  /**
+   * @generated from field: string thread_id = 1;
+   */
+  threadId: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message alinery.v1.ChatAttachmentBlob.
+ * Use `create(ChatAttachmentBlobSchema)` to create a new message.
+ */
+export const ChatAttachmentBlobSchema: GenMessage<ChatAttachmentBlob> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_blobs, 3);
+
+/**
  * @generated from message alinery.v1.BlobRef
  */
 export type BlobRef = Message<"alinery.v1.BlobRef"> & {
@@ -108,6 +132,12 @@ export type BlobRef = Message<"alinery.v1.BlobRef"> & {
      */
     value: AttachmentBlob;
     case: "attachment";
+  } | {
+    /**
+     * @generated from field: alinery.v1.ChatAttachmentBlob chat_attachment = 3;
+     */
+    value: ChatAttachmentBlob;
+    case: "chatAttachment";
   } | {
     /**
      * @generated from field: alinery.v1.StagedBlob staged = 5;
@@ -128,7 +158,7 @@ export type BlobRef = Message<"alinery.v1.BlobRef"> & {
  * Use `create(BlobRefSchema)` to create a new message.
  */
 export const BlobRefSchema: GenMessage<BlobRef> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 3);
+  messageDesc(file_alinery_v1_blobs, 4);
 
 /**
  * @generated from message alinery.v1.ReadBlobRequest
@@ -157,7 +187,7 @@ export type ReadBlobRequest = Message<"alinery.v1.ReadBlobRequest"> & {
  * Use `create(ReadBlobRequestSchema)` to create a new message.
  */
 export const ReadBlobRequestSchema: GenMessage<ReadBlobRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 4);
+  messageDesc(file_alinery_v1_blobs, 5);
 
 /**
  * @generated from message alinery.v1.ReadBlobResponse
@@ -193,7 +223,7 @@ export type ReadBlobResponse = Message<"alinery.v1.ReadBlobResponse"> & {
  * Use `create(ReadBlobResponseSchema)` to create a new message.
  */
 export const ReadBlobResponseSchema: GenMessage<ReadBlobResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 5);
+  messageDesc(file_alinery_v1_blobs, 6);
 
 /**
  * @generated from message alinery.v1.BeginUploadRequest
@@ -227,7 +257,7 @@ export type BeginUploadRequest = Message<"alinery.v1.BeginUploadRequest"> & {
  * Use `create(BeginUploadRequestSchema)` to create a new message.
  */
 export const BeginUploadRequestSchema: GenMessage<BeginUploadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 6);
+  messageDesc(file_alinery_v1_blobs, 7);
 
 /**
  * @generated from message alinery.v1.BeginUploadResponse
@@ -249,7 +279,7 @@ export type BeginUploadResponse = Message<"alinery.v1.BeginUploadResponse"> & {
  * Use `create(BeginUploadResponseSchema)` to create a new message.
  */
 export const BeginUploadResponseSchema: GenMessage<BeginUploadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 7);
+  messageDesc(file_alinery_v1_blobs, 8);
 
 /**
  * @generated from message alinery.v1.UploadChunkRequest
@@ -278,7 +308,7 @@ export type UploadChunkRequest = Message<"alinery.v1.UploadChunkRequest"> & {
  * Use `create(UploadChunkRequestSchema)` to create a new message.
  */
 export const UploadChunkRequestSchema: GenMessage<UploadChunkRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 8);
+  messageDesc(file_alinery_v1_blobs, 9);
 
 /**
  * @generated from message alinery.v1.UploadChunkResponse
@@ -291,7 +321,7 @@ export type UploadChunkResponse = Message<"alinery.v1.UploadChunkResponse"> & {
  * Use `create(UploadChunkResponseSchema)` to create a new message.
  */
 export const UploadChunkResponseSchema: GenMessage<UploadChunkResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 9);
+  messageDesc(file_alinery_v1_blobs, 10);
 
 /**
  * @generated from message alinery.v1.CommitUploadRequest
@@ -308,7 +338,7 @@ export type CommitUploadRequest = Message<"alinery.v1.CommitUploadRequest"> & {
  * Use `create(CommitUploadRequestSchema)` to create a new message.
  */
 export const CommitUploadRequestSchema: GenMessage<CommitUploadRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 10);
+  messageDesc(file_alinery_v1_blobs, 11);
 
 /**
  * @generated from message alinery.v1.CommitUploadResponse
@@ -332,7 +362,7 @@ export type CommitUploadResponse = Message<"alinery.v1.CommitUploadResponse"> & 
  * Use `create(CommitUploadResponseSchema)` to create a new message.
  */
 export const CommitUploadResponseSchema: GenMessage<CommitUploadResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_blobs, 11);
+  messageDesc(file_alinery_v1_blobs, 12);
 
 /**
  * Blobs never take a path from the client. A `BlobRef` names the thing and the daemon resolves and checks the path,

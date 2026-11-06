@@ -179,10 +179,19 @@ message Session {
   optional string name = 36;
   string name_source = 37;  // auto or user
   optional string name_error = 38;
+  // What an attention notification calls this session: its task's name, else the slug, else "session" (S4.4). The
+  // shell shows the OS notification; the text comes from here, so it reads no meta file.
+  string attention_label = 39;
 }
 message Artifact {}
 message Comment {}
-message ChatThread {}
+// A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
+message ChatThread {
+  string id = 1;
+  string branch_label = 2;  // the branch the thread works on
+  bool checkout = 3;        // true: the repository checkout; false: the thread's own worktree
+  bool superseded = 4;      // a later thread continues this one (resume_of); the rail hides it
+}
 // A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
 // Progress arrives through Subscribe. The result's oneof numbers are fixed now: S4.9 adds backup = 10,
 // purge = 12 and import = 13 beside storage.

@@ -7,6 +7,7 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, rea
 import { extname, join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
+import { chatAttachmentsDir, loadChat } from "./chat.ts";
 import { alineryDir, attachmentsDir, safeComponent, taskDir } from "./taskFiles.ts";
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -14,10 +15,10 @@ export const MAX_ATTACHMENT_SET_BYTES = 100 * 1024 * 1024;
 /** The size a client should cut chunks to (WA 256 KiB). */
 export const CHUNK_BYTES = 256 * 1024;
 
-export type UploadTarget = { kind: "attachment"; taskSlug: string; name: string } | { kind: "staged"; name: string };
+export type UploadTarget = { kind: "attachment"; taskSlug: string; name: string } | { kind: "chat"; threadId: string; name: string } | { kind: "staged"; name: string };
 
 type Upload = { id: string; target: UploadTarget; size: number; sha256: string; received: number; fd: number; path: string; done?: BlobResult };
-export type BlobResult = { kind: "attachment"; taskSlug: string; name: string } | { kind: "staged"; name: string; uploadId: string };
+export type BlobResult = { kind: "attachment"; taskSlug: string; name: string } | { kind: "chat"; threadId: string; name: string } | { kind: "staged"; name: string; uploadId: string };
 
 /** attachments.rs `attachment_dir_bytes`. */
 export function dirBytes(dir: string): number {
@@ -61,6 +62,7 @@ export class BlobStore {
       if (safeComponent(target.taskSlug) !== target.taskSlug) throw new DomainError("invalid_argument", "invalid task slug");
       if (!existsSync(taskDir(this.repo, target.taskSlug))) throw new DomainError("not_found", `no such task: ${target.taskSlug}`);
     }
+    if (target.kind === "chat") loadChat(this.repo, target.threadId);
     if (!/^[0-9a-f]{64}$/.test(sha256)) throw new DomainError("invalid_argument", "sha256 must be 64 lowercase hex digits");
     if (!Number.isSafeInteger(size) || size < 0) throw new DomainError("invalid_argument", "invalid upload size");
     if (size > MAX_ATTACHMENT_BYTES) throw new DomainError("invalid_argument", `${target.name} - larger than 25 MB`);
@@ -105,13 +107,13 @@ export class BlobStore {
       u.done = { kind: "staged", name: u.target.name, uploadId: id };
       return u.done;
     }
-    const dir = attachmentsDir(this.repo, u.target.taskSlug);
+    const dir = u.target.kind === "chat" ? chatAttachmentsDir(this.repo, u.target.threadId) : attachmentsDir(this.repo, u.target.taskSlug);
     mkdirSync(dir, { recursive: true });
     if (dirBytes(dir) + bytes.length > MAX_ATTACHMENT_SET_BYTES) reject(`${u.target.name} - attachment set would exceed 100 MB`);
     const name = uniqueAttachmentName(dir, u.target.name);
     if (!name) reject(`${u.target.name} - too many name collisions`);
     renameSync(u.path, join(dir, name as string));
-    u.done = { kind: "attachment", taskSlug: u.target.taskSlug, name: name as string };
+    u.done = u.target.kind === "chat" ? { kind: "chat", threadId: u.target.threadId, name: name as string } : { kind: "attachment", taskSlug: u.target.taskSlug, name: name as string };
     return u.done;
   }
 
@@ -138,7 +140,10 @@ export type BlobBytes = { total: number; contentType: string; read: (offset: num
 export function attachmentBlob(repo: string, taskSlug: string, name: string): BlobBytes {
   if (safeComponent(taskSlug) !== taskSlug) throw new DomainError("invalid_argument", "invalid task slug");
   if (safeComponent(name) !== name) throw new DomainError("invalid_argument", `invalid attachment name: ${name}`);
-  const path = join(attachmentsDir(repo, taskSlug), name);
+  return regularFileBlob(join(attachmentsDir(repo, taskSlug), name), name);
+}
+
+function regularFileBlob(path: string, name: string): BlobBytes {
   let st: ReturnType<typeof lstatSync>;
   try {
     st = lstatSync(path);
@@ -160,6 +165,13 @@ export function attachmentBlob(repo: string, taskSlug: string, name: string): Bl
       }
     },
   };
+}
+
+/** A file in a chat thread's attachments directory: the thread must exist, the name is one component, the file a regular file. */
+export function chatAttachmentBlob(repo: string, threadId: string, name: string): BlobBytes {
+  loadChat(repo, threadId);
+  if (safeComponent(name) !== name) throw new DomainError("invalid_argument", `invalid attachment name: ${name}`);
+  return regularFileBlob(join(chatAttachmentsDir(repo, threadId), name), name);
 }
 
 /** A pasted image a draft keeps in `draft-attachments.json` (base64 inside the file). */

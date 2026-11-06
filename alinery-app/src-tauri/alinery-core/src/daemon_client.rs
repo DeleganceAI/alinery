@@ -182,7 +182,7 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
 /// socket, 26 the settings services, 27 the execution service and 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), and each left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.

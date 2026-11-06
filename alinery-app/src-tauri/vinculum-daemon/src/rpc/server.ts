@@ -11,6 +11,7 @@ import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
+import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import { TerminalService } from "alinery-proto/alinery/v1/terminal_pb";
 import { adminService, type DaemonInfo, type Lifecycle } from "./admin.ts";
@@ -23,7 +24,8 @@ import type { Store } from "../sync/store.ts";
 import { blobService } from "./blobs.ts";
 import { executionService } from "./executions.ts";
 import { jobService } from "./jobs.ts";
-import { sessionService, type Transcripts } from "./sessions.ts";
+import { chatService } from "./chat.ts";
+import { type SessionControl, sessionService, type Transcripts } from "./sessions.ts";
 import { repoService, settingsService, type SettingsDeps } from "./settings.ts";
 import { syncService } from "./sync.ts";
 import { draftService, type TaskDeps, taskService } from "./tasks.ts";
@@ -32,16 +34,17 @@ import { peerExecutable, samePath } from "./peer.ts";
 
 const MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
 
-type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps };
+type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl };
 
-function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks }: Hosted) {
+function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions }: Hosted) {
   // A draft carries its pasted images in one message (up to the 100 MB attachment set); grpc-js defaults to 4 MiB.
   const server = new grpc.Server({ "grpc.max_receive_message_length": MAX_MESSAGE_BYTES });
   const values = (header: Headers) => credentials(header, peer, secret);
   addService(server, AdminService, adminService(info, lifecycle, store.epoch), values);
   addService(server, SyncService, syncService(store), values);
   addService(server, JobService, jobService(jobs, dedupe, store, storageScan), values);
-  addService(server, SessionService, sessionService(transcripts), values);
+  addService(server, SessionService, sessionService(transcripts, sessions, dedupe, store), values);
+  if (sessions) addService(server, ChatService, chatService(sessions, dedupe, store), values);
   addService(server, TerminalService, terminal, values);
   addService(server, ExecutionService, executionService(dedupe, store), values);
   if (settings) {
@@ -63,11 +66,11 @@ function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable:
   return peer && samePath(peer, hostExecutable) ? "shell" : "other";
 }
 
-export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps };
+export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl };
 
 export function serveRpc(options: RpcOptions): Promise<NetServer> {
   // One dedupe and one attach table for all three peer classes: a client's retry lands on a new connection, not a new class.
-  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks };
+  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks, sessions: options.sessions };
   const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info, options.lifecycle, hosted)]));
   const net = createNetServer((sock) => {
     sock.on("error", () => {});

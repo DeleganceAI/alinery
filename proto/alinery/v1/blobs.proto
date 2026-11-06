@@ -30,9 +30,16 @@ message DraftImageBlob {
   string name = 2;
 }
 
+// A file in a chat thread's `<id>.attachments` directory.
+message ChatAttachmentBlob {
+  string thread_id = 1;
+  string name = 2;
+}
+
 message BlobRef {
   oneof target {
     AttachmentBlob attachment = 2;
+    ChatAttachmentBlob chat_attachment = 3;
     StagedBlob staged = 5;
     DraftImageBlob draft_image = 6;
   }
