@@ -62,7 +62,7 @@ The daemon launches from the product launch list (Terminal + bundled/overlaid `o
 - **GUI ownership locks** (`.alinery/.alinery-app.lock`). Dev and production are mutually exclusive on one folder. Product ownership is flock-only: never a pid file.
 - **Activity sidecar**: every session byte is appended to `sessions/<id>.scrollback`. The daemon's in-memory `vt100` emulator is reattach truth.
 
-In-app self-update embeds `scripts/lib/preflight.sh` (compile-time `include_str!`) and runs the same quiet-machine gate as the public CDN installer. That installer script itself is not in this repo.
+In-app self-update embeds `scripts/lib/preflight.sh` (compile-time `include_str!`) and runs the same quiet-machine gate as the public CDN installer. The gate holds no RPC token, so against a current daemon it connects to `rpc.sock` (liveness), counts live sessions from the session metas, and ends the daemon with SIGTERM, which the daemon handles as its `Shutdown` teardown (a signal handler, not a sender of `Shutdown`); a daemon from before the single listener is still probed and stopped over its JSON-lines `alineryd.sock`. That installer script itself is not in this repo.
 
 ## Remote repositories (SSH)
 

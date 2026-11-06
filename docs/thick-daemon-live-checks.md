@@ -817,6 +817,20 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the typed text echoes, the terminal rejoins after the reconnect with its scrollback, and the daemon on the host kept running throughout (`docker exec alinery-test-sshd pgrep -fa alinery-vinculum-daemon`).
 - **Status:** open
 
+### L-S5.3-h: the updater and installer gate against a real daemon
+- **Session:** S5.3 (R-S5.3-13).
+- **Needs:** the app launched from a bundle with a repository open and at least one running Terminal session; for the Linux half, a Linux machine with netcat-openbsd.
+- **Steps:** with the sessions running, run the in-app update (or `bash -c '. scripts/lib/preflight.sh; preflight_gate 0'` from this checkout). Read the prompt, answer `n`, check `pgrep -fl alinery-vinculum-daemon` still shows the daemon and the session still types. Run again and answer `y`; check the daemon is gone, `ls <repo>/.alinery/*.sock` shows no `rpc.sock`, and after reopening the app the sessions show as ended (not interrupted). On Linux run the same two answers.
+- **Expected:** the prompt lists the repository with the right live-session count; `n` changes nothing; `y` stops the app first, then the daemon, and returns only once the socket no longer answers. On Linux the daemon is found (netcat exit status is 0 on connect).
+- **Status:** open
+
+### L-S5.3-i: an update from a released build with the old wire
+- **Session:** S5.3 (R-S5.3-13).
+- **Needs:** a released Alinery build whose daemon serves `alineryd.sock` (protocol 38 or older), launched with a session running.
+- **Steps:** with that daemon running, run `bash -c '. scripts/lib/preflight.sh; preflight_gate 0'` from this checkout, answer `y`.
+- **Expected:** the repository is listed with its live sessions (read from the old `list` reply), and the daemon stops over its JSON-lines socket.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -829,6 +843,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.12-a to -c (S4.12):** built; see the entries above.
 - **L-S5.1-a to -e (S5.1):** built; see the entries above.
 - **L-S5.2-a to -d (S5.2):** built; see the entries above.
-- **L-S5.3-a to -g (S5.3):** built; see the entries above.
+- **L-S5.3-a to -i (S5.3):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
