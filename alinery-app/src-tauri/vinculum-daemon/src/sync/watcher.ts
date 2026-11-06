@@ -28,6 +28,8 @@ export class Watcher {
       log?: (line: string) => void;
       /** The global `app.toml`, which sits outside `.alinery/`: its directory is watched and the file reported as `app.toml`. */
       appConfig?: string;
+      /** The machine's playbook library, outside the repository (S4.6): reported as `global-playbooks/...`. */
+      globalPlaybooks?: string;
     } = {},
   ) {}
 
@@ -35,6 +37,10 @@ export class Watcher {
     this.add(join(this.alinery, "tasks"), true, (f) => `tasks/${f}`);
     this.add(this.alinery, false, (f) => (CONFIG_FILES.has(f) ? f : undefined));
     this.add(join(this.alinery, "sessions"), false, (f) => `sessions/${f}`);
+    // The playbook library (S4.6): the repository's two directories and the machine's. The projector redoes the rows on any of them.
+    this.add(join(this.alinery, "playbooks"), true, (f) => `playbooks/${f}`);
+    this.add(join(dirname(this.alinery), "alinery", "playbooks"), true, (f) => `committed-playbooks/${f}`);
+    if (this.o.globalPlaybooks) this.add(this.o.globalPlaybooks, true, (f) => `global-playbooks/${f}`);
     const app = this.o.appConfig;
     if (app) this.add(dirname(app), false, (f) => (f === basename(app) ? "app.toml" : undefined));
   }

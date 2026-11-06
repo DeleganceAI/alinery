@@ -4,7 +4,9 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { ErrorDetailSchema, type MutationMeta } from "alinery-proto/alinery/v1/common_pb";
 import { DomainError } from "../platform/lock.ts";
 
-export const fail = (code: Code, detail: string, message: string) => new ConnectError(message, code, undefined, [{ desc: ErrorDetailSchema, value: { code: detail, message } }]);
+/** `fields` carries what a client needs to act on the refusal beyond its text (S4.6: the playbook library's tagged errors as JSON). */
+export const fail = (code: Code, detail: string, message: string, fields?: Record<string, string>) =>
+  new ConnectError(message, code, undefined, [{ desc: ErrorDetailSchema, value: { code: detail, message, fields } }]);
 
 /** A mutation without an id could not be deduplicated, so it is refused rather than run twice on a retry. */
 export function metaOf(meta: MutationMeta | undefined) {

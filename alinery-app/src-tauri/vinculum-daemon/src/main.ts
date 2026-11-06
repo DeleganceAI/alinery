@@ -25,6 +25,8 @@ import { Reconciler } from "./sync/reconcile.ts";
 import { BoardProjector } from "./domain/board.ts";
 import { BlobStore } from "./domain/blobs.ts";
 import { ArtifactProjector } from "./domain/artifactProjector.ts";
+import { appConfigDirOf } from "./domain/playbookLibrary.ts";
+import { PlaybookProjector } from "./domain/playbookProjector.ts";
 import { executionRecords } from "./rpc/artifacts.ts";
 import { openPreflight } from "./domain/openPreflight.ts";
 import { commitExecution, executionParser } from "./domain/executions.ts";
@@ -50,7 +52,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 30;
+const PROTOCOL = 31;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -1157,7 +1159,7 @@ repairSessionMetas();
 // Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
 // then does the RPC server listen, so a first Subscribe never sees a half-built store.
 await feed.scan();
-const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line), appConfig });
+const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line), appConfig, globalPlaybooks: join(appConfigDirOf(appConfig), "playbooks") });
 watcher.start();
 publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
@@ -1218,9 +1220,16 @@ setInterval(() => void chat.refreshAll(), 30_000).unref();
 // Artifact rows (S4.5): every task once, then on each change the feed reports and on the 30 s pass for a missed event.
 const taskExecution = (slug: string) => getTaskExecution(repo, slug, lane, identity);
 const artifactProjector = new ArtifactProjector(store, repo, executionRecords(taskExecution));
-feed.onChanged = (rel) => artifactProjector.changed(rel);
+// Playbook library rows (S4.6): the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
+const playbookProjector = new PlaybookProjector(store, { globalConfigDir: appConfigDirOf(appConfig), repoDir: repo });
+feed.onChanged = (rel) => {
+  artifactProjector.changed(rel);
+  playbookProjector.changed(rel);
+};
 await artifactProjector.pass();
+playbookProjector.refresh();
 setInterval(() => void artifactProjector.pass().catch((e) => console.error(`artifact pass: ${(e as Error).message}`)), 30_000).unref();
+setInterval(() => playbookProjector.refresh(), 30_000).unref();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
   socketPath: rpcSocket,
@@ -1234,6 +1243,7 @@ await serveRpc({
   settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
   tasks: taskDeps,
   sessions: sessionControl,
+  playbooks: { repo, appConfig, projector: playbookProjector },
   artifacts: { repo, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
