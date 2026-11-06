@@ -1,5 +1,7 @@
 # Remote repositories: performance plan
 
+> **Status (2026-11-06, thick-daemon S5.4): mostly superseded.** `docs/thick-daemon-plan.md` replaces the repo-service `RepoOp` channel (gone since S5.2) and the pollers this plan tuned: the daemon's `SyncService.Subscribe` pushes entity changes, so P6 is built as the design, not as an option. Steps P2, P3, P4, P5 and P7 are withdrawn; findings F2 to F5 describe code that no longer exists. P1 and its gate (`check-remote-offload.sh`) still hold. M1 (measure) and F6 (a dead link is found late) still apply to the ssh transport, but the baseline M1 asked for is of the old pollers, so re-measure on the sync design if a number is wanted. The text below is kept as the record of the reasoning.
+
 A plan, not code. It lists what the remote path costs today, in what order to fix it, and how each fix is proved. Every number marked *estimate* comes from reading the code; nothing here has been measured on a real link yet, and step M1 exists to replace the estimates before any other step changes behavior.
 
 The items that follow from this plan are tracked in `docs/remote-repos-todo.md` (section P).
@@ -67,13 +69,13 @@ These are proposals to argue with, stated for a 100 ms RTT, 10 Mbit/s link.
 
 Each step names what changes, why, the expected gain, the risk, and how it is proved. Steps are ordered so that the safe, mechanical ones come first and each later step can be judged on measured numbers.
 
-**M1. Measure.** Nothing else starts until this exists.
+**M1. Measure.** *(Open, but its target changed: the old pollers and `RepoChannel::call` are gone; see the status above.)* Nothing else starts until this exists.
 - Count every remote call by name: calls, duration (p50, p95), bytes up and down. Record in `RepoChannel::call` and in the `DaemonClient` observation path that remote repos use. Keep it in memory and expose it through one debug command and the existing log, so it ships without a new UI.
 - Add latency to the test sshd. `scripts/tests/remote-sshd/run.sh start --latency-ms 50` runs the container with `NET_ADMIN` and `tc qdisc add dev eth0 root netem delay 50ms` (iproute2 added to the Dockerfile). Delay on the container's egress adds 50 ms to every reply, which is enough to expose serial chains.
 - Script a scenario against that host: open the repo, load the board, open a session, idle for 60 s, stream a chat for 30 s. Record the table from F3 as numbers. Commit the baseline in this file.
 - Proves: the estimates in F3 and F5, and gives each later step a number to beat.
 
-**P1. Never block a UI or runtime thread on a remote call (F1).**
+**P1. Never block a UI or runtime thread on a remote call (F1).** *(Done, and still enforced.)*
 - Make every remote-routed command `async` and run its remote arm in `spawn_blocking`. This is mechanical: the same `off_main_thread` shape the backup, storage and archive commands already use. The local arm keeps its current behavior.
 - Add a gate that fails when a `#[tauri::command]` reaches `remote_call`, `repo_client`, `task_client` or a channel call without `async` and `spawn_blocking`. The scan used to write this plan is a few lines of awk and becomes the gate.
 - Expected gain: the freeze disappears. No change in bandwidth or call count.
@@ -81,38 +83,38 @@ Each step names what changes, why, the expected gain, the risk, and how it is pr
 - Proof: the gate, plus a live test that holds the host's channel and checks a command returns control within the budget (the call itself may still time out).
 - Done. One thing the plan did not foresee: terminal input is fired without awaiting and depended on the main thread's order, so a plain pool would have reordered keystrokes. Remote terminals use one ordered queue per session instead (see the todo).
 
-**P2. Pollers that cannot pile up or run for nothing (F2).**
+**P2. Pollers that cannot pile up or run for nothing (F2).** *(Superseded by subscriptions: no daemon-state poller is left in the frontend.)*
 - One in-flight guard per poller: chain the next call from the previous one's completion, as `useBoardTaskActivity` already does.
 - Back off while a call fails or the host is not connected, and stop while the window is hidden or the view is not shown.
 - Raise the chat transcript busy floor from 200 ms to 750 ms for a remote repo. This is the no-protocol-change half of F5.
 - Expected gain: bounded concurrency on a slow link; idle load drops when nothing is visible.
 - Risk: low. Proof: vitest with fake timers on the guard; M1 numbers for the idle scenario.
 
-**P3. One host-side board snapshot (F3, F4).**
+**P3. One host-side board snapshot (F3, F4).** *(Superseded: the `board` entity arrives on a subscription; `BoardSnapshot` was never built and the repo service is gone.)*
 - New `RepoOp::BoardSnapshot { repo }`: the host reads its own task files, asks its own daemon over the local socket for session statuses (the repo service already links `alinery-core` and its `daemon_client`), and returns columns, tasks and task activity together. The app stops uploading statuses to the host.
 - The three board views call one command and the activity hook goes away for remote repos. Fan the call out across repositories so the board costs the slowest host, not the sum.
 - Expected gain: the 4 RTT of a board tick (tasks, then activity) become 1, and the status upload disappears. With P4 this takes the idle estimate in F3 from about 5.5 RTT per second to about 2.
 - Risk: medium. It adds a host-side use of the daemon wire, which must stay inside `alinery-core/src/daemon_client.rs` (`check-wire-parsing-boundary.sh`). It needs no protocol bump because it uses ops the daemon already has.
 - Proof: a golden test that the snapshot equals the three separate answers on one temp repo, and the M1 board-tick count.
 
-**P4. Read the daemon from the host (F3).**
+**P4. Read the daemon from the host (F3).** *(Superseded: the page talks to the host's daemon over the forward, one RPC; `DaemonRead` was never built.)*
 - New `RepoOp::DaemonRead` for read-only daemon queries (`session_statuses`, `session_status`, `transcript`), run on the host against its local socket. The reply costs 1 RTT, not 2, and several queries can share one call.
 - Move `daemon_status`, `session_list_statuses`, `session_status` and the drawer tabs onto it, and cache the "all session statuses" answer on the host for a short window so three pollers share one query. `session_status` stops fetching every session of the task to find one.
 - Expected gain: every polled daemon read drops from 2 RTT to 1, and duplicates collapse.
 - Risk: medium. The op must stay read-only and be listed in the no-auto-kill gate's reasoning (it sends no `shutdown`). Writes and PTY streams keep using the forward.
 - Proof: round-trip test for each query shape; M1 idle scenario.
 
-**P5. Transcript deltas (F5).**
+**P5. Transcript deltas (F5).** *(Superseded: transcripts are served by `SessionService`/`BlobService` with offsets and a subscription, not by an `if_none_match` poll.)*
 - A daemon op change: `transcript` takes `if_none_match` and answers `{ unchanged, etag }`, then optionally `since` for appends. The app keeps the last transcript per session.
 - This is a wire change, so `PROTOCOL_VERSION` moves (24 to 25) and every running remote daemon becomes a conflict until restarted. Do it together with the next unavoidable daemon change, not on its own, and note the restart in the release notes.
 - Expected gain: an idle or slow-moving conversation costs one small request per poll, and a streaming one costs the new text.
 - Risk: medium (protocol bump). Proof: Bun tests for the etag, `check-protocol-version-bump.sh`, M1 streaming scenario.
 
-**P6. Push instead of poll.**
+**P6. Push instead of poll.** *(Built: this is the thick-daemon plan's sync engine, `docs/thick-daemon-plan.md` 2.2.)*
 - A `Subscribe` stream on the repo-service channel: the host watches `.alinery` and its own daemon locally and sends changes, so idle cost falls to keep-alives and update latency to half an RTT.
 - Only worth building if M1 still shows idle load or board latency over budget after P1 to P4. It is the largest change and it adds a long-lived protocol.
 
-**P7. Connection tuning, judged on M1 numbers.**
+**P7. Connection tuning, judged on M1 numbers.** *(Withdrawn with M1's old target; reopen only on a measured difference.)*
 - Compare `Compression` on and off, and check that `IPQoS` is not penalizing interactive traffic on common networks. Check that the master survives sleep and network changes, and how fast a dead link is noticed (`ServerAliveInterval`).
 - Change nothing without a measured difference.
 
