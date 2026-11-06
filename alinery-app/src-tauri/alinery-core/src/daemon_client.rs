@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 pub use crate::task_creation::{
-    AllowExecutionCompletionRequest, CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
+    CreateExecutionSessionReply, CreateExecutionSessionRequest, CreateTaskReply, CreateTaskRequest, ExecutionSessionTarget,
     GetTaskExecutionRequest, StartSessionRequest, TaskAttachment, TaskExecutionReply, TaskPlaybookPackage,
 };
 
@@ -30,7 +30,8 @@ fn typed_reply<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, Str
 /// A retained, peer-authenticated UI connection. Its authority is connection-bound:
 /// neither a capability string nor a `caller` field can authorize another socket.
 pub struct UiControlConnection {
-    stream: UnixStream,
+    /// Held open: the daemon authorizes the connection, so closing the stream ends the authority.
+    _stream: UnixStream,
 }
 impl UiControlConnection {
     pub fn connect(client: &DaemonClient) -> Result<Self, String> {
@@ -51,13 +52,7 @@ impl UiControlConnection {
         let mut stream = client.send(&request)?;
         let value: Value = serde_json::from_str(&read_reply_line(&mut stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
         expect_ok(value)?;
-        Ok(Self { stream })
-    }
-    pub fn allow_execution_completion(&mut self, request: &AllowExecutionCompletionRequest) -> Result<(), String> {
-        writeln!(self.stream, "{}", json!({"op":"allow_execution_completion","request":request})).map_err(|e| e.to_string())?;
-        self.stream.flush().map_err(|e| e.to_string())?;
-        let value = serde_json::from_str(&read_reply_line(&mut self.stream, DAEMON_CONTROL_TIMEOUT)?).map_err(|e| e.to_string())?;
-        expect_ok(value)
+        Ok(Self { _stream: stream })
     }
 }
 
@@ -959,15 +954,6 @@ pub fn classify_observed_version(reply: &DaemonVersionReply, build_id: &str, exp
             observed_build_id: reply.build_id.clone(),
         }),
     }
-}
-
-pub fn observe_compatible(socket_path: &Path, build_id: &str, expected_identity: &str) -> Result<DaemonCompat, DaemonClientError> {
-    let value = observe_exchange(socket_path, &version_request())?;
-    classify_observed_version(&parse_version_reply(&value), build_id, expected_identity)
-}
-
-pub fn observe_task_execution(socket_path: &Path, task_slug: &str) -> Result<TaskExecutionReply, String> {
-    typed_reply(observe_exchange(socket_path, &json!({"op":"get_task_execution","request":{"task_slug":task_slug}})).map_err(|error| error.to_string())?)
 }
 
 fn format_socket_write_error(error: std::io::Error) -> String {

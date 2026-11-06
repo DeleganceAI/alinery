@@ -719,22 +719,47 @@ fn nested_artifact_list_sorts_numerically_and_excludes_reserved_namespaces() {
 
 #[test]
 fn execution_artifact_metadata_browses_saved_ownership_offline_without_locks() {
-    use alinery_core::execution::{install_seed, reserve_execution, write_execution_state_unlocked, ExecutionCandidate};
+    use alinery_core::execution::{
+        write_execution_state_unlocked, CompletionPermission, ExecutionCandidate, ExecutionLifecycle, ExecutionRecord, LaunchChoices, OutputAssignment,
+    };
     let repo = activity_repo("art-off");
     write_retained_discovery_task(&repo, "task", "offline-owner", false);
-    let mut saved = crate::saved_task_execution_for(&repo, "task").unwrap();
-    let seed = install_seed(&mut saved.state, "ticket.md", "0-ticket-1.md").unwrap();
-    let candidate = ExecutionCandidate {
-        step_key: "implementation".into(),
-        context_id: "root".into(),
-        inputs: std::collections::BTreeMap::from([("ticket.md".into(), vec![seed])]),
-        complete_collection_id: None,
-        each_collection_id: None,
-        each_member_id: None,
-        manual: false,
+    let mut saved = alinery_core::board::saved_task_execution(&repo, "task").unwrap();
+    // An engine execution as the daemon's projection stores it: a UUID-free `e1`, its own session, one assigned output.
+    let execution_id = "e1".to_string();
+    let record = ExecutionRecord {
+        id: execution_id.clone(),
+        binding_key: "binding".into(),
+        candidate: ExecutionCandidate {
+            step_key: "implementation".into(),
+            context_id: "root".into(),
+            inputs: std::collections::BTreeMap::new(),
+            complete_collection_id: None,
+            each_collection_id: None,
+            each_member_id: None,
+            manual: false,
+        },
+        outputs: vec![OutputAssignment {
+            selector: "report.md".into(),
+            relative_path: "1-report-1.md".into(),
+            discriminator: 1,
+            required: false,
+        }],
+        parent_execution_ids: Default::default(),
+        depth: 1,
+        owner_session_id: "s-offline".into(),
+        previous_session_ids: vec![],
+        launch: LaunchChoices::default(),
+        is_coding_step: false,
+        start_requested: true,
+        lifecycle: ExecutionLifecycle::Running,
+        permission: CompletionPermission::Automatic,
+        receipt_id: None,
+        exit_code: None,
+        shutdown_confirmed: false,
+        error: None,
     };
-    let execution_id = reserve_execution(&repo, "task", &saved.definition, &mut saved.state, candidate, &Default::default(), None, false).unwrap();
-    let record = saved.state.executions[&execution_id].clone();
+    saved.state.executions.insert(execution_id.clone(), record.clone());
     let output = &record.outputs[0].relative_path;
     fs::create_dir_all(artifacts_dir(&repo, "task")).unwrap();
     fs::write(artifacts_dir(&repo, "task").join(output), "# Saved report\n").unwrap();

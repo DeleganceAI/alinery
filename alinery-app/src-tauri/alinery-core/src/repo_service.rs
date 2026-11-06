@@ -48,11 +48,6 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
     },
-    /// The task's retained execution state and playbook, as stored.
-    SavedExecution {
-        repo: PathBuf,
-        slug: String,
-    },
     ListArtifactsWithMetadata {
         repo: PathBuf,
         slug: String,
@@ -660,7 +655,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
         RepoOp::SubtaskState { repo, slug } => to_value(crate::subtask::subtask_manager_state(&repo, &slug)?),
-        RepoOp::SavedExecution { repo, slug } => to_value(crate::board::saved_task_execution(&repo, &slug)?),
         RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
         RepoOp::ListTaskArtifactTree { repo, slug } => to_value(crate::list_task_artifact_tree(&repo, &slug)?),
         RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
@@ -1033,10 +1027,6 @@ mod tests {
                 show_hidden: true,
             },
             RepoOp::SubtaskState {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::SavedExecution {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
             },

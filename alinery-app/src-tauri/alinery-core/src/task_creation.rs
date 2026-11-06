@@ -170,14 +170,6 @@ pub struct StartSessionRequest {
 pub struct GetTaskExecutionRequest {
     pub task_slug: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AllowExecutionCompletionRequest {
-    pub task_slug: String,
-    pub execution_id: String,
-    pub session_id: String,
-}
-
 fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }

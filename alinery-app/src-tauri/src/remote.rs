@@ -1087,13 +1087,6 @@ pub(crate) fn store_ui_secret(secrets_dir: &Path, repo_path: &str, secret: &str)
     alinery_core::write_owner_only_bytes(&secrets_dir.join("ui-secrets.json"), &serde_json::to_vec(&secrets).map_err(|error| error.to_string())?)
 }
 
-/// The secret for the daemon this Mac started for `repo_path` on `host_id`.
-pub(crate) fn remote_ui_secret(app_config: &Path, host_id: &str, repo_path: &str) -> Result<String, String> {
-    read_ui_secrets(&remote_secrets_dir(app_config, host_id)?).remove(repo_path).ok_or_else(|| {
-        "this remote daemon was not started by this Mac, so it cannot approve from here; stop the daemon on the host and reconnect to start one that can".to_string()
-    })
-}
-
 fn new_ui_secret() -> String {
     format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
 }

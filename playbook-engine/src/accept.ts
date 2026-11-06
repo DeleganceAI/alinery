@@ -7,7 +7,7 @@
  * output rejects the whole attempt, and omitted outputs are simply not
  * published.
  */
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { matches, type Output, wildcard } from './playbook.ts';
 
@@ -17,13 +17,31 @@ export function inspectOutputs(outDir: string, outputs: Output[]): Inspection {
   const published: { role: string; path: string }[] = [];
   const problems: string[] = [];
 
+  // A link anywhere on the way (the assigned directory included) could point a "published" file outside it.
+  const linked = (role: string): boolean => {
+    let path = outDir;
+    for (const part of ['', ...role.split('/')]) {
+      path = part ? join(path, part) : path;
+      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return true;
+    }
+    return false;
+  };
+
   const consider = (role: string) => {
     const path = join(outDir, role);
-    const st = statSync(path, { throwIfNoEntry: false });
-    if (!st) return; // omitted: a possible publication that did not happen
-    if (!st.isFile()) problems.push(`${role} is not a regular file`);
-    else if (st.size === 0) problems.push(`${role} is empty`);
-    else published.push({ role, path });
+    try {
+      if (linked(role)) {
+        problems.push(`${role} is reached through a symbolic link`);
+        return;
+      }
+      const st = statSync(path, { throwIfNoEntry: false });
+      if (!st) return; // omitted: a possible publication that did not happen
+      if (!st.isFile()) problems.push(`${role} is not a regular file`);
+      else if (st.size === 0) problems.push(`${role} is empty`);
+      else published.push({ role, path });
+    } catch (error) {
+      problems.push(`${role} cannot be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   for (const out of outputs) {
@@ -41,8 +59,10 @@ export function inspectOutputs(outDir: string, outputs: Output[]): Inspection {
     let names: string[];
     try {
       names = readdirSync(dir);
-    } catch {
-      continue; // directory never created: zero members
+    } catch (error) {
+      // A directory never created is zero members; one that cannot be listed is not the same as empty.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') problems.push(`${dirname(out.path)} cannot be listed: ${(error as Error).message}`);
+      continue;
     }
     for (const name of names.sort()) {
       const role = w.dir ? `${w.dir}/${name}` : name;

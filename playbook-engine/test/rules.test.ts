@@ -2,8 +2,8 @@
  * The engine's individual rules, each on the smallest playbook that shows it.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import type { Launch } from '../src/harness.ts';
 import { parsePlaybookMd } from '../src/playbook-md.ts';
@@ -171,6 +171,55 @@ test('acceptance: an empty assigned file rejects the attempt; nothing published 
   writeText(launch.outputs['c-*.md'].replace('*', '2'), 'late');
   assert.deepEqual(await launch.requestCompletion(), accepted); // files written after acceptance never join the receipt
   assert.deepEqual(byStep(engine, 's')[0].receipt!.map((o) => o.role), ['a.md', 'b.md', 'c-1.md']);
+});
+
+test('acceptance: a link on the way to an output rejects the attempt, and an unlistable family is not an empty one', async () => {
+  const pb = playbook([step('s', { outputs: [{ path: 'a.md' }, { path: 'fam/*.md' }] })]);
+  const dir = taskDir();
+  let launch!: Launch;
+  const engine = openEngine(
+    pb,
+    new FakeHarness(async (l) => {
+      launch = l;
+    }),
+    dir,
+  );
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const outside = join(dir.root, 'outside');
+  writeText(join(outside, 'secret.md'), 'not yours');
+
+  // An output that is a link to a real file elsewhere.
+  mkdirSync(dirname(launch.outputs['a.md']), { recursive: true });
+  symlinkSync(join(outside, 'secret.md'), launch.outputs['a.md']);
+  const linkedFile = await launch.requestCompletion();
+  assert.equal(linkedFile.kind, 'rejected');
+  if (linkedFile.kind === 'rejected') assert.ok(linkedFile.problems.some((p) => p.includes('symbolic link')), String(linkedFile.problems));
+
+  // The family directory is a link to a directory elsewhere.
+  rmSync(launch.outputs['a.md']);
+  const family = dirname(launch.outputs['fam/*.md']);
+  symlinkSync(outside, family);
+  const linkedDir = await launch.requestCompletion();
+  assert.equal(linkedDir.kind, 'rejected');
+  if (linkedDir.kind === 'rejected') assert.ok(linkedDir.problems.some((p) => p.includes('fam/secret.md') && p.includes('symbolic link')), String(linkedDir.problems));
+  assert.equal(byStep(engine, 's')[0].receipt, null);
+
+  // A family directory that exists and cannot be listed.
+  rmSync(family);
+  mkdirSync(family);
+  writeText(launch.outputs['a.md'], 'ok');
+  chmodSync(family, 0o000);
+  try {
+    if (process.getuid?.() !== 0) {
+      const unlistable = await launch.requestCompletion();
+      assert.equal(unlistable.kind, 'rejected');
+      if (unlistable.kind === 'rejected') assert.ok(unlistable.problems.some((p) => p.includes('cannot be listed')), String(unlistable.problems));
+    }
+  } finally {
+    chmodSync(family, 0o755);
+  }
+  assert.equal((await launch.requestCompletion()).kind, 'accepted');
 });
 
 test('a required output rejects until that exact file exists', async () => {

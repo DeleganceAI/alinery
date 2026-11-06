@@ -704,7 +704,6 @@ function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknow
 }
 
 const kept = new WeakSet<Socket>();
-const uiAuthorized = new WeakSet<Socket>();
 
 function reply(socket: Socket, value: unknown, keep = false) {
   socket.write(`${JSON.stringify(value)}\n`);
@@ -983,7 +982,6 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
         return;
       }
     }
-    uiAuthorized.add(socket);
     reply(socket, { ok: true }, true);
     return;
   }

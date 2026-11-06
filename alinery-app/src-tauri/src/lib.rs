@@ -214,9 +214,7 @@ pub fn run() {
             chat_set_thinking_level,
             rename_session,
             rename_task,
-            observe_task_executions,
             start_session,
-            allow_execution_completion,
             archive_session,
             archive_session_for_repo,
             mark_session_notification_read,
@@ -373,11 +371,6 @@ pub fn run() {
             }
             // alineryd remains detached (on purpose)
         });
-}
-
-#[cfg(test)]
-pub(crate) fn observation_dispatch_builder(builder: tauri::Builder<tauri::test::MockRuntime>) -> tauri::Builder<tauri::test::MockRuntime> {
-    builder.invoke_handler(tauri::generate_handler![observe_task_executions, ping])
 }
 
 #[cfg(test)]

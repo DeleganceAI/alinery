@@ -956,7 +956,8 @@ pub fn archive_task_guarded(repo: &Path, slug: &str) -> Result<(), String> {
         ensure_task_can_archive(repo, slug)?;
         let mut task = read_task(repo, slug).ok_or_else(|| format!("no such task: {slug}"))?;
         task.archived = true;
-        write_task_unlocked(repo, &task)
+        write_task_unlocked(repo, &task)?;
+        crate::execution::prune_execution_objects(repo, slug)
     })
 }
 #[cfg(test)]
@@ -1406,6 +1407,31 @@ mod tests {
         write_task_unlocked(&repo, &unrelated).unwrap();
         archive_task_guarded(&repo, "u").unwrap();
         assert!(read_task(&repo, "u").unwrap().archived);
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn archiving_a_task_drops_the_bytes_its_executions_kept_and_nothing_else() {
+        let repo = repo("archive-prune");
+        write_task_unlocked(&repo, &task("a")).unwrap();
+        let dir = crate::task_dir(&repo, "a");
+        for execution in ["e1", "e2"] {
+            fs::create_dir_all(dir.join("executions").join(execution).join("objects")).unwrap();
+            fs::write(dir.join("executions").join(execution).join("objects").join("0".repeat(64)), "kept bytes").unwrap();
+        }
+        fs::create_dir_all(dir.join("artifacts")).unwrap();
+        fs::write(dir.join("artifacts/report.md"), "the artifact").unwrap();
+        fs::write(dir.join("execution.json"), "{\"manifest\":\"stays\"}").unwrap();
+        archive_task_guarded(&repo, "a").unwrap();
+        assert!(read_task(&repo, "a").unwrap().archived);
+        for execution in ["e1", "e2"] {
+            assert!(!dir.join("executions").join(execution).join("objects").exists());
+        }
+        assert_eq!(fs::read_to_string(dir.join("artifacts/report.md")).unwrap(), "the artifact");
+        assert_eq!(fs::read_to_string(dir.join("execution.json")).unwrap(), "{\"manifest\":\"stays\"}");
+        // A task that never kept any bytes archives the same way.
+        write_task_unlocked(&repo, &task("b")).unwrap();
+        archive_task_guarded(&repo, "b").unwrap();
         let _ = fs::remove_dir_all(repo);
     }
 

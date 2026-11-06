@@ -184,15 +184,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         "the peer is sshd, which is not the UI host"
     );
     assert!(alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &"x".repeat(64)).is_err());
-    let mut control = alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &secret).unwrap();
-    let refused = control
-        .allow_execution_completion(&alinery_core::task_creation::AllowExecutionCompletionRequest {
-            task_slug: "t".into(),
-            execution_id: "e".into(),
-            session_id: "no-such-session".into(),
-        })
-        .unwrap_err();
-    assert!(refused.contains("no engine execution"), "an authorized request reaches the handler: {refused}");
+    alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &secret).unwrap();
 
     let daemons = |session: &RemoteSession| {
         session
@@ -2358,17 +2350,14 @@ fn approval_secrets_are_kept_per_repo_in_an_owner_only_file() {
     let dir = std::env::temp_dir().join(format!("alinery-secrets-{}", uuid::Uuid::new_v4()));
     let app_config = dir.join("app.toml");
     let secrets = remote_secrets_dir(&app_config, "box-a1b2c3").unwrap();
-    assert!(remote_ui_secret(&app_config, "box-a1b2c3", "/srv/a").unwrap_err().contains("not started by this Mac"));
+    let secret_of = |repo: &str| read_ui_secrets(&remote_secrets_dir(&app_config, "box-a1b2c3").unwrap()).remove(repo);
+    assert_eq!(secret_of("/srv/a"), None);
     store_ui_secret(&secrets, "/srv/a", "first").unwrap();
     store_ui_secret(&secrets, "/srv/b", "other").unwrap();
     store_ui_secret(&secrets, "/srv/a", "second").unwrap();
-    assert_eq!(
-        remote_ui_secret(&app_config, "box-a1b2c3", "/srv/a").unwrap(),
-        "second",
-        "a restarted daemon replaces its secret"
-    );
-    assert_eq!(remote_ui_secret(&app_config, "box-a1b2c3", "/srv/b").unwrap(), "other");
-    assert!(remote_ui_secret(&app_config, "another-host", "/srv/a").is_err(), "secrets do not cross hosts");
+    assert_eq!(secret_of("/srv/a").as_deref(), Some("second"), "a restarted daemon replaces its secret");
+    assert_eq!(secret_of("/srv/b").as_deref(), Some("other"));
+    assert_eq!(read_ui_secrets(&remote_secrets_dir(&app_config, "another-host").unwrap()).remove("/srv/a"), None, "secrets do not cross hosts");
     assert_eq!(std::fs::metadata(secrets.join("ui-secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
     let _ = std::fs::remove_dir_all(dir);
 }
