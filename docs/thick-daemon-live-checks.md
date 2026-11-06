@@ -162,6 +162,33 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** as described. This is the P6 exit check and the moment the user runs every other open entry.
 - **Status:** open (session not built)
 
+### L-S4.1-a: Repository settings through the daemon (write, disk edit, conflict)
+
+- **Session:** S4.1. Plan: S4.1 Accept; ledger R-S4.1-6.
+- **Steps:** launch the app on a scratch git repo `<repo>`. (1) Settings, pick the repo in the scope list, change Thinking to another value. Watch the field: it shows the new value at once and keeps the "Repository override" label. `shasum -a 256 <repo>/.alinery/config.toml` before and after. (2) Edit `<repo>/.alinery/config.toml` by hand (change `thinking`) and save; do not touch the app. (3) Open a second Alinery window on the same repo (or edit the file between the field showing a value and you pressing a second change), then change the same field in both. (4) Clear the override with the field's reset control.
+- **Expected:** (1) the value stays after the daemon's row arrives and `config.toml` holds the new value in the `[defaults]` table; (2) the open Settings page shows the hand edit within a second without a reload; (3) the second writer sees the toast "these settings were changed elsewhere; showing the newer values" and the newer value, and `config.toml` holds the first writer's value; (4) the field returns to the global value labelled "Global". A Create task page opened afterwards starts with the repo's effective harness and model.
+- **Status:** open
+
+### L-S4.1-b: A repository opened for the first time gets its files from the daemon
+
+- **Session:** S4.1. Plan: S4.1 Accept (`EnsureReady`, run twice); ledger R-S4.1-1.
+- **Steps:** `git init /tmp/s41-scratch && cd /tmp/s41-scratch && git commit --allow-empty -m init`. Add it as a repository in the app. Then:
+  ```bash
+  ls -la /tmp/s41-scratch/.alinery
+  git -C /tmp/s41-scratch check-ignore -q .alinery/tasks; echo "ignored: $?"
+  find /tmp/s41-scratch/.alinery -type f -newermt '1970-01-01' -exec stat -f '%m %N' {} + | sort > /tmp/s41-before.txt
+  ```
+  Close and reopen the repo in the app (the shell calls `EnsureReady` again), then repeat the `find` into `/tmp/s41-after.txt` and `diff /tmp/s41-before.txt /tmp/s41-after.txt`. Also `grep ensure-ready-failed "<app_config_dir>/logs/alinery.log"`.
+- **Expected:** `config.toml` and `harnesses.toml` exist, `ignored: 0`, the diff shows no changed mtime other than socket and lock files the daemon rewrites, and the log has no `app.ensure-ready-failed` line. (The unit test `rpc/settings.test.ts` covers the same calls against a real gRPC server; this run adds the shell's call after attach.)
+- **Status:** open
+
+### L-S4.1-c: Repo settings telemetry reaches a local listener, and consent off sends nothing
+
+- **Session:** S4.1. Plan: S4.1 Accept (telemetry); ledger R-S4.1-3.
+- **Steps:** in `<app_config_dir>/app.toml` set `[telemetry]` `enabled = true`, `prompted = true`, a non-empty `install_id`, and `endpoint = "http://127.0.0.1:8099"`. In a terminal run `nc -l 8099` (or `python3 -m http.server 8099` and read its log). In the app change one repository setting (L-S4.1-a step 1). Then set `enabled = false`, restart nothing, and change another setting.
+- **Expected:** with consent on, one `POST` arrives within 3 s whose JSON body has `"event":"settings.change"`, `"source":"alineryd"` and `"scope":"repo"` and no repository path, slug or token; with consent off the listener receives nothing within 3 s, and the setting still saves.
+- **Status:** open
+
 ## Needs a signing identity
 
 ### L-S0.5-a: bun:ffi under the hardened runtime
@@ -241,6 +268,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Session:** S2.2 (optional in its Status; the Worker entry-point change is only proven on macOS arm64).
 - **Steps:** after L-S1.3-a, start the Linux runtime's daemon inside the arm64 sshd container (or any Linux host), create a task in a scratch repo (`CreateTask` or the app), then check `task.md` exists with the right bytes and the daemon log has no worker error.
 - **Expected:** `writeDurable` completes (two `fsyncSync` calls on Linux); no `ModuleNotFound` for the Worker.
+- **Status:** open
+
+### L-S4.1-d: A remote repository's settings and `EnsureReady`
+
+- **Session:** S4.1. Plan: S4.1 (remote hosts); ledger R-S4.1-1, R-S4.1-2, R-S4.1-7.
+- **Steps:** after L-S1.3-a and with the runtime rebuilt (`scripts/build-remote-runtimes.sh`, since `alinery-core`, `mcp/` and `vinculum-daemon/` changed), run the live remote tests as in L-S1.3-b. They now include the `remote_github_token` case (a host `config.toml` override over the Mac's global token). Then in the app, with the container host connected and a repository on it open: change a setting in Settings (repository scope); `ssh` to the host and `cat <repo>/.alinery/config.toml`; `cat ~/.local/share/alinery-remote/config/*/app.toml`.
+- **Expected:** the live tests pass; the host's `config.toml` holds the new value; the host's `app.toml` has a `[telemetry]` section with this Mac's `enabled`, `prompted`, `install_id` and `endpoint`; a freshly added remote repo has `config.toml`, `harnesses.toml` and the ignore entry before any task is created.
 - **Status:** open
 
 ## Needs a Linux machine (any arch)

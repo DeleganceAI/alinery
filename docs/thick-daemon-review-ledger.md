@@ -223,6 +223,57 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 - **Kind:** decision (rule).
 - **What:** where S4.x sessions find an architecture gap, they choose the plan's WA, else the most conservative and reversible choice, and append an entry here. Nothing is stopped for approval. README text goes in section H.
 
+### R-S4.1-1: the shell creates only `.alinery/`; the daemon's `EnsureReady` does the rest
+- **Kind:** decision (working assumption) / behaviour change.
+- **What:** `ensure_repo_ready` in the shell shrank to `ensure_alinery_dir` (`paths.rs`): it creates `.alinery/` so the daemon has a place for its sockets, and nothing else. After `attach_repo_daemon_locked` has set the daemon it calls `daemon_rpc::ensure_repo_ready`, which sends `RepoService.EnsureReady` (ADMIN, idempotent) for a local repo and, through `ensure_remote_repo_ready`, for a remote one. The daemon then creates `.gitignore`'s task-data entry, `harnesses.toml` and `config.toml`. A remote repo now gets all three at attach; before it got `config.toml` on its first settings read and the ignore entry only when a task was created.
+- **Consequence:** if no daemon answers (a `DaemonConflict`, a refused attach), those files are not created at `set_active_repo`. The failure is logged as `app.ensure-ready-failed` and the repo still opens. `harnesses.toml` is newly created by `EnsureReady` (the core `ensure_harnesses_toml` helper in `shared.rs` is deleted with its only caller).
+- **Options:** keep the Rust `ensure_repo_ready` as a fallback when no daemon answers (rejected: that is the second copy S4.1 exists to remove, and D7 says a repo without a daemon shows only its banner).
+- **Reverse:** restore the old `ensure_repo_ready` body in `paths.rs` and drop the `daemon_rpc::ensure_repo_ready` call in `daemon.rs`.
+- **Files:** `src/paths.rs`, `src/daemon.rs`, `src/daemon_rpc.rs`, `src/remote.rs`, `vinculum-daemon/src/rpc/settings.ts`, `vinculum-daemon/src/domain/settings.ts`.
+- **Live check:** L-S4.1-b.
+
+### R-S4.1-2: remote repos read their effective settings from the host's rendered `app.toml`; telemetry is copied whole
+- **Kind:** decision / privacy-relevant.
+- **What:** the global tier of a remote repo's `settings/_/repo` is the host's `app.toml` as `render_remote_app_toml` writes it (an allowlist), so the Mac's own global settings no longer reach a remote Settings view unless that allowlist carries them. `render_remote_app_toml` now copies `[telemetry]` whole (`enabled`, `prompted`, `install_id`, `endpoint`), as the plan says (O17 c), so a remote daemon sends `settings.change` under this Mac's install id and consent. Its doc comment ("the host records no events under this install") changed with it. Per O25 (b) the telemetry ingest credential ships inside the daemon, so a remote host that runs the daemon holds it (see section H).
+- **Options:** keep blanking telemetry on the host (rejected by the plan text of S4.1).
+- **Reverse:** blank the section again in `render_remote_app_toml`; the host's daemon then finds no consent and sends nothing.
+- **Files:** `src/remote.rs` (`render_remote_app_toml`, `src/tests/remote.rs`).
+- **Live check:** L-S4.1-d.
+
+### R-S4.1-3: the telemetry sender, its source name and the `--app-version` flag
+- **Kind:** decision.
+- **What:** `platform/telemetry.ts` sends records with `source: "alineryd"` (the Rust enum already had `Alineryd`) and `app_version` taken from a new `--app-version` argument that `alinery-core::daemon_command` adds to every daemon it builds. A daemon started without the flag (an older app) reports `"unknown"`. The send is one `fetch` with a 2 s `AbortSignal.timeout`, not awaited, errors dropped. Consent is read from `app.toml` on each send, so a change applies without a restart. Only `settings.change` with scope `repo` moved; global `SettingsChange` and the other repo-less events stay in the shell. The Rust and TypeScript records are compared through the `telemetry/` conformance fixtures.
+- **Files:** `vinculum-daemon/src/platform/telemetry.ts`, `alinery-core/src/daemon_client.rs`, `alinery-core/tests/conformance.rs`, `scripts/tests/check-telemetry-privacy.sh` (now scans the daemon TypeScript).
+
+### R-S4.1-4: PROTOCOL_VERSION 26
+- **Kind:** decision.
+- **What:** `SettingsService` and `RepoService` are new services and `settings/_/repo` a new entity on the same unreleased wire, and `daemon_command` gained an argument, so `PROTOCOL_VERSION` moved 25 to 26 (`protocol.rs` and `main.ts` `PROTOCOL`; `check-protocol-version-bump.sh` passes). A daemon of protocol 25 is not reused by the new app (`ensure_daemon` matches protocol and identity); replacing it is the usual confirmed restart. The golden fixture `proto/golden/admin.json` gained `EnsureReadyRequest`. `audited_shutdown_protocol` (`alinery-core/src/daemon_client.rs`) is a list of protocols whose JSON `shutdown` op is audited; it did not include 26, so the first full `check.sh` failed `tests::daemon::takeover_rejects_invalid_and_compatible_targets_before_shutdown` (a protocol-26 peer was refused as unaudited). 26 is added, with its test. **Every later protocol bump must add its number to that list and to `legacy_dialect_and_unknown_impact_are_distinct` in `alinery-core/tests/daemon_takeover.rs`**; `check-protocol-version-bump.sh` does not catch it.
+- **Files:** `alinery-core/src/protocol.rs`, `vinculum-daemon/src/main.ts`, `proto/alinery/v1/settings.proto`, `proto/alinery/v1/entities.proto`.
+
+### R-S4.1-5: how the daemon reads the three files
+- **Kind:** deviation / follow-up.
+- **What:** (1) The daemon parses `app.toml` leniently: it checks only the sections it reads (`notifications`, `github`, `defaults`, `backup`, `harnesses`, `telemetry`); sections it never reads (`updates`, `power`, `experiments`, `grid_views`, `model_favorites`) are not checked, so a file that Rust's serde would refuse because of one of those is accepted by the daemon. (2) `BUNDLED_PLAYBOOK_KEYS` in `domain/settings.ts` is a hard-coded copy of the bundled playbook keys (a legacy `defaults.playbook = "<key>"` is bundled only for these); a test keeps it equal to `alinery-app/src-tauri/playbooks/`, and it is the third list of bundled keys after Rust and the playbook registry. (3) Reads of the three files are synchronous so a write between two reads cannot split a row. (4) `config.toml` bytes come from `Bun.TOML.stringify` with each table in the Rust struct's key order (the plan's WA); golden cases written by Rust pin them.
+- **Follow-up:** when `app.toml` moves to the daemon (it stays in the shell by plan), check the unread sections too.
+- **Files:** `vinculum-daemon/src/domain/settings.ts`, `vinculum-daemon/src/serde.ts`, `alinery-app/src-tauri/conformance/settings*/`.
+
+### R-S4.1-6: the optimistic overlay (`src/sync/overlay.ts`)
+- **Kind:** decision.
+- **What:** the overlay holds overrides plus the fields a write set. A cleared override is not predicted: the view shows the global value when the daemon's row arrives, because computing it locally would be a second copy of the precedence. A layer ends when the replica's epoch changes or its cursor reaches `Applied.cursor.seq`; an error drops it at once. A second write while the first is still pending sends no `expected_revision`, because the revision the first one produces is not known yet (a stale one would refuse a write the user made in order). `SettingsConflict` (ABORTED) toasts "these settings were changed elsewhere; showing the newer values" and the row replaces the layer. Settings, CreateTask, ReviewHandoff, Onboarding and App read the entity through `readRepoSettings` / `readEffectiveConfig` (a one-shot read, 3 s timeout) or `useRepoSettings`.
+- **Reverse:** none needed; the old commands are gone (R-S4.1-7).
+- **Files:** `alinery-app/src/sync/overlay.ts`, `sync/settings.ts`, `sync/mutation.ts`, `views/Settings.tsx`.
+
+### R-S4.1-7: what was deleted, and what stays on purpose
+- **Kind:** deviation from the Exit line.
+- **What:** deleted: `read_config`, `read_config_for_repo`, `read_scoped_settings_for_repo`, `read_repo_overrides_for_repo`, `write_repo_overrides_for_repo`, `clear_repo_override_for_repo`, `write_config`, their `ipc.ts` wrappers, `RepoOp::WriteRepoOverrides`, the shell's `write_overrides`, `scoped_for`, `ensure_config_toml` and `emit_repo_settings_change`, and the TypeScript precedence copy in `sessionControls.ts` (`smol-toml` no longer imported there). **Kept:** `RepoOp::ReadRepoOverrides`, with a new `remote_github_token` in `settings.rs`, because the remote GitHub import runs in the shell with this Mac's credentials and needs the host's `[github] token` override (S4.10 owns imports; the Exit line says `ReadRepoOverrides` goes). Also kept in `alinery-core`: `write_repo_overrides`, `clear_repo_override`, `read_scoped_settings_strict` and `resolve_effective_config`, which the mcp, the playbook-library tests and the conformance runners still call; `write_repo_overrides` is the byte reference for the TypeScript writer, so it stays while the golden cases run.
+- **Reverse / close:** S4.10 deletes `ReadRepoOverrides`, `remote_github_token` and the core reference writer once imports read the entity or the daemon.
+- **Tests removed with the code:** the live remote test for `read_overrides`/`write_overrides` became a test of `remote_github_token` (host override over global); the Rust command tests went with their commands; frontend tests moved to `fakeSettings` (`src/test/settingsHooks.ts`). `Settings.general.test` no longer shows a fictional `repoGlobal` with `keep_awake: true`: the repo scope mirrors the global read, as the view now does.
+- **Files:** `src/settings.rs`, `src/imports.rs`, `src/lib.rs`, `alinery-core/src/repo_service.rs`, `alinery-app/src/ipc.ts`.
+
+### R-S4.1-8: environment note for the daemon's tests
+- **Kind:** follow-up.
+- **What:** `vinculum-daemon/node_modules/alinery-proto` holds one symlink per generated file, so a new `proto/gen` file (here `settings_pb`) was not importable in the daemon's tests until I linked it by hand in this worktree. A fresh `bun install` should create the link; I did not run one to confirm (unverified).
+- **Files:** `vinculum-daemon/package.json`.
+
 ---
 
 ## D. Dustin's PR #154 comments (dtdannen, 2026-11-05): dispositions
@@ -245,6 +296,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Kind:** flaky.
 - **What:** asserts attach returns in under 500 ms. Under full-workspace load it failed once with "returned before any spawn attempt" during S3.5; it passed in 3 of 3 isolated reruns and in the later `check.sh --quick`. S3.5 did not touch the test or the code it exercises. Rerun it alone before treating a failure as a regression:
   `cd alinery-app/src-tauri && cargo test -p alinery-app --lib -- tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
+- **Update 2026-11-05 (S4.1):** failed again in the first full `check.sh` of S4.1 (the same run also failed the real S4.1 regression above); passed alone on the rerun. It then failed in three full `cargo test -p alinery-app --lib` runs in a row. **Cause found:** the 500 ms is spent in `current_alineryd_socket_path` -> `alineryd_socket_namespace` -> `resolve_alineryd_path` -> `daemon_in`, which calls `read_dir` on `target/debug/deps`; after many builds in one worktree that directory held 145,273 files (142,436 of them stray `*.o`), and under the parallel load of the whole lib suite the listing took 550 to 690 ms (measured with a temporary `eprintln!` on `started.elapsed()`: `attach_repo_daemon` itself took 1.3 us, `repo_daemon` 5 us). After `find alinery-app/src-tauri/target/debug/deps -name '*.o' -delete` (2,837 files left) the full lib run passed. So the flake is a function of the size of `target/debug/deps`, not of S4.1 code. **If it recurs on a long-lived worktree, delete the stray `.o` files first.** The product-side hazard is real but small: `daemon_in` lists the whole executable directory (in a release app that directory is small).
 - **Follow-up:** widen or drop the 500 ms wall-clock bound.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon.rs:518`.
 
@@ -287,3 +339,4 @@ Edit the plan, or let S5.4 do it.
 - After S6.2, the getting-started text could describe the setup screen: a local repository, or an ssh remote and then a repository on it.
 - After S5.2, the remote-host requirements no longer need Rust, zig or cross-compilation; the host only needs the Bun binary the app installs (O15 b).
 - Telemetry: remote hosts that run the daemon hold the shared telemetry ingest credential (O25 b, R5). If the README describes the telemetry privacy model, say so.
+- After S4.1, the daemon creates `.alinery/config.toml`, `.alinery/harnesses.toml` and the task-data ignore entry when a repository is first opened (local or remote), and it sends the repository-settings telemetry event itself. A remote host's daemon sends it under this Mac's install id and consent (R-S4.1-2).
