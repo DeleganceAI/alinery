@@ -549,6 +549,48 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 33 (a host on 32 shows the daemon-conflict banner and Restart daemon); `SubtaskService` answers through the ssh forward.
 - **Status:** open
 
+### L-S4.9-a: backup, storage and purge in the app, local repo
+
+- **Session:** S4.9. Plan: S4.9 (needs the app); ledger R-S4.9-1.
+- **Steps:** open Alinery from this branch on a local repository with a few tasks, one archived. In Settings, Storage: read the numbers and press **Delete all archived**. In Settings, Backup: pick a destination folder, turn backups on, press **Back up now**, and watch the list and the busy state; press **Back up now** twice quickly.
+- **Expected:** the numbers match `du` of `<repo>/.alinery`; the purge removes every archived task, session and worktree and shows how many; a backup appears in the list within a few seconds as `<name>-<time>-v1.zip` in the destination, with the right size and version; the second press does not start a second job; no request repeats every second in the network panel.
+- **Status:** open
+
+### L-S4.9-b: restore through the sidecar on a local repo
+
+- **Session:** S4.9. Plan: S4.9 (Restore); ledger R-S4.9-4.
+- **Steps:** with a backup from L-S4.9-a, change a task (add a comment, rename it) and start a session. In Settings, Backup, press **Restore** on that backup and confirm the dialog, which names the running session. Then try the same with an archive of another repository (copy one from another repo's destination).
+- **Expected:** the verify step runs before anything stops (the foreign archive is refused with its reason and the session keeps running); a good restore ends the daemon and its sessions, puts the backed-up tree back, starts the daemon again and shows the older state. `<repo>/.alinery/tmp/restore-*` is gone afterwards and no `.alinery` file outside the curated list changed.
+- **Status:** open
+
+### L-S4.9-c: the same on a remote repo, and the Linux runtime with protocol 34
+
+- **Session:** S4.9. Plan: S4.9 (remote hosts); ledger R-S4.9-2.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd (its image now installs `zip` and `unzip`; `scripts/tests/remote-sshd/run.sh start`) and run `cargo test -p alinery-app --lib -- tests::remote::live`. Then connect that host, open a repo on it, and repeat L-S4.9-a and L-S4.9-b with a destination path typed on the host.
+- **Expected:** the live tests pass against protocol 34 (a host on 33 shows the daemon-conflict banner and Restart daemon); the backup, storage numbers and purge are measured on the host's disk; the restore verifies on the host, stops the host's daemon, restores and starts it again. The live restore test makes its archive with the host's `zip`.
+- **Status:** open
+
+### L-S4.9-d: the automatic triggers, and the after-an-artifact-change one
+
+- **Session:** S4.9. Plan: S4.9; ledger R-S4.9-5. This is the check L-S4.5-e expected to fail until now.
+- **Steps:** turn on automatic backups with each trigger in turn: after an artifact change, after a push or commit, before archive. Add a comment, send a review, clear a pending review; then commit and push a task; then discard a sub-task setup and archive a task. Do each burst quickly.
+- **Expected:** one backup per burst, about 2 s after the last change (the list shows trigger `post_artifact_change`, `post_push_commit`, `pre_archive`); with a trigger off, no backup. L-S4.5-e should now pass, and its Status may be changed after you see it.
+- **Status:** open
+
+### L-S4.9-e: a failing pre-archive backup blocks the archive in the UI
+
+- **Session:** S4.9. Plan: S4.9 (Accept: the archive with a failing backup job); ledger R-S4.9-6.
+- **Steps:** with before-archive backups on, make the destination unusable (replace the folder with a file, or remove write permission), then archive a task from the board and from the task page.
+- **Expected:** the task stays unarchived and the page shows "the task was not archived" with the backup's reason; restore the destination and the archive goes through and a `pre_archive` backup appears.
+- **Status:** open
+
+### L-S4.9-f: a host with no zip or unzip, and the 70,000-file read
+
+- **Session:** S4.9. Plan: S4.9 (D6, Accept); ledger R-S4.9-7.
+- **Steps:** (1) on a Linux host without `zip` or `unzip` (a stock `debian:12` container), run the setup probe from the remote form, then try a backup on a local repo whose machine lacks them (rename `zip` on PATH for the launch). (2) Run the cross-language read: `ALINERY_KEEP_BACKUP=/tmp/ts-70k.zip bun test src/domain/backup.test.ts` in `alinery-app/src-tauri/vinculum-daemon`, then `ALINERY_TS_ARCHIVE=/tmp/ts-70k.zip cargo test -p alinery-core --test backup_zip_interop` in `alinery-app/src-tauri`.
+- **Expected:** (1) the probe refuses the host and names `zip` and `unzip` with the install hint; a local backup without them fails with the tool's name in the message. (2) both pass; Rust reads the daemon's archive whole (over 70,000 files).
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
@@ -570,5 +612,6 @@ These have no steps yet; the session that builds them adds the entries.
 
 - **L-S4.7-a to -e (S4.7):** built; see the entries above.
 - **L-S4.8-a to -e (S4.8):** built; see the entries above.
+- **L-S4.9-a to -f (S4.9):** built; see the entries above. L-S4.5-e is expected to pass now (L-S4.9-d).
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.

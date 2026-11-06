@@ -791,6 +791,53 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
 
 
+### R-S4.9-1: verify, list and the destination check are unary RPCs, not jobs
+- **Kind:** provisional decision (the plan says "backup, verify, storage scan and purge are jobs").
+- **What:** `StartBackup` and `StartPurge` (and the earlier `StartStorageScan`) are jobs with a result. `VerifyBackup`, `ListBackups` and `CheckBackupDestination` are unary `BackupService` calls: each reads one small file or directory and answers in milliseconds, the page needs the answer before it asks for a restore, and a job row for each would only add a poll. `VerifyBackup` refuses a path outside the configured destination folder, so a caller cannot make the daemon open an arbitrary file.
+- **Options:** (a) unary (chosen); (b) a `VERIFY` job kind with its own row.
+- **Reverse:** add a job kind and a result arm, and have `sync/storage.ts` use `runJob`. About 60 lines.
+- **Files:** `proto/alinery/v1/backups.proto`, `vinculum-daemon/src/rpc/backups.ts`, `alinery-app/src/sync/storage.ts`.
+
+### R-S4.9-2: the remote restore stays two repo-service ops until S5.2 (Exit met in part)
+- **Kind:** deviation from Exit (5 of the 7 `RepoOp` variants are gone) with a close date.
+- **What:** gone: `StorageInfo`, `PurgeArchived`, `BackupCreate`, `BackupList`, `BackupCheckDestination`. Kept: `BackupVerify` and `BackupRestore`. A restore has to run while the daemon is down, and a remote host has no one-shot program to run until the host bootstrap (O15, S5.2); `stop_remote_daemon` takes a `while_down` closure that runs the host's restore. I first removed `BackupVerify` too and put it back: a refused remote archive would otherwise have stopped the host's daemon, and its sessions, before saying no. Local restore does not use them (see R-S4.9-4).
+- **Close:** S5.2 gives the host a one-shot restore, then both variants and their core functions go.
+- **Files:** `alinery-core/src/repo_service.rs`, `src/backup.rs`, `src/remote.rs`.
+
+### R-S4.9-3: core `backup.rs` and `storage.rs` stay for `alinery-mcp` until S5.1
+- **Kind:** deviation from Exit (the plan lists `storage_info` and `delete_all_archived_storage`, which are gone from the app; the core code beneath stays).
+- **What:** `alinery-mcp`, the restore reader (`read_backup_meta`, `extract_backup_into`), the remote restore and the interop test still use core `backup.rs` (including its `zip`-crate writer) and `storage.rs` (`storage_info_in`, `purge_archived_storage`). Two writers of one archive format exist until then: the daemon's (the host's `zip`) and core's. The interop test (`backup_zip_interop.rs`) keeps them agreeing on the layout (`backup-meta.json` at the root, curated files relative to `.alinery/`).
+- **Close:** S5.1 moves MCP's tools to RPCs; then the core writer, `storage.rs` and the Cargo `zip` dependency go, except the reader the S5.2 restore needs.
+- **Files:** `alinery-core/src/backup.rs`, `alinery-core/src/storage.rs`, `alinery-core/tests/backup_zip_interop.rs`.
+
+### R-S4.9-4: how a local restore runs without a Rust gRPC client
+- **Kind:** provisional decision (the plan: "Restore stays `Shutdown(RESTORE_BACKUP)` then a one-shot restore; the shell still runs it locally").
+- **What:** the shell has no gRPC client (`daemon_rpc` is a byte bridge for the page). So the page calls `VerifyBackup` first (it names the archive's repository and refuses a foreign one before anything stops), shows the confirm dialog with the live sessions, then calls the shell command `restore_backup`. The command takes the repository lifecycle lock, sends `Shutdown` with origin `RESTORE_BACKUP`, and runs the daemon program once as `alinery-vinculum-daemon --restore-backup <repo> <archive>`, which prints one JSON line (`restore_outcome` parses it; a program that dies without printing is an error carrying the end of its stderr). The program is the same restore code the daemon would run (`domain/backup.ts` `restoreBackup`), so there is one implementation. The daemon starts again through the normal attach.
+- **Options:** (a) the page verifies, the shell restores through the sidecar (chosen); (b) a Rust gRPC client in the shell (large, and S5.x removes the need); (c) keep the Rust restore (two restore implementations, and it reads the new archives only through the `zip` crate).
+- **Reverse:** (c) is the old `backup::restore_backup` in core, still present for the remote path.
+- **Files:** `src/backup.rs`, `vinculum-daemon/src/main.ts` (`--restore-backup`), `jobs/child.ts` (`runRestoreBackup`), `alinery-app/src/sync/storage.ts`, `views/Settings.tsx`.
+
+### R-S4.9-5: where the daemon publishes the triggers; the artifact trigger fires again
+- **Kind:** provisional decision.
+- **What:** `BackupHost.publish(trigger)` is called by the daemon after a commit and a push (`rpc/git.ts`), after an artifact change (`addComment`, `sendReview`, `clearReviewPending`, `prepareCommentsPrompt`, the sites that published `PostArtifactChange` in the deleted `artifacts.rs`), and after a sub-task discard (`pre_archive`, as the Rust discard queued it; a task archive runs its own waiting job instead). The 2 s debounce and the per-trigger settings gates live in `jobs/autoBackup.ts` and `backupHost.ts`; the host reads its own `config.toml` and `app.toml`, so a remote repo's backups follow the host's settings. This closes R-S4.5-10 and should make L-S4.5-e pass (L-S4.9-d). The pre-archive backup in `ArchiveTask` is not debounced: it waits for the job and refuses to archive if the job fails, as the S4.3 WA did, now on the daemon side (R-S4.3-2 ends).
+- **Files:** `vinculum-daemon/src/jobs/backupHost.ts`, `jobs/autoBackup.ts`, `rpc/git.ts`, `rpc/artifacts.ts`, `rpc/subtasks.ts`, `rpc/tasks.ts` (the pre-archive job).
+
+### R-S4.9-6: the purge is atomic per task, and a backup may outlive its restore
+- **Kind:** provisional decision and a known gap.
+- **What:** the purge renames a task's directory out to `.alinery/tmp/purge-<id>/` (one rename, so a cancel leaves the task whole or gone), then deletes it, and the next purge run sweeps a tombstone left by a crash. A session still running under an archived task is ended first through the daemon's runner. Gap: a backup job child is a separate process; if a restore starts while one still runs (an automatic backup the page did not see), that child can read a half-restored tree and write a mixed archive. Nothing in the restore checks for a backup child that is still running. Also unexercised by a test: the rollback path of `restoreBackup` when the final placement fails after the old tree was moved aside.
+- **Reverse:** have `restore_backup` refuse while `.alinery/tmp` holds a live backup child's pid file (about 30 lines); a test that makes the rename fail.
+- **Files:** `vinculum-daemon/src/jobs/purge.ts`, `domain/backup.ts`.
+
+### R-S4.9-7: host tools, the daemon's status field, and the test image
+- **Kind:** deviation from Build (D6 and D9: a host tool status).
+- **What:** `zip` and `unzip` joined the setup probe list, so a remote host without them is refused at setup with the install hint. A machine whose daemon starts without them (a local Linux box, or a host set up before this build) gets the tool's own spawn error in the job's message; the daemon's host-tool status field and a banner for `zip`, `unzip` and `git` that D6/D9 describe is not built (the plan's WA: leave the message). The `remote-sshd` Dockerfile installs `zip` and `unzip` so the live tests can restore; the stock Debian image has neither.
+- **Files:** `src/remote.rs` (probe list), `scripts/tests/remote-sshd/Dockerfile`, `vinculum-daemon/src/platform/zip.ts`.
+
+### R-S4.9-8: `PROTOCOL_VERSION` 34, tests, and environment notes
+- **Kind:** note.
+- **What:** a new service and new job RPCs bumped the protocol to 34 (`protocol.rs`, `main.ts` `PROTOCOL`, the dialect list in `daemon_client.rs`). The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.9-c); that was not done here (no runtime bundle on this machine, Docker is arm64 only), so the remote live restore test was written and compiled but not run. The 70,000-file daemon test takes about 15 s of the daemon suite; `ALINERY_KEEP_BACKUP=<file>` keeps its archive for the Rust read. `vinculum-daemon/node_modules/alinery-proto` links per file, so after the proto regeneration `bun install` was needed (or the two new `backups` links by hand), as in R-S4.7-5. Tests removed with the code: `backup_queue.rs`' own, the `backup_now`, `list_backups` and storage cases in `tests/backup.rs`, the remote live storage test, and the daemon slot test. Core Rust zip cases stay with R-S4.9-3. The first `check.sh` failed only `cargo fmt` (532d152) and the second only clippy's unused import (c802aa5).
+- **Flaky:** see R-FLAKE-1 for this session's run.
+
 ## E. Known flaky tests
 
 ### R-FLAKE-1: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
@@ -800,6 +847,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Update 2026-11-05 (S4.1):** failed again in the first full `check.sh` of S4.1 (the same run also failed the real S4.1 regression above); passed alone on the rerun. It then failed in three full `cargo test -p alinery-app --lib` runs in a row. **Cause found:** the 500 ms is spent in `current_alineryd_socket_path` -> `alineryd_socket_namespace` -> `resolve_alineryd_path` -> `daemon_in`, which calls `read_dir` on `target/debug/deps`; after many builds in one worktree that directory held 145,273 files (142,436 of them stray `*.o`), and under the parallel load of the whole lib suite the listing took 550 to 690 ms (measured with a temporary `eprintln!` on `started.elapsed()`: `attach_repo_daemon` itself took 1.3 us, `repo_daemon` 5 us). After `find alinery-app/src-tauri/target/debug/deps -name '*.o' -delete` (2,837 files left) the full lib run passed. So the flake is a function of the size of `target/debug/deps`, not of S4.1 code. **If it recurs on a long-lived worktree, delete the stray `.o` files first.** The product-side hazard is real but small: `daemon_in` lists the whole executable directory (in a release app that directory is small).
 - **Update 2026-11-06 (S4.6):** passed in the S4.6 full `check.sh`.
 - **Update 2026-11-06 (S4.7):** passed in the S4.7 full `check.sh`.
+- **Update 2026-11-06 (S4.9):** passed in the S4.9 full `check.sh`.
 - **Follow-up:** widen or drop the 500 ms wall-clock bound.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon.rs:518`.
 
@@ -848,3 +896,4 @@ Edit the plan, or let S5.4 do it.
 - After S4.6, playbooks are read and written through the repository's daemon: a remote repository lists the host's own global playbooks, not this Mac's, and the bundled and global playbooks need at least one local repository to be known before they can be listed. `README.md:242` (`alinery_read_playbook`) is unchanged: MCP still reads the core library.
 - After S4.7, git work on a task (worktree removal, commit, push and the compare URL, the stored pull-request link) runs in the repository's daemon, so for a remote repository it runs on the host with the host's git and credentials; only the GitHub pull-request lookup (with this Mac's token) runs here. If the README says the app runs git, say that the daemon does.
 - After S4.8, starting, recovering, killing and discarding a sub-task run in the repository's daemon (on the host, for a remote repository). `alinery-mcp`'s `alinery_create_subtask` creates the child through the daemon as before; `alinery_inspect_subtask_finish` and `alinery_finalize_subtask` still run in the MCP process until S5.1.
+- After S4.9, backup, restore-verification, the storage scan and the purge run in the repository's daemon (on the host, for a remote repository), so a remote repository's backup destination is a folder on the host. Backups are written with the host's `zip` and read with its `unzip`: a Linux host needs both installed (the remote setup refuses a host without them). The automatic backup triggers (after an artifact change, after a push or commit, before archive) are decided by the daemon, and a failing before-archive backup now stops the archive. Backups made by earlier builds are not guaranteed to restore.
