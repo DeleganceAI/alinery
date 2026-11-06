@@ -197,9 +197,6 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     getVersion: vi.fn(async () => "0.11.1"),
     subtaskState: vi.fn(),
     getTaskExecution: vi.fn(),
-    listArtifactsWithMetadata: vi.fn(),
-    listTaskArtifactTree: vi.fn(),
-    listArtifactCommentDraftsForRepo: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
     setActiveRepo: vi.fn(),
@@ -225,6 +222,7 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   return { ipcMocks, ipcModule, readEffectiveConfig };
 });
 
+vi.mock("./sync/artifacts", async (actual) => (await import("./test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./sync/execution", async (actual) => (await import("./test/executionFeed")).executionHooks(await actual()));
 fakeExecution.source = (slug, repo) => ipcMocks.getTaskExecution(slug, repo);
@@ -1363,9 +1361,6 @@ describe("session work names", () => {
       disabled_reason: "",
     });
     ipcMocks.getTaskExecution.mockResolvedValue(executionReply([]));
-    ipcMocks.listArtifactsWithMetadata.mockResolvedValue([]);
-    ipcMocks.listTaskArtifactTree.mockResolvedValue([]);
-    ipcMocks.listArtifactCommentDraftsForRepo.mockResolvedValue([]);
     taskWrites.worktreeExists.mockResolvedValue(true);
     fakeBoard.set({ sessions: [manager] as never });
     await renderApp();

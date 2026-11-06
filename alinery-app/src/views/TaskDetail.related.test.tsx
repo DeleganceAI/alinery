@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, Task } from "../types";
@@ -44,21 +45,17 @@ const board = (over: Partial<BoardTask> = {}): BoardTask =>
   }) as BoardTask;
 
 const mocks = vi.hoisted(() => ({
-  listArtifactsWithMetadata: vi.fn(),
   setRelatedTasksForRepo: vi.fn(),
 }));
 
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), setRelatedTasksForRepo: mocks.setRelatedTasksForRepo }));
-vi.mock("../ipc", () =>
-  mockIpc({
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-  }),
-);
+vi.mock("../ipc", () => mockIpc({}));
 
 beforeEach(() => {
   fakeBoard.reset();
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
+  fakeArtifacts.reset();
   mocks.setRelatedTasksForRepo.mockReset().mockImplementation(async (_repo: string, _slug: string, related: Task["related_tasks"]) => task({ related_tasks: related }));
 });
 

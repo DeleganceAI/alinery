@@ -30,11 +30,6 @@ import type {
   AccountStatus,
   AppConfig,
   AppearancePrefs,
-  ArtifactComment,
-  ArtifactCommentDraft,
-  ArtifactListItem,
-  ArtifactReviewPendingStatus,
-  ArtifactTreeNode,
   BackupListItem,
   BackupMeta,
   CommunityImportRow,
@@ -57,7 +52,6 @@ import type {
   PlaybookCatalog,
   PlaybookRef,
   PlaybookValidation,
-  PreparedSessionMessageAction,
   PreviewResult,
   PublishResult,
   PullRequestSnapshot,
@@ -65,10 +59,8 @@ import type {
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
-  ReviewHandoffResult,
   SavePlaybookRequest,
   ScopedPlaybook,
-  SessionMessageActionProvenance,
   SessionMeta,
   SkillInstall,
   SshTarget,
@@ -130,90 +122,6 @@ export const remoteClassify = (hostId: string, path: string) => invoke<PickedFol
 export const remoteInit = (hostId: string, path: string) => invoke<InitializedFolder>("remote_init", { hostId, path });
 export const remoteAddRepo = (hostId: string, path: string) => invoke<string>("remote_add_repo", { hostId, path });
 export const removeRemoteRepoKeepRunning = (path: string) => invoke<AppConfig>("remove_remote_repo_keep_running", { path });
-
-// ── artifacts.rs ──────────────────────────────────────────────────────
-export const addArtifactComment = (a: {
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<ArtifactComment[]>("add_artifact_comment", a);
-export const addArtifactCommentForRepo = (a: {
-  repoPath: string;
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<ArtifactComment[]>("add_artifact_comment_for_repo", a);
-export const prepareArtifactCommentsPrompt = (taskSlug: string, artifacts: string[]) =>
-  invoke<PreparedSessionMessageAction>("prepare_artifact_comments_prompt", { taskSlug, artifacts });
-export const archiveArtifactComments = (taskSlug: string, artifact: string) => invoke<string>("archive_artifact_comments", { taskSlug, artifact });
-export const archiveArtifactCommentsForRepo = (repoPath: string, taskSlug: string, artifact: string) =>
-  invoke<string>("archive_artifact_comments_for_repo", { repoPath, taskSlug, artifact });
-export const artifactReviewPendingStatus = (taskSlug: string, artifact: string) =>
-  invoke<ArtifactReviewPendingStatus | null>("artifact_review_pending_status", { taskSlug, artifact });
-export const attachmentPath = (taskSlug: string, name: string) => invoke<string>("attachment_path", { taskSlug, name });
-export const artifactNodePath = (taskSlug: string, nodeId: string) => invoke<string>("artifact_node_path", { taskSlug, nodeId });
-export const clearArtifactReviewPending = (taskSlug: string, artifact: string) => invoke<void>("clear_artifact_review_pending", { taskSlug, artifact });
-export const clearArtifactReviewPendingForRepo = (repoPath: string, taskSlug: string, artifact: string) =>
-  invoke<void>("clear_artifact_review_pending_for_repo", { repoPath, taskSlug, artifact });
-export const deleteArtifactCommentDraft = (taskSlug: string, artifact: string, anchorId: string) => invoke<void>("delete_artifact_comment_draft", { taskSlug, artifact, anchorId });
-export const deleteArtifactCommentDraftForRepo = (repoPath: string, taskSlug: string, artifact: string, anchorId: string) =>
-  invoke<void>("delete_artifact_comment_draft_for_repo", { repoPath, taskSlug, artifact, anchorId });
-export const listArtifactCommentDrafts = (taskSlug: string) => invoke<ArtifactCommentDraft[]>("list_artifact_comment_drafts", { taskSlug });
-export const listArtifactCommentDraftsForRepo = (repoPath: string, taskSlug: string) =>
-  invoke<ArtifactCommentDraft[]>("list_artifact_comment_drafts_for_repo", { repoPath, taskSlug });
-export const listArtifactComments = (taskSlug: string, artifact: string) => invoke<ArtifactComment[]>("list_artifact_comments", { taskSlug, artifact });
-export const listArtifactsWithMetadata = (taskSlug: string) => invoke<ArtifactListItem[]>("list_artifacts_with_metadata", { taskSlug });
-export const listTaskArtifactTree = (taskSlug: string) => invoke<ArtifactTreeNode[]>("list_task_artifact_tree", { taskSlug });
-export const readArtifact = (taskSlug: string, name: string) => invoke<string>("read_artifact", { taskSlug, name });
-export const readArtifactForRepo = (repoPath: string, taskSlug: string, name: string) => invoke<string>("read_artifact_for_repo", { repoPath, taskSlug, name });
-export const readTaskArtifactNode = (taskSlug: string, nodeId: string) => invoke<string>("read_task_artifact_node", { taskSlug, nodeId });
-export const saveArtifactCommentDraft = (a: {
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<void>("save_artifact_comment_draft", a);
-export const saveArtifactCommentDraftForRepo = (a: {
-  repoPath: string;
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<void>("save_artifact_comment_draft_for_repo", a);
-export const sendReviewHandoff = (a: {
-  sourceRepoPath: string;
-  targetRepoPath: string;
-  sourceSlug: string;
-  sourceSession: string;
-  sourceArtifact: string;
-  targetSlug: string;
-  targetPhase: string;
-  harness: string;
-  model: string;
-  promptExtra: string;
-}) => invoke<ReviewHandoffResult>("send_review_handoff", a);
 
 // ── backup.rs ─────────────────────────────────────────────────────────
 export const backupBusy = (repoPath: string | null) => invoke<boolean>("backup_busy", { repoPath });
@@ -331,10 +239,6 @@ export const customProviderSave = (input: { id: string; name: string; baseUrl: s
   invoke<ProviderCatalog>("custom_provider_save", input);
 export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
-export const prepareReviewApprovalPrompt = (taskSlug: string, reviewArtifact: string) =>
-  invoke<PreparedSessionMessageAction>("prepare_review_approval_prompt", { taskSlug, reviewArtifact });
-export const finalizeSessionMessageActions = (id: string, taskSlug: string, actions: SessionMessageActionProvenance[]) =>
-  invoke<void>("finalize_session_message_actions", { id, taskSlug, actions });
 
 // ── settings.rs ───────────────────────────────────────────────────────
 export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
@@ -359,7 +263,6 @@ export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_f
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>("pre_archive_backup", { repoPath, slug });
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
-export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
 // ── playbook.rs ───────────────────────────────────────────────────────
 export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });

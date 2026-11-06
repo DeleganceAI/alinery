@@ -886,6 +886,8 @@ export type RepoScope = "active" | "all";
 export type ReviewHandoffRecord = {
   version: number;
   direction: string;
+  source_repo_path?: string;
+  target_repo_path?: string;
   source_task: string;
   source_session: string;
   source_artifact: string;
@@ -931,6 +933,8 @@ export type ArtifactTreeNode = {
   owner_task_slug: string;
   source: ArtifactTreeSource;
   children: ArtifactTreeNode[];
+  /** An attachment's path below `.alinery/` on the daemon's machine, for Reveal; never read as a file name. */
+  reveal_path?: string;
 };
 
 export type SessionMessageActionProvenance =

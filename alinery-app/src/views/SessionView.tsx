@@ -2,7 +2,7 @@ import { ArrowLeft, MessageSquare, Pencil } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
+import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
@@ -35,7 +35,7 @@ import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-import { filesAreRemote, revealPath } from "../revealPath";
+import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -52,8 +52,18 @@ import {
   isVinculumHarness,
   LoadingState,
   StatusDot,
-  sameArtifactListItems,
 } from "../shared";
+import {
+  addComment,
+  attachmentFilePath,
+  clearReviewPending,
+  finalizeMessageActions,
+  prepareCommentsPrompt,
+  prepareReviewApproval,
+  readArtifactText,
+  readNodeText,
+  useTaskArtifacts,
+} from "../sync/artifacts";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { readChatImage } from "../sync/chat";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
@@ -64,7 +74,6 @@ import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type {
   AppearancePrefs,
-  ArtifactListItem,
   ArtifactTreeNode,
   HostedCatalogView,
   LifecycleState,
@@ -84,11 +93,6 @@ import { SessionActionPanel } from "./SessionActionPanel";
 import { ThinkingSelect } from "./ThinkingSelect";
 
 // ---- session view -------------------------------------------------------------
-
-type ArtifactReviewPendingStatus = {
-  artifact: string;
-  review: string;
-};
 
 function prepareChatSend(taskSlug: string, repoPath: string, caption: string, attachments: DraftAttachment[]) {
   return prepareChatAttachments(
@@ -149,8 +153,10 @@ export function SessionView({
   onDiagramZoomOpenChange?: (open: boolean) => void;
   onNameCommitted?: (change: NameCommit) => void;
 }) {
-  const [artifactItems, setArtifactItems] = useState<ArtifactListItem[]>([]);
-  const [artifactTree, setArtifactTree] = useState<ArtifactTreeNode[]>([]);
+  // The list, the tree, the comments and the waiting-for-review marks are rows of the task's stream: nothing here polls.
+  const liveArtifacts = useTaskArtifacts(repoPath, taskSlug);
+  const artifactItems = liveArtifacts.items;
+  const artifactTree = liveArtifacts.tree;
   const artifactNames = artifactItems.map((a) => a.name);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
@@ -161,14 +167,22 @@ export function SessionView({
   const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
   const [artifactErr, setArtifactErr] = useState("");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
-  const [artifactComments, setArtifactComments] = useState<ArtifactComment[]>([]);
-  const [artifactCommentCountByArtifact, setArtifactCommentCountByArtifact] = useState<Record<string, number>>({});
+  const artifactCommentCountByArtifact = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const comment of liveArtifacts.comments) counts[comment.artifact] = (counts[comment.artifact] ?? 0) + 1;
+    return counts;
+  }, [liveArtifacts.comments]);
   const [commentAnchor, setCommentAnchor] = useState<ArtifactCommentAnchor | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentSendBusy, setCommentSendBusy] = useState(false);
   const [commentSendStatus, setCommentSendStatus] = useState("");
-  const [reviewPending, setReviewPending] = useState<ArtifactReviewPendingStatus | null>(null);
+  const commentsEnabled = selectedArtifactIsDirect && selectedArtifact !== "" && !selectedArtifact.endsWith(".comments.md");
+  const artifactComments = useMemo(
+    () => (commentsEnabled ? liveArtifacts.comments.filter((comment) => comment.artifact === selectedArtifact) : []),
+    [commentsEnabled, liveArtifacts.comments, selectedArtifact],
+  );
+  const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === selectedArtifact)) || null;
   const [artifactWidth, artifactResizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
   const termhostRef = useRef<HTMLDivElement>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
@@ -223,7 +237,6 @@ export function SessionView({
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
   const executionStep = executionView?.definition.step.find((step) => step.key === execution?.candidate.step_key);
   const completionAvailable = executionAvailable && execution?.owner_session_id === id && execution.lifecycle === "running";
-  const [reviewFindingsComments, setReviewFindingsComments] = useState<ArtifactComment[]>([]);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
   const hasTask = Boolean(taskSlug);
@@ -262,19 +275,6 @@ export function SessionView({
   const nextAttachmentId = () => {
     attachmentSeq.current += 1;
     return `att-${attachmentSeq.current}`;
-  };
-
-  const refreshAttachmentArtifacts = () => {
-    void ipc
-      .listArtifactsWithMetadata(taskSlug)
-      .then((items) => {
-        setArtifactItems((current) => (sameArtifactListItems(current, items) ? current : items));
-      })
-      .catch(() => undefined);
-    void ipc
-      .listTaskArtifactTree(taskSlug)
-      .then(setArtifactTree)
-      .catch(() => undefined);
   };
 
   const stageIncoming = (accepted: DraftAttachment[]) => {
@@ -471,114 +471,30 @@ export function SessionView({
   useEffect(() => {
     setArtifactTab("playbook");
     setSelectedArtifactNode(null);
-    setArtifactCommentCountByArtifact({});
   }, [id, taskSlug]);
 
   useEffect(() => {
-    let alive = true;
-    if (!hasTask) {
-      setArtifactItems([]);
-      setArtifactTree([]);
-      setSelectedArtifact("");
-      setSelectedArtifactNode(null);
-      setArtifactErr("");
-      return;
-    }
-    let itemsError = "";
-    let treeError = "";
-    let itemsTimer = 0;
-    let treeTimer = 0;
-    const reportLoadError = () => {
-      if (alive && !selectedArtifact) setArtifactErr([itemsError, treeError].filter(Boolean).join(" · "));
-    };
-    const pollItems = () => {
-      ipc
-        .listArtifactsWithMetadata(taskSlug)
-        .then((items) => {
-          if (!alive) return;
-          setArtifactItems((current) => (sameArtifactListItems(current, items) ? current : items));
-          itemsError = "";
-          reportLoadError();
-        })
-        .catch((error) => {
-          itemsError = String(error);
-          reportLoadError();
-        })
-        .finally(() => {
-          if (alive) itemsTimer = window.setTimeout(pollItems, 3000);
-        });
-    };
-    const pollTree = () => {
-      ipc
-        .listTaskArtifactTree(taskSlug)
-        .then((tree) => {
-          if (!alive) return;
-          setArtifactTree(tree);
-          treeError = "";
-          reportLoadError();
-        })
-        .catch((error) => {
-          treeError = String(error);
-          reportLoadError();
-        })
-        .finally(() => {
-          if (alive) treeTimer = window.setTimeout(pollTree, 3000);
-        });
-    };
-    pollItems();
-    pollTree();
-    return () => {
-      alive = false;
-      window.clearTimeout(itemsTimer);
-      window.clearTimeout(treeTimer);
-    };
-  }, [hasTask, taskSlug, selectedArtifact]);
+    if (hasTask) return;
+    setSelectedArtifact("");
+    setSelectedArtifactNode(null);
+    setArtifactErr("");
+  }, [hasTask]);
 
   useEffect(() => {
     let alive = true;
+    setArtifactText("");
+    setCommentAnchor(null);
+    setCommentDraft("");
+    setCommentSendStatus("");
     if (!hasTask || !selectedArtifact || (!selectedArtifactIsDirect && !selectedArtifactTreeId)) {
-      setArtifactText("");
-      setArtifactComments([]);
-      setReviewPending(null);
-      setCommentAnchor(null);
-      setCommentDraft("");
-      setCommentSendStatus("");
       return () => {
         alive = false;
       };
     }
-    const commentsDisabled = !selectedArtifactIsDirect || selectedArtifact.endsWith(".comments.md");
-    setArtifactText("");
     setArtifactErr("");
-    setReviewPending(null);
-    setCommentAnchor(null);
-    setCommentDraft("");
-    setCommentSendStatus("");
-    if (commentsDisabled) {
-      setArtifactComments([]);
-    } else {
-      ipc
-        .listArtifactComments(taskSlug, selectedArtifact)
-        .then((comments) => {
-          if (!alive) return;
-          setArtifactComments(comments);
-          setArtifactCommentCountByArtifact((current) => ({ ...current, [selectedArtifact]: comments.length }));
-        })
-        .catch((error) => {
-          if (alive) setArtifactErr(String(error));
-        });
-      ipc
-        .artifactReviewPendingStatus(taskSlug, selectedArtifact)
-        .then((pending) => {
-          if (alive) setReviewPending(pending);
-        })
-        .catch((error) => {
-          if (alive) setArtifactErr(String(error));
-        });
-    }
     const read = (() => {
-      if (selectedArtifactIsDirect) return ipc.readArtifact(taskSlug, selectedArtifact);
-      if (selectedArtifactTreeId) return ipc.readTaskArtifactNode(taskSlug, selectedArtifactTreeId);
+      if (selectedArtifactIsDirect) return readArtifactText(repoPath, taskSlug, selectedArtifact);
+      if (selectedArtifactTreeId) return readNodeText(repoPath, taskSlug, selectedArtifactTreeId);
       return Promise.reject(new Error("Selected artifact has no tree identity"));
     })();
     read
@@ -591,7 +507,7 @@ export function SessionView({
     return () => {
       alive = false;
     };
-  }, [hasTask, taskSlug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
+  }, [hasTask, repoPath, taskSlug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
 
   const trimmedCommentDraft = commentDraft.trim();
   const canSaveArtifactComment = Boolean(commentAnchor && selectedArtifact && trimmedCommentDraft && !commentBusy);
@@ -613,79 +529,33 @@ export function SessionView({
     artifactTree.filter((node) => node.source !== "owned"),
     artifactTab,
   );
-  const commentableArtifactNames = artifactItems.map((item) => item.name).filter((name) => !name.endsWith(".comments.md"));
-  const commentableArtifactSignature = commentableArtifactNames.join("|");
+  const reviewFindingsComments = useMemo(
+    () => (hasTask && latestReviewFindings ? liveArtifacts.comments.filter((comment) => comment.artifact === latestReviewFindings.name) : []),
+    [hasTask, latestReviewFindings?.name, liveArtifacts.comments],
+  );
+
   const effectivePlaybook = executionView?.definition.key ?? playbook ?? task?.playbook ?? "";
   const commentsNewerThanFindings = Boolean(
     latestReviewFindings?.modified_at_ms && reviewFindingsComments.some((comment) => comment.created_at_ms > (latestReviewFindings.modified_at_ms ?? 0)),
   );
 
-  useEffect(() => {
-    let alive = true;
-    if (!hasTask || !latestReviewFindings) {
-      setReviewFindingsComments([]);
-      return () => {
-        alive = false;
-      };
-    }
-    ipc
-      .listArtifactComments(taskSlug, latestReviewFindings.name)
-      .then((comments) => {
-        if (alive) setReviewFindingsComments(comments);
-      })
-      .catch(() => {
-        if (alive) setReviewFindingsComments([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [hasTask, taskSlug, latestReviewFindings?.name]);
-
-  useEffect(() => {
-    let alive = true;
-    if (!hasTask || commentableArtifactNames.length === 0) {
-      setArtifactCommentCountByArtifact({});
-      return () => {
-        alive = false;
-      };
-    }
-    Promise.all(
-      commentableArtifactNames.map((artifact) =>
-        ipc
-          .listArtifactComments(taskSlug, artifact)
-          .then((comments) => [artifact, comments.length] as const)
-          .catch(() => [artifact, 0] as const),
-      ),
-    ).then((entries) => {
-      if (!alive) return;
-      setArtifactCommentCountByArtifact(Object.fromEntries(entries));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [hasTask, taskSlug, commentableArtifactSignature]);
-
   const saveArtifactComment = () => {
     if (!canSaveArtifactComment || !commentAnchor || !selectedArtifact) return;
     setCommentBusy(true);
-    ipc
-      .addArtifactCommentForRepo({
-        repoPath,
-        taskSlug,
-        artifact: selectedArtifact,
-        anchorId: commentAnchor.anchor_id,
-        anchorKind: commentAnchor.anchor_kind,
-        anchorLabel: commentAnchor.anchor_label,
-        anchorExcerpt: commentAnchor.anchor_excerpt,
-        lineStart: commentAnchor.line_start,
-        lineEnd: commentAnchor.line_end,
-        body: trimmedCommentDraft,
-      })
-      .then((comments) => {
-        setArtifactComments(comments);
+    addComment({
+      repoPath,
+      taskSlug,
+      artifact: selectedArtifact,
+      anchorId: commentAnchor.anchor_id,
+      anchorKind: commentAnchor.anchor_kind,
+      anchorLabel: commentAnchor.anchor_label,
+      anchorExcerpt: commentAnchor.anchor_excerpt,
+      lineStart: commentAnchor.line_start,
+      lineEnd: commentAnchor.line_end,
+      body: trimmedCommentDraft,
+    })
+      .then(() => {
         void discardCommentDraft(selectedArtifact, commentAnchor.anchor_id).catch(() => {});
-        setArtifactCommentCountByArtifact((current) => ({ ...current, [selectedArtifact]: comments.length }));
-        if (selectedArtifact === latestReviewFindings?.name) setReviewFindingsComments(comments);
         setCommentAnchor(null);
         setCommentDraft("");
         setCommentSendStatus("");
@@ -749,8 +619,7 @@ export function SessionView({
     if (targets.length === 0 || messageSending) return;
     setCommentSendBusy(true);
     setCommentSendStatus("");
-    ipc
-      .prepareArtifactCommentsPrompt(taskSlug, targets)
+    prepareCommentsPrompt(repoPath, taskSlug, targets)
       .then((prepared) => {
         appendPreparedAction(prepared.text, prepared.provenance);
         setCommentSendStatus(targets.length === 1 ? "Added review comments to draft." : `Added ${targets.length} review files to draft.`);
@@ -761,10 +630,7 @@ export function SessionView({
 
   const clearPendingReview = () => {
     if (!selectedArtifact) return;
-    ipc
-      .clearArtifactReviewPendingForRepo(repoPath, taskSlug, selectedArtifact)
-      .then(() => setReviewPending(null))
-      .catch((error) => setArtifactErr(String(error)));
+    clearReviewPending(repoPath, taskSlug, selectedArtifact).catch((error) => setArtifactErr(String(error)));
   };
 
   const canSendCommentsToSession = selectedArtifact !== "" && !selectedArtifact.endsWith(".comments.md") && artifactComments.length > 0;
@@ -775,36 +641,13 @@ export function SessionView({
     if (!latestReviewFindings || messageSending) return;
     setApprovalBusy(true);
     setApprovalStatus("");
-    ipc
-      .prepareReviewApprovalPrompt(taskSlug, latestReviewFindings.name)
+    prepareReviewApproval(repoPath, taskSlug, latestReviewFindings.name)
       .then((prepared) => {
         appendPreparedAction(prepared.text, prepared.provenance);
         setApprovalStatus("Added approval prompt to draft.");
       })
       .catch((error) => setArtifactErr(String(error)))
       .finally(() => setApprovalBusy(false));
-  };
-
-  const refreshFinalizedActions = async (actions: SessionMessageActionProvenance[]) => {
-    const commentArtifacts = actions.flatMap((action) => (action.type === "artifact_comments" ? action.items.map((item) => item.artifact) : []));
-    if (commentArtifacts.length > 0) {
-      const refreshed = await Promise.all(
-        commentArtifacts.map(async (artifact) => ({
-          artifact,
-          comments: await ipc.listArtifactComments(taskSlug, artifact),
-        })),
-      );
-      setArtifactCommentCountByArtifact((current) => {
-        const next = { ...current };
-        for (const entry of refreshed) next[entry.artifact] = entry.comments.length;
-        return next;
-      });
-      const selected = refreshed.find((entry) => entry.artifact === selectedArtifact);
-      if (selected) {
-        setArtifactComments(selected.comments);
-        setReviewPending(await ipc.artifactReviewPendingStatus(taskSlug, selectedArtifact));
-      }
-    }
   };
 
   const sendCurrentMessage = async (text?: string) => {
@@ -831,7 +674,6 @@ export function SessionView({
     try {
       if (transport === "rpc") {
         const message = attachments.length > 0 ? (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message : caption;
-        if (attachments.length > 0) refreshAttachmentArtifacts();
         await ipc.sessionPrompt(id, message);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
@@ -840,8 +682,7 @@ export function SessionView({
       }
       if (actions.length > 0) {
         try {
-          await ipc.finalizeSessionMessageActions(id, taskSlug, actions);
-          await refreshFinalizedActions(actions);
+          await finalizeMessageActions(repoPath, id, taskSlug, actions);
         } catch (error) {
           setMessageError(`Delivered to session, but Alinery could not finalize message metadata: ${String(error)}`);
         }
@@ -868,7 +709,6 @@ export function SessionView({
       let message = caption;
       if (attachments.length > 0) {
         message = (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message;
-        refreshAttachmentArtifacts();
       }
       await ipc.sessionAbort(id);
       await ipc.sessionPrompt(id, message);
@@ -1791,12 +1631,7 @@ export function SessionView({
                           }}
                           onClick={() => {
                             if (item.attachment) {
-                              // A remote repo's files are on its host; the daemon never hands out a path.
-                              if (filesAreRemote()) return;
-                              ipc
-                                .attachmentPath(taskSlug, item.name)
-                                .then(revealPath)
-                                .catch((error) => setArtifactErr(String(error)));
+                              revealPath(attachmentFilePath(repoPath, taskSlug, item.name)).catch((error) => setArtifactErr(String(error)));
                               return;
                             }
                             if (!node) return;
@@ -1825,6 +1660,7 @@ export function SessionView({
                     {contextualArtifactTree.length > 0 && (
                       <ArtifactTree
                         taskSlug={taskSlug}
+                        repoPath={repoPath}
                         nodes={contextualArtifactTree}
                         selectedId={selectedArtifactTreeId}
                         onSelect={(node) => {

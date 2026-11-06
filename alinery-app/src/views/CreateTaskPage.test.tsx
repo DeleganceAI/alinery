@@ -159,6 +159,10 @@ vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("..
 const sessionWrites = vi.hoisted(() => ({ createSession: vi.fn(), startSession: vi.fn() }));
 vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), ...sessionWrites }));
 
+// The saved ticket a draft carries is read through BlobService.
+const artifactReads = vi.hoisted(() => ({ readArtifactText: vi.fn<(repo: string, slug: string, name: string) => Promise<string>>() }));
+vi.mock("../sync/artifacts", async (actual) => ({ ...(await actual<typeof import("../sync/artifacts")>()), ...artifactReads }));
+
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 
 import * as ipc from "../ipc";
@@ -1228,7 +1232,7 @@ describe("starting branch contract", () => {
   });
 
   it("creates from the saved starting branch rather than an implicit HEAD", async () => {
-    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    vi.mocked(artifactReads.readArtifactText).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, branch: "new-task-branch", draft_base_ref: "refs/heads/release" };
     render(<CreateTaskPage initialDraft={saved} activeRepo="/other" knownRepos={["/other", "/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("checkbox", { name: "Build" });
@@ -1244,7 +1248,7 @@ describe("starting branch contract", () => {
   });
 
   it.each(["title", "session cap"] as const)("does not rewrite a reopened draft until a %s edit", async (field) => {
-    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    vi.mocked(artifactReads.readArtifactText).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, draft_base_ref: "refs/heads/release" };
     vi.useFakeTimers();
     try {
@@ -1710,7 +1714,7 @@ describe("clipboard task attachments", () => {
       vi.mocked(taskWrites.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
       vi.mocked(ipc.pickAttachmentFilesDialog).mockReset().mockResolvedValue([]);
       vi.mocked(taskWrites.deleteDraftForRepo).mockReset().mockResolvedValue(undefined);
-      vi.mocked(ipc.readArtifactForRepo).mockReset().mockResolvedValue("Saved description");
+      vi.mocked(artifactReads.readArtifactText).mockReset().mockResolvedValue("Saved description");
       vi.mocked(ipc.getCurrentWebview).mockReturnValue({
         onDragDropEvent: async (handler) => {
           dropFiles = (paths) => handler({ event: "tauri://drag-drop", id: 0, payload: { type: "drop", paths, position: { x: 0, y: 0 } } } as Parameters<typeof handler>[0]);
@@ -1724,7 +1728,7 @@ describe("clipboard task attachments", () => {
       vi.mocked(taskWrites.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
       vi.mocked(ipc.pickAttachmentFilesDialog).mockReset();
       vi.mocked(taskWrites.deleteDraftForRepo).mockReset();
-      vi.mocked(ipc.readArtifactForRepo).mockReset();
+      vi.mocked(artifactReads.readArtifactText).mockReset();
       vi.mocked(ipc.getCurrentWebview)
         .mockReset()
         .mockReturnValue({

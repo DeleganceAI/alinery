@@ -99,6 +99,7 @@ const mocks = vi.hoisted(() => ({
 }));
 const readEffectiveConfig = vi.hoisted(() => vi.fn());
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
+vi.mock("../sync/artifacts", async (actual) => ({ ...(await actual<typeof import("../sync/artifacts")>()), sendReviewHandoff: mocks.sendReviewHandoff }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", async () => {

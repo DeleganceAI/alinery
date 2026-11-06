@@ -5,6 +5,7 @@ import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
+import { readArtifactText } from "../sync/artifacts";
 import { readEffectiveConfig } from "../sync/settings";
 import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
 import * as taskMutationGuard from "../taskMutationGuard";
@@ -373,7 +374,7 @@ export function CreateTaskPage({
         setCatalogLoading(false);
         if (initialDraft && initialDraft.repo_path === repoPath && !ticketLoaded.current) {
           try {
-            const raw = await ipc.readArtifactForRepo(repoPath, initialDraft.slug, "00-ticket.md");
+            const raw = await readArtifactText(repoPath, initialDraft.slug, "00-ticket.md");
             if (!alive || request !== targetRequest.current) return;
             // The composer emits the heading exactly once and always after the description,
             // so the occurrence nearest the end is the machine-written one.

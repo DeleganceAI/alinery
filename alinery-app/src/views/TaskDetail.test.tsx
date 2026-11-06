@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
@@ -66,10 +67,6 @@ const ipcSpies = vi.hoisted(() => ({
 const mocks = vi.hoisted(() => ({
   subtaskState: vi.fn(),
   getTaskExecution: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
-  listTaskArtifactTree: vi.fn(),
-  readArtifact: vi.fn(),
-  listArtifactCommentDrafts: vi.fn(),
   worktreeExists: vi.fn(),
   markSessionNotificationRead: vi.fn(),
 }));
@@ -91,6 +88,7 @@ vi.mock("../sync/tasks", async (actual) => ({
   renameTask: ipcSpies.renameTask,
   setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
 }));
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../sync/sessions", async (actual) => ({
@@ -104,10 +102,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     subtaskState: mocks.subtaskState,
     getTaskExecution: mocks.getTaskExecution,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    listTaskArtifactTree: mocks.listTaskArtifactTree,
-    readArtifact: mocks.readArtifact,
-    listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
     sessionAbort: ipcSpies.sessionAbort,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
@@ -352,10 +346,8 @@ beforeEach(() => {
   });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
   fakeExecution.reset();
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
-  mocks.readArtifact.mockReset().mockResolvedValue("");
-  mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
+  fakeArtifacts.reset();
+  fakeArtifacts.readArtifact.mockResolvedValue("");
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.worktreeExists.mockReset().mockResolvedValue(true);
@@ -465,7 +457,7 @@ describe("task run graph", () => {
     };
     scenario.sessions = [producer, consumer];
     mocks.getTaskExecution.mockResolvedValue(retained);
-    mocks.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
+    fakeArtifacts.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
 
     const { onOpenSession } = await renderDetail("parent", "graph");
     const graph = within(screen.getByRole("region", { name: "Task run graph" }));
@@ -491,7 +483,7 @@ describe("task run graph", () => {
     // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
-    expect(mocks.readArtifact).toHaveBeenCalledExactlyOnceWith("parent", "research/2-result-10.md");
+    expect(fakeArtifacts.readArtifact).toHaveBeenCalledExactlyOnceWith("/repo", "parent", "research/2-result-10.md");
     expect(screen.getByRole("button", { name: "Back to artifact list" })).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -2110,7 +2102,6 @@ describe("the empty-sessions state", () => {
   it("never renders before the sessions stream has a snapshot, and appears once it does", async () => {
     const fixture = task();
     scenario.task = fixture;
-    mocks.listArtifactsWithMetadata.mockResolvedValue([]);
     sessionStatuses.mockResolvedValue({});
 
     scenario.sessions = null as never; // the stream has no snapshot yet

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { classifyAttachment } from "./chat/attachments";
-import * as ipc from "./ipc";
 import { revealPath } from "./revealPath";
+import { alineryFilePath } from "./sync/artifacts";
 import type { ArtifactTreeNode } from "./types";
 
 export function isDirectOwnedArtifactNode(node: ArtifactTreeNode): boolean {
@@ -18,6 +18,7 @@ const sourceLabels: Partial<Record<ArtifactTreeNode["source"], string>> = {
 function ArtifactTreeRow({
   node,
   taskSlug,
+  repoPath,
   depth,
   selectedId,
   collapsed,
@@ -27,6 +28,7 @@ function ArtifactTreeRow({
 }: {
   node: ArtifactTreeNode;
   taskSlug: string;
+  repoPath: string;
   depth: number;
   selectedId?: string;
   collapsed: Set<string>;
@@ -40,7 +42,7 @@ function ArtifactTreeRow({
   if (node.kind === "attachment" && classifyAttachment({ name: node.label }) === "image") {
     return (
       <div style={{ paddingLeft: `${depth * 16}px` }}>
-        <AttachmentPreview taskSlug={taskSlug} name={node.label} nodeId={node.id}>
+        <AttachmentPreview taskSlug={taskSlug} name={node.label} nodeId={node.id} repoPath={repoPath} revealBelow={node.reveal_path}>
           {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
         </AttachmentPreview>
       </div>
@@ -57,10 +59,7 @@ function ArtifactTreeRow({
           if (folder) {
             onToggle(node.id);
           } else if (node.kind === "attachment") {
-            ipc
-              .artifactNodePath(taskSlug, node.id)
-              .then(revealPath)
-              .catch((error) => onError(String(error)));
+            if (node.reveal_path) revealPath(alineryFilePath(repoPath, node.reveal_path)).catch((error) => onError(String(error)));
           } else {
             onSelect(node);
           }
@@ -79,6 +78,7 @@ function ArtifactTreeRow({
             key={child.id}
             node={child}
             taskSlug={taskSlug}
+            repoPath={repoPath}
             depth={depth + 1}
             selectedId={selectedId}
             collapsed={collapsed}
@@ -93,12 +93,14 @@ function ArtifactTreeRow({
 
 export function ArtifactTree({
   taskSlug,
+  repoPath,
   nodes,
   selectedId,
   onSelect,
   onError,
 }: {
   taskSlug: string;
+  repoPath: string;
   nodes: ArtifactTreeNode[];
   selectedId?: string;
   onSelect: (node: ArtifactTreeNode) => void;
@@ -122,6 +124,7 @@ export function ArtifactTree({
           key={node.id}
           node={node}
           taskSlug={taskSlug}
+          repoPath={repoPath}
           depth={0}
           selectedId={selectedId}
           collapsed={collapsed}

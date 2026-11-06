@@ -89,7 +89,7 @@ export class ExecutionConflict extends Error {
 const reached = (at: Cursor | undefined, applied: Cursor | undefined) => !applied || (!!at && (at.epoch !== applied.epoch || at.seq >= applied.seq));
 
 /** Resolves once `replica` has passed `applied`, or after `timeoutMs`: a read right after a write then shows the change. */
-function whenReaches(replica: Replica, applied: Cursor | undefined, timeoutMs: number): Promise<void> {
+export function whenReaches(replica: Replica, applied: Cursor | undefined, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
     let off = () => {};
     const done = () => {

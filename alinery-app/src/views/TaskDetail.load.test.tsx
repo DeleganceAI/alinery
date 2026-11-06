@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { ArtifactListItem, SessionMeta, Task } from "../types";
@@ -61,19 +62,18 @@ const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
 const mocks = vi.hoisted(() => ({
   getTaskExecution: vi.fn(),
   confirmDanger: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
   renameSession: vi.fn(),
 }));
 
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
   }),
 );
 
@@ -83,7 +83,7 @@ beforeEach(() => {
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
 
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
+  fakeArtifacts.reset();
   mocks.renameSession.mockReset();
 });
 
@@ -120,7 +120,7 @@ describe("an unreadable saved execution state", () => {
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockRejectedValue(new Error("Invalid execution.json"));
     fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
-    mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
+    fakeArtifacts.set("a-task", { items: [artifactItem({ name: "00-ticket.md" })] });
 
     renderDetail({ initialTask: fixture });
 
@@ -150,7 +150,7 @@ describe("saved execution state without live access", () => {
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockResolvedValue(retained);
     fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
-    mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
+    fakeArtifacts.set("a-task", { items: [artifactItem({ name: "00-ticket.md" })] });
     renderDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
@@ -180,34 +180,11 @@ describe("a removed library definition", () => {
   });
 });
 
-describe("a failing artifact scan on an unseeded related-task route", () => {
-  it("still renders name/branch/worktree and sessions when getTask succeeds without a seed", async () => {
-    const fixture = task({ slug: "related-task", name: "Related Task", branch: "related-branch", worktree: "/w/related-task" });
-    fakeBoard.set({ anyRepoTasks: [fixture] as never });
-    fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
-    mocks.listArtifactsWithMetadata.mockRejectedValue(new Error("artifact scan failed"));
-
-    // No initialTask — this is App.tsx's related-task navigation case (App.tsx:797).
-    renderDetail({ slug: "related-task" });
-
-    // Nothing is seeded synchronously; everything comes from getTask resolving.
-    await waitFor(() => expect(screen.getByText("Related Task")).toBeDefined());
-    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-    expect(screen.getByText("related-branch")).toBeDefined();
-    expect(screen.getByText("/w/related-task")).toBeDefined();
-    expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined();
-
-    // The failure is surfaced, not swallowed and not blanking.
-    await waitFor(() => expect(screen.getByText("Couldn't load artifacts.")).toBeDefined());
-  });
-});
-
 describe("a successful listSessions returning an empty array", () => {
   it("shows the empty-sessions state", async () => {
     const fixture = task();
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
     fakeBoard.set({ taskSessions: [] as never });
-    mocks.listArtifactsWithMetadata.mockResolvedValue([]);
 
     renderDetail({ initialTask: fixture });
 
@@ -215,25 +192,16 @@ describe("a successful listSessions returning an empty array", () => {
   });
 });
 
-describe("an artifact read that fails first and recovers on the next poll", () => {
-  it("clears the artifacts warning", async () => {
-    vi.useFakeTimers();
+describe("artifacts arriving on the task's stream", () => {
+  it("shows an artifact when the stream delivers it, with no poll", async () => {
     const fixture = task();
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
-    mocks.listArtifactsWithMetadata.mockRejectedValueOnce(new Error("artifact scan failed")).mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
 
     renderDetail({ initialTask: fixture });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByText("Couldn't load artifacts.")).toBeDefined();
-    expect(screen.queryByText("No sessions yet.")).toBeDefined();
+    fireEvent.click(await screen.findByRole("button", { name: "Artifacts", pressed: false }));
+    expect(screen.queryByText("00-ticket.md")).toBeNull();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-    expect(screen.queryByText("Couldn't load artifacts.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
+    act(() => fakeArtifacts.set("a-task", { items: [artifactItem({ name: "00-ticket.md" })] }));
     expect(screen.getByText("00-ticket.md")).toBeDefined();
   });
 });

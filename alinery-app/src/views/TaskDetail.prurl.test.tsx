@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { PullRequestSnapshot, Task } from "../types";
@@ -28,15 +29,14 @@ const task = (over: Partial<Task> = {}): Task =>
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
-  listArtifactsWithMetadata: vi.fn(),
   listTaskPullRequests: vi.fn(),
   openUrl: vi.fn(),
 }));
 
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskPullRequests: mocks.listTaskPullRequests,
     openUrl: mocks.openUrl,
   }),
@@ -45,7 +45,7 @@ vi.mock("../ipc", () =>
 beforeEach(() => {
   fakeBoard.reset();
 
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
+  fakeArtifacts.reset();
   mocks.listTaskPullRequests.mockReset().mockResolvedValue({});
   mocks.openUrl.mockReset().mockResolvedValue(undefined);
 });

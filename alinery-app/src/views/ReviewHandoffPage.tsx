@@ -1,8 +1,8 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import * as ipc from "../ipc";
 import { repoDisplayPath, sameMachine } from "../remoteRepo";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
+import { sendReviewHandoff } from "../sync/artifacts";
 import { useRepoBoard } from "../sync/board";
 import { readTaskExecution } from "../sync/execution";
 import { readEffectiveConfig } from "../sync/settings";
@@ -81,19 +81,18 @@ export function ReviewHandoffPage({
     setBusy(true);
     setAttempted(true);
     setErr("");
-    ipc
-      .sendReviewHandoff({
-        sourceRepoPath: source.source_repo_path,
-        sourceSlug: source.source_slug,
-        sourceSession: source.source_session,
-        sourceArtifact: source.source_artifact,
-        targetSlug: selectedTask.slug,
-        targetRepoPath: selectedTask.repo_path,
-        targetPhase: phase,
-        harness,
-        model,
-        promptExtra,
-      })
+    sendReviewHandoff({
+      sourceRepoPath: source.source_repo_path,
+      sourceSlug: source.source_slug,
+      sourceSession: source.source_session,
+      sourceArtifact: source.source_artifact,
+      targetSlug: selectedTask.slug,
+      targetRepoPath: selectedTask.repo_path,
+      targetPhase: phase,
+      harness,
+      model,
+      promptExtra,
+    })
       .then((result) => {
         if (result.errors.length > 0 || result.start === "failed") setCreated(result);
         else onConfirmed(result);

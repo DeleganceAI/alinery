@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import type { SessionMessageDraft } from "../sessionMessage";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
@@ -13,12 +14,6 @@ import { Toast, toast } from "../toast";
 import type { AgentState, ArtifactListItem, ArtifactTreeNode, BoardTask, SessionObservation } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { SessionView } from "./SessionView";
-
-const scenario = vi.hoisted(() => ({
-  itemCalls: 0,
-  treeCalls: 0,
-  items: null as ArtifactListItem[] | null,
-}));
 
 // The sessions the fake daemon holds. `sessionStatus.mockResolvedValue(o)` states what the daemon says
 // about the session under test (task/session in /repo); a later call is a live delta.
@@ -121,6 +116,7 @@ const initialTree: ArtifactTreeNode[] = [
 
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 // The session writes and reads are the daemon's SessionService, not ipc.
@@ -128,14 +124,6 @@ vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import(
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution,
-    listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
-    listTaskArtifactTree: () => {
-      scenario.treeCalls += 1;
-      return scenario.treeCalls === 1 ? Promise.resolve(initialTree) : new Promise<ArtifactTreeNode[]>(() => {});
-    },
-    listArtifactCommentDrafts: async () => [],
-    listArtifactCommentDraftsForRepo: async () => [],
-    listArtifactComments: async () => [],
     sessionPrompt,
     sessionAbort,
     sessionSetModel,
@@ -144,10 +132,6 @@ vi.mock("../ipc", () =>
     readOmpModelRoles,
     writeOmpModelRoles,
     openUrl,
-    prepareReviewApprovalPrompt: async () => ({
-      text: "Please approve the review.",
-      provenance: { type: "review_approval" as const, review_artifact: "03-review-findings.md" },
-    }),
     pickAttachmentFilesDialog,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),
     ...({
@@ -173,10 +157,18 @@ async function flushPromises() {
   });
 }
 
+// The task's stream holds these unless a test says otherwise.
+beforeEach(() => {
+  fakeArtifacts.reset();
+  fakeArtifacts.set("task", { items: initialItems, tree: initialTree });
+  fakeArtifacts.prepareApproval.mockResolvedValue({
+    text: "Please approve the review.",
+    provenance: { type: "review_approval" as const, review_artifact: "03-review-findings.md" },
+  });
+});
+
 describe("SessionView artifact pane", () => {
   beforeEach(() => {
-    scenario.itemCalls = 0;
-    scenario.treeCalls = 0;
     resetDaemon();
     vi.useFakeTimers();
     fakeBoard.set({ anyRepoTasks: [{ ...task }] });
@@ -188,7 +180,7 @@ describe("SessionView artifact pane", () => {
     vi.useRealTimers();
   });
 
-  it("keeps category tabs and flat artifact polling live when the context tree stalls", async () => {
+  it("keeps category tabs and shows an artifact as the stream delivers it", async () => {
     render(
       <SessionView
         id="session"
@@ -219,14 +211,37 @@ describe("SessionView artifact pane", () => {
     expect(screen.getByText("Parent context")).toBeDefined();
     expect(screen.queryByText("02-review-checks.md")).toBeNull();
 
-    await act(async () => {
-      vi.advanceTimersByTime(3000);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    act(() => fakeArtifacts.set("task", { items: updatedItems }));
 
     expect(screen.getByText("02-review-checks.md")).toBeDefined();
     expect(screen.getByText("3/3")).toBeDefined();
+  });
+
+  it("shows a comment another client added, with no poll", async () => {
+    renderSession({ phase: "review-checks", playbook: "review" });
+    await flushPromises();
+    expect(screen.queryByLabelText("1 active comment")).toBeNull();
+
+    act(() =>
+      fakeArtifacts.set("task", {
+        comments: [
+          {
+            id: "c1",
+            artifact: "00-ticket.md",
+            anchor_id: "a1",
+            anchor_kind: "line",
+            anchor_label: "Line 1",
+            anchor_excerpt: "x",
+            line_start: 1,
+            line_end: 1,
+            body: "from elsewhere",
+            created_at_ms: 5,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByLabelText("1 active comment")).toBeDefined();
   });
 
   it.each(["merged", "finished", "killed"] as const)("warns that a live %s child session may be stale", async (outcome) => {
@@ -595,7 +610,6 @@ describe("session lifecycle polling", () => {
 describe("session message composer feature gate", () => {
   beforeEach(() => {
     fakeBoard.set({ anyRepoTasks: [{ ...task }] });
-    scenario.items = null;
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
   });
 
@@ -609,7 +623,7 @@ describe("session message composer feature gate", () => {
   });
 
   it("offers the review draft actions to Chat with no experimental flag", async () => {
-    scenario.items = [{ name: "03-review-findings.md", modified_at_ms: 3, playbook_step: "review-findings", session_id: "", handoffs: [] }];
+    fakeArtifacts.set("task", { items: [{ name: "03-review-findings.md", modified_at_ms: 3, playbook_step: "review-findings", session_id: "", handoffs: [] }] });
     const onDraftChange = vi.fn();
     renderSession({ appearance: DEFAULT_APPEARANCE, playbook: "review", onMessageDraftChange: onDraftChange });
 
@@ -755,7 +769,7 @@ describe("session chat send routing", () => {
 describe("session-scoped completion permission", () => {
   beforeEach(() => {
     fakeBoard.set({ anyRepoTasks: [task] });
-    scenario.items = [];
+    fakeArtifacts.set("task", { items: [] });
     sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     fakeExecution.allow.mockReset().mockImplementation(async (_repo: string, _slug: string, executionId: string) => {

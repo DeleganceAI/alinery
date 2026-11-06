@@ -1,13 +1,27 @@
 import { type ReactNode, useEffect, useState } from "react";
-import * as ipc from "./ipc";
 import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
+import { alineryFilePath, attachmentFilePath, readNodeBytes } from "./sync/artifacts";
 import { readAttachmentBytes } from "./sync/tasks";
 
 /**
- * `repoPath` set and no `nodeId`: the image is read from the daemon (BlobService). A tree node is still resolved by the
- * shell until the artifact tree moves to the daemon (S4.5).
+ * The image is read from the daemon (BlobService): a tree node by `nodeId`, an attachment of the task by `name`.
+ * `revealBelow` is a tree node's path below `.alinery/`; without it the attachment's own place is used.
  */
-export function AttachmentPreview({ taskSlug, name, nodeId, repoPath, children }: { taskSlug: string; name: string; nodeId?: string; repoPath?: string; children?: ReactNode }) {
+export function AttachmentPreview({
+  taskSlug,
+  name,
+  nodeId,
+  repoPath,
+  revealBelow,
+  children,
+}: {
+  taskSlug: string;
+  name: string;
+  nodeId?: string;
+  repoPath: string;
+  revealBelow?: string;
+  children?: ReactNode;
+}) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -16,7 +30,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, repoPath, children }
     let url = "";
     setSrc("");
     setError("");
-    (repoPath && !nodeId ? readAttachmentBytes(repoPath, taskSlug, name) : ipc.readAttachmentImage(taskSlug, name, nodeId)).then(
+    (nodeId ? readNodeBytes(repoPath, taskSlug, nodeId) : readAttachmentBytes(repoPath, taskSlug, name)).then(
       (bytes) => {
         if (cancelled) return;
         url = URL.createObjectURL(new Blob([bytes]));
@@ -51,15 +65,14 @@ export function AttachmentPreview({ taskSlug, name, nodeId, repoPath, children }
         )}
       </div>
       <div className="attachment-preview-actions">
-        {/* An attachment's path is on this machine only for a local repo; the daemon never hands out a path. */}
-        {(nodeId || !filesAreRemote()) && (
+        {(!nodeId || revealBelow) && (
           <button
             type="button"
             className="btn ghost small"
             aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
             onClick={() => {
-              const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
-              path.then(revealPath).catch((reason) => setError(String(reason)));
+              const path = revealBelow ? alineryFilePath(repoPath, revealBelow) : attachmentFilePath(repoPath, taskSlug, name);
+              revealPath(path).catch((reason) => setError(String(reason)));
             }}
           >
             {revealActionLabel()}

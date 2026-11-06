@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
+import { fakeArtifacts } from "../test/artifactHooks";
 import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { sessionDaemon } from "../test/sessionDaemon";
@@ -45,12 +46,12 @@ const task = (over: Partial<Task> = {}): Task =>
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
-  listArtifactsWithMetadata: vi.fn(),
   pushAndCompareUrlForRepo: vi.fn(),
   killSessionForRepo: vi.fn(),
   renameSession: vi.fn(),
 }));
 
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/sessions", async (actual) => ({
   ...(await actual<typeof import("../sync/sessions")>()),
@@ -59,7 +60,6 @@ vi.mock("../sync/sessions", async (actual) => ({
 }));
 vi.mock("../ipc", () =>
   mockIpc({
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
   }),
 );
@@ -68,7 +68,7 @@ beforeEach(() => {
   localStorage.removeItem("alinery.taskSessionView");
   fakeBoard.reset();
 
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
+  fakeArtifacts.reset();
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.pushAndCompareUrlForRepo.mockReset().mockResolvedValue("https://example.test/compare");
