@@ -362,7 +362,6 @@ fn to_value<T: Serialize>(value: T) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Task;
     use std::fs;
 
     fn temp_dir(name: &str) -> PathBuf {
