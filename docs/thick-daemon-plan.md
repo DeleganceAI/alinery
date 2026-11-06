@@ -1056,7 +1056,7 @@ The 11 host-level variants (Ping, ClaimRepo, ReleaseRepo, Classify, Init, ListDi
 | Reads a file on the local machine (picker result, dropped file), then writes it into the repo | The shell reads the file and uploads it through `BlobService`; the daemon writes it |
 | Calls a network API that needs the local machine's secrets (GitHub token, Linear OAuth, account) | The shell calls the API and passes the result to a daemon command |
 | Calls a network API that needs no local secret | The daemon calls it |
-| `open_session` (meta preflight, hosted refresh, attach) | The daemon owns preflight and attach; hosted-token refresh stays in the shell and reaches the daemon as a settings write (S4.11) |
+| `open_session` (meta preflight, hosted refresh, attach) | The daemon owns preflight and attach; hosted-token refresh stays in the shell and reaches the daemon as a settings write (S4.12; S4.11 left it a file, R-S4.11-5) |
 | `set_active_repo` (select, provision, ready the repo) | Selection and provisioning stay in the shell; a new `RepoService.EnsureReady` in the daemon does the repo half |
 | Stops sessions, rewrites the repo, starts again (`restore_backup`) | `Shutdown` with origin `RESTORE_BACKUP` (S1.4), the restore itself while no daemon runs (S4.9), then a normal start |
 
@@ -1068,9 +1068,9 @@ The 30, with the rule and the session that owns each half (measured 2026-10-27; 
 | `task.rs:282` copy_chat_attachments | 4 | S4.3 (builds `BlobService` upload) |
 | `task.rs:645` list_task_activity | 1 | S3.5 |
 | `session.rs:321` archive_session, `:369` archive_session_for_repo | 2 | S4.4 |
-| `session.rs:505` open_session | 7 | attach S3.4; preflight S4.3; hosted refresh stays in the shell (S4.11) |
+| `session.rs:505` open_session | 7 | attach S3.4; preflight S4.3; hosted refresh stays in the shell (the settings write is S4.12) |
 | `session.rs:832` session_status, `:1013` session_list_statuses, `:1076` session_statuses, `chat.rs:395` chat_session_status | 1 | S3.2 |
-| `chat.rs:152` create_chat_thread, `:180` start_chat_thread | 7 | S4.4; hosted refresh stays in the shell (S4.11) |
+| `chat.rs:152` create_chat_thread, `:180` start_chat_thread | 7 | S4.4; hosted refresh stays in the shell (the settings write is S4.12) |
 | `chat.rs:538` copy_chat_thread_attachments | 4 | S4.4 (uses S4.3's upload) |
 | `daemon.rs:328` observe_task_executions | 1 | S4.2 |
 | `daemon.rs:1345` close_all_repos | 2, in part | shutdown S1.4; the exited-session acks stay (R-S4.4-15, S4.11 may revisit); the quit latch and MCP stop stay in the shell |
@@ -2158,9 +2158,9 @@ Status: **done, db12a95 (daemon, shell, core, protocol 35 and frontend in one co
 
 ### S4.11 Ownership, takeover, keep-awake, hosted handoff
 
-Status: **done, 68a5c6a; `./scripts/check.sh` passes**. Left for you: the live checks L-S4.11-a to L-S4.11-e in `docs/thick-daemon-live-checks.md` (the keep-awake hold on macOS and on a Linux desktop with logind, adoption of a project on upgrade and a confirmed takeover in the app, the Linux runtime without `libalinery_core.so`, and a bundled app without the `ownership/` resource). Every other Accept line was run. Not built as the plan wrote it, each in the ledger: the hosted token is not sent as a settings write, it stays the `inference.json` file the shell writes (R-S4.11-5); the first Accept line is read as "no `libalinery_core` and no dlopen of it", because the daemon's libc dlopens (flock, fsync, peer credentials) remain (R-S4.11-2); the TypeScript fence checks the fields the daemon uses, not the whole serde shape (R-S4.11-3). O9 is decided (b) by test on macOS; the Linux hold is tested for its pipe mechanism only (R-S4.11-1). Needs: S4.2, S4.8, S2.2.
+Status: **done, 68a5c6a; `./scripts/check.sh` passes**. Left for you: the live checks L-S4.11-a to L-S4.11-e in `docs/thick-daemon-live-checks.md` (the keep-awake hold on macOS and on a Linux desktop with logind, adoption of a project on upgrade and a confirmed takeover in the app, the Linux runtime without `libalinery_core.so`, and a bundled app without the `ownership/` resource). Every other Accept line was run. Not built as the plan wrote it, each in the ledger: the hosted token is not sent as a settings write: that Build bullet is waived and moved to S4.12, and the token stays the `inference.json` file the shell writes (R-S4.11-5); the first Accept line now reads `libalinery_core|ALINERY_OWNERSHIP_LIB`, because the daemon's libc dlopens (flock, fsync, peer credentials) remain (R-S4.11-2); the TypeScript fence checks the fields the daemon uses, not the whole serde shape (R-S4.11-3). O9 is decided (b) by test on macOS; the Linux hold is tested for its pipe mechanism only (R-S4.11-1). Needs: S4.2, S4.8, S2.2.
 
-**Goal.** Repo ownership and keep-awake run without `libalinery_core`; the hosted token reaches the daemon as a settings write.
+**Goal.** Repo ownership and keep-awake run without `libalinery_core`. (The hosted token as a settings write moved to S4.12, with its credentials: R-S4.11-5.)
 
 **Read first.** Core `repo_ownership.rs`, `ownership_ffi.rs` (:27, :53), `idle_inhibit.rs` (:25, :40, :45). Daemon `main.ts:224-233` (keep-awake) and `:254-259` (`alinery_pi_acquire`). App `session.rs:458` (`spawn_pi_hosted_refresh`) and `:505` (`open_session`); `daemon.rs` takeover commands.
 
@@ -2168,13 +2168,13 @@ Status: **done, 68a5c6a; `./scripts/check.sh` passes**. Left for you: the live c
 - Decide O9 with a test on both platforms: (a) keep the IOKit FFI; (b) `caffeinate -w <pid>` on macOS, `systemd-inhibit` on Linux, as a child the daemon holds.
 - `domain/ownership.ts`: `repo_ownership.rs` ported onto `platform/lock.ts`, under `withTaskMutation`. It is the last Rust writer of execution state (S4.2 caveat).
 - `main.ts:224-233` and `:254-259` stop calling FFI; `ownership_ffi.rs` and (if O9 b) `idle_inhibit.rs` go.
-- The hosted refresh (`session.rs:458`) stays in the shell, which holds the account; it sends the token as a settings write instead of a file the daemon reads. (`open_session`'s preflight moved in S4.3.)
+- The hosted refresh (`session.rs:458`) stays in the shell, which holds the account. **Moved to S4.12 (waived here, R-S4.11-5):** the token is still the `inference.json` file the shell writes; S4.12 adds `SettingsService.WriteHostedInference` (ADMIN, a protocol bump) so the daemon writes it on its own host. (`open_session`'s preflight moved in S4.3.)
 - Takeover keeps its app-only prepare, confirm and cancel; confirm sends `Shutdown(CONFIRMED_TAKEOVER)`.
 
 **Tests.** Ownership conformance from the `repo_ownership.rs` tests. Two daemons on one repo: the second gets `repo_busy`. Keep-awake: the inhibitor child exits when the daemon exits.
 
 **Accept.**
-- `rg -n 'dlopen|libalinery_core' alinery-app/src-tauri/vinculum-daemon/src`: nothing.
+- `rg -n 'libalinery_core|ALINERY_OWNERSHIP_LIB' alinery-app/src-tauri/vinculum-daemon/src`: nothing. (The daemon's libc `dlopen`s in `platform/lock.ts`, `platform/fsync-worker.ts` and `rpc/peer.ts` stay by design: R-S4.11-2.)
 - Two daemons on one scratch repo: the second exits with `repo_busy`, and the first's sessions are untouched.
 - Keep-awake under O9 (b): with a session running, `pmset -g assertions` (macOS) or `systemd-inhibit --list` (Linux) shows the daemon's inhibitor; `kill -9` of the daemon removes it within 1 s.
 
@@ -2189,6 +2189,7 @@ Status: not started. Needs: S1.1, S1.2, S1.3.
 **Read first.** Daemon `main.ts:964-1021` (the seven `provider_*` and `custom_provider_*` ops: catalog, logout, login start, login poll, login reply, custom save, custom delete); app `session.rs` provider commands (:1215 `provider_catalog`, :1227 `provider_logout`, :1233 `provider_login_start`, :1239 `provider_login_poll`, :1245 `provider_login_reply`, :1251 `custom_provider_save`, :1265 `custom_provider_delete`, all through `active_daemon`); app `settings.rs` `grok_key_ready` :58, `list_harness_models` :74, `list_harness_models_for_repo` :85; `credentials.ts`.
 
 **Build.**
+- From S4.11 (R-S4.11-5): `SettingsService.WriteHostedInference` (ADMIN, a hand-written `prost` message for the shell, a protocol bump). The daemon writes `inference.json` on its own host; the shell calls it on each hosted refresh and on every connect to a remote host. `hosted.rs`, credential sharing (`SHARE_HOSTED`) and sign-out keep reading the file until they move with it.
 - `ProviderService`: `Catalog`, `LoginStart`, `LoginPoll`, `LoginReply`, `Logout`, `SaveCustom`, `DeleteCustom`, and `ListModels`, which replaces `list_harness_models(_for_repo)`.
 - Login and logout need ADMIN: they touch credentials.
 - The browser sign-in stays in the shell (it opens the local browser); the daemon holds the device-code poll.
@@ -2200,6 +2201,7 @@ Status: not started. Needs: S1.1, S1.2, S1.3.
 - `rg -n '"provider_|"custom_provider_' alinery-app/src-tauri/vinculum-daemon/src/main.ts`: nothing.
 - `bun test src/rpc/providers` with the fake provider: start, poll, reply, logout. The shell token from a peer that isn't the shell (VIEW and ACT, 2.1.10) gets PERMISSION_DENIED on `LoginStart`.
 - On the remote-sshd container: `ListModels` through the forward returns the host's list.
+- `WriteHostedInference` from the shell (the carried S4.11 bullet): a bun test that the daemon writes `inference.json` with owner-only mode, a VIEW or ACT peer is refused, and the golden fixture for the `prost` message decodes.
 
 **Exit.** The provider ops leave the JSON-lines wire; the seven session commands and the two model-list commands are gone.
 
@@ -2645,7 +2647,7 @@ Slots the sessions fill (empty until then):
 | S4.2 | The multi-writer note and the 53-case disposition table are above (`S4.2 build (v0.10)`, then the table). S4.3 moved task creation and the approve-all toggle to TypeScript (`domain/tasks.ts`, under the same flock); `task_creation.rs` stays in core for `alinery-mcp` and sub-task creation until S4.8 and S5.1, and `alinery-core::execution`'s `write_execution_state_unlocked` stays for them. S4.8 moved sub-task creation and kill to TypeScript (`domain/subtasks.ts`, the same flock); `subtask.rs` keeps the finish and finalize half for `alinery-mcp` until S5.1, and S4.11 removes `repo_ownership.rs`. |
 | S4.9 | User-run: L-S4.9-a to L-S4.9-f (all in `docs/thick-daemon-live-checks.md`). The remote restore stays a repo-service op until S5.2, and core `backup.rs` and `storage.rs` until S5.1; R-S4.9-2 and R-S4.9-3. |
 | S4.10 | User-run: L-S4.10-a to L-S4.10-d (all in `docs/thick-daemon-live-checks.md`). O12 is Decided (a); the `rg` Accept returns nothing in the shell. The model-role helpers `ensure_default_model_role` stay in `omp_update.rs` until S4.11 (R-S4.10-5). |
-| S4.11 | User-run: L-S4.11-a to L-S4.11-e (all in `docs/thick-daemon-live-checks.md`). O9 is built (b) and tested on macOS; the Linux hold is not run against logind. The hosted token is still a file (R-S4.11-5; S4.12 is where it can move). |
+| S4.11 | User-run: L-S4.11-a to L-S4.11-e (all in `docs/thick-daemon-live-checks.md`). O9 is built (b) and tested on macOS; the Linux hold is not run against logind. The hosted token is still a file: the Build bullet is waived and now sits in S4.12 (R-S4.11-5). |
 | S5.1 | O10; O22; the AGENT RPC list |
 | S5.2 | O15 |
 | S7.1 | What a restart loses; O5 |

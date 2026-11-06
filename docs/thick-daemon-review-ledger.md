@@ -906,7 +906,8 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 ### R-S4.11-2: the first Accept line is read as "no libalinery_core"
 - **Kind:** deviation from the Accept text.
 - **What:** `rg -n 'dlopen|libalinery_core' vinculum-daemon/src` is not empty and cannot be: `platform/lock.ts` (flock, O6), `platform/fsync-worker.ts` (`F_FULLFSYNC`, O26) and `rpc/peer.ts` (peer credentials) dlopen libc by design. What is true: nothing loads `libalinery_core`, and `rg -n 'libalinery_core|ALINERY_OWNERSHIP_LIB|bun:ffi' src/main.ts src/tasks.ts` and `rg -n libalinery_core` over the daemon source, the app, the scripts and the gates return nothing.
-- **Reverse:** none needed; the plan's text should say "dlopen of libalinery_core".
+- **Verifier follow-up:** the plan's Accept line was reworded to `rg -n 'libalinery_core|ALINERY_OWNERSHIP_LIB'`, which returns nothing, and notes the libc dlopens.
+- **Reverse:** none needed.
 
 ### R-S4.11-3: the TypeScript fence reads the fields the daemon uses, not the whole serde shape
 - **Kind:** decision (conservative on what it blocks, lenient on what it accepts).
@@ -924,7 +925,8 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Kind:** deviation from Build bullet 4 (decided overnight, conservatively); not built.
 - **What:** the plan has the shell send the refreshed hosted token to the daemon as a settings write instead of a file the daemon reads. `inference.json` is also read by the shell (`hosted.rs`, the hosted catalog), copied to a host by credential sharing (`SHARE_HOSTED`), refreshed together with the isolated `models.yml`, and wiped on sign-out (`hosted_inference.rs`). A write that only reaches the daemon would leave those readers on the file, so there would be two sources for one token. The refresh itself did not move: it stays in the shell (`spawn_pi_hosted_refresh`, `refresh_hosted_inference_before_open`), as the plan says. S4.12 (`ProviderService`) is the session that owns credentials and the model catalog, and is where a daemon-held token fits; at that point the file, the share item and the `models.yml` splice change together.
 - **Options:** (a) leave the file (chosen); (b) add `SettingsService.WriteHostedInference` (ADMIN, a hand-written `prost` message for the shell, a protocol bump) that makes the daemon write `inference.json` on its own host, and have the shell call it on each refresh and on every connect to a remote host (this would also fix a remote host's token going stale between connects, which today is only re-pushed on connect).
-- **Reverse / next step:** (b), as part of S4.12.
+- **Verifier follow-up (major):** the verifier called the missing bullet a major gap. Decided overnight to waive it for S4.11 and edit the plan, not to build (b) here: (b) is a protocol bump plus a new shell-side `prost` message, and it only pays off when the shell's own readers of the file move with it, which is S4.12's credentials work. The plan now carries the bullet as an S4.12 Build bullet and Accept line, and the S4.11 Goal no longer promises it. To reverse: build (b) now (S4.12's bullet, ahead of schedule).
+- **Reverse / next step:** (b), as part of S4.12 (now written into S4.12's Build and Accept).
 - **Files:** none changed; `src/session.rs`, `alinery-core/src/hosted_inference.rs`, `vinculum-daemon/src/provider.ts` are where it would go.
 
 ### R-S4.11-6: takeover needed no change
@@ -942,8 +944,13 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 
 ### R-S4.11-9: the Linux runtime and the bundle changed, neither was rebuilt
 - **Kind:** unverified claim.
-- **What:** `scripts/build-remote-runtimes.sh` no longer builds or ships `libalinery_core.so` (the archive is the daemon, `alinery-mcp` and `MANIFEST`), `copy-sidecar.sh` no longer copies the library, `tauri.conf.json` no longer bundles `resources/ownership/`, and `RepoOp::SpawnDaemon` lost `ownership_lib` (the repo service is versioned by the runtime hash, not `PROTOCOL_VERSION`). None of it was run: there is no zig on this machine and the app is not built. `cargo check -p alinery-app`, the workspace tests and the shell gates pass. `alinery-core` is `rlib` only. `AGENTS.md` still says the daemon uses "the ownership library (`libalinery_core`)" (S5.4 rewrites that line).
+- **What:** `scripts/build-remote-runtimes.sh` no longer builds or ships `libalinery_core.so` (the archive is the daemon, `alinery-mcp` and `MANIFEST`), `copy-sidecar.sh` no longer copies the library, `tauri.conf.json` no longer bundles `resources/ownership/`, and `RepoOp::SpawnDaemon` lost `ownership_lib` (the repo service is versioned by the runtime hash, not `PROTOCOL_VERSION`). None of it was run: there is no zig on this machine and the app is not built. `cargo check -p alinery-app`, the workspace tests and the shell gates pass. `alinery-core` is `rlib` only. The `AGENTS.md` line that said the daemon uses "the ownership library (`libalinery_core`)" was corrected in the verifier follow-up (the daemon now owns ownership in TypeScript).
 - **Files:** `scripts/build-remote-runtimes.sh`, `alinery-app/src-tauri/scripts/copy-sidecar.sh`, `tauri.conf.json`, `alinery-core/Cargo.toml`, `alinery-core/src/repo_service.rs`, `src/remote.rs`, `src/pi_durable.rs`. Live: L-S4.11-d, L-S4.11-e.
+
+### R-S4.11-10: verifier follow-up on S4.11's tests
+- **Kind:** decision.
+- **What:** (1) `domain/ownership.daemon.test.ts` now starts a drawer Terminal (`spawn` with an empty `task_slug`) in the first daemon and asserts it is still `alive` after the second daemon is refused. (2) `platform/keepawake.test.ts` has a macOS test that holds the real `caffeinate` and ends it by turning the pref off, then by the last session ending; deleting `signalChild(... "keepawake-release")` from `drop()` now fails it (checked by that mutation). (3) The fixture reads in `keepawake.test.ts` and `ownership.test.ts` go through `firstLine.testutil.ts`, which fails after 10 s instead of waiting on a pipe, and the process-spawning tests have explicit timeouts. A mutation that makes ownership.ts loop at 100% CPU in-process cannot be interrupted by any test timeout (a synchronous loop never yields); that case stays caught only by the outer run limit.
+- **Files:** `vinculum-daemon/src/domain/ownership.daemon.test.ts`, `domain/ownership.test.ts`, `platform/keepawake.test.ts`, `firstLine.testutil.ts`.
 
 ## E. Known flaky tests
 
