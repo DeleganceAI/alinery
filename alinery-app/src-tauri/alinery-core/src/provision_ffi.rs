@@ -53,38 +53,9 @@ pub unsafe extern "C" fn alinery_create_subtask(repo: *const c_char, lane: *cons
     call(repo, lane, identity, request, subtask_json)
 }
 
-fn c_string(ptr: *const c_char) -> Result<String, String> {
-    if ptr.is_null() {
-        return Err("missing session name argument".into());
-    }
-    Ok(unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
-}
-
-/// Keep the working tree's files alive under a ref for one execution (O27). The reply is
-/// `{"ref","tree"}`, `{}` when the directory is not in a git working tree, or `{"error"}`.
-///
 /// # Safety
 ///
-/// Each pointer must be null or a valid NUL-terminated string for the duration of the call.
-/// The returned pointer is owned by the caller and freed with `alinery_string_free`.
-#[no_mangle]
-pub unsafe extern "C" fn alinery_record_worktree(dir: *const c_char, slug: *const c_char, exec_id: *const c_char) -> *mut c_char {
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::git::record_worktree_tree(Path::new(&c_string(dir)?), &c_string(slug)?, &c_string(exec_id)?)
-    }));
-    let body = match outcome {
-        Ok(Ok(Some((reference, tree)))) => json!({ "ref": reference, "tree": tree }).to_string(),
-        Ok(Ok(None)) => "{}".to_string(),
-        Ok(Err(error)) => json!({ "error": error }).to_string(),
-        Err(_) => json!({ "error": "worktree record panicked" }).to_string(),
-    };
-    reply_string(body)
-}
-
-/// # Safety
-///
-/// `reply` must be null or a pointer returned by `alinery_create_subtask`
-/// or `alinery_record_worktree` that has not already been freed.
+/// `reply` must be null or a pointer returned by `alinery_create_subtask` that has not already been freed.
 #[no_mangle]
 pub unsafe extern "C" fn alinery_string_free(reply: *mut c_char) {
     if !reply.is_null() {

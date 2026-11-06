@@ -8,6 +8,7 @@ import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
 import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
 import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
+import { GitService } from "alinery-proto/alinery/v1/git_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
@@ -26,6 +27,7 @@ import type { Store } from "../sync/store.ts";
 import { type ArtifactDeps, artifactService } from "./artifacts.ts";
 import { blobService } from "./blobs.ts";
 import { executionService } from "./executions.ts";
+import { gitService } from "./git.ts";
 import { jobService } from "./jobs.ts";
 import { type PlaybookDeps, playbookService } from "./playbooks.ts";
 import { chatService } from "./chat.ts";
@@ -59,6 +61,7 @@ function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle
     addService(server, TaskService, taskService(tasks, dedupe, store), values);
     addService(server, DraftService, draftService(tasks, dedupe, store), values);
     addService(server, BlobService, blobService(tasks, dedupe, store), values);
+    addService(server, GitService, gitService(tasks, dedupe, store), values);
   }
   if (artifacts) addService(server, ArtifactService, artifactService(artifacts, dedupe, store), values);
   if (playbooks) addService(server, PlaybookService, playbookService(playbooks, dedupe, store), values);

@@ -49,7 +49,7 @@ import type {
   PlaybookRef,
   PreviewResult,
   PublishResult,
-  PullRequestSnapshot,
+  PullRequest,
   PurgeArchivedResult,
   RemoteDirListing,
   RemoteHostView,
@@ -62,8 +62,6 @@ import type {
   SubtaskManagerState,
   TakeoverOutcome,
   TakeoverPreview,
-  TaskActivityRef,
-  TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
   VinculumCustomizations,
@@ -149,13 +147,9 @@ export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOu
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────
-export const commitWorktree = (slug: string, message: string) => invoke<void>("commit_worktree", { slug, message });
-export const commitWorktreeForRepo = (repoPath: string, slug: string, message: string) => invoke<void>("commit_worktree_for_repo", { repoPath, slug, message });
-export const pushAndCompareUrl = (slug: string) => invoke<string>("push_and_compare_url", { slug });
-export const pushAndCompareUrlForRepo = (repoPath: string, slug: string) => invoke<string>("push_and_compare_url_for_repo", { repoPath, slug });
-export const removeWorktreeForRepo = (repoPath: string, slug: string) => invoke<void>("remove_worktree_for_repo", { repoPath, slug });
-export const setPrUrl = (slug: string, url: string) => invoke<void>("set_pr_url", { slug, url });
-export const setPrUrlForRepo = (repoPath: string, slug: string, url: string) => invoke<void>("set_pr_url_for_repo", { repoPath, slug, url });
+export const publishGitBackup = (repoPath: string) => invoke<void>("publish_git_backup", { repoPath });
+export const lookupTaskPullRequest = (prUrl: string, branch: string, originUrl: string | null) =>
+  invoke<PullRequest | null>("lookup_task_pull_request", { prUrl, branch, originUrl });
 
 // ── connections.rs ────────────────────────────────────────────────────
 export const connectionStatuses = () => invoke<ConnectionStatus[]>("connection_statuses");
@@ -245,9 +239,6 @@ export const setModelFavorite = (harness: string, model: string, favorite: boole
 export const writeGlobalSettings = (global: GlobalSettings) => invoke<GlobalSettings>("write_global_settings", { global });
 
 // ── task.rs ───────────────────────────────────────────────────────────
-export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: string | null) =>
-  invoke<TaskSourceBranches>("task_source_branches_for_repo", { repoPath, selectedBaseRef: selectedBaseRef ?? null });
-export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
 export type ChatImage = { mime_type: string; data: string };

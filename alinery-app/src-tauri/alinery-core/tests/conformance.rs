@@ -151,6 +151,9 @@ fn telemetry(case: &Path) -> Value {
         },
         "task.draft_delete" => TelemetryEvent::TaskDraftDelete { source, task_id },
         "task.archive" => TelemetryEvent::TaskArchive { source, task_id },
+        "git.commit" => TelemetryEvent::GitCommit { source },
+        "git.push" => TelemetryEvent::GitPush { source },
+        "git.worktree_remove" => TelemetryEvent::GitWorktreeRemove { source },
         "session.archive" => TelemetryEvent::SessionArchive {
             source,
             killed_live: event["killedLive"].as_bool().unwrap(),

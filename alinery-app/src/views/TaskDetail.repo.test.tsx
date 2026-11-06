@@ -58,11 +58,8 @@ vi.mock("../sync/sessions", async (actual) => ({
   killSession: mocks.killSessionForRepo,
   renameSession: mocks.renameSession,
 }));
-vi.mock("../ipc", () =>
-  mockIpc({
-    pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
-  }),
-);
+vi.mock("../sync/git", () => ({ pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo, listTaskPullRequests: async () => ({}) }));
+vi.mock("../ipc", () => mockIpc());
 
 beforeEach(() => {
   localStorage.removeItem("alinery.taskSessionView");

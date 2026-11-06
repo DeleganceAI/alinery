@@ -58,6 +58,7 @@ import {
 import { addComment, attachmentFilePath, clearReviewPending, readArtifactText, readNodeText, useTaskArtifacts } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
@@ -916,8 +917,7 @@ export function TaskDetail({
                 onClick={() => {
                   setBusy("push");
                   setErr(null);
-                  ipc
-                    .pushAndCompareUrlForRepo(repoPath, slug)
+                  pushAndCompareUrlForRepo(repoPath, slug)
                     .then(async (url) => {
                       setTask((current) => (current ? { ...current, pr_url: url } : current));
                       await copyTextToClipboard(url).catch(() => undefined);

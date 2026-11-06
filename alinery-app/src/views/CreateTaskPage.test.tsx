@@ -136,12 +136,14 @@ const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, sele
 
 vi.mock("../ipc", () =>
   mockIpc({
-    taskSourceBranchesForRepo,
     connectionStatuses: vi.fn(async () => []),
     listHarnessModelsForRepo: vi.fn(async () => []),
     getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
+
+// The source branches are the daemon's GitService (sync/git), not ipc.
+vi.mock("../sync/git", () => ({ taskSourceBranchesForRepo }));
 
 // The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
 type PlaybookReads = typeof import("../sync/playbooks");

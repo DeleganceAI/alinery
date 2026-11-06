@@ -6,6 +6,7 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import { readArtifactText } from "../sync/artifacts";
+import { taskSourceBranchesForRepo } from "../sync/git";
 import { listPlaybookCatalog, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig } from "../sync/settings";
 import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
@@ -302,8 +303,7 @@ export function CreateTaskPage({
     const selected = baseRefRef.current;
     setBranchesLoading(true);
     setBranchError("");
-    ipc
-      .taskSourceBranchesForRepo(repoPath, selected)
+    taskSourceBranchesForRepo(repoPath, selected)
       .then((snapshot) => {
         if (!alive || request !== branchRequest.current) return;
         branchSnapshotRequest.current = request;

@@ -92,6 +92,8 @@ step "rust: tests (--workspace)"
 # ---------- source-invariant gates ----------
 step "source gates"
 "$ROOT/scripts/tests/check-git-env-scrub.sh"
+"$ROOT/scripts/tests/check-daemon-git-spawn.sh"
+"$ROOT/scripts/tests/daemon_git_spawn_test.sh"
 "$ROOT/scripts/tests/check-proto-gen.sh"
 "$ROOT/scripts/tests/check-admin-wire-frozen.sh"
 "$ROOT/scripts/tests/admin_wire_frozen_test.sh"

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { branchNameValid, type GitLookup, gitEnv, localBranches, registeredWorktrees, selectGit, worktreeAdd } from "./git.ts";
+import { branchNameValid, type GitLookup, git, gitArgs, gitEnv, gitText, localBranches, registeredWorktrees, selectGit, worktreeAdd } from "./git.ts";
 
 const lookup = (over: Partial<GitLookup> & { executables?: string[] }): GitLookup => ({
   env: { PATH: "/a:/b" },
@@ -56,6 +56,61 @@ test("a GIT_DIR in the daemon's own environment does not redirect a call", async
   } finally {
     if (saved === undefined) delete process.env.GIT_DIR;
     else process.env.GIT_DIR = saved;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the macOS stub at /usr/bin/git is skipped and the alongside tree answers, with its exec path set", () => {
+  const alongside = "/Applications/Alinery.git/bin/git";
+  const l = lookup({
+    platform: "darwin",
+    env: { PATH: "/usr/bin:/bin" },
+    executables: ["/usr/bin/git", alongside],
+    developerDirPresent: () => false,
+    alongside,
+    execPathOf: (p) => (p === alongside ? "/Applications/Alinery.git/libexec/git-core" : undefined),
+  });
+  const chosen = selectGit(l);
+  expect(chosen).toEqual({ program: alongside, bundled: true });
+  expect(gitEnv(chosen, l).GIT_EXEC_PATH).toBe("/Applications/Alinery.git/libexec/git-core");
+  // With the Command Line Tools installed the system git is a git again, and the bundled tree is not used.
+  expect(selectGit({ ...l, developerDirPresent: () => true })).toEqual({ program: "/usr/bin/git", bundled: false });
+});
+
+test("only the bundled tree on macOS is pointed at the keychain credential helper", () => {
+  const helper = "/g/libexec/git-core/git-credential-osxkeychain";
+  const l = lookup({ platform: "darwin", executables: [helper], execPathOf: () => "/g/libexec/git-core" });
+  expect(gitArgs({ program: "/g/bin/git", bundled: true }, l, "/r", ["push"])).toEqual(["-C", "/r", "-c", "credential.helper=osxkeychain", "push"]);
+  expect(gitArgs({ program: "/usr/bin/git", bundled: false }, l, "/r", ["push"])).toEqual(["-C", "/r", "push"]);
+  expect(gitArgs({ program: "/g/bin/git", bundled: true }, { ...l, platform: "linux" }, "/r", ["push"])).toEqual(["-C", "/r", "push"]);
+  expect(gitArgs({ program: "/g/bin/git", bundled: true }, { ...l, isExecutable: () => false }, "/r", ["push"])).toEqual(["-C", "/r", "push"]);
+});
+
+test("a GIT_DIR in the lookup's environment is absent from the child's, and an option env is added after the scrub", async () => {
+  const dir = mkdtempSync("/tmp/git-env-");
+  try {
+    const fake = join(dir, "git");
+    writeFileSync(fake, "#!/bin/sh\nenv\n");
+    chmodSync(fake, 0o755);
+    const env = { PATH: "/usr/bin:/bin", ALINERY_GIT_PATH: fake, GIT_DIR: "/x", GIT_WORK_TREE: "/x", GIT_INDEX_FILE: "/x", KEEP: "1" };
+    const l = lookup({ env, executables: [fake] });
+    const seen = (await git(dir, ["status"], { ...l, isExecutable: (p) => p === fake }, { env: { GIT_INDEX_FILE: "/chosen" } })).stdout.split("\n");
+    expect(seen).toContain("KEEP=1");
+    expect(seen).toContain("GIT_INDEX_FILE=/chosen");
+    expect(seen.some((line) => line.startsWith("GIT_DIR=") || line.startsWith("GIT_WORK_TREE="))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("git reports its version through the one spawn, and gitText reports git's own words", async () => {
+  const dir = mkdtempSync("/tmp/git-text-");
+  try {
+    Bun.spawnSync(["git", "-C", dir, "init", "-q"]);
+    expect((await git(dir, ["--version"])).stdout).toStartWith("git version");
+    await expect(gitText(dir, ["rev-parse", "--verify", "nope"])).rejects.toThrow("git rev-parse:");
+    await expect(git(dir, ["status"], lookup({ env: { PATH: "/a:/b" }, executables: [] }))).rejects.toThrow();
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

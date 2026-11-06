@@ -2,7 +2,7 @@
 // consent rule, the record shape, the allowlists, the ingest URL and the basic auth. Events are a closed
 // union, so a caller can never put a path, a name or free text on the wire. This is the only file in the
 // daemon that builds an ingest request (`check-telemetry-privacy.sh`). Events move here from the Rust
-// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3).
+// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3), the git events (S4.7).
 import { type Global, parseGlobal } from "../domain/settings.ts";
 import { readFileSync } from "node:fs";
 
@@ -45,6 +45,9 @@ export type TelemetryEvent =
   | { event: "task.archive"; source: TelemetrySource; taskId: string }
   | { event: "session.archive"; source: TelemetrySource; killedLive: boolean; sessionId: string; taskId: string }
   | { event: "session.kill"; source: TelemetrySource; sessionId: string; taskId: string }
+  | { event: "git.commit"; source: TelemetrySource }
+  | { event: "git.push"; source: TelemetrySource }
+  | { event: "git.worktree_remove"; source: TelemetrySource }
   | { event: "artifact.comment_add"; source: TelemetrySource }
   | { event: "artifact.review_send"; source: TelemetrySource }
   | { event: "artifact.review_handoff"; source: TelemetrySource; targetPhase: string; harness: string };
@@ -67,6 +70,9 @@ function eventProps(e: TelemetryEvent): Record<string, unknown> {
       return { source: e.source, ...(e.sessionId ? { session_id: e.sessionId } : {}), ...withId(e.taskId) };
     case "artifact.comment_add":
     case "artifact.review_send":
+    case "git.commit":
+    case "git.push":
+    case "git.worktree_remove":
       return { source: e.source };
     case "artifact.review_handoff":
       return { source: e.source, target_phase: sanitizePhase(e.targetPhase), harness: sanitizeHarness(e.harness) };

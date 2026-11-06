@@ -17,7 +17,6 @@ type Request = Record<string, unknown>;
 type CoreLib = {
   symbols: {
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
-    alinery_record_worktree: (dir: ReturnType<typeof ptr>, slug: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
     alinery_string_free: (reply: number | null) => void;
   };
 };
@@ -41,7 +40,6 @@ function core(): CoreLib {
   const library = ownershipLibrary();
   coreLib = dlopen(library, {
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
-    alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
   }) as CoreLib;
   return coreLib;
@@ -49,17 +47,6 @@ function core(): CoreLib {
 
 function cstr(value: string) {
   return ptr(Buffer.from(`${value}\0`));
-}
-
-/** Keeps the working tree's files (uncommitted ones too) alive under `refs/alinery/executions/<slug>/<execId>` for one execution. Undefined outside git. */
-export function recordWorktree(dir: string, slug: string, execId: string): { ref: string; tree: string } | undefined {
-  const lib = core();
-  const reply = lib.symbols.alinery_record_worktree(cstr(dir), cstr(slug), cstr(execId));
-  const text = reply ? new CString(reply).toString() : "";
-  if (reply) lib.symbols.alinery_string_free(reply);
-  const body = (text ? JSON.parse(text) : { error: "empty worktree reply" }) as { ref?: string; tree?: string; error?: string };
-  if (body.error) throw new Error(body.error);
-  return body.ref && body.tree ? { ref: body.ref, tree: body.tree } : undefined;
 }
 
 function coreCall(repo: string, lane: string, identity: string, request: string): Request {

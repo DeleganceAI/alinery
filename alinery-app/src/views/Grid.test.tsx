@@ -177,11 +177,15 @@ const taskExecutions: Record<string, TaskExecutionReply> = {
 
 const ipcMock = vi.hoisted(() => ({
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
-  listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
   archiveTaskForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
+}));
+// The task's git work is the daemon's GitService (sync/git), not ipc.
+const gitMock = vi.hoisted(() => ({
+  listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   removeWorktreeForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
 }));
+vi.mock("../sync/git", () => gitMock);
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () => ipcMock);
@@ -209,7 +213,7 @@ beforeEach(() => {
   window.localStorage.clear();
   fakeBoard.reset();
   fakeBoard.set({ tasks: tasks });
-  ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
+  gitMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => taskExecutions[`${repoPath}:${slug}`] ?? retainedExecution([step("implementation", "Implementation")]));
   playbookMock.readPlaybook.mockImplementation(async (reference) => ({
     source: { reference, path: null },
@@ -660,12 +664,12 @@ describe("configurable task grid", () => {
     const task = makeTask({ name: "PR task", slug: "grid-pr", repo_path: "/grid-pr" });
     const url = "https://github.com/example/project/pull/42";
     fakeBoard.set({ tasks: [task] });
-    ipcMock.listTaskPullRequests.mockResolvedValue({ "/grid-pr:grid-pr": { pr: { number: 42, url, state: "open" }, error: null } });
+    gitMock.listTaskPullRequests.mockResolvedValue({ "/grid-pr:grid-pr": { pr: { number: 42, url, state: "open" }, error: null } });
     const onOpen = vi.fn();
     const first = render(<Grid repoPaths={["/grid-pr"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
     const card = await screen.findByRole("button", { name: /PR task, grid-pr/ });
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
-    expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
+    expect(gitMock.listTaskPullRequests).not.toHaveBeenCalled();
     fireEvent.click(screen.getByLabelText("pull request"));
     await screen.findByRole("link", { name: /PR #42.*Open/ });
     for (const mode of ["detail", "compact", "icon"]) {
@@ -689,7 +693,7 @@ describe("configurable task grid", () => {
     render(<Grid repoPaths={["/grid-pr"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
     expect((screen.getByLabelText("pull request") as HTMLInputElement).checked).toBe(true);
     await screen.findByRole("link", { name: /PR #42.*Open/ });
-    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
+    expect(gitMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByLabelText("pull request"));
     expect(screen.queryByRole("link", { name: /PR #42/ })).toBeNull();
   });
@@ -703,25 +707,25 @@ describe("configurable task grid", () => {
     view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active={false} />);
     fireEvent.click(screen.getByLabelText("pull request"));
     await act(async () => {});
-    expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
+    expect(gitMock.listTaskPullRequests).not.toHaveBeenCalled();
     view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active />);
-    await waitFor(() => expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(gitMock.listTaskPullRequests).toHaveBeenCalledTimes(1));
     vi.useFakeTimers();
     view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active={false} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
+    expect(gitMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
     view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
+    expect(gitMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByLabelText("pull request"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
+    expect(gitMock.listTaskPullRequests).toHaveBeenCalledTimes(2);
   });
 
   it("persists exact-width scrolling columns and collapsed group rails", async () => {
@@ -1004,14 +1008,14 @@ describe("configurable task grid", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive task" }));
     await waitFor(() => expect(ipcMock.archiveTaskForRepo).toHaveBeenCalledWith("/repo-b", "shared-slug"));
     expect(ipcMock.archiveTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipcMock.removeWorktreeForRepo).not.toHaveBeenCalled();
+    expect(gitMock.removeWorktreeForRepo).not.toHaveBeenCalled();
 
     act(() => requireNav(boardNav).archiveSelected());
     fireEvent.click(screen.getByLabelText("Also permanently remove the worktree (uncommitted changes are lost)"));
     fireEvent.click(screen.getByRole("button", { name: "Archive task" }));
-    await waitFor(() => expect(ipcMock.removeWorktreeForRepo).toHaveBeenCalledWith("/repo-b", "shared-slug"));
+    await waitFor(() => expect(gitMock.removeWorktreeForRepo).toHaveBeenCalledWith("/repo-b", "shared-slug"));
     expect(ipcMock.archiveTaskForRepo).toHaveBeenCalledTimes(2);
-    expect(ipcMock.removeWorktreeForRepo).toHaveBeenCalledTimes(1);
+    expect(gitMock.removeWorktreeForRepo).toHaveBeenCalledTimes(1);
   });
 
   it("keeps row-local paths, focus state, lane priority, and compact settings state", async () => {

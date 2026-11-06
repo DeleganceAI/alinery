@@ -65,10 +65,11 @@ const setBoard = (rows: BoardTask[]) => {
 
 const ipcMocks = vi.hoisted(() => ({
   archiveTaskForRepo: vi.fn(),
-  listTaskPullRequests: vi.fn(),
   openUrl: vi.fn(),
-  removeWorktreeForRepo: vi.fn(),
 }));
+// The task's git work is the daemon's GitService (sync/git), not ipc.
+const gitMocks = vi.hoisted(() => ({ listTaskPullRequests: vi.fn(), removeWorktreeForRepo: vi.fn() }));
+vi.mock("../sync/git", () => gitMocks);
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () => mockIpc(ipcMocks));
@@ -76,7 +77,7 @@ vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("..
 
 beforeEach(() => {
   setBoard(tasks);
-  ipcMocks.listTaskPullRequests.mockResolvedValue({});
+  gitMocks.listTaskPullRequests.mockResolvedValue({});
   ipcMocks.openUrl.mockResolvedValue(undefined);
 });
 
@@ -330,7 +331,7 @@ describe("Kanban pull requests", () => {
     const row = task({ name: "Awaiting review", slug: "pr-review", repo_path: "/pr-board" });
     setBoard([row]);
     let resolve!: (value: Record<string, PullRequestSnapshot>) => void;
-    ipcMocks.listTaskPullRequests.mockImplementation(
+    gitMocks.listTaskPullRequests.mockImplementation(
       () =>
         new Promise((done) => {
           resolve = done;
@@ -390,7 +391,7 @@ describe("archiving is gated by a confirmation", () => {
     // … and NOTHING has been archived yet. Asserted as a call count, not as absent text:
     // a dialog that renders but does not gate would still pass a text assertion.
     expect(ipcMocks.archiveTaskForRepo).not.toHaveBeenCalled();
-    expect(ipcMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
+    expect(gitMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
   });
 
   it("explains the permanent limitation before removing a worktree", async () => {
@@ -420,7 +421,7 @@ describe("archiving is gated by a confirmation", () => {
     fireEvent.click(screen.getByText("Cancel"));
 
     expect(ipcMocks.archiveTaskForRepo).not.toHaveBeenCalled();
-    expect(ipcMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
+    expect(gitMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
   });
 
   it("accepting archives the selected task, and leaves the worktree alone by default", async () => {
@@ -437,7 +438,7 @@ describe("archiving is gated by a confirmation", () => {
     expect(ipcMocks.archiveTaskForRepo).toHaveBeenCalledWith("/r", "designing");
     // Removing the worktree is destructive on top of destructive — uncommitted work is
     // lost — so it must stay opt-in even once the user has accepted the archive.
-    expect(ipcMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
+    expect(gitMocks.removeWorktreeForRepo).not.toHaveBeenCalled();
   });
 });
 

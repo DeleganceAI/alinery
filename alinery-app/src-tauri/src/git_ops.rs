@@ -6,138 +6,20 @@ use crate::*;
 // alinery-core/src/git.rs for why `-C <dir>` alone targets the wrong repository.
 pub(crate) use alinery_core::git_cmd;
 
-pub(crate) use alinery_core::git_actions::commit_worktree_in;
-pub(crate) use alinery_core::git_actions::{
-    github_pull_request_ref, record_discovered_pull_request_in, set_pr_url_in, task_source_branches as task_source_branches_in, TaskSourceBranches,
-};
-// Only the tests reach these directly; the commands use them through core.
-#[cfg(test)]
-pub(crate) use alinery_core::git_actions::{compare_url, default_base_branch, record_pushed_url_in, record_removed_worktree_in, TaskSourceHead};
+pub(crate) use alinery_core::git_actions::github_pull_request_ref;
 
-pub(crate) fn remove_worktree_in(app: &AppHandle, repo: &Path, slug: String) -> Result<(), String> {
-    alinery_core::git_actions::remove_worktree(repo, &slug)?;
-    emit(
-        app,
-        alinery_core::TelemetryEvent::GitWorktreeRemove {
-            source: alinery_core::TelemetrySource::App,
-        },
-    );
-    Ok(())
-}
+// The git work itself (commit, push, remove a worktree, the PR link, the source branches) is the daemon's GitService
+// (S4.7); the frontend calls it through `src/sync/git.ts`. What stays here is what needs this machine: the GitHub API call
+// with this machine's token, and the backup queue.
 
-// Push the task branch from its worktree, then build + store the forge compare URL.
-pub(crate) fn push_and_compare_url_in(app: &AppHandle, repo: &Path, slug: String) -> Result<String, String> {
-    let url = alinery_core::git_actions::push_and_compare_url(repo, &slug)?;
-    publish_auto_backup(app, repo, alinery_core::BackupTrigger::PostPushCommit);
-    emit(
-        app,
-        alinery_core::TelemetryEvent::GitPush {
-            source: alinery_core::TelemetrySource::App,
-        },
-    );
-    Ok(url)
-}
-
+/// The backup an automatic trigger queues once a commit or push succeeded (`PostPushCommit`). The daemon cannot queue it:
+/// the queue is this process's until S4.9 moves it to the daemon, and the host's trigger flags gate a remote one. A local
+/// repo is gated by this machine's settings; a remote repo's key goes into the queue and the host applies its own.
 #[tauri::command]
-pub(crate) async fn task_source_branches_for_repo(app: AppHandle, repo_path: String, selected_base_ref: Option<String>) -> Result<TaskSourceBranches, String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || match target {
-        RepoRef::Local(repo) => task_source_branches_in(&repo, selected_base_ref.as_deref()),
-        RepoRef::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::TaskSourceBranches {
-                repo: path.into(),
-                selected_base_ref,
-            },
-        ),
-    })
-    .await
-    .map_err(|error| format!("task source discovery worker: {error}"))?
-}
-
-// ---- M5 remove worktree ------------------------------------------------------
-// End the task's live sessions (a running pty holds the worktree), then git worktree remove
-// --force, then clear task.worktree. The branch, sessions, artifacts, pr_url all survive.
-#[tauri::command]
-pub(crate) async fn remove_worktree(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<(), String> {
-    let repo = match active_repo_ref()? {
-        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
-        remote => remote,
-    };
-    remove_worktree_off_thread(app, repo, slug).await
-}
-
-async fn remove_worktree_off_thread(app: AppHandle, repo: RepoRef, slug: String) -> Result<(), String> {
-    let result = tauri::async_runtime::spawn_blocking(move || match repo {
-        RepoRef::Local(repo) => remove_worktree_in(&app, &repo, slug),
-        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::RemoveWorktree { repo: path.into(), slug }),
-    })
-    .await;
-    result.map_err(|e| format!("remove worktree task: {e}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn remove_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let repo = owned_target(&app, &state, &repo_path)?;
-    remove_worktree_off_thread(app, repo, slug).await
-}
-
-// ---- M5 PR compare URL -------------------------------------------------------
-// Pure remote-URL -> compare-URL parsing. Handles ssh (git@host:owner/repo(.git) and
-// ssh://[user@]host/owner/repo(.git)) and http(s). GitHub adds ?expand=1 to prefill the PR
-// form; other forges (Gitea) use the bare compare path.
-// origin/HEAD is the remote default branch (e.g. "origin/main"); fall back to "main".
-// Push the task branch from its worktree, then build + store the forge compare URL.
-#[tauri::command]
-pub(crate) async fn push_and_compare_url(app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<String, String> {
-    let repo = match active_repo_ref()? {
-        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
-        remote => remote,
-    };
-    push_off_thread(app, repo, slug).await
-}
-
-// A remote push runs on the host with the host's git credentials; the telemetry is about this
-// machine's copy of a repo, which a remote one is not. Its backup is the host's.
-async fn push_off_thread(app: AppHandle, repo: RepoRef, slug: String) -> Result<String, String> {
-    let result = tauri::async_runtime::spawn_blocking(move || match repo {
-        RepoRef::Local(repo) => push_and_compare_url_in(&app, &repo, slug),
-        RepoRef::Remote { host_id, path } => {
-            let url = remote_call(&app.state::<AppState>(), &host_id, RepoOp::PushAndCompareUrl { repo: path.clone().into(), slug })?;
-            publish_remote_backup(&app, &host_id, &path, alinery_core::BackupTrigger::PostPushCommit);
-            Ok(url)
-        }
-    })
-    .await;
-    result.map_err(|e| format!("push task: {e}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn push_and_compare_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<String, String> {
-    let repo = owned_target(&app, &state, &repo_path)?;
-    push_off_thread(app, repo, slug).await
-}
-
-// Hand-edit the PR link to the real PR URL once it exists (compare URL is just the prefill).
-#[tauri::command]
-pub(crate) async fn set_pr_url(app: AppHandle, state: State<'_, AppState>, slug: String, url: String) -> Result<(), String> {
-    let target = require_active_target(&state)?;
-    off_main_thread("set PR url", move || match target {
-        ActiveRepo::Local(repo) => set_pr_url_in(&repo, slug, url),
-        ActiveRepo::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn set_pr_url_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, url: String) -> Result<(), String> {
+pub(crate) async fn publish_git_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
     let target = owned_target(&app, &state, &repo_path)?;
-    off_main_thread("set PR url", move || match target {
-        RepoRef::Local(repo) => set_pr_url_in(&repo, slug, url),
-        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::SetPrUrl { repo: path.into(), slug, url }),
-    })
-    .await
+    publish_auto_backup(&app, Path::new(&target.uri()), alinery_core::BackupTrigger::PostPushCommit);
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -153,12 +35,6 @@ pub(crate) struct PullRequest {
     pub(crate) number: u64,
     pub(crate) url: String,
     pub(crate) state: PullRequestState,
-}
-
-#[derive(Serialize)]
-pub(crate) struct PullRequestSnapshot {
-    pub(crate) pr: Option<PullRequest>,
-    pub(crate) error: Option<String>,
 }
 
 fn pull_request_from_json(value: &Value) -> Result<PullRequest, String> {
@@ -202,7 +78,7 @@ pub(crate) fn select_branch_pull_request(value: &Value, owner: &str, repo: &str,
     Ok(selected)
 }
 
-fn github_pull_request_json(_repo: &Path, endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
+fn github_pull_request_json(endpoint: &str, fields: &[(&str, &str)]) -> Result<Value, String> {
     let mut url = format!("https://api.github.com/{endpoint}");
     if !fields.is_empty() {
         let query = fields
@@ -273,177 +149,12 @@ pub(crate) fn find_task_pull_request(
     Ok(pull)
 }
 
-pub(crate) fn task_pull_request_with(
-    repo: &Path,
-    slug: &str,
-    origin: impl FnMut() -> Result<Option<(String, String)>, String>,
-    request: impl FnMut(&str, &[(&str, &str)]) -> Result<Value, String>,
-) -> Result<Option<PullRequest>, String> {
-    if alinery_core::safe_component(slug).is_none() {
-        return Err("invalid task slug".into());
-    }
-    let task = read_task(repo, slug)?;
-    let pull = find_task_pull_request(&task.pr_url, &task.branch, origin, request)?;
-    if let Some(pull) = &pull {
-        record_discovered_pull_request_in(repo, slug, &task.branch, &task.pr_url, &pull.url)?;
-    }
-    Ok(pull)
-}
-
-/// A remote repo's lookup: the host supplies the stored link, branch and origin; the GitHub call is
-/// made from here with this machine's token, and the discovered link is recorded back on the host.
-fn remote_task_pull_request(state: &AppState, host_id: &str, path: &str, slug: &str) -> Result<Option<PullRequest>, String> {
-    let inputs: alinery_core::git_actions::PullRequestInputs = remote_call(
-        state,
-        host_id,
-        RepoOp::TaskPullRequestInputs {
-            repo: path.into(),
-            slug: slug.to_string(),
-        },
-    )?;
-    let pull = find_task_pull_request(
-        &inputs.pr_url,
-        &inputs.branch,
-        || Ok(inputs.origin_url.as_deref().and_then(github_repo_from_remote)),
-        |endpoint, fields| github_pull_request_json(Path::new(""), endpoint, fields),
-    )?;
-    if let Some(pull) = &pull {
-        remote_call::<()>(
-            state,
-            host_id,
-            RepoOp::RecordDiscoveredPullRequest {
-                repo: path.into(),
-                slug: slug.to_string(),
-                branch: inputs.branch.clone(),
-                previous_url: inputs.pr_url.clone(),
-                url: pull.url.clone(),
-            },
-        )?;
-    }
-    Ok(pull)
-}
-
-pub(crate) fn task_pull_request_in(repo: &Path, slug: &str) -> Result<Option<PullRequest>, String> {
-    task_pull_request_with(
-        repo,
-        slug,
-        || {
-            let mut command = git_cmd(repo);
-            command.args(["remote", "get-url", "origin"]).stdin(std::process::Stdio::null());
-            let output = output_with_timeout(command, Duration::from_secs(5)).map_err(|error| format!("read GitHub origin: {error}"))?;
-            if !output.status.success() {
-                return Err(format!("read GitHub origin: {}", String::from_utf8_lossy(&output.stderr).trim()));
-            }
-            Ok(github_repo_from_remote(String::from_utf8_lossy(&output.stdout).trim()))
-        },
-        |endpoint, fields| github_pull_request_json(repo, endpoint, fields),
-    )
-}
-
-pub(crate) fn task_pull_request_snapshots_with(
-    tasks: Vec<TaskActivityRef>,
-    lookup: impl Fn(&TaskActivityRef) -> Result<Option<PullRequest>, String> + Sync,
-) -> HashMap<String, PullRequestSnapshot> {
-    let tasks: HashMap<_, _> = tasks
-        .into_iter()
-        .map(|reference| (task_activity_key(&reference.repo_path, &reference.task_slug), reference))
-        .collect();
-    let worker_count = tasks.len().min(4);
-    let (job_tx, job_rx) = std::sync::mpsc::channel();
-    let job_rx = Mutex::new(job_rx);
-    let (result_tx, result_rx) = std::sync::mpsc::channel();
-    for task in tasks {
-        let _ = job_tx.send(task);
-    }
-    drop(job_tx);
-
-    // As with activity polling, bound subprocess fan-out without serializing the whole board.
-    std::thread::scope(|scope| {
-        for _ in 0..worker_count {
-            let job_rx = &job_rx;
-            let lookup = &lookup;
-            let result_tx = result_tx.clone();
-            scope.spawn(move || loop {
-                let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                let Ok((key, reference)) = job else {
-                    break;
-                };
-                let snapshot = match lookup(&reference) {
-                    Ok(pr) => PullRequestSnapshot { pr, error: None },
-                    Err(error) => PullRequestSnapshot { pr: None, error: Some(error) },
-                };
-                let _ = result_tx.send((key, snapshot));
-            });
-        }
-        drop(result_tx);
-    });
-    result_rx.into_iter().collect()
-}
-
+/// A task's pull request, looked up from the facts the daemon holds for it (`TaskPullRequestInputs`): the stored link, the
+/// branch and the origin URL. The GitHub call is made here with this machine's token; the frontend records what it finds
+/// back through the daemon.
 #[tauri::command]
-pub(crate) async fn list_task_pull_requests(app: AppHandle, tasks: Vec<TaskActivityRef>) -> Result<HashMap<String, PullRequestSnapshot>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        task_pull_request_snapshots_with(tasks, |reference| match owned_target(&app, &state, &reference.repo_path)? {
-            RepoRef::Local(repo) => task_pull_request_in(&repo, &reference.task_slug),
-            RepoRef::Remote { host_id, path } => remote_task_pull_request(&state, &host_id, &path, &reference.task_slug),
-        })
-    })
-    .await
-    .map_err(|error| format!("GitHub PR lookup worker: {error}"))
-}
-
-// ---- commit-to-branch ---------------------------------------------------------
-// Stage everything and commit in the task's working directory (dedicated worktree, or the
-// main repo when the task opted out of one). Local commit only — no push. Protects in-progress
-// code from remove_worktree's --force discard.
-#[tauri::command]
-pub(crate) async fn commit_worktree(app: AppHandle, state: State<'_, AppState>, slug: String, message: String) -> Result<(), String> {
-    let repo = match active_repo_ref()? {
-        RepoRef::Local(_) => RepoRef::Local(require_owned_active_repo(&state)?),
-        remote => remote,
-    };
-    if commit_off_thread(&app, repo, slug, message).await? {
-        emit(
-            &app,
-            alinery_core::TelemetryEvent::GitCommit {
-                source: alinery_core::TelemetrySource::App,
-            },
-        );
-    }
-    Ok(())
-}
-
-/// Commit in the task's worktree. Returns whether it was a local repo, which is the only kind
-/// that has telemetry to send (a remote one's backup is published all the same).
-async fn commit_off_thread(app: &AppHandle, repo: RepoRef, slug: String, message: String) -> Result<bool, String> {
-    let worker_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || match repo {
-        RepoRef::Local(repo) => {
-            commit_worktree_in(&repo, slug, message)?;
-            Ok::<_, String>(RepoRef::Local(repo))
-        }
-        RepoRef::Remote { host_id, path } => {
-            remote_call::<()>(
-                &worker_app.state::<AppState>(),
-                &host_id,
-                RepoOp::CommitWorktree {
-                    repo: path.clone().into(),
-                    slug,
-                    message,
-                },
-            )?;
-            Ok(RepoRef::Remote { host_id, path })
-        }
-    })
-    .await;
-    let committed = result.map_err(|e| format!("commit task: {e}"))??;
-    publish_auto_backup(app, Path::new(&committed.uri()), alinery_core::BackupTrigger::PostPushCommit);
-    Ok(matches!(committed, RepoRef::Local(_)))
-}
-
-#[tauri::command]
-pub(crate) async fn commit_worktree_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String, message: String) -> Result<(), String> {
-    let repo = owned_target(&app, &state, &repo_path)?;
-    commit_off_thread(&app, repo, slug, message).await.map(|_| ())
+pub(crate) async fn lookup_task_pull_request(pr_url: String, branch: String, origin_url: Option<String>) -> Result<Option<PullRequest>, String> {
+    tauri::async_runtime::spawn_blocking(move || find_task_pull_request(&pr_url, &branch, || Ok(origin_url.as_deref().and_then(github_repo_from_remote)), github_pull_request_json))
+        .await
+        .map_err(|error| format!("GitHub PR lookup worker: {error}"))?
 }

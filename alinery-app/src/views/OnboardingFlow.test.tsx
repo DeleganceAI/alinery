@@ -19,6 +19,7 @@ const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepo
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
 const playbookMock = vi.hoisted(() => ({ readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>() }));
 vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookMock }));
+vi.mock("../sync/git", () => ({ listTaskPullRequests: async () => ({}) }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
@@ -387,9 +388,7 @@ describe("OnboardingFlow wizard", () => {
 });
 
 describe("Empty Grid Playbook Starter Gate", () => {
-  beforeEach(() => {
-    vi.spyOn(ipc, "listTaskPullRequests").mockResolvedValue({});
-  });
+  beforeEach(() => {});
 
   it("renders GridPlaybookStarterGate when repository has 0 tasks, and filter empty message when tasks are filtered out", async () => {
     fakeBoard.set({ tasks: [] });

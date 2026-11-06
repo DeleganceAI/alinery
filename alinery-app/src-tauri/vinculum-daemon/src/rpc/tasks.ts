@@ -12,6 +12,7 @@ import type { Task } from "alinery-proto/alinery/v1/entities_pb";
 import type { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import type { BlobStore } from "../domain/blobs.ts";
 import { deleteDraft, writeDraft } from "../domain/drafts.ts";
+import { deleteExecutionRefs } from "../domain/gitActions.ts";
 import { alineryDir, readTaskChecked } from "../domain/taskFiles.ts";
 import { type AttachmentSource, archiveTask, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
 import { writeAtomic } from "../platform/fs.ts";
@@ -209,6 +210,8 @@ export function taskService(d: TaskDeps, dedupe: Dedupe, store: Store): ServiceI
         domain(async () => {
           const task = await archiveTask(d.repo, req.slug, guardFor(req.slug, req.expectedRevision));
           await settle(req.slug);
+          // The archive is written; a ref that cannot be deleted is left for the next `git gc` to find, not a reason to fail it.
+          await deleteExecutionRefs(d.repo, req.slug).catch((e) => console.error(`vinculum: ${req.slug} execution refs not deleted: ${(e as Error).message}`));
           d.telemetry.record(() => ({ event: "task.archive", source: "alineryd", taskId: String(task.telemetry_id ?? "") }));
           return { applied: applied() };
         }),

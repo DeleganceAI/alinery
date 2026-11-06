@@ -1134,10 +1134,10 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
 }
 
-/// Git on the host: commit, push with the host's credentials, the compare URL and PR link, worktree
-/// removal, branch discovery, and the sub-task requests, all against a real repo with an origin.
+/// The origin URL and the sub-task requests on the host, against a real repo with an origin. The git actions
+/// themselves (commit, push, worktree removal, branch discovery) are the daemon's GitService since S4.7.
 #[test]
-fn live_git_actions_run_on_the_host() {
+fn live_origin_url_and_sub_task_requests_run_on_the_host() {
     let Some(args) = live_args() else {
         eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
         return;
@@ -1176,98 +1176,10 @@ fn live_git_actions_run_on_the_host() {
     .unwrap();
     let repo_path = || std::path::PathBuf::from(&repo);
     let slug = || "feat".to_string();
-    let get_task = || -> alinery_core::Task { toml::from_str(&sh(&format!("cat '{repo}/.alinery/tasks/feat/task.md'"))).unwrap() };
 
-    let branches: crate::TaskSourceBranches = serde_json::from_value(
-        call(RepoOp::TaskSourceBranches {
-            repo: repo_path(),
-            selected_base_ref: Some("refs/heads/feat".into()),
-        })
-        .unwrap(),
-    )
-    .unwrap();
-    let names: Vec<_> = branches.branches.iter().map(|branch| branch.name.as_str()).collect();
-    assert_eq!(names, ["feat", "main"]);
-    assert!(branches.selected.is_some_and(|selected| selected.available));
-
-    // Commit: the host stages and commits in the task's worktree.
-    call(RepoOp::WriteFile {
-        path: format!("{worktree}/hello.txt").into(),
-        contents: "hello\n".into(),
-    })
-    .unwrap();
-    assert!(
-        call(RepoOp::CommitWorktree {
-            repo: repo_path(),
-            slug: slug(),
-            message: "   ".into()
-        })
-        .is_err(),
-        "an empty message is refused"
-    );
-    call(RepoOp::CommitWorktree {
-        repo: repo_path(),
-        slug: slug(),
-        message: "add hello".into(),
-    })
-    .unwrap();
-    assert!(sh(&format!("git -C '{worktree}' log --oneline -1")).contains("add hello"));
-    assert!(
-        call(RepoOp::CommitWorktree {
-            repo: repo_path(),
-            slug: slug(),
-            message: "again".into()
-        })
-        .is_err(),
-        "nothing left to commit"
-    );
-
-    // Push: lands in the origin, and the compare URL is stored on the task.
-    let url: String = serde_json::from_value(call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).unwrap()).unwrap();
-    assert_eq!(url, "https://github.com/acme/widgets/compare/main...feat?expand=1");
-    assert!(sh(&format!("git -C '{origin}' rev-parse --verify refs/heads/feat")).trim().len() >= 40);
-    assert_eq!(get_task().pr_url, url);
-
-    // PR link: a real link replaces the compare URL and survives the next push.
-    let pr = "https://github.com/acme/widgets/pull/7";
-    call(RepoOp::SetPrUrl {
-        repo: repo_path(),
-        slug: slug(),
-        url: format!("  {pr}  "),
-    })
-    .unwrap();
-    assert_eq!(get_task().pr_url, pr);
-    call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).unwrap();
-    assert_eq!(get_task().pr_url, pr, "pushing must not replace a real PR link");
-    let inputs: alinery_core::git_actions::PullRequestInputs = serde_json::from_value(call(RepoOp::TaskPullRequestInputs { repo: repo_path(), slug: slug() }).unwrap()).unwrap();
-    assert_eq!(
-        (inputs.pr_url.as_str(), inputs.branch.as_str(), inputs.origin_url.as_deref()),
-        (pr, "feat", Some("https://github.com/acme/widgets.git"))
-    );
     // The origin URL is what a bare `#123` GitHub import resolves against.
     let origin_url: Option<String> = serde_json::from_value(call(RepoOp::GitOriginUrl { repo: repo_path() }).unwrap()).unwrap();
     assert_eq!(origin_url.as_deref(), Some("https://github.com/acme/widgets.git"));
-    assert!(call(RepoOp::TaskPullRequestInputs {
-        repo: repo_path(),
-        slug: "../feat".into()
-    })
-    .is_err());
-    let record = |previous: &str, url: &str| {
-        call(RepoOp::RecordDiscoveredPullRequest {
-            repo: repo_path(),
-            slug: slug(),
-            branch: "feat".into(),
-            previous_url: previous.into(),
-            url: url.into(),
-        })
-    };
-    assert!(
-        record("https://github.com/acme/widgets/pull/1", "https://github.com/acme/widgets/pull/9").is_err(),
-        "a changed link is refused"
-    );
-    assert!(record(pr, "https://example.com/not-a-pr").is_err());
-    record(pr, "https://github.com/acme/widgets/pull/9").unwrap();
-    assert_eq!(get_task().pr_url, "https://github.com/acme/widgets/pull/9");
 
     // Sub-tasks: the manager request is built from the host's files.
     let request: alinery_core::task_creation::CreateExecutionSessionRequest = serde_json::from_value(
@@ -1302,16 +1214,6 @@ fn live_git_actions_run_on_the_host() {
     })
     .is_err());
 
-    // Remove the worktree: the directory goes, the task forgets it, the branch stays.
-    call(RepoOp::RemoveWorktree { repo: repo_path(), slug: slug() }).unwrap();
-    assert!(sh(&format!("test -e '{worktree}' && echo present || echo gone")).contains("gone"));
-    assert_eq!(get_task().worktree, "");
-    assert!(sh(&format!("git -C '{repo}' rev-parse --verify refs/heads/feat")).trim().len() >= 40);
-    assert!(call(RepoOp::RemoveWorktree { repo: repo_path(), slug: slug() }).is_err(), "already removed");
-    assert!(
-        call(RepoOp::PushAndCompareUrl { repo: repo_path(), slug: slug() }).is_err(),
-        "nothing to push without a worktree"
-    );
     sh(&format!("rm -rf '{repo}' '{origin}'"));
     session.conn.exit_master();
 }

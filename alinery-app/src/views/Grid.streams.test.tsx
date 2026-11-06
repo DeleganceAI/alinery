@@ -9,11 +9,8 @@ import { Grid } from "./Grid";
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 let daemon = sessionDaemon();
-vi.mock("../ipc", () =>
-  mockIpc({
-    listTaskPullRequests: async () => ({}),
-  }),
-);
+vi.mock("../ipc", () => mockIpc());
+vi.mock("../sync/git", () => ({ listTaskPullRequests: async () => ({}) }));
 
 const steps = [
   { key: "research", title: "Research" },

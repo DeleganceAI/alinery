@@ -97,6 +97,16 @@ vi.mock("./sync/playbooks", async (actual) => ({
   ...(await actual<typeof import("./sync/playbooks")>()),
   listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
 }));
+vi.mock("./sync/git", () => ({
+  taskSourceBranchesForRepo: async () => ({
+    branches: [{ full_ref: "refs/heads/main", name: "main" }],
+    head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+    selected: null,
+  }),
+  listTaskPullRequests: async () => ({}),
+  removeWorktreeForRepo: async () => {},
+  pushAndCompareUrlForRepo: async () => "",
+}));
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), duplicateTaskForRepo: mocks.duplicateTaskForRepo }));
 vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig: mocks.readEffectiveConfig }));
@@ -112,11 +122,6 @@ vi.mock("./ipc", () =>
     initPickedFolder: mocks.initPickedFolder,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
-    taskSourceBranchesForRepo: async () => ({
-      branches: [{ full_ref: "refs/heads/main", name: "main" }],
-      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
-      selected: null,
-    }),
     listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
   }),

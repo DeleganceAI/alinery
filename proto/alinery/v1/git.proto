@@ -1,0 +1,112 @@
+// proto/alinery/v1/git.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// Git work on a task's repository and worktree (S4.7). The daemon runs git (platform/git.ts is its one spawn site), so the
+// same calls serve a local repository and one on another machine. The GitHub API call that looks up a task's pull request
+// stays in the shell, which holds the token (2.3.4): the shell asks TaskPullRequestInputs, calls GitHub, then records what
+// it found with RecordDiscoveredPullRequest. A write that changes task.md answers with the cursor that covers it.
+service GitService {
+  rpc TaskSourceBranches(TaskSourceBranchesRequest) returns (TaskSourceBranchesResponse);  // VIEW
+  rpc RemoveWorktree(RemoveWorktreeRequest) returns (RemoveWorktreeResponse);              // ACT
+  rpc PushAndCompareUrl(PushAndCompareUrlRequest) returns (PushAndCompareUrlResponse);     // ACT
+  rpc SetPrUrl(SetPrUrlRequest) returns (SetPrUrlResponse);                                // ACT
+  rpc CommitWorktree(CommitWorktreeRequest) returns (CommitWorktreeResponse);              // ACT
+  rpc TaskPullRequestInputs(TaskPullRequestInputsRequest) returns (TaskPullRequestInputsResponse);  // VIEW
+  rpc RecordDiscoveredPullRequest(RecordDiscoveredPullRequestRequest) returns (RecordDiscoveredPullRequestResponse);  // ACT
+  rpc GitOriginUrl(GitOriginUrlRequest) returns (GitOriginUrlResponse);                    // VIEW
+}
+
+message TaskSourceBranch {
+  string full_ref = 1;  // refs/heads/<name>
+  string name = 2;
+}
+
+// Where a task's worktree would branch from: a branch, a detached commit, or an unborn branch.
+message TaskSourceHead {
+  oneof head {
+    TaskSourceRef branch = 1;
+    string detached_oid = 2;
+    TaskSourceRef unborn = 3;
+  }
+}
+message TaskSourceRef {
+  string full_ref = 1;
+  string name = 2;
+}
+
+message TaskSourceSelection {
+  string base_ref = 1;
+  bool available = 2;  // still a local branch, or a commit the repository has
+}
+
+message TaskSourceBranchesRequest {
+  optional string selected_base_ref = 1;  // a saved choice to check; unset: none
+}
+message TaskSourceBranchesResponse {
+  repeated TaskSourceBranch branches = 1;
+  TaskSourceHead head = 2;
+  optional TaskSourceSelection selected = 3;
+}
+
+message RemoveWorktreeRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+}
+message RemoveWorktreeResponse {
+  Applied applied = 1;
+}
+
+message PushAndCompareUrlRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+}
+message PushAndCompareUrlResponse {
+  string compare_url = 1;
+  Applied applied = 2;
+}
+
+message SetPrUrlRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string url = 3;  // trimmed; empty clears the link
+}
+message SetPrUrlResponse {
+  Applied applied = 1;
+}
+
+message CommitWorktreeRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string message = 3;
+}
+message CommitWorktreeResponse {
+  Applied applied = 1;
+}
+
+message TaskPullRequestInputsRequest {
+  string slug = 1;
+}
+message TaskPullRequestInputsResponse {
+  string pr_url = 1;
+  string branch = 2;
+  optional string origin_url = 3;  // `git remote get-url origin`; unset when there is no origin
+}
+
+message RecordDiscoveredPullRequestRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string branch = 3;        // the branch the lookup started from
+  string previous_url = 4;  // the stored link the lookup started from
+  string url = 5;           // a https://github.com/<owner>/<repo>/pull/<n> link
+}
+message RecordDiscoveredPullRequestResponse {
+  Applied applied = 1;
+}
+
+message GitOriginUrlRequest {}
+message GitOriginUrlResponse {
+  optional string origin_url = 1;
+}

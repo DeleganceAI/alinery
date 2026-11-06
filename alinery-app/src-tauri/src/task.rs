@@ -6,15 +6,7 @@ use alinery_core::task_creation::MAX_ATTACHMENT_BYTES;
 // The board projection lives in alinery-core so a remote host computes the same rows.
 pub(crate) use alinery_core::board::list_tasks_checked as list_tasks_for_repo;
 
-#[derive(Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TaskActivityRef {
-    pub(crate) repo_path: String,
-    pub(crate) task_slug: String,
-}
-
-pub(crate) use alinery_core::task_activity::task_activity_key;
-
+#[cfg(test)]
 pub(crate) use alinery_core::board::read_task_checked as read_task;
 #[cfg(test)]
 pub(crate) use alinery_core::task_drafts::{branch_ref_conflicts, slugify};

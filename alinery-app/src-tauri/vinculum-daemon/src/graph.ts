@@ -11,7 +11,7 @@ import type { Execution } from "playbook-engine/src/state.ts";
 import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./domain/executionStore.ts";
 import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
-import { recordWorktree } from "./tasks.ts";
+import { recordWorktreeTree } from "./domain/gitActions.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
@@ -278,9 +278,9 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     onSaved: () => hooks?.executionChanged?.(slug),
     historyDir: historyDir(repo, slug),
     // A failed record (git missing, a damaged repository) must not fail the acceptance it documents.
-    recordWorktree: (execution) => {
+    recordWorktree: async (execution) => {
       try {
-        return recordWorktree(cwd, slug, execution.id);
+        return await recordWorktreeTree(cwd, slug, execution.id);
       } catch (error) {
         console.error(`vinculum: ${slug} ${execution.id} worktree not recorded: ${error}`);
         return undefined;

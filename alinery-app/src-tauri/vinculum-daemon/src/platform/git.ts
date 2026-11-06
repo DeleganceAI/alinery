@@ -4,8 +4,8 @@
 //
 // Resolution, first hit wins: `ALINERY_GIT_PATH` when that file exists; the first usable `git` on PATH (the macOS
 // `/usr/bin/git` stub does not count until the Command Line Tools exist); the alongside tree the installer placed
-// (which gets `GIT_EXEC_PATH` so https push finds `git-remote-https`); the bare name. S4.7 adds the commit and push
-// helpers; this session needs the branch and worktree calls task creation makes.
+// (which gets `GIT_EXEC_PATH` so https push finds `git-remote-https`); the bare name. What a task does with git
+// (commit, push, remove a worktree, the source branches) is `domain/gitActions.ts`, which calls `git()` here.
 import { existsSync, statSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 
@@ -85,14 +85,50 @@ export function gitEnv(selected: GitProgram, lookup: GitLookup): Record<string, 
   return env;
 }
 
+/**
+ * The arguments after the program. The bundled tree on macOS has no configured credential helper, so `git push` over https is
+ * pointed at the keychain one that ships beside it (core `git_command` did the same); the system git keeps the user's own.
+ */
+export function gitArgs(selected: GitProgram, lookup: GitLookup, dir: string, args: string[]): string[] {
+  const exec = selected.bundled ? lookup.execPathOf(selected.program) : undefined;
+  const helper = exec !== undefined && lookup.platform === "darwin" && lookup.isExecutable(join(exec, "git-credential-osxkeychain"));
+  return ["-C", dir, ...(helper ? ["-c", "credential.helper=osxkeychain"] : []), ...args];
+}
+
 export type GitResult = { code: number; stdout: string; stderr: string };
 
+export type GitOptions = {
+  /** Set after the scrub, so a caller can point one call at a temporary index (`GIT_INDEX_FILE`) on purpose. */
+  env?: Record<string, string>;
+  /** Written to the child's stdin, then closed. */
+  input?: string;
+  /** Refuse output that is not valid UTF-8 instead of replacing the bad bytes (source discovery must not show a mangled ref name). */
+  strict?: boolean;
+};
+
 /** Runs `git -C <dir> <args>`; resolves with the exit code and both streams. Throws only when git cannot start. */
-export async function git(dir: string, args: string[], lookup: GitLookup = systemLookup()): Promise<GitResult> {
+export async function git(dir: string, args: string[], lookup: GitLookup = systemLookup(), options: GitOptions = {}): Promise<GitResult> {
   const selected = selectGit(lookup);
-  const child = Bun.spawn([selected.program, "-C", dir, ...args], { env: gitEnv(selected, lookup), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  return { code, stdout, stderr };
+  const child = Bun.spawn([selected.program, ...gitArgs(selected, lookup, dir, args)], {
+    env: { ...gitEnv(selected, lookup), ...options.env },
+    stdin: options.input === undefined ? "ignore" : new Blob([options.input]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([new Response(child.stdout).arrayBuffer(), new Response(child.stderr).arrayBuffer(), child.exited]);
+  const decoder = new TextDecoder("utf-8", { fatal: options.strict === true });
+  try {
+    return { code, stdout: decoder.decode(out), stderr: decoder.decode(err) };
+  } catch {
+    throw new Error(`git ${args[0]}: invalid UTF-8 in its output`);
+  }
+}
+
+/** `git(...)` that must succeed: the trimmed stdout, or an error naming the subcommand and git's own words. */
+export async function gitText(dir: string, args: string[], options: GitOptions = {}): Promise<string> {
+  const r = await git(dir, args, systemLookup(), options);
+  if (r.code !== 0) throw new Error(`git ${args[0]}: ${r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`}`);
+  return r.stdout.trim();
 }
 
 /** `git check-ref-format --branch`: whether `name` is a usable local branch name. */

@@ -187,6 +187,15 @@ const sessionWrites = vi.hoisted(() => ({
 }));
 vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), ...sessionWrites }));
 
+// The task's git work is the daemon's GitService (sync/git), not ipc.
+const gitMocks = vi.hoisted(() => ({
+  taskSourceBranchesForRepo: vi.fn(),
+  listTaskPullRequests: vi.fn(async () => ({})),
+  removeWorktreeForRepo: vi.fn(async () => {}),
+  pushAndCompareUrlForRepo: vi.fn(async () => ""),
+}));
+vi.mock("./sync/git", () => gitMocks);
+
 // The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
 const playbookMocks = vi.hoisted(() => ({
   listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
@@ -903,7 +912,7 @@ describe("Playbooks navigation", () => {
       return source;
     });
     vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
-    vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
+    gitMocks.taskSourceBranchesForRepo.mockResolvedValue({
       branches: [{ full_ref: "refs/heads/main", name: "main" }],
       head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
       selected: null,

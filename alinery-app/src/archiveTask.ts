@@ -1,4 +1,4 @@
-import * as ipc from "./ipc";
+import { removeWorktreeForRepo } from "./sync/git";
 import { archiveTaskForRepo } from "./sync/tasks";
 import { toast } from "./toast";
 import type { BoardTask } from "./types";
@@ -16,7 +16,7 @@ export async function archiveBoardTask(
     await archiveTaskForRepo(task.repo_path, task.slug);
     if (removeWorktree) {
       onPhase("removing-worktree");
-      await ipc.removeWorktreeForRepo(task.repo_path, task.slug);
+      await removeWorktreeForRepo(task.repo_path, task.slug);
     }
     toast("Task archived", "success");
     return null;

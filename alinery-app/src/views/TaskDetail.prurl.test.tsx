@@ -35,12 +35,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
-vi.mock("../ipc", () =>
-  mockIpc({
-    listTaskPullRequests: mocks.listTaskPullRequests,
-    openUrl: mocks.openUrl,
-  }),
-);
+vi.mock("../sync/git", () => ({ listTaskPullRequests: mocks.listTaskPullRequests }));
+vi.mock("../ipc", () => mockIpc({ openUrl: mocks.openUrl }));
 
 beforeEach(() => {
   fakeBoard.reset();

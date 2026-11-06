@@ -29,7 +29,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -180,7 +180,8 @@ pub fn run() {
             pick_attachment_files_dialog,
             read_local_file,
             pre_archive_backup,
-            list_task_pull_requests,
+            lookup_task_pull_request,
+            publish_git_backup,
             ensure_drawer_terminal,
             list_chat_repos,
             chat_prompt,
@@ -242,15 +243,6 @@ pub fn run() {
             backup_busy,
             list_backups,
             restore_backup,
-            remove_worktree,
-            remove_worktree_for_repo,
-            task_source_branches_for_repo,
-            push_and_compare_url,
-            push_and_compare_url_for_repo,
-            set_pr_url,
-            set_pr_url_for_repo,
-            commit_worktree,
-            commit_worktree_for_repo,
             connection_statuses,
             connect_github,
             connect_linear,

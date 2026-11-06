@@ -365,7 +365,7 @@ export function duplicatePackage(repo: string, sourceSlug: string): CreateTaskPa
 /** Runs inside the task-mutation lock before a change, so a caller's `expected_revision` is checked against the file as it is now. */
 export type Guard = () => void | Promise<void>;
 
-async function mutateTask<T>(repo: string, slug: string, op: string, change: (task: TaskRecord) => T | Promise<T>, guard?: Guard): Promise<{ task: TaskRecord; result: T }> {
+export async function mutateTask<T>(repo: string, slug: string, op: string, change: (task: TaskRecord) => T | Promise<T>, guard?: Guard): Promise<{ task: TaskRecord; result: T }> {
   return withTaskMutation(repo, op, async () => {
     await guard?.();
     const task = readTaskChecked(repo, slug);

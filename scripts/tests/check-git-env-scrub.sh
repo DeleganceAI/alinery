@@ -27,17 +27,6 @@ if [ -n "$hits" ]; then
   exit 1
 fi
 
-# The daemon's one git spawn site is platform/git.ts (it resolves git like git_cmd and strips the same
-# environment). Any other file spawning "git" bypasses the scrub.
-ts_hits=$(grep -rn -E 'spawn(Sync)?\([[:space:]]*\[?[[:space:]]*["'\'']git["'\'']' \
-  --include='*.ts' --exclude='*.test.ts' --exclude='*.bench.ts' \
-  "$TAURI/vinculum-daemon/src" \
-  | grep -v '/src/platform/git\.ts:' || true)
+# The daemon's own git spawn site is checked by check-daemon-git-spawn.sh.
 
-if [ -n "$ts_hits" ]; then
-  echo "ERROR: the daemon starts git only through platform/git.ts:" >&2
-  echo "$ts_hits" >&2
-  exit 1
-fi
-
-echo "OK: all git spawns go through alinery_core::git_cmd and platform/git.ts"
+echo "OK: all git spawns go through alinery_core::git_cmd"
