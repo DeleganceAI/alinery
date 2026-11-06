@@ -1146,7 +1146,7 @@ Edit the plan, or let S5.4 do it.
 - **Kind:** flaky, deviation.
 - **What:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` failed ("returned before any spawn attempt") in two of the four full `./scripts/check.sh` runs of this session and passes alone (R-P4X-3, R-S4.11-13). `attach_repo_daemon` returns at its first `is_closing` check, before any work, so the 500 ms bound only fails when the test thread is starved by the rest of the suite (this machine also holds the daemons that R-S4.11-12 left running). The bound is now 5 s; the two asserts above it (no daemon attached, no socket) are what prove nothing was spawned, and a spawn attempt waits for seconds.
 - **Reverse:** put 500 ms back.
-- **Files:** `alinery-app/src-tauri/src/tests/daemon.rs`.
+- **Files:** `alinery-app/src-tauri/src/tests/daemon.rs` (this test and the quit-latch twin next to it, which had the same bound).
 
 ### R-S5.1-8: AGENTS.md
 - **Kind:** follow-up.

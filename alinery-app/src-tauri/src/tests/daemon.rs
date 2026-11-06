@@ -422,7 +422,7 @@ fn quitting_stops_every_daemon_bring_up() {
     assert!(state.repo_daemon(&repo).is_none(), "no daemon may be attached while quitting");
     assert!(!current_alineryd_socket_path(&repo).exists(), "no daemon may be spawned while quitting");
     // The two asserts above are the proof that nothing was spawned; this bound only separates "returned at once" from a spawn wait, which takes seconds, so it is wide enough for a loaded machine.
-        assert!(started.elapsed() < Duration::from_secs(5), "returned before any spawn attempt");
+    assert!(started.elapsed() < Duration::from_secs(5), "returned before any spawn attempt");
 
     let _ = fs::remove_dir_all(&repo);
 }
@@ -508,7 +508,8 @@ fn a_repo_being_closed_is_not_respawned_by_attach() {
         attach_repo_daemon(&state, &repo, &repo.join("app.toml"));
         assert!(state.repo_daemon(&repo).is_none(), "a repo being closed must not have a daemon attached");
         assert!(!current_alineryd_socket_path(&repo).exists(), "a repo being closed must not have a daemon spawned");
-        assert!(started.elapsed() < Duration::from_millis(500), "returned before any spawn attempt");
+        // The asserts above prove nothing was spawned; this bound only separates "returned at once" from a spawn wait (seconds), so it is wide enough for a loaded suite.
+        assert!(started.elapsed() < Duration::from_secs(5), "returned before any spawn attempt");
     }
 
     // Guard dropped: teardown is over and the repo is attachable again. A set that
