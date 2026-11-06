@@ -1229,3 +1229,73 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 ### R-S5.2-10: the first full check.sh stopped at the daemon `bun test`
 - **Kind:** flaky (fixed), record.
 - **What:** the first `./scripts/check.sh` after bf67be3 failed once in `ops.test.ts` ("an answering socket keeps it waiting; a daemon that exits mid-wait lets it return", `ECONNRESET`), 595 of 596 passing, before reaching the Rust steps. It is R-S5.2-6; six reruns of `bun test src/hostService` passed 37 of 37 after the fix, and the third full `check.sh` is the one in the Status line (the second stopped at the `mcp/src` gates, R-S5.2-3).
+
+## S5.3 Retire the JSON-lines wire
+
+### R-S5.3-1: the op inventory and the last caller of each
+- **Kind:** record.
+- **What:** `handle` in `main.ts` had 18 named ops, plus the `write`, `resize` and `detach` frames on an attach stream. After this session none is served. `version` is `Hello` (`ensure_daemon`, the poller, the remote supervisor). `list` and `status` are `LiveSessions` and the `daemon/_/status` entity. `shutdown` is `AdminService.Shutdown` (the old op is sent only to a daemon of protocol 38 or older, R-S5.3-3). `spawn`, `attach` and `resume` are `ResumeSession` with `TerminalService.Attach`. `kill` is `KillSession`. `create_task` and `create_subtask` are `CreateTask` and `CreateSubtask` (S4.3, S4.8). `vinculum_customizations` is `ReadCustomizations` (S4.10). `ui_control` is the RPC token (2.1.10). `send_message` answered `unsupported` and `event` answered `event-rejected` at 07c03a9 and had no caller. The ops with a caller and no RPC were `prompt`, `abort`, `set_model`, `set_thinking_level` (each for a session and, with `chat: true`, for a chat thread), the MCP status read and the live-session list: R-S5.3-2.
+- **Files:** `vinculum-daemon/src/main.ts` (at 07c03a9, lines 734 to 1073).
+
+### R-S5.3-2: ten RPCs for ops that still had a caller
+- **Kind:** deviation.
+- **What:** the plan says "an op with a caller left goes back to the session that owns its domain; this session ports nothing". The remaining callers were the turn controls the pages call on every session and chat thread, the MCP status (`mcp_status` in the shell) and the live-session list that Settings and the teardown dialogs show. No later session owns them (S5.4 is a docs session, P6 is the setup screen), so leaving them would have kept the JSON listener. Ten RPCs were added: `PromptSession`, `AbortSession`, `SetSessionModel`, `SetSessionThinkingLevel` (`sessions.proto`; `SetSessionModel` and `SetSessionThinkingLevel` answer with the new `SessionControls`), `PromptChatThread`, `AbortChatThread`, `SetChatModel`, `SetChatThinkingLevel` (`chat.proto`), `ReadMcpStatus` (`agent.proto`) and `LiveSessions` (`admin.proto`). Mutations carry `MutationMeta`; the handlers are the old branches moved into `rpc/sessions.ts`, `rpc/chat.ts`, `rpc/agent.ts` and `rpc/admin.ts` with their refusals unchanged. `PROTOCOL_VERSION` is 39 (it was 38).
+- **Options:** keep the JSON listener for these until P6; fold them into one `Control` RPC.
+- **Why:** the Exit line is one listener per daemon. Separate RPCs keep each one's capability (VIEW or ACT) and its `MutationMeta`.
+- **Reverse:** none cheap; the pages call them.
+- **Files:** `proto/alinery/v1/{sessions,chat,agent,admin}.proto`, `vinculum-daemon/src/rpc/`, `alinery-app/src/sync/{sessions,chat,agent}.ts`, `alinery-app/src-tauri/src/daemon_rpc.rs` (`LiveSessions`).
+
+### R-S5.3-3: a legacy stop for protocol 38 and older stays in core
+- **Kind:** deviation (the Exit line says "no JSON-lines client in Rust").
+- **What:** O23 (a) freezes `Hello` and `Shutdown` so a new app can always stop an old daemon. A daemon of protocol 24 or older has no `rpc.sock`, and one of 25 to 38 was started before this app kept an `rpc-secrets` token for its lane, so `AdminService.Shutdown` cannot be relied on; all of them speak `{"op":"shutdown"}` (the audited dialects in `audited_shutdown_protocol`) and hold the repository's owner lock, so a new app that cannot stop one cannot open the repository. `alinery-core/src/legacy_daemon.rs` (877 lines, 11 tests) keeps only that: the bound connection (`BoundDaemonConnection`: peer identity, `version`, `sessions`, `shutdown`), `wait_for_daemon_gone`, the version classifier and the reply parsers. Every other JSON op and the request builders are deleted. The app reaches it only through `legacy_shutdown` (the closure `shutdown_daemon` runs when `rpc.sock` does not answer) and `observe_takeover_owner`. The gate `check-no-auto-session-kill.sh` requires every caller of `legacy_shutdown` to be one of the five origins.
+- **Options:** delete it and require users to stop an old daemon by hand (rejected: O23 a); keep the whole client (rejected).
+- **Why:** it is the smallest code that keeps the promise of O23 (a). Remove it when no supported release speaks protocol 38.
+- **Reverse:** delete `legacy_daemon.rs`, the `legacy` argument of `shutdown_daemon` and its four call sites.
+- **Files:** `alinery-core/src/legacy_daemon.rs`, `src/daemon.rs` (`legacy_shutdown`, `observe_takeover_owner`), `src/daemon_rpc.rs` (`shutdown_daemon`), `src/backup.rs`.
+
+### R-S5.3-4: the secret directory is `rpc-secrets`
+- **Kind:** deviation (a rename the Accept line forced).
+- **What:** the host's kept secret file lived in `ui-secrets/` and the Accept line `rg 'ui_control|ui-secret|ui_secret|RpcChunkAssembler' alinery-app` must find nothing, so the directory is `rpc-secrets/<hash>.rpc` under the host's config dir and `host.proto` reserves field 9 (`ui_secret_file`). The golden bytes were regenerated (`proto/golden/host.json`). A host that an older app set up keeps an unused `ui-secrets/` directory; it is leftover bytes and nothing reads it. The AGENTS.md "Host layout" line is updated.
+- **Reverse:** rename back and un-reserve field 9 (a wire change).
+- **Files:** `src/remote.rs`, `src/host_wire.rs`, `proto/alinery/v1/host.proto`, `proto/golden.ts`, `proto/golden/host.json`.
+
+### R-S5.3-5: taking over a new-protocol daemon needs its kept token
+- **Kind:** unverified, limitation.
+- **What:** a daemon on a legacy socket is observed and stopped over the JSON-lines wire. A daemon that answers on `rpc.sock` is observed with `Hello` and `LiveSessions` and stopped with `AdminService.Shutdown`, both with the token this app kept for that repository and lane (`rpc-secrets/<hash>.secret`). A protocol 39 daemon started by another build with another app config directory has no token here, so "Take over" cannot observe it or stop it from the UI. Whether the banner still names the owner from the lane locks alone is not tested; it is part of L-S5.3-c. Tests cover the lanes where the token exists; the cross-config case is L-S5.3-c.
+- **Reverse:** to take over such a daemon, stop it from the build that started it.
+- **Files:** `src/daemon.rs` (`observe_rpc_owner`).
+
+### R-S5.3-6: the drawer shell is created by `CreateSession` and ended by the page
+- **Kind:** deviation.
+- **What:** the shell had `ensure_drawer_terminal` (it opened the drawer shell over the JSON wire) and `set_active_repo(path, drawerSessionIds)` (it ended the old repository's drawer shells on a switch). Now the page calls `CreateSession` (an auxiliary `no-harness` session, `start: false`, `createDrawerTerminal(repo)` in `sync/sessions.ts`) and `KillSession` after a successful switch. `ensure_drawer_terminal` is deleted and `set_active_repo` takes only the path; the `App.*` tests expect `setActiveRepo(path)`. A kill that fails is not retried by the page (R-S5.3-6 is unverified in the app: L-S5.3-e).
+- **Files:** `alinery-app/src/sync/sessions.ts`, `App.tsx`, `SessionTerminal.tsx`, `src/app_config.rs`.
+
+### R-S5.3-7: the daemon publishes the host-guard warning
+- **Kind:** decision.
+- **What:** the shell used to read `host_guard_ready` from the JSON `version` reply (the daemon answered `true` unconditionally, so the warning in `App.tsx` could never show). `daemon/_/status` already had a `host_guard_warning` string that nothing set. `main.ts` now passes `"no canonical executable for dynamic host screening"` when `ALINERY_HOST_EXECUTABLE` is unset, `SessionPublisher.commitStatus` publishes it, and `useDaemonStatus` sets `host_guard_warning` from it. The shell's own half of `DaemonStatus` is `ShellDaemonStatus` (`mode`, `extra_lanes`, `stale_lanes`, `repo`, `build_drift`, `conflict`, `repo_busy`). Effect: a daemon started by hand without the executable now shows the warning; a normal start does not (L-S5.3-d).
+- **Files:** `vinculum-daemon/src/main.ts`, `domain/sessions.ts` (+ test), `alinery-app/src/useDaemonStatus.ts` (+ test), `types.ts`, `ipc.ts`.
+
+### R-S5.3-8: the gates
+- **Kind:** decision.
+- **What:** `check-no-auto-session-kill.sh` lost the scan for the `shutdown` op and `shutdown_request(`; it keeps the `ShutdownOrigin` check (all five origins must name one), the close-repo caller list, the daemon-side signal checks and the MCP check, and adds that `legacy_shutdown` has only allowlisted callers. `check-wire-parsing-boundary.sh` is kept (the shell still has the legacy client) and confines request building and reply fields to `legacy_daemon.rs`; it fails if they leak. `check-protocol-version-bump.sh` watches `proto/alinery/v1` and `legacy_daemon.rs` instead of `daemon_client.rs`. `protocol_gate_test.sh` has a proto case and a check that the number `Hello` returns (`PROTOCOL` in `main.ts`) equals `PROTOCOL_VERSION` in `protocol.rs`; the plan's "reads the protocol from `Hello`" is met by that source comparison, not by launching a daemon. `check-remote-routing.sh` lost `require_owned_active_repo(`, `require_active_target(`, `repo_client(`, `task_client(`, `with_library` and `remote_call(`, which no longer exist; `check-experimental-daemon-names.sh` reads the resolver from `daemon_launch.rs`.
+- **Files:** `scripts/tests/`.
+
+### R-S5.3-9: what the live remote tests no longer assert
+- **Kind:** deviation.
+- **What:** the live tests asserted terminal bytes through the old JSON attach path. Those assertions went with the code (the replacement stream is `TerminalService.Attach`, which the bridge tests and the daemon tests cover, and which no live test drives over the forward). The eight `live_*` tests still cover install, browse, daemon start, survive-a-disconnect, credentials, close-all, backups, the stalled host and the dropped host. A terminal on a remote repository is L-S5.3-g.
+- **Files:** `src/tests/remote.rs`.
+
+### R-S5.3-10: the relaunch test starts the daemon from the file the build id hashes
+- **Kind:** decision.
+- **What:** `start_daemon` resolved the binary with `resolve_alongside` (the app's own directory), which `cargo test` cannot find (it runs from `target/debug/deps`). It now uses `alinery_core::resolve_alineryd_path()`, the resolver `daemon_binary_build_id()` already used, so the file started is the file the app compares against. In an installed app the two paths are the same. The relaunch test skips with a message when no sidecar is built.
+- **Files:** `src/pi_durable.rs`, `src/tests/daemon.rs`.
+
+### R-S5.3-11: what was run
+- **Kind:** record.
+- **What:** `./scripts/check.sh` passes (the code at 7b02900); `bun test` 600 pass; vitest 1,744 pass and 1 skipped; `cargo test --workspace` exits 0. The remote runtimes were rebuilt locally (`scripts/build-remote-runtimes.sh`, gitignored) and the eight `live_*` tests pass against the Debian arm64 sshd. The x64 archive was built and not run. A scratch daemon on a new repository listed `rpc.sock` alone in `.alinery/*.sock`. The `rg` Accept returns nothing and `daemon_client.rs` does not exist.
+- **Observation (unverified):** after the scratch daemon received SIGTERM from `pkill`, `rpc.sock` was still on disk (a stale socket). A daemon stopped by `Shutdown` is what the app does; the next start replaces a stale socket, but that replacement was not exercised here.
+
+### R-S5.3-12: AGENTS.md
+- **Kind:** follow-up (done).
+- **What:** AGENTS.md now describes the one listener, the `rpc-secrets` directory, the legacy stop, `Hello`-based lifecycle and the moved-command recipe without `remote_call`/`repo_client`. README.md was not edited. Suggested README text: none beyond R-S5.1-10 and R-S5.2-9, which still apply.
+- **Files:** `AGENTS.md`.

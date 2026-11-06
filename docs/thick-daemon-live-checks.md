@@ -768,6 +768,55 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the confirmation names the live sessions, the daemon stops, the host service restores, the daemon starts again, and the tasks are those of the backup. Choosing an archive of another repository is refused before the daemon is touched (the sessions keep running).
 - **Status:** open
 
+### L-S5.3-a: the relaunch reattaches with sessions open
+- **Session:** S5.3 (the relaunch Accept line; the daemon-level case passes in `tests::daemon::a_relaunched_app_reattaches_to_the_daemon_that_outlived_it_with_the_stored_token`, this is the same thing through the window).
+- **Needs:** the app launched from this branch, a local repository with a task.
+- **Steps:** open a Terminal session and a harness session, type something in each. Quit with the dialog's default, "leave sessions running". Run `pgrep -fl alinery-vinculum-daemon` and note the PID of the daemon whose `--repo` is `<repo>`. Open Alinery again.
+- **Expected:** both sessions come back with their scrollback and keep working, the board shows no conflict banner, and `pgrep` shows the same PID. `ls <repo>/.alinery/*.sock` lists `rpc.sock` (or `rpc-<ns>.sock` for a dev build) and no `alineryd*.sock`.
+- **Status:** open
+
+### L-S5.3-b: an older daemon is stopped from the banner
+- **Session:** S5.3 (O23 a, R-S5.3-3).
+- **Needs:** two builds: the previous one (S5.2 head, protocol 38) and this branch, on the same repository. Run both from the same lane (both dev or both prod).
+- **Steps:** open the repository with the previous build, start a Terminal session, quit leaving it running. Open the same repository with this branch.
+- **Expected:** the repository opens with a banner that names the older daemon and its live sessions; "Take over" asks for confirmation, then the old daemon stops and a protocol 39 daemon starts and attaches. The session that was running is not resumed (the takeover ends it; the task and its history stay). Cancelling the confirmation leaves the old daemon and its session running.
+- **Status:** open
+
+### L-S5.3-c: a new-protocol daemon on another lane
+- **Session:** S5.3 (R-S5.3-5).
+- **Needs:** this branch's dev build and a production build of this same branch (or two builds that speak protocol 39 on different lanes) on one repository.
+- **Steps:** open the repository with one, leave its daemon running, open it with the other.
+- **Expected:** the second build shows a conflict banner naming the first lane's daemon. Report what "Take over" does: the build cannot read the first lane's kept token unless both share the app config directory, so it may refuse with a message, and that refusal is the finding to report. Nothing is stopped without a confirmation.
+- **Status:** open
+
+### L-S5.3-d: the host-guard banner
+- **Session:** S5.3 (R-S5.3-7).
+- **Needs:** the app launched; a shell in `<repo>`.
+- **Steps:** (1) open the repository normally and look for the host-guard warning (the `HostGuardWarning` strip). (2) Stop the daemon from Settings, then start one by hand without the executable the app passes: `ALINERY_HOST_EXECUTABLE= alinery-app/src-tauri/target/debug/alinery-vinculum-daemon --repo <repo> --app-config <app_config_dir>/app.toml --rpc-secret-file <a file holding the 64-hex token the app kept for this repo>` and reopen the repository.
+- **Expected:** (1) no warning. (2) the warning shows, because `daemon/_/status` carries `hostGuardWarning`; a restart from Settings clears it.
+- **Status:** open
+
+### L-S5.3-e: the drawer shell follows the repository
+- **Session:** S5.3 (R-S5.3-6).
+- **Needs:** the app launched with two repositories.
+- **Steps:** open the bottom drawer terminal in repository A and type `echo a`. Switch to repository B (the drawer opens one for B). In a shell run `pgrep -fl 'zsh|bash' | wc -l` before and after switching back to A.
+- **Expected:** B's drawer is a fresh shell, A's drawer shell was ended by the switch (the count drops by one) and a new one starts when A's drawer is opened again. No `window.confirm` appears and nothing else in A ends.
+- **Status:** open
+
+### L-S5.3-f: the turn controls through the RPCs
+- **Session:** S5.3 (R-S5.3-2).
+- **Needs:** the app launched; a repository with a harness session open and a Chat thread.
+- **Steps:** in a harness session send a prompt, abort it while it streams, change the model, change the thinking level. Repeat the four on a Chat thread. With a hosted Alinery model selected, open a session and send a prompt.
+- **Expected:** each control takes effect and the footer shows the new model and thinking level; an abort ends the turn; the hosted prompt works (the hosted token refresh now runs when the session opens, in the page).
+- **Status:** open
+
+### L-S5.3-g: a terminal on a remote repository
+- **Session:** S5.3 (R-S5.3-9; the live tests no longer assert terminal bytes).
+- **Needs:** the app launched; a remote host with a repository (the Docker sshd works).
+- **Steps:** connect, open a Terminal session in the remote repository, type, then disconnect the host and connect it again.
+- **Expected:** the typed text echoes, the terminal rejoins after the reconnect with its scrollback, and the daemon on the host kept running throughout (`docker exec alinery-test-sshd pgrep -fa alinery-vinculum-daemon`).
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -780,5 +829,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.12-a to -c (S4.12):** built; see the entries above.
 - **L-S5.1-a to -e (S5.1):** built; see the entries above.
 - **L-S5.2-a to -d (S5.2):** built; see the entries above.
+- **L-S5.3-a to -g (S5.3):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
