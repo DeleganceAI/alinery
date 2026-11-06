@@ -693,6 +693,54 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
 - **Verifier-style check done by hand:** `rg -n 'smol-toml|parseToml' playbook-engine/src` shows the import and one call, both in `playbook-md.ts`.
 
+### R-S4.7-1: the pull-request lookup is mediated by the page
+- **Kind:** provisional decision (the plan says the daemon returns branch and remote URL and the GitHub call stays in the shell; it does not say who carries the values).
+- **What:** `src/sync/git.ts` `listTaskPullRequests` asks the daemon (`TaskPullRequestInputs`: stored link, branch, `origin`), passes them to the shell command `lookup_task_pull_request(prUrl, branch, originUrl)` (GitHub API with the local token), and writes a link found back with `RecordDiscoveredPullRequest`, which fails with "task branch or PR link changed during lookup" if the stored link or branch moved. The old Rust `list_task_pull_requests` did all three in one command, for local and remote repos alike.
+- **Options:** (a) the page carries the values (chosen: local and remote repos take the same path, and the shell needs no client for the daemon's grpc socket); (b) the shell calls the daemon through `daemon_rpc` and the page makes one call (fewer round trips; needs the bridge client in the shell for a repo that may be remote).
+- **Reverse:** make `lookup_task_pull_request` take `(repoPath, slug)`, call `GitService` through the bridge, and have `listTaskPullRequests` call it alone. The page code is 30 lines.
+- **Files:** `alinery-app/src/sync/git.ts`, `alinery-app/src-tauri/src/git_ops.rs`, `vinculum-daemon/src/rpc/git.ts`, `vinculum-daemon/src/domain/gitActions.ts`.
+- **Wire:** `PROTOCOL_VERSION` 32 (R-S4.7-5).
+
+### R-S4.7-2: the backup trigger after a push is a shell command the page calls
+- **Kind:** provisional decision, temporary.
+- **What:** the Rust push queued an automatic backup (`BackupTrigger::PostPushCommit`) in the same call. The daemon cannot reach the in-process queue (`backup_queue.rs`, S4.9), so `pushAndCompareUrlForRepo` calls `publish_git_backup(repoPath)` after a successful push and ignores its failure (the push already happened). A failed push queues nothing (tested). A remote repo's key goes into the same queue and the host applies its own trigger flags, as before.
+- **Options:** (a) the page calls the shell after the push (chosen); (b) leave the backup out until S4.9 (loses the post-push backup for now); (c) the daemon calls back into the shell (no such channel).
+- **Close:** S4.9 moves the queue into the daemon; `publish_git_backup`, its `ipc.ts` wrapper and the call in `sync/git.ts` go with it. `commit_worktree` had the same trigger, but nothing in the page called a commit command, so there is no second call site.
+
+### R-S4.7-3: `SetPrUrl` and `CommitWorktree` have no caller
+- **Kind:** note and deviation (scope).
+- **What:** the plan lists both RPCs and the commands `set_pr_url(_for_repo)` and `commit_worktree(_for_repo)`. `git grep` at the commit before this session finds no use of their `ipc.ts` wrappers in `alinery-app/src`, and nothing in MCP. The RPCs exist (tested, with telemetry for the commit) so the surface the plan names is complete, and `sync/git.ts` has no wrapper for either; the first caller adds one.
+- **Options:** (a) keep the two RPCs (chosen: the plan's list, and the daemon is where the next UI or MCP tool would call them); (b) drop them and their tests (smaller; the plan's 8-op list is then 6).
+- **Reverse:** delete `SetPrUrl` and `CommitWorktree` from `git.proto`, regenerate, delete the two handlers and `setPrUrl` and `commitWorktree` in `gitActions.ts` with their tests, and bump `PROTOCOL_VERSION`.
+
+### R-S4.7-4: `GitOriginUrl` stays a `RepoOp` (Exit not met in full)
+- **Kind:** deviation from the plan's Exit line ("the 8 git variants are gone").
+- **What:** 7 of the 8 git `RepoOp` variants are deleted. `RepoOp::GitOriginUrl` stays: the GitHub issue import in the shell (`imports.rs`) reads a repository's `origin` through it for a remote repo, and S4.10 moves imports to the daemon. `GitService.GitOriginUrl` exists on the daemon and is tested (`domain/gitActions.test.ts`, "the origin URL is part of the lookup inputs"), so S4.10 only has to switch the caller and delete the variant. The commit message of the S4.7 commit says "8"; this entry is the correction.
+- **Close:** S4.10 deletes `RepoOp::GitOriginUrl`, `git_origin_url` in `repo_service.rs` and its round-trip case.
+
+### R-S4.7-5: `PROTOCOL_VERSION` 32 and the Linux runtime
+- **Kind:** note.
+- **What:** a new service (`GitService`) on the daemon's grpc socket bumps the protocol to 32 (`protocol.rs`, `main.ts` `PROTOCOL`, `daemon_client.rs`'s dialect list, `tests/daemon_takeover.rs`). The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.7-e). After a proto regeneration, `bun install` in `vinculum-daemon` is needed to refresh its `node_modules/alinery-proto` copy (daemon tests failed with "Cannot find module alinery-proto/alinery/v1/git_pb" until then).
+- **Wire:** the bump is in the same commit as the new service; the protocol gate passes.
+
+### R-S4.7-6: tests moved to TypeScript, not shared with Rust
+- **Kind:** deviation from the plan's Tests ("conformance from the `git_actions.rs` tests against a temp repo").
+- **What:** the Rust git code is deleted, so a cross-language conformance case would compare the TypeScript with nothing. The `git_actions.rs` and `git_ops.rs` cases that stayed meaningful were rewritten in `domain/gitActions.test.ts` (19, against real temp repositories and a bare remote) and `rpc/git.test.ts` (6); the ones about the Rust-only mechanics (the `git_cmd` env, the Rust `record_worktree_tree`, the `curl` timeout helper) went with the code. The survival of a recorded ref through `git gc --prune=now`, which the Rust test asserted, is asserted in the TypeScript test. The `live_git_actions_run_on_the_host` remote test was cut down to what still exists on the Rust side and renamed rather than deleted. Three telemetry conformance fixtures (`conformance/telemetry/git_commit`, `git_push`, `git_worktree_remove`) are shared with Rust's `conformance.rs` as for the other events.
+- **Scrub test:** `platform/git.test.ts` "a GIT_DIR in the daemon's own environment does not redirect a call" (a real child) and "a GIT_DIR in the lookup's environment is absent from the child's".
+
+### R-S4.7-7: the execution refs and `task_activity.rs`
+- **Kind:** note.
+- **What:** `recordWorktreeTree` (temporary `GIT_INDEX_FILE`, `add -A`, `write-tree`, `commit-tree`, `update-ref refs/alinery/executions/<slug>/<execId>`) replaces `alinery_record_worktree`; the graph calls it in-process and the FFI function and `c_string` are deleted. The archive handler deletes `refs/alinery/executions/<slug>/*` after the archive is applied and logs a failure instead of failing the archive (the task is already archived; a stuck ref is garbage, not state). A slug that is a prefix of another (`task-a`, `task-a-b`) deletes only its own refs (tested). `alinery-core/src/task_activity.rs` (the `repo:slug` key function) lost its only user and is deleted; the same key is `pullRequestKey` in `sync/git.ts`.
+- **Reverse:** none planned. Garbage refs from a failed cleanup can be removed with `git for-each-ref refs/alinery/executions/<slug> --format='%(refname)' | xargs -n1 git update-ref -d`.
+
+### R-S4.7-8: smaller things
+- **Remote-sshd Accept, as run.** The runtime manifest is empty on this machine (no zig), so the live remote tests could not install the app's runtime. Instead: `run.sh start` (Debian 12, linux/arm64), `docker cp` of the Bun 1.4.3 linux-aarch64 binary and a copy of `platform/git.ts` plus a three-line probe into the container, and over ssh `setsid -f sh -c 'cd ctr && bun probe.ts'`. It printed `git version 2.39.5` through `git()` with the daemon-style PATH `/usr/local/bin:/usr/bin:/bin:/usr/games`. The container was stopped afterwards. `systemd-run --user` was not run (L-S4.7-b).
+- **Gates.** `check-daemon-git-spawn.sh` allows only `platform/git.ts` and has its own test (`daemon_git_spawn_test.sh`: exit 0 clean, exit 1 with `Bun.spawn(["git"` added to another daemon file); both are in `check.sh`. The TypeScript block was removed from `check-git-env-scrub.sh` (it is now Rust-only). `check-blocking-commands.sh`'s `git_ops.rs` entry is `lookup_task_pull_request`.
+- **Hardening in the port.** The lookup order is the Rust one; `git()` takes `{env, input, strict}`: the execution ref sets `GIT_INDEX_FILE` and the author through `env`, the ref deletion feeds `update-ref --stdin` through `input`, and the source-branch reads use `strict` so a non-UTF-8 ref name is an error and not a lossy string, as in the Rust.
+- **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
+- **Full check:** `./scripts/check.sh` passed on `e71a4d0` (vitest 135 files, 1695 tests; daemon `bun test` 415 pass).
+- **AGENTS.md** gets one gate line and a clause that the daemon's git goes through `platform/git.ts`; S5.4 rewrites the rest.
+
 ---
 
 ## E. Known flaky tests
@@ -703,6 +751,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
   `cd alinery-app/src-tauri && cargo test -p alinery-app --lib -- tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
 - **Update 2026-11-05 (S4.1):** failed again in the first full `check.sh` of S4.1 (the same run also failed the real S4.1 regression above); passed alone on the rerun. It then failed in three full `cargo test -p alinery-app --lib` runs in a row. **Cause found:** the 500 ms is spent in `current_alineryd_socket_path` -> `alineryd_socket_namespace` -> `resolve_alineryd_path` -> `daemon_in`, which calls `read_dir` on `target/debug/deps`; after many builds in one worktree that directory held 145,273 files (142,436 of them stray `*.o`), and under the parallel load of the whole lib suite the listing took 550 to 690 ms (measured with a temporary `eprintln!` on `started.elapsed()`: `attach_repo_daemon` itself took 1.3 us, `repo_daemon` 5 us). After `find alinery-app/src-tauri/target/debug/deps -name '*.o' -delete` (2,837 files left) the full lib run passed. So the flake is a function of the size of `target/debug/deps`, not of S4.1 code. **If it recurs on a long-lived worktree, delete the stray `.o` files first.** The product-side hazard is real but small: `daemon_in` lists the whole executable directory (in a release app that directory is small).
 - **Update 2026-11-06 (S4.6):** passed in the S4.6 full `check.sh`.
+- **Update 2026-11-06 (S4.7):** passed in the S4.7 full `check.sh`.
 - **Follow-up:** widen or drop the 500 ms wall-clock bound.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon.rs:518`.
 
@@ -724,6 +773,7 @@ Everything below is claimed by the plan or a Status line but has not been observ
 - `Bun.TOML.stringify` stays in Bun's API: guarded by the S4.1 golden test (not built).
 - The S0.6 claim that the full `check.sh` passed: only `--quick` was re-verified.
 - The playbook library through a real ssh forward to a Linux host's daemon, and a remote repo showing the host's global playbooks: L-S4.6-a, -e. The deletion of a community-imported repo playbook in the real app: L-S4.6-c. An edit in a second window refused as stale: L-S4.6-d.
+- Git on a Mac without Command Line Tools, and the daemon's PATH under `systemd-run --user` on a Linux host (only `setsid` on a Debian container was run): L-S4.7-a, -b. A push, a worktree removal and a pull-request lookup on a remote repo in the real app: L-S4.7-c, -d.
 
 ---
 
@@ -748,3 +798,4 @@ Edit the plan, or let S5.4 do it.
 - Telemetry: remote hosts that run the daemon hold the shared telemetry ingest credential (O25 b, R5). If the README describes the telemetry privacy model, say so.
 - After S4.1, the daemon creates `.alinery/config.toml`, `.alinery/harnesses.toml` and the task-data ignore entry when a repository is first opened (local or remote), and it sends the repository-settings telemetry event itself. A remote host's daemon sends it under this Mac's install id and consent (R-S4.1-2).
 - After S4.6, playbooks are read and written through the repository's daemon: a remote repository lists the host's own global playbooks, not this Mac's, and the bundled and global playbooks need at least one local repository to be known before they can be listed. `README.md:242` (`alinery_read_playbook`) is unchanged: MCP still reads the core library.
+- After S4.7, git work on a task (worktree removal, commit, push and the compare URL, the stored pull-request link) runs in the repository's daemon, so for a remote repository it runs on the host with the host's git and credentials; only the GitHub pull-request lookup (with this Mac's token) runs here. If the README says the app runs git, say that the daemon does.

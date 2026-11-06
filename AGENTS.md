@@ -140,7 +140,7 @@ MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery
 ## Engineering rules
 
 - Smallest diff that solves the requested problem. No speculative traits, registries, or abstractions.
-- Git = `alinery_core::git_cmd` only. Never `Command::new("git")`. `git_cmd` uses a real git on this process's PATH when there is one (macOS `/usr/bin/git` does not count until the Command Line Tools are installed — that binary is a stub and running it raises a dialog). Otherwise it uses the alongside tree (`/Applications/Alinery.git/bin/git`, or `~/.local/share/alinery/git/bin/git` on Linux) and sets `GIT_EXEC_PATH` so HTTPS push can find `git-remote-https`. `scripts/git-pin.txt` pins the official tarball the release build compiles; `install.sh` copies that tree only when the app would not already see a git. `tauri dev` keeps using the system git. `ALINERY_GIT_PATH` is a dev/test override, not a PATH search.
+- Git = `alinery_core::git_cmd` only (in the daemon: `platform/git.ts`, the one place that spawns it; `check-daemon-git-spawn.sh`). Never `Command::new("git")`. `git_cmd` uses a real git on this process's PATH when there is one (macOS `/usr/bin/git` does not count until the Command Line Tools are installed — that binary is a stub and running it raises a dialog). Otherwise it uses the alongside tree (`/Applications/Alinery.git/bin/git`, or `~/.local/share/alinery/git/bin/git` on Linux) and sets `GIT_EXEC_PATH` so HTTPS push can find `git-remote-https`. `scripts/git-pin.txt` pins the official tarball the release build compiles; `install.sh` copies that tree only when the app would not already see a git. `tauri dev` keeps using the system git. `ALINERY_GIT_PATH` is a dev/test override, not a PATH search.
 - `time` is pinned to `0.3.51` in `Cargo.lock` — never un-pin (`cargo update` breaks the Tauri v2 build).
 - Do not infer correctness from editor state or partial compiles. See "Build & Compile Verification". Do not launch the app to verify unless the user asks.
 - Quit must never kill harnesses **on its own** — the daemon outlives the app on purpose. Teardown inside the app is explicit only (the three origins above).
@@ -215,6 +215,7 @@ It covers biome, both typecheck passes, vitest, the omp-extension suite, `cargo 
 These run from `scripts/check.sh`. Source guards also run under `--quick`; the behavioural suites do not.
 
 - `check-git-env-scrub.sh` — no raw `Command::new("git")` outside `alinery-core/src/git.rs`
+- `check-daemon-git-spawn.sh` — the daemon spawns git only from `vinculum-daemon/src/platform/git.ts`
 - `check-ssh-spawn.sh` — `ssh` is spawned only from `src/remote.rs`, and the remote path kills no process by name or signal
 - `check-remote-routing.sh` — every repo-resolving command routes remote repos or is listed in `remote-local-only.txt`
 - `check-remote-offload.sh` — every command that reaches a remote call is async and reaches `off_main_thread`/`spawn_blocking`, or is listed with a reason in `remote-offload-ok.txt`

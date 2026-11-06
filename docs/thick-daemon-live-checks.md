@@ -479,6 +479,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 31 (a host on 30 shows the daemon-conflict banner and Restart daemon); the catalog, a read, a save and a delete of a repo playbook work on the remote repo through the host daemon's `PlaybookService`.
 - **Status:** open
 
+### L-S4.7-a: git on a Mac without Command Line Tools
+
+- **Session:** S4.7. Plan: S4.7 Research (UNCONFIRMED, 4.2); ledger R-S4.7-8.
+- **Steps:** on a Mac (or a user account / VM) where `xcode-select -p` fails and no git is on PATH, launch Alinery, open a local repository and create a task with a worktree, then archive the task from the board (this removes the worktree). Repeat on a Mac that has the Command Line Tools.
+- **Expected:** with no Command Line Tools the daemon uses the alongside tree (`/Applications/Alinery.git/bin/git` with `GIT_EXEC_PATH`) and never runs the `/usr/bin/git` stub (no "install the command line developer tools" dialog); with the tools installed it uses the one on PATH. The unit test covers the order with the checks injected; this checks the real machine.
+- **Status:** open
+
+### L-S4.7-b: the daemon's PATH finds git under `systemd-run --user`
+
+- **Session:** S4.7. Plan: S4.7 Research and Accept (the remote-sshd container has no user systemd).
+- **Steps:** on a Linux host with systemd user sessions (a VM, VERIFY.md), connect the host from the app and open a repository on it, then in the app create a task and open its Source branches in the create page. On the host run `systemctl --user show-environment | grep ^PATH` and `ssh host 'command -v git'`.
+- **Expected:** the branch list loads (the daemon found git); the daemon's PATH contains the directory `command -v git` printed. If the daemon was started under `systemd-run --user` with a bare PATH and the branch list says git could not run, git is not found there and the daemon's start line needs `--setenv=PATH`.
+- **Status:** open
+
+### L-S4.7-c: push, commit link and worktree removal on a remote repo
+
+- **Session:** S4.7. Plan: S4.7 Build; ledger R-S4.7-1, R-S4.7-4.
+- **Steps:** with a remote repo whose `origin` is a GitHub URL the host can push to (host git credentials), create a task, let it commit something in its worktree, then use "Open pull request" in the task view (push and compare URL). Afterwards archive the task and remove its worktree.
+- **Expected:** the push runs on the host (the compare URL opens in this Mac's browser with the host's `origin`); a missing credential shows git's own words in the toast; after the removal the host has no `.alinery/worktrees/<slug>`, the branch is kept, and `git for-each-ref refs/alinery/executions/<slug>` on the host prints nothing. A rejected push leaves `task.md` unchanged.
+- **Status:** open
+
+### L-S4.7-d: the pull-request lookup in the app
+
+- **Session:** S4.7. Plan: S4.7 Build (the lookup stays in the shell); ledger R-S4.7-1.
+- **Steps:** with GitHub connected (Settings, Connections), open the Grid with a task whose branch has an open pull request on GitHub and no stored link, then one with a stored link. Disconnect GitHub and reload.
+- **Expected:** the first task shows its PR badge and `task.md` gets `pr_url` (once; a second poll does not rewrite it); the second keeps its link. Disconnected, the badge shows the lookup error and nothing is written. Do the same on a remote repo: the lookup runs on this Mac and the link is written on the host.
+- **Status:** open
+
+### L-S4.7-e: the Linux runtime with protocol 32
+
+- **Session:** S4.7. Plan: S4.7 (remote hosts); ledger R-S4.7-5.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`). Then use L-S4.7-c's steps against that host.
+- **Expected:** the live tests pass against protocol 32 (a host on 31 shows the daemon-conflict banner and Restart daemon); `GitService` answers through the ssh forward.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
@@ -498,6 +533,6 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 
 These have no steps yet; the session that builds them adds the entries.
 
-- **L-S4.7-a (S4.7):** which git the daemon finds on a Mac without Command Line Tools; whether its PATH on a remote host (under `systemd-run --user` or `setsid`) finds the git the setup probe found. The remote-sshd container has no user systemd. (4.2 row.)
+- **L-S4.7-a to -e (S4.7):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
