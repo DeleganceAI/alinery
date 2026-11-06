@@ -965,6 +965,12 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Follow-up:** widen or drop the 500 ms wall-clock bound.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon.rs:518`.
 
+### R-FLAKE-2: `tests::daemon_rpc::a_takeover_is_bound_to_the_process_it_was_confirmed_for`
+- **Kind:** flaky (fixed).
+- **What:** the test re-executes the test binary as a listener child and waited at most 100 x 50 ms for it to bind. In one full `check.sh` of the P5 review it failed with "the child listens" (exit 101); the second full run passed and the test passed alone 3 of 3. On failure `child.kill()` was never reached, so the child slept 60 s as an orphan.
+- **Fix:** the wait is now 600 x 50 ms (30 s) and the child is held in a kill-on-drop guard, so a panic cannot leak it. Reversal: restore the 100-iteration loop and the explicit `kill`/`wait`.
+- **Files:** `alinery-app/src-tauri/src/tests/daemon_rpc.rs` (`a_takeover_is_bound_to_the_process_it_was_confirmed_for`).
+
 ---
 
 ## F. Unverified claims

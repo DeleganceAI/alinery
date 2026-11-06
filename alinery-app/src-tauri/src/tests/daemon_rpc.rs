@@ -839,14 +839,25 @@ fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
     assert_eq!(shutdowns_with("bound").len(), 1);
     // An identity taken from another process is stale: refused before any request is sent.
     let child_socket = t.repo.with_file_name("child.sock");
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "tests::daemon_rpc::listener_child_for_the_takeover_identity_test", "--nocapture"])
-        .env("ALINERY_TEST_LISTEN", &child_socket)
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    // Killed on drop, so a panic while waiting cannot leave the 60 s listener behind.
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _child = KillOnDrop(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::daemon_rpc::listener_child_for_the_takeover_identity_test", "--nocapture"])
+            .env("ALINERY_TEST_LISTEN", &child_socket)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    // Up to 30 s: a re-executed test binary starts slowly under full-workspace load (R-FLAKE-2).
     let mut stream = None;
-    for _ in 0..100 {
+    for _ in 0..600 {
         match std::os::unix::net::UnixStream::connect(&child_socket) {
             Ok(connected) => {
                 stream = Some(connected);
@@ -860,8 +871,6 @@ fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
         panic!("must not fall back")
     })
     .unwrap_err();
-    child.kill().unwrap();
-    child.wait().unwrap();
     assert!(error.starts_with("stale daemon"), "{error}");
     assert_eq!(shutdowns_with("bound").len(), 1, "the second call sent nothing");
 }
