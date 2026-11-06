@@ -62,6 +62,16 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
   };
 }
 
+/** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
+export type TurnControl = {
+  prompt(id: string, text: string): Promise<void>;
+  abort(id: string): Promise<void>;
+  setModel(id: string, model: string): Promise<Controls>;
+  setThinkingLevel(id: string, level: string): Promise<Controls>;
+};
+export type Controls = { model: string; thinking: string; thinking_levels: string[] };
+export const controlsOf = (c: Controls) => ({ controls: { model: c.model, thinking: c.thinking, thinkingLevels: c.thinking_levels } });
+
 /** What the session writes need from the daemon: the files, the store, and the runner that owns the processes. */
 export type SessionControl = {
   repo: string;
@@ -72,6 +82,7 @@ export type SessionControl = {
   backups?: { publish(trigger: "pre_archive"): void };
   chat: ChatPublisher;
   runner: ChatSessions;
+  turns: TurnControl;
   /** Where the session's `telemetry_id` and its task's are. */
   telemetryIds: (slug: string, id: string) => { session: string; task: string };
 };
@@ -221,6 +232,28 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
     artifactReady: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
       return { ready: sessionArtifactReady(c().repo, refSlug(req.session), req.session?.id ?? "") };
+    },
+    promptSession: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await c().turns.prompt(req.sessionId, req.text);
+        return {};
+      });
+    },
+    abortSession: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return domain(async () => {
+        await c().turns.abort(req.sessionId);
+        return {};
+      });
+    },
+    setSessionModel: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => controlsOf(await c().turns.setModel(req.sessionId, req.model)));
+    },
+    setSessionThinkingLevel: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => controlsOf(await c().turns.setThinkingLevel(req.sessionId, req.level)));
     },
   };
 }

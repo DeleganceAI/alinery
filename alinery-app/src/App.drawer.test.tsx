@@ -29,7 +29,7 @@ const appConfig: AppConfig = {
 const drawerRecords = vi.hoisted(() => ({ current: [] as RecordedDrawer[] }));
 
 const mocks = vi.hoisted(() => ({
-  ensureDrawerTerminal: vi.fn(),
+  createDrawerTerminal: vi.fn(),
   killSession: vi.fn(async (_repo: string, _id: string, _slug: string) => {}),
   observationNow: vi.fn(),
   setActiveRepo: vi.fn(),
@@ -44,13 +44,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
-vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), killSession: mocks.killSession }));
+vi.mock("./sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("./sync/sessions")>()),
+  killSession: mocks.killSession,
+  createDrawerTerminal: mocks.createDrawerTerminal,
+}));
 vi.mock("./ipc", () =>
   mockIpc({
     getVersion: async () => "0.19.1",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
-    ensureDrawerTerminal: mocks.ensureDrawerTerminal,
     setActiveRepo: mocks.setActiveRepo,
     removeRepo: mocks.removeRepo,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
@@ -146,16 +149,16 @@ async function expectDrawerCleared() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  const before = mocks.ensureDrawerTerminal.mock.calls.length;
-  mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("fresh"));
+  const before = mocks.createDrawerTerminal.mock.calls.length;
+  mocks.createDrawerTerminal.mockResolvedValueOnce(meta("fresh"));
   pressBackquote();
-  await waitFor(() => expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(before + 1));
+  await waitFor(() => expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(before + 1));
 }
 
 async function openFirst(id = "s-1", worktree = "/repo") {
-  mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta(id, worktree));
+  mocks.createDrawerTerminal.mockResolvedValueOnce(meta(id, worktree));
   pressBackquote();
-  await waitFor(() => expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(drawerRecords.current.length).toBeGreaterThan(0));
   return latestDrawer();
 }
@@ -176,7 +179,7 @@ beforeEach(() => {
     },
   );
   drawerRecords.current = [];
-  mocks.ensureDrawerTerminal.mockReset();
+  mocks.createDrawerTerminal.mockReset();
   mocks.killSession.mockReset().mockResolvedValue(undefined);
   mocks.observationNow.mockReset().mockRejectedValue(new Error("no status"));
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
@@ -199,7 +202,7 @@ describe("App terminal drawer tabs", () => {
   it("does not create a terminal when there is no active repo", async () => {
     await renderApp({ ...appConfig, active_repo: "" });
     pressBackquote();
-    expect(mocks.ensureDrawerTerminal).not.toHaveBeenCalled();
+    expect(mocks.createDrawerTerminal).not.toHaveBeenCalled();
   });
 
   it("opens one ordinal tab from the shortcut and hides without killing", async () => {
@@ -215,7 +218,7 @@ describe("App terminal drawer tabs", () => {
     expect(latestDrawer().tabs).toEqual([{ id: "s-1", ordinal: 1, cwd: "/repo" }]);
 
     pressBackquote();
-    expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(1);
+    expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(latestDrawer().open).toBe(true));
   });
 
@@ -229,9 +232,9 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst();
     expect(opened.onNew).toEqual(expect.any(Function));
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     opened.onNew?.();
-    await waitFor(() => expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(latestDrawer().activeId).toBe("s-2"));
     expect(latestDrawer().tabs).toEqual([
       { id: "s-1", ordinal: 1, cwd: "/repo" },
@@ -245,10 +248,10 @@ describe("App terminal drawer tabs", () => {
     const opened = await openFirst();
     const onNew = requireFn(opened.onNew, "onNew");
     const pending = deferred<SessionMeta>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     onNew();
     onNew();
-    expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(2);
+    expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(2);
     pending.resolve(meta("s-2"));
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
     expect(latestDrawer().tabs?.filter((tab) => tab.id === "s-2")).toHaveLength(1);
@@ -258,7 +261,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst();
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockRejectedValueOnce(new Error("create failed"));
+    mocks.createDrawerTerminal.mockRejectedValueOnce(new Error("create failed"));
     onNew();
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("create failed"), "error"));
     expect(latestDrawer().tabs).toEqual([{ id: "s-1", ordinal: 1, cwd: "/repo" }]);
@@ -268,7 +271,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst();
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs).toEqual([expect.objectContaining({ id: "s-1" }), expect.objectContaining({ id: "s-2" })]));
     requireFn(latestDrawer().onClose, "onClose")("s-1");
@@ -283,15 +286,15 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.ordinal)).toEqual([1, 2]));
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
     requireFn(latestDrawer().onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.ordinal)).toEqual([1, 2, 3]));
     requireFn(latestDrawer().onClose, "onClose")("s-2");
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.ordinal)).toEqual([1, 3]));
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-4"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-4"));
     requireFn(latestDrawer().onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.ordinal)).toEqual([1, 3, 4]));
   });
@@ -300,10 +303,10 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
     requireFn(latestDrawer().onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().activeId).toBe("s-3"));
     requireFn(latestDrawer().onSelect, "onSelect")("s-2");
@@ -324,14 +327,14 @@ describe("App terminal drawer tabs", () => {
     requireFn(opened.onClose, "onClose")("s-1");
     await waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-1", ""));
     pressBackquote();
-    await waitFor(() => expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(2));
   });
 
   it("treats one tab exit as a removal of that id, without a kill and not a kill-all", async () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
     requireFn(latestDrawer().onTabExited, "onTabExited")("s-1");
@@ -347,7 +350,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     for (const id of ["s-2", "s-3"]) {
-      mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta(id));
+      mocks.createDrawerTerminal.mockResolvedValueOnce(meta(id));
       requireFn(latestDrawer().onNew, "onNew")();
       await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toContain(id));
     }
@@ -386,7 +389,7 @@ describe("App terminal drawer tabs", () => {
   it("kill-all removes the tabs that stopped and keeps the ones that did not", async () => {
     await renderApp();
     const opened = await openFirst("s-1");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     requireFn(opened.onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().tabs).toHaveLength(2));
     mocks.killSession.mockImplementation(async (_repo: string, id: string) => {
@@ -403,7 +406,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const pending = deferred<SessionMeta>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     requireFn(opened.onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().creating).toBe(true));
     pending.reject(new Error("spawn failed"));
@@ -415,7 +418,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
     mocks.confirmDanger.mockClear();
@@ -424,10 +427,10 @@ describe("App terminal drawer tabs", () => {
     expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-2", "");
     expect(mocks.confirmDanger).not.toHaveBeenCalled();
 
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
     pressBackquote();
     await waitFor(() => expect(latestDrawer().tabs?.[0]?.id).toBe("s-3"));
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-4"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-4"));
     requireFn(latestDrawer().onNew, "onNew")();
     await waitFor(() => expect(latestDrawer().tabs).toHaveLength(2));
     mocks.killSession.mockClear();
@@ -439,29 +442,33 @@ describe("App terminal drawer tabs", () => {
     expect(mocks.confirmDanger).not.toHaveBeenCalled();
   });
 
-  it("passes every drawer id to setActiveRepo and does not kill from the frontend", async () => {
+  it("stops every drawer shell in the old repo once the switch has succeeded", async () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
     mocks.setActiveRepo.mockResolvedValueOnce({ ...appConfig, active_repo: "/other" });
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/other"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other", ["s-1", "s-2"]));
-    expect(mocks.killSession).not.toHaveBeenCalled();
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other"));
+    await waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-1", ""));
+    expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-2", "");
+    expect(mocks.killSession.mock.calls.some(([repo]) => repo === "/other")).toBe(false);
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
     pressBackquote();
-    await waitFor(() => expect(mocks.ensureDrawerTerminal).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(mocks.createDrawerTerminal).toHaveBeenCalledTimes(3));
   });
 
-  it("passes the open drawer id to setActiveRepo as a list", async () => {
+  it("a switch to the same repo stops no drawer shell", async () => {
     await renderApp();
     await openFirst("s-1");
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
+    mocks.setActiveRepo.mockResolvedValueOnce({ ...appConfig, active_repo: "/repo" });
     fireEvent.click(screen.getByTitle("/other"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other", ["s-1"]));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mocks.killSession).not.toHaveBeenCalled();
   });
 
@@ -497,7 +504,7 @@ describe("App terminal drawer tabs", () => {
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
     const pending = deferred<SessionMeta>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     onNew();
     requireFn(opened.onKillAll, "onKillAll")();
     pending.resolve(meta("s-2"));
@@ -506,7 +513,7 @@ describe("App terminal drawer tabs", () => {
       expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-2", "");
     });
     expect(drawerRecords.current.some((props) => props.tabs?.some((tab) => tab.id === "s-2"))).toBe(false);
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
     pressBackquote();
     await waitFor(() => expect(latestDrawer().tabs?.[0]?.id).toBe("s-3"));
   });
@@ -516,7 +523,7 @@ describe("App terminal drawer tabs", () => {
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
     const pending = deferred<SessionMeta>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     onNew();
     mocks.setActiveRepo.mockResolvedValueOnce({ ...appConfig, active_repo: "/other" });
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
@@ -533,12 +540,12 @@ describe("App terminal drawer tabs", () => {
     const onNew = requireFn(opened.onNew, "onNew");
     const pending = deferred<SessionMeta>();
     const switchPending = deferred<AppConfig>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     mocks.setActiveRepo.mockReturnValueOnce(switchPending.promise);
     onNew();
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/other"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other", ["s-1"]));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/other"));
     pending.resolve(meta("s-2"));
     await Promise.resolve();
     switchPending.resolve({ ...appConfig, active_repo: "/other" });
@@ -554,7 +561,7 @@ describe("App terminal drawer tabs", () => {
     const onNew = requireFn(opened.onNew, "onNew");
     const pending = deferred<SessionMeta>();
     const switchPending = deferred<AppConfig>();
-    mocks.ensureDrawerTerminal.mockReturnValueOnce(pending.promise);
+    mocks.createDrawerTerminal.mockReturnValueOnce(pending.promise);
     mocks.setActiveRepo.mockReturnValueOnce(switchPending.promise);
     onNew();
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
@@ -571,7 +578,7 @@ describe("App terminal drawer tabs", () => {
     await renderApp();
     const opened = await openFirst("s-1");
     const onNew = requireFn(opened.onNew, "onNew");
-    mocks.ensureDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-2"));
     onNew();
     await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-1", "s-2"]));
     mocks.confirmDanger.mockResolvedValueOnce(false);

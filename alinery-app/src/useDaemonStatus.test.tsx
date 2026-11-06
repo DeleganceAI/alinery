@@ -72,6 +72,16 @@ it("a status delta re-renders the badge numbers with no timer and no extra comma
   expect(vi.mocked(ipc.daemonStatus).mock.calls.length).toBe(reads);
 });
 
+it("the host guard warning is the daemon's own, from the status entity", async () => {
+  const d = liveDaemon();
+  vi.mocked(ipc.daemonStatus).mockResolvedValue({ repo: "/fixture" } as DaemonStatus);
+  d.push(() => snapshot([entity("daemon/_/status", { case: "daemonStatus", value: create(DaemonStatusSchema, { hostGuardWarning: "no executable" }) })], 1));
+  const { result } = renderHook(() => useDaemonStatus("/fixture"));
+  await waitFor(() => expect(result.current.host_guard_warning).toBe(true));
+  d.push(() => put(statusRow(0), 2));
+  await waitFor(() => expect(result.current.host_guard_warning).toBe(false));
+});
+
 it("a dropped stream reports unreachable and keeps the last count", async () => {
   const d = liveDaemon();
   vi.mocked(ipc.daemonStatus).mockResolvedValue({ repo: "/fixture" } as DaemonStatus);

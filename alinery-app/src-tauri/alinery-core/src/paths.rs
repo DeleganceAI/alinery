@@ -101,8 +101,8 @@ pub fn task_mutation_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".task-mutation.lock")
 }
 
-/// Enumerate alineryd lane sockets under `.alinery/`: `(namespace, path)`.
-/// Prod lane uses `namespace == ""` for `alineryd.sock`.
+/// Enumerate the daemon lane sockets under `.alinery/`: `(namespace, path)`. A lane has the gRPC socket
+/// `rpc[-ns].sock`, and an older daemon's lane also has `alineryd[-ns].sock`. The prod lane uses `namespace == ""`.
 pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     let dir = alinery_dir(repo);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -112,14 +112,12 @@ pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     for ent in entries.flatten() {
         let name = ent.file_name();
         let Some(s) = name.to_str() else { continue };
-        if !s.ends_with(".sock") || !s.starts_with("alineryd") {
-            continue;
-        }
+        let Some(stem) = s.strip_suffix(".sock") else { continue };
         // skip unrelated *.sock
-        let ns = if s == "alineryd.sock" {
+        let ns = if stem == "alineryd" || stem == "rpc" {
             String::new()
-        } else if let Some(rest) = s.strip_prefix("alineryd-") {
-            rest.trim_end_matches(".sock").to_string()
+        } else if let Some(rest) = stem.strip_prefix("alineryd-").or_else(|| stem.strip_prefix("rpc-")) {
+            rest.to_string()
         } else {
             continue;
         };

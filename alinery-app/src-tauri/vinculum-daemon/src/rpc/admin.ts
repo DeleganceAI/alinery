@@ -4,9 +4,9 @@ import { capabilitiesOf, requireCapability, type TokenRegistry } from "./auth.ts
 
 export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string };
 
-/** What the daemon does for `Shutdown`: `stop` ends every session and removes the sockets (the same
- * teardown as the JSON `shutdown` op) and returns how many sessions it ended; `exit` ends the process. */
-export type Lifecycle = { stop: () => number; exit: () => void };
+/** What the daemon does for `Shutdown`: `stop` ends every session and removes the sockets and returns how many sessions it
+ * ended; `exit` ends the process. `live` names the sessions whose process is running (`LiveSessions`). */
+export type Lifecycle = { stop: () => number; exit: () => void; live?: () => string[] };
 
 // Time for the reply to leave the socket before the process goes.
 const EXIT_DELAY_MS = 100;
@@ -30,6 +30,11 @@ export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: stri
       if (req.capability !== Capability.AGENT) throw new ConnectError("only an AGENT token can be minted", Code.InvalidArgument);
       console.error(`agent token minted: label=${JSON.stringify(req.label)}`);
       return { token: tokens.mint(req.label) };
+    },
+    // What a takeover or a restart would end, for the consent it asks for.
+    liveSessions: (_req, ctx) => {
+      requireCapability(ctx, Capability.ADMIN);
+      return { sessions: (lifecycle.live?.() ?? []).map((id) => ({ id })) };
     },
     // Invariant 1: the five origins are the only ways to stop a daemon, so an unnamed one is refused
     // before anything stops. A takeover also names the confirmation the app consumed for it; the

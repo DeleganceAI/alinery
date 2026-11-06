@@ -15,6 +15,20 @@ service AgentService {
   rpc InstallSkill(InstallSkillRequest) returns (InstallSkillResponse);              // ACT
   rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);                 // ACT
   rpc CustomizationPrompt(CustomizationPromptRequest) returns (CustomizationPromptResponse);  // VIEW
+  // The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
+  rpc ReadMcpStatus(ReadMcpStatusRequest) returns (ReadMcpStatusResponse);            // VIEW
+}
+
+message ReadMcpStatusRequest {}
+message McpServerStatus {
+  string name = 1;
+  bool builtin = 2;
+  string state = 3;  // connected, disabled or error
+  optional string error = 4;
+}
+message ReadMcpStatusResponse {
+  repeated string tools = 1;
+  repeated McpServerStatus servers = 2;
 }
 
 message ReadModelRolesRequest {}

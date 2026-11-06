@@ -44,7 +44,7 @@ import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { readPlaybook } from "./sync/playbooks";
 import { observationNow } from "./sync/sessionObservation";
-import { createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
+import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
 import { readEffectiveConfig } from "./sync/settings";
 import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
@@ -423,7 +423,7 @@ export default function App() {
     setDrawerCreating(true);
     const generation = drawerGeneration.current;
     try {
-      const meta = await ipc.ensureDrawerTerminal();
+      const meta = await createDrawerTerminal(repoAtCreate);
       inFlightDrawerId.current = meta.id;
       while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
       if (drawerGeneration.current !== generation || inFlightDrawerId.current !== meta.id) {
@@ -517,16 +517,19 @@ export default function App() {
     setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
   }, []);
 
-  // The backend reserves the candidate before it kills the old repo's drawer sessions.
-  // Clear the drawer UI only after that transactional switch succeeds. Do not claim the
-  // in-flight id here: a thrown switch must still be able to insert it.
+  // The backend reserves the candidate and writes the config. Only after that switch succeeds are the old repo's drawer shells
+  // stopped (in the daemon that made them; a refusal is ignored, the shell is then left running) and the drawer UI cleared.
+  // Do not claim the in-flight id here: a thrown switch must still be able to insert it.
   const switchActiveRepo = async (path: string): Promise<AppConfig> => {
     const previousRepo = appConfigRef.current?.active_repo;
     beginRepoSwitch();
     const drawerSessionIds = drawerIds(false);
     try {
-      const cfg = await ipc.setActiveRepo(path, drawerSessionIds);
-      if (cfg.active_repo !== previousRepo) clearDrawerUi();
+      const cfg = await ipc.setActiveRepo(path);
+      if (cfg.active_repo !== previousRepo) {
+        if (previousRepo) for (const id of drawerSessionIds) void killSession(previousRepo, id, "").catch(() => undefined);
+        clearDrawerUi();
+      }
       return { ...cfg, appearance: applyAppearance(cfg.appearance) };
     } finally {
       endRepoSwitch();

@@ -273,8 +273,6 @@ pub(crate) struct HostSpawnDaemon {
     pub launch: i32,
     #[prost(string, tag = "8")]
     pub unit: String,
-    #[prost(string, tag = "9")]
-    pub ui_secret_file: String,
     #[prost(string, tag = "10")]
     pub rpc_secret_file: String,
     #[prost(string, tag = "11")]
@@ -357,10 +355,7 @@ pub(crate) enum HostOp {
         launch: Launch,
         /// systemd unit name; required for `SystemdRun`.
         unit: Option<String>,
-        /// A file holding the secret that lets the app control this daemon's UI-only ops over a forward. The daemon reads it and
-        /// deletes it before it listens.
-        ui_secret_file: Option<PathBuf>,
-        /// The same for the RPC socket's bearer token (`--rpc-secret-file`).
+        /// A file holding the RPC socket's bearer token (`--rpc-secret-file`). The daemon reads it and deletes it before it listens.
         rpc_secret_file: Option<PathBuf>,
     },
 }
@@ -406,7 +401,6 @@ impl HostOp {
                 log,
                 launch,
                 unit,
-                ui_secret_file,
                 rpc_secret_file,
             } => Call::SpawnDaemon(HostSpawnDaemon {
                 repo: text(&repo),
@@ -417,7 +411,6 @@ impl HostOp {
                 log: text(&log),
                 launch: launch as i32,
                 unit: unit.unwrap_or_default(),
-                ui_secret_file: ui_secret_file.map(|file| text(&file)).unwrap_or_default(),
                 rpc_secret_file: rpc_secret_file.map(|file| text(&file)).unwrap_or_default(),
                 // The version a telemetry event carries (`--app-version`). All three crates moved together; this is the app's.
                 app_version: env!("CARGO_PKG_VERSION").to_string(),

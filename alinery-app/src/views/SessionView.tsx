@@ -69,7 +69,17 @@ import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { readChatImage } from "../sync/chat";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
-import { archiveSession, readSessionOmp, renameSession, sessionArtifactReady, startSession } from "../sync/sessions";
+import {
+  abortSession,
+  archiveSession,
+  promptSession,
+  readSessionOmp,
+  renameSession,
+  sessionArtifactReady,
+  setSessionModel,
+  setSessionThinkingLevel,
+  startSession,
+} from "../sync/sessions";
 import { addTaskAttachment, copyTaskAttachments } from "../sync/tasks";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -675,7 +685,7 @@ export function SessionView({
     try {
       if (transport === "rpc") {
         const message = attachments.length > 0 ? (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message : caption;
-        await ipc.sessionPrompt(id, message);
+        await promptSession(repoPath, id, message);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
@@ -711,8 +721,8 @@ export function SessionView({
       if (attachments.length > 0) {
         message = (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message;
       }
-      await ipc.sessionAbort(id);
-      await ipc.sessionPrompt(id, message);
+      await abortSession(repoPath, id);
+      await promptSession(repoPath, id, message);
       const rowAttachments = draftToRowAttachments(attachments);
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);
@@ -930,7 +940,7 @@ export function SessionView({
     setMessageError("");
     try {
       setChat((current) => appendOptimisticAbort(current));
-      await ipc.sessionAbort(id);
+      await abortSession(repoPath, id);
     } catch (error) {
       setMessageError(`Couldn't interrupt the session: ${String(error)}`);
     } finally {
@@ -982,7 +992,7 @@ export function SessionView({
     .filter((part) => part && part.length > 0)
     .join(" · ");
   const pickThinking = (level: string) => {
-    void ipc.sessionSetThinkingLevel(id, level).then(
+    void setSessionThinkingLevel(repoPath, id, level).then(
       (controls) => {
         setChat((current) => {
           const next = applySessionControls(current, controls);
@@ -1031,7 +1041,7 @@ export function SessionView({
   const applyChatModel = async (provider: string, modelId: string) => {
     setModelError(null);
     try {
-      const controls = await ipc.sessionSetModel(id, `${provider}/${modelId}`);
+      const controls = await setSessionModel(repoPath, id, `${provider}/${modelId}`);
       setChat((current) => {
         const next = applySessionControls(current, controls);
         chatRef.current = next;

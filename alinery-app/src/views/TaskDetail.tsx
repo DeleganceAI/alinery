@@ -12,7 +12,6 @@ import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassificat
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
-import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
@@ -60,7 +59,7 @@ import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSe
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
-import { archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
+import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
 import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
@@ -1426,7 +1425,7 @@ export function TaskDetail({
                                 setBusy(`stop-session:${s.id}`);
                                 setErr(null);
                                 try {
-                                  await ipc.sessionAbort(s.id);
+                                  await abortSession(repoPath, s.id);
                                   await load();
                                 } catch (error) {
                                   setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });

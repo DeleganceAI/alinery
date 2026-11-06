@@ -1101,32 +1101,7 @@ pub(crate) fn remote_secrets_dir(app_config: &Path, host_id: &str) -> Result<Pat
     Ok(app_config_dir_of(app_config).ok_or("app config root unavailable")?.join("remote").join(host_id))
 }
 
-pub(crate) fn read_ui_secrets(secrets_dir: &Path) -> std::collections::BTreeMap<String, String> {
-    fs::read(secrets_dir.join("ui-secrets.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
-}
-
-pub(crate) fn store_ui_secret(secrets_dir: &Path, repo_path: &str, secret: &str) -> Result<(), String> {
-    let mut secrets = read_ui_secrets(secrets_dir);
-    secrets.insert(repo_path.to_string(), secret.to_string());
-    fs::create_dir_all(secrets_dir).map_err(|error| format!("create {}: {error}", secrets_dir.display()))?;
-    alinery_core::write_owner_only_bytes(&secrets_dir.join("ui-secrets.json"), &serde_json::to_vec(&secrets).map_err(|error| error.to_string())?)
-}
-
-fn new_ui_secret() -> String {
-    format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
-}
-
-/// The local forwarded socket and the host's daemon socket it reaches, for one repo.
-pub(crate) fn repo_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
-    let remote_socket = alinery_core::alineryd_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
-    let local = forward_socket(&control_dir(alinery_core::effective_uid()), host_id, &remote_socket)?;
-    Ok((local, remote_socket))
-}
-
-/// The same for the daemon's RPC socket (a second forward on the same master).
+/// The local forwarded socket and the host's RPC socket it reaches, for one repo (a unix-socket forward on the host's master).
 pub(crate) fn rpc_forward(host_id: &str, repo_path: &str) -> Result<(PathBuf, String), String> {
     let remote_socket = alinery_core::rpc_socket_path(Path::new(repo_path), None).to_string_lossy().into_owned();
     let local = forward_socket(&control_dir(alinery_core::effective_uid()), host_id, &remote_socket)?;
@@ -1140,10 +1115,7 @@ fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result
     let deadline = Instant::now() + wait;
     loop {
         let _ = session.conn.forward(&local, &remote_socket);
-        let hello = tauri::async_runtime::block_on(async {
-            let token = crate::daemon_rpc::rpc_token(&local, &secret_path).await?;
-            crate::daemon_rpc::hello(&local, &token).await
-        });
+        let hello = crate::daemon_rpc::hello_at(&local, &secret_path, REMOTE_OBSERVE_TIMEOUT);
         match hello {
             Ok(hello) => return Ok(hello),
             Err(error) if Instant::now() >= deadline => return Err(error),
@@ -1152,109 +1124,71 @@ fn rpc_hello(session: &RemoteSession, repo_path: &str, wait: Duration) -> Result
     }
 }
 
-/// Bring up (or reconnect to) a remote repo's daemon: forward its socket, start the daemon
-/// if nothing answers, and return a client on the forwarded path. Never stops anything.
-pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app_config_identity: &str) -> Result<(DaemonClient, DaemonCompat, bool), String> {
-    let (local, remote_socket) = repo_forward(&session.conn.host_id, repo_path)?;
-    let client = DaemonClient::connect_path(local.clone())?.with_observe_timeout(REMOTE_OBSERVE_TIMEOUT);
-    // A reachable socket is not a live daemon: over a forward `connect` succeeds whenever the
-    // master is up, so liveness is a `version` round trip.
-    let answers = |client: &DaemonClient| client.version_checked().ok();
-
-    let mut version = answers(&client);
-    if version.is_none() {
-        // The forward may be missing (new master) or already there (re-requesting is harmless).
-        let _ = session.conn.forward(&local, &remote_socket);
-        version = answers(&client);
-    }
-    let started = version.is_none();
-    if started {
-        let repo_hash = crate::daemon::fnv1a64_hex(repo_path);
-        let runtime = runtime_dir(&session.root, &session.runtime_hash);
-        // The secret goes to the host in a file only the daemon reads, and is kept here before the
-        // daemon exists so a successful start can never lack its copy.
-        let secret = new_ui_secret();
-        let secret_file = format!("{}/ui-secrets/{}.secret", session.config_dir, &repo_hash[..12]);
-        store_ui_secret(&session.secrets_dir, repo_path, &secret)?;
-        session.channel.call(
-            HostOp::WriteFile {
-                path: secret_file.clone().into(),
-                contents: secret,
-            },
-            SERVICE_TIMEOUT,
-        )?;
-        // The RPC token travels the same way, and its copy is kept per repo and lane (the remote lane is "").
-        let rpc_secret = crate::daemon::new_rpc_secret()?;
-        let rpc_secret_file = format!("{}/ui-secrets/{}.rpc", session.config_dir, &repo_hash[..12]);
-        crate::daemon::store_pending_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
-        session.channel.call(
-            HostOp::WriteFile {
-                path: rpc_secret_file.clone().into(),
-                contents: rpc_secret,
-            },
-            SERVICE_TIMEOUT,
-        )?;
-        let (launch, unit) = match session.launcher {
-            Launcher::SystemdRun => (Launch::SystemdRun, Some(format!("alinery-daemon-{}", &repo_hash[..12]))),
-            Launcher::Setsid | Launcher::Nohup => (Launch::Direct, None),
-        };
-        session.channel.call(
-            HostOp::SpawnDaemon {
-                repo: repo_path.into(),
-                app_config: format!("{}/app.toml", session.config_dir).into(),
-                binary: format!("{runtime}/alinery-vinculum-daemon").into(),
-                build_id: session.runtime_hash.clone(),
-                namespace: None,
-                log: format!("{}/logs/daemon-{}.log", session.config_dir, &repo_hash[..12]).into(),
-                launch,
-                unit,
-                ui_secret_file: Some(secret_file.into()),
-                rpc_secret_file: Some(rpc_secret_file.into()),
-            },
-            SERVICE_TIMEOUT,
-        )?;
-        for _ in 0..75 {
-            version = answers(&client);
-            if version.is_some() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(200));
+/// Bring up (or reconnect to) a remote repo's daemon: forward its RPC socket, start the daemon if nothing answers `Hello`
+/// there, and return what it answered. Never stops anything.
+pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app_config_identity: &str) -> Result<(crate::daemon_rpc::HelloResponse, DaemonCompat), String> {
+    // A reachable socket is not a live daemon: over a forward `connect` succeeds whenever the master is up, so
+    // liveness is a `Hello` round trip. A daemon started elsewhere, with a token this Mac does not have, looks dead here.
+    let hello = match rpc_hello(session, repo_path, Duration::ZERO) {
+        Ok(hello) => hello,
+        Err(_) => {
+            let repo_hash = crate::daemon::fnv1a64_hex(repo_path);
+            let runtime = runtime_dir(&session.root, &session.runtime_hash);
+            // The token goes to the host in a file only the daemon reads, and its copy is kept here per repo and lane (the
+            // remote lane is "") before the daemon exists, so a successful start can never lack its copy.
+            let rpc_secret = crate::daemon::new_rpc_secret()?;
+            let rpc_secret_file = format!("{}/rpc-secrets/{}.rpc", session.config_dir, &repo_hash[..12]);
+            crate::daemon::store_pending_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
+            session.channel.call(
+                HostOp::WriteFile {
+                    path: rpc_secret_file.clone().into(),
+                    contents: rpc_secret,
+                },
+                SERVICE_TIMEOUT,
+            )?;
+            let (launch, unit) = match session.launcher {
+                Launcher::SystemdRun => (Launch::SystemdRun, Some(format!("alinery-daemon-{}", &repo_hash[..12]))),
+                Launcher::Setsid | Launcher::Nohup => (Launch::Direct, None),
+            };
+            session.channel.call(
+                HostOp::SpawnDaemon {
+                    repo: repo_path.into(),
+                    app_config: format!("{}/app.toml", session.config_dir).into(),
+                    binary: format!("{runtime}/alinery-vinculum-daemon").into(),
+                    build_id: session.runtime_hash.clone(),
+                    namespace: None,
+                    log: format!("{}/logs/daemon-{}.log", session.config_dir, &repo_hash[..12]).into(),
+                    launch,
+                    unit,
+                    rpc_secret_file: Some(rpc_secret_file.into()),
+                },
+                SERVICE_TIMEOUT,
+            )?;
+            rpc_hello(session, repo_path, Duration::from_secs(30)).map_err(|error| {
+                format!("the daemon did not answer Hello on the host (it did not start, or another Alinery started it; see its log under the remote config directory): {error}")
+            })?
         }
-    }
-    let version = version.ok_or("the daemon did not start on the host; see its log under the remote config directory")?;
-    // The RPC socket rides a second forward. A daemon this app just started must answer Hello there
-    // (it holds the token we gave it); one already running may have been started elsewhere, with a
-    // token this Mac does not have, so a failure there is left for the first call to report.
-    let probe = rpc_hello(session, repo_path, if started { Duration::from_secs(15) } else { Duration::ZERO });
-    if let (true, Err(error)) = (started, probe) {
-        return Err(format!("the daemon started but did not answer Hello on its RPC socket: {error}"));
-    }
+    };
     // An unusable daemon is returned, not refused: the caller records it as a conflict and the
     // user decides whether to replace it (`stop_remote_daemon`).
-    let compat = daemon_client::classify_version_reply(&version, &session.runtime_hash, app_config_identity);
-    Ok((client, compat, version.host_guard_warning()))
+    let compat = crate::daemon::classify_hello(&hello, &session.runtime_hash, app_config_identity);
+    Ok((hello, compat))
 }
 
 /// What the banner shows for a daemon this app cannot use: one owner that cannot be taken over
 /// (a remote daemon is replaced by restarting it) and the sessions that restart would end.
-fn remote_conflict(key: &str, client: &DaemonClient, compat: DaemonCompat, app_config_identity: &str) -> DaemonConflict {
-    let version = client.version();
-    let impact = match client.session_statuses_observed() {
-        Ok(sessions) => TakeoverImpact::Known {
-            sessions: sessions
-                .into_iter()
-                .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
-                .map(|session| TakeoverSession { id: session.id, name: None })
-                .collect(),
+fn remote_conflict(session: &RemoteSession, key: &str, path: &str, hello: &crate::daemon_rpc::HelloResponse, compat: DaemonCompat, app_config_identity: &str) -> DaemonConflict {
+    let impact = match rpc_forward(&session.conn.host_id, path)
+        .and_then(|(local, _)| crate::daemon_rpc::live_sessions_at(&local, &crate::daemon::rpc_secret_path(&session.secrets_dir, path, "")))
+    {
+        Ok(ids) => TakeoverImpact::Known {
+            sessions: ids.into_iter().map(|id| TakeoverSession { id, name: None }).collect(),
         },
         Err(detail) => TakeoverImpact::Unknown { detail },
     };
     let issue = match compat {
         DaemonCompat::AppConfigMismatch => "The daemon on the host was started with other settings than this app's.".to_string(),
-        _ => format!(
-            "The daemon on the host speaks protocol {}; this app speaks {PROTOCOL_VERSION}.",
-            version.protocol.map_or("none".to_string(), |protocol| protocol.to_string())
-        ),
+        _ => format!("The daemon on the host speaks protocol {}; this app speaks {PROTOCOL_VERSION}.", hello.protocol),
     };
     DaemonConflict {
         repo: key.to_string(),
@@ -1263,23 +1197,14 @@ fn remote_conflict(key: &str, client: &DaemonClient, compat: DaemonCompat, app_c
         owners: vec![DaemonOwnerConflict {
             lane: String::new(),
             pid: None,
-            protocol: version.protocol,
-            build_id: version.build_id,
-            app_config_identity: version.app_config_identity,
+            protocol: Some(hello.protocol),
+            build_id: Some(hello.build_id.clone()),
+            app_config_identity: Some(hello.app_config_identity.clone()),
             impact,
             takeover_unavailable: Some("Restart the daemon on the host to replace it.".to_string()),
         }],
         issues: vec![issue],
     }
-}
-
-/// The client of a remote repo's daemon, or why there is none.
-fn remote_daemon(state: &AppState, repo: &RepoRef) -> Result<DaemonClient, String> {
-    let key = PathBuf::from(repo.uri());
-    state.daemon_for(&key).ok_or_else(|| match state.daemon_conflict(&key) {
-        Some(_) => "the daemon on this host was started by another Alinery version; restart it from the banner above the board".to_string(),
-        None => "this remote repository's daemon is not connected".to_string(),
-    })
 }
 
 /// A forwarded socket costs a channel open plus the request.
@@ -1307,38 +1232,6 @@ pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppStat
     serde_json::from_value(value).map_err(|error| format!("unexpected reply from the host: {error}"))
 }
 
-/// The active repo of a command that talks to a daemon: a local repo this window owns, or a
-/// remote one whose host is connected and whose daemon answers.
-pub(crate) fn require_active_target(state: &AppState) -> Result<(), String> {
-    match active_repo_ref()? {
-        RepoRef::Local(_) => require_owned_active_repo(state).map(|_| ()),
-        RepoRef::Remote { host_id, path } => {
-            connected_session(state, &host_id)?;
-            remote_daemon(state, &RepoRef::Remote { host_id, path }).map(|_| ())
-        }
-    }
-}
-
-/// The repo's own daemon client (its own lane), for operations that are not about one task.
-pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClient, String> {
-    match repo {
-        RepoRef::Local(path) => {
-            require_repo_owned(state, path)?;
-            state.daemon_for(path).ok_or_else(|| "daemon not connected".to_string())
-        }
-        RepoRef::Remote { host_id, .. } => {
-            connected_session(state, host_id)?;
-            remote_daemon(state, repo)
-        }
-    }
-}
-
-/// For the commands that only need a live daemon for the active repo (write, resize,
-/// prompt, ...): the local ownership check, or the remote connection check.
-pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> {
-    require_active_target(state)
-}
-
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the
 /// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry. A daemon this
 /// app cannot use is recorded as a conflict and is not an error: the repo opens, shows only its
@@ -1349,15 +1242,15 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Pa
         return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
     }
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
-    let (client, compat, warning) = ensure_remote_daemon(session, path, &identity)?;
+    let (hello, compat) = ensure_remote_daemon(session, path, &identity)?;
     if compat.usable() {
-        state.set_daemon(Path::new(key), client, compat, identity, warning);
+        state.set_daemon(Path::new(key), compat);
         // The repository half of readying a repo, which a remote one never had (plan S4.1). A failure leaves the repo as it was.
         if let Err(error) = ensure_remote_repo_ready(session, path) {
             crate::daemon::log_ensure_ready_failed(app_config, key, &error);
         }
     } else {
-        state.set_daemon_conflict(Path::new(key), remote_conflict(key, &client, compat, &identity));
+        state.set_daemon_conflict(Path::new(key), remote_conflict(session, key, path, &hello, compat, &identity));
     }
     Ok(())
 }
@@ -1395,16 +1288,14 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
     let session = connected_session(&state, host_id)?;
     let lifecycle = state.repo_lifecycle(Path::new(&key));
     let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-    // A conflicted daemon has no stored client, so talk to the forward directly.
-    let (local, remote_socket) = repo_forward(host_id, path)?;
-    let client = DaemonClient::connect_path(local.clone())?.with_observe_timeout(REMOTE_OBSERVE_TIMEOUT);
-    let _ = session.conn.forward(&local, &remote_socket);
+    // A conflicted daemon is not attached, so talk to the forward directly.
     let (rpc_local, rpc_remote) = rpc_forward(host_id, path)?;
     let _ = session.conn.forward(&rpc_local, &rpc_remote);
     // A daemon that does not answer has nothing to end; the attach below starts a new one.
-    if client.version_checked().is_ok() {
+    if rpc_hello(&session, path, Duration::ZERO).is_ok() {
+        // The host's daemons are started by this app's runtime, which serves `alinery.v1`, so there is no older wire to fall back to.
         crate::daemon_rpc::shutdown_daemon(&key, &app_config_path(app)?, None, crate::daemon_rpc::ShutdownOrigin::StopRemote, "", None, || {
-            client.call(&daemon_client::shutdown_request()).map(|_| ())
+            Err("the daemon on the host did not accept the shutdown on its RPC socket".to_string())
         })?;
         session.channel.call(HostOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
         state.clear_daemon(Path::new(&key));
@@ -1799,7 +1690,7 @@ pub(crate) fn disconnect_host<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &s
         if let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(&key) {
             if id == host_id {
                 state.clear_daemon(Path::new(&key));
-                forwards.extend(repo_forward(host_id, &path).ok().map(|(local, _)| local));
+                forwards.extend(rpc_forward(host_id, &path).ok().map(|(local, _)| local));
             }
         }
     }

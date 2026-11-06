@@ -7,7 +7,7 @@ import { AgentService } from "alinery-proto/alinery/v1/agent_pb";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
-import type { SkillInstall, VinculumCustomizations } from "../types";
+import type { SkillInstall, VinculumCustomizations, VinculumDaemonCustomizations } from "../types";
 import { agentHost, call } from "./hostCall";
 import { newMutationMeta } from "./mutation";
 import { upload } from "./tasks";
@@ -65,4 +65,11 @@ export async function deleteSkill(name: string, repo?: string): Promise<void> {
 export async function customizationPrompt(repo?: string): Promise<string> {
   const host = await agentHost(repo);
   return (await call(() => agent(host).customizationPrompt({}))).prompt;
+}
+
+/** The agent's built-in tools and the state of each MCP server connection, as the host's daemon reports them. */
+export async function readMcpStatus(repo?: string): Promise<VinculumDaemonCustomizations> {
+  const host = await agentHost(repo);
+  const reply = await call(() => agent(host).readMcpStatus({}));
+  return { tools: reply.tools, servers: reply.servers.map((s) => ({ name: s.name, builtin: s.builtin, state: s.state, ...(s.error === undefined ? {} : { error: s.error }) })) };
 }

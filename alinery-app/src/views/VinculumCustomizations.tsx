@@ -29,7 +29,7 @@ export function VinculumCustomizations() {
       const host = await agent.agentHost();
       const [files, status] = await Promise.all([
         agent.readCustomizations(),
-        ipc.vinculumCustomizations().then(
+        agent.readMcpStatus().then(
           (value) => ({ ok: true as const, value }),
           () => ({ ok: false as const, value: null }),
         ),

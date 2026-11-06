@@ -2,18 +2,26 @@ import { Code, ConnectError, createRouterTransport, type Transport } from "@conn
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
+import * as ipc from "../ipc";
 import {
+  abortSession,
   archiveSession,
   clearSessionNotifications,
+  createDrawerTerminal,
   killSession,
   markSessionNotificationRead,
+  openSession,
+  promptSession,
   readSessionHistory,
   readSessionOmp,
   renameSession,
   SessionConflict,
+  setSessionModel,
+  setSessionThinkingLevel,
 } from "./sessions";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+vi.mock("../ipc", () => ({ prepareHostedInference: vi.fn(async () => undefined) }));
 
 type Seen = { repo: string; call: string; req: Record<string, unknown> }[];
 let seen: Seen;
@@ -30,7 +38,22 @@ beforeEach(() => {
     return createRouterTransport((router) => {
       router.service(
         SessionService,
-        Object.fromEntries(["renameSession", "archiveSession", "killSession", "clearNotifications", "readHistory", "readOmpWindow"].map((c) => [c, handler(c)])) as never,
+        Object.fromEntries(
+          [
+            "renameSession",
+            "archiveSession",
+            "killSession",
+            "clearNotifications",
+            "readHistory",
+            "readOmpWindow",
+            "promptSession",
+            "abortSession",
+            "setSessionModel",
+            "setSessionThinkingLevel",
+            "resumeSession",
+            "createSession",
+          ].map((c) => [c, handler(c)]),
+        ) as never,
       );
     }) as Transport;
   });
@@ -94,5 +117,61 @@ describe("session reads", () => {
     const text = new TextDecoder().decode(out);
     expect(text).toBe('{"start":5,"end":12,"length":40}\na\nb\n');
     expect(seen[0].req).toMatchObject({ want: 100n, session: { taskSlug: "t", id: "s1" } });
+  });
+});
+
+describe("the turn controls and the process (S5.3)", () => {
+  it("a prompt and an abort name the session; a prompt carries a mutation id and an abort does not", async () => {
+    await promptSession("/r", "s1", "hello");
+    await abortSession("/r", "s1");
+    expect(seen.map((s) => [s.repo, s.call])).toEqual([
+      ["/r", "promptSession"],
+      ["/r", "abortSession"],
+    ]);
+    expect(seen[0].req).toMatchObject({ sessionId: "s1", text: "hello" });
+    expect((seen[0].req.meta as { mutationId: string }).mutationId).not.toBe("");
+    expect(seen[1].req).toMatchObject({ sessionId: "s1" });
+  });
+
+  it("a model or thinking change answers with the controls in the shape the views read", async () => {
+    impl.setSessionModel = () => ({ controls: { model: "anthropic/claude", thinking: "off", thinkingLevels: [] } });
+    impl.setSessionThinkingLevel = () => ({ controls: { model: "xai/grok", thinking: "low", thinkingLevels: ["off", "low", "high"] } });
+    expect(await setSessionModel("/r", "s1", "anthropic/claude")).toEqual({ model: "anthropic/claude", thinking: "off", thinking_levels: [] });
+    expect(await setSessionThinkingLevel("/r", "s1", "low")).toEqual({ model: "xai/grok", thinking: "low", thinking_levels: ["off", "low", "high"] });
+    expect(seen[0].req).toMatchObject({ sessionId: "s1", model: "anthropic/claude" });
+    expect(seen[1].req).toMatchObject({ sessionId: "s1", level: "low" });
+  });
+
+  it("opening to spawn refreshes the hosted credentials first and asks ResumeSession with the geometry", async () => {
+    const order: string[] = [];
+    vi.mocked(ipc.prepareHostedInference).mockImplementation(async () => {
+      order.push("prepare");
+    });
+    impl.resumeSession = () => {
+      order.push("resume");
+      return {};
+    };
+    await openSession("/r", { id: "s1", cwd: "/w", taskSlug: " t ", phase: "plan", model: "p/m", harness: "omp", intent: "spawn", cols: 80, rows: 24 });
+    expect(order).toEqual(["prepare", "resume"]);
+    expect(ipc.prepareHostedInference).toHaveBeenCalledWith("p/m", "omp");
+    expect(seen[0].req).toMatchObject({ session: { taskSlug: "t", id: "s1" }, intent: "spawn", cwd: "/w", phase: "plan", model: "p/m", cols: 80, rows: 24 });
+  });
+
+  it("an attach starts nothing, so it refreshes nothing; an unknown intent never reaches the daemon", async () => {
+    await openSession("/r", { id: "s1", cwd: "/w", intent: "attach" });
+    expect(ipc.prepareHostedInference).not.toHaveBeenCalled();
+    expect(seen[0]).toMatchObject({ call: "resumeSession", req: { intent: "attach", session: { taskSlug: "", id: "s1" } } });
+    await expect(openSession("/r", { id: "s1", cwd: "/w", intent: "teleport" })).rejects.toThrow("unknown session intent 'teleport'");
+    expect(seen).toHaveLength(1);
+  });
+
+  it("the drawer shell is a taskless no-harness session that is created and not started", async () => {
+    impl.createSession = () => ({ started: { session: { id: "d1", harness: "no-harness" }, start: "not_requested", errors: [] } });
+    expect(await createDrawerTerminal("/r")).toMatchObject({ id: "d1" });
+    expect(seen[0]).toMatchObject({
+      repo: "/r",
+      call: "createSession",
+      req: { taskSlug: "", start: false, target: { case: "auxiliary", value: { harness: "no-harness" } } },
+    });
   });
 });

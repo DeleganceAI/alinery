@@ -3,13 +3,13 @@
 import type { ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { ChatService } from "alinery-proto/alinery/v1/chat_pb";
-import { archiveChatThread, createChatThread, removeChatWorktree, resumeChatThread, setChatPinned } from "../domain/chat.ts";
+import { archiveChatThread, createChatThread, loadChat, removeChatWorktree, resumeChatThread, setChatPinned } from "../domain/chat.ts";
 import type { Json } from "../domain/sessionOps.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, metaOf } from "./errors.ts";
-import { metaRel, nameRel, ranOrFail, type SessionControl, started } from "./sessions.ts";
+import { controlsOf, metaRel, nameRel, ranOrFail, type SessionControl, started } from "./sessions.ts";
 
 export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): ServiceImpl<typeof ChatService> {
   const applied = () => ({ cursor: store.cursor() });
@@ -71,6 +71,37 @@ export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): Se
         const id = String(successor.id);
         await settle(req.threadId, id);
         return { applied: applied(), successorId: id };
+      });
+    },
+    // The controls name a thread, and a thread is a root session of the chat kind (`loadChat` refuses any other id).
+    promptChatThread: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        loadChat(c.repo, req.threadId);
+        await c.turns.prompt(req.threadId, req.text);
+        return {};
+      });
+    },
+    abortChatThread: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return domain(async () => {
+        loadChat(c.repo, req.threadId);
+        await c.turns.abort(req.threadId);
+        return {};
+      });
+    },
+    setChatModel: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        loadChat(c.repo, req.threadId);
+        return controlsOf(await c.turns.setModel(req.threadId, req.model));
+      });
+    },
+    setChatThinkingLevel: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        loadChat(c.repo, req.threadId);
+        return controlsOf(await c.turns.setThinkingLevel(req.threadId, req.level));
       });
     },
   };

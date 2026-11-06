@@ -111,7 +111,7 @@ export class SessionPublisher {
     private readonly store: Store,
     private readonly feed: Feed,
     private readonly liveRows: () => Iterable<LiveRow>,
-    private readonly info: { protocol: number; buildId: string; watchExhausted?: () => boolean },
+    private readonly info: { protocol: number; buildId: string; watchExhausted?: () => boolean; hostGuardWarning?: string },
     private readonly log: (line: string) => void = console.error,
   ) {}
 
@@ -163,6 +163,6 @@ export class SessionPublisher {
       else if (row.agent.state === "waiting_for_input") waitingForInput += 1;
       else if (row.agent.state === "waiting_for_approval") waitingForApproval += 1;
     }
-    commitDaemonStatus(this.store, { protocol: this.info.protocol, buildId: this.info.buildId, liveSessions, watchExhausted: this.info.watchExhausted?.(), busy, waitingForInput, waitingForApproval });
+    commitDaemonStatus(this.store, { protocol: this.info.protocol, buildId: this.info.buildId, liveSessions, hostGuardWarning: this.info.hostGuardWarning, watchExhausted: this.info.watchExhausted?.(), busy, waitingForInput, waitingForApproval });
   }
 }

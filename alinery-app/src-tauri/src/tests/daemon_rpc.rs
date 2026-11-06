@@ -71,7 +71,23 @@ static HOSTED_WRITES: Mutex<Vec<(String, WriteHostedInferenceRequest)>> = Mutex:
 /// Every Shutdown any stand-in received: the Authorization header, then the decoded request.
 static SHUTDOWNS: Mutex<Vec<(String, ShutdownRequest)>> = Mutex::new(Vec::new());
 
-fn shutdowns_with(token: &str) -> Vec<ShutdownRequest> {
+/// What a stand-in answers `Hello` with, per token (a lifecycle test registers its own token, so parallel tests do not meet).
+static HELLOS: Mutex<Vec<(String, HelloResponse)>> = Mutex::new(Vec::new());
+
+/// The ids a stand-in answers `LiveSessions` with, per token.
+static LIVE: Mutex<Vec<(String, Vec<String>)>> = Mutex::new(Vec::new());
+
+/// Make every stand-in answer `Hello` with `reply` when the call carries `token`.
+pub(super) fn answer_hello_with(token: &str, reply: HelloResponse) {
+    HELLOS.lock().unwrap().push((token.to_string(), reply));
+}
+
+/// Make every stand-in answer `LiveSessions` with `ids` when the call carries `token`.
+pub(super) fn answer_live_sessions_with(token: &str, ids: &[&str]) {
+    LIVE.lock().unwrap().push((token.to_string(), ids.iter().map(|id| id.to_string()).collect()));
+}
+
+pub(super) fn shutdowns_with(token: &str) -> Vec<ShutdownRequest> {
     SHUTDOWNS
         .lock()
         .unwrap()
@@ -81,8 +97,8 @@ fn shutdowns_with(token: &str) -> Vec<ShutdownRequest> {
         .collect()
 }
 
-struct Server {
-    socket: PathBuf,
+pub(super) struct Server {
+    pub(super) socket: PathBuf,
     accepts: Arc<AtomicUsize>,
     aborted: Arc<AtomicUsize>,
     kill: watch::Sender<u32>,
@@ -93,6 +109,11 @@ fn trailers(status: &str) -> Frame<Bytes> {
     let mut map = HeaderMap::new();
     map.insert("grpc-status", status.parse().unwrap());
     Frame::trailers(map)
+}
+
+fn registered_hello(req: &http::Request<Incoming>) -> Option<HelloResponse> {
+    let token = req.headers().get("authorization").and_then(|v| v.to_str().ok())?;
+    HELLOS.lock().unwrap().iter().find(|(t, _)| format!("Bearer {t}") == token).map(|(_, reply)| reply.clone())
 }
 
 async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: Held, kill: watch::Sender<u32>) -> Result<http::Response<Feed>, Infallible> {
@@ -113,6 +134,33 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
         "/alinery.v1.AdminService/Hello" if req.headers().get("authorization").is_some_and(|v| v == "Bearer stale") => {
             builder = builder.header("grpc-status", "16").header("grpc-message", "wrong token");
             empty = true;
+        }
+        "/alinery.v1.AdminService/Hello" if registered_hello(&req).is_some() => {
+            let message = registered_hello(&req).unwrap().encode_to_vec();
+            let mut body = vec![0, 0, 0, 0, message.len() as u8];
+            body.extend_from_slice(&message);
+            tx.send(Frame::data(Bytes::from(body))).unwrap();
+            tx.send(trailers("0")).unwrap();
+        }
+        "/alinery.v1.AdminService/LiveSessions" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let ids = LIVE.lock().unwrap().iter().find(|(t, _)| format!("Bearer {t}") == token).map(|(_, ids)| ids.clone());
+            match ids {
+                Some(ids) => {
+                    let message = crate::daemon_rpc::LiveSessionsResponse {
+                        sessions: ids.into_iter().map(|id| crate::daemon_rpc::LiveSession { id }).collect(),
+                    }
+                    .encode_to_vec();
+                    let mut body = vec![0, 0, 0, 0, message.len() as u8];
+                    body.extend_from_slice(&message);
+                    tx.send(Frame::data(Bytes::from(body))).unwrap();
+                    tx.send(trailers("0")).unwrap();
+                }
+                None => {
+                    builder = builder.header("grpc-status", "16").header("grpc-message", "wrong token");
+                    empty = true;
+                }
+            }
         }
         "/alinery.v1.AdminService/Hello" => {
             let mut message = vec![0x08, 25, 0x12, 3];
@@ -206,7 +254,7 @@ async fn serve() -> Server {
     serve_at(dir.join("rpc.sock"), dir).await
 }
 
-async fn serve_at(socket: PathBuf, dir: PathBuf) -> Server {
+pub(super) async fn serve_at(socket: PathBuf, dir: PathBuf) -> Server {
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (accepts, aborted, held) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Held::default());
     let (kill, _) = watch::channel(0u32);
@@ -463,11 +511,6 @@ fn resolve_maps_a_remote_key_to_its_ssh_forward_and_the_token_this_app_kept_for_
     let (forward, remote) = crate::remote::rpc_forward("host-1", "/home/me/repo").unwrap();
     assert_eq!(socket, forward);
     assert_eq!(remote, "/home/me/repo/.alinery/rpc.sock", "the host's daemon has no lane");
-    assert_ne!(
-        forward,
-        crate::remote::repo_forward("host-1", "/home/me/repo").unwrap().0,
-        "the RPC socket rides its own forward, not the JSON-lines one"
-    );
     assert_eq!(secret, crate::daemon::rpc_secret_path(&cfg.join("remote").join("host-1"), "/home/me/repo", ""));
     assert_ne!(secret, crate::daemon::rpc_secret_path(&cfg.join("remote").join("host-2"), "/home/me/repo", ""));
 }
@@ -598,13 +641,13 @@ fn golden_write_hosted_inference_decodes_field_by_field_and_encodes_back_to_the_
 
 /// A repo whose `.alinery/rpc[-lane].sock` is served by a stand-in, with the token this app would have
 /// kept for it. Plain `#[test]`, because `shutdown_daemon` blocks on the app's own runtime.
-struct Teardown {
-    repo: PathBuf,
-    app_config: PathBuf,
-    server: Server,
+pub(super) struct Teardown {
+    pub(super) repo: PathBuf,
+    pub(super) app_config: PathBuf,
+    pub(super) server: Server,
 }
 
-fn teardown_fixture(lane: Option<&str>, token: &str) -> Teardown {
+pub(super) fn teardown_fixture(lane: Option<&str>, token: &str) -> Teardown {
     let root = PathBuf::from(format!("/tmp/alinery-sd-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
     let repo = root.join("repo");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
@@ -791,7 +834,7 @@ fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
     let t = teardown_fixture(None, "bound");
     let key = t.repo.display().to_string();
     // This process serves the stand-in, so its identity is the one a takeover of it would hold.
-    let here = alinery_core::daemon_client::peer_process_identity(&std::os::unix::net::UnixStream::connect(&t.server.socket).unwrap()).unwrap();
+    let here = alinery_core::legacy_daemon::peer_process_identity(&std::os::unix::net::UnixStream::connect(&t.server.socket).unwrap()).unwrap();
     shutdown_daemon(&key, &t.app_config, None, ShutdownOrigin::ConfirmedTakeover, "c-1", Some(&here), || panic!("rpc answers")).unwrap();
     assert_eq!(shutdowns_with("bound").len(), 1);
     // An identity taken from another process is stale: refused before any request is sent.
@@ -812,7 +855,7 @@ fn a_takeover_is_bound_to_the_process_it_was_confirmed_for() {
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-    let foreign = alinery_core::daemon_client::peer_process_identity(&stream.expect("the child listens")).unwrap();
+    let foreign = alinery_core::legacy_daemon::peer_process_identity(&stream.expect("the child listens")).unwrap();
     let error = shutdown_daemon(&key, &t.app_config, None, ShutdownOrigin::ConfirmedTakeover, "c-2", Some(&foreign), || {
         panic!("must not fall back")
     })

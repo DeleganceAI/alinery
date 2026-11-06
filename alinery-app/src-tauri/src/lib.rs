@@ -40,12 +40,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use alinery_core::daemon_client;
+use alinery_core::legacy_daemon::read_socket_line;
 #[cfg(test)]
-use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
-#[cfg(test)]
-use alinery_core::daemon_client::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT};
-use alinery_core::daemon_client::{read_socket_line, DaemonClient};
+use alinery_core::legacy_daemon::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT, DAEMON_OBSERVATION_TIMEOUT};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 pub(crate) use alinery_core::write_owner_only_bytes;
 #[cfg(test)]
@@ -118,7 +115,6 @@ use mcp::*;
 use notify::*;
 use omp_update::*;
 use paths::*;
-use pi_durable::*;
 use remote::*;
 use session::*;
 use settings::*;
@@ -143,7 +139,6 @@ pub fn run() {
         .setup(|app| {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
-            spawn_pi_supervisor(app.handle().clone());
             spawn_remote_supervisor(app.handle().clone());
             spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
@@ -176,12 +171,7 @@ pub fn run() {
             pick_attachment_files_dialog,
             read_local_file,
             lookup_task_pull_request,
-            ensure_drawer_terminal,
             list_chat_repos,
-            chat_prompt,
-            chat_abort,
-            chat_set_model,
-            chat_set_thinking_level,
             list_community_playbooks,
             community_remote_status,
             download_community_source,
@@ -190,11 +180,6 @@ pub fn run() {
             publish_community_playbook,
             grok_key_ready,
             chat_file_stat,
-            open_session,
-            session_prompt,
-            session_abort,
-            session_set_model,
-            session_set_thinking_level,
             daemon_status,
             prepare_repo_takeover,
             confirm_repo_takeover,
@@ -235,7 +220,6 @@ pub fn run() {
             apply_update,
             open_vinculum_agent_dir,
             pick_vinculum_skill_dialog,
-            vinculum_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")

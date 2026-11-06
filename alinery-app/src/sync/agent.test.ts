@@ -3,7 +3,7 @@ import type { AgentService } from "alinery-proto/alinery/v1/agent_pb";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness } from "../test/daemonHarness";
-import { agentDirIsLocal, agentHost, customizationPrompt, deleteSkill, installSkill, readCustomizations, readModelRoles, writeModelRoles } from "./agent";
+import { agentDirIsLocal, agentHost, customizationPrompt, deleteSkill, installSkill, readCustomizations, readMcpStatus, readModelRoles, writeModelRoles } from "./agent";
 import { NoLibraryHost } from "./playbooks";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -108,4 +108,24 @@ it("a refusal reads as the daemon's own message", async () => {
     },
   });
   await expect(deleteSkill("../x", "/a")).rejects.toThrow("skill name is not valid");
+});
+
+it("maps the MCP status of the host's daemon, leaving an absent error absent", async () => {
+  serve({
+    readMcpStatus: () => ({
+      tools: ["read", "alinery_phase_complete"],
+      servers: [
+        { name: "alinery", builtin: true, state: "connected" },
+        { name: "linear", builtin: false, state: "error", error: "spawn failed" },
+      ],
+    }),
+  });
+  expect(await readMcpStatus("/a")).toEqual({
+    tools: ["read", "alinery_phase_complete"],
+    servers: [
+      { name: "alinery", builtin: true, state: "connected" },
+      { name: "linear", builtin: false, state: "error", error: "spawn failed" },
+    ],
+  });
+  expect(vi.mocked(daemonTransport)).toHaveBeenCalledWith("/a");
 });

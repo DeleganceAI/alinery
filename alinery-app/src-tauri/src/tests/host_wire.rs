@@ -92,8 +92,7 @@ fn every_request_matches_the_bytes_protobuf_es_wrote() {
             log: p("/srv/c/logs/d.log"),
             launch: Launch::SystemdRun,
             unit: Some("alinery-daemon-abc".into()),
-            ui_secret_file: Some(p("/srv/c/ui-secrets/a.secret")),
-            rpc_secret_file: Some(p("/srv/c/ui-secrets/a.rpc")),
+            rpc_secret_file: Some(p("/srv/c/rpc-secrets/a.rpc")),
         },
     );
 }
@@ -109,15 +108,11 @@ fn a_spawn_with_nothing_optional_sends_empty_strings_the_service_leaves_out() {
         log: "/l".into(),
         launch: Launch::Direct,
         unit: None,
-        ui_secret_file: None,
         rpc_secret_file: None,
     }
     .into_call();
     let host_request::Call::SpawnDaemon(spawn) = call else { panic!("not a spawn") };
-    assert_eq!(
-        (spawn.namespace.as_str(), spawn.unit.as_str(), spawn.ui_secret_file.as_str(), spawn.rpc_secret_file.as_str()),
-        ("", "", "", "")
-    );
+    assert_eq!((spawn.namespace.as_str(), spawn.unit.as_str(), spawn.rpc_secret_file.as_str()), ("", "", ""));
     assert_eq!(spawn.launch, Launch::Direct as i32);
 }
 

@@ -10,7 +10,54 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/admin.proto.
  */
 export const file_alinery_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIk0KEE1pbnRUb2tlblJlcXVlc3QSKgoKY2FwYWJpbGl0eRgBIAEoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRINCgVsYWJlbBgCIAEoCSIiChFNaW50VG9rZW5SZXNwb25zZRINCgV0b2tlbhgBIAEoCSJICgxIZWxsb1JlcXVlc3QSEQoJY2xpZW50X2lkGAEgASgJEhMKC2NsaWVudF9raW5kGAIgASgJEhAKCHByb3RvY29sGAMgASgNIqABCg1IZWxsb1Jlc3BvbnNlEhAKCHByb3RvY29sGAEgASgNEhAKCGJ1aWxkX2lkGAIgASgJEg0KBWVwb2NoGAMgASgJEiwKDGNhcGFiaWxpdGllcxgEIAMoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRIRCglyZXBvX3Jvb3QYBSABKAkSGwoTYXBwX2NvbmZpZ19pZGVudGl0eRgGIAEoCSJWCg9TaHV0ZG93blJlcXVlc3QSKgoGb3JpZ2luGAEgASgOMhouYWxpbmVyeS52MS5TaHV0ZG93bk9yaWdpbhIXCg9jb25maXJtYXRpb25faWQYAiABKAkiLAoQU2h1dGRvd25SZXNwb25zZRIYChBzZXNzaW9uc19zdG9wcGVkGAEgASgNKpUBCgpDYXBhYmlsaXR5EhoKFkNBUEFCSUxJVFlfVU5TUEVDSUZJRUQQABITCg9DQVBBQklMSVRZX1ZJRVcQARISCg5DQVBBQklMSVRZX0FDVBACEhYKEkNBUEFCSUxJVFlfQVBQUk9WRRADEhQKEENBUEFCSUxJVFlfQURNSU4QBBIUChBDQVBBQklMSVRZX0FHRU5UEAUq3wEKDlNodXRkb3duT3JpZ2luEh8KG1NIVVRET1dOX09SSUdJTl9VTlNQRUNJRklFRBAAEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX0RBRU1PThABEh4KGlNIVVRET1dOX09SSUdJTl9DTE9TRV9SRVBPEAISIgoeU0hVVERPV05fT1JJR0lOX1JFU1RPUkVfQkFDS1VQEAMSJgoiU0hVVERPV05fT1JJR0lOX0NPTkZJUk1FRF9UQUtFT1ZFUhAEEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX1JFTU9URRAFMt0BCgxBZG1pblNlcnZpY2USPAoFSGVsbG8SGC5hbGluZXJ5LnYxLkhlbGxvUmVxdWVzdBoZLmFsaW5lcnkudjEuSGVsbG9SZXNwb25zZRJFCghTaHV0ZG93bhIbLmFsaW5lcnkudjEuU2h1dGRvd25SZXF1ZXN0GhwuYWxpbmVyeS52MS5TaHV0ZG93blJlc3BvbnNlEkgKCU1pbnRUb2tlbhIcLmFsaW5lcnkudjEuTWludFRva2VuUmVxdWVzdBodLmFsaW5lcnkudjEuTWludFRva2VuUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIhUKE0xpdmVTZXNzaW9uc1JlcXVlc3QiGQoLTGl2ZVNlc3Npb24SCgoCaWQYASABKAkiQQoUTGl2ZVNlc3Npb25zUmVzcG9uc2USKQoIc2Vzc2lvbnMYASADKAsyFy5hbGluZXJ5LnYxLkxpdmVTZXNzaW9uIk0KEE1pbnRUb2tlblJlcXVlc3QSKgoKY2FwYWJpbGl0eRgBIAEoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRINCgVsYWJlbBgCIAEoCSIiChFNaW50VG9rZW5SZXNwb25zZRINCgV0b2tlbhgBIAEoCSJICgxIZWxsb1JlcXVlc3QSEQoJY2xpZW50X2lkGAEgASgJEhMKC2NsaWVudF9raW5kGAIgASgJEhAKCHByb3RvY29sGAMgASgNIqABCg1IZWxsb1Jlc3BvbnNlEhAKCHByb3RvY29sGAEgASgNEhAKCGJ1aWxkX2lkGAIgASgJEg0KBWVwb2NoGAMgASgJEiwKDGNhcGFiaWxpdGllcxgEIAMoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRIRCglyZXBvX3Jvb3QYBSABKAkSGwoTYXBwX2NvbmZpZ19pZGVudGl0eRgGIAEoCSJWCg9TaHV0ZG93blJlcXVlc3QSKgoGb3JpZ2luGAEgASgOMhouYWxpbmVyeS52MS5TaHV0ZG93bk9yaWdpbhIXCg9jb25maXJtYXRpb25faWQYAiABKAkiLAoQU2h1dGRvd25SZXNwb25zZRIYChBzZXNzaW9uc19zdG9wcGVkGAEgASgNKpUBCgpDYXBhYmlsaXR5EhoKFkNBUEFCSUxJVFlfVU5TUEVDSUZJRUQQABITCg9DQVBBQklMSVRZX1ZJRVcQARISCg5DQVBBQklMSVRZX0FDVBACEhYKEkNBUEFCSUxJVFlfQVBQUk9WRRADEhQKEENBUEFCSUxJVFlfQURNSU4QBBIUChBDQVBBQklMSVRZX0FHRU5UEAUq3wEKDlNodXRkb3duT3JpZ2luEh8KG1NIVVRET1dOX09SSUdJTl9VTlNQRUNJRklFRBAAEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX0RBRU1PThABEh4KGlNIVVRET1dOX09SSUdJTl9DTE9TRV9SRVBPEAISIgoeU0hVVERPV05fT1JJR0lOX1JFU1RPUkVfQkFDS1VQEAMSJgoiU0hVVERPV05fT1JJR0lOX0NPTkZJUk1FRF9UQUtFT1ZFUhAEEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX1JFTU9URRAFMrACCgxBZG1pblNlcnZpY2USPAoFSGVsbG8SGC5hbGluZXJ5LnYxLkhlbGxvUmVxdWVzdBoZLmFsaW5lcnkudjEuSGVsbG9SZXNwb25zZRJFCghTaHV0ZG93bhIbLmFsaW5lcnkudjEuU2h1dGRvd25SZXF1ZXN0GhwuYWxpbmVyeS52MS5TaHV0ZG93blJlc3BvbnNlEkgKCU1pbnRUb2tlbhIcLmFsaW5lcnkudjEuTWludFRva2VuUmVxdWVzdBodLmFsaW5lcnkudjEuTWludFRva2VuUmVzcG9uc2USUQoMTGl2ZVNlc3Npb25zEh8uYWxpbmVyeS52MS5MaXZlU2Vzc2lvbnNSZXF1ZXN0GiAuYWxpbmVyeS52MS5MaXZlU2Vzc2lvbnNSZXNwb25zZWIGcHJvdG8z");
+
+/**
+ * @generated from message alinery.v1.LiveSessionsRequest
+ */
+export type LiveSessionsRequest = Message<"alinery.v1.LiveSessionsRequest"> & {
+};
+
+/**
+ * Describes the message alinery.v1.LiveSessionsRequest.
+ * Use `create(LiveSessionsRequestSchema)` to create a new message.
+ */
+export const LiveSessionsRequestSchema: GenMessage<LiveSessionsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 0);
+
+/**
+ * @generated from message alinery.v1.LiveSession
+ */
+export type LiveSession = Message<"alinery.v1.LiveSession"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message alinery.v1.LiveSession.
+ * Use `create(LiveSessionSchema)` to create a new message.
+ */
+export const LiveSessionSchema: GenMessage<LiveSession> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 1);
+
+/**
+ * @generated from message alinery.v1.LiveSessionsResponse
+ */
+export type LiveSessionsResponse = Message<"alinery.v1.LiveSessionsResponse"> & {
+  /**
+   * @generated from field: repeated alinery.v1.LiveSession sessions = 1;
+   */
+  sessions: LiveSession[];
+};
+
+/**
+ * Describes the message alinery.v1.LiveSessionsResponse.
+ * Use `create(LiveSessionsResponseSchema)` to create a new message.
+ */
+export const LiveSessionsResponseSchema: GenMessage<LiveSessionsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 2);
 
 /**
  * Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
@@ -36,7 +83,7 @@ export type MintTokenRequest = Message<"alinery.v1.MintTokenRequest"> & {
  * Use `create(MintTokenRequestSchema)` to create a new message.
  */
 export const MintTokenRequestSchema: GenMessage<MintTokenRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 0);
+  messageDesc(file_alinery_v1_admin, 3);
 
 /**
  * @generated from message alinery.v1.MintTokenResponse
@@ -53,7 +100,7 @@ export type MintTokenResponse = Message<"alinery.v1.MintTokenResponse"> & {
  * Use `create(MintTokenResponseSchema)` to create a new message.
  */
 export const MintTokenResponseSchema: GenMessage<MintTokenResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 1);
+  messageDesc(file_alinery_v1_admin, 4);
 
 /**
  * @generated from message alinery.v1.HelloRequest
@@ -82,7 +129,7 @@ export type HelloRequest = Message<"alinery.v1.HelloRequest"> & {
  * Use `create(HelloRequestSchema)` to create a new message.
  */
 export const HelloRequestSchema: GenMessage<HelloRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 2);
+  messageDesc(file_alinery_v1_admin, 5);
 
 /**
  * @generated from message alinery.v1.HelloResponse
@@ -126,7 +173,7 @@ export type HelloResponse = Message<"alinery.v1.HelloResponse"> & {
  * Use `create(HelloResponseSchema)` to create a new message.
  */
 export const HelloResponseSchema: GenMessage<HelloResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 3);
+  messageDesc(file_alinery_v1_admin, 6);
 
 /**
  * @generated from message alinery.v1.ShutdownRequest
@@ -148,7 +195,7 @@ export type ShutdownRequest = Message<"alinery.v1.ShutdownRequest"> & {
  * Use `create(ShutdownRequestSchema)` to create a new message.
  */
 export const ShutdownRequestSchema: GenMessage<ShutdownRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 4);
+  messageDesc(file_alinery_v1_admin, 7);
 
 /**
  * @generated from message alinery.v1.ShutdownResponse
@@ -165,7 +212,7 @@ export type ShutdownResponse = Message<"alinery.v1.ShutdownResponse"> & {
  * Use `create(ShutdownResponseSchema)` to create a new message.
  */
 export const ShutdownResponseSchema: GenMessage<ShutdownResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 5);
+  messageDesc(file_alinery_v1_admin, 8);
 
 /**
  * @generated from enum alinery.v1.Capability
@@ -290,6 +337,18 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof MintTokenRequestSchema;
     output: typeof MintTokenResponseSchema;
+  },
+  /**
+   * The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
+   *
+   * ADMIN
+   *
+   * @generated from rpc alinery.v1.AdminService.LiveSessions
+   */
+  liveSessions: {
+    methodKind: "unary";
+    input: typeof LiveSessionsRequestSchema;
+    output: typeof LiveSessionsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_admin, 0);

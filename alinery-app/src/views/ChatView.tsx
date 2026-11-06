@@ -12,7 +12,7 @@ import { repoDisplayPath } from "../remoteRepo";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
-import { archiveChatThread, createChatThread, removeChatWorktree, resumeChatThread, setChatPinned, useChatThreads, useOpenChatRepos } from "../sync/chat";
+import { archiveChatThread, createChatThread, removeChatWorktree, resumeChatThread, setChatPinned, setChatThinkingLevel, useChatThreads, useOpenChatRepos } from "../sync/chat";
 import { useSessionObservations } from "../sync/sessionObservation";
 import { renameSession } from "../sync/sessions";
 import { toast } from "../toast";
@@ -293,7 +293,7 @@ function ChatViewBody({
 
   function pickThinking(level: string) {
     if (!selected) return;
-    void ipc.chatSetThinkingLevel(selected.repo_path, selected.session.id, level).then(
+    void setChatThinkingLevel(selected.repo_path, selected.session.id, level).then(
       (controls) => chat.applyControls(controls),
       (cause: unknown) => setError(String(cause)),
     );

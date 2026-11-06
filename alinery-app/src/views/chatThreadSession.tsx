@@ -19,7 +19,16 @@ import { compactCommand, getStateCommand, type ImageContent, promptCommand } fro
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
-import { copyChatThreadAttachments, readChatThreadImage, resumeChatThread, startChatThread, writeChatThreadAttachmentBytes } from "../sync/chat";
+import {
+  abortChatThread,
+  copyChatThreadAttachments,
+  promptChatThread,
+  readChatThreadImage,
+  resumeChatThread,
+  setChatModel,
+  startChatThread,
+  writeChatThreadAttachmentBytes,
+} from "../sync/chat";
 import { useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -657,7 +666,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      await ipc.chatPrompt(repo, id, text);
+      await promptChatThread(repo, id, text);
     } catch (cause) {
       entry.verdicts.delete(command.id);
       throw cause;
@@ -803,7 +812,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     try {
       const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
       const row = prepared ? draftToRowAttachments(attachments) : undefined;
-      await ipc.chatAbort(repo, id).catch(() => undefined);
+      await abortChatThread(repo, id).catch(() => undefined);
       await writeSend(
         prepared?.message ?? text,
         sendNowCommand(prepared?.message ?? text, prepared?.images),
@@ -820,7 +829,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   function abort() {
     updateTranscript((current) => appendOptimisticAbort(current));
-    ipc.chatAbort(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
+    abortChatThread(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
   }
 
   const activity = chatActivity(observation, transcript);
@@ -985,7 +994,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           current={transcript.sessionMeta.model}
           onPick={(model) => {
             setProvidersDialog(null);
-            void ipc.chatSetModel(repo, id, model).then(
+            void setChatModel(repo, id, model).then(
               (controls) => updateTranscript((current) => applySessionControls(current, controls)),
               (cause: unknown) => registry.setError(String(cause)),
             );

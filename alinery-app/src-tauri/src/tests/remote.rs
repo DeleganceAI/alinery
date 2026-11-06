@@ -94,6 +94,13 @@ fn live_args() -> Option<Vec<String>> {
     Some(raw.split_whitespace().map(str::to_string).collect())
 }
 
+/// `Hello` to the daemon behind `repo` on host `id`, over its forward, with the token this app kept for it.
+fn remote_hello(state: &crate::AppState, id: &str, repo: &str) -> Result<crate::daemon_rpc::HelloResponse, String> {
+    let session = state.remotes.session(id).ok_or("the host is not connected")?;
+    let (local, _) = rpc_forward(id, repo)?;
+    crate::daemon_rpc::hello_at(&local, &crate::daemon::rpc_secret_path(&session.secrets_dir, repo, ""), std::time::Duration::from_secs(5))
+}
+
 fn live_session(args: &[String], id: &str) -> RemoteSession {
     let conn = HostConn::new(id, args).unwrap();
     conn.ensure_master(true).unwrap();
@@ -169,29 +176,50 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         contents: render_remote_app_toml(&local, std::slice::from_ref(&repo), false).unwrap(),
     });
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
-    let (client, compat, _) = ensure_remote_daemon(&session, &repo, &identity).unwrap();
+    let (hello, compat) = ensure_remote_daemon(&session, &repo, &identity).unwrap();
     assert!(compat.usable());
-    assert!(client.session_statuses_observed().unwrap().is_empty());
+    assert_eq!(hello.app_config_identity, identity);
+    {
+        let (rpc_local, _) = rpc_forward(&session.conn.host_id, &repo).unwrap();
+        let secret = crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "");
+        assert!(crate::daemon_rpc::live_sessions_at(&rpc_local, &secret).unwrap().is_empty());
+    }
 
-    // UI control over the forward: the secret this Mac gave the daemon opens it, nothing else does,
-    // and the file that carried it is gone from the host.
-    let secret = read_ui_secrets(&session.secrets_dir).remove(&repo).expect("the app kept the secret it gave the daemon");
-    assert_eq!(secret.len(), 64);
+    // The token this Mac gave the daemon travelled in a file that the daemon deletes when it starts.
     let leftover = session
         .conn
         .exec_ok(
-            &format!("ls '{}/ui-secrets' | wc -l", session.config_dir),
+            &format!("ls '{}/rpc-secrets' | wc -l", session.config_dir),
             RemoteStdin::None,
             std::time::Duration::from_secs(20),
         )
         .unwrap();
     assert_eq!(leftover.trim(), "0", "the daemon deletes the secret file when it starts");
     assert!(
-        alinery_core::daemon_client::UiControlConnection::connect(&client).is_err(),
-        "the peer is sshd, which is not the UI host"
+        session
+            .conn
+            .exec_ok(
+                &format!("test -S '{repo}/.alinery/rpc.sock' && echo yes; true"),
+                RemoteStdin::None,
+                std::time::Duration::from_secs(20)
+            )
+            .unwrap()
+            .trim()
+            == "yes"
     );
-    assert!(alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &"x".repeat(64)).is_err());
-    alinery_core::daemon_client::UiControlConnection::connect_with_secret(&client, &secret).unwrap();
+    assert_eq!(
+        session
+            .conn
+            .exec_ok(
+                &format!("ls '{repo}/.alinery/' | grep -c '^alineryd.*sock$'; true"),
+                RemoteStdin::None,
+                std::time::Duration::from_secs(20)
+            )
+            .unwrap()
+            .trim(),
+        "0",
+        "the daemon serves one socket, rpc.sock"
+    );
 
     let daemons = |session: &RemoteSession| {
         session
@@ -215,7 +243,6 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     assert_eq!(first_hello.protocol, alinery_core::PROTOCOL_VERSION);
     assert!(!first_hello.epoch.is_empty() && !first_hello.build_id.is_empty(), "{first_hello:?}");
     let (rpc_local, _) = rpc_forward(&session.conn.host_id, &repo).unwrap();
-    assert_ne!(rpc_local, repo_forward(&session.conn.host_id, &repo).unwrap().0);
     let wrong = tauri::async_runtime::block_on(crate::daemon_rpc::hello(&rpc_local, "x".repeat(64).as_str())).unwrap_err();
     assert!(wrong.contains("grpc-status 16"), "a wrong token is UNAUTHENTICATED, not a transport failure: {wrong}");
 
@@ -224,7 +251,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     drop(session);
     let again = live_session(&args, &id);
     assert_eq!(daemons(&again), before, "the daemon must be the same process after reconnecting");
-    let (_, compat, _) = ensure_remote_daemon(&again, &repo, &identity).unwrap();
+    let (_, compat) = ensure_remote_daemon(&again, &repo, &identity).unwrap();
     assert!(compat.usable());
     assert_eq!(daemons(&again), before, "reconnecting must not start a second daemon");
     assert_eq!(
@@ -315,11 +342,11 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     // A path that is not a checkout root is refused.
     assert!(add_remote_repo(&handle, &id, &home).is_err());
 
-    let config = crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    let config = crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
     assert_eq!(config.active_repo, key);
-    assert!(state.daemon_for(Path::new(&key)).is_some());
+    assert!(state.daemon_attached(Path::new(&key)));
     assert!(crate::active_repo().is_err(), "un-migrated local-path commands must refuse a remote active repo");
-    assert!(state.daemon().is_some(), "the active remote repo's client is the one session commands use");
+    assert!(remote_hello(&state, &id, &repo).is_ok(), "the attached daemon answers Hello over its forward");
 
     // A task written on the host shows up in the same board rows a local repo would give.
     let task = alinery_core::Task {
@@ -339,58 +366,22 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             std::time::Duration::from_secs(30),
         )
         .unwrap();
-    // A terminal on the host, streamed through the forwarded socket: create the auxiliary
-    // session, open it, type a command, read the output come back.
-    let client = repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap();
-    let created = client
-        .create_execution_session(&alinery_core::task_creation::CreateExecutionSessionRequest {
-            task_slug: String::new(),
-            target: alinery_core::task_creation::ExecutionSessionTarget::Auxiliary {
-                harness: alinery_core::NO_HARNESS_KEY.into(),
-                model: None,
-                prompt: None,
-            },
-            launch_override: None,
-            prompt_extra: None,
-            handoff_artifact: None,
-            start: false,
-        })
-        .unwrap();
-    let terminal = created.session.id.clone();
-    // The shell starts over the forward. Its bytes travel on TerminalService, not on this socket
-    // (vinculum-daemon/src/rpc/terminal.test.ts).
-    client
-        .resume_session(&alinery_core::daemon_client::OpenRequest {
-            intent: alinery_core::daemon_client::ops::SPAWN,
-            id: &terminal,
-            cwd: &repo,
-            task_slug: Some(""),
-            phase: None,
-            model: None,
-            resume_token: None,
-            cols: Some(80),
-            rows: Some(24),
-        })
-        .unwrap();
-
-    client.kill_session(&terminal).unwrap();
-
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
     disconnect_host(&handle, &id);
-    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert!(!state.daemon_attached(Path::new(&key)));
     assert_eq!(host_views(&handle, &state)[0].state, "idle");
     assert!(
-        crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).is_err(),
+        crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).is_err(),
         "a disconnected host cannot be activated"
     );
 
     // Reconnect re-attaches every known repo on the host to the daemon that was still running.
     connect_and_attach(&handle, &id, false).unwrap();
-    assert!(state.daemon_for(Path::new(&key)).is_some());
+    assert!(state.daemon_attached(Path::new(&key)));
 
     let after = remove_remote_repo(&handle, &key).unwrap();
     assert!(!after.known_repos.contains(&key));
-    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert!(!state.daemon_attached(Path::new(&key)));
     disconnect_host(&handle, &id);
     let _ = crate::set_active_repo_global(None);
     if let Ok(dir) = handle.path().app_config_dir() {
@@ -441,7 +432,7 @@ fn live_a_dropped_host_comes_back_by_itself_and_a_disconnect_stays_down() {
         )
         .unwrap();
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
-    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
     let daemons = || {
         first
             .conn
@@ -476,7 +467,7 @@ fn live_a_dropped_host_comes_back_by_itself_and_a_disconnect_stays_down() {
         before,
         "the daemon is the same process after the app reconnected on its own"
     );
-    assert!(state.daemon_for(Path::new(&key)).is_some_and(|client| client.version_checked().is_ok()));
+    assert!(state.daemon_attached(Path::new(&key)) && remote_hello(&state, &id, &repo).is_ok());
 
     // The user disconnects: it stays down.
     disconnect_host(&handle, &id);
@@ -545,7 +536,7 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
         )
         .unwrap();
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
-    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
     let daemons = |session: &RemoteSession| {
         session
             .conn
@@ -558,7 +549,7 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
     state.begin_quit();
     assert_eq!(crate::close_all_repos_blocking(&handle).unwrap(), 0, "no local repo, and no failure for the remote one");
     assert_eq!(state.remotes.status(&id).state, "idle");
-    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert!(!state.daemon_attached(Path::new(&key)));
 
     state.cancel_quit();
     connect_and_attach(&handle, &id, false).unwrap();
@@ -608,13 +599,22 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, Duration::from_secs(30)).unwrap();
     sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
-    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
     // This repo's daemons only: the host runs the other live tests' daemons too.
     let daemons = || sh(&format!("pgrep -f '[a]linery-vinculum-daemon --repo {repo}' | sort"));
 
     // Replace the good daemon with one started under another settings file, which gives it another identity.
-    let good = state.daemon_for(Path::new(&key)).expect("the app's own daemon is attached");
-    good.call(&alinery_core::daemon_client::shutdown_request()).unwrap();
+    assert!(state.daemon_attached(Path::new(&key)), "the app's own daemon is attached");
+    crate::daemon_rpc::shutdown_daemon(
+        &key,
+        &crate::app_config_path(&handle).unwrap(),
+        None,
+        crate::daemon_rpc::ShutdownOrigin::StopRemote,
+        "",
+        None,
+        || Err("the daemon answers alinery.v1".into()),
+    )
+    .unwrap();
     session.channel.call(HostOp::WaitDaemonGone { repo: repo.clone().into() }, Duration::from_secs(30)).unwrap();
     state.clear_daemon(Path::new(&key));
     assert!(daemons().trim().is_empty(), "no daemon is left to confuse the count");
@@ -622,7 +622,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     sh(&format!("cp '{config_dir}/app.toml' '{config_dir}/other.toml'"));
     // An earlier daemon of this app has the token this app kept for the repo; the replacement is given the same one.
     let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "")).unwrap();
-    let old_rpc_file = format!("{config_dir}/ui-secrets/old.rpc");
+    let old_rpc_file = format!("{config_dir}/rpc-secrets/old.rpc");
     session
         .channel
         .call(
@@ -646,7 +646,6 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
                 // The test host has no systemd user manager; the daemon still detaches.
                 launch: crate::host_wire::Launch::Direct,
                 unit: None,
-                ui_secret_file: None,
                 rpc_secret_file: Some(old_rpc_file.into()),
             },
             Duration::from_secs(30),
@@ -663,7 +662,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     assert!(!old.trim().is_empty(), "the old daemon started");
     // A started process is not a listening daemon: wait for its socket, or the app would find nothing there and start its own.
     for _ in 0..100 {
-        if sh(&format!("test -S '{repo}/.alinery/alineryd.sock' && echo yes; true")).trim() == "yes" {
+        if sh(&format!("test -S '{repo}/.alinery/rpc.sock' && echo yes; true")).trim() == "yes" {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -671,26 +670,23 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
 
     // Opening the repo reports the conflict instead of failing, and replaces nothing.
     crate::activate_remote_repo(&handle, &state, &key).unwrap();
-    assert!(state.daemon_for(Path::new(&key)).is_none());
+    assert!(!state.daemon_attached(Path::new(&key)));
     let conflict = state.daemon_conflict(Path::new(&key)).expect("the unusable daemon is recorded as a conflict");
     assert_eq!(conflict.repo, key);
     assert_eq!(conflict.owners.len(), 1);
     assert!(matches!(&conflict.owners[0].impact, crate::TakeoverImpact::Known { sessions } if sessions.is_empty()));
     assert!(conflict.issues[0].contains("other settings"), "{:?}", conflict.issues);
-    assert!(repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap_err().contains("restart it"));
     assert_eq!(daemons(), old, "attaching never replaces the daemon");
 
     // The confirmed stop ends it, waits for its socket to go, and starts this app's daemon.
     crate::stop_remote_daemon(&handle, &id, &repo, |_, _| Ok(())).unwrap();
     assert!(state.daemon_conflict(Path::new(&key)).is_none());
-    let client = state.daemon_for(Path::new(&key)).expect("the new daemon is attached");
+    assert!(state.daemon_attached(Path::new(&key)), "the new daemon is attached");
     let after = daemons();
     assert_eq!(after.lines().count(), 1, "one daemon serves the repo: {after}");
     assert_ne!(after, old, "the old daemon is gone and a new one runs");
-    let version = client.version();
     let identity = alinery_core::app_config_identity(Path::new(&format!("{config_dir}/app.toml")));
-    assert_eq!(version.app_config_identity.as_deref(), Some(identity.as_str()));
-    assert!(client.session_statuses_observed().unwrap().is_empty());
+    assert_eq!(remote_hello(&state, &id, &repo).unwrap().app_config_identity, identity);
 
     let _ = remove_remote_repo(&handle, &key);
     disconnect_host(&handle, &id);
@@ -736,7 +732,7 @@ fn live_backups_are_written_and_restored_on_the_host() {
     let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, Duration::from_secs(30)).unwrap();
     sh(&format!("rm -rf '{repo}' '{dest}' && mkdir -p '{repo}' '{dest}' && git init -q '{repo}'"));
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
-    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
     let write = |relative: &str, contents: &str| {
         session
             .channel
@@ -794,7 +790,7 @@ fn live_backups_are_written_and_restored_on_the_host() {
     crate::restore_remote_backup(&handle, &id, &repo, &archive).unwrap();
     assert_eq!(sh(&format!("cat '{repo}/.alinery/tasks/keep/notes.txt'")), "before");
     assert_eq!(sh(&format!("ls '{repo}/.alinery/tasks'")).trim(), "keep", "what came after the backup is gone");
-    assert!(state.daemon_for(Path::new(&key)).is_some(), "the daemon is attached again");
+    assert!(state.daemon_attached(Path::new(&key)), "the daemon is attached again");
     let restarted = daemons();
     assert!(
         !restarted.trim().is_empty() && restarted != running,
@@ -855,7 +851,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(30)).unwrap();
     sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
-    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
+    crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone()).unwrap();
 
     let resume = Resume(session.clone());
     sh("pkill -STOP -f '[a]linery-vinculum-daemon --host-service'");
@@ -897,24 +893,24 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
 }
 
 #[test]
-fn approval_secrets_are_kept_per_repo_in_an_owner_only_file() {
+fn a_remote_repos_rpc_token_is_kept_per_host_and_repo_in_an_owner_only_file() {
+    use crate::daemon::{rpc_secret_path, store_rpc_secret};
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!("alinery-secrets-{}", uuid::Uuid::new_v4()));
     let app_config = dir.join("app.toml");
-    let secrets = remote_secrets_dir(&app_config, "box-a1b2c3").unwrap();
-    let secret_of = |repo: &str| read_ui_secrets(&remote_secrets_dir(&app_config, "box-a1b2c3").unwrap()).remove(repo);
-    assert_eq!(secret_of("/srv/a"), None);
-    store_ui_secret(&secrets, "/srv/a", "first").unwrap();
-    store_ui_secret(&secrets, "/srv/b", "other").unwrap();
-    store_ui_secret(&secrets, "/srv/a", "second").unwrap();
-    assert_eq!(secret_of("/srv/a").as_deref(), Some("second"), "a restarted daemon replaces its secret");
-    assert_eq!(secret_of("/srv/b").as_deref(), Some("other"));
-    assert_eq!(
-        read_ui_secrets(&remote_secrets_dir(&app_config, "another-host").unwrap()).remove("/srv/a"),
-        None,
-        "secrets do not cross hosts"
+    let (box_dir, other_dir) = (
+        remote_secrets_dir(&app_config, "box-a1b2c3").unwrap(),
+        remote_secrets_dir(&app_config, "another-host").unwrap(),
     );
-    assert_eq!(std::fs::metadata(secrets.join("ui-secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    let kept = |dir: &Path, repo: &str| std::fs::read_to_string(rpc_secret_path(dir, repo, "")).ok();
+    assert_eq!(kept(&box_dir, "/srv/a"), None);
+    store_rpc_secret(&box_dir, "/srv/a", "", "first").unwrap();
+    store_rpc_secret(&box_dir, "/srv/b", "", "other").unwrap();
+    store_rpc_secret(&box_dir, "/srv/a", "", "second").unwrap();
+    assert_eq!(kept(&box_dir, "/srv/a").as_deref(), Some("second"), "a restarted daemon replaces its token");
+    assert_eq!(kept(&box_dir, "/srv/b").as_deref(), Some("other"));
+    assert_eq!(kept(&other_dir, "/srv/a"), None, "tokens do not cross hosts");
+    assert_eq!(std::fs::metadata(rpc_secret_path(&box_dir, "/srv/a", "")).unwrap().permissions().mode() & 0o777, 0o600);
     let _ = std::fs::remove_dir_all(dir);
 }
 

@@ -61,15 +61,15 @@ vi.mock("../sync/chat", async (actual) => ({
   copyChatThreadAttachments: mocks.copyChatThreadAttachments,
   writeChatThreadAttachmentBytes: mocks.writeChatThreadAttachmentBytes,
   readChatThreadImage: mocks.readChatThreadImage,
+  setChatModel: mocks.chatSetModel,
+  setChatThinkingLevel: mocks.chatSetThinkingLevel,
+  promptChatThread: mocks.chatPrompt,
+  abortChatThread: mocks.chatAbort,
 }));
 vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
   mockIpc({
     listChatRepos: mocks.listChatRepos,
-    chatSetModel: mocks.chatSetModel,
-    chatSetThinkingLevel: mocks.chatSetThinkingLevel,
-    chatPrompt: mocks.chatPrompt,
-    chatAbort: mocks.chatAbort,
     openUrl: mocks.openUrl,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,

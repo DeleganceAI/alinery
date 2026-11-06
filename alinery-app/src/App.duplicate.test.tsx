@@ -251,7 +251,7 @@ describe("App duplicate coordinator", () => {
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", []);
+    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b");
     expect(mocks.startSession).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
@@ -291,11 +291,11 @@ describe("App duplicate coordinator", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/repo-a"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a", []));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a"));
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b", []);
+    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b");
     expect(mocks.startSession).not.toHaveBeenCalled();
   });
 

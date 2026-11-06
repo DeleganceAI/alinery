@@ -4,7 +4,9 @@
 # Review finding 5: the guard watched only `alineryd/src/main.rs` + `protocol.rs`, so a
 # rename confined to the app's client changed the wire and passed. Adding a file to
 # SURFACE is not evidence the gate works — this suite builds synthetic repos and proves
-# the verdict, one case per branch. The fixtures are throwaway git repos in a temp dir;
+# the verdict, one case per branch. Since S5.3 the wire is the proto package, so case 1 is a
+# proto change; the cases about the older JSON-lines client keep guarding what is left of it.
+# The fixtures are throwaway git repos in a temp dir;
 # nothing here touches the real working tree.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,7 +28,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 CONST_REL="alinery-app/src-tauri/alinery-core/src/protocol.rs"
-CLIENT_REL="alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
+CLIENT_REL="alinery-app/src-tauri/alinery-core/src/legacy_daemon.rs"
+PROTO_REL="proto/alinery/v1/admin.proto"
 DAEMON_REL="alinery-app/src-tauri/vinculum-daemon/src/main.ts"
 
 # A minimal repo with the real SURFACE layout and a copy of the gate at the real path,
@@ -34,9 +37,10 @@ DAEMON_REL="alinery-app/src-tauri/vinculum-daemon/src/main.ts"
 new_fixture() { # name -> echoes repo path, leaves a committed baseline at tag "base"
   local repo="$TMP/$1"
   mkdir -p "$repo/scripts/tests" "$repo/$(dirname "$CONST_REL")" \
-    "$repo/$(dirname "$CLIENT_REL")" "$repo/$(dirname "$DAEMON_REL")"
+    "$repo/$(dirname "$CLIENT_REL")" "$repo/$(dirname "$DAEMON_REL")" "$repo/$(dirname "$PROTO_REL")"
   cp "$GATE" "$repo/scripts/tests/"
   printf 'pub const PROTOCOL_VERSION: u32 = 1;\n' >"$repo/$CONST_REL"
+  printf 'service AdminService { rpc Hello(HelloRequest) returns (HelloResponse); }\n' >"$repo/$PROTO_REL"
   # Requests AND reply parsing: both halves of the contract live in this file, so the
   # fixture carries one of each and the cases below can vary them independently.
   {
@@ -59,9 +63,18 @@ run_gate() { # repo -> echoes rc
   printf '%s' "$rc"
 }
 
+# --- 0. the proto package is the wire --------------------------------------------------------
+repo="$(new_fixture proto-wire-change)"
+printf 'service AdminService { rpc Hello(HelloRequest) returns (HelloResponse); rpc Ping(PingRequest) returns (PingResponse); }\n' >"$repo/$PROTO_REL"
+git -C "$repo" commit -qam "add an RPC"
+check "a proto change without a bump FAILS the gate" "1" "$(run_gate "$repo")"
+printf 'pub const PROTOCOL_VERSION: u32 = 2;\n' >"$repo/$CONST_REL"
+git -C "$repo" commit -qam "bump PROTOCOL_VERSION for the RPC"
+check "…and passes once PROTOCOL_VERSION is bumped" "0" "$(run_gate "$repo")"
+
 # --- 1. THE finding: an app-side wire change with the server untouched -------------------
-# Renaming the op the app sends breaks compatibility just as thoroughly as renaming the op
-# the daemon accepts. Before daemon_client.rs joined SURFACE this returned 0.
+# Renaming the op the older-daemon client sends breaks compatibility just as thoroughly as
+# renaming the op the daemon accepts. Before the client joined SURFACE this returned 0.
 repo="$(new_fixture app-wire-change)"
 printf 'pub const WRITE: &str = "write_v2";\n' >"$repo/$CLIENT_REL"
 git -C "$repo" commit -qam "rename the app-side write op"
@@ -131,7 +144,7 @@ check "…and a bump in a later commit does cover the whole range" "0" "$(run_ga
 # Re-review finding 5. The gate covered the requests the app *sends* while the fields it
 # *expects back* were still read in lib.rs — so renaming the status field from "status" to
 # "state" broke the app against an unchanged daemon and the guard stayed green. Reproduced
-# with the old layout. Both halves of the contract now live in daemon_client.rs.
+# with the old layout. Both halves of the older-daemon contract live in legacy_daemon.rs.
 repo="$(new_fixture reply-parsing)"
 printf 'pub const WRITE: &str = "write";\n' >"$repo/$CLIENT_REL"
 printf 'pub fn parse_status_reply(v: &Value) -> String { v["state"].to_string() }\n' \
@@ -275,6 +288,14 @@ git -C "$repo" commit --amend -qm "Resolve daemon merge
 
 Protocol-Neutral: resolution preserves the existing daemon operations and replies"
 check "a conflicted merge passes after declaring its resolution neutral" "0" "$(run_gate "$repo")"
+# --- 11. the number Hello answers is the number the shell compares against ----------------------
+# `ensure_daemon` reuses a daemon only when the protocol in its Hello equals PROTOCOL_VERSION. The daemon answers
+# Hello from main.ts's PROTOCOL, so the two constants must be the same number in the real tree.
+shell_protocol="$(sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9]*\);.*/\1/p' "$ROOT/$CONST_REL")"
+daemon_protocol="$(sed -n 's/^const PROTOCOL = \([0-9]*\);.*/\1/p' "$ROOT/$DAEMON_REL")"
+check "the daemon's Hello protocol equals PROTOCOL_VERSION" "$shell_protocol" "$daemon_protocol"
+check "…and both are numbers" "yes" "$([[ "$shell_protocol" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+
 if [ "$fails" -ne 0 ]; then
   echo "FAILED: $fails check(s)"
   exit 1

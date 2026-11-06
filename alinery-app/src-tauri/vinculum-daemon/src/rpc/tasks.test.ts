@@ -14,7 +14,6 @@ import { Feed } from "../sync/feed.ts";
 import { taskKey } from "../sync/parsers/task.ts";
 import { Store } from "../sync/store.ts";
 import { serveRpc } from "./server.ts";
-import { createFromWire } from "./tasks.ts";
 
 const SECRET = "ab".repeat(32);
 const PLAYBOOK = readFileSync(join(import.meta.dir, "../../../playbooks/one-shot/playbook.md"), "utf8");
@@ -141,25 +140,6 @@ test("CreateTask makes the task, its worktree, ticket and staged attachment, and
   const again = await c.tasks.createTask(createRequest("Fix login"));
   expect(again.created?.task?.slug).toBe("fix-login-1");
   expect(again.created?.task?.branch).toBe("fix-login-1");
-});
-
-test("the legacy create_task wire (alinery-mcp) creates through the same path, with inline base64 attachments, and leaves no scratch behind", async () => {
-  const c = await start();
-  const bytes = randomBytes(1000);
-  const reply = (await createFromWire(c.deps, {
-    name: "From mcp",
-    attachments: [{ name: "a.bin", bytes: bytes.toString("base64") }],
-    playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK },
-    launch_defaults: { harness: "omp", model: "" },
-    start: false,
-  } as never)) as { task: { slug: string }; creation: string; errors: unknown[]; error?: string };
-  expect(reply.error).toBeUndefined();
-  expect(reply.creation).toBe("ready");
-  expect(reply.task.slug).toBe("from-mcp");
-  expect(sha(readFileSync(join(c.alinery, "tasks", "from-mcp", "artifacts", "attachments", "a.bin")))).toBe(sha(bytes));
-  expect(readdirSync(join(c.alinery, "tmp")).filter((n) => n.startsWith("wire-"))).toEqual([]);
-  const refused = (await createFromWire(c.deps, { name: "x", parent_task: "p", playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, start: false } as never)) as { error?: string };
-  expect(refused.error).toContain("create_subtask");
 });
 
 test("WorktreeExists follows the worktree on disk, and an unknown task is NOT_FOUND", async () => {

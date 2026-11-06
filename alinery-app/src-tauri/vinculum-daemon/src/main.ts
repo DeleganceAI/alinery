@@ -1,5 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
-import { createServer, type Socket } from "node:net";
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { WatchHandle } from "@earendil-works/pi-durable";
@@ -15,10 +13,9 @@ import { completeConfiguredText, modelSources, resolveModel } from "./provider.t
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
-import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
-import { createFromWire, createSubtaskFromWire, type TaskDeps } from "./rpc/tasks.ts";
+import type { TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
 import { BoardProjector } from "./domain/board.ts";
@@ -39,14 +36,14 @@ import { BackupHost } from "./jobs/backupHost.ts";
 import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
-import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, startSession, taskOp, taskWorktree } from "./tasks.ts";
+import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, startSession, taskWorktree } from "./tasks.ts";
 import { ChatPublisher, type ChatSessions, loadChat } from "./domain/chat.ts";
 import { setSessionName } from "./domain/sessionOps.ts";
 import { readTask } from "./domain/taskFiles.ts";
 import { DomainError } from "./platform/lock.ts";
 import { acquireRepoOwnership } from "./domain/ownership.ts";
 import { KeepAwake } from "./platform/keepawake.ts";
-import type { SessionControl } from "./rpc/sessions.ts";
+import type { SessionControl, TurnControl } from "./rpc/sessions.ts";
 import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
@@ -56,7 +53,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 38;
+const PROTOCOL = 39;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -117,35 +114,11 @@ function flag(name: string): string {
 
 const repo = flag("--repo");
 const appConfig = flag("--app-config");
-// A daemon behind an ssh forward cannot prove its UI by peer executable (the peer is sshd), so the
-// app that started it hands it a secret in a file. It is read and deleted before the daemon listens
-// or resumes anything, and then lives only in this process's memory.
-let uiSecret = "";
-const uiSecretFile = flag("--ui-secret-file");
-if (uiSecretFile) {
-  try {
-    uiSecret = readFileSync(uiSecretFile, "utf8").trim();
-  } catch {
-    /* no secret: only the peer check can authorize UI control */
-  }
-  try {
-    unlinkSync(uiSecretFile);
-  } catch {
-    /* already gone */
-  }
-}
-
-// The RPC bearer token (R8) comes the same way: a file the app wrote, read and deleted before the
-// daemon listens or resumes anything, then held only in memory.
+// The RPC bearer token (R8): a file the app wrote, read and deleted before the daemon listens or
+// resumes anything, then held only in memory.
 const rpcSecretFile = flag("--rpc-secret-file");
 const rpcSecret = rpcSecretFile ? takeSecretFile(rpcSecretFile) : Buffer.alloc(0);
 
-function uiSecretMatches(given: unknown): boolean {
-  if (uiSecret.length < 32 || typeof given !== "string") return false;
-  const expected = Buffer.from(uiSecret);
-  const actual = Buffer.from(given);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
 const namespace = flag("--socket-namespace");
 const buildId = flag("--build-id") || "alinery-vinculum-daemon";
 if (!repo || !appConfig) {
@@ -168,7 +141,13 @@ const feed = new Feed(store, join(repo, ".alinery"), (entity) => board.decorate(
 parsers.push(executionParser(repo, lane, identity), settingsParser(join(repo, ".alinery"), appConfig));
 // The version in a telemetry event: the app passes its own, since a daemon binary has none.
 const telemetry = telemetrySender(appConfig, flag("--app-version") || "unknown");
-const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId, watchExhausted: () => watcher.status.enospc });
+const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), {
+  protocol: PROTOCOL,
+  buildId,
+  watchExhausted: () => watcher.status.enospc,
+  // Peers of the shell role are screened against the app's executable; a daemon started without one cannot, and the shell says so.
+  hostGuardWarning: process.env.ALINERY_HOST_EXECUTABLE ? undefined : "no canonical executable for dynamic host screening",
+});
 // One owner per repository (S4.11): a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
 try {
   await acquireRepoOwnership(repo, lane ?? "", identity);
@@ -176,14 +155,8 @@ try {
   console.error(`${error instanceof DomainError ? error.code : "ownership_failed"}: ${error instanceof Error ? error.message : error}`);
   process.exit(1);
 }
-const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
 const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
-try {
-  unlinkSync(uiSocket);
-} catch {
-  /* absent */
-}
-mkdirSync(dirname(uiSocket), { recursive: true });
+mkdirSync(dirname(rpcSocket), { recursive: true });
 
 const providers = openProviderRuntime(appConfig);
 const models = providers.models;
@@ -806,227 +779,71 @@ function openCreated(id: string, taskSlug: string, model: string, prompt: string
   return openSession(id, taskSlug, model, prompt).then(() => undefined);
 }
 
-const kept = new WeakSet<Socket>();
-
-function reply(socket: Socket, value: unknown, keep = false) {
-  socket.write(`${JSON.stringify(value)}\n`);
-  if (keep) kept.add(socket);
-  else socket.end();
+/** The live harness session `id` and its conversation, or the refusal a caller reads. */
+async function harnessSession(id: string): Promise<{ row: Live; conversation: Conversation }> {
+  const row = live.get(id);
+  const conversation = row ? await conversationFor(row) : null;
+  if (!row || !conversation) throw new DomainError("not_found", "unknown-session");
+  return { row, conversation };
 }
 
-async function handle(socket: Socket, header: Record<string, unknown>, body: Buffer | null) {
-  const op = String(header.op ?? "");
-  if (header.body_bytes != null && body == null) return;
-  if (op === "version") {
-    reply(socket, { protocol: PROTOCOL, build_id: buildId, app_config_identity: identity, host_guard_ready: true });
-    return;
-  }
-  if (op === "list") {
-    const byId = new Map<string, { state: string; reason?: string }>();
-    for (const row of engineAxis()) byId.set(row.id, row.playbook);
-    const sessions = [...live.values()]
-      .filter((row) => row.id !== "__omp-setup__")
-      .map((row) => ({ id: row.id, ...sessionState({ ...row, playbook: byId.get(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" }));
-    reply(socket, { sessions });
-    return;
-  }
-  if (op === "status") {
-    const row = live.get(String(header.id ?? ""));
-    if (!row) {
-      reply(socket, { error: "unknown-session" });
-      return;
-    }
-    const fromEngine = enginePlaybook(row.id);
-    reply(socket, { ...sessionState({ ...row, playbook: fromEngine ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" });
-    return;
-  }
-  if (op === "shutdown") {
-    stopEverything();
-    socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
-      socket.end();
-      void exitWhenJobsEnded();
-    });
-    return;
-  }
-  if (op === "spawn" || op === "attach" || op === "resume") {
-    const { answer, keep } = await openOp(op, header);
-    reply(socket, answer, keep);
-    return;
-  }
-  if (op === "kill") {
-    killSession(String(header.id ?? ""));
-    reply(socket, { ok: true });
-    return;
-  }
-  if (op === "send_message") {
-    reply(socket, { error: "unsupported" });
-    return;
-  }
-  if (op === "event") {
-    reply(socket, { error: "event-rejected" });
-    return;
-  }
-  // The chat commands name a thread, and a thread is a root Vinculum session (`require_chat_thread`, now here).
-  if ((op === "prompt" || op === "abort" || op === "set_model" || op === "set_thinking_level") && header.chat === true) {
+/** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
+ * and `set_thinking_level` ops of the JSON-lines wire). */
+const rawTurns: TurnControl = {
+  async prompt(id, text) {
+    const { row, conversation } = await harnessSession(id);
+    if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
+    const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+    if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
+    await ensureModel(conversation, resolved, context);
+    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+  },
+  async abort(id) {
+    const { row, conversation } = await harnessSession(id);
     try {
-      loadChat(repo, String(header.id ?? ""));
+      await conversation.abort(context);
     } catch (error) {
-      reply(socket, { error: error instanceof Error ? error.message : String(error) });
-      return;
+      // A completion wait is local agent state, not a live run. Abort still has to release it.
+      if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
     }
+    if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
+      row.agent = { state: row.liveRun ? "busy" : "idle" };
+      row.wait = undefined;
+      commitSession(row.taskSlug, row.id);
+    }
+  },
+  async setModel(id, requested) {
+    const refusal = setModelRefusal(live.has(id), requested);
+    if (refusal) throw new DomainError(refusal === "unknown-session" ? "not_found" : "invalid_argument", refusal);
+    const { row, conversation } = await harnessSession(id);
+    const resolved = resolveModel(appConfig, requested);
+    if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
+    await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
+    return sessionControls(conversation);
+  },
+  async setThinkingLevel(id, level) {
+    const { conversation } = await harnessSession(id);
+    const agent = await conversation.agent(context);
+    const current = agent.model;
+    const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
+    await changeThinkingLevel(conversation, level, catalog, context);
+    return sessionControls(conversation);
+  },
+};
+/** What the harness refuses (a model it does not have, a thinking level it does not offer) reaches the caller as a failed precondition with its text. */
+const refused = async <T>(run: () => Promise<T>): Promise<T> => {
+  try {
+    return await run();
+  } catch (error) {
+    throw error instanceof DomainError ? error : new DomainError("failed_precondition", error instanceof Error ? error.message : String(error));
   }
-  if (op === "prompt" || op === "abort") {
-    const row = live.get(String(header.id ?? ""));
-    if (!row) {
-      reply(socket, { error: "unknown-session" });
-      return;
-    }
-    try {
-      const conversation = await conversationFor(row);
-      if (!conversation) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      if (op === "prompt") {
-        const text = typeof header.text === "string" ? header.text : "";
-        if (!text.trim()) {
-          reply(socket, { error: "empty-prompt" });
-          return;
-        }
-        const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-        if (!resolved) {
-          reply(socket, { error: "no model is configured" });
-          return;
-        }
-        await ensureModel(conversation, resolved, context);
-        await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
-        reply(socket, { ok: true });
-        return;
-      }
-      try {
-        await conversation.abort(context);
-      } catch (error) {
-        // A completion wait is local agent state, not a live run. Abort still has to release it.
-        if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
-      }
-      if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
-        row.agent = { state: row.liveRun ? "busy" : "idle" };
-        row.wait = undefined;
-        commitSession(row.taskSlug, row.id);
-      }
-      reply(socket, { ok: true });
-    } catch (error) {
-      reply(socket, { error: String(error) });
-    }
-    return;
-  }
-  if (op === "set_model" || op === "set_thinking_level") {
-    const row = live.get(String(header.id ?? ""));
-    const requested = op === "set_model" && typeof header.model === "string" ? header.model : "";
-    const refusal = op === "set_model" ? setModelRefusal(Boolean(row), requested) : row ? null : "unknown-session";
-    if (refusal || !row) {
-      reply(socket, { error: refusal ?? "unknown-session" });
-      return;
-    }
-    try {
-      const conversation = await conversationFor(row);
-      if (!conversation) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      if (op === "set_model") {
-        const resolved = resolveModel(appConfig, requested);
-        if (!resolved) {
-          reply(socket, { error: "no model is configured" });
-          return;
-        }
-        await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
-      } else {
-        const level = typeof header.level === "string" ? header.level : "";
-        const agent = await conversation.agent(context);
-        const current = agent.model;
-        const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
-        await changeThinkingLevel(conversation, level, catalog, context);
-      }
-      reply(socket, { ok: true, ...(await sessionControls(conversation)) });
-    } catch (error) {
-      reply(socket, { error: error instanceof Error ? error.message : String(error) });
-    }
-    return;
-  }
-  if (op === "ui_control") {
-    const host = process.env.ALINERY_HOST_EXECUTABLE;
-    if (!uiSecretMatches(header.secret)) {
-      const peer = peerExecutable(socket);
-      if (!host || !peer || !samePath(peer, host)) {
-        reply(socket, { error: "UI control requires the protected UI host" });
-        return;
-      }
-    }
-    reply(socket, { ok: true }, true);
-    return;
-  }
-  if (op === "vinculum_customizations") {
-    try {
-      reply(socket, await mcpHub.refresh());
-    } catch {
-      reply(socket, { error: "could not read customizations" });
-    }
-    return;
-  }
-  // `alinery-mcp` still creates tasks over the legacy wire (plan S5.1 removes it); the app uses TaskService.
-  if (op === "create_task") {
-    const request = JSON.parse((body ?? Buffer.from(JSON.stringify(header.request ?? {}))).toString("utf8"));
-    reply(socket, await createFromWire(taskDeps, request));
-    return;
-  }
-  if (op === "create_subtask") {
-    reply(socket, await createSubtaskFromWire(taskDeps, header.request));
-    return;
-  }
-  if (["get_task_execution", "create_execution_session", "start_session"].includes(op)) {
-    try {
-      reply(socket, (await taskOp(repo, lane, identity, op, header, openCreated)) ?? { error: "unhandled" });
-    } catch (error) {
-      reply(socket, { error: String(error) });
-    }
-    return;
-  }
-  reply(socket, { error: "unknown-op" });
-}
-
-const server = createServer((socket) => {
-  let buffer = Buffer.alloc(0);
-  let header: Record<string, unknown> | null = null;
-  let need = 0;
-  socket.on("error", () => {});
-  socket.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    for (;;) {
-      if (!header) {
-        const newline = buffer.indexOf(0x0a);
-        if (newline < 0) return;
-        try {
-          header = JSON.parse(buffer.subarray(0, newline).toString()) as Record<string, unknown>;
-        } catch {
-          buffer = Buffer.alloc(0);
-          if (!kept.has(socket)) reply(socket, { error: "invalid-json" });
-          return;
-        }
-        buffer = buffer.subarray(newline + 1);
-        need = Number(header.body_bytes ?? 0);
-      }
-      if (need > 0 && buffer.length < need) return;
-      const body = need > 0 ? buffer.subarray(0, need) : null;
-      if (need > 0) buffer = buffer.subarray(need);
-      const current = header;
-      header = null;
-      need = 0;
-      void handle(socket, current, body);
-      if (buffer.length === 0) return;
-    }
-  });
-});
+};
+const turns: TurnControl = {
+  prompt: (id, text) => refused(() => rawTurns.prompt(id, text)),
+  abort: (id) => refused(() => rawTurns.abort(id)),
+  setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
+  setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),
+};
 
 async function resumeInterrupted() {
   const pending: Promise<unknown>[] = [];
@@ -1065,7 +882,7 @@ async function resumeInterrupted() {
   await Promise.all(pending);
 }
 
-/** The teardown both shutdown paths run (the JSON `shutdown` op and `AdminService.Shutdown`): ends every
+/** The teardown `AdminService.Shutdown` runs: ends every
  * session and removes the sockets. Returns how many sessions were still running. */
 function stopEverything(): number {
   jobs.stopAll();
@@ -1082,7 +899,7 @@ function stopEverything(): number {
   const stoppedRows = [...live.values()];
   live.clear();
   for (const row of stoppedRows) commitSession(row.taskSlug, row.id);
-  for (const path of [uiSocket, rpcSocket]) {
+  for (const path of [rpcSocket]) {
     try {
       unlinkSync(path);
     } catch {
@@ -1123,7 +940,7 @@ backupHost = new BackupHost(jobs, {
     await artifactProjector.pass();
   },
 });
-// Task writes: TaskService and DraftService serve them, and the legacy `create_task` op (no caller left but alinery-core's test client; S5.3 deletes it) runs the same create.
+// Task writes: TaskService and DraftService serve them.
 const taskDeps: TaskDeps = {
   backups: backupHost,
   repo,
@@ -1167,6 +984,7 @@ const sessionControl: SessionControl = {
   telemetry,
   chat,
   runner,
+  turns,
   telemetryIds: (slug, id) => {
     let session = "";
     try {
@@ -1199,7 +1017,7 @@ await serveRpc({
   tokens: agentTokens,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
-  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded() },
+  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__omp-setup__").map((row) => row.id) },
   store,
   jobs,
   backups: backupHost,
@@ -1209,7 +1027,7 @@ await serveRpc({
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
-  agent: { appConfig, blobs: taskDeps.blobs },
+  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub },
   providers: { providers, repo, appConfig },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
@@ -1226,48 +1044,46 @@ await serveRpc({
     };
   },
 });
-server.listen(uiSocket, () => {
-  void resumeInterrupted().then(() => startGraphs(repo, {
-    executionChanged: (taskSlug) => {
-      commitExecution(store, repo, taskSlug, lane, identity);
-      // The engine owns the playbook axis of a task's sessions, so they move with the execution.
-      for (const row of live.values()) if (row.taskSlug === taskSlug) commitSession(taskSlug, row.id);
-    },
-    open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
-    status(id) {
-      return Promise.resolve(sessionHarnessStatus(live.get(id)));
-    },
-    async send(id, text) {
-      const row = live.get(id);
-      const conversation = row ? await conversationFor(row) : null;
-      if (!row || !conversation) throw new Error(`unknown session ${id}`);
-      const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-      if (!resolved) throw new Error("no model is configured");
-      await ensureModel(conversation, resolved, context);
-      await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
-    },
-    async stop(id) {
-      const row = live.get(id);
-      if (!row || row.process === "exited") return;
-      const conversation = await conversationFor(row);
-      if (conversation) {
-        try {
-          await conversation.abort(context);
-        } catch {
-          /* already idle */
-        }
+void resumeInterrupted().then(() => startGraphs(repo, {
+  executionChanged: (taskSlug) => {
+    commitExecution(store, repo, taskSlug, lane, identity);
+    // The engine owns the playbook axis of a task's sessions, so they move with the execution.
+    for (const row of live.values()) if (row.taskSlug === taskSlug) commitSession(taskSlug, row.id);
+  },
+  open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
+  status(id) {
+    return Promise.resolve(sessionHarnessStatus(live.get(id)));
+  },
+  async send(id, text) {
+    const row = live.get(id);
+    const conversation = row ? await conversationFor(row) : null;
+    if (!row || !conversation) throw new Error(`unknown session ${id}`);
+    const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+    if (!resolved) throw new Error("no model is configured");
+    await ensureModel(conversation, resolved, context);
+    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+  },
+  async stop(id) {
+    const row = live.get(id);
+    if (!row || row.process === "exited") return;
+    const conversation = await conversationFor(row);
+    if (conversation) {
+      try {
+        await conversation.abort(context);
+      } catch {
+        /* already idle */
       }
-      row.process = "exited";
-      writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
-      commitSession(row.taskSlug, row.id);
-    },
-    bind(id, executionId, step) {
-      const row = live.get(id);
-      if (!row) return;
-      row.executionId = executionId;
-      // The session's own file says which execution and step it is (disagreement 6), so the board follows the run.
-      writeMeta(row.taskSlug, id, { execution_id: executionId, phase: step });
-      commitSession(row.taskSlug, id);
-    },
-  }, appConfig, { lane, identity }));
-});
+    }
+    row.process = "exited";
+    writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
+    commitSession(row.taskSlug, row.id);
+  },
+  bind(id, executionId, step) {
+    const row = live.get(id);
+    if (!row) return;
+    row.executionId = executionId;
+    // The session's own file says which execution and step it is (disagreement 6), so the board follows the run.
+    writeMeta(row.taskSlug, id, { execution_id: executionId, phase: step });
+    commitSession(row.taskSlug, id);
+  },
+}, appConfig, { lane, identity }));

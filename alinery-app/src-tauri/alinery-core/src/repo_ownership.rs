@@ -99,15 +99,16 @@ fn enumerate(repo: &Path) -> Evidence {
             }
             let stem = name.strip_prefix('.').and_then(|s| s.strip_suffix(".lock")).or_else(|| name.strip_suffix(".sock"));
             let Some(stem) = stem else { return Ok(None) };
-            let candidate = if stem == "alineryd" {
+            // `alineryd[-lane]` is an older daemon's socket and lock; `rpc[-lane]` is the gRPC socket of the daemon now.
+            let candidate = if stem == "alineryd" || stem == "rpc" {
                 ""
-            } else if let Some(lane) = stem.strip_prefix("alineryd-") {
+            } else if let Some(lane) = stem.strip_prefix("alineryd-").or_else(|| stem.strip_prefix("rpc-")) {
                 lane
             } else {
                 return Ok(None);
             };
             validate_lane(candidate)?;
-            if stem != "alineryd" && candidate.is_empty() {
+            if stem != "alineryd" && stem != "rpc" && candidate.is_empty() {
                 return Err(format!("invalid daemon ownership file {name}"));
             }
             Ok(Some(candidate.to_owned()))
@@ -173,19 +174,26 @@ fn enumerate(repo: &Path) -> Evidence {
     evidence
 }
 
+/// Whether anything answers on the lane's sockets: the rpc socket of a gRPC daemon or the legacy one of an older daemon.
 fn socket_reachable(repo: &Path, lane: &str) -> Result<bool, String> {
-    let socket = crate::alineryd_socket_path(repo, Some(lane));
-    match fs::symlink_metadata(&socket) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("inspect owner socket {}: {error}", socket.display())),
-        Ok(metadata) if !metadata.file_type().is_socket() => return Err(format!("invalid owner socket {}", socket.display())),
-        Ok(_) => {}
+    Ok(reachable_socket(repo, lane)?.is_some())
+}
+
+fn reachable_socket(repo: &Path, lane: &str) -> Result<Option<std::path::PathBuf>, String> {
+    for socket in [crate::rpc_socket_path(repo, Some(lane)), crate::alineryd_socket_path(repo, Some(lane))] {
+        match fs::symlink_metadata(&socket) {
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("inspect owner socket {}: {error}", socket.display())),
+            Ok(metadata) if !metadata.file_type().is_socket() => return Err(format!("invalid owner socket {}", socket.display())),
+            Ok(_) => {}
+        }
+        match crate::legacy_daemon::connect_for_ownership_probe(&socket) {
+            Ok(_) => return Ok(Some(socket)),
+            Err(error) if matches!(error.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound) => {}
+            Err(error) => return Err(format!("cannot establish owner socket stopped ({}): {error}", socket.display())),
+        }
     }
-    match crate::daemon_client::connect_for_ownership_probe(&socket) {
-        Ok(_) => Ok(true),
-        Err(error) if matches!(error.kind(), ErrorKind::ConnectionRefused | ErrorKind::NotFound) => Ok(false),
-        Err(error) => Err(format!("cannot establish owner socket stopped ({}): {error}", socket.display())),
-    }
+    Ok(None)
 }
 
 /// Non-authoritative diagnostics. A held repository lease must not hide reachable
@@ -225,11 +233,8 @@ fn discover(repo: &Path) -> Result<Vec<LockFile>, String> {
     }
     for lane in evidence.lanes {
         leases.push(lease(&crate::alineryd_lock_path(repo, Some(&lane)))?);
-        if socket_reachable(repo, &lane)? {
-            return Err(format!(
-                "project owner is still answering {}; stop it before opening this project here",
-                crate::alineryd_socket_path(repo, Some(&lane)).display()
-            ));
+        if let Some(socket) = reachable_socket(repo, &lane)? {
+            return Err(format!("project owner is still answering {}; stop it before opening this project here", socket.display()));
         }
     }
     Ok(leases)

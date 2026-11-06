@@ -26,6 +26,7 @@ const lifecycle = {
   exit: () => {
     events.push("exit");
   },
+  live: () => ["s1", "s2"],
 };
 afterEach(() => {
   for (const fn of cleanup.splice(0)) fn();
@@ -243,4 +244,11 @@ test("no token and a non-shell token cannot shut the daemon down", async () => {
   expect(await code(client(socketPath, `Bearer ${SECRET}`).shutdown({ origin: ShutdownOrigin.STOP_DAEMON }))).toBe(Code.PermissionDenied);
   await new Promise((resolve) => setTimeout(resolve, 250));
   expect(events).toEqual([]);
+});
+
+test("LiveSessions names the running sessions and needs ADMIN", async () => {
+  const shell = await start(process.execPath);
+  expect((await client(shell.socketPath, `Bearer ${SECRET}`).liveSessions({})).sessions.map((s) => s.id)).toEqual(["s1", "s2"]);
+  const other = await start("/bin/sh");
+  expect(await code(client(other.socketPath, `Bearer ${SECRET}`).liveSessions({}))).toBe(Code.PermissionDenied);
 });

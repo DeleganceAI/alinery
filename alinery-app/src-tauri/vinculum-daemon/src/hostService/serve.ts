@@ -108,7 +108,6 @@ export async function handle(call: HostRequest["call"], claims: Claims): Promise
         log: v.log,
         launch: v.launch === HostSpawnDaemon_Launch.SYSTEMD_RUN ? "systemd_run" : "direct",
         unit: v.unit,
-        uiSecretFile: v.uiSecretFile,
         rpcSecretFile: v.rpcSecretFile,
         appVersion: v.appVersion,
       });

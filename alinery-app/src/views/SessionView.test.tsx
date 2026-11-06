@@ -122,14 +122,20 @@ vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHo
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 // The session writes and reads are the daemon's SessionService, not ipc.
-vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession, archiveSession, sessionArtifactReady, startSession }));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  renameSession,
+  archiveSession,
+  sessionArtifactReady,
+  startSession,
+  promptSession: sessionPrompt,
+  abortSession: sessionAbort,
+  setSessionModel: sessionSetModel,
+  setSessionThinkingLevel: sessionSetThinkingLevel,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution,
-    sessionPrompt,
-    sessionAbort,
-    sessionSetModel,
-    sessionSetThinkingLevel,
     openUrl,
     pickAttachmentFilesDialog,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),
@@ -904,14 +910,14 @@ describe("Vinculum session chat", () => {
     const onMessageDraftChange = vi.fn();
     renderSession({ intent: "attach", messageDraft: { body: "hello", pendingActions: [], attachments: [] }, onMessageDraftChange });
     fireEvent.click(await screen.findByRole("button", { name: "Send" }));
-    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("session", "hello"));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello"));
   });
 
   it("stops a session stuck waiting for completion permission", async () => {
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "waiting_for_approval", correlation_id: "completion-permission:x" }));
     renderSession({ intent: "attach" });
     fireEvent.click(await screen.findByRole("button", { name: "Abort turn" }));
-    await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("session"));
+    await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("/repo", "session"));
   });
 
   it("shows the transcript model and thinking level, and a set updates the label without an OMP write", async () => {
@@ -944,13 +950,13 @@ describe("Vinculum session chat", () => {
     const picker = screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
     expect(picker.value).toBe("high");
     fireEvent.change(picker, { target: { value: "low" } });
-    await waitFor(() => expect(sessionSetThinkingLevel).toHaveBeenCalledWith("session", "low"));
+    await waitFor(() => expect(sessionSetThinkingLevel).toHaveBeenCalledWith("/repo", "session", "low"));
     await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
 
     fireEvent.click(screen.getByRole("button", { name: "Change model" }));
     expect(await screen.findByText("Current model: xai/grok-4.6")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "anthropic/claude" }));
-    await waitFor(() => expect(sessionSetModel).toHaveBeenCalledWith("session", "anthropic/claude"));
+    await waitFor(() => expect(sessionSetModel).toHaveBeenCalledWith("/repo", "session", "anthropic/claude"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("anthropic/claude"));
     expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
     expect(screen.getByText("off")).toBeTruthy();

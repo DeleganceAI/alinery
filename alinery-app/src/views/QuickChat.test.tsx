@@ -32,11 +32,14 @@ const mocks = vi.hoisted(() => ({
   getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
-vi.mock("../sync/chat", async (actual) => ({ ...(await import("../test/chatHooks")).chatHooks(await actual()), copyChatThreadAttachments: mocks.copyChatThreadAttachments }));
+vi.mock("../sync/chat", async (actual) => ({
+  ...(await import("../test/chatHooks")).chatHooks(await actual()),
+  copyChatThreadAttachments: mocks.copyChatThreadAttachments,
+  promptChatThread: mocks.chatPrompt,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
     listChatRepos: mocks.listChatRepos,
-    chatPrompt: mocks.chatPrompt,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
     getCurrentWebview: mocks.getCurrentWebview as never,

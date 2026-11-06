@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   readCustomizations: vi.fn(),
   agentHost: vi.fn(),
   agentDirIsLocal: vi.fn(),
-  vinculumCustomizations: vi.fn(),
+  readMcpStatus: vi.fn(),
   openVinculumAgentDir: vi.fn(),
   customizationPrompt: vi.fn(),
   revealItemInDir: vi.fn(),
@@ -26,6 +26,7 @@ vi.mock("../sync/agent", () => ({
   readCustomizations: mocks.readCustomizations,
   agentHost: mocks.agentHost,
   agentDirIsLocal: mocks.agentDirIsLocal,
+  readMcpStatus: mocks.readMcpStatus,
   customizationPrompt: mocks.customizationPrompt,
   installSkill: mocks.installSkill,
   deleteSkill: mocks.deleteSkill,
@@ -45,7 +46,7 @@ beforeEach(() => {
   mocks.readCustomizations.mockResolvedValue(installed);
   mocks.agentHost.mockResolvedValue("/repo");
   mocks.agentDirIsLocal.mockReturnValue(true);
-  mocks.vinculumCustomizations.mockResolvedValue(live);
+  mocks.readMcpStatus.mockResolvedValue(live);
   mocks.openVinculumAgentDir.mockResolvedValue(undefined);
   mocks.customizationPrompt.mockResolvedValue("Inspect this Vinculum installation; append your requested change.");
   mocks.revealItemInDir.mockResolvedValue(undefined);
@@ -161,7 +162,7 @@ describe("Vinculum customizations", () => {
   });
 
   it("says the session daemon is not running instead of inventing tools", async () => {
-    mocks.vinculumCustomizations.mockRejectedValue(new Error("daemon not connected"));
+    mocks.readMcpStatus.mockRejectedValue(new Error("daemon not connected"));
     render(<VinculumCustomizations />);
     expect(await screen.findByText("The session daemon is not running.")).toBeTruthy();
     expect(screen.queryByRole("list", { name: "Built-in tools" })).toBeNull();

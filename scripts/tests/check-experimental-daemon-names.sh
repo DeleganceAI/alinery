@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAURI="$ROOT/alinery-app/src-tauri/tauri.conf.json"
-RESOLVER="$ROOT/alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
+RESOLVER="$ROOT/alinery-app/src-tauri/alinery-core/src/daemon_launch.rs"
 fails=0
 
 fail() { echo "FAIL - $1" >&2; fails=$((fails + 1)); }

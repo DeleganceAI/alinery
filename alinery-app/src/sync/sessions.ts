@@ -5,9 +5,11 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { SessionRefSchema } from "alinery-proto/alinery/v1/entities_pb";
-import { SessionService, type SessionStarted } from "alinery-proto/alinery/v1/sessions_pb";
+import { type SessionControls as SessionControlsMessage, SessionService, type SessionStarted } from "alinery-proto/alinery/v1/sessions_pb";
+import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
-import type { CreateExecutionSessionReply, CreateExecutionSessionRequest, SessionName, SessionNameSource, SessionNotificationClearRef } from "../types";
+import * as ipc from "../ipc";
+import type { CreateExecutionSessionReply, CreateExecutionSessionRequest, SessionMeta, SessionName, SessionNameSource, SessionNotificationClearRef } from "../types";
 import { newMutationMeta } from "./mutation";
 
 /** The client, replaceable by a test (a fake transport stands in for the daemon). */
@@ -142,4 +144,76 @@ export async function readSessionOmp(repo: string, a: { id: string; taskSlug?: s
 
 export async function sessionArtifactReady(repo: string, id: string, taskSlug: string): Promise<boolean> {
   return (await call(() => sessionApi.sessions(repo).artifactReady({ session: ref(taskSlug, id) }))).ready;
+}
+
+// ---- the turn controls and the process (S5.3) -------------------------------------------------------------------------
+
+/** The model and thinking level the next turn will use, as the views read them. */
+export const controlsOf = (c: SessionControlsMessage | undefined): SessionControls => ({
+  model: c?.model ?? "",
+  thinking: c?.thinking ?? "",
+  thinking_levels: c?.thinkingLevels ?? [],
+});
+
+/** A message to the harness of a live session. */
+export async function promptSession(repo: string, id: string, text: string): Promise<void> {
+  await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text }));
+}
+
+export async function abortSession(repo: string, id: string): Promise<void> {
+  await call(() => sessionApi.sessions(repo).abortSession({ sessionId: id }));
+}
+
+export async function setSessionModel(repo: string, id: string, model: string): Promise<SessionControls> {
+  return controlsOf((await call(() => sessionApi.sessions(repo).setSessionModel({ meta: newMutationMeta(), sessionId: id, model }))).controls);
+}
+
+export async function setSessionThinkingLevel(repo: string, id: string, level: string): Promise<SessionControls> {
+  return controlsOf((await call(() => sessionApi.sessions(repo).setSessionThinkingLevel({ meta: newMutationMeta(), sessionId: id, level }))).controls);
+}
+
+export type OpenSessionArgs = {
+  id: string;
+  cwd: string;
+  taskSlug?: string | null;
+  phase?: string | null;
+  model?: string | null;
+  /** What the session runs, for the hosted-inference refresh only; the daemon gates the open from the session's own meta. */
+  harness?: string | null;
+  intent?: string | null;
+  resumeToken?: string | null;
+  cols?: number | null;
+  rows?: number | null;
+};
+
+const INTENTS = ["attach", "spawn", "resume"];
+
+/**
+ * Start a session's process (spawn or resume) in `cwd`, or re-check that it runs (attach). The bytes are not this call's business:
+ * the terminal attaches with TerminalService.Attach, so a session keeps running in the background and switching back shows the
+ * same process at its current screen. Hosted-inference credentials are refreshed on this machine first (the daemon reads them at
+ * spawn), for every intent that can start a process.
+ */
+export async function openSession(repo: string, a: OpenSessionArgs): Promise<void> {
+  const intent = a.intent ?? "spawn";
+  if (!INTENTS.includes(intent)) throw new Error(`unknown session intent '${intent}'`);
+  if (intent !== "attach") await ipc.prepareHostedInference(a.model ?? "", a.harness ?? undefined);
+  await call(() =>
+    sessionApi.sessions(repo).resumeSession({
+      meta: newMutationMeta(),
+      session: ref((a.taskSlug ?? "").trim(), a.id),
+      intent,
+      cwd: a.cwd,
+      phase: a.phase ?? undefined,
+      model: a.model ?? undefined,
+      resumeToken: a.resumeToken ?? undefined,
+      cols: a.cols ?? undefined,
+      rows: a.rows ?? undefined,
+    }),
+  );
+}
+
+/** A shell with no task, for the drawer: created in the repo's daemon, started when its terminal opens. */
+export async function createDrawerTerminal(repo: string): Promise<SessionMeta> {
+  return (await createSession(repo, { task_slug: "", target: { kind: "auxiliary", harness: "no-harness", model: null, prompt: null }, start: false })).session;
 }

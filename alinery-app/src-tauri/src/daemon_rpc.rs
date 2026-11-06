@@ -23,7 +23,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::time::Instant;
 
-use alinery_core::daemon_client::{peer_process_identity, PeerProcessIdentity, DAEMON_CONTROL_TIMEOUT};
+use alinery_core::legacy_daemon::{peer_process_identity, PeerProcessIdentity, DAEMON_CONTROL_TIMEOUT};
 use prost::Message;
 
 use crate::daemon::{alineryd_socket_namespace, rpc_secret_path};
@@ -442,6 +442,21 @@ pub(crate) struct HelloResponse {
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct LiveSessionsRequest {}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct LiveSession {
+    #[prost(string, tag = "1")]
+    pub id: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct LiveSessionsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub sessions: Vec<LiveSession>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct ShutdownRequest {
     #[prost(enumeration = "ShutdownOrigin", tag = "1")]
     pub origin: i32,
@@ -511,14 +526,41 @@ pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(so
 /// Hello through the bridge path: the RPC liveness probe (over a forward a connect alone proves
 /// nothing, plan 2.1.3).
 pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, String> {
+    hello_within(socket, token, Duration::from_secs(10)).await
+}
+
+pub(crate) async fn hello_within(socket: &Path, token: &str, within: Duration) -> Result<HelloResponse, String> {
     let request = HelloRequest {
         client_id: "alinery-shell".into(),
         client_kind: "desktop".into(),
         protocol: alinery_core::PROTOCOL_VERSION,
     };
-    tokio::time::timeout(Duration::from_secs(10), unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
+    tokio::time::timeout(within, unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
         .await
         .map_err(|_| "Hello timed out".to_string())?
+}
+
+/// What the daemon at `socket` answers `Hello` with, using the token this app kept for it. Blocking: the callers are off the
+/// main thread. This is the one liveness and version probe the lifecycle uses (S5.3: it replaced the JSON `version` op).
+pub(crate) fn hello_at(socket: &Path, committed_token: &Path, within: Duration) -> Result<HelloResponse, String> {
+    tauri::async_runtime::block_on(async {
+        let token = rpc_token(socket, committed_token).await?;
+        hello_within(socket, &token, within).await
+    })
+}
+
+/// The ids of the sessions whose process is running (`AdminService.LiveSessions`), for the consent a takeover or a restart asks for.
+pub(crate) fn live_sessions_at(socket: &Path, committed_token: &Path) -> Result<Vec<String>, String> {
+    tauri::async_runtime::block_on(async {
+        let token = rpc_token(socket, committed_token).await?;
+        let reply: LiveSessionsResponse = tokio::time::timeout(
+            Duration::from_secs(3),
+            unary(socket, &token, "/alinery.v1.AdminService/LiveSessions", &LiveSessionsRequest {}),
+        )
+        .await
+        .map_err(|_| "LiveSessions timed out".to_string())??;
+        Ok(reply.sessions.into_iter().map(|session| session.id).collect())
+    })
 }
 
 /// An AGENT token for the daemon on `socket`, minted with the shell's ADMIN `token`. A second mint with the same `label` replaces the first.
@@ -640,8 +682,8 @@ async fn shutdown_over_rpc(socket: &Path, token: &str, origin: ShutdownOrigin, c
 /// Where a teardown reaches a daemon: `repo_key`'s RPC socket and the token this app kept for it.
 /// A daemon that cannot be reached there (one of an older protocol has no `rpc.sock`, one started by
 /// another app has a token this one lacks, or the socket is a stale file) is stopped through
-/// `legacy`, the JSON `shutdown` op that `AdminService.Shutdown` replaces (plan O23: the new app must
-/// still be able to stop an older daemon; S5.3 deletes it). A daemon that does answer and refuses
+/// `legacy`, the JSON `shutdown` op of `alinery_core::legacy_daemon` that `AdminService.Shutdown` replaced (plan O23: the new app
+/// must still be able to stop an older daemon, and nothing else uses that wire). A daemon that does answer and refuses
 /// (a wrong token, a missing capability, a bad origin) is an error, never a retry on the old wire.
 /// The five teardown origins call this, and only they.
 pub(crate) fn shutdown_daemon(

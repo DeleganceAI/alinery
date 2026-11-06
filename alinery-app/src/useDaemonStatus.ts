@@ -2,41 +2,31 @@ import { useCallback, useEffect, useState } from "react";
 import { admin } from "./daemon/transport";
 import * as ipc from "./ipc";
 import { DAEMON_STATUS_KEY, REPO_SCOPE, useEntity, useLink, useScope } from "./sync/hooks";
-import type { DaemonStatus } from "./types";
+import type { DaemonStatus, ShellDaemonStatus } from "./types";
 
-const OFFLINE: DaemonStatus = {
-  reachable: false,
+const OFFLINE: ShellDaemonStatus = {
   mode: "local",
-  alive: 0,
-  busy: 0,
-  waiting_for_input: 0,
-  waiting_for_approval: 0,
-  idle: 0,
-  unknown: 0,
-  exited: 0,
-  total: 0,
   extra_lanes: 0,
   stale_lanes: 0,
   repo: "",
   build_drift: false,
   conflict: null,
   repo_busy: false,
-  host_guard_warning: false,
 };
 
 // What `Hello` reports once per repo open; null until it answers or when the daemon does not .
 export type DaemonHello = { protocol: number; buildId: string };
 export type DaemonStatusHandle = DaemonStatus & { refresh: () => void; hello: DaemonHello | null };
 
-// The daemon's half (live count, agent counts) arrives on the `daemon/_/status` entity and `reachable`
-// comes from the replica's run loop, so neither needs a timer. The shell's half (build drift, conflict,
-// repo busy, host guard) stays on its command until P5; it is read when the repo opens, on `refresh`, when
+// The daemon's half (live count, agent counts, host guard) arrives on the `daemon/_/status` entity and `reachable`
+// comes from the replica's run loop, so neither needs a timer. The shell's half (build drift, conflict, repo busy,
+// foreign lanes) stays on its command; it is read when the repo opens, on `refresh`, when
 // the link flips and when the window regains focus, and each newer request supersedes older ones.
 export function useDaemonStatus(repo: string): DaemonStatusHandle {
   const replica = useScope(repo, REPO_SCOPE);
   const { reachable } = useLink(replica);
   const live = useEntity(replica, DAEMON_STATUS_KEY);
-  const [shell, setShell] = useState<DaemonStatus>(OFFLINE);
+  const [shell, setShell] = useState<ShellDaemonStatus>(OFFLINE);
   const [hello, setHello] = useState<{ repo: string; hello: DaemonHello } | null>(null);
   const [nudge, setNudge] = useState(0);
   const refresh = useCallback(() => setNudge((n) => n + 1), []);
@@ -89,6 +79,7 @@ export function useDaemonStatus(repo: string): DaemonStatusHandle {
     unknown: 0,
     exited: 0,
     total: d?.liveSessions ?? 0,
+    host_guard_warning: (d?.hostGuardWarning ?? "") !== "",
     refresh,
     hello: hello?.repo === repo ? hello.hello : null,
   };

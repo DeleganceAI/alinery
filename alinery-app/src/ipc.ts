@@ -33,7 +33,6 @@ import type {
   CommunityPlaybookPage,
   CommunitySourceResult,
   ConnectionStatus,
-  DaemonStatus,
   DesktopCreditsView,
   GitHubIssue,
   GlobalSettings,
@@ -47,13 +46,12 @@ import type {
   RemoteHostView,
   RemoteSharingView,
   RemoteStatusRow,
-  SessionMeta,
+  ShellDaemonStatus,
   SshTarget,
   StagedUpdate,
   TakeoverOutcome,
   TakeoverPreview,
   UpdateStatus,
-  VinculumDaemonCustomizations,
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
@@ -81,7 +79,7 @@ export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("clas
 export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
-export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
+export const setActiveRepo = (path: string) => invoke<AppConfig>("set_active_repo", { path });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
 
 // ── remote.rs ─────────────────────────────────────────────────────────
@@ -124,7 +122,7 @@ export const daemonRpc =
 export const daemonRpcCancel: DaemonRpcCancel = (callId) => {
   invoke<void>("daemon_rpc_cancel", { callId }).catch(() => {});
 };
-export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
+export const daemonStatus = () => invoke<ShellDaemonStatus>("daemon_status");
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
@@ -172,31 +170,12 @@ export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge
 
 /** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
 export const listChatRepos = () => invoke<string[]>("list_chat_repos");
-/** Refreshes the hosted-model credentials the daemon reads at spawn; run before a start or create that may launch a hosted model. */
-export const prepareHostedInference = (model: string) => invoke<void>("prepare_hosted_inference", { model });
+/**
+ * Refreshes the hosted-model credentials the daemon reads at spawn; run before a start, create, spawn or resume that may launch a
+ * hosted model. `harness` is a hint for that refresh and nothing else; unset means the default harness.
+ */
+export const prepareHostedInference = (model: string, harness?: string) => invoke<void>("prepare_hosted_inference", { model, harness });
 export type { SessionControls, VinculumTranscript };
-export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
-export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
-export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
-export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
-export const openSession = (a: {
-  id: string;
-  cwd: string;
-  taskSlug?: string | null;
-  phase?: string | null;
-  model?: string | null;
-  /** What the session runs, for the hosted-inference refresh only; the daemon gates the open from the session's own meta. */
-  harness?: string | null;
-  intent?: string | null;
-  resumeToken?: string | null;
-  cols?: number | null;
-  rows?: number | null;
-}) => invoke<void>("open_session", a);
-export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
-export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
-export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
-export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 
 // ── settings.rs ───────────────────────────────────────────────────────
 export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
@@ -234,7 +213,6 @@ export const applyUpdate = (version: string) => invoke<void>("apply_update", { v
 // The Finder window and the file picker; the agent directory itself is the daemon's (sync/agent.ts).
 export const openVinculumAgentDir = () => invoke<void>("open_vinculum_agent_dir");
 export const pickVinculumSkillDialog = () => invoke<string | null>("pick_vinculum_skill_dialog");
-export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
 
 /**
  * A remote host was connected (the first time, or brought back after it dropped). A pane that lost

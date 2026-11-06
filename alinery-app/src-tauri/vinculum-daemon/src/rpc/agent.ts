@@ -12,7 +12,12 @@ import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-export type AgentDeps = { appConfig: string; blobs: BlobStore };
+export type AgentDeps = {
+  appConfig: string;
+  blobs: BlobStore;
+  /** The live MCP-hub state: the built-in tools and each server connection (`McpHub.refresh`). */
+  mcp?: { refresh(): Promise<{ tools: string[]; servers: { name: string; builtin: boolean; state: string; error?: string }[] }> };
+};
 
 export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): ServiceImpl<typeof AgentService> {
   const agentDir = () => vinculumAgentDir(d.appConfig);
@@ -44,6 +49,14 @@ export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): Servic
       return domain(() => {
         const inv = customizationsFromDir(agentDir());
         return { items: inv.items.map((i) => ({ ...i, path: i.path ?? undefined })), errors: inv.errors, agentDir: agentDir() };
+      });
+    },
+    readMcpStatus: (_req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(async () => {
+        if (!d.mcp) throw fail(Code.Unimplemented, "unimplemented", "this daemon runs no MCP hub");
+        const status = await d.mcp.refresh();
+        return { tools: status.tools, servers: status.servers.map((s) => ({ name: s.name, builtin: s.builtin, state: s.state, error: s.error })) };
       });
     },
     installSkill: (req, ctx) => {

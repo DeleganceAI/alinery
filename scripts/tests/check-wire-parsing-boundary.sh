@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# The app and MCP alineryd wire contract must live entirely in `alinery-core/src/daemon_client.rs`.
+# The JSON-lines alineryd wire is retired (S5.3): the daemon speaks `alinery.v1` alone, and the shell reaches it through
+# the bridge in `daemon_rpc.rs`. What remains of the old wire is the way to observe and stop a daemon of protocol 38 or
+# older (plan O23), and it must live entirely in `alinery-core/src/legacy_daemon.rs`.
 #
 # `check-protocol-version-bump.sh` watches a SURFACE of files. That is only worth
 # something if the contract cannot quietly move back *out* of them: reply parsing sat in
@@ -12,7 +14,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-CLIENT="alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
+CLIENT="alinery-app/src-tauri/alinery-core/src/legacy_daemon.rs"
 # Discover every app caller source. A hardcoded module list is allow-by-omission:
 # a request rebuilt in a new module would otherwise go unscanned while this still printed OK.
 OUTSIDE=()
@@ -50,4 +52,4 @@ if [ "$fails" -ne 0 ]; then
   echo "Move it into $CLIENT and have the caller consume the typed result." >&2
   exit 1
 fi
-echo "OK: app/MCP wire contract is confined to $CLIENT"
+echo "OK: the retired JSON-lines wire is confined to $CLIENT"

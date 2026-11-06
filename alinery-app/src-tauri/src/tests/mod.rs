@@ -13,11 +13,11 @@ pub(crate) use super::{
     linear_account_path_in, list_tasks_for_repo, loopback_html, open_chat_repos_in, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback,
     parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode,
     pkce_challenge, plan_label, production_livemode, read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins,
-    remove_mcp_lane_runtime_files, remove_repo_from_config, require_explicit_daemon, require_repo_owned, resolve_hosted_catalog, route_socket_path, sanitize_app_config,
-    sanitize_appearance, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, sync_hosted_inference, task_dir,
-    validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry,
-    write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, AuthAttempt, AuthRetryError, Command, DesktopCreditsView,
-    LinearTokenError, OAuthCallback, SessionMeta, SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
+    remove_mcp_lane_runtime_files, remove_repo_from_config, require_repo_owned, resolve_hosted_catalog, sanitize_app_config, sanitize_appearance, session_meta_path, sessions_dir,
+    set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, sync_hosted_inference, task_dir, validate_known_target_repo,
+    wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry, write_global_settings_in, write_task,
+    AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, AuthAttempt, AuthRetryError, Command, DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMeta,
+    SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
 };
 pub(crate) use alinery_core::{
     alinery_app_lock_path, hosted_models_yml_unavailable, models_yml_path, parse_inference_session_body, render_models_yml, wipe_hosted_files, write_hosted_models_yml,
@@ -121,92 +121,6 @@ fn activity_repo(label: &str) -> std::path::PathBuf {
     fs::create_dir_all(&repo).unwrap();
 
     repo
-}
-
-struct FixtureListener {
-    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    stop: Option<std::sync::mpsc::Sender<()>>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
-
-impl FixtureListener {
-    fn calls(mut self) -> usize {
-        self.shutdown();
-        self.calls.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    fn shutdown(&mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-impl Drop for FixtureListener {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
-// ---- Session list performance regression — TDD red tests (05-tdd.md) ----
-
-// Stay up until the test reads the count. An 1800ms accept window measured from
-// spawn, and any fatal `accept` error, both drop the listener while the socket
-// file remains — the next connect is then `ECONNREFUSED`, which is what
-// durable_board_discovery saw for the foreign-config lane.
-fn status_list_socket(socket_path: std::path::PathBuf, response: Option<&str>) -> FixtureListener {
-    fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
-    let listener = std::os::unix::net::UnixListener::bind(socket_path).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let response = response.map(str::to_owned);
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let calls_thread = std::sync::Arc::clone(&calls);
-    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
-    let handle = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            if stop_rx.try_recv().is_ok() {
-                break;
-            }
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    calls_thread.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    // Answer here, not on a fresh thread. Observation calls give up after
-                    // 250ms. The liveness probe connects and drops without a line; a
-                    // failed read is that probe, and the listener has to stay up for the
-                    // real request that follows.
-                    if super::read_socket_line(&mut stream).is_err() {
-                        continue;
-                    }
-                    if let Some(response) = &response {
-                        // Not `unwrap`: a caller can close after the read. Panicking
-                        // killed the listener, and every later op then read as a daemon
-                        // that answers nothing — a protocol mismatch turned into a
-                        // missing protocol.
-                        let _ = stream.write_all(response.as_bytes());
-                        let _ = stream.flush();
-                    } else {
-                        // Hold the socket open so the client observes a timeout, not EOF.
-                        std::thread::sleep(Duration::from_millis(1200));
-                    }
-                }
-                // Any `accept` error, including ECONNABORTED from the liveness probe
-                // and EINTR, must not drop the listener. Dropping it leaves the
-                // socket file behind and the next connect is ECONNREFUSED.
-                Err(_) => {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-        }
-    });
-    FixtureListener {
-        calls,
-        stop: Some(stop_tx),
-        handle: Some(handle),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

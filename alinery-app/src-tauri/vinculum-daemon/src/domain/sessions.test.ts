@@ -148,6 +148,18 @@ test("a session with no live row has no status", async () => {
   expect(e?.case === "session" && e.value.status).toBeUndefined();
 });
 
+test("daemon status carries the host guard warning it was started with", () => {
+  const t = rig();
+  const warning = () => {
+    const e = t.store.get(daemonStatusKey)?.value;
+    return e?.case === "daemonStatus" ? e.value.hostGuardWarning : undefined;
+  };
+  new SessionPublisher(t.store, t.feed, () => t.rows.values(), { protocol: 25, buildId: "test" }).commitStatus();
+  expect(warning()).toBe("");
+  new SessionPublisher(t.store, t.feed, () => t.rows.values(), { protocol: 25, buildId: "test", hostGuardWarning: "no executable" }).commitStatus();
+  expect(warning()).toBe("no executable");
+});
+
 test("daemon status reports an exhausted watcher", () => {
   const t = rig();
   let exhausted = false;

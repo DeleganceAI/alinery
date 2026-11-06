@@ -96,11 +96,11 @@ vi.mock("../sync/sessions", async (actual) => ({
   archiveSession: ipcSpies.archiveSessionForRepo,
   renameSession: ipcSpies.renameSession,
   markSessionNotificationRead: mocks.markSessionNotificationRead,
+  abortSession: ipcSpies.sessionAbort,
 }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    sessionAbort: ipcSpies.sessionAbort,
   }),
 );
 vi.mock("../sync/subtasks", () => ({
@@ -849,7 +849,7 @@ describe("task session row Stop", () => {
       fireEvent.click(stop);
     });
     expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(1);
-    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("stop-me");
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("/repo", "stop-me");
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);

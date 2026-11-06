@@ -408,18 +408,18 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
 }
 
 #[tauri::command]
-pub(crate) async fn set_active_repo(app: AppHandle, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
-    // Killing each drawer shell waits on the daemon; a sync command would run that on the main thread.
-    // The whole switch moves together so reservation, config write, kill, commit stay in order.
+pub(crate) async fn set_active_repo(app: AppHandle, path: String) -> Result<AppConfig, String> {
+    // The switch waits on the repo's lock and daemon; a sync command would run that on the main thread.
+    // The whole switch moves together so reservation, config write and commit stay in order.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        set_active_repo_sync(app.clone(), state, path, drawer_session_ids)
+        set_active_repo_sync(app.clone(), state, path)
     })
     .await
     .map_err(|e| format!("set active repo task: {e}"))?
 }
 
-pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String, drawer_session_ids: Vec<String>) -> Result<AppConfig, String> {
+pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: State<'_, AppState>, path: String) -> Result<AppConfig, String> {
     if is_remote_repo_key(path.trim()) {
         return activate_remote_repo(&app, &state, path.trim());
     }
@@ -441,22 +441,12 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
 
     ensure_alinery_dir(&repo)?;
     let app_config = app_config_path(&app)?;
-    let previous_repo = active_repo().ok();
     let repo_s = repo.to_string_lossy().to_string();
     let mut cfg = load_app_config(&app);
     cfg.active_repo = repo_s.clone();
     cfg.known_repos.push(repo_s);
     cfg = sanitize_app_config(cfg);
     write_app_config(&app, &cfg)?;
-
-    if let Some(previous) = previous_repo.as_ref() {
-        if previous != &repo && state.owns_repo(previous) {
-            for id in &drawer_session_ids {
-                let _ = with_session_client(&state, previous, "", id, |daemon| daemon.kill_session(id));
-                state.clear_session_route(id);
-            }
-        }
-    }
 
     reservation.commit(&state);
     set_active_repo_global(Some(repo.clone()))?;

@@ -9,6 +9,7 @@ import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { type Scope, ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { type ChatImage, type CopyChatAttachmentsResult, onRemoteHostConnected } from "../ipc";
@@ -17,7 +18,7 @@ import { sessionDisplayOf } from "./board";
 import { acquireScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
-import { call, startedOf } from "./sessions";
+import { call, controlsOf, startedOf } from "./sessions";
 import { MAX_FILE_BYTES, readBlob, upload } from "./tasks";
 
 export const chatApi = {
@@ -155,6 +156,24 @@ export async function resumeChatThread(repo: string, threadId: string): Promise<
   const reply = await call(() => chatApi.chat(repo).resumeChatThread({ meta: newMutationMeta(), threadId }));
   await settled(repo, reply.applied?.cursor);
   return reply.successorId;
+}
+
+// ---- the turn controls ---------------------------------------------------------------------------------------
+
+export async function promptChatThread(repo: string, threadId: string, text: string): Promise<void> {
+  await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text }));
+}
+
+export async function abortChatThread(repo: string, threadId: string): Promise<void> {
+  await call(() => chatApi.chat(repo).abortChatThread({ threadId }));
+}
+
+export async function setChatModel(repo: string, threadId: string, model: string): Promise<SessionControls> {
+  return controlsOf((await call(() => chatApi.chat(repo).setChatModel({ meta: newMutationMeta(), threadId, model }))).controls);
+}
+
+export async function setChatThinkingLevel(repo: string, threadId: string, level: string): Promise<SessionControls> {
+  return controlsOf((await call(() => chatApi.chat(repo).setChatThinkingLevel({ meta: newMutationMeta(), threadId, level }))).controls);
 }
 
 // ---- attachments and images --------------------------------------------------------------------------------

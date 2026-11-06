@@ -104,12 +104,6 @@ pub(crate) fn require_repo_owned(state: &AppState, repo: &Path) -> Result<(), St
     }
 }
 
-pub(crate) fn require_owned_active_repo(state: &AppState) -> Result<PathBuf, String> {
-    let repo = active_repo()?;
-    require_repo_owned(state, &repo)?;
-    Ok(repo)
-}
-
 pub(crate) fn app_config_path_for(app_config_dir: &Path, identifier: &str, launch_root: Option<&OsStr>) -> PathBuf {
     if identifier != alinery_core::DEVELOPMENT_APP_IDENTIFIER {
         return app_config_dir.join("app.toml");
@@ -180,12 +174,15 @@ pub(crate) fn target_or_active_ref<R: tauri::Runtime>(app: &AppHandle<R>, repo_p
     }
 }
 
+#[cfg(test)]
 pub(crate) fn tasks_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("tasks")
 }
+#[cfg(test)]
 pub(crate) fn task_dir(repo: &Path, slug: &str) -> PathBuf {
     tasks_dir(repo).join(slug)
 }
+#[cfg(test)]
 pub(crate) fn sessions_dir(repo: &Path, slug: &str) -> PathBuf {
     task_dir(repo, slug).join("sessions")
 }

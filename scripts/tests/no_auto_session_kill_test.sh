@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-no-auto-session-kill.sh must pass on the real tree and fail, naming the function, when a
-# sixth function names a ShutdownOrigin or sends the old shutdown op. Each case runs the gate on a
+# sixth function names a ShutdownOrigin or builds the older-daemon shutdown. Each case runs the gate on a
 # scratch copy of the three Rust source dirs (and the daemon's TypeScript) it scans, with one planted function.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -37,7 +37,7 @@ expect_fail() { # <what> <planted line> <name that must be reported>
   fi
 }
 expect_fail "a sixth function names a ShutdownOrigin" 'let _ = ShutdownOrigin::StopDaemon;'
-expect_fail "a sixth function sends the old op" 'let _ = daemon_client::shutdown_request();'
+expect_fail "a sixth function builds the older-daemon shutdown" 'let _ = legacy_shutdown(std::path::Path::new("/"), "", None);'
 
 fresh_tree
 sed -i.bak 's/ShutdownOrigin::StopRemote/ShutdownOrigin::StopDaemon_REMOVED/;s/ShutdownOrigin::ConfirmedTakeover/ShutdownOrigin_REMOVED/' "$TMP/tree/alinery-app/src-tauri/src/remote.rs" "$TMP/tree/alinery-app/src-tauri/src/daemon.rs"

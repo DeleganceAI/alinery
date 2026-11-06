@@ -5,7 +5,7 @@ import { closeSync, type Dirent, existsSync, lstatSync, mkdirSync, openSync, rea
 import { join } from "node:path";
 import { applyCredentialChanges } from "../credentials.ts";
 import { restoreBackup, verifyBackup } from "../domain/backup.ts";
-import { laneLockPath, laneSocketPath, socketReachable, validateLane } from "../domain/ownership.ts";
+import { laneLockPath, laneSockets, socketReachable, validateLane } from "../domain/ownership.ts";
 import { git } from "../platform/git.ts";
 import { writeOwnerOnly } from "../platform/fs.ts";
 import { tryLockExclusive, type LockHandle } from "../platform/lock.ts";
@@ -236,7 +236,7 @@ export async function waitDaemonGone(repo: string, lane = "", budget = { attempt
   }
   if (!rootStat.isDirectory()) throw new Error("cannot establish daemon exit: invalid ownership directory");
   const lockPath = laneLockPath(repo, lane);
-  const socketPath = laneSocketPath(repo, lane);
+  const sockets = laneSockets(repo, lane);
   for (let attempt = 0; attempt < budget.attempts; attempt++) {
     let before: ReturnType<typeof lstatSync> | undefined;
     try {
@@ -246,13 +246,15 @@ export async function waitDaemonGone(repo: string, lane = "", budget = { attempt
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error instanceof Error && error.message.startsWith("cannot") ? error : new Error(`cannot establish daemon exit: ${error}`);
       before = undefined;
     }
-    let reachable: boolean;
-    try {
-      reachable = await socketReachable(socketPath);
-    } catch (error) {
-      // A connection reset is the daemon closing its listener under the probe: it is still going, so look again.
-      if (!String((error as Error).message).includes("ECONNRESET")) throw new Error(`cannot establish daemon exit: ${(error as Error).message}`);
-      reachable = true;
+    let reachable = false;
+    for (const socketPath of sockets) {
+      try {
+        reachable = (await socketReachable(socketPath)) || reachable;
+      } catch (error) {
+        // A connection reset is the daemon closing its listener under the probe: it is still going, so look again.
+        if (!String((error as Error).message).includes("ECONNRESET")) throw new Error(`cannot establish daemon exit: ${(error as Error).message}`);
+        reachable = true;
+      }
     }
     if (!reachable) {
       const lease = tryLockExclusive(lockPath);
@@ -280,7 +282,6 @@ export type SpawnDaemonParams = {
   log: string;
   launch: "direct" | "systemd_run";
   unit: string;
-  uiSecretFile: string;
   rpcSecretFile: string;
   appVersion: string;
 };
@@ -314,7 +315,6 @@ export function daemonArguments(p: SpawnDaemonParams): string[] {
   const args = ["--repo", p.repo, "--app-config", p.appConfig, "--build-id", p.buildId, "--app-version", p.appVersion];
   if (p.namespace !== "") args.push("--socket-namespace", p.namespace);
   if (p.rpcSecretFile !== "") args.push("--rpc-secret-file", p.rpcSecretFile);
-  if (p.uiSecretFile !== "") args.push("--ui-secret-file", p.uiSecretFile);
   return args;
 }
 

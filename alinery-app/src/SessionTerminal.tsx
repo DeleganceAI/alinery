@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { APPEARANCE_EVENT } from "./appearance";
 import * as ipc from "./ipc";
 import { observationNow } from "./sync/sessionObservation";
-import { readSessionHistory } from "./sync/sessions";
+import { type OpenSessionArgs, openSession, readSessionHistory } from "./sync/sessions";
 import { terminalLink } from "./sync/terminal";
 import { attachGpuRenderer } from "./terminalRenderer";
 import { restoreViewport, saveViewport } from "./terminalViewport";
@@ -47,7 +47,7 @@ export type SessionTerminalConnectionState = "opening" | "open" | "recovering" |
  */
 export type SessionTerminalIo = {
   /** Spawn or resume the shell. Not called to rejoin a running one. */
-  open: (args: Parameters<typeof ipc.openSession>[0]) => Promise<void>;
+  open: (args: OpenSessionArgs) => Promise<void>;
   /** The repo key the daemon is reached by. */
   repo: () => Promise<string>;
   status: () => Promise<SessionObservation>;
@@ -92,7 +92,7 @@ export function SessionTerminal({
     const host = hostRef.current;
     if (!host) return;
     const sessionIo: SessionTerminalIo = io ?? {
-      open: (args) => ipc.openSession(args),
+      open: async (args) => openSession((await ipc.readAppConfig()).active_repo, args),
       repo: async () => (await ipc.readAppConfig()).active_repo,
       status: async () => observationNow((await ipc.readAppConfig()).active_repo, taskSlug, sessionId),
     };
@@ -133,7 +133,7 @@ export function SessionTerminal({
 
     if (readOnly) {
       // Read-only history replay (issue #24 P7): fetch the session's recorded activity
-      // chunks once and write them. NO open_session/attach, NO stdin, NO daemon resize —
+      // chunks once and write them. NO ResumeSession/attach, NO stdin, NO daemon resize —
       // this pane never touches the daemon, so it works after the pty (and daemon) are gone.
       sessionIo
         .repo()

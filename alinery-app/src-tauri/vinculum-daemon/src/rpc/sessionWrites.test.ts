@@ -16,7 +16,9 @@ import { Feed } from "../sync/feed.ts";
 import { sessionKey } from "../sync/parsers/sessionMeta.ts";
 import { Store } from "../sync/store.ts";
 import { createExecutionSession, startSession } from "../tasks.ts";
+import { DomainError } from "../platform/lock.ts";
 import { serveRpc } from "./server.ts";
+import type { TurnControl } from "./sessions.ts";
 
 const SECRET = "cd".repeat(32);
 const cleanup: Array<() => void> = [];
@@ -59,8 +61,23 @@ async function start() {
       running.delete(id);
     },
   };
+  const turnCalls: string[] = [];
+  const turns: TurnControl = {
+    prompt: async (id, text) => void turnCalls.push(`prompt ${id} ${text}`),
+    abort: async (id) => void turnCalls.push(`abort ${id}`),
+    setModel: async (id, model) => {
+      if (id === "gone") throw new DomainError("not_found", "unknown-session");
+      turnCalls.push(`model ${id} ${model}`);
+      return { model, thinking: "high", thinking_levels: ["low", "high"] };
+    },
+    setThinkingLevel: async (id, level) => {
+      turnCalls.push(`thinking ${id} ${level}`);
+      return { model: "m", thinking: level, thinking_levels: ["low", "high"] };
+    },
+  };
   const sessions = {
     repo,
+    turns,
     refresh: (rel: string) => f.refresh(rel),
     telemetry: { record: (build: () => TelemetryEvent) => void events.push(build()) },
     chat: new ChatPublisher(store, repo),
@@ -89,7 +106,7 @@ async function start() {
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
     interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
   });
-  return { repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  return { turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -207,4 +224,36 @@ test("a chat thread is created, pinned, continued and archived through ChatServi
   expect(c.storeAtKill[resumed.successorId]).toMatchObject({ value: { archived: true } });
   expect(c.store.get(sessionKey("", resumed.successorId))?.value).toMatchObject({ value: { archived: true } });
   expect(await code(c.chat.setChatPinned({ meta: meta(), threadId: "nope", pinned: true }))).toBe(Code.NotFound);
+});
+
+test("a session's turn controls reach the daemon's runner, and what it refuses leaves as a gRPC code", async () => {
+  const c = await start();
+  await c.session.promptSession({ meta: meta(), sessionId: "s1", text: "go" });
+  await c.session.abortSession({ sessionId: "s1" });
+  const model = await c.session.setSessionModel({ meta: meta(), sessionId: "s1", model: "p/m" });
+  expect(model.controls).toMatchObject({ model: "p/m", thinking: "high", thinkingLevels: ["low", "high"] });
+  const level = await c.session.setSessionThinkingLevel({ meta: meta(), sessionId: "s1", level: "low" });
+  expect(level.controls).toMatchObject({ thinking: "low" });
+  expect(c.turnCalls).toEqual(["prompt s1 go", "abort s1", "model s1 p/m", "thinking s1 low"]);
+  expect(await code(c.session.setSessionModel({ meta: meta(), sessionId: "gone", model: "p/m" }))).toBe(Code.NotFound);
+  // A retried prompt is not sent twice.
+  const m = meta();
+  await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
+  await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
+  expect(c.turnCalls.filter((line) => line === "prompt s1 once")).toHaveLength(1);
+});
+
+test("a chat thread's turn controls refuse an id that is not a chat thread", async () => {
+  const c = await start();
+  sessionMeta(c, "", "chat1", { harness: "vinculum", generic: true });
+  sessionMeta(c, "t", "task-session");
+  await c.chat.promptChatThread({ meta: meta(), threadId: "chat1", text: "hi" });
+  await c.chat.abortChatThread({ threadId: "chat1" });
+  expect((await c.chat.setChatModel({ meta: meta(), threadId: "chat1", model: "p/m" })).controls?.model).toBe("p/m");
+  expect((await c.chat.setChatThinkingLevel({ meta: meta(), threadId: "chat1", level: "low" })).controls?.thinking).toBe("low");
+  expect(c.turnCalls).toEqual(["prompt chat1 hi", "abort chat1", "model chat1 p/m", "thinking chat1 low"]);
+  // A task session's id is not a thread, and nothing reaches the runner for it.
+  expect(await code(c.chat.promptChatThread({ meta: meta(), threadId: "task-session", text: "x" }))).toBe(Code.NotFound);
+  expect(await code(c.chat.abortChatThread({ threadId: "../x" }))).toBe(Code.InvalidArgument);
+  expect(c.turnCalls).toHaveLength(4);
 });

@@ -4,12 +4,12 @@
 #   No Saga code path automatically kills a live session. Every kill originates in a
 #   deliberate, explicitly-clicked user action carrying a loss-of-work warning.
 #
-# Fails if any function in the Tauri app sends the daemon's `shutdown` op (which
-# SIGTERM/SIGKILLs every harness process group) unless that function is one of the
-# deliberate teardown origins below. The same holds for the RPC form: a name of
-# `ShutdownOrigin` (`AdminService.Shutdown`, plan invariant 1) may appear only in those
-# functions, and each of them must name one. The JSON `shutdown` op stays as the way to stop a
-# daemon of an older protocol (plan O23) until S5.3, reached only from the same functions.
+# Fails if any function in the Tauri app names a `ShutdownOrigin` (`AdminService.Shutdown`, which
+# SIGTERM/SIGKILLs every harness process group; plan invariant 1) unless that function is one of the
+# deliberate teardown origins below, and each of them must name one. A daemon of protocol 38 or older
+# is stopped over its JSON-lines socket (plan O23); that goes through `legacy_shutdown`, whose callers
+# must be among the same origins. The wire is otherwise retired (S5.3), so nothing else builds a
+# `shutdown` request.
 #
 # A behavioural test alone would pass against a re-introduced *conditional* kill, which
 # is exactly how the original bug shipped — hence a source-level check.
@@ -23,18 +23,9 @@ SRC="$ROOT/alinery-app/src-tauri/src"
 
 # Every app-crate module, not just lib.rs — the teardown origins live in daemon.rs,
 # backup.rs and app_config.rs since lib.rs was split into domain modules. Scanning one
-# file would leave the rest unpoliced *and* trip the drift self-check below.
-#
-# Two exclusions:
-#   daemon_client.rs  defines shutdown_request() itself; scanning it flags the definition.
-#   tests.rs          test-only callers are not product paths.
-LIBS=()
-for f in "$SRC"/*.rs; do
-  case "$(basename "$f")" in
-    daemon_client.rs | tests.rs) continue ;;
-    *) LIBS+=("$f") ;;
-  esac
-done
+# file would leave the rest unpoliced *and* trip the drift self-check below. Test code is in
+# src/tests/, a subdirectory, so it is not scanned.
+LIBS=("$SRC"/*.rs)
 [ "${#LIBS[@]}" -gt 0 ] || { echo "ERROR: no app-crate sources found under $SRC" >&2; exit 1; }
 
 # The ONLY deliberate session-kill origins. Add a name here only together with a
@@ -50,7 +41,7 @@ done
 ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_blocking stop_remote_daemon"
 
 # `close_repo_daemon` is a plain fn, so a NEW CALLER of it would end every live session in
-# a repo without adding a `shutdown` sender for the scan above to notice. Its callers are
+# a repo without naming a `ShutdownOrigin` for the scan above to notice. Its callers are
 # therefore allowlisted separately:
 #   remove_repo      close-repo confirmation (B4)
 #   close_all_repos  the quit dialog's express "close all repos" choice
@@ -58,43 +49,9 @@ ALLOWED="stop_daemon close_repo_daemon restore_backup confirm_repo_takeover_bloc
 #                            close_all_repos calls it
 CLOSE_CALLERS_ALLOWED="remove_repo close_all_repos close_all_repos_blocking"
 
-senders="$(
-  awk '
-    # Reset attribution at each file boundary so a hit never inherits the previous
-    # file'"'"'s last function name.
-    FNR == 1 { current = "" }
-    match($0, /^[[:space:]]*(pub(\([^)]*\))? )?(async )?fn [a-z_0-9]+/) {
-      f = $0
-      sub(/.*fn /, "", f)
-      sub(/[^a-z_0-9].*/, "", f)
-      current = f
-    }
-    # Two spellings, both matched on purpose: the wire client builds requests through
-    # daemon_client::shutdown_request(), but a hand-rolled json!({"op":"shutdown"}) must
-    # not slip past this guard just because it bypassed the module.
-    /"op"[[:space:]]*:[[:space:]]*"shutdown"/ || /shutdown_request\(/ || /\.shutdown[[:space:]]*\([[:space:]]*\)/ { print current }
-  ' "${LIBS[@]}" | sort -u | tr '\n' ' '
-)"
-senders="$(echo $senders)"
-
-if [ -z "$senders" ]; then
-  # The grep pattern must keep matching something, or this check silently passes forever.
-  echo "ERROR: found no shutdown senders at all — the match pattern has drifted from the code." >&2
-  exit 1
-fi
-
 status=0
-for fn in $senders; do
-  case " $ALLOWED " in
-    *" $fn "*) echo "ok       $fn (deliberate teardown)" ;;
-    *)
-      echo "ERROR: $fn sends the daemon shutdown op — that kills every live session." >&2
-      status=1
-      ;;
-  esac
-done
 
-# The RPC form: where a `ShutdownOrigin` is named. Comment lines do not count.
+# Where a `ShutdownOrigin` is named. Comment lines do not count.
 origin_users="$(
   awk '
     FNR == 1 { current = "" }
@@ -129,6 +86,31 @@ for fn in $ALLOWED; do
     *" $fn "*) echo "ok       $fn (names its ShutdownOrigin)" ;;
     *)
       echo "ERROR: $fn is a teardown origin but names no ShutdownOrigin." >&2
+      status=1
+      ;;
+  esac
+done
+
+# The older-daemon stop (O23): `legacy_shutdown(` is built only by a teardown origin.
+legacy_users="$(
+  awk '
+    FNR == 1 { current = "" }
+    match($0, /^[[:space:]]*(pub(\([^)]*\))? )?(async )?fn [a-z_0-9]+/) {
+      f = $0
+      sub(/.*fn /, "", f)
+      sub(/[^a-z_0-9].*/, "", f)
+      current = f
+    }
+    /^[[:space:]]*\/\// { next }
+    /legacy_shutdown\(/ && current != "legacy_shutdown" { print current }
+  ' "${LIBS[@]}" | sort -u | tr '\n' ' '
+)"
+legacy_users="$(echo $legacy_users)"
+for fn in $legacy_users; do
+  case " $ALLOWED " in
+    *" $fn "*) ;;
+    *)
+      echo "ERROR: $fn builds the older-daemon shutdown — that ends every live session." >&2
       status=1
       ;;
   esac
@@ -181,11 +163,11 @@ for (const dir of ["src", "alinery-core/src"]) {
       if (/\bconfirm_repo_takeover_blocking\s*\(/.test(line) && !declaration && current !== "confirm_repo_takeover") {
         throw new Error(`${dir}/${name}: ${current} bypasses confirmed takeover entry`);
       }
-      if (/\.shutdown\s*\(\s*\)/.test(line) && !(dir === "src" && current === "confirm_repo_takeover_blocking")) {
-        throw new Error(`${dir}/${name}: ${current} sends bound shutdown outside confirmed takeover`);
+      if (/\.shutdown\s*\(\s*\)/.test(line) && !(dir === "src" && current === "legacy_shutdown")) {
+        throw new Error(`${dir}/${name}: ${current} sends the older-daemon shutdown outside legacy_shutdown`);
       }
-      if (dir !== "src" && /\bshutdown_request\s*\(/.test(line) && !declaration && !(dir === "alinery-core/src" && name === "daemon_client.rs" && current === "shutdown")) {
-        throw new Error(`${dir}/${name}: ${current} sends shutdown outside checked core transport`);
+      if (/\bshutdown_request\s*\(/.test(line) && !declaration && !(dir === "alinery-core/src" && name === "legacy_daemon.rs" && current === "shutdown")) {
+        throw new Error(`${dir}/${name}: ${current} builds a JSON shutdown request outside the legacy transport`);
       }
     }
   }
@@ -250,7 +232,7 @@ else
   echo "ok       mcpServer (calls no Shutdown, signals nothing)"
 fi
 
-case " $senders " in
+case " $origin_users $legacy_users " in
   *" ensure_daemon "*)
     echo "ERROR: ensure_daemon must NEVER send shutdown. Reuse on protocol equality; on" >&2
     echo "       mismatch return the typed error and do not spawn." >&2

@@ -112,7 +112,7 @@ pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, ba
         }
         // DELIBERATE TEARDOWN ORIGIN: confirmed restore holds lifecycle ordering
         // through extraction, so no queued attach can publish against half-restored data.
-        if let Ok(daemon) = DaemonClient::connect_path_checked(current_alineryd_socket_path(&repo)) {
+        if daemon_answers(&repo) {
             shutdown_daemon(
                 &repo.display().to_string(),
                 &app_config_path(&worker_app)?,
@@ -120,10 +120,10 @@ pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, ba
                 ShutdownOrigin::RestoreBackup,
                 "",
                 None,
-                || daemon.call(&daemon_client::shutdown_request()).map(|_| ()),
+                legacy_shutdown(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""), None),
             )
             .map_err(|error| format!("could not stop daemon before restore: {error}"))?;
-            daemon_client::wait_for_daemon_gone(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""))
+            alinery_core::legacy_daemon::wait_for_daemon_gone(&repo, alineryd_socket_namespace().as_deref().unwrap_or(""))
                 .map_err(|error| format!("{error}; restore aborted so live sessions cannot write over the archive"))?;
         }
         state.clear_daemon(&repo);

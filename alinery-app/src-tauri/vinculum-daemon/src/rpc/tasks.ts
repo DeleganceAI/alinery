@@ -65,68 +65,7 @@ async function runCreate(d: TaskDeps, params: CreateTaskParams, release: string[
   return { reply, tail };
 }
 
-type WireRequest = Record<string, unknown> & {
-  name: string;
-  attachments?: { name: string; bytes: string }[];
-  playbook: { reference: { scope: string; key: string }; source: string };
-  launch_defaults?: { harness: string; model: string };
-};
-
-/**
- * The legacy `create_task` op (the Bun MCP no longer sends it; S5.3 deletes the op): the Rust
- * `CreateTaskRequest` as JSON, attachments inline as base64. The bytes are put in a scratch directory for the create
- * and removed after; the reply is the JSON `CreateTaskReply` the MCP tool returns.
- */
-export async function createFromWire(d: TaskDeps, request: WireRequest): Promise<Record<string, unknown>> {
-  if (typeof request.parent_task === "string" && request.parent_task !== "") return { error: "a sub-task is created by create_subtask" };
-  const scratch = join(alineryDir(d.repo), "tmp", `wire-${randomUUID()}`);
-  try {
-    const attachments: AttachmentSource[] = [];
-    for (const a of request.attachments ?? []) {
-      const bytes = Buffer.from(a.bytes, "base64");
-      mkdirSync(scratch, { recursive: true });
-      const path = join(scratch, `${attachments.length}`);
-      writeAtomic(path, bytes);
-      attachments.push({ name: a.name, path, size: bytes.length });
-    }
-    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
-    const params: CreateTaskParams = {
-      name: request.name,
-      draftSlug: str(request.draft_slug),
-      requestedSlug: str(request.requested_slug),
-      description: str(request.description),
-      evidence: str(request.evidence),
-      attachments,
-      originalTicket: str(request.original_ticket),
-      attachmentUrls: (request.attachment_urls as string[] | undefined) ?? [],
-      attachmentErrors: (request.attachment_errors as string[] | undefined) ?? [],
-      linearId: str(request.linear_id),
-      githubIssue: str(request.github_issue),
-      relatedTasks: (request.related_tasks as CreateTaskParams["relatedTasks"]) ?? [],
-      playbook: request.playbook,
-      branchName: str(request.branch_name),
-      worktreeName: str(request.worktree_name),
-      baseRef: str(request.base_ref),
-      launchDefaults: request.launch_defaults,
-      autoAdvanceSteps: (request.auto_advance_steps as string[] | null | undefined) ?? undefined,
-      stepModels: (request.step_models as Record<string, string> | undefined) ?? {},
-      maxLiveSessions: (request.max_live_sessions as number | null | undefined) ?? undefined,
-      start: request.start === true,
-    };
-    const { reply, tail } = await runCreate(d, params, [], params.draftSlug);
-    return { task: reply.task, sessions: tail.sessions, executions: tail.executions, creation: reply.creation, start: tail.start, errors: tail.errors };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}
-
-/**
- * The legacy `create_subtask` op (the Bun MCP no longer calls it; S5.3 deletes the op). The reply is the
- * JSON `CreateSubtaskResult`: the parent and child summaries, the manager session as the file now holds it, and the child's
- * `CreateTaskReply`. A refusal is `{ error }`, as every legacy op answers.
- */
+/** A sub-task's create: the reply is the JSON `CreateSubtaskResult` (the parent and child summaries, the manager session as the file now holds it, and the child's `CreateTaskReply`). */
 export async function createSubtask(d: TaskDeps, request: unknown): Promise<Record<string, unknown>> {
   const plan = await prepareSubtask(d, parseCreateSubtaskInput(request));
   const { reply, tail } = await runCreate(d, plan.params, [], undefined, plan.hooks);
@@ -135,14 +74,6 @@ export async function createSubtask(d: TaskDeps, request: unknown): Promise<Reco
   await settleFiles(d, owner, `tasks/${owner}/${managerFile}`);
   const provisioning = { task: reply.task, sessions: tail.sessions, executions: tail.executions, creation: reply.creation, start: tail.start, errors: tail.errors };
   return plan.result(reply, provisioning);
-}
-
-export async function createSubtaskFromWire(d: TaskDeps, request: unknown): Promise<Record<string, unknown>> {
-  try {
-    return await createSubtask(d, request);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
-  }
 }
 
 export function taskService(d: TaskDeps, dedupe: Dedupe, store: Store): ServiceImpl<typeof TaskService> {

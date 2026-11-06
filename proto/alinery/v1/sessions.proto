@@ -24,7 +24,34 @@ service SessionService {
   rpc ReadHistory(ReadHistoryRequest) returns (ReadHistoryResponse);                      // VIEW
   rpc ReadOmpWindow(ReadOmpWindowRequest) returns (ReadOmpWindowResponse);                // VIEW
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
+  // The turn controls of a live harness session (S5.3: the JSON-lines prompt, abort, set_model and set_thinking_level ops).
+  rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
+  rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
+  rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT
+  rpc SetSessionThinkingLevel(SetSessionThinkingLevelRequest) returns (SetSessionThinkingLevelResponse);  // ACT
 }
+
+// The session is named by id alone: a live session's id is unique in its daemon, and a chat thread has no task.
+message PromptSessionRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string text = 3;
+}
+message PromptSessionResponse {}
+message AbortSessionRequest { string session_id = 1; }
+message AbortSessionResponse {}
+message SetSessionModelRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string model = 3;  // provider/id
+}
+message SetSessionThinkingLevelRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string level = 3;
+}
+message SetSessionModelResponse { SessionControls controls = 1; }
+message SetSessionThinkingLevelResponse { SessionControls controls = 1; }
 
 message PrimaryTarget {
   string step_key = 1;

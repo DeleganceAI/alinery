@@ -5,13 +5,14 @@ pub mod attachments;
 pub mod backup;
 pub mod board;
 pub mod credential_sync;
-pub mod daemon_client;
+pub mod daemon_launch;
 pub mod execution;
 pub mod fs_atomic;
 pub mod git;
 pub mod git_actions;
 pub mod hosted_inference;
 pub mod http;
+pub mod legacy_daemon;
 pub mod lockfile;
 pub mod log;
 pub mod message;
@@ -32,7 +33,7 @@ pub mod types;
 
 // Re-exports for convenience
 pub use backup::*;
-pub use daemon_client::*;
+pub use daemon_launch::*;
 pub use execution::*;
 pub use fs_atomic::{create_dir_owner_only, write_bytes_atomic, write_owner_only_bytes};
 pub use git::*;
@@ -42,6 +43,7 @@ pub use hosted_inference::{
     render_models_yml, revoke_hosted_inference, sync_hosted_inference, wipe_hosted_files, write_hosted_models_yml, write_inference_file, HostedApiError, HostedCatalog,
     HostedModel, HOSTED_MODEL_UNAVAILABLE,
 };
+pub use legacy_daemon::*;
 pub use lockfile::*;
 pub use log::*;
 pub use message::*;

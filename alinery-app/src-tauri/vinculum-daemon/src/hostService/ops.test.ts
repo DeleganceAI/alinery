@@ -269,7 +269,6 @@ describe("spawnDaemon", () => {
     log: join(root, "logs/d.log"),
     launch: "direct" as const,
     unit: "",
-    uiSecretFile: join(root, "ui.secret"),
     rpcSecretFile: join(root, "rpc.secret"),
     appVersion: "9.9.9",
     ...over,
@@ -295,13 +294,12 @@ describe("spawnDaemon", () => {
     expect(text).toContain("--build-id hash1");
     expect(text).toContain("--app-version 9.9.9");
     expect(text).toContain("--socket-namespace ns");
-    expect(text).toContain(`--ui-secret-file ${join(root, "ui.secret")}`);
     expect(text).toContain(`--rpc-secret-file ${join(root, "rpc.secret")}`);
     expect(text).toContain("xai=xai-test host=\n");
   });
 
   test("the arguments leave out what was not given", () => {
-    const args = daemonArguments(params("/r", { namespace: "", uiSecretFile: "", rpcSecretFile: "" }));
+    const args = daemonArguments(params("/r", { namespace: "", rpcSecretFile: "" }));
     expect(args).toEqual(["--repo", "/r/repo", "--app-config", "/r/app.toml", "--build-id", "hash1", "--app-version", "9.9.9"]);
   });
 

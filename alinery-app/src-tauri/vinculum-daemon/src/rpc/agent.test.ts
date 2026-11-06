@@ -40,7 +40,7 @@ async function start() {
     jobs: new JobRunner(store),
     storageScan: { mode: "error" } as never,
     transcripts: async () => undefined,
-    agent: { appConfig, blobs },
+    agent: { appConfig, blobs, mcp: { refresh: async () => ({ tools: ["read", "bash"], servers: [{ name: "docs", builtin: false, state: "error", error: "could not start" }, { name: "alinery", builtin: true, state: "connected" }] }) } },
   });
   cleanup.push(() => {
     net.close();
@@ -114,4 +114,14 @@ test("the prompt names this host's agent directory", async () => {
   const t = await start();
   const { prompt } = await t.svc.customizationPrompt({});
   expect(prompt).toContain(`'${t.agentDir}'`);
+});
+
+test("the MCP hub's state reads back with each server's connection and a failure's fixed text", async () => {
+  const t = await start();
+  const status = await t.svc.readMcpStatus({});
+  expect(status.tools).toEqual(["read", "bash"]);
+  expect(status.servers.map((s) => [s.name, s.builtin, s.state, s.error])).toEqual([
+    ["docs", false, "error", "could not start"],
+    ["alinery", true, "connected", undefined],
+  ]);
 });

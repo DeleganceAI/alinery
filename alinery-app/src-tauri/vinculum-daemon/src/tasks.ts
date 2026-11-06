@@ -321,20 +321,3 @@ export async function startSession(
     errors: [],
   };
 }
-
-export async function taskOp(
-  repo: string,
-  lane: string,
-  appIdentity: string,
-  op: string,
-  header: Request,
-  openSession: (id: string, taskSlug: string, model: string, prompt: string) => Promise<void>,
-): Promise<Record<string, unknown> | undefined> {
-  if (op === "get_task_execution") {
-    const request = (header.request ?? {}) as Request;
-    return getTaskExecution(repo, String(request.task_slug ?? ""), lane, appIdentity);
-  }
-  if (op === "create_execution_session") return createExecutionSession(repo, (header.request ?? {}) as Request, openSession);
-  if (op === "start_session") return startSession(repo, (header.request ?? {}) as Request, openSession);
-  return undefined;
-}

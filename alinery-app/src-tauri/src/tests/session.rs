@@ -17,39 +17,16 @@ created = 1
 }
 
 #[test]
-fn bounded_observation_timeout_returns_error() {
-    let repo = activity_repo("bounded-observation-timeout");
-    let socket = crate::current_alineryd_socket_path(&repo);
-    let listener = status_list_socket(socket.clone(), None);
-
-    let started = std::time::Instant::now();
-    let result = crate::DaemonClient::connect_path(socket).unwrap().session_statuses_observed();
-
-    assert!(result.is_err(), "silent daemon observation should fail");
-    assert!(
-        started.elapsed() < Duration::from_millis(900),
-        "observation waited {:?}, expected bounded timeout",
-        started.elapsed()
-    );
-    assert_eq!(listener.calls(), 1);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
-    assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));
-    assert!(hosted_refresh_needed("spawn", "vinculum", "alinery/Qwen3.6-35B-A3B"));
-    assert!(hosted_refresh_needed("resume", "omp", "alinery/Qwen3.6-35B-A3B"));
-    assert!(hosted_refresh_needed("spawn", "omp", " alinery/Qwen3.6-35B-A3B "));
-    assert!(hosted_refresh_needed("spawn", "omp", ""));
-    assert!(hosted_refresh_needed("resume", "omp", "   "));
-    assert!(!hosted_refresh_needed("spawn", "omp", "anthropic/claude"));
-    assert!(!hosted_refresh_needed("resume", "omp", "xai/grok"));
-    assert!(!hosted_refresh_needed("attach", "omp", "alinery/Qwen3.6-35B-A3B"));
-    assert!(!hosted_refresh_needed("spawn", "no-harness", "alinery/Qwen3.6-35B-A3B"));
-    assert!(!hosted_refresh_needed("resume", "no-harness", "alinery/Qwen3.6-35B-A3B"));
-    assert!(!hosted_refresh_needed("spawn", "", "alinery/Qwen3.6-35B-A3B"));
-    assert!(!hosted_refresh_needed("attach", "no-harness", "alinery/Qwen3.6-35B-A3B"));
+fn hosted_refresh_needed_only_for_omp_hosted_or_unset_models() {
+    assert!(hosted_refresh_needed("omp", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("vinculum", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("omp", " alinery/Qwen3.6-35B-A3B "));
+    assert!(hosted_refresh_needed("omp", ""));
+    assert!(hosted_refresh_needed("omp", "   "));
+    assert!(!hosted_refresh_needed("omp", "anthropic/claude"));
+    assert!(!hosted_refresh_needed("omp", "xai/grok"));
+    assert!(!hosted_refresh_needed("no-harness", "alinery/Qwen3.6-35B-A3B"));
+    assert!(!hosted_refresh_needed("", "alinery/Qwen3.6-35B-A3B"));
 }
 
 #[test]
@@ -312,35 +289,13 @@ fn open_chat_repos_need_ownership_a_daemon_and_no_close_in_flight() {
     let foreign = init_git_test_repo("chat-foreign");
     let closing = init_git_test_repo("chat-closing");
     let state = AppState::default();
-    let client = || crate::DaemonClient::connect_path(std::path::PathBuf::from("/tmp/unused-chat-open.sock")).unwrap();
     for repo in [&open, &no_daemon, &closing] {
         assert!(state.claim_repo(repo));
     }
     for repo in [&open, &foreign, &closing] {
-        state.set_daemon(repo, client(), alinery_core::DaemonCompat::Current, String::new(), false);
+        state.set_daemon(repo, alinery_core::DaemonCompat::Current);
     }
     let _closing = state.mark_closing(&closing);
     let known: Vec<String> = [&open, &no_daemon, &foreign, &closing].iter().map(|repo| repo.to_string_lossy().into_owned()).collect();
     assert_eq!(open_chat_repos_in(&known, &state), [open]);
 }
-
-#[test]
-fn require_explicit_daemon_does_not_call_active() {
-    let mut calls = 0;
-    let missing = require_explicit_daemon(None::<u8>, || {
-        calls += 1;
-        Some(1)
-    });
-    assert_eq!(missing.unwrap_err(), "daemon not connected");
-    assert_eq!(calls, 0);
-    let chosen = require_explicit_daemon(Some(2u8), || {
-        calls += 1;
-        Some(1)
-    })
-    .unwrap();
-    assert_eq!(chosen, 2);
-    assert_eq!(calls, 0);
-}
-
-// Stands in for the daemon during a resume: `create_execution_session` mints the successor row,
-// `resume` is acked. Two connections, then it exits.

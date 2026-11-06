@@ -18,7 +18,33 @@ service ChatService {
   rpc RemoveChatWorktree(RemoveChatWorktreeRequest) returns (RemoveChatWorktreeResponse);  // ACT
   // Continues a thread in a new one that resumes its harness conversation.
   rpc ResumeChatThread(ResumeChatThreadRequest) returns (ResumeChatThreadResponse);  // ACT
+  // The turn controls of a thread, the chat form of SessionService's: the thread must be a chat thread (a root session).
+  rpc PromptChatThread(PromptChatThreadRequest) returns (PromptChatThreadResponse);  // ACT
+  rpc AbortChatThread(AbortChatThreadRequest) returns (AbortChatThreadResponse);     // ACT
+  rpc SetChatModel(SetChatModelRequest) returns (SetChatModelResponse);              // ACT
+  rpc SetChatThinkingLevel(SetChatThinkingLevelRequest) returns (SetChatThinkingLevelResponse);  // ACT
 }
+
+message PromptChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string text = 3;
+}
+message PromptChatThreadResponse {}
+message AbortChatThreadRequest { string thread_id = 1; }
+message AbortChatThreadResponse {}
+message SetChatModelRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string model = 3;
+}
+message SetChatThinkingLevelRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string level = 3;
+}
+message SetChatModelResponse { SessionControls controls = 1; }
+message SetChatThinkingLevelResponse { SessionControls controls = 1; }
 
 message CreateChatThreadRequest {
   MutationMeta meta = 1;

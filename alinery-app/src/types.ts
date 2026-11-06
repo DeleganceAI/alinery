@@ -1098,9 +1098,12 @@ export type TakeoverPreview = {
 
 export type TakeoverOutcome = { status: "attached" } | { status: "blocked"; conflict: DaemonConflict } | { status: "reconfirm"; preview: TakeoverPreview };
 
+/** What only the shell knows about a repo's daemon (the `daemon_status` command); the rest of `DaemonStatus` is the daemon's own entity. */
+export type ShellDaemonStatus = Pick<DaemonStatus, "mode" | "extra_lanes" | "stale_lanes" | "repo" | "build_drift" | "conflict" | "repo_busy">;
+
 export type DaemonStatus = {
   reachable: boolean;
-  mode: string; // "local" today; "remote" reserved for a future remote daemon
+  mode: string; // "local", or "remote" for a daemon behind an SSH forward
   // Independent process-level count (alive PTY processes).
   alive: number;
   // Agent-state counts (OMP-only; unsupported/unknown sessions excluded from agent counts).
@@ -1120,7 +1123,7 @@ export type DaemonStatus = {
   conflict: DaemonConflict | null;
   /** B6: another live alinery holds this repo's `.alinery/.alinery-app.lock`. */
   repo_busy: boolean;
-  /** The selected daemon lacks a canonical executable for dynamic host screening. */
+  /** The daemon reports (entity `daemon/_/status`) that it lacks a canonical executable for dynamic host screening. */
   host_guard_warning: boolean;
 };
 

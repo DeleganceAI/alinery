@@ -30,7 +30,10 @@ export function validateLane(lane: string): void {
 
 const stem = (lane: string) => (lane === "" ? "alineryd" : `alineryd-${lane}`);
 export const laneLockPath = (repo: string, lane: string) => join(alineryDir(repo), `.${stem(lane)}.lock`);
-export const laneSocketPath = (repo: string, lane: string) => join(alineryDir(repo), `${stem(lane)}.sock`);
+/** The gRPC socket every daemon serves: `rpc.sock` or `rpc-<lane>.sock`. */
+export const laneSocketPath = (repo: string, lane: string) => join(alineryDir(repo), `${lane === "" ? "rpc" : `rpc-${lane}`}.sock`);
+/** Where a lane's daemon answers: its gRPC socket, and the JSON-lines one that only a daemon from before S5.3 still listens on. Either answering means the lane's daemon is running. */
+export const laneSockets = (repo: string, lane: string) => [laneSocketPath(repo, lane), join(alineryDir(repo), `${stem(lane)}.sock`)];
 const repoLockPath = (repo: string) => join(alineryDir(repo), ".repo-owner.lock");
 
 const notFound = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
@@ -180,12 +183,14 @@ function enumerate(repo: string): { lanes: Set<string>; retained: Retained[]; is
     const candidateStem = lock ? lock[1] : sock;
     if (candidateStem === undefined) continue;
     let lane: string;
-    if (candidateStem === "alineryd") lane = "";
+    // A lane's evidence is its lock and either socket; there is no `.rpc.lock`.
+    if (candidateStem === "alineryd" || (sock !== undefined && candidateStem === "rpc")) lane = "";
     else if (candidateStem.startsWith("alineryd-")) lane = candidateStem.slice("alineryd-".length);
+    else if (sock !== undefined && candidateStem.startsWith("rpc-")) lane = candidateStem.slice("rpc-".length);
     else continue;
     try {
       validateLane(lane);
-      if (candidateStem !== "alineryd" && lane === "") throw problem(`invalid daemon ownership file ${name}`);
+      if (candidateStem !== "alineryd" && candidateStem !== "rpc" && lane === "") throw problem(`invalid daemon ownership file ${name}`);
       lanes.add(lane);
     } catch (error) {
       issues.push((error as Error).message);
@@ -266,8 +271,10 @@ export function acquireRepoOwnership(repo: string, lane: string, appConfigIdenti
       evidence.lanes.add(lane);
       for (const name of [...evidence.lanes].sort()) {
         leases.push(lease(laneLockPath(repo, name)));
-        if (await socketReachable(laneSocketPath(repo, name))) {
-          throw new DomainError("repo_busy", `project owner is still answering ${laneSocketPath(repo, name)}; stop it before opening this project here`);
+        for (const socket of laneSockets(repo, name)) {
+          if (await socketReachable(socket)) {
+            throw new DomainError("repo_busy", `project owner is still answering ${socket}; stop it before opening this project here`);
+          }
         }
       }
       for (const { path, file } of evidence.retained) {
