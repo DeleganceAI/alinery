@@ -77,7 +77,7 @@ describe("a session's badge follows its subscription", () => {
 
     daemon.show("/r", "task", "s1", running("waiting_for_input"), { kind: "input", correlationId: "c1" });
     await screen.findByText("Needs input");
-    expect(notify).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     expect(notify).toHaveBeenCalledWith("/r", "task", "waiting_for_input");
 
     daemon.show("/r", "task", "s1", exited);
@@ -101,7 +101,7 @@ describe("a session's badge follows its subscription", () => {
     vi.mocked(daemonTransport).mockReturnValue(daemonHarness({ sync: h.sync }).transport as Transport);
     render(<Probe />);
     await screen.findByText("Needs input");
-    expect(notify).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(h.requests.length).toBe(2), { timeout: 3000 }); // the run loop resubscribed
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
