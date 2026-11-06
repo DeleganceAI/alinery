@@ -2,7 +2,6 @@
 //! execution and the artifact list. The board's derived rows (current step, activity, display names)
 //! come from the daemon's store, not from here.
 
-use crate::execution::{read_execution_state, read_task_playbook};
 use crate::{sessions_dir, task_dir, tasks_dir, SessionMeta, Task};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -61,45 +60,8 @@ pub fn list_task_sessions(repo: &Path, task_slug: &str) -> Result<Vec<SessionMet
     list_session_metas_in_dir(sessions_dir(repo, task_slug))
 }
 
-pub fn load_session_meta(repo: &Path, task_slug: &str, id: &str) -> Result<SessionMeta, String> {
-    let path = crate::session_meta_path(repo, task_slug, id);
-    let raw = fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    serde_json::from_str(&raw).map_err(|error| format!("parse {}: {error}", path.display()))
-}
-
-/// The task's retained execution state and playbook, as stored on disk.
-pub fn saved_task_execution(repo: &Path, task_slug: &str) -> Result<crate::task_creation::TaskExecutionReply, String> {
-    let state = read_execution_state(repo, task_slug)?;
-    let definition = read_task_playbook(repo, task_slug, &state)?;
-    Ok(crate::task_creation::TaskExecutionReply { state, definition })
-}
-
-pub fn artifacts_with_metadata(repo: &Path, task_slug: &str) -> Result<Vec<crate::ArtifactListItem>, String> {
-    let task = read_task_checked(repo, task_slug)?;
-    if task.engine_version >= 2 {
-        let execution = saved_task_execution(repo, task_slug)?;
-        crate::list_artifacts_with_execution_metadata(repo, task_slug, &execution.state)
-    } else {
-        crate::list_artifacts_with_metadata_for(repo, task_slug)
-    }
-}
-
 /// Whether the task's recorded worktree still exists on disk.
 pub fn worktree_exists(repo: &Path, task_slug: &str) -> Result<bool, String> {
     let task = read_task_checked(repo, task_slug)?;
     Ok(!task.worktree.is_empty() && Path::new(&task.worktree).exists())
-}
-
-/// True when the session's phase artifact exists and is non-empty. A content feature, not a completion signal.
-pub fn session_artifact_ready(repo: &Path, task_slug: &str, id: &str) -> bool {
-    let Some(meta) = std::fs::read_to_string(crate::session_meta_path(repo, task_slug, id))
-        .ok()
-        .and_then(|text| serde_json::from_str::<SessionMeta>(&text).ok())
-    else {
-        return false;
-    };
-    crate::artifact_file_path(repo, task_slug, &meta.artifact)
-        .ok()
-        .and_then(|path| std::fs::metadata(path).ok())
-        .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0)
 }

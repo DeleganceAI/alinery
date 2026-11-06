@@ -101,7 +101,7 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `daemon.rs` | `DaemonClient`, `ensure_daemon`, lane routing, teardown origins, the 5s poller |
 | `pi_durable.rs` | Vinculum process supervision |
 | `remote.rs` | SSH hosts: destination parsing, probe, runtime install, ControlMaster, repo-service channel, credential sharing, `~/.ssh/config` aliases |
-| `chat.rs` | taskless chat threads (rail, create/pin/archive, attachments); file and git half in `alinery_core::chat` |
+| `chat.rs` | which repos Chat may use and the turn controls; the rail, thread writes and attachments are the daemon's `ChatService` |
 | `hosted.rs` | hosted Alinery models: catalog, credits, mint/revoke against the accounts service |
 | `vinculum_customizations.rs` | the Finder window and skill picker of the agent directory (the directory itself is the daemon's `AgentService`) |
 | `community_playbooks.rs` | community catalog, preview, mine, remote status, package download, publish (the import registry is the daemon's) |

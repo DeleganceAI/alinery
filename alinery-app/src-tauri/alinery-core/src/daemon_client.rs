@@ -2,7 +2,7 @@
 //!
 //! Every app and MCP request is built and every daemon-only reply field is parsed here.
 
-use crate::{alineryd_socket_path, app_config_identity, daemon_compat, login_shell_path, DaemonCompat, ProcessState, SessionState, SessionTransport, PROTOCOL_VERSION};
+use crate::{alineryd_socket_path, app_config_identity, daemon_compat, login_shell_path, DaemonCompat, SessionState, SessionTransport, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -861,10 +861,6 @@ impl DaemonClient {
     pub fn get_task_execution(&self, request: &GetTaskExecutionRequest) -> Result<TaskExecutionReply, String> {
         typed_reply(self.call(&json!({"op":"get_task_execution","request":request}))?)
     }
-    pub fn connect_local(repo: &Path) -> Result<Self, String> {
-        Self::connect_path_checked(alineryd_socket_path(repo, None))
-    }
-
     pub fn connect_path(socket_path: PathBuf) -> Result<Self, String> {
         Ok(Self {
             socket_path,
@@ -919,17 +915,6 @@ impl DaemonClient {
 
     pub fn version(&self) -> DaemonVersionReply {
         self.version_checked().unwrap_or_default()
-    }
-
-    pub fn live_session_count(&self) -> u32 {
-        self.session_statuses_observed()
-            .map(|sessions| {
-                sessions
-                    .iter()
-                    .filter(|session| matches!(session.state.process, ProcessState::Starting | ProcessState::Alive))
-                    .count() as u32
-            })
-            .unwrap_or(0)
     }
 
     pub fn send_message(&self, id: &str, body: &str) -> Result<(), String> {

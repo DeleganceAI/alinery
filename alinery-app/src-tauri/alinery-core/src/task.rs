@@ -10,16 +10,6 @@ pub fn slugify(name: &str) -> String {
     name.to_lowercase().replace(' ', "-").chars().filter(|c| c.is_alphanumeric() || *c == '-').collect()
 }
 
-pub fn unique_slug(repo: &Path, base: &str) -> String {
-    let mut slug = base.to_string();
-    let mut i = 1;
-    while task_dir(repo, &slug).exists() {
-        slug = format!("{}-{}", base, i);
-        i += 1;
-    }
-    slug
-}
-
 pub fn task_dir(repo: &Path, slug: &str) -> std::path::PathBuf {
     tasks_dir(repo).join(slug)
 }
@@ -352,31 +342,6 @@ pub fn set_related_tasks_in(repo: &Path, slug: String, related: Vec<crate::Relat
         task.related_tasks = cleaned;
         write_task_unlocked(repo, &task)?;
         crate::sync_related_artifact_links(repo, &task.slug, &task.related_tasks)?;
-        Ok(task)
-    })
-}
-
-pub fn set_auto_approve_all_in(repo: &Path, slug: String, enabled: bool) -> Result<Task, String> {
-    crate::with_task_mutation_lock_waiting(repo, "set auto approve all", crate::TASK_MUTATION_CONTENTION_WAIT, || {
-        let mut task = crate::board::read_task_checked(repo, &slug)?;
-        if task.archived {
-            return Err("task is archived — read-only".into());
-        }
-        if task.draft {
-            return Err("draft tasks have no execution to override".into());
-        }
-        if task.engine_version < 2 {
-            return Err("pre-v2 tasks have no automatic completion to override".into());
-        }
-        // Completion reads execution.json, not task.md. Write the task first so a failed
-        // execution write leaves the engine off rather than approving while the file says off.
-        let mut state = crate::execution::read_execution_state(repo, &slug)?;
-        task.auto_approve_all = enabled;
-        write_task_unlocked(repo, &task)?;
-        if state.auto_approve_all != enabled {
-            state.auto_approve_all = enabled;
-            crate::execution::write_execution_state_unlocked(repo, &slug, &mut state)?;
-        }
         Ok(task)
     })
 }

@@ -697,6 +697,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the credential lands in the host's `provider-credentials.json` (owner-only), not on the Mac; the picker lists `groq/...` for the host; a local repo that has no Groq key does not list it.
 - **Status:** open
 
+### L-P4X-a: Stop daemon while a purge or backup runs leaves no job child
+- **Session:** P4 review fix (R-P4X-1).
+- **Needs:** the app launched on a scratch repo with several archived tasks (a few hundred MB, so a purge or backup takes seconds).
+- **Steps:** in Settings, Storage, start "Delete all archived" (or a manual backup to a slow destination). While it shows progress, run `pgrep -fl -- '--job '` in a terminal and note the pid, then Settings, Harness, "Quit and stop all sessions" and confirm. Run `pgrep -fl -- '--job '` and `pgrep -fl alinery-vinculum` again. Repeat once with a remote repo (Restart daemon from the conflict banner, or restore a backup).
+- **Expected:** both lists are empty within 2 s of the confirmation; the purge ended between two tasks (no half-deleted task directory); the app's "stop" returns without the "has not released its socket" error; after reopening the repo the job entity is absent or CANCELLED.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.

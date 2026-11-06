@@ -26,11 +26,7 @@ pub enum ExecutionLifecycle {
     Interrupted,
 }
 
-impl ExecutionLifecycle {
-    pub fn holds_capacity(&self) -> bool {
-        matches!(self, Self::Starting | Self::Running | Self::Finishing | Self::Interrupted)
-    }
-}
+impl ExecutionLifecycle {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -360,67 +356,6 @@ pub fn prune_execution_objects(repo: &Path, slug: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutionState, id: &str) -> Result<String, String> {
-    use std::fmt::Write;
-    let record = state.executions.get(id).ok_or("unknown execution")?;
-    let root = crate::artifacts_dir(repo, slug);
-    let mut prompt = String::from(concat!(
-        "\n\n## Engine assignment (authoritative)\n",
-        "You are responsible for this one engine-assigned execution in an Alinery Playbook. Other executions may run before, after, or concurrently in the same task. Work only on this execution. Do not start, stop, advance, or modify other executions; the engine coordinates them.\n\n",
-        "Read only the assigned input occurrences below. Do not infer lineage or choose versions by filenames.\n",
-    ));
-    for (selector, ids) in &record.candidate.inputs {
-        for occurrence_id in ids {
-            let occurrence = state.occurrences.get(occurrence_id).ok_or("missing assigned occurrence")?;
-            let _ = writeln!(
-                prompt,
-                "Read: {} (logical {selector}; occurrence {occurrence_id}; producer {})",
-                root.join(&occurrence.relative_path).display(),
-                occurrence.producer_execution_id.as_deref().unwrap_or("seed")
-            );
-        }
-    }
-    for assignment in &record.outputs {
-        let _ = writeln!(
-            prompt,
-            "Write: {} (logical {}; {}{})",
-            root.join(&assignment.relative_path).display(),
-            assignment.selector,
-            if assignment.required { "required publication" } else { "possible publication" },
-            if assignment.relative_path.contains('*') {
-                ", wildcard family with zero or finitely many valid members"
-            } else if assignment.required {
-                "; omitting this exact nonempty file rejects completion"
-            } else {
-                ""
-            }
-        );
-    }
-    prompt.push_str(concat!(
-        "\nEach output declaration is a possible publication, not an individual file requirement. Successful completion requires at least one valid assigned artifact overall. Safely absent outputs and zero-member wildcard families may be omitted; present invalid artifacts and genuine filesystem inspection errors reject the entire attempt. Publish only within these exact assigned paths. This current publication rule supersedes older blanket all-output requirements and older zero-publication guidance, but never waives substantive work, deliverables, verification, decisions, or human approval. Missing substantive work stays interactive. Accepted publications are immutable: files written after acceptance do not extend the receipt.\n",
-        "\nCompletion is an explicit handshake: you request completion through alinery_phase_complete, the engine validates the assigned outputs and completion permission and records acceptance, and the session then shuts down normally. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
-        "## Deliver the result\n\n",
-        "Your artifact is a file on disk, not your chat response. Printing its contents or naming its path does not create it.\n\n",
-        "When the assigned work, verification, and substantive decisions are ready:\n",
-        "1. Use a filesystem tool to write the required deliverables to their exact assigned output paths. Publish only the outputs appropriate to the outcome; do not manufacture unused branch triggers.\n",
-        "2. Verify that the files were saved successfully.\n",
-        "3. Send a brief user-facing handoff naming the saved artifacts and verification. Do not substitute the full document in chat for saving it.\n",
-        "4. Invoke alinery_phase_complete as an actual tool call in the same assistant turn as the handoff, before ending the turn.\n\n",
-        "In OMP, invoke completion through your existing write tool with these arguments:\n",
-        "{\"path\":\"xd://alinery_phase_complete\",\"content\":\"{}\",\"i\":\"Completing assigned execution\"}\n",
-        "This executes the completion tool; it does not create a file. You do not need a separately listed alinery_phase_complete tool or a separate xd:// tool. Make the actual write tool call, not a chat message containing these arguments.\n\n",
-        "Do not end a ready-to-complete turn after only the handoff. Finish all required work and the handoff before invoking the tool because acceptance requests shutdown.\n\n",
-        "If clarification, substantive approval, output work, or another blocker remains, explain what is needed and stay interactive instead. Do not call the completion tool merely because the session is idle.\n\n",
-        "When ready, call alinery_phase_complete even when completion permission is locked. The tool handles the separate permission-to-finish gate; substantive approval of the work does not replace the completion call. If permission is denied or unavailable, stay interactive without repeatedly requesting it.\n\n",
-        "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. Only successors whose declared inputs are satisfied by accepted publications become eligible after confirmed process exit; completion does not promise every possible successor will run.\n\n",
-        "Do not modify other executions' artifacts.\n",
-    ));
-    if record.outputs.iter().any(|assignment| assignment.required) {
-        prompt.push_str("An exact output marked required above is not optional. Omitting it rejects completion and leaves this execution running. That exception supersedes the possible-publication sentence for those paths only.\n");
-    }
-    Ok(prompt)
 }
 
 #[cfg(test)]

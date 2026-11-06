@@ -323,43 +323,6 @@ fn history(case: &Path) -> Value {
     serde_json::json!({ "reads": reads, "windows": windows })
 }
 
-/// The chat rail `list_chat_threads_in` makes of a repository's root sessions, with and without the archived ones. The case
-/// is made a git checkout on `main` first, so a thread without a worktree of its own reports that branch. The daemon's
-/// `ChatPublisher` rows (chat.ts) plus its session rows must give the same threads.
-fn chat(case: &Path) -> Value {
-    let (scratch, command) = scratch_of(case, "chat");
-    for args in [
-        &["init", "-q", "-b", "main"][..],
-        &["config", "user.email", "t@example.com"],
-        &["config", "user.name", "t"],
-        &["commit", "--allow-empty", "-q", "-m", "init"],
-    ] {
-        let out = alinery_core::git_cmd(&scratch).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    }
-    let mut out = Map::new();
-    for include in command["include_archived"].as_array().unwrap() {
-        let include = include.as_bool().unwrap();
-        let threads = alinery_core::chat::list_chat_threads_in(std::slice::from_ref(&scratch), include).unwrap();
-        let rows: Vec<Value> = threads
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "id": t.session.id,
-                    "name": t.name,
-                    "branch_label": t.branch_label,
-                    "checkout": t.checkout,
-                    "archived": t.session.archived,
-                    "pinned": t.session.pinned,
-                })
-            })
-            .collect();
-        out.insert(format!("include_archived_{include}"), rows.into());
-    }
-    let _ = fs::remove_dir_all(&scratch);
-    out.into()
-}
-
 /// Replaces everything a run makes different: the scratch directory (and its canonical form), comment ids (`c<ms>`), the
 /// `_ms` clocks and the hash of a markdown that carries those ids. The daemon's `scrub` (artifactConformance) does the same.
 fn scrub_str(text: &str, scratch: &Path) -> String {
@@ -393,59 +356,6 @@ fn scrub_str(text: &str, scratch: &Path) -> String {
         i += ch.len_utf8();
     }
     result
-}
-
-fn scrub(value: Value, scratch: &Path) -> Value {
-    match value {
-        Value::String(text) => Value::String(scrub_str(&text, scratch)),
-        Value::Array(items) => Value::Array(items.into_iter().map(|v| scrub(v, scratch)).collect()),
-        Value::Object(map) => Value::Object(
-            map.into_iter()
-                .map(|(key, v)| {
-                    let v = if key.ends_with("_ms") && key != "modified_at_ms" {
-                        Value::from(0)
-                    } else if key == "comments_hash" {
-                        Value::from("HASH")
-                    } else {
-                        scrub(v, scratch)
-                    };
-                    (key, v)
-                })
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
-/// Every regular file under `dir` gets the case's fixed mtime (5000 ms unless `mtimes` names it, relative to `.alinery/tasks`),
-/// so the order of attachments (newest first) does not move with the clock.
-fn fix_mtimes(tasks: &Path, dir: &Path, overrides: &Value) {
-    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            fix_mtimes(tasks, &path, overrides);
-        } else {
-            let relative = path.strip_prefix(tasks).unwrap().to_string_lossy().into_owned();
-            let ms = overrides[relative.as_str()].as_u64().unwrap_or(5000);
-            let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
-            file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)).unwrap();
-        }
-    }
-}
-
-/// `board::artifacts_with_metadata` for the case's task: the rows of the artifact list, in the order the shell gave them.
-fn artifact_list(case: &Path) -> Value {
-    let (scratch, command) = scratch_of(case, "alist");
-    let slug = command["slug"].as_str().unwrap();
-    let tasks = scratch.join(".alinery/tasks");
-    fix_mtimes(&tasks, &tasks, &command["mtimes"]);
-    let rows = alinery_core::board::artifacts_with_metadata(&scratch, slug).map(|items| serde_json::to_value(items).unwrap());
-    let out = match rows {
-        Ok(rows) => serde_json::json!({ "items": rows }),
-        Err(_) => serde_json::json!({ "error": true }),
-    };
-    let _ = fs::remove_dir_all(&scratch);
-    out
 }
 
 /// The artifact tree each named task sees, a read of every file node (an attachment answers `error`: it is revealed, never
@@ -493,131 +403,6 @@ fn artifact_tree(case: &Path) -> Value {
     }
     let _ = fs::remove_dir_all(&scratch);
     out.into()
-}
-
-/// Comments, drafts, review-pending files and the prepared "address these comments" prompt, applied step by step to a copy of the
-/// case. What each step answered, then every file the steps left in the task's artifacts directory (JSON parsed, markdown as is).
-fn artifact_comments(case: &Path) -> Value {
-    use alinery_core::artifact_comments as ac;
-    let (scratch, command) = scratch_of(case, "acom");
-    let slug = command["slug"].as_str().unwrap();
-    let artifacts = scratch.join(".alinery/tasks").join(slug).join("artifacts");
-    let text = |step: &Value, key: &str| step[key].as_str().unwrap_or_default().to_string();
-    let mut prepared: Vec<Option<ac::PreparedSessionMessageAction>> = Vec::new();
-    let mut answers: Vec<Value> = Vec::new();
-    for step in command["steps"].as_array().unwrap() {
-        let artifact = text(step, "artifact");
-        let anchor = |step: &Value| {
-            (
-                text(step, "anchor_id"),
-                text(step, "anchor_kind"),
-                text(step, "anchor_label"),
-                text(step, "anchor_excerpt"),
-                step["line_start"].as_u64().unwrap_or(0) as u32,
-                step["line_end"].as_u64().unwrap_or(0) as u32,
-                text(step, "body"),
-            )
-        };
-        let mut kept = None;
-        let answer: Result<Value, String> = match step["op"].as_str().unwrap() {
-            "list_comments" => ac::load_artifact_comments_for(&scratch, slug, &artifact).map(|c| serde_json::json!({ "comments": c })),
-            "add" => {
-                let (id, kind, label, excerpt, start, end, body) = anchor(step);
-                ac::add_artifact_comment_for(&scratch, slug, &artifact, id, kind, label, excerpt, start, end, body).map(|c| serde_json::json!({ "comments": c }))
-            }
-            "save_draft" => {
-                let (id, kind, label, excerpt, start, end, body) = anchor(step);
-                ac::save_artifact_comment_draft_for(&scratch, slug, &artifact, id, kind, label, excerpt, start, end, body).map(|()| serde_json::json!({}))
-            }
-            "delete_draft" => ac::delete_artifact_comment_draft_for(&scratch, slug, &artifact, &text(step, "anchor_id")).map(|()| serde_json::json!({})),
-            "list_drafts" => ac::list_artifact_comment_drafts_for(&scratch, slug).map(|drafts| {
-                let rows: Vec<Value> = drafts
-                    .iter()
-                    .map(|d| {
-                        let mut row = serde_json::to_value(d).unwrap();
-                        row["stale"] = d.stale.into();
-                        row
-                    })
-                    .collect();
-                serde_json::json!({ "drafts": rows })
-            }),
-            "write" => fs::write(artifacts.join(&artifact), text(step, "text"))
-                .map(|()| serde_json::json!({}))
-                .map_err(|e| e.to_string()),
-            "pending_status" => ac::artifact_review_pending_status_for(&scratch, slug, &artifact).map(|status| serde_json::json!({ "status": status })),
-            "archive" => {
-                ac::archive_artifact_comments_for(&scratch, slug, &artifact).map(|path| serde_json::json!({ "review": path.strip_prefix(&artifacts).unwrap().to_string_lossy() }))
-            }
-            "clear_pending" => ac::clear_artifact_review_pending_for(&scratch, slug, &artifact).map(|()| serde_json::json!({})),
-            "prepare" => {
-                let names: Vec<String> = step["artifacts"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
-                ac::prepare_artifact_comments_prompt_for(&scratch, slug, &names).map(|action| {
-                    let value = serde_json::to_value(&action).unwrap();
-                    kept = Some(action);
-                    value
-                })
-            }
-            "prepare_approval" => ac::prepare_review_approval_prompt_for(&scratch, slug, &artifact).map(|action| {
-                let value = serde_json::to_value(&action).unwrap();
-                kept = Some(action);
-                value
-            }),
-            "finalize" | "finalize_tampered" => {
-                let from = step["from"].as_u64().unwrap() as usize;
-                match prepared.get(from).cloned().flatten().map(|a| a.provenance) {
-                    Some(ac::SessionMessageActionProvenance::ArtifactComments { items }) => {
-                        if step["op"] == "finalize_tampered" {
-                            let review = artifacts.join(&items[0].review);
-                            let mut bytes = fs::read(&review).unwrap();
-                            bytes.extend_from_slice(b"tampered\n");
-                            fs::write(&review, bytes).unwrap();
-                        }
-                        ac::finalize_artifact_comments_for(&scratch, slug, &items).map(|()| serde_json::json!({}))
-                    }
-                    _ => Err("no prepared comments at that step".into()),
-                }
-            }
-            "finalize_actions" => {
-                let actions: Vec<_> = step["from"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|i| prepared.get(i.as_u64().unwrap() as usize).cloned().flatten().map(|a| a.provenance))
-                    .collect();
-                ac::finalize_session_message_actions_for(&scratch, &text(step, "session"), slug, &actions).map(|()| serde_json::json!({}))
-            }
-            other => panic!("unknown artifact_comments op {other}"),
-        };
-        prepared.push(kept);
-        answers.push(match answer {
-            Ok(value) => scrub(serde_json::json!({ "ok": value }), &scratch),
-            Err(_) => serde_json::json!({ "error": true }),
-        });
-    }
-    let mut files = Map::new();
-    fn collect(dir: &Path, root: &Path, files: &mut Map<String, Value>, scratch: &Path) {
-        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect(&path, root, files, scratch);
-                continue;
-            }
-            let relative = path.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-            let raw = fs::read_to_string(&path).unwrap();
-            let value = match relative.ends_with(".json") {
-                true => scrub(serde_json::from_str(&raw).unwrap(), scratch),
-                false => scrub_str(&raw, scratch).into(),
-            };
-            files.insert(relative, value);
-        }
-    }
-    let task_dir = scratch.join(".alinery/tasks").join(slug);
-    collect(&artifacts, &task_dir, &mut files, &scratch);
-    if let Ok(drafts) = fs::read_to_string(task_dir.join("artifact-comment-drafts.json")) {
-        files.insert("artifact-comment-drafts.json".into(), scrub(serde_json::from_str(&drafts).unwrap(), &scratch));
-    }
-    let _ = fs::remove_dir_all(&scratch);
-    serde_json::json!({ "steps": answers, "files": files })
 }
 
 /// The text a playbook step names: `source` literally, else the case's `fixture` (or `fixture2`, `base`) with the `replace`
@@ -846,10 +631,7 @@ fn run(domain: &str, case: &Path, update: bool) -> Value {
         "task_create" => task_create(case),
         "session_name" => session_name(case),
         "history" => history(case),
-        "chat" => chat(case),
-        "artifact_list" => artifact_list(case),
         "artifact_tree" => artifact_tree(case),
-        "artifact_comments" => artifact_comments(case),
         "playbook" => playbook(case),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
@@ -863,7 +645,9 @@ fn rust_readers_match_expected_json() {
         let domain_name = domain.file_name().to_string_lossy().into_owned();
         // `board`: the derived fields have one implementation now (the daemon's, rule R3). Its cases were written by the
         // Rust `board_task` before that was deleted, and the daemon's `bun test` still checks them.
-        if domain_name == "board" {
+        // `chat`, `artifact_comments` and `artifact_list` the same way: the Rust copies are gone and the daemon's `bun test`
+        // still checks their cases against the `expected.json` written from them.
+        if matches!(domain_name.as_str(), "board" | "chat" | "artifact_comments" | "artifact_list") {
             continue;
         }
         for case in fs::read_dir(domain.path()).unwrap().flatten().filter(|e| e.path().is_dir()) {

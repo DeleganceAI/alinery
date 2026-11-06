@@ -7,15 +7,13 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::git::git_cmd;
-use crate::paths::{alinery_dir, app_config_toml_path, artifacts_dir, harnesses_toml_path, safe_component, session_meta_path, sessions_dir};
-use crate::prompts::{SUBTASK_MANAGER_PROMPT, SUBTASK_MANAGER_RECOVERY_PROMPT};
-use crate::settings::{bundled_harness_file, default_global_settings, load_global_settings, load_repo_overrides};
-use crate::task::{append_related_tasks_prompt, read_task};
+use crate::paths::{alinery_dir, harnesses_toml_path, safe_component, session_meta_path, sessions_dir};
+use crate::settings::{bundled_harness_file, load_global_settings, load_repo_overrides};
+use crate::task::read_task;
 use crate::types::{
     AgentState, ArtifactListItem, BackupDefaults, ChoiceProvenance, ConfigProvenance, EffectiveConfig, GitHubPrefs, GlobalSettings, Harness, HarnessAdapter, HarnessChoice,
     HarnessFile, MessageAdapter, NormalizedSessionStatus, PlaybookState, ProcessState, PromptVars, RepoBackupOverrides, RepoOverrides, ReviewHandoffRecord, ReviewHandoffRequest,
-    ReviewHandoffResult, RunnerEvent, SessionMeta, SessionState, SettingSource, Task, TaskSummary, MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
+    ReviewHandoffResult, RunnerEvent, SessionMeta, SessionState, SettingSource, MAX_BACKUP_RETENTION, MIN_BACKUP_RETENTION,
 };
 use crate::write_bytes_atomic;
 use serde::{Deserialize, Serialize};
@@ -266,194 +264,6 @@ fn next_outbound_handoff_sidecar_name(repo: &Path, source_slug: &str, source_art
 
 fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
-fn append_parent_context(repo: &Path, task: &Task, mut prompt: String) -> Result<String, String> {
-    if task.parent_task.is_empty() {
-        return Ok(prompt);
-    }
-    let relationships = crate::subtask::read_task_relationships(repo, &task.slug)?;
-    let parent = relationships
-        .parent_task
-        .ok_or_else(|| format!("relationship corruption: task '{}' has no valid parent context", task.slug))?;
-    let parent_artifacts = artifacts_dir(repo, &parent.slug);
-    prompt.push_str(&format!(
-        "\n\n## Immediate parent context\n\nParent task slug: {}\nParent ticket: {}\nParent artifacts directory: {}\nRead the parent ticket and relevant parent artifacts directly for context.",
-        parent.slug,
-        parent_artifacts.join("00-ticket.md").display(),
-        parent_artifacts.display(),
-    ));
-    Ok(prompt)
-}
-
-fn append_launch_context(repo: &Path, task: &Task, prompt: String) -> Result<String, String> {
-    Ok(append_related_tasks_prompt(repo, task, append_parent_context(repo, task, prompt)?))
-}
-
-fn worktree_status_label(worktree: &str) -> &'static str {
-    let path = Path::new(worktree);
-    if worktree.trim().is_empty() || !path.is_dir() {
-        return "UNKNOWN";
-    }
-    match git_cmd(path).args(["status", "--porcelain=v1", "-z"]).output() {
-        Ok(output) if output.status.success() && output.stdout.is_empty() => "CLEAN",
-        Ok(output) if output.status.success() => "DIRTY",
-        _ => "UNKNOWN",
-    }
-}
-
-fn manager_prompt(repo: &Path, task: &Task, worktree: &str, manager_session_id: &str) -> String {
-    let artifacts = artifacts_dir(repo, &task.slug);
-    SUBTASK_MANAGER_PROMPT
-        .replace("{{PARENT_NAME}}", &task.name)
-        .replace("{{PARENT_SLUG}}", &task.slug)
-        .replace("{{PARENT_BRANCH}}", &task.branch)
-        .replace("{{PARENT_WORKTREE}}", worktree)
-        .replace("{{PARENT_WORKTREE_STATUS}}", worktree_status_label(worktree))
-        .replace("{{PARENT_TICKET}}", &artifacts.join("00-ticket.md").display().to_string())
-        .replace("{{PARENT_ARTIFACTS}}", &artifacts.display().to_string())
-        .replace("{{MANAGER_SESSION_ID}}", manager_session_id)
-}
-
-fn recovery_manager_prompt(repo: &Path, task: &Task, child: &TaskSummary, worktree: &str, manager_session_id: &str) -> String {
-    let parent_artifacts = artifacts_dir(repo, &task.slug);
-    let child_artifacts = artifacts_dir(repo, &child.slug);
-    SUBTASK_MANAGER_RECOVERY_PROMPT
-        .replace("{{PARENT_NAME}}", &task.name)
-        .replace("{{PARENT_SLUG}}", &task.slug)
-        .replace("{{PARENT_BRANCH}}", &task.branch)
-        .replace("{{PARENT_WORKTREE}}", worktree)
-        .replace("{{PARENT_WORKTREE_STATUS}}", worktree_status_label(worktree))
-        .replace("{{PARENT_TICKET}}", &parent_artifacts.join("00-ticket.md").display().to_string())
-        .replace("{{PARENT_ARTIFACTS}}", &parent_artifacts.display().to_string())
-        .replace("{{MANAGER_SESSION_ID}}", manager_session_id)
-        .replace("{{CHILD_NAME}}", &child.name)
-        .replace("{{CHILD_SLUG}}", &child.slug)
-        .replace("{{CHILD_PLAYBOOK}}", &child.playbook)
-        .replace("{{CHILD_BRANCH}}", &child.branch)
-        .replace("{{CHILD_WORKTREE}}", &child.worktree)
-        .replace("{{CHILD_TICKET}}", &child_artifacts.join("00-ticket.md").display().to_string())
-        .replace("{{CHILD_ARTIFACTS}}", &child_artifacts.display().to_string())
-}
-
-pub fn resolve_launch_prompt(repo: &Path, launch: &LaunchFields) -> Result<Option<String>, String> {
-    if launch.harness == NO_HARNESS_KEY {
-        return Ok(None);
-    }
-    // Auxiliary prompts are user instructions; graph prompts always receive a fresh
-    // authoritative assignment block after every editable instruction.
-    if launch.generic || launch.subtask_manager || launch.task_slug.is_empty() {
-        if let Some(prompt) = &launch.prompt {
-            return Ok((!prompt.is_empty()).then(|| compose_prompt_extra(prompt, &launch.prompt_extra)));
-        }
-    }
-    // A taskless chat has no ticket to seed. The first turn is the RPC prompt.
-    if launch.task_slug.is_empty() {
-        return Ok(None);
-    }
-    let task = read_task(repo, &launch.task_slug).ok_or_else(|| format!("read task {}: missing task.md", launch.task_slug))?;
-    let playbook = launch.playbook.clone();
-    let worktree = if launch.worktree.trim().is_empty() {
-        task.worktree.as_str()
-    } else {
-        launch.worktree.as_str()
-    };
-    if launch.subtask_manager {
-        let prompt = if launch.subtask_slug.is_empty() {
-            manager_prompt(repo, &task, worktree, &launch.id)
-        } else {
-            let relationships = crate::subtask::read_task_relationships(repo, &task.slug)?;
-            let child = relationships
-                .active_subtask
-                .ok_or_else(|| format!("relationship corruption: manager '{}' is bound to missing child '{}'", launch.id, launch.subtask_slug))?;
-            if child.slug != launch.subtask_slug {
-                return Err(format!(
-                    "relationship corruption: manager '{}' is bound to child '{}' but parent points to '{}'",
-                    launch.id, launch.subtask_slug, child.slug
-                ));
-            }
-            recovery_manager_prompt(repo, &task, &child, worktree, &launch.id)
-        };
-        return append_launch_context(repo, &task, prompt).map(Some);
-    }
-    let artifacts = artifacts_dir(repo, &launch.task_slug);
-    let ticket = artifacts.join("00-ticket.md");
-    let history = sessions_dir(repo, &launch.task_slug);
-    if launch.generic {
-        let base = format!(
-            "You are running in a Generic Alinery session for an existing task.\n\n\
-Task name: {}\n\
-Task slug: {}\n\
-Task playbook: {}\n\
-Task worktree: {}\n\
-Task ticket: {}\n\
-Task artifacts directory: {}\n\
-Task session-history directory: {}\n\n\
-This is an auxiliary session, not a playbook step. Do not advance or reinterpret the task's primary playbook.\n\
-Prior playbook artifacts are ordinary files in the task artifacts directory. Read the ticket and any relevant artifacts directly when they provide useful context.",
-            task.name,
-            task.slug,
-            playbook,
-            worktree,
-            ticket.display(),
-            artifacts.display(),
-            history.display(),
-        );
-        let prompt = if launch.prompt_extra.is_empty() {
-            base
-        } else {
-            format!("{base}\n\nAdditional instructions:\n{}", launch.prompt_extra)
-        };
-        return append_launch_context(repo, &task, prompt).map(Some);
-    }
-    if task.engine_version != 2 {
-        return Err("pre-v2 task data is read-only; create a new v2 task to launch graph work".into());
-    }
-    let state = crate::execution::read_execution_state(repo, &task.slug)?;
-    let definition = crate::execution::read_task_playbook(repo, &task.slug, &state)?;
-    let execution = state
-        .executions
-        .values()
-        .find(|execution| execution.owner_session_id == launch.id)
-        .ok_or("session is not the current owner of a retained execution")?;
-    let step = definition
-        .step
-        .iter()
-        .find(|step| step.key == execution.candidate.step_key)
-        .ok_or("retained execution step is missing")?;
-    let artifact_file = execution
-        .outputs
-        .iter()
-        .find(|output| !output.selector.contains('*'))
-        .map(|output| artifact_file_path(repo, &task.slug, &output.relative_path))
-        .transpose()?
-        .unwrap_or_default();
-    let review_handoff_file = if launch.handoff_artifact.is_empty() {
-        None
-    } else {
-        Some(artifact_file_path(repo, &launch.task_slug, &launch.handoff_artifact)?)
-    };
-    let vars = PromptVars {
-        artifacts_dir: &artifacts,
-        artifact_file: &artifact_file,
-        review_handoff_file: review_handoff_file.as_deref(),
-        prompt_extra: &launch.prompt_extra,
-        session_history_dir: &history,
-        task_name: &task.name,
-        task_slug: &task.slug,
-        worktree,
-        playbook_key: &definition.key,
-        phase_key: &step.key,
-        phase_title: &step.title,
-        ticket_file: &ticket,
-    };
-    let prompt = match &launch.prompt {
-        Some(prompt) => compose_prompt_extra(prompt, &launch.prompt_extra),
-        None => substitute_prompt_tokens(&step.prompt, &vars),
-    };
-    let mut prompt = append_launch_context(repo, &task, prompt)?;
-    prompt.push_str(&crate::execution::execution_assignment_prompt(repo, &task.slug, &state, &execution.id)?);
-    Ok(Some(prompt))
 }
 
 pub fn send_review_handoff_for_repos(
@@ -904,14 +714,6 @@ pub fn write_local_harness_overrides(repo: &Path, overrides: &HarnessFile) -> Re
     fs::write(harnesses_toml_path(repo), toml::to_string(overrides).map_err(|e| e.to_string())?).map_err(|e| format!("write {}: {e}", harnesses_toml_path(repo).display()))
 }
 
-pub fn clear_local_harness_overrides(repo: &Path) -> Result<(), String> {
-    match fs::remove_file(harnesses_toml_path(repo)) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("remove {}: {error}", harnesses_toml_path(repo).display())),
-    }
-}
-
 // `models_cmd` is the one harness field that is executed as a shell pipeline rather than as an
 // argv (the shell ran it under `$SHELL -ilc` until S4.12 moved model lists to the daemon, which runs no
 // pipeline; the guard stays so the field cannot become one again). `.alinery/harnesses.toml`
@@ -985,18 +787,6 @@ pub fn load_harnesses_for(app_config: &Path, repo: &Path) -> Vec<Harness> {
     effective_harnesses_for(app_config, repo).into_iter().map(|entry| entry.harness).collect()
 }
 
-pub fn load_harnesses(repo: &Path) -> Vec<Harness> {
-    app_config_toml_path().map(|app_config| load_harnesses_for(&app_config, repo)).unwrap_or_else(|| {
-        let global = default_global_settings();
-        let local = read_local_harness_overrides(repo);
-        product_launch_list(&global.harnesses, &local).into_iter().map(|entry| entry.harness).collect()
-    })
-}
-
-pub fn reset_harnesses_toml(repo: &Path) -> Result<(), String> {
-    clear_local_harness_overrides(repo)
-}
-
 pub fn no_harness_entry() -> Harness {
     Harness {
         key: NO_HARNESS_KEY.into(),
@@ -1025,11 +815,6 @@ pub fn resolve_harness_strict_for(app_config: &Path, repo: &Path, key: &str) -> 
         .ok_or_else(|| format!("unknown harness '{key}'"))
 }
 
-pub fn resolve_harness_strict(repo: &Path, key: &str) -> Result<Harness, String> {
-    let app_config = app_config_toml_path().ok_or_else(|| "app config dir unavailable".to_string())?;
-    resolve_harness_strict_for(&app_config, repo, key)
-}
-
 pub fn resolve_harness_for(app_config: &Path, repo: &Path, key: &str) -> Option<Harness> {
     if !is_allowed_launch_harness(key) {
         return None;
@@ -1038,10 +823,6 @@ pub fn resolve_harness_for(app_config: &Path, repo: &Path, key: &str) -> Option<
 }
 
 // Look up a harness by key. Leftover/unknown keys fail closed.
-pub fn resolve_harness(repo: &Path, key: &str) -> Option<Harness> {
-    app_config_toml_path().and_then(|app_config| resolve_harness_for(&app_config, repo, key))
-}
-
 // {worktree}/{model}/{resume_token} placeholder substitution
 pub fn subst(s: &str, worktree: &str, model: &str, resume_token: &str) -> String {
     s.replace("{worktree}", worktree).replace("{model}", model).replace("{resume_token}", resume_token)
@@ -1148,13 +929,6 @@ pub fn reduce_runner_event(current: &SessionState, event: &RunnerEvent) -> Runne
     RunnerReduction {
         state,
         completion_attempt_required,
-    }
-}
-
-pub fn process_started(current: &SessionState) -> SessionState {
-    SessionState {
-        process: ProcessState::Alive,
-        ..current.clone()
     }
 }
 
@@ -1313,45 +1087,6 @@ pub fn telemetry_id_for_task(repo: &Path, slug: &str) -> String {
     crate::task::read_task(repo, slug).map(|task| task.telemetry_id).unwrap_or_default()
 }
 
-/// Load and validate a never-started task session before contacting or spawning a daemon.
-/// The daemon repeats this check at the ownership boundary; callers use it to reject local
-/// metadata failures without starting an otherwise unnecessary daemon.
-pub fn validate_task_session_start(app_config: &Path, repo: &Path, task_slug: &str, session_id: &str) -> Result<LaunchFields, String> {
-    if safe_component(task_slug).is_none() || safe_component(session_id).is_none() {
-        return Err("invalid task or session id".into());
-    }
-    let task = read_task(repo, task_slug).ok_or("missing-task")?;
-    if task.archived {
-        return Err("task-archived".into());
-    }
-    if !task.has_worktree || task.worktree.trim().is_empty() || !Path::new(&task.worktree).is_dir() {
-        return Err("missing-worktree".into());
-    }
-    let meta_path = sessions_dir(repo, task_slug).join(format!("{session_id}.meta.json"));
-    let meta = read_session_meta_full(&meta_path).ok_or("missing-session-meta")?;
-    if meta.archived {
-        return Err("session-archived".into());
-    }
-    if !meta.generic && !meta.subtask_manager && meta.harness != NO_HARNESS_KEY {
-        if task.engine_version != 2 || meta.execution_id.is_empty() {
-            return Err("pre-v2 task data is read-only; create a new v2 task to launch graph work".into());
-        }
-        let state = crate::execution::read_execution_state(repo, task_slug)?;
-        let execution = state.executions.get(&meta.execution_id).ok_or("missing-execution")?;
-        if execution.owner_session_id != meta.id {
-            return Err("stale execution session owner".into());
-        }
-    }
-    if meta.started_at.is_some() {
-        return Err("already-started; use resume or start-fresh".into());
-    }
-    if meta.worktree != task.worktree || !Path::new(&meta.worktree).is_dir() {
-        return Err("missing-worktree".into());
-    }
-    resolve_harness_strict_for(app_config, repo, &meta.harness)?;
-    read_meta_launch_fields(repo, task_slug, session_id).ok_or_else(|| "missing-session-meta".into())
-}
-
 // Atomic meta write: serialize to a same-dir tmp file, then rename over the target so a
 // concurrent reader never sees a half-written file (three-writer safety: app + daemon).
 pub fn write_meta_atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
@@ -1403,7 +1138,8 @@ pub fn sweep_ends_session(started_at: Option<u64>, ended_at: Option<u64>) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config_toml_path, write_global_settings, write_repo_overrides, DEFAULT_HARNESSES_TOML};
+    use crate::settings::default_global_settings;
+    use crate::{artifacts_dir, config_toml_path, write_global_settings, write_repo_overrides, DEFAULT_HARNESSES_TOML};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;

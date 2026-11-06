@@ -353,30 +353,6 @@ pub fn enforce_retention(repo: &Path, settings: &BackupDefaults) -> Result<(), S
     Ok(())
 }
 
-/// The backup settings in force for `repo`: the global defaults in `app_config` under the repo's own
-/// overrides. Read where the repo lives, so a remote repo uses its host's settings, not this Mac's.
-pub fn backup_settings_in(app_config: &Path, repo: &Path) -> BackupDefaults {
-    let overrides = crate::load_repo_overrides(repo);
-    crate::resolve_effective_config(&crate::load_global_settings(app_config), &overrides).backup
-}
-
-/// Should this trigger enqueue a backup?
-///
-/// Only the three automatic triggers are gated here. `Manual` (BACKUP NOW) and `Mcp` never
-/// consult this gate: they are explicit user/agent requests that call `create_backup` directly
-/// and report their real result, rather than disappearing into a debounce window.
-pub fn should_publish(settings: &BackupDefaults, repo: &Path, trigger: BackupTrigger) -> bool {
-    if !backup_feature_ready(settings, repo) {
-        return false;
-    }
-    match trigger {
-        BackupTrigger::PreArchive => settings.trigger_pre_archive,
-        BackupTrigger::PostArtifactChange => settings.trigger_post_artifact_change,
-        BackupTrigger::PostPushCommit => settings.trigger_post_push_commit,
-        BackupTrigger::Manual | BackupTrigger::Mcp => false,
-    }
-}
-
 /// Remove exactly what `create_backup` archives — no more. Anything cleared here but not
 /// archived there is data the user loses on restore, so both read `CURATED_ALINERY_PATHS`.
 /// Missing paths are not an error: a repo may never have had a `playbooks.toml`.

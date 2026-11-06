@@ -641,12 +641,6 @@ fn save_playbook_locked(roots: &PlaybookRoots, request: SavePlaybookRequest, exp
     })
 }
 
-/// Run `mutate` under the repo library's mutation lock. The import registry sits beside the
-/// playbooks, so its read-modify-write has to serialize with them and with itself.
-pub fn with_repo_library_lock<T>(roots: &PlaybookRoots, mutate: impl FnOnce() -> Result<T, PlaybookSaveError>) -> Result<T, PlaybookSaveError> {
-    with_library_lock(roots, PlaybookScope::Repo, |_| mutate())
-}
-
 pub fn delete_playbook(roots: &PlaybookRoots, reference: &PlaybookRef) -> Result<(), PlaybookSaveError> {
     if !valid_playbook_key(&reference.key) {
         return Err(PlaybookSaveError::Invalid {

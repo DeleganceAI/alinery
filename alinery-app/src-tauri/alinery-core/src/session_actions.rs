@@ -71,18 +71,6 @@ pub fn mark_exit_notification_read(repo: &Path, task_slug: &str, id: &str) -> Re
     stamp_meta(&path, |value| stamp_notification_checkpoint(value, "exit_notification_read_at", exit))
 }
 
-/// Flag a session archived. This is a read-modify-write of `archived` only, so it cannot clobber
-/// the started/ended/exit fields the daemon writes concurrently.
-pub fn stamp_session_archived(repo: &Path, task_slug: &str, id: &str) -> Result<(), String> {
-    stamp_meta(&crate::session_meta_path(repo, task_slug, id), |value| value["archived"] = json!(true))
-}
-
-/// Archive a task after checking nothing forbids it. The worktree and branch are untouched.
-pub fn archive_task_on_disk(repo: &Path, slug: &str) -> Result<(), String> {
-    crate::ensure_task_can_archive(repo, slug)?;
-    crate::archive_task_guarded(repo, slug)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,22 +132,6 @@ mod tests {
         }
         fs::remove_dir_all(repo).unwrap();
     }
-
-    #[test]
-    fn archiving_a_session_changes_only_the_archived_flag() {
-        let meta = SessionMeta {
-            id: "s".into(),
-            ended_at: Some(9),
-            exit_code: Some(1),
-            ..Default::default()
-        };
-        let repo = repo_with_session("archive", &meta);
-        stamp_session_archived(&repo, "task", "s").unwrap();
-        let stored: SessionMeta = serde_json::from_value(read_meta_value(&crate::session_meta_path(&repo, "task", "s")).unwrap()).unwrap();
-        assert!(stored.archived);
-        assert_eq!((stored.ended_at, stored.exit_code), (Some(9), Some(1)));
-        fs::remove_dir_all(repo).unwrap();
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -169,16 +141,4 @@ pub struct SessionNotificationClearRef {
     pub id: String,
     #[serde(default)]
     pub notification_suppression: Option<crate::NotificationSuppression>,
-}
-
-/// Mark each session's notifications read and record any suppression the person chose.
-pub fn clear_session_notifications_in(repo: &Path, refs: &[SessionNotificationClearRef]) -> Result<(), String> {
-    for reference in refs {
-        mark_notification_read(repo, &reference.task_slug, &reference.id)?;
-        if let Some(suppression) = &reference.notification_suppression {
-            let path = session_notification_path(repo, &reference.task_slug, &reference.id)?;
-            stamp_meta(&path, |value| value["notification_suppression"] = serde_json::json!(suppression))?;
-        }
-    }
-    Ok(())
 }
