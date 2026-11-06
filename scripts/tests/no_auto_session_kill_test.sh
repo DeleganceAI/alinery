@@ -10,10 +10,9 @@ fail=0
 
 fresh_tree() {
   rm -rf "$TMP/tree"
-  mkdir -p "$TMP/tree/scripts/tests" "$TMP/tree/alinery-app/src-tauri/mcp" "$TMP/tree/alinery-app/src-tauri/alinery-core"
+  mkdir -p "$TMP/tree/scripts/tests" "$TMP/tree/alinery-app/src-tauri/alinery-core"
   cp "$ROOT/scripts/tests/check-no-auto-session-kill.sh" "$TMP/tree/scripts/tests/"
   cp -R "$ROOT/alinery-app/src-tauri/src" "$TMP/tree/alinery-app/src-tauri/src"
-  cp -R "$ROOT/alinery-app/src-tauri/mcp/src" "$TMP/tree/alinery-app/src-tauri/mcp/src"
   cp -R "$ROOT/alinery-app/src-tauri/alinery-core/src" "$TMP/tree/alinery-app/src-tauri/alinery-core/src"
   mkdir -p "$TMP/tree/alinery-app/src-tauri/vinculum-daemon"
   cp -R "$ROOT/alinery-app/src-tauri/vinculum-daemon/src" "$TMP/tree/alinery-app/src-tauri/vinculum-daemon/src"

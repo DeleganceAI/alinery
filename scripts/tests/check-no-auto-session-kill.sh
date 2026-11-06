@@ -170,7 +170,7 @@ node --input-type=module - "$ROOT" <<'JS'
 import fs from "node:fs";
 import path from "node:path";
 const root = process.argv[2];
-for (const dir of ["src", "mcp/src", "alinery-core/src"]) {
+for (const dir of ["src", "alinery-core/src"]) {
   const base = path.join(root, "alinery-app/src-tauri", dir);
   for (const name of fs.readdirSync(base).filter(name => name.endsWith(".rs"))) {
     const source = fs.readFileSync(path.join(base, name), "utf8").split("#[cfg(test)]\nmod tests")[0];

@@ -15,7 +15,7 @@ TAURI="$ROOT/alinery-app/src-tauri"
 
 hits=$(grep -rn -E 'Command::new\("(ssh|scp|sftp|ssh-keyscan)"\)' \
   --include='*.rs' \
-  "$TAURI/src" "$TAURI/alinery-core/src" "$TAURI/mcp/src" \
+  "$TAURI/src" "$TAURI/alinery-core/src" \
   | grep -v "^$TAURI/src/remote.rs:" \
   | grep -v "^$TAURI/src/tests/" || true)
 
@@ -27,8 +27,8 @@ fi
 
 kills=$(grep -n -E 'pkill|killall|kill -[0-9A-Za-z]|systemctl --user (stop|kill)|systemctl stop' \
   "$TAURI/src/remote.rs" \
-  "$TAURI/mcp/src/repo_service.rs" \
-  "$TAURI/alinery-core/src/repo_service.rs" \
+  "$TAURI/vinculum-daemon/src/hostService/ops.ts" \
+  "$TAURI/vinculum-daemon/src/hostService/serve.ts" \
   "$TAURI/alinery-core/src/credential_sync.rs" || true)
 
 if [ -n "$kills" ]; then

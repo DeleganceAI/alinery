@@ -13,13 +13,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 CLIENT="alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
-# Discover every app and MCP caller source. A hardcoded module list is allow-by-omission:
+# Discover every app caller source. A hardcoded module list is allow-by-omission:
 # a request rebuilt in a new module would otherwise go unscanned while this still printed OK.
 OUTSIDE=()
 while IFS= read -r f; do OUTSIDE+=("$f"); done < <(
-  find alinery-app/src-tauri/src alinery-app/src-tauri/mcp/src -maxdepth 1 -name '*.rs' | sort
+  find alinery-app/src-tauri/src -maxdepth 1 -name '*.rs' | sort
 )
-[ "${#OUTSIDE[@]}" -gt 0 ] || { echo "ERROR: no app/MCP caller sources found to scan" >&2; exit 1; }
+[ "${#OUTSIDE[@]}" -gt 0 ] || { echo "ERROR: no app caller sources found to scan" >&2; exit 1; }
 
 fails=0
 report() { # label file:line…
