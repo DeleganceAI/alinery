@@ -533,10 +533,13 @@ fn artifact_comments(case: &Path) -> Value {
                     .collect();
                 serde_json::json!({ "drafts": rows })
             }),
-            "write" => fs::write(artifacts.join(&artifact), text(step, "text")).map(|()| serde_json::json!({})).map_err(|e| e.to_string()),
+            "write" => fs::write(artifacts.join(&artifact), text(step, "text"))
+                .map(|()| serde_json::json!({}))
+                .map_err(|e| e.to_string()),
             "pending_status" => ac::artifact_review_pending_status_for(&scratch, slug, &artifact).map(|status| serde_json::json!({ "status": status })),
-            "archive" => ac::archive_artifact_comments_for(&scratch, slug, &artifact)
-                .map(|path| serde_json::json!({ "review": path.strip_prefix(&artifacts).unwrap().to_string_lossy() })),
+            "archive" => {
+                ac::archive_artifact_comments_for(&scratch, slug, &artifact).map(|path| serde_json::json!({ "review": path.strip_prefix(&artifacts).unwrap().to_string_lossy() }))
+            }
             "clear_pending" => ac::clear_artifact_review_pending_for(&scratch, slug, &artifact).map(|()| serde_json::json!({})),
             "prepare" => {
                 let names: Vec<String> = step["artifacts"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
