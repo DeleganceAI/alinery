@@ -1,5 +1,5 @@
-// A task's execution state from the daemon's `execution/<slug>/<slug>` entity (plan S4.2): what `observe_task_executions`
-// answered, and the approval that replaces `allow_execution_completion`. The row is the Rust-shaped state plus the playbook
+// A task's execution state from the daemon's `execution/<slug>/<slug>` entity (plan S4.2): what the shell's observation
+// commands answered, and the approval that replaced the shell's allow command. The row is the Rust-shaped state plus the playbook
 // definition; the engine behind it is the daemon's.
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
