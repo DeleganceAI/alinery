@@ -440,7 +440,46 @@ message DaemonStatus {
   uint32 waiting_for_input = 7;
   uint32 waiting_for_approval = 8;
 }
-message Playbook {}
+// A problem the playbook library found: a playbook that does not parse (`code`, `field` and `line` say where), or a directory it could
+// not read. The same record the parser makes (playbook-engine `DocDiagnostic`).
+message PlaybookDiagnostic {
+  string code = 1;
+  string message = 2;
+  optional uint32 line = 3;
+  optional string field = 4;
+  string severity = 5;
+}
+// One definition the library offers (`playbook/<scope>/<key>`, S4.6): bundled, global or the repository's. Only what the
+// catalog shows; the whole definition is `PlaybookService.Read`, because the bundled set alone is half a megabyte of prompts.
+// A definition that does not parse is still a row, with `diagnostics` and no title.
+message Playbook {
+  PlaybookRef reference = 1;
+  optional string path = 2;  // absent for a bundled playbook
+  optional string title = 3;
+  optional string description = 4;
+  optional uint64 modified_at_ms = 5;
+  repeated PlaybookDiagnostic diagnostics = 6;
+}
+message PickerEntry {
+  PlaybookRef reference = 1;
+  bool preferred = 2;
+  bool hidden = 3;
+  bool collapsed = 4;
+  optional string badge = 5;
+  optional string color = 6;
+  optional uint64 last_imported_at_ms = 7;
+}
+// The picker's preferences: `playbook/_/picker` is the repository's own file, `playbook/_/picker-global` the one a window with
+// no repository uses. `error` is why the file was refused (the preferences are then empty).
+message PlaybookPicker {
+  repeated PlaybookRef order = 1;
+  repeated PickerEntry entries = 2;
+  string error = 3;
+}
+// `playbook/_/library`: what the scan of the library's directories could not read.
+message PlaybookLibrary {
+  repeated PlaybookDiagnostic diagnostics = 1;
+}
 // A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
 message Attachment {
   string slug = 1;
@@ -486,5 +525,7 @@ message Entity {
     CommentDraft comment_draft = 22;
     ReviewPending review_pending = 23;
     ArtifactTree artifact_tree = 24;
+    PlaybookPicker playbook_picker = 25;
+    PlaybookLibrary playbook_library = 26;
   }
 }

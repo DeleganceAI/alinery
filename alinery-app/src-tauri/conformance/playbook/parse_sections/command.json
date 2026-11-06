@@ -1,0 +1,59 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n```markdown\n<!-- alinery:step run -->\nsecond\n```\n"
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "<!-- alinery:step run -->",
+     "<!-- alinery:step missing -->"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "<!-- alinery:step run -->",
+     "inline <!-- alinery:step run -->"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "Read {{TICKET_FILE}}.",
+     " "
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "append": "inline <!-- alinery:step unknown -->\n <!-- alinery:step unknown -->\n<!-- alinery:step  unknown -->\n"
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "Do other.",
+     "  "
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n"
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n"
+  }
+ ]
+}

@@ -1,0 +1,585 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "codes": [
+        [
+          "missing_field",
+          "unsupported_version"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field",
+          "unknown_step"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ],
+        [
+          "missing_field"
+        ]
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_key",
+          "field": "key",
+          "line": null,
+          "message": "playbook key must be a lowercase ASCII slug",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "0-a",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "empty_title",
+          "field": "title",
+          "line": null,
+          "message": "playbook title must not be empty",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "duplicate_step",
+          "field": "step[run].key",
+          "line": null,
+          "message": "duplicate step run",
+          "severity": "error"
+        },
+        {
+          "code": "unknown_step",
+          "field": "step[other].prompt",
+          "line": 32,
+          "message": "section refers to unknown step other",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "steps",
+          "line": null,
+          "message": "unknown field steps",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "edge",
+          "line": null,
+          "message": "unknown field edge",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "columns",
+          "line": null,
+          "message": "unknown field columns",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "kind",
+          "line": null,
+          "message": "unknown field kind",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "typo",
+          "line": null,
+          "message": "unknown field typo",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].artifact",
+          "line": null,
+          "message": "unknown field step[0].artifact",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].prompt",
+          "line": null,
+          "message": "unknown field step[0].prompt",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].prompt_inline",
+          "line": null,
+          "message": "unknown field step[0].prompt_inline",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].column",
+          "line": null,
+          "message": "unknown field step[0].column",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].kind",
+          "line": null,
+          "message": "unknown field step[0].kind",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].human",
+          "line": null,
+          "message": "unknown field step[0].human",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].retry",
+          "line": null,
+          "message": "unknown field step[0].retry",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].retry_max",
+          "line": null,
+          "message": "unknown field step[0].retry_max",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].attempts",
+          "line": null,
+          "message": "unknown field step[0].attempts",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].rerun",
+          "line": null,
+          "message": "unknown field step[0].rerun",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].rerun_on_failure",
+          "line": null,
+          "message": "unknown field step[0].rerun_on_failure",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].on_failure",
+          "line": null,
+          "message": "unknown field step[0].on_failure",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].completion",
+          "line": null,
+          "message": "unknown field step[0].completion",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].human_approval",
+          "line": null,
+          "message": "unknown field step[0].human_approval",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].allow_empty_prompt",
+          "line": null,
+          "message": "unknown field step[0].allow_empty_prompt",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "required_wildcard",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "required applies only to an exact output; a wildcard family stays optional",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md",
+                "required": true
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].inputs[0].optional",
+          "line": null,
+          "message": "unknown field step[0].inputs[0].optional",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].outputs[0].mode",
+          "line": null,
+          "message": "unknown field step[0].outputs[0].mode",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "step[0].outputs[0]",
+          "line": null,
+          "message": "selector must be a table",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_field",
+          "field": "step[0].outputs[0].path",
+          "line": null,
+          "message": "required field step[0].outputs[0].path is missing",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_input_mode",
+          "field": "step[0].inputs[0].mode",
+          "line": null,
+          "message": "mode must be single, each or complete",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "title",
+          "line": null,
+          "message": "title must be string",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "step[0].is_coding_step",
+          "line": null,
+          "message": "step[0].is_coding_step must be boolean",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "step[0].inputs",
+          "line": null,
+          "message": "step[0].inputs must be array",
+          "severity": "error"
+        },
+        {
+          "code": "unknown_field",
+          "field": "step[0].xx",
+          "line": null,
+          "message": "unknown field step[0].xx",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step_extra",
+          "line": null,
+          "message": "unknown field step_extra",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_steps",
+          "field": "step",
+          "line": null,
+          "message": "at least one step is required",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "step[0]",
+          "line": null,
+          "message": "step must be a table",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

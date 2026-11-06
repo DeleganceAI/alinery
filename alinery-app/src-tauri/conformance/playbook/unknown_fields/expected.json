@@ -1,0 +1,81 @@
+{
+  "files": {
+    "repo/.alinery/playbooks/picker.toml": "order = [{ scope = \"repo\", key = \"a\", typo = 1 }]\n"
+  },
+  "steps": [
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "typo",
+          "line": null,
+          "message": "unknown field typo",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].typo",
+          "line": null,
+          "message": "unknown field step[0].typo",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].inputs[0].typo",
+          "line": null,
+          "message": "unknown field step[0].inputs[0].typo",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_field",
+          "field": "step[0].outputs[0].typo",
+          "line": null,
+          "message": "unknown field step[0].outputs[0].typo",
+          "severity": "error"
+        }
+      ]
+    },
+    {},
+    {
+      "error": true
+    },
+    {},
+    {
+      "error": true
+    },
+    {},
+    {
+      "error": true
+    },
+    {
+      "rejected": true
+    },
+    {
+      "rejected": true
+    },
+    {
+      "rejected": true
+    },
+    {
+      "rejected": true
+    },
+    {
+      "rejected": true
+    },
+    {
+      "rejected": true
+    }
+  ]
+}

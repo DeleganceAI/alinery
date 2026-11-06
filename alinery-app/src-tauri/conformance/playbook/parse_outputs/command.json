@@ -1,0 +1,494 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"x.md\"}, {path = \"x.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"x.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"x.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"x.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"x.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-a.md\"}, {path = \"result-*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-a.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"result-*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"result-a.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"ab*.md\"}, {path = \"*bc.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"ab*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"*bc.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"*bc.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"ab*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"*a.md\"}, {path = \"*b.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"*a.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"*b.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"*b.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"*a.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-a*.md\"}, {path = \"result-b*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-a*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"result-b*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-b*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"result-a*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"a/*.md\"}, {path = \"b/*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"a/*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"b/*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"b/*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"a/*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"abc.md\"}, {path = \"abc*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"abc.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"abc*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"abc*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"abc.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"a.md\"}, {path = \"a*a.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"a.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"a*a.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"a*a.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"a.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request.md\"}, {path = \"request*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"request*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"request.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design.md\"}, {path = \"requests/*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"requests/*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"requests/design.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design*.md\"}, {path = \"requests/*sign.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design*.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"requests/*sign.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/*sign.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"requests/design*.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"request.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"requests/design.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request.md\"}, {path = \"Request.md\"}, {path = \"requests/design.md\"}, {path = \"Requests/design.md\"}, {path = \"other/design.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"request.md\"}, {path = \"request.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"requests/design.md\"}, {path = \"requests/design.md\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"requests/design.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"requests/design.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"wildcard\"\ntitle = \"W\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"requests/*.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n<!-- alinery:step wildcard -->\nW.\n"
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"ticket.md\"}"
+    ],
+    [
+     "{path = \"other.md\"}",
+     "{path = \"x.md\"}"
+    ],
+    [
+     "ticket.md\", mode = \"single\"}]\noutputs = [{path = \"ticket.md",
+     "result.md\", mode = \"single\"}]\noutputs = [{path = \"ticket.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"../result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step missing -->\nRead {{TICKET_FILE}}.\n"
+  }
+ ]
+}

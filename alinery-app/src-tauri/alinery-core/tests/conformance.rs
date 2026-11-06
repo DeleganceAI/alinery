@@ -612,6 +612,211 @@ fn artifact_comments(case: &Path) -> Value {
     serde_json::json!({ "steps": answers, "files": files })
 }
 
+
+/// The text a playbook step names: `source` literally, else the case's `fixture` (or `fixture2`, `base`) with the `replace`
+/// pairs applied to their first occurrence, the `replace_all` pairs to every one, then `append`. The daemon's `sourceOf` does the same.
+fn playbook_source(command: &Value, step: &Value) -> String {
+    if let Some(text) = step["source"].as_str() {
+        return text.to_string();
+    }
+    let mut text = command[step["base"].as_str().unwrap_or("fixture")].as_str().unwrap().to_string();
+    for pair in step["replace"].as_array().into_iter().flatten() {
+        text = text.replacen(pair[0].as_str().unwrap(), pair[1].as_str().unwrap(), 1);
+    }
+    for pair in step["replace_all"].as_array().into_iter().flatten() {
+        text = text.replace(pair[0].as_str().unwrap(), pair[1].as_str().unwrap());
+    }
+    if let Some(tail) = step["append"].as_str() {
+        text.push_str(tail);
+    }
+    text
+}
+
+/// Diagnostics in a fixed order (the library collects some from a hash set) as the JSON the daemon also produces.
+fn playbook_errors(errors: Vec<alinery_core::playbook::PlaybookValidationError>) -> Value {
+    let mut rows: Vec<Value> = errors.iter().map(|e| serde_json::to_value(e).unwrap()).collect();
+    rows.sort_by_key(|row| row.to_string());
+    rows.into()
+}
+
+fn playbook_parse(source: &str) -> Value {
+    match alinery_core::playbook::parse_playbook_md(source) {
+        Ok(definition) => serde_json::json!({ "ok": definition }),
+        Err(errors) => serde_json::json!({ "errors": playbook_errors(errors) }),
+    }
+}
+
+/// `modified_at_ms` is the file's real clock: present or absent is all a case can say about it.
+fn playbook_scrub(value: Value, scratch: &Path) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, v)| {
+                    let v = if key == "modified_at_ms" && !v.is_null() { Value::from("MTIME") } else { playbook_scrub(v, scratch) };
+                    (key, v)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(|v| playbook_scrub(v, scratch)).collect()),
+        Value::String(text) => Value::String(scrub_str(&text, scratch)),
+        other => other,
+    }
+}
+
+fn playbook_ref(value: &Value) -> alinery_core::playbook::PlaybookRef {
+    serde_json::from_value(value.clone()).unwrap()
+}
+
+/// The playbook library over `input/app` (the global config dir) and `input/repo`, step by step, then every file left behind.
+/// `no_repo` makes the roots global-only. The daemon's `playbookLibrary.ts` must give the same answers and the same bytes.
+fn playbook(case: &Path) -> Value {
+    use alinery_core::playbook::render_playbook_md;
+    use alinery_core::playbook_library as lib;
+    let (scratch, command) = scratch_of(case, "playbook");
+    let (app, repo) = (scratch.join("app"), scratch.join("repo"));
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(&repo).unwrap();
+    let roots = lib::PlaybookRoots {
+        global_config_dir: app,
+        repo_dir: if command["no_repo"] == true { PathBuf::new() } else { repo },
+    };
+    let bundled_source = |step: &Value| -> String {
+        let spec = &step["bundled"];
+        let key = spec["key"].as_str().unwrap();
+        let mut definition = alinery_core::playbook::parse_playbook_md(lib::BUNDLED_PLAYBOOKS.iter().find(|(found, _)| *found == key).unwrap().1).unwrap();
+        if let Some(title) = spec["title"].as_str() {
+            definition.title = title.into();
+        }
+        if let Some(set_key) = spec["set_key"].as_str() {
+            definition.key = set_key.into();
+        }
+        render_playbook_md(&definition)
+    };
+    let mut answers = Vec::new();
+    for step in command["steps"].as_array().unwrap() {
+        let answer = match step["op"].as_str().unwrap() {
+            "parse" => playbook_parse(&playbook_source(&command, step)),
+            "roundtrip" => match alinery_core::playbook::parse_playbook_md(&playbook_source(&command, step)) {
+                Ok(definition) => {
+                    let rendered = render_playbook_md(&definition);
+                    let again = alinery_core::playbook::parse_playbook_md(&rendered);
+                    serde_json::json!({
+                        "rendered": rendered,
+                        "reparsed_equal": again.as_ref().ok() == Some(&definition),
+                        "rerendered_equal": again.map(|d| render_playbook_md(&d) == rendered).unwrap_or(false),
+                    })
+                }
+                Err(errors) => serde_json::json!({ "errors": playbook_errors(errors) }),
+            },
+            "remove_lines_sweep" => {
+                let source = playbook_source(&command, step);
+                let codes: Vec<Value> = source
+                    .split_inclusive('\n')
+                    .enumerate()
+                    .filter(|(_, line)| line.contains(" = "))
+                    .map(|(removed, _)| {
+                        let without: String = source.split_inclusive('\n').enumerate().filter_map(|(i, line)| (i != removed).then_some(line)).collect();
+                        match alinery_core::playbook::parse_playbook_md(&without) {
+                            Ok(_) => Value::from("ok"),
+                            Err(errors) => {
+                                let mut codes: Vec<String> = errors.into_iter().map(|e| e.code).collect();
+                                codes.sort();
+                                codes.dedup();
+                                codes.into()
+                            }
+                        }
+                    })
+                    .collect();
+                serde_json::json!({ "codes": codes })
+            }
+            "strict_json" => {
+                let value = step["value"].clone();
+                let rejected = match step["type"].as_str().unwrap() {
+                    "NormalizedPlaybook" => serde_json::from_value::<alinery_core::playbook::NormalizedPlaybook>(value).err().map(|e| e.to_string()),
+                    "NormalizedStep" => serde_json::from_value::<alinery_core::playbook::NormalizedStep>(value).err().map(|e| e.to_string()),
+                    "SavePlaybookRequest" => serde_json::from_value::<lib::SavePlaybookRequest>(value).err().map(|e| e.to_string()),
+                    "PlaybookRoots" => serde_json::from_value::<lib::PlaybookRoots>(value).err().map(|e| e.to_string()),
+                    other => panic!("unknown strict type {other}"),
+                };
+                let field = step["field"].as_str().unwrap();
+                if let Some(message) = &rejected {
+                    assert!(message.contains(field), "{message} does not name {field}");
+                }
+                serde_json::json!({ "rejected": rejected.is_some() })
+            }
+            "catalog" => serde_json::to_value(lib::load_playbook_catalog(&roots)).unwrap(),
+            "resolve" => match lib::resolve_playbook(&roots, &playbook_ref(&step["reference"])) {
+                Ok(found) => serde_json::json!({ "ok": found }),
+                Err(error) => serde_json::json!({ "error": error }),
+            },
+            "save" => {
+                let source = if step["bundled"].is_object() { bundled_source(step) } else { playbook_source(&command, step) };
+                let request = lib::SavePlaybookRequest {
+                    target: playbook_ref(&step["target"]),
+                    source,
+                    overwrite: step["overwrite"] == true,
+                };
+                match lib::save_playbook(&roots, request) {
+                    Ok(saved) => serde_json::json!({ "ok": saved }),
+                    Err(error) => serde_json::json!({ "error": error }),
+                }
+            }
+            "delete" => match lib::delete_playbook(&roots, &playbook_ref(&step["reference"])) {
+                Ok(()) => serde_json::json!({ "ok": {} }),
+                Err(error) => serde_json::json!({ "error": error }),
+            },
+            "load_picker" => match lib::load_picker_preferences(&roots) {
+                Ok(preferences) => serde_json::json!({ "ok": preferences }),
+                Err(_) => serde_json::json!({ "error": true }),
+            },
+            "save_picker" => match serde_json::from_value::<lib::PickerPreferences>(step["preferences"].clone()) {
+                Ok(preferences) => match lib::save_picker_preferences(&roots, &preferences) {
+                    Ok(()) => serde_json::json!({ "ok": {} }),
+                    Err(error) => serde_json::json!({ "error": error }),
+                },
+                Err(_) => serde_json::json!({ "error": true }),
+            },
+            "read_file" => serde_json::json!({ "text": fs::read_to_string(scratch.join(step["path"].as_str().unwrap())).ok() }),
+            "write_file" => {
+                let path = scratch.join(step["path"].as_str().unwrap());
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, step["text"].as_str().unwrap()).unwrap();
+                serde_json::json!({})
+            }
+            "symlink" => {
+                let path = scratch.join(step["path"].as_str().unwrap());
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::os::unix::fs::symlink(scratch.join(step["target"].as_str().unwrap()), path).unwrap();
+                serde_json::json!({})
+            }
+            other => panic!("unknown playbook op {other}"),
+        };
+        answers.push(playbook_scrub(answer, &scratch));
+    }
+    let mut files = Map::new();
+    fn collect(dir: &Path, root: &Path, files: &mut Map<String, Value>) {
+        let mut entries: Vec<_> = fs::read_dir(dir).into_iter().flatten().flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".mutation.lock" {
+                continue;
+            }
+            if fs::symlink_metadata(&path).unwrap().file_type().is_symlink() {
+                files.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), "<symlink>".into());
+            } else if path.is_dir() {
+                collect(&path, root, files);
+            } else {
+                files.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned().into());
+            }
+        }
+    }
+    collect(&scratch, &scratch, &mut files);
+    let _ = fs::remove_dir_all(&scratch);
+    serde_json::json!({ "steps": answers, "files": files })
+}
+
 fn run(domain: &str, case: &Path, update: bool) -> Value {
     let input = case.join("input");
     match domain {
@@ -627,6 +832,7 @@ fn run(domain: &str, case: &Path, update: bool) -> Value {
         "artifact_list" => artifact_list(case),
         "artifact_tree" => artifact_tree(case),
         "artifact_comments" => artifact_comments(case),
+        "playbook" => playbook(case),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
 }
