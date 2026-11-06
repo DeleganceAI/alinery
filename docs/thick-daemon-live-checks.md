@@ -206,13 +206,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 ### L-S4.2-c: A step's file states survive a live edit and an archive prunes them
 
 - **Session:** S4.2. Plan: S4.2 Accept (O27); ledger R-S4.2-5, R-S4.2-6.
-- **Steps:** run a fork and join to completion. In `<repo>/.alinery/tasks/<slug>/executions/<execId>/` note the manifest hashes and `ls objects/`. Edit an artifact an earlier step had consumed, restart the daemon, and `shasum -a 256` the object named in the manifest. Then archive the task in the app.
-- **Expected:** the object's hash equals its file name and the original bytes, whatever the live file now holds; after the archive `objects/` is gone and the manifests remain.
+- **Steps:** run a fork and join to completion. In `<repo>/.alinery/tasks/<slug>/executions/<execId>/` note the manifest hashes and `ls objects/`. Edit an artifact an earlier step had consumed, restart the daemon, and `shasum -a 256` the object named in the manifest. Then archive the task in the app. Repeat with a sub-task finished from its manager (and one killed): its `objects/` goes the same way.
+- **Expected:** the object's hash equals its file name and the original bytes, whatever the live file now holds; after the archive, finalize or kill `objects/` is gone and the manifests remain.
 - **Status:** open
 
 ### L-S4.2-e: A real coding step records its working files under a ref
 - **Session:** S4.2 (review fix). Plan: S4.2 Accept (O27, "a git-worktree step still resolves its recorded tree"); ledger R-S4.2-10.
-- **Steps:** with the app running, run a playbook with a coding step (the bundled `superdevelop` build step) in a git repository to acceptance, leaving a file uncommitted in the task worktree. Then `git -C <worktree> for-each-ref refs/alinery/executions` and `git -C <worktree> ls-tree -r <ref>`. Run `git -C <worktree> gc --prune=now` and repeat the `ls-tree`.
+- **Steps:** with the app running, run a playbook with a coding step (the bundled `superdevelop` build step) in a git repository to acceptance, leaving a file uncommitted in the task worktree. Then `git -C <worktree> for-each-ref refs/alinery/executions` (the refs read `refs/alinery/executions/<slug>/<execId>`; run a second task with a coding step in the same repository and check the first task's ref is unchanged) and `git -C <worktree> ls-tree -r <ref>`. Run `git -C <worktree> gc --prune=now` and repeat the `ls-tree`.
 - **Expected:** one ref per accepted coding execution; the tree lists the uncommitted file with its content at acceptance; `git status` of the worktree is unchanged by the recording; the tree survives the gc. The daemon log has no `worktree not recorded` line.
 - **Status:** open
 
