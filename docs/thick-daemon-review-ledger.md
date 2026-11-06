@@ -639,6 +639,60 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Minor (deviations a-e):** recorded already in R-S4.5-5, -9, -10, -12; nothing changed. (c), the `PostArtifactChange` auto-backup trigger that stops firing until S4.9, still needs the user's decision.
 - **Wire:** neutral (commit carries `Protocol-Neutral:`).
 
+### R-S4.6-1: the Rust playbook parser, `ReadPlaybookTree` and `ApplyPlaybookTree` are not gone (Exit not met)
+- **Kind:** deviation from the plan's Exit line.
+- **What:** the plan says the Rust parser, `ReadPlaybookTree` and `ApplyPlaybookTree` go. They stay: the core `playbook.rs` and `playbook_library.rs` are still used by the MCP tools (`alinery_read_playbook`, `alinery_save_playbook`, which the plan keeps on the core path until S5.1) and by the community import registry in the shell (`community_playbooks.rs`), which for a remote repo stages the repo's playbook files through `ReadPlaybookTree` and `ApplyPlaybookTree` (`playbook.rs` `with_library_at`). The two parsers are held equal by the 13 conformance cases (Rust writes `expected.json`, the daemon and the engine compare), so R3's "one implementation per rule" is met for the app and the daemon and is a tested copy for MCP.
+- **Options:** (a) delete them now and break the community import for remote repos and MCP; (b) keep them until S5.1 (MCP on the daemon) and S4.10 (the registry in the daemon) delete them (chosen).
+- **Reverse / close:** S5.1 deletes the MCP use; S4.10 deletes `with_library_at`'s remote branch, `playbook_tree.rs` and the two `RepoOp`s, then the Rust `playbook.rs` parser and `playbook_library.rs` can go. The live remote test block in `src/tests/remote.rs` that exercises the scratch copy goes with them.
+- **Wire:** neutral.
+
+### R-S4.6-2: how the 11 `deny_unknown_fields` structs are covered
+- **Kind:** deviation (mapping) and note.
+- **What:** `rg -c deny_unknown_fields` counts 11: `PlaybookRef`, `InputSelector`, `OutputSelector`, `NormalizedStep`, `NormalizedPlaybook`, `Metadata`, `StepMetadata` (`playbook.rs`) and `PlaybookRoots`, `SavePlaybookRequest`, `PickerPreferences`, `PickerPreference` (`playbook_library.rs`). The case `conformance/playbook/unknown_fields` has four `parse` steps (a frontmatter, a step, an input selector and an output selector field), three `load_picker` steps (the picker file's top level, one entry and one reference), and six `strict_json` steps (`NormalizedPlaybook`, `NormalizedStep`, `SavePlaybookRequest` twice, `PlaybookRoots`, `NormalizedPlaybook`). In Rust each is rejected by serde; in TypeScript the parse steps are rejected by the engine's parser with a diagnostic naming the field (`typo`), the picker steps by the library's picker decoder, and the `strict_json` steps by the wire message's `fromJson` (which refuses an unknown field and names it). `PlaybookRoots` exists only in Rust (the daemon builds its roots from its own flags and never reads them from a request), so that step is skipped on the TypeScript side and the harness says so in a comment.
+- **Known difference:** TOML parsers differ in the words of a syntax error (the `toml` crate and `smol-toml`), so the conformance test compares the code and line of an `invalid_toml` diagnostic and not its message. TOML also makes no difference between `2` and `2.0` once parsed (`smol-toml`), so a float written where the schema wants an integer is accepted in TypeScript and refused in Rust; it is noted in `playbook-md.ts` and no case relies on it.
+
+### R-S4.6-3: the global half of the picker is served by a local repository's daemon, not the shell
+- **Kind:** deviation from the plan ("the global half stays with `app.toml` (shell)").
+- **What:** the picker's preferences are not in `app.toml`; they are `<app config dir>/playbooks/picker.toml` (global) and `<repo>/.alinery/playbooks/picker.toml` (the repository's), the files `picker_preferences` always used. The shell has no reason to own the first file once the daemon reads and writes the library from the same directory, so `PlaybookService.SavePicker` takes `global` and the rows `playbook/_/picker-global` and `playbook/_/picker` carry the two. A window with a repository selected reads and writes that repository's picker; a window with none uses the global one through the active (else first known) local repository's daemon.
+- **Options:** (a) keep the global file in the shell with two commands (the plan); (b) the daemon serves both (chosen: one writer for the directory, and no new shell commands).
+- **Reverse:** re-add `read_playbook_picker_preferences` and `save_playbook_picker_preferences` for the global file only and make `savePlaybookPickerPreferences` call them when `repoPath` is empty.
+
+### R-S4.6-4: the machine's playbooks need a local repository to read them
+- **Kind:** behaviour change.
+- **What:** the bundled and the global (this Mac's `<app config dir>/playbooks`) playbooks are read through a daemon, and the daemon is per repository. With a repository named, that repository's daemon answers; with none (onboarding, Settings with no repo, `Playbooks` with no repo), `libraryHost` takes the active repository, else the first known one that is not an ssh repository. With no local repository, `NoLibraryHost` is thrown ("Open a repository to read the playbook library."); onboarding shows that sentence in the preview's error slot and Retry works once a repository exists. Before S4.6 a fresh install could preview the curated playbooks with no repository. The per-lane daemons of a local repo each read the same global directory (the watcher covers it), so two repos show the same global playbooks.
+- **Options:** (a) accept it (chosen: the smallest change, and the setup screen of P6 puts a repository first); (b) compile the five curated definitions into the page for the preview; (c) a machine-level daemon (D-decision, out of scope).
+- **Close:** P6's setup screen makes a repository (or a host) the first thing a user adds; L-S4.6-b checks the message.
+
+### R-S4.6-5: a remote repo shows the host's own global playbooks
+- **Kind:** behaviour change (follows O12 a for the agent dir).
+- **What:** a remote repo's catalog comes from the host's daemon, whose "global" directory is the host's `~/.local/share/alinery-remote/config/<identity>/playbooks`. Before S4.6 the shell staged only the repo's files and read the global and bundled ones on this Mac, so a remote repo showed this Mac's global playbooks. Now it shows the host's. The bundled set is the same on both (compiled into each). Nothing syncs global playbooks to a host (the credentials list is the only thing the app places there).
+- **Close:** L-S4.6-a. If users want their Mac's global playbooks on a host, that is a sharing item like the credentials (a later session), not something to copy implicitly.
+
+### R-S4.6-6: the community import registry stays in the shell; deleting a repo playbook forgets its import first
+- **Kind:** deviation and a new command.
+- **What:** before S4.6 `delete_playbook_source` (shell) removed the file and the registry record in one step on one machine. The daemon now deletes the file and knows nothing of `community-imports.toml` (S4.10 moves the registry). `deletePlaybookSource` (page) for a `repo` reference first calls the new shell command `forget_community_import(repoPath, key)` (`forget_import_before_delete`: a registry that cannot be read stops the delete with its error; no record is a no-op), then the daemon delete. The two are not atomic: if the daemon delete fails after the registry write, the playbook stays and the Community list offers Import instead of Update for it. That is the safe direction (an import can be redone; an orphaned record claims a file that is not there).
+- **Reverse / close:** S4.10 moves the registry into the daemon and deletes `forget_community_import`; the page's call goes with it. The command is under `check-remote-routing.sh` and `check-remote-offload.sh` (async, `off_main_thread`, `owned_library`) and both pass.
+- **Close check:** L-S4.6-c.
+
+### R-S4.6-7: concurrency and the revision the page sends
+- **Kind:** note and deviation (the plan said `save_playbook_if_unchanged` becomes `expected_revision`).
+- **What:** the old compare-and-swap compared file bytes the caller held. Now a row's `revision` (the store's commit seq of its last change) is compared. `ReadPlaybook` refreshes the projector from disk first (an edit made outside the app is seen before the compare, test "an edit made on disk is seen before the revision is compared") and returns the row's revision in `ReadPlaybookResponse.revision` (added to the proto for this; field 6). The page (`sync/playbooks.ts`) records the revision of each definition it reads or saves in a module map and sends it as `expected_revision` on a save that sets `overwrite` and on a delete; a save of a new file sends 0 (no check; the daemon's "already exists" conflict covers it); a playbook the window never read sends 0. A catalog read does not record a revision (opening is what counts). The map is per window and is not cleared when a repo is removed (small, keyed by host and row).
+- **Not done:** the picker is saved whole and last-writer-wins (revision 0), as before; two windows saving different preferences at once keep the later one. `SavePicker.expected_revision` exists for the day that matters.
+- **Tests:** daemon `rpc/playbooks.test.ts` (stale ABORTED with the file untouched, the current revision and 0 go through, two saves of one revision leave one winner, retried mutation answered once); vitest `sync/playbooks.test.tsx` (the revision read is the one sent; a stale refusal reaches the page with "Reopen the playbook"; a tagged invalid error keeps its diagnostics).
+
+### R-S4.6-8: `PROTOCOL_VERSION` 31, the Linux runtime, and the sidecar
+- **Kind:** note.
+- **What:** `PlaybookService` is a new service on the daemon's grpc socket and the daemon commit bumped `PROTOCOL_VERSION` to 31 (`protocol.rs`, `daemon_client.rs`, `daemon_takeover.rs`); the frontend commit carries a `Protocol-Neutral:` trailer for the `revision` field because it adds a message field and no op. The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.6-e): `alinery-core`, `mcp/` and `vinculum-daemon/` changed.
+- **Environment:** `cargo test -p alinery-mcp` failed 6 `session_tools` tests ("expected value at line 1 column 1") with the sidecar from before this session, because the MCP spawns the daemon sidecar and that one spoke protocol 30; after `src-tauri/scripts/copy-sidecar.sh debug` they pass (7 of 7). `check.sh` runs the script first, so the gate was not affected. Anyone running the MCP tests alone after a protocol bump has to refresh the sidecar.
+
+### R-S4.6-9: smaller things
+- **Kanban columns.** `list_kanban_columns` returned a fixed list of four (`research-design`, `planning`, `implementation`, `review`); it is now `src/kanbanColumns.ts` and `Kanban`/`Grid` read it synchronously, so the board no longer waits for a call before drawing its columns. The Kanban and Grid tests used their own column lists (`todo-draft`, `in-review`); they now use the real four, and one navigation test moves across the empty Implementation column.
+- **Pre-existing, not fixed:** `playbook-engine` `tsc` reports an error at `engine.ts(187)` (from S4.2). Not part of this session's files; `bun test` passes.
+- **Biome:** `npx biome check --write src` reordered imports in files this session touched and nothing else.
+- **Unused after the move:** `readPlaybookPickerPreferences` (it only called the catalog) and `RemoteLibrary.stage_repo`/`host_path` and `Library::rehome` (the Rust shell no longer returns paths to the page) were removed; the live remote test block that used `rehome` now compares the files the scratch copy sends back.
+- **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
+- **Verifier-style check done by hand:** `rg -n 'smol-toml|parseToml' playbook-engine/src` shows the import and one call, both in `playbook-md.ts`.
+
 ---
 
 ## E. Known flaky tests
@@ -648,6 +702,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **What:** asserts attach returns in under 500 ms. Under full-workspace load it failed once with "returned before any spawn attempt" during S3.5; it passed in 3 of 3 isolated reruns and in the later `check.sh --quick`. S3.5 did not touch the test or the code it exercises. Rerun it alone before treating a failure as a regression:
   `cd alinery-app/src-tauri && cargo test -p alinery-app --lib -- tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
 - **Update 2026-11-05 (S4.1):** failed again in the first full `check.sh` of S4.1 (the same run also failed the real S4.1 regression above); passed alone on the rerun. It then failed in three full `cargo test -p alinery-app --lib` runs in a row. **Cause found:** the 500 ms is spent in `current_alineryd_socket_path` -> `alineryd_socket_namespace` -> `resolve_alineryd_path` -> `daemon_in`, which calls `read_dir` on `target/debug/deps`; after many builds in one worktree that directory held 145,273 files (142,436 of them stray `*.o`), and under the parallel load of the whole lib suite the listing took 550 to 690 ms (measured with a temporary `eprintln!` on `started.elapsed()`: `attach_repo_daemon` itself took 1.3 us, `repo_daemon` 5 us). After `find alinery-app/src-tauri/target/debug/deps -name '*.o' -delete` (2,837 files left) the full lib run passed. So the flake is a function of the size of `target/debug/deps`, not of S4.1 code. **If it recurs on a long-lived worktree, delete the stray `.o` files first.** The product-side hazard is real but small: `daemon_in` lists the whole executable directory (in a release app that directory is small).
+- **Update 2026-11-06 (S4.6):** passed in the S4.6 full `check.sh`.
 - **Follow-up:** widen or drop the 500 ms wall-clock bound.
 - **Files:** `alinery-app/src-tauri/src/tests/daemon.rs:518`.
 
@@ -668,6 +723,7 @@ Everything below is claimed by the plan or a Status line but has not been observ
 - The cause of the 20 to 26 ms loop gaps while `F_FULLFSYNC` runs on the Worker: not isolated (4.2).
 - `Bun.TOML.stringify` stays in Bun's API: guarded by the S4.1 golden test (not built).
 - The S0.6 claim that the full `check.sh` passed: only `--quick` was re-verified.
+- The playbook library through a real ssh forward to a Linux host's daemon, and a remote repo showing the host's global playbooks: L-S4.6-a, -e. The deletion of a community-imported repo playbook in the real app: L-S4.6-c. An edit in a second window refused as stale: L-S4.6-d.
 
 ---
 
@@ -691,3 +747,4 @@ Edit the plan, or let S5.4 do it.
 - After S5.2, the remote-host requirements no longer need Rust, zig or cross-compilation; the host only needs the Bun binary the app installs (O15 b).
 - Telemetry: remote hosts that run the daemon hold the shared telemetry ingest credential (O25 b, R5). If the README describes the telemetry privacy model, say so.
 - After S4.1, the daemon creates `.alinery/config.toml`, `.alinery/harnesses.toml` and the task-data ignore entry when a repository is first opened (local or remote), and it sends the repository-settings telemetry event itself. A remote host's daemon sends it under this Mac's install id and consent (R-S4.1-2).
+- After S4.6, playbooks are read and written through the repository's daemon: a remote repository lists the host's own global playbooks, not this Mac's, and the bundled and global playbooks need at least one local repository to be known before they can be listed. `README.md:242` (`alinery_read_playbook`) is unchanged: MCP still reads the core library.

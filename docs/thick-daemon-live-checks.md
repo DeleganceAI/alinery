@@ -444,6 +444,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 30 (a host on 29 shows the daemon-conflict banner and Restart daemon); every artifact view works on the remote repo through the repo's daemon, with the file reads served as `ReadBlob` frames over the forward.
 - **Status:** open
 
+### L-S4.6-a: A remote repo shows the host's own global playbooks
+
+- **Session:** S4.6. Plan: S4.6 Build; ledger R-S4.6-4, R-S4.6-5.
+- **Steps:** open a local repo and a repo on a remote host (L-S1.3-b host). On the host, put a playbook at `~/.local/share/alinery-remote/config/<identity>/playbooks/hostonly/playbook.md` (a copy of any bundled one with `key = "hostonly"`). Open Playbooks on the remote repo, then on the local repo, then Settings, General, default playbook, with each repo selected.
+- **Expected:** the remote repo lists the bundled playbooks, `hostonly` as a global one and its own repo playbooks; the local repo lists this Mac's global playbooks and not `hostonly`. A repo playbook saved on the remote repo appears in the list with no reload and is a file under the host's `<repo>/.alinery/playbooks/`.
+- **Status:** open
+
+### L-S4.6-b: Onboarding's playbook preview before any repository is open
+
+- **Session:** S4.6. Plan: S4.6 Accept; ledger R-S4.6-4.
+- **Steps:** start the app with no known repository (move `known_repos` out of `app.toml`, or a fresh `<app_config_dir>`), go to the Playbooks step of onboarding, then add a local repository and return to that step.
+- **Expected:** with no repository the previews say "Open a repository to read the playbook library." (no raw `NoLibraryHost:` prefix) and Retry works once a repository is added; after that the curated playbooks preview with their steps. (A fresh install used to preview them with no repository; that no longer works, R-S4.6-4.)
+- **Status:** open
+
+### L-S4.6-c: Deleting a repo playbook that was imported from the community
+
+- **Session:** S4.6. Plan: S4.6 Build (community registry stays in the shell); ledger R-S4.6-6.
+- **Steps:** signed in, import a community playbook into a repo (Playbooks, Community, Import), confirm the local row says it is an import, then delete that repo playbook from the Local list. Open Community again.
+- **Expected:** the playbook disappears from the Local list, the Community row no longer says imported (it offers Import again, not Update), and `<repo>/.alinery/playbooks/` has no directory for it left and no record for it in `community-imports.toml`. If that file is made unreadable first (not valid TOML), the delete is refused with a message and the playbook is still there.
+- **Status:** open
+
+### L-S4.6-d: An edit in a second window is refused as stale, and the picker follows
+
+- **Session:** S4.6. Plan: S4.6 Tests ("a save with a stale revision is ABORTED"); ledger R-S4.6-7.
+- **Steps:** with two Alinery windows on one repo (or the app plus a hand edit of the file), open the same repo playbook in the editor in both. Save a change in window 1. In window 2 change the same playbook and Save. Then in window 1 mark a different playbook preferred and hide a third.
+- **Expected:** window 2's save is refused with the daemon's "changed since revision N" text and "Reopen the playbook to see the newer version", and the file keeps window 1's text; after reopening, a save goes through. Window 2's list shows the preferred and hidden marks within a second or two with no reload. Editing the file in a text editor instead of window 1 gives the same refusal.
+- **Status:** open
+
+### L-S4.6-e: The Linux runtime with protocol 31
+
+- **Session:** S4.6. Plan: S4.6 (remote hosts); ledger R-S4.6-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`). Then use L-S4.6-a's steps against that host.
+- **Expected:** the live tests pass against protocol 31 (a host on 30 shows the daemon-conflict banner and Restart daemon); the catalog, a read, a save and a delete of a repo playbook work on the remote repo through the host daemon's `PlaybookService`.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
