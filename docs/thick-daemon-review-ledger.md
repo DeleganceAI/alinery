@@ -332,6 +332,8 @@ Build records, corrections and environment notes.
 - `R-S5.3-15` drawer-shell cleanup after a switch (verifier minor)
 - `R-S6.2-8` P6 review, "failed" is not "given up"
 
+- `R-WRAP-1` how the two ledgers were reorganised (decision: non-destructive index; reverse with `git show e7372ca:<file>`).
+
 ---
 
 ## Full entries
