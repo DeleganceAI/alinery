@@ -458,6 +458,83 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 6. **P0 to P3 need no change.** S2.4's `onEvent` hook, S0.6's locked `addExecution` and the in-memory changelog all stand.
 7. **Tests** in S4.2 (four-step fork and join, change an artifact a finished step had consumed, publish a later step, restart: the first step's manifest still lists the original sha256 and the bytes read back) and S4.5 (`BlobRef` resolves under `executions/<eN>/objects/`, read-only). Not built yet.
 
+### R-S4.4-1: the agent's tool name `alinery_set_session_name` stays
+- **Kind:** deviation from Accept line 1 (`rg -n 'alinery_set_session_name|suggestSessionName' alinery-app/src-tauri` finds nothing).
+- **What:** `suggestSessionName` and the Rust naming FFI are gone; naming is `setSessionName` in `domain/sessionOps.ts`, reached by `RenameSession` and by the daemon's own tool. The string `alinery_set_session_name` is the name of the tool the Vinculum agent calls (`naming.ts`, `main.ts`, `mcp.ts` `BUILTIN_TOOLS`, the customizations text in `vinculum_customizations.rs`). It is a tool name inside a prompt, not a Rust or FFI function, and agents already running (and their sessions' stored prompts) use it.
+- **Options:** (a) keep the name; (b) rename the tool and the prompt text, breaking a running agent's call.
+- **Why (a):** the plan's intent (naming moves to the daemon) is met; renaming a tool the model has seen buys nothing.
+- **Reverse:** rename in the five files and bump the daemon prompt; no wire change.
+- **Files:** `vinculum-daemon/src/{naming,main,mcp}.ts`, `src/vinculum_customizations.rs`.
+
+### R-S4.4-2: `FinalizeSessionMessageActions` and `PrepareReviewApprovalPrompt` are deferred to S4.5
+- **Kind:** deviation (provisional).
+- **What:** the plan's S4.4 row lists them, but both read and write artifact comment and review state (`artifact_review_pending`, the review markdown), which S4.5 moves. They remain `RepoOp` variants and the commands `finalize_session_message_actions` and `prepare_review_approval_prompt`. The other 8 session and all 12 chat variants are gone.
+- **Why:** moving them now would split the review state between two owners for one session.
+- **Reverse:** none needed; S4.5 deletes them.
+- **Files:** `alinery-core/src/repo_service.rs`, `src/session.rs`.
+
+### R-S4.4-3: `ReadHistory` without a window returns the replay bytes, not a rendered screen
+- **Kind:** behaviour change (provisional, accepted at S3.4).
+- **What:** Rust drew the tail's final screen with a `vt100` emulator and sent that frame. The daemon returns the scrollback tail with terminal queries removed (the bytes an attach replay sends); xterm draws them to the same screen and keeps its own scrollback. A windowed read (`offset` and `limit`) is byte-exact and is the conformance case; the tail is not compared with Rust.
+- **Files:** `vinculum-daemon/src/domain/history.ts`, `alinery-core/tests/conformance.rs` (`history`).
+
+### R-S4.4-4: `ArchiveSession` stamps, refreshes the store, then stops the process
+- **Kind:** decision (the plan's 2.3.4 rule 2).
+- **What:** the meta is stamped `archived`, the store is refreshed so the stamp is a put in the stream, and only then does the runner stop the process, so a subscriber sees `archived` before the exit. The reply says whether a live process was stopped (`killed_live`), and `session.archive` telemetry carries it. A session that is not running is archived all the same. Tested at the file level (`domain/chat.test.ts`, the metadata read at the moment of the stop) and through the service (`rpc/sessionWrites.test.ts`). The live half, with a real Terminal, is L-S4.4-a.
+- **Files:** `vinculum-daemon/src/rpc/sessions.ts`, `domain/sessionOps.ts`.
+
+### R-S4.4-5: a chat thread is a root session plus a `ChatThread` entity; the chat scope is `chat/*` and `session/_/*`
+- **Kind:** decision (the plan said "entities in the chat scope"; the shape is mine).
+- **What:** the thread is the root Vinculum session (`generic: true`, harness `vinculum`; an older `omp` row is still a thread). Beside it `ChatPublisher` keeps `chat/_/<id>` with the branch label, whether the thread uses the checkout, and whether another thread continues it (`superseded`). A refresh recomputes the thread and the one it continues, and there is a 30 s pass for branch changes made outside. The frontend rail (`chatThreadsOf`) joins the two rows, leaves out a superseded thread and an archived one (unless asked), and sorts pinned first, then newest. Worktrees are `.alinery/chat-worktrees/<id>` on `chat/<id>`.
+- **Files:** `proto/alinery/v1/entities.proto`, `vinculum-daemon/src/domain/chat.ts`, `alinery-app/src/sync/chat.ts`.
+
+### R-S4.4-6: `Session.attention_label` carries the notification text
+- **Kind:** decision.
+- **What:** the plan says the Session entity gets the attention body. The entity carries the label (the task's name, else the slug, else empty) and the frontend composes `<label> — <reason>` (`attentionBody` in `shared.tsx`), so the text is not stored per reason. `notify_session_attention` receives the finished body and only shows the OS notification. The Rust `session_attention_body` and its `RepoOp` are deleted; its coverage is the daemon's label test and `shared.test.ts`.
+- **Files:** `proto/alinery/v1/entities.proto`, `vinculum-daemon/src/sync/parsers/*`, `alinery-app/src/{shared.tsx,sync/sessionObservation.ts}`.
+
+### R-S4.4-7: the `chat: true` header on the turn controls
+- **Kind:** decision.
+- **What:** `chat_prompt`, `chat_abort`, `chat_set_model` and `chat_set_thinking_level` keep using the legacy JSON-lines ops (the plan gives them to no S4 session). `DaemonClient::chat_*` (`alinery-core`) marks them `chat: true`, and the daemon refuses an id that is not a chat thread, as the Rust `load_root_omp` check did before the op reached the daemon.
+- **Files:** `alinery-core/src/daemon_client.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.4-8: `PROTOCOL_VERSION` 29
+- **Kind:** note. The wire gained `SessionService` writes, `ChatService`, two `BlobService` targets and two entity changes. `audited_shutdown_protocol` accepts 29 (the `shutdown` op is unchanged). Hosts on 28 show the daemon-conflict banner until restarted from it. The remote runtimes need a rebuild before the live remote tests mean anything.
+- **Files:** `alinery-core/src/{protocol,daemon_client}.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.4-9: hosted-model refresh stays in the shell
+- **Kind:** decision (the plan table: "hosted refresh stays in the shell (S4.11)").
+- **What:** the refresh writes the credentials the daemon reads at spawn, so it must run in the app before a chat is created or started. The new command `prepare_hosted_inference(model)` runs it (`refresh_hosted_inference_before_open`), and `createChatThread` and `startChatThread` in `sync/chat.ts` call it before the RPC. A model that is not hosted makes it a no-op. S4.11 replaces the command with a settings write the shell sends.
+- **Files:** `src/session.rs`, `alinery-app/src/{ipc.ts,sync/chat.ts}`.
+
+### R-S4.4-10: the legacy JSON-lines ops and the core functions stay
+- **Kind:** decision (migration rule 5).
+- **What:** `create_execution_session`, `start_session`, `resume` and the other legacy ops stay on the daemon's socket for `alinery-mcp` (its four tools). The `alinery-core` functions `set_session_name`, `read_session_history`, `read_omp_window`, `list_chat_threads_in` and their neighbours stay as the Rust reference the conformance runner calls; they have no app caller left. Delete them with the MCP move (S4.9).
+- **Files:** `alinery-core/src/{chat,session_name,history,session_actions}.rs`.
+
+### R-S4.4-11: `open_session` is unchanged; `ResumeSession` is served and unused
+- **Kind:** note.
+- **What:** the shell's `open_session` still attaches and, for a session with a resume token, resumes through the legacy op (its preflight is S4.3's). `SessionService.ResumeSession` is implemented and tested (`rpc/sessionWrites.test.ts`) but no frontend code calls it; the open path would switch to it when `open_session` leaves the shell.
+- **Files:** `src/session.rs`, `vinculum-daemon/src/rpc/sessions.ts`.
+
+### R-S4.4-12: telemetry source for the daemon's session events is `alineryd`
+- **Kind:** note. `session.archive` and `session.kill` are sent by the daemon (`platform/telemetry.ts`) with source `alineryd`; the Rust `TelemetrySource::App` sender is no longer reached for them. Conformance cases `session_archive_live`, `session_archive_idle_no_task` and `session_kill` pin the record.
+- **Files:** `vinculum-daemon/src/{rpc/sessions.ts,platform/telemetry.ts}`, `conformance/telemetry/*`.
+
+### R-S4.4-13: the open-repos poll is replaced by re-reads, not by a stream
+- **Kind:** behaviour change.
+- **What:** `list_chat_repos` (which repos Chat may use: open here, daemon attached) was read every 3 s. `useOpenChatRepos` now reads it when the view shows, on window focus, when a remote host connects and when the app's repo list changes. What happens inside those repos arrives by stream. A daemon stopped without a change to the repo list is noticed at the next focus or when the view is shown again, not within 3 s. A stream per repo cannot tell Chat that a repo closed, because a closed repo has no daemon to stream from.
+- **Reverse:** call the read from a timer again (Accept 2 forbids it).
+- **Files:** `alinery-app/src/sync/chat.ts`, `views/{ChatView,QuickChat}.tsx`.
+
+### R-S4.4-14: tests removed, and where the coverage went; gate and environment notes
+- **Kind:** note.
+- **Removed Rust app tests** (they called deleted commands): `manual_rename_uses_owned_explicit_repo_without_daemon`, the five `clear_session_notifications_*`, `chat_thread_attachments_land_beside_the_session_and_reject_escape`, the `list_chat_threads`, `set_chat_pinned`, `archive_chat_*`, `remove_chat_worktree_*`, `chat_worktree_follows_*`, `overlapping_resumes_*` and `resume_chat_*` tests in `tests/session.rs`, the two attention-body tests in `tests/notify.rs`, and the session, chat and attention parts of the first live remote test. Their coverage is `domain/{chat,sessionOps,history}.test.ts`, `rpc/sessionWrites.test.ts` and the conformance cases. The live stall test (`live_a_stalled_host_does_not_hold_up_the_command_that_asked`) now asks `list_artifacts` (made generic over the runtime so a mock handle can call it) instead of `read_chat_image`.
+- **Removed frontend tests:** the "closed repo's group still reloading" test and the three name-poll timer tests in `ChatView.test.tsx` (replaced by "shows the name the daemon publishes ... never asks on a timer" and the rename tests).
+- **Gates:** `check-blocking-commands.sh` lost `archive_session` and `archive_session_for_repo`. The no-kill gate (`.kill(` only in `platform/process.ts`) made the runner's `kill` a `stop`. `check.sh` needs node and bun on PATH (the line at the top of the live-checks file).
+- **Flaky test:** R-FLAKE-1 (`a_repo_being_closed_is_not_respawned_by_attach`) did not trip in this session's full `check.sh`.
+- **Suggested README text (not edited):** after S4.4 the README's chat paragraph could say that chat threads, their attachments and their worktrees are kept by the repo's daemon, so a thread made in one window shows in every other window on that repo without a refresh, and a repository on another machine keeps its threads on that machine.
+
 ---
 
 ## E. Known flaky tests

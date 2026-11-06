@@ -353,6 +353,48 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 28 (a host still on 27 shows the daemon-conflict banner and Restart daemon); create, duplicate and archive work through the forwarded RPC socket; the attachment's reveal action is absent for the remote repo; the pre-archive backup runs on the host and obeys the host's own trigger flags.
 - **Status:** open
 
+### L-S4.4-a: Archive a live Terminal session; the stamp comes before the exit
+
+- **Session:** S4.4. Plan: S4.4 Accept (`ArchiveSession` on a live Terminal); ledger R-S4.4-4.
+- **Steps:** launch the app on a scratch git repo with a task. Open a Terminal session in the task and start `sleep 600`. Archive the session from the sessions list. In a second window on the same repo, watch the sessions list while you do it.
+- **Expected:** the row shows archived and its process gone; `<repo>/.alinery/tasks/<slug>/sessions/<id>.meta.json` has `"archived": true`; `pgrep -f 'sleep 600'` finds nothing; the second window never shows the session running and archived at once in the wrong order (it goes straight from running to archived, then exited). Archiving a session that already exited stamps it and kills nothing.
+- **Status:** open
+
+### L-S4.4-b: The chat rail follows other windows and a remote repo with no poll
+
+- **Session:** S4.4. Plan: S4.4 vitest ("a new chat thread appears in the rail with no poll"); ledger R-S4.4-5, R-S4.4-13.
+- **Steps:** open two windows on the same repo and show Chat in both. In one, create a thread, pin it, rename it and archive it, one at a time. Then add the Docker sshd host (L-S1.3-b), open a remote repo with its daemon on protocol 29, and repeat in Chat there. Finally stop the repo's daemon from Settings and focus the window.
+- **Expected:** each change shows in the other window within a second with no refresh; the pinned thread moves to the top; the archived one leaves the rail unless "show archived" is on; a remote repo's threads show under its key. After the daemon is stopped, the repo leaves the Chat repo list when the window is focused (it can take until the next focus, R-S4.4-13).
+- **Status:** open
+
+### L-S4.4-c: A file dropped in the chat composer is uploaded to the thread
+
+- **Session:** S4.4. Plan: S4.4 Accept (`BeginUpload`, not a path); ledger R-S4.4-14.
+- **Steps:** in Chat, drop a PDF from Finder and paste a screenshot into the composer, then send. Open the thread's folder.
+- **Expected:** `<repo>/.alinery/sessions/<id>.attachments/` holds both files, byte for byte (`shasum -a 256`); the pasted image previews in the transcript; a file over 25 MB is refused with its name in the message and the rest still go. On a remote repo, the files appear under the same path on the host.
+- **Status:** open
+
+### L-S4.4-d: The attention notification text
+
+- **Session:** S4.4. Plan: S4.4 Build (the Session entity carries the attention body); ledger R-S4.4-6.
+- **Steps:** with a task named "Fix login", run a session that stops to ask a question (waiting for input), one that needs an approval, and one that finishes a turn (idle). Keep the app in the background. Repeat for a chat thread.
+- **Expected:** the OS notifications read `Fix login — waiting for your input`, `Fix login — waiting for your approval` and `Fix login — idle, needs you`; a chat thread uses its own label, or `session` when it has none.
+- **Status:** open
+
+### L-S4.4-e: A hosted-model chat can be created and started
+
+- **Session:** S4.4. Plan: S4.4 Build (hosted refresh stays in the shell); ledger R-S4.4-9.
+- **Steps:** signed in to an Alinery account with a hosted plan, pick a hosted model, create a chat thread and send a message. Do it again after the hosted credential has expired (change `expires` in the hosted `inference.json` under `<app_config_dir>`, or wait). Do it also from a thread that was created but never started.
+- **Expected:** the thread starts and answers each time; the credential file is refreshed before the spawn (its mtime moves); a model that is not hosted makes no network call.
+- **Status:** open
+
+### L-S4.4-f: The Linux runtime with protocol 29, and chat on a remote repo
+
+- **Session:** S4.4. Plan: S4.4 (remote hosts); ledger R-S4.4-8, R-S4.4-14.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live` was edited to compile: its session and chat sections are gone and the stall test asks `list_artifacts`). Then in the app, on a remote repo: create a chat thread with a worktree, attach a file, archive it removing the worktree, rename a task session and archive it.
+- **Expected:** the live tests pass against protocol 29 (a host still on 28 shows the daemon-conflict banner and Restart daemon); the thread's worktree exists on the host under `.alinery/chat-worktrees/<id>` and is gone after the archive; the session list updates without a reload.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
