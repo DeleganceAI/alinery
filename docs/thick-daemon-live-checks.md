@@ -848,6 +848,34 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** (1) the board opens with no onboarding, `app.toml` gains `local_onboarded = true` after the first write, and the `localStorage` key is gone (devtools: Application, Local Storage). (2) the board opens with no onboarding, because a local repo is known. (3) onboarding opens first; after Skip, `app.toml` holds `local_onboarded = true`, and a relaunch opens the board. For a remote host: a host with a repo in `known_repos` shows `onboarded = true` under `[remote_hosts.<id>]` after the first write, and a host with none shows `false`.
 - **Status:** open
 
+### L-S6.2-a: the setup screen on this computer (the P6 exit check, local half)
+- **Session:** S6.2.
+- **Needs:** the app launched (user-run), with an empty app config dir (move `~/Library/Application Support/<app>` aside or point the app at a scratch config) and two scratch git repos `/tmp/repo-a` and `/tmp/repo-b`.
+- **Steps:** (1) launch with no `app.toml`. (2) On the screen, check "This computer" is the selected tab, SSH is the other, and "Open repository" is disabled. (3) Choose folder... `/tmp/repo-a`, Open repository. Watch the progress list. (4) Onboarding opens at Playbooks (step 01 of 03); click Skip Onboarding. (5) From the top bar choose Add repository: the setup screen opens as a dialog; choose `/tmp/repo-b`, Open repository. (6) Choose a plain non-git folder in step 3 or 5 and confirm the Initialize Git prompt appears and Cancel leaves the folder alone.
+- **Expected:** (2) as stated. (3) "Checking the folder", then "Starting the daemon" and "Preparing the repository", then the screen goes away. (4) the wizard has three steps (Playbooks, Models, First task), no repository step. (5) the board opens with no onboarding. `app.toml` holds `local_onboarded = true` after (4). The look of the tabs, the folder row and the progress list is yours to judge (new CSS in `onboarding.css`, not seen by an agent).
+- **Status:** open
+
+### L-S6.2-b: the setup screen against the remote-sshd container (the P6 exit check, ssh half)
+- **Session:** S6.2.
+- **Needs:** the app launched (user-run), Docker (arm64 image only; never amd64 here), and a Linux runtime bundle for the container's arch (`scripts/build-remote-runtimes.sh`, which needs zig; the bundle in `resources/remote/` from an earlier build also works).
+- **Steps:** `scripts/tests/remote-sshd/run.sh start` and note the key path it prints. In the app (empty config, or after L-S6.2-a): SSH tab, SSH host dropdown shows "No SSH hosts yet", choose "Add SSH connection...". Fill SSH host `dev@127.0.0.1`, SSH port `2222`, SSH key = the printed `id_test` path (and the known-hosts option is not a field, so the host key prompt will appear). Click Test connection, answer the trust prompt with Trust and test, then Add SSH connection. Back on the screen the new host is selected and "Connect to ..." shows. Click it, trust, wait for the phases, answer the credentials form with Continue. In the folder list open `work`, select `proj` (the image has `/home/dev/work/proj`, not a repo): Open repository and confirm Initialize Git. When the daemon is up, onboarding runs. Skip it. Then Add repository, SSH, the same host, another folder: it opens straight on its board. `run.sh stop` afterwards.
+- **Expected:** Test connection says "Reachable: <the host's platform>. Nothing was installed.". Adding installs nothing (`ls ~/.local/share/alinery-remote` inside the container is absent until Connect). The first repo on the host runs onboarding and `app.toml` gets `onboarded = true` under `[remote_hosts.<id>]` and `local_onboarded` is unchanged; the second repo on it does not run onboarding.
+- **Status:** open
+
+### L-S6.2-c: each refusal reaches the screen as a fix
+- **Session:** S6.2 (R-S6.2-3).
+- **Needs:** the app launched (user-run) and the remote-sshd container.
+- **Steps:** (1) `docker exec alinery-test-sshd mv /usr/bin/git /usr/bin/git.off`, then in Add SSH connection fill the container and click Test connection. (2) `docker exec alinery-test-sshd mv /usr/bin/git.off /usr/bin/git`. (3) The other kinds need hosts the container cannot be: a Mac or other non-Linux host (not_linux), an Alpine host (no_glibc), a host with glibc below 2.28 (old_glibc), a 64 KiB-page arm64 host (large_pages), and a systemd host with `KillUserProcesses=yes` and lingering off (stops_processes, expect the command `loginctl enable-linger <user>` shown copyable). Their wording is covered by vitest; this check is whether a real host produces the kind.
+- **Expected:** (1) "The host is missing git. Install it on that host with its package manager..." and Add SSH connection stays enabled. Saving that host and clicking Connect fails with the same notice and the host disappears from the list again (it was added on this screen and never connected).
+- **Status:** open
+
+### L-S6.2-d: the screen over a running board, and the offline-host rule
+- **Session:** S6.2 (R-S6.2-2).
+- **Needs:** the app launched (user-run), and a remote repo from L-S6.2-b as the only known repo.
+- **Steps:** (1) With a board open, click Add repository (top bar) and Add remote repository: both open the setup screen as a dialog, the second on the SSH tab; Cancel closes without changes. (2) With only the remote repo known and active, stop the container (`run.sh stop`) and wait for the host to give up (a refused login or a changed host key gives up; a stopped sshd only keeps retrying as `reconnecting`). Use a host-key change instead: after `run.sh start` again the new container has a new key.
+- **Expected:** (1) as stated. (2) once the host's state is `failed` the window shows the setup screen instead of the board, with the host selectable and the error shown after Connect; when the host is reachable again the board returns by itself after the next 3 s poll.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -864,4 +892,5 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S5.4-a (S5.4):** built; see the entry above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S6.1-a (S6.1):** built; see the entry above.
+- **L-S6.2-a to -d (S6.2):** built; see the entries above.
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.

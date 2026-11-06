@@ -1385,3 +1385,44 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **Kind:** unverified.
 - **What:** (a) "Removing a host clears its mark" holds because the mark is a field of the `RemoteHost` entry; the Rust test only shows the serialized config has no trace of a removed host, since `discard_unconnected_host` needs an `AppHandle`. (b) `list_hosts` and `listHosts` have no caller in the UI until S6.2, so nothing exercises the command through Tauri; the Rust test covers `host_entries`, and `check-ipc-commands.sh` the registration. (c) The real launch is L-S6.1-a. (d) The mark is Mac-private: `render_remote_app_toml` is an allowlist and does not copy it to a host.
 - **Files:** `alinery-app/src-tauri/src/tests/app_config.rs`.
+
+## S6.2 The setup screen
+
+### R-S6.2-1: the typed host refusal lives in the shell, not in `host.proto`
+- **Kind:** decision (the plan says the refusal is typed "in host.proto"; the probe, the runtime selection and the launcher choice that refuse are Rust in `remote.rs`, and there is no host proto in the tree for them to travel in).
+- **What:** `Refusal { kind, message, missing_tools, fix }` with `RefusalKind` (`not_linux`, `unsupported_cpu`, `no_glibc`, `old_glibc`, `large_pages`, `missing_tools`, `no_runtime`, `stops_processes`) is returned by `select_target` and `choose_launcher`. It reaches the page as the error string `host-refused: <json>`, the same shape as the existing `host-key-unknown:` prefix, and `parseRefusal` in `setup.ts` reads it. The words shown to the user come from `refusalAdvice` (per kind) and not from `message`, which stays the plain English the logs and older callers print. The probe also reports `user=`, so the `stops_processes` fix can name the account (`loginctl enable-linger <user>`).
+- **Options:** carry the kind in a new `ErrorKind` of the app's command errors (every command would then need to carry it); parse `message` text (brittle).
+- **Reverse:** replace the prefix with a structured command error; `parseRefusal` is the one reader.
+- **Files:** `alinery-app/src-tauri/src/remote.rs`, `alinery-app/src/setup.ts`, `alinery-app/src-tauri/src/tests/remote.rs`.
+
+### R-S6.2-2: when the setup screen takes the whole window
+- **Kind:** decision.
+- **What:** `shouldShowSetup(cfg, hosts)` is true when there is no active repo or no known repo, false when any local repo is known, and otherwise (only remote repos known) true only when the active remote repo's host state is `failed`. A host that is `connecting`, `reconnecting` or `needs access` keeps the board and its banners, so a flaky link does not throw the user to a setup screen; a refused login or changed host key (the supervisor gives up, state `failed`) does. Add repository and Add remote repository from the top bar, the command palette and the busy banner open the same screen as a dialog (`setupTab` state; the remote button opens the SSH tab).
+- **Reverse:** `shouldShowSetup` is the one place.
+- **Files:** `alinery-app/src/setup.ts`, `alinery-app/src/App.tsx`.
+
+### R-S6.2-3: Test connection probes an unsaved host and Add never installs
+- **Kind:** decision.
+- **What:** `remote_test_host(destination, trust)` parses the destination, probes with `sh -s` over a throwaway ControlMaster and answers `{platform, glibc}`. If a master for the same socket was already alive it is left alone; only a master this call started is closed (`exit_master`). It installs nothing and writes nothing to the app config. A changed or unknown host key is the same `host-key-unknown:` prompt, and the dialog's trust button is "Trust and test". Add SSH connection stays enabled after a failed test (a test can fail for reasons the user will fix on the host). A host added on the screen and then refused on its first connect is discarded again (`remoteDiscardHost`), so a typo does not leave a row; a host that existed before is never discarded.
+- **Files:** `alinery-app/src-tauri/src/remote.rs` (`test_destination`, `test_ssh_args`), `alinery-app/src/AddSshHostDialog.tsx`, `alinery-app/src/views/SetupScreen.tsx`.
+
+### R-S6.2-4: onboarding runs after the repo opens, for the host's first daemon
+- **Kind:** decision (completes R-S6.1-3, which left it to this session).
+- **What:** the wizard lost its workspace step (three steps: Playbooks, Models, First task) and its repo props. After a repo is opened from the setup screen, `openFromSetup` reads `list_hosts` and opens the wizard at Playbooks when that repo's host has no onboarded mark; a second repo on the same host goes straight to the board. The wizard's launch step has a Change action that completes onboarding and reopens the setup screen. Whether to open onboarding is decided by the host list read after the open, so a host connected in this very flow is judged by its mark and not by a startup snapshot. Telemetry consent is deferred while there is no active repo (it was asked on top of the empty window).
+- **Reverse:** `openFromSetup` in `App.tsx`.
+- **Files:** `alinery-app/src/App.tsx`, `alinery-app/src/views/OnboardingFlow.tsx`, `alinery-app/src/onboarding.ts`.
+
+### R-S6.2-5: the daemon steps are one call
+- **Kind:** decision.
+- **What:** the plan lists "Starting the daemon" and "Preparing the repository" as separate steps. `set_active_repo` already does Hello and EnsureReady in one command (`attach_repo_daemon_locked`), so the progress list shows the folder check, then both daemon lines together while that command runs, and none of the three lines is a measured stage. A failure keeps the screen on the form with the message above the list. No new command or event was added to split them.
+- **Reverse:** split `set_active_repo` into attach and ensure-ready commands and drive the two lines from them.
+
+### R-S6.2-6: one helper for the folder and the Git question
+- **Kind:** decision (Accept: `classifyPickedFolder` and `remoteClassify` are called only through one helper).
+- **What:** `openFolderAsRepo(hostId | null, path)` in `folderSetup.ts` is the only caller of `classifyPickedFolder`, `remoteClassify` and the init command. It asks "Initialize Git?" through `askConfirm` for a folder that is not a repository and answers `root`, `refused` or `cancelled`. The setup screen is its only caller; the old copies in `App.tsx` and `RemoteModal.tsx` are gone. `RemoteModal` is now reconnect-only (connecting, needs access, failed with Try again).
+- **Files:** `alinery-app/src/folderSetup.ts`, `alinery-app/src/RemoteModal.tsx`.
+
+### R-S6.2-7: what the tests do not prove
+- **Kind:** unverified.
+- **What:** (a) The setup screen, the dialog and the connecting flow are exercised with `mockIpc` in jsdom; no real window, trust prompt or ssh ran (L-S6.2-a, -b, -d). (b) The CSS added to `onboarding.css` (`.setup-tabs`, `.setup-folder-row`, `.setup-connect`, `.setup-fix-command`) was never rendered. (c) Only the missing-tool kind has a live test (a host without git, L-S6.2-c); the other kinds are covered by the unit test that every kind serializes with its fields and by vitest wording. (d) The 500 ms phase polling in `hostConnect.ts` reads `remoteHosts`; there is no host event for phases, so a very fast connect may show no intermediate phase. (e) The live test moves `/usr/bin/git` inside the throwaway container and puts it back in a drop guard; a killed test run leaves the container without git until `run.sh stop` and `start`. (f) `live_test_destination...` calls `test_ssh_args` with parsed arguments because `parse_destination` refuses `UserKnownHostsFile`; the destination parser itself is covered by the existing unit tests.
+- **README suggestion (human only):** the getting-started text can describe the first-run screen: choose This computer or SSH, add an SSH connection with Test connection, pick a folder, then the three-step walkthrough.
