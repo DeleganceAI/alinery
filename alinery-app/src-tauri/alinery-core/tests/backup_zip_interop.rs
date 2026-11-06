@@ -71,8 +71,21 @@ fn rust_reads_a_70000_file_archive_written_with_the_host_zip() {
     fs::write(staging.join(BACKUP_META_NAME), meta).unwrap();
     let archive = root.join("repo-v1.zip");
 
-    assert!(Command::new("zip").args(["-q", "-j", "-X"]).arg(&archive).arg(staging.join(BACKUP_META_NAME)).status().unwrap().success());
-    let mut add = Command::new("zip").args(["-q", "-X", "-D", "-nw"]).arg(&archive).arg("-@").current_dir(&alinery).stdin(Stdio::piped()).spawn().unwrap();
+    assert!(Command::new("zip")
+        .args(["-q", "-j", "-X"])
+        .arg(&archive)
+        .arg(staging.join(BACKUP_META_NAME))
+        .status()
+        .unwrap()
+        .success());
+    let mut add = Command::new("zip")
+        .args(["-q", "-X", "-D", "-nw"])
+        .arg(&archive)
+        .arg("-@")
+        .current_dir(&alinery)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     add.stdin.take().unwrap().write_all(format!("{}\n", names.join("\n")).as_bytes()).unwrap();
     assert!(add.wait().unwrap().success());
 

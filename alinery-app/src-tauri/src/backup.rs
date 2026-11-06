@@ -56,7 +56,10 @@ pub(crate) fn restore_outcome(success: bool, stdout: &str, stderr: &str) -> Resu
     match line {
         Some(v) if v.get("error").is_some() => Err(v["error"].as_str().unwrap_or("restore failed").to_string()),
         Some(v) if v.get("result").is_some() && success => Ok(()),
-        _ => Err(format!("restore did not finish: {}", stderr.trim().lines().last().unwrap_or("the daemon program printed no result"))),
+        _ => Err(format!(
+            "restore did not finish: {}",
+            stderr.trim().lines().last().unwrap_or("the daemon program printed no result")
+        )),
     }
 }
 

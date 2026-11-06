@@ -222,7 +222,10 @@ fn restore_round_trips_curated_data_and_keeps_worktrees() {
 fn the_restore_outcome_is_the_daemon_programs_one_json_line() {
     use crate::restore_outcome;
     assert!(restore_outcome(true, "{\"result\":{\"trigger\":\"manual\"}}\n", "").is_ok());
-    assert_eq!(restore_outcome(false, "{\"error\":\"backup belongs to /a, not /b\"}\n", ""), Err("backup belongs to /a, not /b".into()));
+    assert_eq!(
+        restore_outcome(false, "{\"error\":\"backup belongs to /a, not /b\"}\n", ""),
+        Err("backup belongs to /a, not /b".into())
+    );
     // Noise before the line is ignored; the last object wins.
     assert!(restore_outcome(true, "starting\n{\"result\":{}}\n", "warn").is_ok());
     // A program that died without printing is an error, with the end of its stderr.
