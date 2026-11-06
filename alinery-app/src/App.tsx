@@ -44,6 +44,7 @@ import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
 import { readEffectiveConfig } from "./sync/settings";
+import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -1056,7 +1057,7 @@ export default function App() {
       const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
       const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
       const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
-      const result = await ipc.createTaskForRepo({
+      const result = await createTaskForRepo({
         repoPath,
         request: {
           name: preset.name,
@@ -1093,7 +1094,7 @@ export default function App() {
     try {
       let created: CreateTaskResult;
       try {
-        created = await ipc.duplicateTaskForRepo(repoPath, sourceSlug);
+        created = await duplicateTaskForRepo(repoPath, sourceSlug);
       } catch (e) {
         toast.error(`TASK DUPLICATION FAILED: ${e}`);
         return;

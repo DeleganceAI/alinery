@@ -37,11 +37,11 @@ const task: BoardTask = {
 const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), addTaskAttachment: mocks.writeChatAttachmentBytes }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    writeChatAttachmentBytes: mocks.writeChatAttachmentBytes,
     listHarnessModelsForRepo: async () => [],
   }),
 );
@@ -221,7 +221,7 @@ describe("retained execution session selection", () => {
 describe("session clipboard attachments", () => {
   beforeEach(() => {
     mocks.getTaskExecution.mockResolvedValue(executionReply([]));
-    mocks.writeChatAttachmentBytes.mockReset().mockImplementation(async (_slug, name) => name);
+    mocks.writeChatAttachmentBytes.mockReset().mockImplementation(async (_repo, _slug, name) => name);
     vi.stubGlobal(
       "URL",
       class extends URL {
@@ -254,8 +254,8 @@ describe("session clipboard attachments", () => {
     expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() => expect(created).toHaveBeenCalledOnce());
-    const name = mocks.writeChatAttachmentBytes.mock.calls[0][1];
-    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledWith("a-task", name, [0, 255, 128, 1], "/other repo");
+    const name = mocks.writeChatAttachmentBytes.mock.calls[0][2];
+    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledWith("/other repo", "a-task", name, new Uint8Array([0, 255, 128, 1]));
     expect(created).toHaveBeenCalledWith(
       expect.objectContaining({ repo_path: "/other repo" }),
       { kind: "auxiliary" },

@@ -469,7 +469,7 @@ export function writeOverridesFile(repo: string, appConfig: string, next: RepoOv
 // ---- EnsureReady -------------------------------------------------------------------------------------------
 
 /** core `ensure_task_data_ignored`. */
-async function ensureIgnored(repo: string): Promise<void> {
+export async function ensureIgnored(repo: string): Promise<void> {
   const path = join(repo, ".gitignore");
   const file = Bun.file(path);
   let contents = (await file.exists()) ? await file.text() : "";

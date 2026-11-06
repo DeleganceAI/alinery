@@ -61,26 +61,11 @@ pub enum RepoOp {
         slug: String,
         node_id: String,
     },
-    /// `null` when the session has no meta.
-    ReadLaunchFields {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-    },
-    WorktreeExists {
-        repo: PathBuf,
-        slug: String,
-    },
     /// Sets the user's name for a session; the reply is the stored name.
     RenameSession {
         repo: PathBuf,
         slug: String,
         session_id: String,
-        name: String,
-    },
-    RenameTask {
-        repo: PathBuf,
-        slug: String,
         name: String,
     },
     MarkSessionNotificationRead {
@@ -93,10 +78,6 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
         session_id: String,
-    },
-    ArchiveTask {
-        repo: PathBuf,
-        slug: String,
     },
     /// A session's scrollback; the reply carries the bytes as base64.
     ReadSessionHistory {
@@ -235,12 +216,6 @@ pub enum RepoOp {
         slug: String,
         manager_session_id: String,
     },
-    /// The host's own path to an attachment, for "copy path on host".
-    AttachmentPath {
-        repo: PathBuf,
-        slug: String,
-        name: String,
-    },
     ArtifactNodePath {
         repo: PathBuf,
         slug: String,
@@ -258,14 +233,6 @@ pub enum RepoOp {
         name: String,
         #[serde(default)]
         node_id: Option<String>,
-    },
-    /// Adds a file to the task's attachments under a unique name; the reply is the name it got.
-    WriteAttachment {
-        repo: PathBuf,
-        slug: String,
-        file_name: String,
-        #[serde(with = "crate::rpc_chunk::base64_bytes")]
-        data: Vec<u8>,
     },
     /// Chat threads of one repo. `repo_path` in each row is the host path.
     ListChatThreads {
@@ -325,15 +292,6 @@ pub enum RepoOp {
         session_id: String,
         name: String,
     },
-    RestoreTask {
-        repo: PathBuf,
-        slug: String,
-    },
-    /// The create request for a copy of a task, built from its files; the app sends it to the daemon.
-    DuplicateTaskPackage {
-        repo: PathBuf,
-        source_slug: String,
-    },
     /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
     /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
     ReadRepoOverrides {
@@ -348,39 +306,6 @@ pub enum RepoOp {
         repo: PathBuf,
         refs: Vec<crate::session_actions::SessionNotificationClearRef>,
     },
-    /// Autosave (or first save) of a task draft; the reply is the stored task.
-    WriteDraft {
-        repo: PathBuf,
-        draft_slug: String,
-        task_slug: String,
-        name: String,
-        description: String,
-        evidence: String,
-        linear_id: String,
-        github_issue: String,
-        playbook: crate::playbook::PlaybookRef,
-        harness: String,
-        model: String,
-        #[serde(default)]
-        auto_advance: Option<Vec<String>>,
-        #[serde(default)]
-        step_models: Option<std::collections::BTreeMap<String, String>>,
-        max_live_sessions: u32,
-        branch_name: String,
-        worktree_name: String,
-        #[serde(default)]
-        draft_base_ref: Option<String>,
-        #[serde(default)]
-        draft_attachments: Option<crate::task_drafts::DraftAttachments>,
-    },
-    ReadDraftAttachments {
-        repo: PathBuf,
-        slug: String,
-    },
-    DeleteDraft {
-        repo: PathBuf,
-        slug: String,
-    },
     /// The URL of the repository's `origin` remote, if it has one.
     GitOriginUrl {
         repo: PathBuf,
@@ -393,17 +318,6 @@ pub enum RepoOp {
     ApplyPlaybookTree {
         repo: PathBuf,
         changes: Vec<crate::playbook_tree::TreeChange>,
-    },
-    SetAutoApproveAll {
-        repo: PathBuf,
-        slug: String,
-        enabled: bool,
-    },
-    /// Related tasks are paths on this host: the app refuses anything that is not.
-    SetRelatedTasks {
-        repo: PathBuf,
-        slug: String,
-        related: Vec<crate::RelatedTaskRef>,
     },
     /// The task's visible artifact names.
     ListArtifacts {
@@ -658,13 +572,9 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
         RepoOp::ListTaskArtifactTree { repo, slug } => to_value(crate::list_task_artifact_tree(&repo, &slug)?),
         RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
-        RepoOp::ReadLaunchFields { repo, slug, session_id } => to_value(crate::read_meta_launch_fields(&repo, &slug, &session_id)),
-        RepoOp::WorktreeExists { repo, slug } => to_value(crate::board::worktree_exists(&repo, &slug)?),
         RepoOp::RenameSession { repo, slug, session_id, name } => to_value(crate::set_session_name(&repo, &slug, &session_id, &name, crate::SessionNameSource::User)?.value),
-        RepoOp::RenameTask { repo, slug, name } => to_value(crate::rename_task(&repo, &slug, &name)?),
         RepoOp::MarkSessionNotificationRead { repo, slug, session_id } => crate::session_actions::mark_notification_read(&repo, &slug, &session_id).map(|()| Value::Null),
         RepoOp::StampSessionArchived { repo, slug, session_id } => crate::session_actions::stamp_session_archived(&repo, &slug, &session_id).map(|()| Value::Null),
-        RepoOp::ArchiveTask { repo, slug } => crate::session_actions::archive_task_on_disk(&repo, &slug).map(|()| Value::Null),
         RepoOp::ReadSessionHistory {
             repo,
             slug,
@@ -748,13 +658,11 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::SubtaskManagerRequest { repo, slug, recover } => to_value(crate::subtask::subtask_manager_request(&repo, slug, recover)?),
         RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
         RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
-        RepoOp::AttachmentPath { repo, slug, name } => to_value(crate::attachments::attachment_path(&repo, &slug, &name)?),
         RepoOp::ArtifactNodePath { repo, slug, node_id } => to_value(crate::artifact_node_path(&repo, &slug, &node_id)?),
         RepoOp::ReadChatImage { repo, slug, name } => to_value(crate::attachments::read_chat_image(&repo, &slug, &name)?),
         RepoOp::ReadAttachmentImage { repo, slug, name, node_id } => to_value(WireBytes {
             data: crate::attachments::read_attachment_image(&repo, &slug, &name, node_id.as_deref())?,
         }),
-        RepoOp::WriteAttachment { repo, slug, file_name, data } => to_value(crate::attachments::write_chat_attachment_bytes(&repo, &slug, &file_name, &data)?),
         RepoOp::ListChatThreads { repo, include_archived } => to_value(crate::chat::list_chat_threads_in(&[repo], include_archived)?),
         RepoOp::ChatThreadMeta { repo, session_id } => to_value(crate::chat::load_root_omp(&repo, &session_id)?),
         RepoOp::ChatThreadName { repo, session_id } => {
@@ -789,59 +697,12 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             data,
         } => to_value(crate::chat::write_chat_thread_attachment_bytes_in(&repo, &session_id, &file_name, &data)?),
         RepoOp::ReadChatThreadImage { repo, session_id, name } => to_value(crate::chat::read_chat_thread_image_in(&repo, &session_id, &name)?),
-        RepoOp::RestoreTask { repo, slug } => crate::restore_task(&repo, &slug).map(|()| Value::Null),
-        RepoOp::DuplicateTaskPackage { repo, source_slug } => to_value(crate::task_creation::duplicate_task_package(&repo, &source_slug)?),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
         RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
         RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
-        RepoOp::WriteDraft {
-            repo,
-            draft_slug,
-            task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        } => to_value(crate::task_drafts::write_draft_in_with_slug(
-            &repo,
-            // Telemetry is about this person's own machine; the host records none.
-            None,
-            &draft_slug,
-            &task_slug,
-            name,
-            description,
-            evidence,
-            linear_id,
-            github_issue,
-            playbook,
-            harness,
-            model,
-            auto_advance,
-            step_models,
-            max_live_sessions,
-            branch_name,
-            worktree_name,
-            draft_base_ref,
-            draft_attachments,
-        )?),
-        RepoOp::ReadDraftAttachments { repo, slug } => to_value(crate::task_drafts::read_draft_attachments_in(&repo, &slug)?),
-        RepoOp::DeleteDraft { repo, slug } => crate::task_drafts::delete_draft_in(&repo, None, &slug).map(|()| Value::Null),
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
         RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
-        RepoOp::SetAutoApproveAll { repo, slug, enabled } => to_value(crate::task::set_auto_approve_all_in(&repo, slug, enabled)?),
-        RepoOp::SetRelatedTasks { repo, slug, related } => to_value(crate::task::set_related_tasks_in(&repo, slug, related)?),
         RepoOp::ListArtifacts { repo, slug } => to_value(crate::visible_artifact_names(&repo, &slug)?),
         RepoOp::ArtifactCommentMarkdownPath { repo, slug, artifact } => {
             to_value(crate::artifact_comments::artifact_comment_markdown_path(&repo, &slug, &artifact)?.display().to_string())
@@ -1043,15 +904,6 @@ mod tests {
                 slug: "t".into(),
                 node_id: "n".into(),
             },
-            RepoOp::ReadLaunchFields {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::WorktreeExists {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
             RepoOp::ReadArtifact {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
@@ -1179,11 +1031,6 @@ mod tests {
                 slug: "t".into(),
                 manager_session_id: "m".into(),
             },
-            RepoOp::AttachmentPath {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                name: "a.png".into(),
-            },
             RepoOp::ArtifactNodePath {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
@@ -1199,12 +1046,6 @@ mod tests {
                 slug: "t".into(),
                 name: "a.png".into(),
                 node_id: Some("n".into()),
-            },
-            RepoOp::WriteAttachment {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                file_name: "a.bin".into(),
-                data: vec![0, 255, 7],
             },
             RepoOp::ListChatThreads {
                 repo: "/srv/a".into(),
@@ -1260,14 +1101,6 @@ mod tests {
                 session_id: "s".into(),
                 name: "a.png".into(),
             },
-            RepoOp::RestoreTask {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::DuplicateTaskPackage {
-                repo: "/srv/a".into(),
-                source_slug: "t".into(),
-            },
             RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
             RepoOp::SessionArtifactReady {
                 repo: "/srv/a".into(),
@@ -1282,44 +1115,6 @@ mod tests {
                     id: "s".into(),
                     notification_suppression: None,
                 }],
-            },
-            RepoOp::WriteDraft {
-                repo: "/srv/a".into(),
-                draft_slug: "d".into(),
-                task_slug: "t".into(),
-                name: "Name".into(),
-                description: "desc".into(),
-                evidence: String::new(),
-                linear_id: String::new(),
-                github_issue: String::new(),
-                playbook: crate::playbook::PlaybookRef {
-                    scope: crate::playbook::PlaybookScope::Repo,
-                    key: "one-shot".into(),
-                },
-                harness: "omp".into(),
-                model: "m".into(),
-                auto_advance: Some(vec!["a".into()]),
-                step_models: Some([("a".to_string(), "m".to_string())].into()),
-                max_live_sessions: 3,
-                branch_name: "b".into(),
-                worktree_name: "w".into(),
-                draft_base_ref: None,
-                draft_attachments: Some(crate::task_drafts::DraftAttachments {
-                    entries: vec!["e".into()],
-                    images: vec![crate::task_drafts::DraftImage {
-                        name: "a.png".into(),
-                        bytes: vec![0, 255],
-                        mime_type: "image/png".into(),
-                    }],
-                }),
-            },
-            RepoOp::ReadDraftAttachments {
-                repo: "/srv/a".into(),
-                slug: "d".into(),
-            },
-            RepoOp::DeleteDraft {
-                repo: "/srv/a".into(),
-                slug: "d".into(),
             },
             RepoOp::GitOriginUrl { repo: "/srv/a".into() },
             RepoOp::ReadPlaybookTree { repo: "/srv/a".into() },
@@ -1337,20 +1132,6 @@ mod tests {
                         new: Some(vec![1]),
                     },
                 ],
-            },
-            RepoOp::SetAutoApproveAll {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                enabled: true,
-            },
-            RepoOp::SetRelatedTasks {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                related: vec![crate::RelatedTaskRef {
-                    repo_path: "/srv/b".into(),
-                    slug: "u".into(),
-                    name: "U".into(),
-                }],
             },
             RepoOp::ListArtifacts {
                 repo: "/srv/a".into(),
@@ -1388,11 +1169,6 @@ mod tests {
                 session_id: "s".into(),
                 name: "n".into(),
             },
-            RepoOp::RenameTask {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                name: "n".into(),
-            },
             RepoOp::MarkSessionNotificationRead {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
@@ -1402,10 +1178,6 @@ mod tests {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
                 session_id: "s".into(),
-            },
-            RepoOp::ArchiveTask {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
             },
             RepoOp::ReadSessionHistory {
                 repo: "/srv/a".into(),

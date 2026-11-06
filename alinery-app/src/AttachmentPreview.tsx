@@ -1,8 +1,13 @@
 import { type ReactNode, useEffect, useState } from "react";
 import * as ipc from "./ipc";
 import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
+import { readAttachmentBytes } from "./sync/tasks";
 
-export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
+/**
+ * `repoPath` set and no `nodeId`: the image is read from the daemon (BlobService). A tree node is still resolved by the
+ * shell until the artifact tree moves to the daemon (S4.5).
+ */
+export function AttachmentPreview({ taskSlug, name, nodeId, repoPath, children }: { taskSlug: string; name: string; nodeId?: string; repoPath?: string; children?: ReactNode }) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -11,7 +16,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
     let url = "";
     setSrc("");
     setError("");
-    ipc.readAttachmentImage(taskSlug, name, nodeId).then(
+    (repoPath && !nodeId ? readAttachmentBytes(repoPath, taskSlug, name) : ipc.readAttachmentImage(taskSlug, name, nodeId)).then(
       (bytes) => {
         if (cancelled) return;
         url = URL.createObjectURL(new Blob([bytes]));
@@ -25,7 +30,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [taskSlug, name, nodeId]);
+  }, [taskSlug, name, nodeId, repoPath]);
 
   return (
     <details className="attachment-preview" open>
@@ -46,17 +51,20 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
         )}
       </div>
       <div className="attachment-preview-actions">
-        <button
-          type="button"
-          className="btn ghost small"
-          aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
-          onClick={() => {
-            const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
-            path.then(revealPath).catch((reason) => setError(String(reason)));
-          }}
-        >
-          {revealActionLabel()}
-        </button>
+        {/* An attachment's path is on this machine only for a local repo; the daemon never hands out a path. */}
+        {(nodeId || !filesAreRemote()) && (
+          <button
+            type="button"
+            className="btn ghost small"
+            aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
+            onClick={() => {
+              const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
+              path.then(revealPath).catch((reason) => setError(String(reason)));
+            }}
+          >
+            {revealActionLabel()}
+          </button>
+        )}
         {children}
       </div>
     </details>

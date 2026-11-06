@@ -49,10 +49,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), setRelatedTasksForRepo: mocks.setRelatedTasksForRepo }));
 vi.mock("../ipc", () =>
   mockIpc({
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    setRelatedTasksForRepo: mocks.setRelatedTasksForRepo,
   }),
 );
 

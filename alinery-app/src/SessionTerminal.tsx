@@ -287,6 +287,7 @@ export function SessionTerminal({
             // Seed the phase prompt only on a genuine fresh spawn.
             phase: intent === "spawn" ? phase || null : null,
             model,
+            harness,
             intent,
             resumeToken: resumeToken ?? null,
             cols: geometryReady ? term.cols : null,

@@ -139,27 +139,6 @@ fn bounded_observation_timeout_returns_error() {
     let _ = fs::remove_dir_all(repo);
 }
 
-// ---- Terminal left-hand pane (root drawer) — TDD red tests (05-tdd.md) ----
-
-#[test]
-fn allow_root_session_open_meta_no_harness_allows() {
-    assert!(allow_root_session_open(Some("no-harness")));
-}
-
-#[test]
-fn allow_root_session_open_no_meta_allows_drawer() {
-    // After the harness cut, the only root session is the drawer. Missing meta is
-    // the defensive path; identity comes from the root meta when present.
-    assert!(allow_root_session_open(None));
-}
-
-#[test]
-fn allow_root_session_open_rejects_non_drawer() {
-    assert!(!allow_root_session_open(Some("claude")));
-    assert!(!allow_root_session_open(Some("")));
-    assert!(!allow_root_session_open(Some("omp")));
-}
-
 #[test]
 fn hosted_refresh_needed_only_for_omp_hosted_spawn_and_resume() {
     assert!(hosted_refresh_needed("spawn", "omp", "alinery/Qwen3.6-35B-A3B"));

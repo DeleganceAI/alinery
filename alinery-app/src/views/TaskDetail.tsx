@@ -17,7 +17,7 @@ import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus }
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
-import { revealPath } from "../revealPath";
+import { filesAreRemote, revealPath } from "../revealPath";
 import {
   classifySessionNotice,
   DEFAULT_TASK_SESSION_SORT,
@@ -58,6 +58,7 @@ import {
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
+import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -485,8 +486,7 @@ export function TaskDetail({
   useEffect(() => {
     if (!worktreePath) return setWorktreeMissing(false);
     let alive = true;
-    ipc
-      .worktreeExists(slug)
+    worktreeExists(repoPath, slug)
       .then((ok) => alive && setWorktreeMissing(!ok))
       .catch(() => alive && setWorktreeMissing(false));
     return () => {
@@ -639,7 +639,7 @@ export function TaskDetail({
     setErr(null);
     setBusy("restore");
     try {
-      await ipc.restoreTaskForRepo(repoPath, slug);
+      await restoreTaskForRepo(repoPath, slug);
       if (!scope.alive || scopeRef.current !== scope) return;
       taskMutationEpoch.current += 1;
       const isCurrent = beginNameRead();
@@ -809,7 +809,7 @@ export function TaskDetail({
                     : current,
                 );
               } else {
-                const updated = await ipc.renameTask(repoPath, owner, name);
+                const updated = await renameTask(repoPath, owner, name);
                 onNameCommitted?.({ kind: "task", repo_path: repoPath, task_slug: owner, task: updated });
                 if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
                 taskMutationEpoch.current += 1;
@@ -841,8 +841,7 @@ export function TaskDetail({
     setBusy("auto-approve");
     setErr(null);
     const epoch = taskMutationEpoch.current;
-    ipc
-      .setAutoApproveAllForRepo(repoPath, slug, enabled)
+    setAutoApproveAllForRepo(repoPath, slug, enabled)
       .then((updated) => {
         if (!scope.alive || scopeRef.current !== scope) return;
         if (epoch === taskMutationEpoch.current) {
@@ -873,8 +872,7 @@ export function TaskDetail({
     setBusy("related");
     setErr(null);
     const epoch = taskMutationEpoch.current;
-    ipc
-      .setRelatedTasksForRepo(repoPath, slug, next)
+    setRelatedTasksForRepo(repoPath, slug, next)
       .then((updated) => {
         if (!scope.alive || scopeRef.current !== scope) return;
         if (epoch === taskMutationEpoch.current) {
@@ -1840,7 +1838,7 @@ export function TaskDetail({
                   {displayedArtifactItems.map((item) => {
                     if (item.attachment && classifyAttachment(item) === "image") {
                       return (
-                        <AttachmentPreview key={item.name} taskSlug={slug} name={item.name}>
+                        <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
                           <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                         </AttachmentPreview>
                       );
@@ -1864,6 +1862,8 @@ export function TaskDetail({
                         }}
                         onClick={() => {
                           if (item.attachment) {
+                            // A remote repo's files are on its host; the daemon never hands out a path.
+                            if (filesAreRemote()) return;
                             ipc
                               .attachmentPath(slug, item.name)
                               .then(revealPath)

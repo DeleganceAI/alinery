@@ -193,6 +193,7 @@ const ipcMock = vi.hoisted(() => ({
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () => ipcMock);
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), archiveTaskForRepo: ipcMock.archiveTaskForRepo }));
 fakeExecution.source = (slug, repo) => ipcMock.getTaskExecution(slug, repo);
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 

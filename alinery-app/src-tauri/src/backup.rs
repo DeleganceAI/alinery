@@ -238,6 +238,51 @@ pub(crate) async fn backup_now(app: AppHandle, repo_path: Option<String>) -> Res
     Ok(meta)
 }
 
+/// The backup an archive waits for (plan S4.3 WA, until S4.9 moves it into `TaskService.ArchiveTask` as a job). The
+/// frontend runs this first and archives only when it returns: a backup that is switched on for archive and fails
+/// leaves the task as it was and the error reaches the person. Nothing is configured or the trigger is off: `Ok`.
+#[tauri::command]
+pub(crate) async fn pre_archive_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    let key = backup_slot_key(&target)?;
+    let worker_app = app.clone();
+    let made = tauri::async_runtime::spawn_blocking(move || -> Result<Option<alinery_core::BackupMeta>, String> {
+        match target {
+            RepoRef::Local(repo) => {
+                // An archive the daemon would refuse must not leave a backup behind.
+                alinery_core::ensure_task_can_archive(&repo, &slug)?;
+                let settings = backup_settings_for(&worker_app, &repo)?;
+                if !settings.enabled || !settings.trigger_pre_archive || settings.destination.is_empty() {
+                    return Ok(None);
+                }
+                let _slot = BackupSlot::claim(key).ok_or("a backup for this repository is already running")?;
+                alinery_core::create_backup(&repo, &settings, alinery_core::BackupTrigger::PreArchive, BACKUP_ALINERY_VERSION).map(Some)
+            }
+            // The host applies its own gate and answers `None` when the trigger is off there.
+            RepoRef::Remote { host_id, path } => {
+                let _slot = BackupSlot::claim(key).ok_or("a backup for this repository is already running")?;
+                host_backup::<Option<alinery_core::BackupMeta>>(&worker_app.state::<AppState>(), &host_id, &path, |repo, app_config| RepoOp::BackupCreate {
+                    repo,
+                    app_config,
+                    trigger: alinery_core::BackupTrigger::PreArchive,
+                })
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("backup task: {e}"))??;
+    if made.is_some() {
+        emit(
+            &app,
+            alinery_core::TelemetryEvent::BackupCreate {
+                source: alinery_core::TelemetrySource::App,
+                trigger: alinery_core::BackupTrigger::PreArchive,
+            },
+        );
+    }
+    Ok(())
+}
+
 /// Is a backup or restore running for this repo? The Backup view polls this because it cannot
 /// know from component state: the work lives in the backend and outlives the view, so leaving
 /// the page and coming back must still show a run — including one started by a trigger.

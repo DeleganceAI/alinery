@@ -35,7 +35,7 @@ import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-import { revealPath } from "../revealPath";
+import { filesAreRemote, revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
 import type { ContextAction } from "../shared";
@@ -57,6 +57,7 @@ import {
 import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { addTaskAttachment, copyTaskAttachments } from "../sync/tasks";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type {
@@ -91,8 +92,8 @@ function prepareChatSend(taskSlug: string, repoPath: string, caption: string, at
   return prepareChatAttachments(
     {
       stat: (path) => ipc.chatFileStat(path),
-      copy: (paths) => ipc.copyChatAttachments(taskSlug, paths),
-      writeBytes: (fileName, bytes) => ipc.writeChatAttachmentBytes(taskSlug, fileName, bytes),
+      copy: (paths) => copyTaskAttachments(repoPath, taskSlug, paths),
+      writeBytes: (fileName, bytes) => addTaskAttachment(repoPath, taskSlug, fileName, Uint8Array.from(bytes)),
       readImage: (name) => ipc.readChatImage(taskSlug, name),
       trailerDir: taskAttachmentDir(repoPath, taskSlug),
     },
@@ -1766,7 +1767,7 @@ export function SessionView({
                     {displayedArtifactItems.map((item) => {
                       if (item.attachment && classifyAttachment(item) === "image") {
                         return (
-                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name}>
+                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name} repoPath={repoPath}>
                             <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                           </AttachmentPreview>
                         );
@@ -1789,6 +1790,8 @@ export function SessionView({
                           }}
                           onClick={() => {
                             if (item.attachment) {
+                              // A remote repo's files are on its host; the daemon never hands out a path.
+                              if (filesAreRemote()) return;
                               ipc
                                 .attachmentPath(taskSlug, item.name)
                                 .then(revealPath)

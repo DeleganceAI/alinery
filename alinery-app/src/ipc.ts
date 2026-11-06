@@ -45,8 +45,6 @@ import type {
   ConnectionStatus,
   CreateExecutionSessionReply,
   CreateExecutionSessionRequest,
-  CreateTaskRequest,
-  CreateTaskResult,
   DaemonStatus,
   DesktopCreditsView,
   DownloadStatusRow,
@@ -63,12 +61,10 @@ import type {
   PlaybookRef,
   PlaybookValidation,
   PreparedSessionMessageAction,
-  PreparedTaskAttachments,
   PreviewResult,
   PublishResult,
   PullRequestSnapshot,
   PurgeArchivedResult,
-  RelatedTaskRef,
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
@@ -86,7 +82,6 @@ import type {
   SubtaskManagerState,
   TakeoverOutcome,
   TakeoverPreview,
-  Task,
   TaskActivityRef,
   TaskSourceBranches,
   UpdateResult,
@@ -265,7 +260,6 @@ export const pushAndCompareUrlForRepo = (repoPath: string, slug: string) => invo
 export const removeWorktreeForRepo = (repoPath: string, slug: string) => invoke<void>("remove_worktree_for_repo", { repoPath, slug });
 export const setPrUrl = (slug: string, url: string) => invoke<void>("set_pr_url", { slug, url });
 export const setPrUrlForRepo = (repoPath: string, slug: string, url: string) => invoke<void>("set_pr_url_for_repo", { repoPath, slug, url });
-export const worktreeExists = (slug: string) => invoke<boolean>("worktree_exists", { slug });
 
 // ── connections.rs ────────────────────────────────────────────────────
 export const connectionStatuses = () => invoke<ConnectionStatus[]>("connection_statuses");
@@ -323,7 +317,6 @@ export const chatPrompt = (repoPath: string, id: string, text: string) => invoke
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
@@ -340,6 +333,8 @@ export const openSession = (a: {
   taskSlug?: string | null;
   phase?: string | null;
   model?: string | null;
+  /** What the session runs, for the hosted-inference refresh only; the daemon gates the open from the session's own meta. */
+  harness?: string | null;
   intent?: string | null;
   resumeToken?: string | null;
   cols?: number | null;
@@ -379,46 +374,17 @@ export const setModelFavorite = (harness: string, model: string, favorite: boole
 export const writeGlobalSettings = (global: GlobalSettings) => invoke<GlobalSettings>("write_global_settings", { global });
 
 // ── task.rs ───────────────────────────────────────────────────────────
-export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });
-export const restoreTaskForRepo = (repoPath: string, slug: string) => invoke<void>("restore_task_for_repo", { repoPath, slug });
-export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequest }) => invoke<CreateTaskResult>("create_task_for_repo", a);
 export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: string | null) =>
   invoke<TaskSourceBranches>("task_source_branches_for_repo", { repoPath, selectedBaseRef: selectedBaseRef ?? null });
-export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
-export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
-export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
-export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
-export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
-export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
-export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });
-export const writeDraftForRepo = (a: {
-  repoPath: string;
-  name: string;
-  taskSlug: string;
-  description: string;
-  evidence: string;
-  linearId: string;
-  githubIssue: string;
-  playbook: PlaybookRef;
-  harness: string;
-  model: string;
-  autoAdvance?: string[] | null;
-  stepModels?: Record<string, string> | null;
-  maxLiveSessions: number;
-  branchName: string;
-  worktreeName: string;
-  draftSlug: string;
-  draftBaseRef?: string | null;
-  draftAttachments?: DraftAttachments;
-}) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
 export type ChatImage = { mime_type: string; data: string };
+/** A local file's bytes (25 MB at most), for the webview to upload through BlobService. */
+export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_file", { path });
+/** The backup an archive waits for; rejects when it fails so the task is left as it was. */
+export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>("pre_archive_backup", { repoPath, slug });
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
-export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
-export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array, repoPath?: string) =>
-  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes, repoPath });
 export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
 export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
   invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });

@@ -1,5 +1,5 @@
-// The five task operations the UI still sends. Replies match the Rust structs
-// the app decodes. Create and subtask call alinery-core. The helper is not asked.
+// The task operations the UI still sends as daemon ops. Replies match the Rust structs the app decodes.
+// Sub-task creation calls alinery-core until S4.8; creating a task is TaskService (rpc/tasks.ts). The helper is not asked.
 import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
@@ -16,7 +16,6 @@ type Request = Record<string, unknown>;
 
 type CoreLib = {
   symbols: {
-    alinery_provision_task: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_set_session_name: (repo: ReturnType<typeof ptr>, taskSlug: ReturnType<typeof ptr>, sessionId: ReturnType<typeof ptr>, name: ReturnType<typeof ptr>) => number | null;
     alinery_record_worktree: (dir: ReturnType<typeof ptr>, slug: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
@@ -42,7 +41,6 @@ function core(): CoreLib {
   if (coreLib) return coreLib;
   const library = ownershipLibrary();
   coreLib = dlopen(library, {
-    alinery_provision_task: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_set_session_name: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
@@ -78,9 +76,9 @@ export function recordWorktree(dir: string, slug: string, execId: string): { ref
   return body.ref && body.tree ? { ref: body.ref, tree: body.tree } : undefined;
 }
 
-function coreCall(op: "alinery_provision_task" | "alinery_create_subtask", repo: string, lane: string, identity: string, request: string): Request {
+function coreCall(repo: string, lane: string, identity: string, request: string): Request {
   const lib = core();
-  const reply = lib.symbols[op](cstr(repo), cstr(lane), cstr(identity), cstr(request));
+  const reply = lib.symbols.alinery_create_subtask(cstr(repo), cstr(lane), cstr(identity), cstr(request));
   const text = reply ? new CString(reply).toString() : "";
   if (reply) lib.symbols.alinery_string_free(reply);
   if (!text) return { error: "empty provisioning reply" };
@@ -149,7 +147,7 @@ export function getTaskExecution(repo: string, slug: string, lane: string, appId
   return { state, definition: definitionOf(parsed.playbook) };
 }
 
-async function overlayStart(repo: string, reply: Request, requested: boolean): Promise<Request> {
+export async function overlayStart(repo: string, reply: Request, requested: boolean): Promise<Request> {
   const task = reply.task as { slug?: string; worktree?: string } | undefined;
   const slug = task?.slug ?? "";
   if (!requested || reply.creation !== "ready" || !slug) return reply;
@@ -267,7 +265,7 @@ export function addExecution(repo: string, slug: string, execution: Record<strin
   });
 }
 
-async function materializeSessions(repo: string, reply: Request): Promise<Request> {
+export async function materializeSessions(repo: string, reply: Request): Promise<Request> {
   if (reply.creation !== "ready") return reply;
   const task = reply.task as { slug?: string; worktree?: string } | undefined;
   const slug = task?.slug ?? "";
@@ -299,13 +297,6 @@ async function materializeSessions(repo: string, reply: Request): Promise<Reques
     sessions.push(meta);
   }
   return { ...reply, sessions };
-}
-
-export async function createTask(repo: string, lane: string, appIdentity: string, request: Request): Promise<Record<string, unknown>> {
-  const reply = coreCall("alinery_provision_task", repo, lane, appIdentity, JSON.stringify(request));
-  if (typeof reply.error === "string") return reply;
-  if (request.start) return overlayStart(repo, reply, true);
-  return materializeSessions(repo, reply);
 }
 
 export async function createExecutionSession(
@@ -414,7 +405,7 @@ export async function startSession(
 }
 
 export async function createSubtask(repo: string, lane: string, appIdentity: string, request: Request): Promise<Record<string, unknown>> {
-  const reply = coreCall("alinery_create_subtask", repo, lane, appIdentity, JSON.stringify(request));
+  const reply = coreCall(repo, lane, appIdentity, JSON.stringify(request));
   if (typeof reply.error === "string") return reply;
   const provisioning = reply.provisioning as Request | undefined;
   if (!provisioning) return reply;
@@ -428,16 +419,11 @@ export async function taskOp(
   appIdentity: string,
   op: string,
   header: Request,
-  body: Buffer | null,
   openSession: (id: string, taskSlug: string, model: string, prompt: string) => Promise<void>,
 ): Promise<Record<string, unknown> | undefined> {
   if (op === "get_task_execution") {
     const request = (header.request ?? {}) as Request;
     return getTaskExecution(repo, String(request.task_slug ?? ""), lane, appIdentity);
-  }
-  if (op === "create_task") {
-    const request = JSON.parse((body ?? Buffer.from(JSON.stringify(header.request ?? {}))).toString("utf8")) as Request;
-    return createTask(repo, lane, appIdentity, request);
   }
   if (op === "create_execution_session") return createExecutionSession(repo, (header.request ?? {}) as Request, openSession);
   if (op === "start_session") return startSession(repo, (header.request ?? {}) as Request, openSession);

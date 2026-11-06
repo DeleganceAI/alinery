@@ -247,16 +247,6 @@ pub(crate) async fn archive_session_for_repo(app: AppHandle, state: State<'_, Ap
 
 // Default derived via #[derive(Default)] on struct (Mutex<Option<T>> defaults to None)
 
-// Root (taskless) drawer open guard. Used only when task_slug is empty: allow when
-// existing meta is no-harness, or when no meta exists yet (the only remaining root
-// session type is the drawer). Meta wins when present. Harness is not on the wire.
-pub(crate) fn allow_root_session_open(meta_harness: Option<&str>) -> bool {
-    match meta_harness {
-        Some(harness) => harness == alinery_core::NO_HARNESS_KEY,
-        None => true,
-    }
-}
-
 pub(crate) fn hosted_refresh_needed(intent: &str, harness: &str, model: &str) -> bool {
     alinery_core::is_vinculum_session(harness) && matches!(intent, daemon_client::ops::SPAWN | daemon_client::ops::RESUME) && (model.trim().is_empty() || is_hosted_model(model))
 }
@@ -306,8 +296,10 @@ pub(crate) async fn ensure_drawer_terminal(state: State<'_, AppState>) -> Result
 // are not this command's business: the webview attaches with TerminalService.Attach, so a session
 // keeps running in the background and switching back shows the same process at its current screen.
 // Distinct ids coexist: the "bag of cheap sessions", many ptys alive at once.
-// M4: the spawn is GENERIC over the registry — which binary/args/env and how the seeded
-// prompt is delivered come from the session's harness (read from its meta), not hardcoded.
+// The gate (a root session is only the drawer terminal; a task must exist, be v2 and not be a draft or archived; the
+// session's harness must be launchable) is the daemon's: it runs it on the spawn, attach and resume ops, from the
+// session's own meta (`domain/openPreflight.ts`). The shell keeps the hosted-inference refresh, which needs a harness
+// and a model before the daemon is asked; the caller passes them (`harness` is a hint for that refresh and nothing else).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn open_session(
@@ -317,93 +309,19 @@ pub(crate) async fn open_session(
     task_slug: Option<String>,
     phase: Option<String>,
     model: Option<String>,
+    harness: Option<String>,
     intent: Option<String>,
     resume_token: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
     let intent = intent.unwrap_or_else(|| daemon_client::ops::SPAWN.to_string());
-    // Both stretches that wait on a task read, a launch lookup or the daemon (over ssh for a remote repo) run on
-    // the blocking pool; the hosted-inference refresh between them is its own awaited step.
-    let (slug, harness, session_model) = {
-        let (app, id, model, intent) = (app.clone(), id.clone(), model.clone(), intent.clone());
-        off_main_thread("open session", move || {
-            let state = app.state::<AppState>();
-            let slug = task_slug.unwrap_or_default().trim().to_string();
-            if slug.is_empty() {
-                let meta_harness = match active_repo_ref() {
-                    Ok(RepoRef::Remote { host_id, path }) => remote_call::<Option<alinery_core::LaunchFields>>(
-                        &state,
-                        &host_id,
-                        RepoOp::ReadLaunchFields {
-                            repo: path.into(),
-                            slug: String::new(),
-                            session_id: id.clone(),
-                        },
-                    )
-                    .ok()
-                    .flatten()
-                    .map(|launch| launch.harness),
-                    _ => active_repo().ok().and_then(|repo| {
-                        let path = session_meta_path(&repo, "", &id);
-                        fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<SessionMeta>(&s).ok()).map(|m| m.harness)
-                    }),
-                };
-                if !allow_root_session_open(meta_harness.as_deref()) {
-                    return Err("root sessions are limited to no-harness drawer".into());
-                }
-            }
-            if !daemon_client::is_known_open_intent(&intent) {
-                return Err(format!("unknown session intent '{intent}'"));
-            }
-            let target = require_active_target(&state)?;
-            let mut harness = String::new();
-            let mut session_model = model.filter(|m| !m.is_empty()).unwrap_or_default();
-            if !slug.is_empty() {
-                let launch = match &target {
-                    ActiveRepo::Local(repo) => {
-                        let task = read_task(repo, &slug)?;
-                        if task.engine_version < 2 {
-                            return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
-                        }
-                        if task.draft || task.archived {
-                            return Err("draft or archived tasks cannot launch sessions".into());
-                        }
-                        task_daemon_for(repo, &task.slug, &app_config_path(&app)?)?
-                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
-                        alinery_core::read_meta_launch_fields(repo, &slug, &id)
-                    }
-                    ActiveRepo::Remote { host_id, path } => {
-                        // The host's daemon answers for the task; its draft, archived and pre-v2 gate moves into the daemon's preflight (S4.3).
-                        state
-                            .daemon()
-                            .ok_or("daemon not connected")?
-                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: slug.clone() })?;
-                        remote_call::<Option<alinery_core::LaunchFields>>(
-                            &state,
-                            host_id,
-                            RepoOp::ReadLaunchFields {
-                                repo: path.clone().into(),
-                                slug: slug.clone(),
-                                session_id: id.clone(),
-                            },
-                        )?
-                    }
-                };
-                if let Some(launch) = launch {
-                    if !alinery_core::is_allowed_launch_harness(&launch.harness) {
-                        return Err(format!("unknown harness '{}'", launch.harness));
-                    }
-                    harness = launch.harness;
-                    if session_model.is_empty() {
-                        session_model = launch.model;
-                    }
-                }
-            }
-            Ok((slug, harness, session_model))
-        })
-        .await?
-    };
+    if !daemon_client::is_known_open_intent(&intent) {
+        return Err(format!("unknown session intent '{intent}'"));
+    }
+    let slug = task_slug.unwrap_or_default().trim().to_string();
+    let harness = harness.unwrap_or_default();
+    let session_model = model.clone().unwrap_or_default();
     refresh_hosted_inference_before_open(app.clone(), &intent, &harness, &session_model).await?;
     off_main_thread("open session", move || {
         let daemon = app.state::<AppState>().daemon().ok_or("daemon not connected")?;

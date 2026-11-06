@@ -2,7 +2,7 @@
 // consent rule, the record shape, the allowlists, the ingest URL and the basic auth. Events are a closed
 // union, so a caller can never put a path, a name or free text on the wire. This is the only file in the
 // daemon that builds an ingest request (`check-telemetry-privacy.sh`). Events move here from the Rust
-// `TelemetryEvent` as the session that owns their command lands; `SettingsChange` is the first.
+// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3).
 import { type Global, parseGlobal } from "../domain/settings.ts";
 import { readFileSync } from "node:fs";
 
@@ -38,12 +38,24 @@ export const sanitizePhase = (raw: string) => (raw === "" ? "" : allowlistedOrCu
 
 export type TelemetrySource = "app" | "mcp" | "alineryd";
 export type SettingsChangeScope = "global" | "repo" | "appearance" | "harnesses";
-export type TelemetryEvent = { event: "settings.change"; source: TelemetrySource; scope: SettingsChangeScope };
+export type TelemetryEvent =
+  | { event: "settings.change"; source: TelemetrySource; scope: SettingsChangeScope }
+  | { event: "task.draft_create"; source: TelemetrySource; hasWorktree: boolean; playbook: string; taskId: string }
+  | { event: "task.draft_delete"; source: TelemetrySource; taskId: string }
+  | { event: "task.archive"; source: TelemetrySource; taskId: string };
+
+/** telemetry.rs `insert_id`: the opaque per-task id goes on the wire when there is one. */
+const withId = (taskId: string) => (taskId ? { task_id: taskId } : {});
 
 function eventProps(e: TelemetryEvent): Record<string, unknown> {
   switch (e.event) {
     case "settings.change":
       return { source: e.source, scope: e.scope };
+    case "task.draft_create":
+      return { source: e.source, has_worktree: e.hasWorktree, playbook: sanitizePlaybook(e.playbook), ...withId(e.taskId) };
+    case "task.draft_delete":
+    case "task.archive":
+      return { source: e.source, ...withId(e.taskId) };
   }
 }
 

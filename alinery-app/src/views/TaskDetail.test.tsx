@@ -84,6 +84,13 @@ const toastSpies = vi.hoisted(() => ({
 }));
 vi.mock("../toast", () => toastSpies);
 
+vi.mock("../sync/tasks", async (actual) => ({
+  ...(await actual<typeof import("../sync/tasks")>()),
+  worktreeExists: mocks.worktreeExists,
+  restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
+  renameTask: ipcSpies.renameTask,
+  setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
+}));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () =>
@@ -94,14 +101,10 @@ vi.mock("../ipc", () =>
     listTaskArtifactTree: mocks.listTaskArtifactTree,
     readArtifact: mocks.readArtifact,
     listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
-    worktreeExists: mocks.worktreeExists,
     createSessionForRepo: ipcSpies.createSessionForRepo,
-    restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
     archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
     sessionAbort: ipcSpies.sessionAbort,
     renameSession: ipcSpies.renameSession,
-    renameTask: ipcSpies.renameTask,
-    setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
     markSessionNotificationRead: mocks.markSessionNotificationRead,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,

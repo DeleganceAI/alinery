@@ -80,6 +80,7 @@ const ipcMocks = vi.hoisted(() => ({
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () => mockIpc(ipcMocks));
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), archiveTaskForRepo: ipcMocks.archiveTaskForRepo }));
 
 beforeEach(() => {
   ipcMocks.listKanbanColumns.mockImplementation(async () => columns);

@@ -3,6 +3,7 @@
 // the row it feeds (so a missing file can delete it), and `parse` reads the file. `null` means "no row":
 // the file is missing or unreadable as this kind, and the key is deleted.
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
+import { draftAttachments } from "./draft.ts";
 import { sessionMeta } from "./sessionMeta.ts";
 import { task } from "./task.ts";
 import { touch } from "./touch.ts";
@@ -15,7 +16,7 @@ export type Parser = {
   present?: string[];
 };
 
-export const parsers: Parser[] = [sessionMeta, task, touch];
+export const parsers: Parser[] = [sessionMeta, task, draftAttachments, touch];
 
 /** The parser that owns `rel`, with its key. A path no parser matches is dropped (S0.4 rules). */
 export function route(rel: string): { parser: Parser; key: string; m: RegExpMatchArray } | undefined {

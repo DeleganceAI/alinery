@@ -1,0 +1,13 @@
+{
+  "request": {
+    "name": "Same Name",
+    "playbook": { "reference": { "scope": "bundled", "key": "one-shot" }, "source": "@one-shot" },
+    "start": false
+  },
+  "attachments": [
+    { "name": "a.txt", "text": "first" },
+    { "name": "a.txt", "text": "second" },
+    { "name": "a.txt", "text": "third" }
+  ],
+  "twice": true
+}

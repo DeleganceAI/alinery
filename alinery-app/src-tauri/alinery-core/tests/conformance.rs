@@ -125,24 +125,116 @@ fn settings_write(case: &Path, update: bool) -> Value {
 fn telemetry(case: &Path) -> Value {
     use alinery_core::{SettingsChangeScope, TelemetryEvent, TelemetrySource};
     let event: Value = serde_json::from_str(&fs::read_to_string(case.join("event.json")).unwrap()).unwrap();
-    assert_eq!(event["event"], "settings.change", "only settings.change has moved to the daemon");
     let source = match event["source"].as_str().unwrap() {
         "app" => TelemetrySource::App,
         "mcp" => TelemetrySource::Mcp,
         "alineryd" => TelemetrySource::Alineryd,
         other => panic!("unknown source {other}"),
     };
-    let scope = match event["scope"].as_str().unwrap() {
-        "global" => SettingsChangeScope::Global,
-        "repo" => SettingsChangeScope::Repo,
-        "appearance" => SettingsChangeScope::Appearance,
-        "harnesses" => SettingsChangeScope::Harnesses,
-        other => panic!("unknown scope {other}"),
+    let task_id = event["taskId"].as_str().unwrap_or_default().to_string();
+    let telemetry_event = match event["event"].as_str().unwrap() {
+        "settings.change" => TelemetryEvent::SettingsChange {
+            source,
+            scope: match event["scope"].as_str().unwrap() {
+                "global" => SettingsChangeScope::Global,
+                "repo" => SettingsChangeScope::Repo,
+                "appearance" => SettingsChangeScope::Appearance,
+                "harnesses" => SettingsChangeScope::Harnesses,
+                other => panic!("unknown scope {other}"),
+            },
+        },
+        "task.draft_create" => TelemetryEvent::TaskDraftCreate {
+            source,
+            has_worktree: event["hasWorktree"].as_bool().unwrap(),
+            playbook: event["playbook"].as_str().unwrap().to_string(),
+            task_id,
+        },
+        "task.draft_delete" => TelemetryEvent::TaskDraftDelete { source, task_id },
+        "task.archive" => TelemetryEvent::TaskArchive { source, task_id },
+        other => panic!("{other} has not moved to the daemon"),
     };
-    let mut record = alinery_core::event_record(&TelemetryEvent::SettingsChange { source, scope }, "11111111-2222-3333-4444-555555555555");
+    let mut record = alinery_core::event_record(&telemetry_event, "11111111-2222-3333-4444-555555555555");
     record["app_version"] = "VERSION".into();
     record["os"] = "OS".into();
     record
+}
+
+/// A task created in a scratch repository, reduced to what must not differ between the Rust and the TypeScript creator:
+/// the `task.md` record without its clock and its paths, the ticket, the attachments, and the shape of `execution.json`.
+/// `command.json` holds the request, the attachment bytes as text, and `twice` to create the same request a second time
+/// (the slug and the attachment names then collide). The daemon's `bun test` runs `provisionTask` over the same files.
+fn task_create(case: &Path) -> Value {
+    let command: Value = serde_json::from_str(&fs::read_to_string(case.join("command.json")).unwrap()).unwrap();
+    let scratch = std::env::temp_dir().join(format!("alinery-conf-create-{}-{}", std::process::id(), case.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&scratch);
+    fs::create_dir_all(&scratch).unwrap();
+    let git = |args: &[&str]| {
+        let out = alinery_core::git_cmd(&scratch).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "t"]);
+    git(&["commit", "--allow-empty", "-q", "-m", "init"]);
+    let playbook = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../playbooks/one-shot/playbook.md")).unwrap();
+    let mut request = command["request"].clone();
+    if request["playbook"]["source"] == "@one-shot" {
+        request["playbook"]["source"] = playbook.into();
+    }
+    request["attachments"] = command["attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| serde_json::json!({ "name": a["name"], "bytes": alinery_core::rpc_chunk::encode_base64(a["text"].as_str().unwrap().as_bytes()) }))
+        .collect();
+    let request: alinery_core::CreateTaskRequest = serde_json::from_value(request).unwrap();
+    let mut slugs = Vec::new();
+    for _ in 0..if command["twice"] == true { 2 } else { 1 } {
+        let reply = alinery_core::provision_task(&scratch, "", "fixture", &request).unwrap();
+        assert_eq!(reply.creation, "ready", "{:?}", reply.errors);
+        slugs.push(reply.task.unwrap().slug);
+    }
+    let mut out = Map::new();
+    for slug in slugs {
+        let dir = scratch.join(".alinery/tasks").join(&slug);
+        let mut files = Map::new();
+        let mut task: Value = serde_json::to_value(toml::from_str::<toml::Value>(&fs::read_to_string(dir.join("task.md")).unwrap()).unwrap()).unwrap();
+        for volatile in ["created", "telemetry_id", "worktree"] {
+            task.as_object_mut().unwrap().remove(volatile);
+        }
+        files.insert("task.md".into(), task);
+        if let Ok(ticket) = fs::read_to_string(dir.join("artifacts/00-ticket.md")) {
+            files.insert("artifacts/00-ticket.md".into(), ticket.into());
+        }
+        if let Ok(entries) = fs::read_dir(dir.join("artifacts/attachments")) {
+            for entry in entries.flatten() {
+                files.insert(
+                    format!("artifacts/attachments/{}", entry.file_name().to_string_lossy()),
+                    fs::read_to_string(entry.path()).unwrap().into(),
+                );
+            }
+        }
+        let execution: Value = serde_json::from_str(&fs::read_to_string(dir.join("execution.json")).unwrap()).unwrap();
+        let mut shape = Map::new();
+        for key in [
+            "version",
+            "creation",
+            "owning_lane",
+            "definition_identity",
+            "enabled_steps",
+            "max_live_sessions",
+            "launch_defaults",
+            "reference",
+        ] {
+            if let Some(value) = execution.get(key) {
+                shape.insert(key.into(), value.clone());
+            }
+        }
+        files.insert("execution.json".into(), shape.into());
+        out.insert(slug, files.into());
+    }
+    let _ = fs::remove_dir_all(&scratch);
+    out.into()
 }
 
 fn run(domain: &str, case: &Path, update: bool) -> Value {
@@ -153,6 +245,7 @@ fn run(domain: &str, case: &Path, update: bool) -> Value {
         "settings" => settings(&input),
         "settings_write" => settings_write(case, update),
         "telemetry" => telemetry(case),
+        "task_create" => task_create(case),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
 }

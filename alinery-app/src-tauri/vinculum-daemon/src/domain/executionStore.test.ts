@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { fold, readLog, type State } from "playbook-engine/src/state.ts";
 import { completeSession, engineExecutions, forgetTask, type SessionHooks, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
 import { holdFromRust, holderBinary } from "../platform/rustHolder.ts";
-import { addExecution, createTask, getTaskExecution, suggestSessionName } from "../tasks.ts";
+import { addExecution, getTaskExecution, suggestSessionName } from "../tasks.ts";
+import { provisionTask } from "./tasks.ts";
 import { executionPath, historyDir, loadEngineState, saveEngineState } from "./executionStore.ts";
 
 // A four-step fork and join: seed, then sum and product, then combine.
@@ -297,7 +298,12 @@ describe("Rust and TypeScript writers on one repository", () => {
     }
     return repo;
   }
-  const request = (name: string) => ({ name, branch_name: name, playbook: { reference: { scope: "bundled", key: "one-shot" }, source: readFileSync(join(tauri, "playbooks", "one-shot", "playbook.md"), "utf8") }, start: false });
+  /** Task creation is TypeScript now (S4.3); Rust still reads every file it writes, which the probe rounds below check. */
+  const provision = (repo: string, name: string) =>
+    provisionTask(
+      { repo, lane: "lane", identity: "identity" },
+      { name, branchName: name, playbook: { reference: { scope: "bundled", key: "one-shot" }, source: readFileSync(join(tauri, "playbooks", "one-shot", "playbook.md"), "utf8") }, start: false },
+    );
   const rustRecord = (id: string) => ({
     id,
     binding_key: id,
@@ -326,9 +332,9 @@ describe("Rust and TypeScript writers on one repository", () => {
     };
   }
 
-  test("100 interleaved rounds of TypeScript saves, manual records, Rust reads and Rust provisioning end in a state both sides accept", async () => {
+  test("100 interleaved rounds of TypeScript saves, manual records, Rust reads and TypeScript provisioning of other tasks end in a state both sides accept", async () => {
     const repo = gitRepo();
-    const created = (await createTask(repo, "lane", "identity", request("interop"))) as { creation: string; task?: { slug: string } };
+    const created = await provision(repo, "interop");
     expect(created.creation).toBe("ready");
     const slug = created.task!.slug;
     const dir = join(repo, ".alinery", "tasks", slug);
@@ -366,7 +372,7 @@ describe("Rust and TypeScript writers on one repository", () => {
         expect("error" in reply ? reply.error : reply.status).toBe("saved");
         probes++;
       } else {
-        const other = (await createTask(repo, "lane", "identity", request(`other-${round}`))) as { creation: string };
+        const other = await provision(repo, `other-${round}`);
         expect(other.creation).toBe("ready");
         provisioned++;
       }

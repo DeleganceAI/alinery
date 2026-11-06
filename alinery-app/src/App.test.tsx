@@ -163,6 +163,19 @@ const actualCreation = vi.hoisted(() => ({ enabled: false }));
 const actualProviders = vi.hoisted(() => ({ enabled: false }));
 const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
 
+// The task writes live in sync/tasks (the daemon), not in ipc.
+const taskWrites = vi.hoisted(() => ({
+  createTaskForRepo: vi.fn(),
+  writeDraftForRepo: vi.fn(),
+  duplicateTaskForRepo: vi.fn(),
+  readDraftAttachmentsForRepo: vi.fn(),
+  deleteDraftForRepo: vi.fn(),
+  prepareTaskAttachments: vi.fn(),
+  worktreeExists: vi.fn(),
+  renameTask: vi.fn(),
+}));
+vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), ...taskWrites }));
+
 const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   const ipcMocks = {
     createSessionForRepo: vi.fn(),
@@ -176,13 +189,11 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     getVersion: vi.fn(async () => "0.11.1"),
     markSessionNotificationRead: vi.fn(async () => {}),
     renameSession: vi.fn(),
-    renameTask: vi.fn(),
     subtaskState: vi.fn(),
     getTaskExecution: vi.fn(),
     listArtifactsWithMetadata: vi.fn(),
     listTaskArtifactTree: vi.fn(),
     listArtifactCommentDraftsForRepo: vi.fn(),
-    worktreeExists: vi.fn(),
     clearSessionNotifications: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
@@ -647,7 +658,7 @@ describe("onboarding gate", () => {
       },
     }));
     vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue({
       task,
       sessions: [],
       executions: [],
@@ -896,8 +907,8 @@ describe("Playbooks navigation", () => {
     expect(await screen.findByRole("radio", { name: /repo review/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", false);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "");
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await screen.findByRole("button", { name: "Create task from this playbook" });
     expect(screen.queryByRole("radio", { name: /repo review/ })).toBeNull();
@@ -1355,7 +1366,7 @@ describe("session work names", () => {
     ipcMocks.listArtifactsWithMetadata.mockResolvedValue([]);
     ipcMocks.listTaskArtifactTree.mockResolvedValue([]);
     ipcMocks.listArtifactCommentDraftsForRepo.mockResolvedValue([]);
-    ipcMocks.worktreeExists.mockResolvedValue(true);
+    taskWrites.worktreeExists.mockResolvedValue(true);
     fakeBoard.set({ sessions: [manager] as never });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
@@ -1366,7 +1377,7 @@ describe("session work names", () => {
     await within(screen.getByRole("listbox")).findByText("Coordinate work");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
     const committed = { ...child, name: "Renamed child" };
-    ipcMocks.renameTask.mockImplementation(async () => {
+    taskWrites.renameTask.mockImplementation(async () => {
       fakeBoard.set({ anyRepoTasks: [committed, parent] as never, tasks: [committed, parent] as never, sessions: [{ ...manager, subtask_name: committed.name }] as never });
       return committed;
     });
@@ -1379,7 +1390,7 @@ describe("session work names", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Renamed child" } });
     expect(within(screen.getByRole("listbox")).getByText("Renamed child")).toBeDefined();
     expect(within(screen.getByRole("listbox")).getByText("Coordinate work")).toBeDefined();
-    expect(ipcMocks.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
+    expect(taskWrites.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
   });
 });
 

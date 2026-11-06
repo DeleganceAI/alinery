@@ -840,14 +840,17 @@ export type TaskExecutionReply = {
   revision?: bigint;
 };
 export type TaskAttachment = { name: string; bytes: string };
-export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
+/** A file already uploaded to the daemon's staging area (`prepareTaskAttachments`); CreateTask names it by this id. */
+export type StagedUpload = { name: string; upload_id: string };
+export type PreparedTaskAttachments = { attachments: StagedUpload[]; attachment_urls: string[]; attachment_errors: string[] };
+export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
 export type CreateTaskRequest = {
   name: string;
   draft_slug?: string | null;
   requested_slug?: string | null;
   description?: string;
   evidence?: string;
-  attachments?: TaskAttachment[];
+  attachments?: (TaskAttachment | StagedUpload)[];
   attachment_urls?: string[];
   attachment_errors?: string[];
   linear_id?: string;

@@ -220,23 +220,14 @@ pub(crate) async fn read_artifact_for_repo(app: AppHandle, repo_path: String, ta
     .await
 }
 
+/// Where an attachment is on this machine, for Reveal. A remote repo's files are on its host and the daemon never
+/// hands out a path, so there is nothing to reveal here (the UI hides the action for a remote repo).
 #[tauri::command]
-pub(crate) async fn attachment_path(app: AppHandle, task_slug: String, name: String) -> Result<String, String> {
-    let target = active_repo_ref()?;
-    off_main_thread("attachment path", move || match target {
-        RepoRef::Local(repo) => attachment_path_in(&repo, &task_slug, &name),
-        // The path on the host: it cannot be revealed here, so the UI offers to copy it.
-        RepoRef::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::AttachmentPath {
-                repo: path.into(),
-                slug: task_slug,
-                name,
-            },
-        ),
-    })
-    .await
+pub(crate) async fn attachment_path(task_slug: String, name: String) -> Result<String, String> {
+    match active_repo_ref()? {
+        RepoRef::Local(repo) => off_main_thread("attachment path", move || attachment_path_in(&repo, &task_slug, &name)).await,
+        RepoRef::Remote { .. } => Err("the attachment is on the remote host".to_string()),
+    }
 }
 
 #[tauri::command]

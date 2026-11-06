@@ -1,0 +1,11 @@
+{
+  "request": {
+    "name": "Fix The Bug",
+    "description": "It crashes on start.",
+    "playbook": { "reference": { "scope": "bundled", "key": "one-shot" }, "source": "@one-shot" },
+    "launch_defaults": { "harness": "omp", "model": "m1" },
+    "max_live_sessions": 4,
+    "start": false
+  },
+  "attachments": []
+}

@@ -83,22 +83,6 @@ pub(crate) async fn remove_worktree_for_repo(app: AppHandle, state: State<'_, Ap
     remove_worktree_off_thread(app, repo, slug).await
 }
 
-// ---- M5 worktree existence check ---------------------------------------------
-// The task's `worktree` path can go stale if the directory is removed outside the app
-// (manually, or by a `git worktree remove` run outside alinery); this gives the frontend a
-// live filesystem check instead of trusting the stored path.
-#[tauri::command]
-pub(crate) async fn worktree_exists(app: AppHandle, slug: String) -> Result<bool, String> {
-    off_main_thread("worktree exists", move || worktree_exists_for(&app.state::<AppState>(), slug)).await
-}
-
-pub(crate) fn worktree_exists_for(state: &AppState, slug: String) -> Result<bool, String> {
-    match active_repo_ref()? {
-        RepoRef::Local(repo) => alinery_core::board::worktree_exists(&repo, &slug),
-        RepoRef::Remote { host_id, path } => remote_call(state, &host_id, alinery_core::repo_service::RepoOp::WorktreeExists { repo: path.into(), slug }),
-    }
-}
-
 // ---- M5 PR compare URL -------------------------------------------------------
 // Pure remote-URL -> compare-URL parsing. Handles ssh (git@host:owner/repo(.git) and
 // ssh://[user@]host/owner/repo(.git)) and http(s). GitHub adds ?expand=1 to prefill the PR

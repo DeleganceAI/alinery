@@ -1,0 +1,75 @@
+// proto/alinery/v1/blobs.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// Blobs never take a path from the client. A `BlobRef` names the thing and the daemon resolves and checks the path,
+// so a client cannot read or write outside `.alinery/`. S4.3 builds the upload half and the reads of attachments and
+// draft images; S4.5 adds artifact bodies.
+service BlobService {
+  rpc ReadBlob(ReadBlobRequest) returns (stream ReadBlobResponse);   // VIEW
+  rpc BeginUpload(BeginUploadRequest) returns (BeginUploadResponse);  // ACT
+  rpc UploadChunk(UploadChunkRequest) returns (UploadChunkResponse);  // ACT
+  rpc CommitUpload(CommitUploadRequest) returns (CommitUploadResponse);  // ACT
+}
+
+message AttachmentBlob {
+  string task_slug = 1;  // a task, a draft, or "" for a taskless chat thread
+  string name = 2;       // a file name in artifacts/attachments/
+}
+// A file that is uploaded before the thing that owns it exists (a task being created). `CommitUpload` leaves it in
+// the daemon's staging directory and the ref it returns names it; CreateTask then moves it into place.
+message StagedBlob {
+  string name = 1;       // the name the file will keep
+  string upload_id = 2;  // empty in a request; set in the CommitUpload response
+}
+// A pasted image kept in a draft's `draft-attachments.json`.
+message DraftImageBlob {
+  string draft_slug = 1;
+  string name = 2;
+}
+
+message BlobRef {
+  oneof target {
+    AttachmentBlob attachment = 2;
+    StagedBlob staged = 5;
+    DraftImageBlob draft_image = 6;
+  }
+}
+
+message ReadBlobRequest {
+  BlobRef ref = 1;
+  uint64 offset = 2;
+  uint64 length = 3;  // 0: to the end
+}
+message ReadBlobResponse {
+  bytes data = 1;
+  uint64 offset = 2;  // position of the first byte of data
+  uint64 total = 3;   // the blob's size
+  string content_type = 4;
+}
+
+message BeginUploadRequest {
+  MutationMeta meta = 1;
+  BlobRef target = 2;
+  uint64 size = 3;
+  string sha256 = 4;  // lowercase hex, checked at commit
+}
+message BeginUploadResponse {
+  string upload_id = 1;
+  uint32 chunk_size = 2;
+}
+message UploadChunkRequest {
+  string upload_id = 1;
+  uint64 offset = 2;  // chunks arrive in order; an offset other than the bytes received so far is INVALID_ARGUMENT
+  bytes data = 3;
+}
+message UploadChunkResponse {}
+message CommitUploadRequest {
+  string upload_id = 1;
+}
+message CommitUploadResponse {
+  Applied applied = 1;
+  BlobRef ref = 2;  // the final name (a name already taken gets a suffix) or the staged id
+}

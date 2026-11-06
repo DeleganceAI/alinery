@@ -19,9 +19,12 @@ import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
+import { createFromWire, type TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
 import { BoardProjector } from "./domain/board.ts";
+import { BlobStore } from "./domain/blobs.ts";
+import { openPreflight } from "./domain/openPreflight.ts";
 import { commitExecution, executionParser } from "./domain/executions.ts";
 import { parsers } from "./sync/parsers/index.ts";
 import { settingsParser } from "./sync/parsers/settings.ts";
@@ -31,7 +34,7 @@ import { runJobChild } from "./jobs/child.ts";
 import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
-import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
+import { completeSessionMeta, getTaskExecution, materializeSessions, overlayStart, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
 import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
@@ -40,7 +43,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 27;
+const PROTOCOL = 28;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -748,6 +751,17 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
   if (op === "spawn" || op === "attach" || op === "resume") {
     const id = String(header.id ?? "");
     const taskSlug = String(header.task_slug ?? "");
+    let metaHarness: string | undefined;
+    try {
+      metaHarness = String((JSON.parse(readFileSync(metaPath(taskSlug, id), "utf8")) as Record<string, unknown>).harness ?? "");
+    } catch {
+      /* no readable meta: the root-session rule allows it, and a task session is checked below */
+    }
+    const refusal = openPreflight(repo, taskSlug, metaHarness);
+    if (refusal) {
+      reply(socket, { error: refusal });
+      return;
+    }
     if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
       const cols = Number(header.cols ?? 0);
       const rows = Number(header.rows ?? 0);
@@ -993,9 +1007,15 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     }
     return;
   }
-  if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {
+  // `alinery-mcp` still creates tasks over the legacy wire (plan S5.1 removes it); the app uses TaskService.
+  if (op === "create_task") {
+    const request = JSON.parse((body ?? Buffer.from(JSON.stringify(header.request ?? {}))).toString("utf8"));
+    reply(socket, await createFromWire(taskDeps, request));
+    return;
+  }
+  if (["get_task_execution", "create_execution_session", "start_session", "create_subtask"].includes(op)) {
     try {
-      reply(socket, (await taskOp(repo, lane, identity, op, header, body, (id, taskSlug, model, prompt) => {
+      reply(socket, (await taskOp(repo, lane, identity, op, header, (id, taskSlug, model, prompt) => {
         if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
           startRecordedShell(id, taskSlug);
           return Promise.resolve();
@@ -1114,6 +1134,27 @@ const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(r
 watcher.start();
 publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
+// Task writes: TaskService and DraftService serve them, and the legacy `create_task` op runs the same create.
+const taskDeps: TaskDeps = {
+  repo,
+  lane,
+  identity,
+  refresh: (rel) => feed.refresh(rel),
+  telemetry,
+  // Constructing the store clears `.alinery/tmp/uploads`: a restart drops uploads nothing claimed.
+  blobs: new BlobStore(repo),
+  afterCreate: async (created, start) => {
+    const out = start ? await overlayStart(repo, { ...created }, true) : await materializeSessions(repo, { ...created });
+    const errors = (out.errors ?? []) as typeof created.errors;
+    return {
+      sessions: (out.sessions ?? []) as never,
+      executions: (out.executions ?? []) as never,
+      start: String(out.start ?? created.start),
+      // A started task's launch errors join the files the create could not import; a reserved one keeps its own.
+      errors: start ? [...created.errors, ...errors] : errors,
+    };
+  },
+};
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
   socketPath: rpcSocket,
@@ -1125,6 +1166,7 @@ await serveRpc({
   jobs: new JobRunner(store),
   storageScan: { repo, appConfig, namespace: lane },
   settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
+  tasks: taskDeps,
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
     if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;

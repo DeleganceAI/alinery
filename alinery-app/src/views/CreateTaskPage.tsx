@@ -6,6 +6,7 @@ import { PlaybookGraph } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import { readEffectiveConfig } from "../sync/settings";
+import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type {
@@ -240,8 +241,7 @@ export function CreateTaskPage({
     if (!initialDraft) return;
     let alive = true;
     const generation = attachmentGeneration.current;
-    ipc
-      .readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
+    readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
       .then((saved) => {
         if (!alive || generation !== attachmentGeneration.current) return;
         const restored: PastedImage[] = [];
@@ -474,7 +474,7 @@ export function CreateTaskPage({
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
           const savedImages = await Promise.all(images.map(async (image) => ({ name: image.name, bytes: await encodeImage(image.file), mime_type: image.file.type })));
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
-          const t = await ipc.writeDraftForRepo({
+          const t = await writeDraftForRepo({
             repoPath: target,
             draftSlug: draftIdentities.current.get(target) ?? "",
             name: n,
@@ -616,13 +616,13 @@ export function CreateTaskPage({
     afterPaint()
       .then(() => draftSaveInFlightRef.current)
       .then(async () => {
-        const prepared = await ipc.prepareTaskAttachments(capturedPaths);
+        const prepared = await prepareTaskAttachments(target, capturedPaths);
         const encodedImages: TaskAttachment[] = [];
         for (const image of capturedImages) {
           encodedImages.push({ name: image.name, bytes: await encodeImage(image.file) });
         }
         provisioningRequested = true;
-        return ipc.createTaskForRepo({
+        return createTaskForRepo({
           repoPath: target,
           request: {
             ...prepared,
@@ -659,7 +659,7 @@ export function CreateTaskPage({
         if (result.creation === "ready" && result.task) {
           const origins = [...draftOrigins, ...Array.from(draftIdentities.current, ([originRepo, slug]) => ({ repoPath: originRepo, slug }))];
           for (const origin of origins) {
-            void ipc.deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
+            void deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
               // Deletion is draft-only; a promoted task is never removed.
             });
           }
@@ -862,7 +862,7 @@ export function CreateTaskPage({
     draftSaveInFlightRef.current
       .then(() => {
         const storedSlug = draftIdentities.current.get(target) ?? slug;
-        if (storedSlug) return ipc.deleteDraftForRepo(target, storedSlug);
+        if (storedSlug) return deleteDraftForRepo(target, storedSlug);
       })
       .then(() => {
         setDraftOrigins((origins) => origins.filter((origin) => origin.repoPath !== target || origin.slug !== slug));

@@ -19,6 +19,7 @@ import type {
   TaskActivitySummary,
 } from "../types";
 import { acquireScope, REPO_SCOPE } from "./hooks";
+import { usePendingVersion, withPendingTasks } from "./pendingTasks";
 import type { Replica } from "./replica";
 
 export const taskEntityKey = (slug: string) => `task/${slug}/${slug}`;
@@ -26,8 +27,11 @@ const num = (v: bigint | undefined) => (v === undefined ? null : Number(v));
 
 /** The `BoardTask` a Task entity stands for; `repoPath` is the repo key the board addresses it by. */
 export function boardTaskOf(e: Entity, repoPath: string): BoardTask | undefined {
-  if (e.value.case !== "task") return undefined;
-  const t: Task = e.value.value;
+  return e.value.case === "task" ? boardTaskFromProto(e.value.value, repoPath) : undefined;
+}
+
+/** The same row from a `Task` message that did not come from the stream (a write's reply). */
+export function boardTaskFromProto(t: Task, repoPath: string): BoardTask {
   const b = t.board;
   return {
     name: t.name,
@@ -170,7 +174,7 @@ export type RepoBoard = {
 /** Task rows of these repos, oldest first, each repo from its own stream (a down repo does not blank the others). */
 export function useRepoBoard(repos: string[], enabled = true): RepoBoard {
   const replicas = useRepoReplicas(repos, enabled);
-  const version = useChanges(replicas);
+  const version = useChanges(replicas) + usePendingVersion();
   // biome-ignore lint/correctness/useExhaustiveDependencies: version stands for the replicas' contents
   return useMemo(() => {
     const out: BoardTask[] = [];
@@ -180,10 +184,12 @@ export function useRepoBoard(repos: string[], enabled = true): RepoBoard {
       const repo = wanted[i];
       if (repo === undefined) return;
       states[repo] = { loaded: replica.ready, reachable: replica.reachable, stale: replica.stale };
+      const rows: BoardTask[] = [];
       for (const e of replica.all()) {
         const t = boardTaskOf(e, repo);
-        if (t) out.push(t);
+        if (t) rows.push(t);
       }
+      out.push(...withPendingTasks(repo, rows, replica.cursor));
     });
     out.sort((a, b) => a.created - b.created);
     // One repo's snapshot is enough to draw a board; a repo that has not answered (down, or a daemon this app cannot use) shows its banner and no tasks.
@@ -195,29 +201,33 @@ export function useRepoBoard(repos: string[], enabled = true): RepoBoard {
 /** One repo's tasks as `list_tasks` answered, or null before its first snapshot. */
 export function useRepoTasks(repo: string | undefined): BoardTask[] | null {
   const replicas = useRepoReplicas(repo ? [repo] : [], !!repo);
-  const version = useChanges(replicas);
+  const version = useChanges(replicas) + usePendingVersion();
   // biome-ignore lint/correctness/useExhaustiveDependencies: version stands for the replicas' contents
   return useMemo(() => {
     const replica = replicas[0];
-    if (!replica?.ready) return null;
-    return replica
+    if (!replica?.ready || !repo) return null;
+    const rows = replica
       .all()
-      .flatMap((e) => (repo ? [boardTaskOf(e, repo)] : []))
+      .flatMap((e) => [boardTaskOf(e, repo)])
       .filter((t): t is BoardTask => !!t)
       .sort((a, b) => a.created - b.created);
+    return withPendingTasks(repo, rows, replica.cursor);
   }, [replicas, version, repo]);
 }
 
 /** A task as `get_task` answered: undefined before the first snapshot, null once the repo is loaded and has no such task. */
 export function useBoardTask(repo: string | undefined, slug: string): BoardTask | null | undefined {
   const replicas = useRepoReplicas(repo ? [repo] : [], !!repo);
-  const version = useChanges(replicas);
+  const version = useChanges(replicas) + usePendingVersion();
   // biome-ignore lint/correctness/useExhaustiveDependencies: version stands for the replicas' contents
   return useMemo(() => {
     const replica = replicas[0];
     if (!repo || !replica?.ready) return undefined;
     const e = replica.get(taskEntityKey(slug));
-    return (e && boardTaskOf(e, repo)) ?? null;
+    const row = e && boardTaskOf(e, repo);
+    if (row) return row;
+    // The row of a task just created is not in the replica yet: its pending card stands in for it.
+    return withPendingTasks(repo, [], replica.cursor).find((t) => t.slug === slug) ?? null;
   }, [replicas, version, slug, repo]);
 }
 

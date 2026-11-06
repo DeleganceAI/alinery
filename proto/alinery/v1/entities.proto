@@ -88,7 +88,18 @@ message Task {
   BoardProjection board = 40;
   TaskActivity activity = 41;
 }
-message Draft {}
+// What the create form saved beside a draft task: the attachment entries the person typed and the pasted images (their
+// bytes are read through BlobService; a draft's images can be megabytes and must not ride the board stream).
+message DraftImageInfo {
+  string name = 1;
+  string mime_type = 2;
+  uint64 size = 3;
+}
+message Draft {
+  string slug = 1;
+  repeated string entries = 2;
+  repeated DraftImageInfo images = 3;
+}
 // One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
 // definition) in JSON form. S4.2 replaces the two Structs with typed fields when it moves the state
 // into execution.json; until then the entity and the RPC read are built by the same function.

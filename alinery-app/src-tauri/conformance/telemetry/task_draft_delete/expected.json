@@ -1,0 +1,10 @@
+{
+  "anon_id": "11111111-2222-3333-4444-555555555555",
+  "app_version": "VERSION",
+  "event": "task.draft_delete",
+  "os": "OS",
+  "props": {
+    "source": "alineryd",
+    "task_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  }
+}

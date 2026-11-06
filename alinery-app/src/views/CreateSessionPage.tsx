@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildPromptMessage, taskAttachmentDir } from "../chat/attachments";
 import { askConfirm } from "../confirm";
-import * as ipc from "../ipc";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import { useRepoBoard } from "../sync/board";
 import { readTaskExecution } from "../sync/execution";
+import { addTaskAttachment } from "../sync/tasks";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
@@ -170,8 +170,7 @@ export function CreateSessionPage({
         for (const image of imagesRef.current) {
           let name = savedImages.current.get(image.id);
           if (!name) {
-            const bytes = Array.from(new Uint8Array(await image.file.arrayBuffer()));
-            name = await ipc.writeChatAttachmentBytes(task.slug, image.name, bytes, task.repo_path);
+            name = await addTaskAttachment(task.repo_path, task.slug, image.name, new Uint8Array(await image.file.arrayBuffer()));
             savedImages.current.set(image.id, name);
           }
           copied.push({ name });

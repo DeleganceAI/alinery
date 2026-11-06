@@ -381,28 +381,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .unwrap();
     assert!(artifacts.is_empty());
-    let worktree: bool = remote_call(
-        &state,
-        &id,
-        RepoOp::WorktreeExists {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(!worktree);
-    let launch: Option<alinery_core::LaunchFields> = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadLaunchFields {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(launch.map(|launch| launch.harness), Some(alinery_core::NO_HARNESS_KEY.to_string()));
-
     // Artifacts and review comments: the viewer's reads and the whole comment round trip.
     let artifact = "01-plan.md";
     let call_ok = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(30)).unwrap();
@@ -627,45 +605,20 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     .unwrap();
     assert!(approval.text.contains("Review playbook action"));
 
-    // Attachments: bytes written from here land on the host, and previews read them back intact.
-    let png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x7f];
-    let attach = |name: &str, data: &[u8]| -> Result<String, String> {
+    // Attachments (written by the daemon in production; here placed on the host directly): previews read them back intact.
+    // The bytes are UTF-8 because `WriteFile` carries text; the base64 wire for bytes that are not is `rpc_chunk`'s own test.
+    let png: Vec<u8> = b"\x01PNG\r\n\x1a\n-stand-in".to_vec();
+    let attach = |name: &str, data: &[u8]| -> Result<(), String> {
         remote_call(
             &state,
             &id,
-            RepoOp::WriteAttachment {
-                repo: repo.clone().into(),
-                slug: slug(),
-                file_name: name.into(),
-                data: data.to_vec(),
+            RepoOp::WriteFile {
+                path: format!("{repo}/.alinery/tasks/remote-task/artifacts/attachments/{name}").into(),
+                contents: String::from_utf8(data.to_vec()).map_err(|e| e.to_string())?,
             },
         )
     };
-    assert_eq!(attach("shot.png", &png).unwrap(), "shot.png");
-    let second = attach("shot.png", &png).unwrap();
-    assert_ne!(second, "shot.png", "a name collision gets a unique name");
-    assert!(attach("../escape.png", &png).is_err());
-    let host_path: String = remote_call(
-        &state,
-        &id,
-        RepoOp::AttachmentPath {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "shot.png".into(),
-        },
-    )
-    .unwrap();
-    assert!(host_path.ends_with("/.alinery/tasks/remote-task/artifacts/attachments/shot.png"), "{host_path}");
-    assert!(remote_call::<String>(
-        &state,
-        &id,
-        RepoOp::AttachmentPath {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "missing.png".into()
-        }
-    )
-    .is_err());
+    attach("shot.png", &png).unwrap();
     let image: crate::ChatImage = remote_call(
         &state,
         &id,
@@ -741,23 +694,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .unwrap();
     assert_eq!(by_node.data, png);
-
-    // Copying files from this machine: each goes over on its own, bad ones are reported, URLs are skipped.
-    let local = std::env::temp_dir().join(format!("local-note-{}.txt", std::process::id()));
-    std::fs::write(&local, "from the Mac\n").unwrap();
-    let copied = crate::copy_files_to_remote_attachments(
-        &state,
-        &id,
-        &repo,
-        "remote-task",
-        &[local.display().to_string(), "/nonexistent/file.bin".into(), "https://example.com/x.png".into(), "  ".into()],
-    )
-    .unwrap();
-    assert_eq!(copied.copied.len(), 1, "{:?}", copied.failures);
-    assert!(copied.copied[0].starts_with("local-note-"));
-    assert_eq!(copied.failures.len(), 1, "{:?}", copied.failures);
-    assert!(copied.failures[0].contains("/nonexistent/file.bin"));
-    let _ = std::fs::remove_file(local);
 
     // A terminal on the host, streamed through the forwarded socket: create the auxiliary
     // session, open it, type a command, read the output come back.
@@ -907,52 +843,11 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .is_err());
 
-    let renamed: alinery_core::Task = remote_call(
-        &state,
-        &id,
-        RepoOp::RenameTask {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "Renamed remote".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(renamed.name, "Renamed remote");
-
     crate::archive_remote_session(&state, &id, repo.clone(), slug(), "s1".into()).unwrap();
     assert!(
         crate::archive_remote_session(&state, &id, repo.clone(), "  ".into(), "s1".into()).is_err(),
         "a taskless session cannot be archived"
     );
-
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::ArchiveTask {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    // Restore flips the flag back on the host; an unknown task is refused.
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::RestoreTask {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::RestoreTask {
-            repo: repo.clone().into(),
-            slug: "missing".into()
-        }
-    )
-    .is_err());
 
     // Chat threads: created beside the host's daemon, listed under the repo's key, pinned, given
     // attachments, archived. The terminal made above is a session but not a chat thread.
@@ -1105,17 +1000,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .is_err());
 
-    // Duplicating a task: the host builds the create request from its own files, identical to what a
-    // local repo would build. A pre-v2 task cannot be copied.
-    assert!(remote_call::<alinery_core::task_creation::CreateTaskRequest>(
-        &state,
-        &id,
-        RepoOp::DuplicateTaskPackage {
-            repo: repo.clone().into(),
-            source_slug: slug()
-        }
-    )
-    .is_err());
+    // A second task on the host (the review handoff below targets it): the retained-duplicate fixture, written file by file.
     let scratch = std::env::temp_dir().join(format!("remote-dup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).unwrap();
@@ -1142,19 +1027,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
                 .unwrap();
         }
     }
-    let package: alinery_core::task_creation::CreateTaskRequest = remote_call(
-        &state,
-        &id,
-        RepoOp::DuplicateTaskPackage {
-            repo: repo.clone().into(),
-            source_slug: source.slug.clone(),
-        },
-    )
-    .unwrap();
-    assert_eq!(package.name, "Original D+1");
-    assert_eq!(package.original_ticket.as_deref(), Some("# Edited original\nKeep exact bytes.\n"));
-    let local = crate::duplicate_task_package(&scratch, &source.slug).unwrap();
-    assert_eq!(serde_json::to_value(&package).unwrap(), serde_json::to_value(&local).unwrap());
     let _ = std::fs::remove_dir_all(&scratch);
 
     // The GitHub import's token for a remote repo: the host's `config.toml` override over this machine's global one.
@@ -1237,78 +1109,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     clear("s-art").unwrap();
     assert!(clear("../s-art").is_err());
 
-    // Task drafts: saved, re-saved under the same slug, given attachments, and deleted on the host.
-    let draft_op = |draft_slug: &str, name: &str, attachments: Option<crate::DraftAttachments>| RepoOp::WriteDraft {
-        repo: repo.clone().into(),
-        draft_slug: draft_slug.into(),
-        task_slug: String::new(),
-        name: name.into(),
-        description: "Write the thing".into(),
-        evidence: String::new(),
-        linear_id: String::new(),
-        github_issue: String::new(),
-        playbook: alinery_core::playbook::PlaybookRef {
-            scope: alinery_core::playbook::PlaybookScope::Repo,
-            key: "one-shot".into(),
-        },
-        harness: "omp".into(),
-        model: "m".into(),
-        auto_advance: None,
-        step_models: None,
-        max_live_sessions: 3,
-        branch_name: "draft-branch".into(),
-        worktree_name: "draft-tree".into(),
-        draft_base_ref: None,
-        draft_attachments: attachments,
-    };
-    let draft: alinery_core::Task = remote_call(&state, &id, draft_op("", "My draft", None)).unwrap();
-    assert!(draft.draft && draft.name == "My draft", "{draft:?}");
-    let again: alinery_core::Task = remote_call(&state, &id, draft_op(&draft.slug, "My draft", None)).unwrap();
-    assert_eq!((again.slug.as_str(), again.created), (draft.slug.as_str(), draft.created), "autosave reuses the draft");
-    let attachments = crate::DraftAttachments {
-        entries: vec!["/tmp/spec.pdf".into()],
-        images: vec![crate::DraftImage {
-            name: "shot.png".into(),
-            bytes: png.clone(),
-            mime_type: "image/png".into(),
-        }],
-    };
-    remote_call::<alinery_core::Task>(&state, &id, draft_op(&draft.slug, "My draft", Some(attachments.clone()))).unwrap();
-    let read_back: crate::DraftAttachments = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadDraftAttachments {
-            repo: repo.clone().into(),
-            slug: draft.slug.clone(),
-        },
-    )
-    .unwrap();
-    assert_eq!(read_back, attachments, "non-UTF-8 image bytes survive");
-    assert!(
-        remote_call::<alinery_core::Task>(&state, &id, draft_op(&draft.slug, "", None)).is_err(),
-        "an empty name is refused"
-    );
-    assert!(
-        remote_call::<()>(
-            &state,
-            &id,
-            RepoOp::DeleteDraft {
-                repo: repo.clone().into(),
-                slug: slug()
-            }
-        )
-        .is_err(),
-        "a real task is not a draft"
-    );
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::DeleteDraft {
-            repo: repo.clone().into(),
-            slug: draft.slug.clone(),
-        },
-    )
-    .unwrap();
     // Repo-scope playbooks: the library code runs on a scratch copy of the host's files and only
     // what changed goes back, with host paths in what the UI sees.
     {
@@ -1420,7 +1220,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
 
     // The file operations that used to read this machine's disk now read the host's.
     {
-        let op_slug = |slug: &str| slug.to_string();
         // `original` is the retained v2 task the duplicate block wrote to the host.
         let names: Vec<String> = remote_call(
             &state,
@@ -1456,51 +1255,9 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
                 },
             )
         };
-        assert_eq!(attention("remote-task", "waiting_for_input").unwrap(), "Renamed remote — waiting for your input");
+        assert_eq!(attention("remote-task", "waiting_for_input").unwrap(), "Remote task — waiting for your input");
         assert_eq!(attention("no-such-task", "idle").unwrap(), "no-such-task — idle, needs you");
         assert!(attention("remote-task", "on_fire").is_err());
-
-        // Auto-approve is a flag in the task and its execution state, so it needs a v2 task.
-        let auto = |slug: &str, enabled: bool| {
-            remote_call::<alinery_core::Task>(
-                &state,
-                &id,
-                RepoOp::SetAutoApproveAll {
-                    repo: repo.clone().into(),
-                    slug: op_slug(slug),
-                    enabled,
-                },
-            )
-        };
-        assert!(auto("remote-task", true).unwrap_err().contains("pre-v2"));
-        assert!(auto("original", true).unwrap().auto_approve_all);
-        assert!(!auto("original", false).unwrap().auto_approve_all);
-
-        // Related tasks are other tasks on the host: named from their own files, never a path from
-        // another machine.
-        let relate = |related: Vec<alinery_core::RelatedTaskRef>| {
-            remote_call::<alinery_core::Task>(
-                &state,
-                &id,
-                RepoOp::SetRelatedTasks {
-                    repo: repo.clone().into(),
-                    slug: slug(),
-                    related,
-                },
-            )
-        };
-        let tag = |repo_path: &str, slug: &str| alinery_core::RelatedTaskRef {
-            repo_path: repo_path.into(),
-            slug: slug.into(),
-            name: String::new(),
-        };
-        let related = relate(vec![tag(&repo, "original")]).unwrap();
-        assert_eq!((related.related_tasks[0].slug.as_str(), related.related_tasks[0].name.as_str()), ("original", "Original"));
-        for foreign in [format!("alinery+ssh://{id}{repo}"), "/Users/someone/on-a-mac".to_string()] {
-            let refused = relate(vec![tag(&repo, "original"), tag(&foreign, "original")]).unwrap_err();
-            assert!(refused.contains("same machine"), "{foreign}: {refused}");
-        }
-        assert!(relate(Vec::new()).unwrap().related_tasks.is_empty());
 
         // A review handoff copies an artifact between tasks on the host and starts the target session
         // through the host's own daemon (here not started: no agent is wanted in a test).
@@ -2128,9 +1885,10 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
             remote_call::<bool>(
                 &handle.state::<crate::AppState>(),
                 &id,
-                RepoOp::WorktreeExists {
+                RepoOp::SessionArtifactReady {
                     repo: repo.into(),
                     slug: "remote-task".into(),
+                    session_id: "s1".into(),
                 },
             )
         })
@@ -2139,13 +1897,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
 
     // The command is an async fn: its first poll runs up to the hand-off and returns.
-    let mut rename = Box::pin(crate::rename_task(
-        handle.clone(),
-        handle.state(),
-        key.clone(),
-        "remote-task".into(),
-        "Renamed remotely".into(),
-    ));
+    let mut rename = Box::pin(crate::read_chat_image(handle.clone(), "remote-task".into(), "missing.png".into()));
     let started = std::time::Instant::now();
     let first = rename.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     let took = started.elapsed();
@@ -2154,8 +1906,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
 
     // Resumed, the host answers both, and the command finishes with the host's result.
     resume.now();
-    let renamed = tauri::async_runtime::block_on(rename).unwrap();
-    assert_eq!(renamed.name, "Renamed remotely");
+    assert!(tauri::async_runtime::block_on(rename).is_err(), "the host answers that the image is not there");
     assert!(!direct.join().unwrap().unwrap());
     drop(resume);
     disconnect_host(&handle, &id);
