@@ -2357,7 +2357,11 @@ fn approval_secrets_are_kept_per_repo_in_an_owner_only_file() {
     store_ui_secret(&secrets, "/srv/a", "second").unwrap();
     assert_eq!(secret_of("/srv/a").as_deref(), Some("second"), "a restarted daemon replaces its secret");
     assert_eq!(secret_of("/srv/b").as_deref(), Some("other"));
-    assert_eq!(read_ui_secrets(&remote_secrets_dir(&app_config, "another-host").unwrap()).remove("/srv/a"), None, "secrets do not cross hosts");
+    assert_eq!(
+        read_ui_secrets(&remote_secrets_dir(&app_config, "another-host").unwrap()).remove("/srv/a"),
+        None,
+        "secrets do not cross hosts"
+    );
     assert_eq!(std::fs::metadata(secrets.join("ui-secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
     let _ = std::fs::remove_dir_all(dir);
 }

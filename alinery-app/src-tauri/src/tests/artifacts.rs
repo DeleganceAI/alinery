@@ -719,9 +719,7 @@ fn nested_artifact_list_sorts_numerically_and_excludes_reserved_namespaces() {
 
 #[test]
 fn execution_artifact_metadata_browses_saved_ownership_offline_without_locks() {
-    use alinery_core::execution::{
-        write_execution_state_unlocked, CompletionPermission, ExecutionCandidate, ExecutionLifecycle, ExecutionRecord, LaunchChoices, OutputAssignment,
-    };
+    use alinery_core::execution::{write_execution_state_unlocked, CompletionPermission, ExecutionCandidate, ExecutionLifecycle, ExecutionRecord, LaunchChoices, OutputAssignment};
     let repo = activity_repo("art-off");
     write_retained_discovery_task(&repo, "task", "offline-owner", false);
     let mut saved = alinery_core::board::saved_task_execution(&repo, "task").unwrap();

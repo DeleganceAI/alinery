@@ -511,7 +511,10 @@ fn a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_bloc
 
     let mut state = read_execution_state(&f.repo, "task").unwrap();
     assert_eq!(state.executions.keys().map(String::as_str).collect::<Vec<_>>(), ["e1", "e2", "e3", "e4"]);
-    assert!(state.executions.values().all(|e| e.lifecycle == ExecutionLifecycle::Completed && e.shutdown_confirmed && e.receipt_id.is_some()));
+    assert!(state
+        .executions
+        .values()
+        .all(|e| e.lifecycle == ExecutionLifecycle::Completed && e.shutdown_confirmed && e.receipt_id.is_some()));
     assert_eq!(state.executions["e2"].candidate.step_key, "sum");
     assert_eq!(state.executions["e2"].candidate.inputs["numbers.md"], ["e1/numbers.md"]);
     assert_eq!(state.executions["e4"].depth, 3);
