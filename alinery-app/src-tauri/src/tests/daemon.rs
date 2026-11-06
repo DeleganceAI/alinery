@@ -589,6 +589,72 @@ fn ensure_daemon_reuses_an_answering_daemon_of_our_protocol_and_config() {
     }
 }
 
+// The relaunch case (S5.3): a daemon started by one app process is found by the next one with the token the first kept on disk.
+// Nothing but that file carries over, so the second attach has no in-memory state to lean on. It must be the same process
+// (PID and epoch unchanged), and it must not have been started again. Runs the real sidecar, which `copy-sidecar.sh debug` puts
+// beside the test binary; without it there is nothing to launch and the test says so.
+#[test]
+fn a_relaunched_app_reattaches_to_the_daemon_that_outlived_it_with_the_stored_token() {
+    if alinery_core::resolve_alineryd_path().is_none() {
+        eprintln!("skipped: no alinery-vinculum-daemon beside the test binary (run src-tauri/scripts/copy-sidecar.sh debug)");
+        return;
+    }
+    let lane = crate::alineryd_socket_namespace();
+    let root = PathBuf::from(format!("/tmp/alinery-rl-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
+    let repo = root.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new(std::env::var("ALINERY_GIT_PATH").unwrap_or_else(|_| "git".into()))
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=t"])
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    let app_config = root.join("cfg").join("app.toml");
+    register_takeover_repo(&repo, &app_config);
+    // The test's own daemon goes the way a person would stop it (a confirmed stop-daemon), also when an assertion fails.
+    struct StopDaemon<'a>(&'a Path, &'a Path, Option<&'a str>, &'a Path);
+    impl Drop for StopDaemon<'_> {
+        fn drop(&mut self) {
+            let key = self.0.display().to_string();
+            let _ = shutdown_daemon(&key, self.1, self.2, ShutdownOrigin::StopDaemon, "relaunch-test", None, || Err("an rpc daemon".into()));
+            let _ = alinery_core::legacy_daemon::wait_for_daemon_gone(self.0, self.2.unwrap_or(""));
+            let _ = fs::remove_dir_all(self.3);
+        }
+    }
+    let _stop = StopDaemon(&repo, &app_config, lane.as_deref(), &root);
+    let peer = || {
+        let stream = std::os::unix::net::UnixStream::connect(alinery_core::rpc_socket_path(&repo, lane.as_deref())).unwrap();
+        alinery_core::legacy_daemon::peer_process_id(&stream).unwrap()
+    };
+
+    let first = AppState::default();
+    attach_repo_daemon(&first, &repo, &app_config);
+    assert!(first.daemon_attached(&repo), "the first app process starts and attaches the daemon");
+    let (pid, epoch) = (peer(), crate::daemon::hello_current(&repo, &app_config, Duration::from_secs(5)).unwrap().epoch);
+    let secret = crate::daemon::rpc_secret_path(
+        alinery_core::app_config_dir_of(&app_config).unwrap(),
+        &repo.to_string_lossy(),
+        lane.as_deref().unwrap_or(""),
+    );
+    assert!(secret.exists(), "the token the daemon accepted is kept");
+    assert!(!crate::daemon::pending_rpc_secret_path(&secret).exists(), "and it was committed after the first Hello");
+
+    // The first app process quits: its GUI ownership flock goes with it, and the daemon stays.
+    let compat = first.daemon_compat(&repo);
+    drop(first);
+    let second = AppState::default();
+    attach_repo_daemon(&second, &repo, &app_config);
+    assert!(second.daemon_attached(&repo), "the next app process reattaches");
+    assert_eq!(second.daemon_compat(&repo), compat);
+    assert_eq!(peer(), pid, "the daemon was not started again");
+    assert_eq!(crate::daemon::hello_current(&repo, &app_config, Duration::from_secs(5)).unwrap().epoch, epoch);
+}
+
 // A daemon on another protocol, or one started with another app config, is a conflict that names it and its sessions. It is
 // never stopped here and the app never speaks to it as if it were current.
 #[test]

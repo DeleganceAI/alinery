@@ -18,7 +18,8 @@ pub(crate) fn resolve_alongside(name: &str) -> Option<PathBuf> {
 
 /// Start a daemon for `repo` and return; the caller waits for it to answer `Hello`.
 pub(crate) fn start_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
-    let binary = resolve_alongside("alinery-vinculum-daemon").ok_or("alinery-vinculum-daemon binary not found beside the app")?;
+    // The file whose content the build id hashes, so the daemon started is the one the app compares against (and `cargo test` finds it).
+    let binary = alinery_core::resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found beside the app")?;
     let namespace = alineryd_socket_namespace();
     let host_executable = canonical_host_executable(std::env::current_exe());
     // The token is kept before the daemon exists, as for a remote daemon, so a started daemon never
