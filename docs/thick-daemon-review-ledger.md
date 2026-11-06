@@ -896,6 +896,55 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **What:** the Accept line "a community import into a remote repo writes the playbook on the host" needs the Linux runtime bundle (`resources/remote/manifest.json` has no targets on this machine; no zig) and so a daemon at protocol 35 in the Debian container. I did not build it. What was run: the import against a repo directory by the daemon (`rpc/community.test.ts`, 12 tests), which is the same code that runs on the host, and the page's call (`sync/community.test.ts`). The daemon only writes its own repo, so a remote write cannot reach the local copy; that is the claim L-S4.10-c checks. The bump to 35 is in `protocol.rs`, `main.ts` and the audited-shutdown list in `daemon_client.rs`; the runtimes must be rebuilt (`alinery-core`, `mcp/` and `vinculum-daemon/` changed) before the live remote tests. After the proto regeneration `bun install` was needed in `vinculum-daemon` (as in R-S4.7-5).
 - **Files:** `alinery-core/src/protocol.rs`, `vinculum-daemon/src/main.ts`, `alinery-core/src/daemon_client.rs`.
 
+### R-S4.11-1: O9 built as (b), tested on macOS only
+- **Kind:** decision (the WA; the plan asked for "a test on both platforms").
+- **What:** `platform/keepawake.ts` holds a child that ends with the daemon: macOS `/usr/bin/caffeinate -i -w <daemon pid>`; Linux `systemd-inhibit --what=idle --who=Alinery --mode=block cat` with a stdin pipe the daemon holds. macOS was measured: `pmset -g assertions` lists one `PreventUserIdleSystemSleep` for the child and no `PreventSystemSleep`; `kill -9` of the parent removes it (`keepawake.test.ts` runs this on darwin). The Linux mechanism (a pipe the daemon holds, closed by its death) was tested with `cat` on macOS, with a second child spawned after the hold, so a session's shell does not keep the pipe open. Not run: the real `systemd-inhibit` (the `debian:12` arm64 image has neither it nor logind) and a Linux run of the test file. Two behaviours differ from the Rust: the macOS hold is a second process instead of an in-process IOKit assertion (the Rust comment named that as the risk; `-w` removes it), and a tool that fails is retried after 30 s (the Rust retried every second and deduplicated only the log line).
+- **Options:** (a) keep the IOKit FFI (needs a Rust library beside the daemon, the thing S4.11 removes); (b) chosen.
+- **Reverse:** `git show 68a5c6a^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
+- **Files:** `vinculum-daemon/src/platform/keepawake.ts`, `keepawake.test.ts`, `keepawake.fixture.ts`, `platform/process.ts`, `scripts/tests/check-no-auto-session-kill.sh`. Live: L-S4.11-a, L-S4.11-b.
+
+### R-S4.11-2: the first Accept line is read as "no libalinery_core"
+- **Kind:** deviation from the Accept text.
+- **What:** `rg -n 'dlopen|libalinery_core' vinculum-daemon/src` is not empty and cannot be: `platform/lock.ts` (flock, O6), `platform/fsync-worker.ts` (`F_FULLFSYNC`, O26) and `rpc/peer.ts` (peer credentials) dlopen libc by design. What is true: nothing loads `libalinery_core`, and `rg -n 'libalinery_core|ALINERY_OWNERSHIP_LIB|bun:ffi' src/main.ts src/tasks.ts` and `rg -n libalinery_core` over the daemon source, the app, the scripts and the gates return nothing.
+- **Reverse:** none needed; the plan's text should say "dlopen of libalinery_core".
+
+### R-S4.11-3: the TypeScript fence reads the fields the daemon uses, not the whole serde shape
+- **Kind:** decision (conservative on what it blocks, lenient on what it accepts).
+- **What:** `domain/ownership.ts` checks `execution.json` for `version` 1, a positive `max_live_sessions`, a numeric `revision`, string `owning_lane`, `owning_app_config_identity` and `definition_identity`, and records with a known `lifecycle` and a string `owner_session_id`; the retained playbook must match its identity and parse; `task.md` must parse as `parseTask` (the board's reader) does. Rust's `read_execution_state` fails on any field of `TaskExecutionState` that is missing or mistyped. A file that is wrong elsewhere passes the daemon and still fails the shell's `check_available` (which is still the strict Rust reader), so the banner and the takeover preflight are as strict as before. Adoption writes the file back whole, so unknown fields are kept.
+- **Options:** (a) as built; (b) port the whole struct as a TypeScript validator (about 150 lines, and a second copy of `TaskExecutionState` to keep in step); (c) have the shell run `check_available` before it starts a daemon.
+- **Reverse:** write the validator in `readExecutionState`.
+- **Files:** `vinculum-daemon/src/domain/ownership.ts`, `alinery-core/src/repo_ownership.rs`.
+
+### R-S4.11-4: a refused fence is `code: message` on stderr and exit 1
+- **Kind:** choice.
+- **What:** before, an ownership failure was an uncaught `Error` from the FFI. `main.ts` now prints `repo_busy: ...` or `failed_precondition: ...` and exits 1. `repo_busy` means a lease is held or a lane's socket still answers; anything that cannot be proven stopped (a lock that is a directory or a symlink, a socket file that is not a socket, a corrupt task record) is `failed_precondition`. Not checked in the app: how the shell words a daemon that exits at start (it reads the daemon log). The shell's banner (`inspect_owners`) is where the user sees an incompatible owner, as before.
+- **Files:** `vinculum-daemon/src/main.ts`, `domain/ownership.ts`.
+
+### R-S4.11-5: the hosted token is not sent as a settings write
+- **Kind:** deviation from Build bullet 4 (decided overnight, conservatively); not built.
+- **What:** the plan has the shell send the refreshed hosted token to the daemon as a settings write instead of a file the daemon reads. `inference.json` is also read by the shell (`hosted.rs`, the hosted catalog), copied to a host by credential sharing (`SHARE_HOSTED`), refreshed together with the isolated `models.yml`, and wiped on sign-out (`hosted_inference.rs`). A write that only reaches the daemon would leave those readers on the file, so there would be two sources for one token. The refresh itself did not move: it stays in the shell (`spawn_pi_hosted_refresh`, `refresh_hosted_inference_before_open`), as the plan says. S4.12 (`ProviderService`) is the session that owns credentials and the model catalog, and is where a daemon-held token fits; at that point the file, the share item and the `models.yml` splice change together.
+- **Options:** (a) leave the file (chosen); (b) add `SettingsService.WriteHostedInference` (ADMIN, a hand-written `prost` message for the shell, a protocol bump) that makes the daemon write `inference.json` on its own host, and have the shell call it on each refresh and on every connect to a remote host (this would also fix a remote host's token going stale between connects, which today is only re-pushed on connect).
+- **Reverse / next step:** (b), as part of S4.12.
+- **Files:** none changed; `src/session.rs`, `alinery-core/src/hosted_inference.rs`, `vinculum-daemon/src/provider.ts` are where it would go.
+
+### R-S4.11-6: takeover needed no change
+- **Kind:** unverified claim, narrowed.
+- **What:** the plan says "confirm sends `Shutdown(CONFIRMED_TAKEOVER)`". It already does (`daemon.rs` `confirm_repo_takeover_blocking` calls `shutdown_daemon` with `ShutdownOrigin::ConfirmedTakeover`, since S1.4), and `rpc.test.ts` covers the origin. The prepare, confirm and cancel commands are unchanged, and so is the Rust `check_available` they use. The takeover itself in the app is live check L-S4.11-c.
+
+### R-S4.11-7: adoption marks the Rust-shaped records; what the engine does with them is S4.2's
+- **Kind:** unverified claim.
+- **What:** `acquireRepoOwnership` interrupts the `executions` records of `execution.json` exactly as the Rust did. For an execution the playbook engine runs, that map is a projection of the engine block (`mergedRecords` rewrites it on the next save), and the engine block is not touched by adoption. So after an adoption, a task whose session was running shows `interrupted` until the engine's own start-up pass (`resumeInterrupted`, `startGraphs`) saves again. The daemon tests cover the file; what the Tasks page shows for a playbook task that was mid-step across an upgrade is L-S4.11-c.
+- **Files:** `vinculum-daemon/src/domain/ownership.ts`, `domain/executionStore.ts`.
+
+### R-S4.11-8: the Rust ownership tests moved
+- **Kind:** disposition.
+- **What:** the nine "kept in Rust, S4.11" cases of the 53-case table (4.1) are ported to `domain/ownership.test.ts` and deleted from `execution_tests.rs`. One Rust case replaces what the shell still uses (`check_available_blocks_on_a_held_owner_unknown_socket_and_malformed_evidence_and_writes_nothing`), and `repo_ownership.rs` keeps its two inspection tests. The write-failure seam that the Rust test used (`with_adoption_write_failure`) is an `options.write` argument in TypeScript.
+
+### R-S4.11-9: the Linux runtime and the bundle changed, neither was rebuilt
+- **Kind:** unverified claim.
+- **What:** `scripts/build-remote-runtimes.sh` no longer builds or ships `libalinery_core.so` (the archive is the daemon, `alinery-mcp` and `MANIFEST`), `copy-sidecar.sh` no longer copies the library, `tauri.conf.json` no longer bundles `resources/ownership/`, and `RepoOp::SpawnDaemon` lost `ownership_lib` (the repo service is versioned by the runtime hash, not `PROTOCOL_VERSION`). None of it was run: there is no zig on this machine and the app is not built. `cargo check -p alinery-app`, the workspace tests and the shell gates pass. `alinery-core` is `rlib` only. `AGENTS.md` still says the daemon uses "the ownership library (`libalinery_core`)" (S5.4 rewrites that line).
+- **Files:** `scripts/build-remote-runtimes.sh`, `alinery-app/src-tauri/scripts/copy-sidecar.sh`, `tauri.conf.json`, `alinery-core/Cargo.toml`, `alinery-core/src/repo_service.rs`, `src/remote.rs`, `src/pi_durable.rs`. Live: L-S4.11-d, L-S4.11-e.
+
 ## E. Known flaky tests
 
 ### R-FLAKE-1: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
@@ -955,3 +1004,4 @@ Edit the plan, or let S5.4 do it.
 - After S4.7, git work on a task (worktree removal, commit, push and the compare URL, the stored pull-request link) runs in the repository's daemon, so for a remote repository it runs on the host with the host's git and credentials; only the GitHub pull-request lookup (with this Mac's token) runs here. If the README says the app runs git, say that the daemon does.
 - After S4.8, starting, recovering, killing and discarding a sub-task run in the repository's daemon (on the host, for a remote repository). `alinery-mcp`'s `alinery_create_subtask` creates the child through the daemon as before; `alinery_inspect_subtask_finish` and `alinery_finalize_subtask` still run in the MCP process until S5.1.
 - After S4.9, backup, restore-verification, the storage scan and the purge run in the repository's daemon (on the host, for a remote repository), so a remote repository's backup destination is a folder on the host. Backups are written with the host's `zip` and read with its `unzip`: a Linux host needs both installed (the remote setup refuses a host without them). The automatic backup triggers (after an artifact change, after a push or commit, before archive) are decided by the daemon, and a failing before-archive backup now stops the archive. Backups made by earlier builds are not guaranteed to restore.
+- After S4.11, the "keep this computer awake" setting holds its inhibit through a small helper process of the daemon (`caffeinate` on macOS, `systemd-inhibit` on Linux), which exits with the daemon. If the README describes how it works, say so; the Linux hold needs logind.

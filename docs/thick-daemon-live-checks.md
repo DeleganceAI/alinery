@@ -619,6 +619,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the title and description prefill the form; a bare `#N` uses the repo's origin; with the repo override set the request uses that token (an invalid override fails and the global token is not tried); Linear images become attachments and failed ones are listed in the ticket; the created task has `github_issue` or `linear_id` in `task.md`. The anonymized `import.fetch` telemetry event still appears once per import when consent is on.
 - **Status:** open
 
+### L-S4.11-a: keep this computer awake on macOS
+
+- **Session:** S4.11. Plan: S4.11 (Accept 3), O9; ledger R-S4.11-1.
+- **Steps:** launch the app from this branch on a local repo. Settings > General > Misc: turn on "Keep this computer awake". Open a Terminal session. In another terminal: `pmset -g assertions | grep -B1 -A3 caffeinate` and `pgrep -fl 'caffeinate -i -w'`. Close the session (or let it exit), wait 2 s, and look again. Turn the setting off while a session runs. Then with a session open and the setting on, `kill -9` the `alinery-vinculum-daemon` pid and look within a second.
+- **Expected:** with the setting on and a live session, one `caffeinate -i -w <daemon pid>` exists and `pmset` shows its `PreventUserIdleSystemSleep` assertion (and no `PreventSystemSleep` from it); with no live session, or the setting off, it is gone within about 2 s; after `kill -9` of the daemon it is gone within a second. The display can still sleep, the lid still sleeps, and an explicit sleep from the Apple menu still works. `<app config dir>/logs/alinery.log` has `power.idle-inhibit acquired` and `released` lines.
+- **Status:** open
+
+### L-S4.11-b: keep this computer awake on a Linux desktop with logind
+
+- **Session:** S4.11. Plan: S4.11 (Accept 3), O9; ledger R-S4.11-1.
+- **Steps:** on a Linux machine with systemd-logind and `/usr/bin/systemd-inhibit` (not a container), run the app or the daemon against a repo with `[global.power] keep_awake = true` in its `app.toml`, and open a Terminal session. `systemd-inhibit --list`. Then `kill -9` the daemon and run `systemd-inhibit --list` again within a second. Also run `cd alinery-app/src-tauri/vinculum-daemon && bun test src/platform/keepawake.test.ts` there.
+- **Expected:** one lock, who `Alinery`, what `idle`, mode `block`, while a session is live; no lock within a second of `kill -9` (the daemon's death closes the pipe, which ends `cat`, which ends `systemd-inhibit`; a session's shell must not keep it alive). On a machine without logind the log has one `power.idle-inhibit unavailable` line and no retry for 30 s. The test file passes (the darwin test is skipped).
+- **Status:** open
+
+### L-S4.11-c: adoption on upgrade and a confirmed takeover in the app
+
+- **Session:** S4.11. Plan: S4.11 (Build: ownership, takeover); ledger R-S4.11-3, R-S4.11-6, R-S4.11-7.
+- **Steps:** (1) with a repo that has a playbook task mid-step (a running session), an archived task and a finished task, stop the app's daemon (Settings > Stop daemon), then open the repo again from this branch. (2) Run a second app instance or an older build's daemon on the same repo and use the conflict banner's Take over {repo}: confirm it, and read the dialog's session count first. (3) Corrupt one task's `execution.json` (copy it aside first) and open the repo.
+- **Expected:** (1) the repo opens, all tasks including the archived one show, the finished task's artifacts and receipts are unchanged, the mid-step task shows an interrupted execution that it can resume or rerun, and `execution.json` of each task has the new `owning_lane` and `owning_app_config_identity`. (2) the banner names the owner, the confirmation expires after 120 s, the old daemon exits through `Shutdown(CONFIRMED_TAKEOVER)` and the new one owns the repo; no process is killed by name. (3) the repo shows the conflict banner (not a crash loop) and the daemon log has `failed_precondition: ...` naming the file; restoring the file lets it open.
+- **Status:** open
+
+### L-S4.11-d: the Linux runtime without libalinery_core.so, and ownership on a host
+
+- **Session:** S4.11. Plan: S4.11 (Accept 2, remote); ledger R-S4.11-9. Needs zig (see "Needs the Linux runtime bundle").
+- **Steps:** `scripts/build-remote-runtimes.sh` (arm64 is enough) and check the archive: `tar tzf alinery-app/src-tauri/resources/remote/aarch64-unknown-linux-gnu.tar.gz` lists `alinery-vinculum-daemon`, `alinery-mcp` and `MANIFEST` and no `libalinery_core.so`. Then `scripts/tests/remote-sshd/run.sh start`, connect the container as a host, open a repo on it, and start a second daemon by hand on the same repo path (`~/.local/share/alinery-remote/runtime/<hash>/alinery-vinculum-daemon --repo <path> --app-config <other.toml> --socket-namespace b`). `run.sh stop`.
+- **Expected:** the host's daemon starts (no "ownership library" error); the second exits 1 with `repo_busy` and the first's sessions are untouched. `cargo test -p alinery-app --lib -- tests::remote::live` passes.
+- **Status:** open
+
+### L-S4.11-e: a bundled app without the ownership resource
+
+- **Session:** S4.11. Plan: S4.11 (Exit); ledger R-S4.11-9. Needs a signing identity (see "Needs a signing identity").
+- **Steps:** build the app bundle as the release does (`npm run tauri build`, signed), check that `Alinery.app/Contents/Resources` has no `ownership/` folder, launch it and open a repo, open a Terminal session, quit leaving sessions running, relaunch.
+- **Expected:** the daemon starts from the bundle with no `libalinery_core` anywhere, sessions survive the quit and reattach, and the bundle's `Resources` and `MacOS` hold no `libalinery_core.dylib`.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
@@ -642,5 +677,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.8-a to -e (S4.8):** built; see the entries above.
 - **L-S4.9-a to -f (S4.9):** built; see the entries above. L-S4.5-e is expected to pass now (L-S4.9-d).
 - **L-S4.10-a to -d (S4.10):** built; see the entries above.
+- **L-S4.11-a to -e (S4.11):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
