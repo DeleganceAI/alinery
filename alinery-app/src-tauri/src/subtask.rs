@@ -34,7 +34,13 @@ pub(crate) fn discard_subtask_in(state: &AppState, repo: &Path, task_slug: &str,
 }
 
 #[tauri::command]
-pub(crate) async fn subtask_state(app: AppHandle, state: State<'_, AppState>, task_slug: String, repo_path: Option<String>) -> Result<alinery_core::SubtaskManagerState, String> {
+// Generic over the runtime only so a test can poll the command on a mock app.
+pub(crate) async fn subtask_state<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+    task_slug: String,
+    repo_path: Option<String>,
+) -> Result<alinery_core::SubtaskManagerState, String> {
     let target = target_or_active_ref(&app, repo_path)?;
     if let RepoRef::Local(repo) = &target {
         require_repo_owned(&state, repo)?;

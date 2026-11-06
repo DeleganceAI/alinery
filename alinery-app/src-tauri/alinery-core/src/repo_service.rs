@@ -48,83 +48,6 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
     },
-    ListArtifactsWithMetadata {
-        repo: PathBuf,
-        slug: String,
-    },
-    ListTaskArtifactTree {
-        repo: PathBuf,
-        slug: String,
-    },
-    ReadTaskArtifactNode {
-        repo: PathBuf,
-        slug: String,
-        node_id: String,
-    },
-    ReadArtifact {
-        repo: PathBuf,
-        slug: String,
-        name: String,
-    },
-    ListArtifactComments {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-    },
-    AddArtifactComment {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-        comment: crate::artifact_comments::CommentInput,
-    },
-    /// Turns an artifact's comments into a review file; the reply is the host's path to it.
-    ArchiveArtifactComments {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-    },
-    PrepareArtifactCommentsPrompt {
-        repo: PathBuf,
-        slug: String,
-        artifacts: Vec<String>,
-    },
-    PrepareReviewApprovalPrompt {
-        repo: PathBuf,
-        slug: String,
-        review_artifact: String,
-    },
-    FinalizeSessionMessageActions {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-        actions: Vec<crate::artifact_comments::SessionMessageActionProvenance>,
-    },
-    ArtifactReviewPendingStatus {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-    },
-    ClearArtifactReviewPending {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-    },
-    ListCommentDrafts {
-        repo: PathBuf,
-        slug: String,
-    },
-    SaveCommentDraft {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-        comment: crate::artifact_comments::CommentInput,
-    },
-    DeleteCommentDraft {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-        anchor_id: String,
-    },
     TaskSourceBranches {
         repo: PathBuf,
         #[serde(default)]
@@ -178,19 +101,6 @@ pub enum RepoOp {
         slug: String,
         manager_session_id: String,
     },
-    ArtifactNodePath {
-        repo: PathBuf,
-        slug: String,
-        node_id: String,
-    },
-    /// An attachment (or artifact-tree attachment node) image; the reply carries the bytes as base64.
-    ReadAttachmentImage {
-        repo: PathBuf,
-        slug: String,
-        name: String,
-        #[serde(default)]
-        node_id: Option<String>,
-    },
     /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
     /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
     ReadRepoOverrides {
@@ -208,25 +118,6 @@ pub enum RepoOp {
     ApplyPlaybookTree {
         repo: PathBuf,
         changes: Vec<crate::playbook_tree::TreeChange>,
-    },
-    /// The task's visible artifact names.
-    ListArtifacts {
-        repo: PathBuf,
-        slug: String,
-    },
-    /// Where the pending review comments of an artifact are written for the agent.
-    ArtifactCommentMarkdownPath {
-        repo: PathBuf,
-        slug: String,
-        artifact: String,
-    },
-    /// Copy a review artifact between two repositories on this host and start the target session
-    /// through the host's own daemon.
-    SendReviewHandoff {
-        source_repo: PathBuf,
-        target_repo: PathBuf,
-        app_config: PathBuf,
-        request: crate::ReviewHandoffRequest,
     },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
@@ -432,52 +323,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
         RepoOp::SubtaskState { repo, slug } => to_value(crate::subtask::subtask_manager_state(&repo, &slug)?),
-        RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
-        RepoOp::ListTaskArtifactTree { repo, slug } => to_value(crate::list_task_artifact_tree(&repo, &slug)?),
-        RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
-        RepoOp::ReadArtifact { repo, slug, name } => to_value(crate::artifact_comments::read_artifact_text(&repo, &slug, &name)?),
-        RepoOp::ListArtifactComments { repo, slug, artifact } => to_value(crate::artifact_comments::load_artifact_comments_for(&repo, &slug, &artifact)?),
-        RepoOp::AddArtifactComment { repo, slug, artifact, comment } => to_value(crate::artifact_comments::add_artifact_comment_for(
-            &repo,
-            &slug,
-            &artifact,
-            comment.anchor_id,
-            comment.anchor_kind,
-            comment.anchor_label,
-            comment.anchor_excerpt,
-            comment.line_start,
-            comment.line_end,
-            comment.body,
-        )?),
-        RepoOp::ArchiveArtifactComments { repo, slug, artifact } => {
-            to_value(crate::artifact_comments::archive_artifact_comments_for(&repo, &slug, &artifact)?.display().to_string())
-        }
-        RepoOp::PrepareArtifactCommentsPrompt { repo, slug, artifacts } => to_value(crate::artifact_comments::prepare_artifact_comments_prompt_for(&repo, &slug, &artifacts)?),
-        RepoOp::PrepareReviewApprovalPrompt { repo, slug, review_artifact } => {
-            to_value(crate::artifact_comments::prepare_review_approval_prompt_for(&repo, &slug, &review_artifact)?)
-        }
-        RepoOp::FinalizeSessionMessageActions { repo, slug, session_id, actions } => {
-            crate::artifact_comments::finalize_session_message_actions_for(&repo, &session_id, &slug, &actions).map(|()| Value::Null)
-        }
-        RepoOp::ArtifactReviewPendingStatus { repo, slug, artifact } => to_value(crate::artifact_comments::artifact_review_pending_status_for(&repo, &slug, &artifact)?),
-        RepoOp::ClearArtifactReviewPending { repo, slug, artifact } => crate::artifact_comments::clear_artifact_review_pending_for(&repo, &slug, &artifact).map(|()| Value::Null),
-        RepoOp::ListCommentDrafts { repo, slug } => to_value(crate::artifact_comments::list_artifact_comment_drafts_for(&repo, &slug)?),
-        RepoOp::SaveCommentDraft { repo, slug, artifact, comment } => crate::artifact_comments::save_artifact_comment_draft_for(
-            &repo,
-            &slug,
-            &artifact,
-            comment.anchor_id,
-            comment.anchor_kind,
-            comment.anchor_label,
-            comment.anchor_excerpt,
-            comment.line_start,
-            comment.line_end,
-            comment.body,
-        )
-        .map(|()| Value::Null),
-        RepoOp::DeleteCommentDraft { repo, slug, artifact, anchor_id } => {
-            crate::artifact_comments::delete_artifact_comment_draft_for(&repo, &slug, &artifact, &anchor_id).map(|()| Value::Null)
-        }
         RepoOp::TaskSourceBranches { repo, selected_base_ref } => to_value(crate::git_actions::task_source_branches(&repo, selected_base_ref.as_deref())?),
         RepoOp::RemoveWorktree { repo, slug } => crate::git_actions::remove_worktree(&repo, &slug).map(|()| Value::Null),
         RepoOp::PushAndCompareUrl { repo, slug } => to_value(crate::git_actions::push_and_compare_url(&repo, &slug)?),
@@ -494,27 +339,10 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::SubtaskManagerRequest { repo, slug, recover } => to_value(crate::subtask::subtask_manager_request(&repo, slug, recover)?),
         RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
         RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
-        RepoOp::ArtifactNodePath { repo, slug, node_id } => to_value(crate::artifact_node_path(&repo, &slug, &node_id)?),
-        RepoOp::ReadAttachmentImage { repo, slug, name, node_id } => to_value(WireBytes {
-            data: crate::attachments::read_attachment_image(&repo, &slug, &name, node_id.as_deref())?,
-        }),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
         RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
-        RepoOp::ListArtifacts { repo, slug } => to_value(crate::visible_artifact_names(&repo, &slug)?),
-        RepoOp::ArtifactCommentMarkdownPath { repo, slug, artifact } => {
-            to_value(crate::artifact_comments::artifact_comment_markdown_path(&repo, &slug, &artifact)?.display().to_string())
-        }
-        RepoOp::SendReviewHandoff {
-            source_repo,
-            target_repo,
-            app_config,
-            request,
-        } => {
-            let daemon = host_daemon(&target_repo, &app_config).ok_or("daemon not connected")?;
-            to_value(crate::send_review_handoff_for_repos(&daemon, &source_repo, &target_repo, request)?)
-        }
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, set, remove, erase_oauth } => to_value(crate::credential_sync::apply(&path, &set, &remove, erase_oauth)?),
         RepoOp::RemoveFile { path } => match std::fs::remove_file(&path) {
@@ -689,98 +517,6 @@ mod tests {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
             },
-            RepoOp::ListArtifactsWithMetadata {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::ListTaskArtifactTree {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::ReadTaskArtifactNode {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                node_id: "n".into(),
-            },
-            RepoOp::ReadArtifact {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                name: "01.md".into(),
-            },
-            RepoOp::ListArtifactComments {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-            },
-            RepoOp::AddArtifactComment {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-                comment: crate::artifact_comments::CommentInput {
-                    anchor_id: "a".into(),
-                    anchor_kind: "heading".into(),
-                    anchor_label: "L".into(),
-                    anchor_excerpt: "E".into(),
-                    line_start: 1,
-                    line_end: 2,
-                    body: "B".into(),
-                },
-            },
-            RepoOp::ArchiveArtifactComments {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-            },
-            RepoOp::PrepareArtifactCommentsPrompt {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifacts: vec!["01.md".into()],
-            },
-            RepoOp::PrepareReviewApprovalPrompt {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                review_artifact: "r.md".into(),
-            },
-            RepoOp::FinalizeSessionMessageActions {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-                actions: vec![crate::artifact_comments::SessionMessageActionProvenance::ReviewApproval { review_artifact: "r.md".into() }],
-            },
-            RepoOp::ArtifactReviewPendingStatus {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-            },
-            RepoOp::ClearArtifactReviewPending {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-            },
-            RepoOp::ListCommentDrafts {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::SaveCommentDraft {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-                comment: crate::artifact_comments::CommentInput {
-                    anchor_id: "a".into(),
-                    anchor_kind: "heading".into(),
-                    anchor_label: "L".into(),
-                    anchor_excerpt: "E".into(),
-                    line_start: 1,
-                    line_end: 2,
-                    body: "B".into(),
-                },
-            },
-            RepoOp::DeleteCommentDraft {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-                anchor_id: "a".into(),
-            },
             RepoOp::TaskSourceBranches {
                 repo: "/srv/a".into(),
                 selected_base_ref: Some("refs/heads/main".into()),
@@ -829,17 +565,6 @@ mod tests {
                 slug: "t".into(),
                 manager_session_id: "m".into(),
             },
-            RepoOp::ArtifactNodePath {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                node_id: "n".into(),
-            },
-            RepoOp::ReadAttachmentImage {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                name: "a.png".into(),
-                node_id: Some("n".into()),
-            },
             RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
             RepoOp::GitOriginUrl { repo: "/srv/a".into() },
             RepoOp::ReadPlaybookTree { repo: "/srv/a".into() },
@@ -857,31 +582,6 @@ mod tests {
                         new: Some(vec![1]),
                     },
                 ],
-            },
-            RepoOp::ListArtifacts {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::ArtifactCommentMarkdownPath {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                artifact: "01.md".into(),
-            },
-            RepoOp::SendReviewHandoff {
-                source_repo: "/srv/a".into(),
-                target_repo: "/srv/b".into(),
-                app_config: "/c/app.toml".into(),
-                request: crate::ReviewHandoffRequest {
-                    source_slug: "s".into(),
-                    source_session: "x".into(),
-                    source_artifact: "01.md".into(),
-                    target_slug: "t".into(),
-                    target_phase: "p".into(),
-                    harness: "omp".into(),
-                    model: "m".into(),
-                    prompt_extra: String::new(),
-                    start: true,
-                },
             },
             RepoOp::WriteFile {
                 path: "/srv/a/app.toml".into(),

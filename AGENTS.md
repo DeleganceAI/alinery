@@ -95,7 +95,6 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `app_config.rs` | `AppConfig`/appearance prefs, known-repo list, repo switching/removal |
 | `settings.rs` | `config.toml`, scoped/global settings, harness + model registry, storage info |
 | `playbook.rs` | playbooks, steps, kanban columns |
-| `artifacts.rs` | artifacts, comments/drafts, review handoff |
 | `task.rs` | `Task`/`BoardTask`, create/draft/attachment/board paths |
 | `session.rs` | `SessionMeta`, session CRUD, message actions, open/write/resize/kill, history |
 | `subtask.rs` | parent/child sub-task lifecycle |
@@ -123,7 +122,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 
 - Task: `create_task`, `list_tasks`, `archive_task`, `restore_task_for_repo`, `attachment_path`
 - Session: `open_session`, `session_prompt`, `session_abort`, `session_set_model`, `session_set_thinking_level`, `finalize_session_message_actions`, `notify_session_attention`, `prepare_hosted_inference`, `list_chat_repos`, `chat_prompt`, `chat_abort`, `chat_set_model`, `chat_set_thinking_level`. Create, start, rename, archive, kill, notification marks, history and chat threads are daemon RPCs (`SessionService`, `ChatService`, `BlobService`) called from the frontend (`src/sync/sessions.ts`, `src/sync/chat.ts`)
-- Playbook/Harness: `list_phases`, `list_playbooks`, `list_harness_models`, `list_artifacts`
+- Playbook/Harness: `list_phases`, `list_playbooks`, `list_harness_models`
 - Daemon/repo: `prepare_repo_takeover`, `confirm_repo_takeover`, `cancel_repo_takeover`, `stop_daemon`, `close_all_repos`, `repo_live_sessions`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `read_app_config`
 - Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear`, `import_github`
 - Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only

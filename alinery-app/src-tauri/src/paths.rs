@@ -163,6 +163,15 @@ pub(crate) fn target_repo_ref_for_app<R: tauri::Runtime>(app: &AppHandle<R>, rep
     }
 }
 
+/// The repo a mutating `_for_repo` command acts on: a local one must be owned by this window.
+pub(crate) fn owned_target(app: &AppHandle, state: &AppState, repo_path: &str) -> Result<RepoRef, String> {
+    let target = target_repo_ref_for_app(app, repo_path)?;
+    if let RepoRef::Local(repo) = &target {
+        require_repo_owned(state, repo)?;
+    }
+    Ok(target)
+}
+
 /// The repo a command targets, validated: the explicit key if given, otherwise the active repo.
 pub(crate) fn target_or_active_ref<R: tauri::Runtime>(app: &AppHandle<R>, repo_path: Option<String>) -> Result<RepoRef, String> {
     match repo_path {
@@ -193,11 +202,6 @@ pub(crate) fn worktrees_dir(repo: &Path) -> PathBuf {
 #[cfg(test)]
 pub(crate) fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
     task_dir(repo, slug).join("artifacts")
-}
-
-#[cfg(test)]
-pub(crate) fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<PathBuf, String> {
-    alinery_core::artifact_file_path(repo, slug, name)
 }
 
 /// What selecting a repo needs before its daemon exists. The rest of readying it (the ignore entry,

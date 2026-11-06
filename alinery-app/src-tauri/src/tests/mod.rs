@@ -6,27 +6,23 @@
 //!
 //! Shared imports and fixtures live here; each child starts with `use super::*`.
 pub(crate) use super::{
-    account_auth_path_in, account_lock_path, account_status_from_path, accounts_url, active_github_repo, add_artifact_comment_for, alineryd_socket_namespace_for,
-    apply_credits_to_hosted_view, archive_artifact_comments_for, artifact_comment_drafts_path, artifact_comment_json_path, artifact_comment_markdown_path, artifact_file_path,
-    artifact_review_pending_path, artifact_review_pending_status_for, artifacts_dir, attach_repo_daemon, attachment_path_in, backup_now_with, backup_queue_lock,
-    begin_sign_in_attempt, cancel_sign_in_at, classify_refresh_response, clear_artifact_review_pending_for, clear_curated_alinery_data, clear_linear_account_in,
-    commit_worktree_in, compare_url, configure_detached_process, credits_view_from, curl_http, curl_request, curl_request_with_timeouts, current_alineryd_socket_path,
-    delete_artifact_comment_draft_for, discard_subtask_with, display_label, end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id,
-    finalize_session_message_actions_for, finish_sign_in, git_cmd, github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_refresh_needed,
-    inference_path, is_hosted_model, is_paid_plan, linear_account_path_in, list_artifact_comment_drafts_for, list_artifacts_for, list_tasks_for_repo,
-    load_artifact_comment_drafts_for, load_artifact_comments_for, loopback_html, next_artifact_review_markdown_path, open_chat_repos_in, paid_from_stored_plan,
-    parse_desktop_credits_body, parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens,
-    parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label, prepare_artifact_comments_prompt_for, prepare_review_approval_prompt_for,
-    production_livemode, read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins, remove_mcp_lane_runtime_files,
-    remove_repo_from_config, require_explicit_daemon, require_repo_owned, resolve_hosted_catalog, restore_backup_into, route_socket_path, sanitize_app_config, sanitize_appearance,
-    save_artifact_comment_draft_for, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, subtask_state_in,
-    sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback,
-    with_access_token_retry, worktrees_dir, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, ArtifactCommentDraftsFile,
-    ArtifactCommentsFile, AuthAttempt, AuthRetryError, BackupSlot, Command, DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMessageActionProvenance, SessionMeta,
-    SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
+    account_auth_path_in, account_lock_path, account_status_from_path, accounts_url, active_github_repo, alineryd_socket_namespace_for, apply_credits_to_hosted_view,
+    artifacts_dir, attach_repo_daemon, backup_now_with, backup_queue_lock, begin_sign_in_attempt, cancel_sign_in_at, classify_refresh_response, clear_curated_alinery_data,
+    clear_linear_account_in, commit_worktree_in, compare_url, configure_detached_process, credits_view_from, curl_http, curl_request, curl_request_with_timeouts,
+    current_alineryd_socket_path, discard_subtask_with, display_label, end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id, finish_sign_in, git_cmd,
+    github_repo_from_remote, gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_refresh_needed, inference_path, is_hosted_model, is_paid_plan,
+    linear_account_path_in, list_tasks_for_repo, loopback_html, open_chat_repos_in, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback,
+    parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode,
+    pkce_challenge, plan_label, production_livemode, read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins,
+    remove_mcp_lane_runtime_files, remove_repo_from_config, require_explicit_daemon, require_repo_owned, resolve_hosted_catalog, restore_backup_into, route_socket_path,
+    sanitize_app_config, sanitize_appearance, session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot,
+    subtask_state_in, sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until,
+    wait_for_linear_callback, with_access_token_retry, worktrees_dir, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs,
+    AuthAttempt, AuthRetryError, BackupSlot, Command, DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMeta, SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE,
+    PROTOCOL_VERSION,
 };
 pub(crate) use alinery_core::git_top_level;
-pub(crate) use alinery_core::task_creation::{unique_attachment_name, MAX_ATTACHMENT_BYTES};
+pub(crate) use alinery_core::task_creation::unique_attachment_name;
 pub(crate) use alinery_core::{
     alinery_app_lock_path, hosted_models_yml_unavailable, models_yml_path, parse_inference_session_body, render_models_yml, strip_terminal_queries, subst, wipe_hosted_files,
     write_hosted_models_yml, HarnessFile, RepoOverrides, DEFAULT_HARNESSES_TOML,
@@ -37,7 +33,6 @@ pub(crate) use std::{fs, io::Write, path::Path};
 
 mod account;
 mod app_config;
-mod artifacts;
 mod backup;
 mod community_playbooks;
 mod connections;

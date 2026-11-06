@@ -154,54 +154,6 @@ pub(crate) async fn open_session(
 }
 
 #[tauri::command]
-pub(crate) async fn prepare_review_approval_prompt(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    task_slug: String,
-    review_artifact: String,
-) -> Result<PreparedSessionMessageAction, String> {
-    let target = require_active_target(&state)?;
-    off_main_thread("prepare review approval", move || match target {
-        ActiveRepo::Local(repo) => prepare_review_approval_prompt_for(&repo, &task_slug, &review_artifact),
-        ActiveRepo::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::PrepareReviewApprovalPrompt {
-                repo: path.into(),
-                slug: task_slug,
-                review_artifact,
-            },
-        ),
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn finalize_session_message_actions(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-    task_slug: String,
-    actions: Vec<SessionMessageActionProvenance>,
-) -> Result<(), String> {
-    let target = require_active_target(&state)?;
-    off_main_thread("finalize message actions", move || match target {
-        ActiveRepo::Local(repo) => finalize_session_message_actions_for(&repo, &id, &task_slug, &actions),
-        ActiveRepo::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::FinalizeSessionMessageActions {
-                repo: path.into(),
-                slug: task_slug,
-                session_id: id,
-                actions,
-            },
-        ),
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn session_prompt(state: State<'_, AppState>, id: String, text: String) -> Result<(), String> {
     require_active_repo_ready(&state)?;
     let daemon = cached_or_own_client(&state, &id).ok_or("daemon not connected")?;

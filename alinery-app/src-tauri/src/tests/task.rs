@@ -2,7 +2,7 @@
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
-use crate::{artifacts_dir, chat_file_stat, read_chat_image_in, MAX_CHAT_IMAGE_BYTES};
+use crate::{chat_file_stat, read_chat_image_in, MAX_CHAT_IMAGE_BYTES};
 
 #[test]
 fn task_without_draft_field_defaults_false() {
@@ -104,23 +104,6 @@ fn read_chat_image_rejects_pdf() {
 }
 
 #[test]
-fn attachment_preview_preserves_bytes_above_chat_limit_and_enforces_attachment_limit() {
-    let repo = unique_attachment_temp("image-preview-limit");
-    let attach = attachments_of(&repo, "task");
-    fs::create_dir_all(&attach).unwrap();
-    let bytes = vec![42; MAX_CHAT_IMAGE_BYTES as usize + 1];
-    fs::write(attach.join("large.PNG"), &bytes).unwrap();
-    assert_eq!(crate::read_attachment_image_in(&repo, "task", "large.PNG", None).unwrap(), bytes);
-    assert!(read_chat_image_in(&repo, "task", "large.PNG").is_err());
-    fs::File::create(attach.join("oversized.png")).unwrap().set_len(MAX_ATTACHMENT_BYTES + 1).unwrap();
-    assert!(crate::read_attachment_image_in(&repo, "task", "oversized.png", None).is_err());
-    fs::write(attach.join("notes.txt"), "not an image").unwrap();
-    assert!(crate::read_attachment_image_in(&repo, "task", "notes.txt", None).is_err());
-    assert!(crate::read_attachment_image_in(&repo, "task", "../large.PNG", None).is_err());
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
 fn chat_file_stat_regular_file_and_rejects_directory() {
     let repo = unique_attachment_temp("chat-file-stat");
     let file = repo.join("shot.png");
@@ -169,32 +152,6 @@ fn targeted_helpers_do_not_depend_on_active_repo() {
     set_active_repo_global(None).unwrap();
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
-}
-
-pub(super) fn retained_duplicate_fixture(repo: &Path) -> Task {
-    let source = include_str!("../../playbooks/one-shot/playbook.md");
-    let reference = alinery_core::playbook::PlaybookRef {
-        scope: alinery_core::playbook::PlaybookScope::Repo,
-        key: "one-shot".into(),
-    };
-    let task = Task {
-        name: "Original".into(),
-        slug: "original".into(),
-        branch: "original".into(),
-        worktree: repo.join(".alinery/worktrees/original").display().to_string(),
-        engine_version: 2,
-        playbook_ref: Some(reference.clone()),
-        ..Default::default()
-    };
-    fs::create_dir_all(artifacts_dir(repo, &task.slug)).unwrap();
-    fs::create_dir_all(sessions_dir(repo, &task.slug)).unwrap();
-    fs::write(task_dir(repo, &task.slug).join("playbook.md"), source).unwrap();
-    fs::write(artifacts_dir(repo, &task.slug).join("00-ticket.md"), "# Edited original\nKeep exact bytes.\n").unwrap();
-    let mut execution = alinery_core::execution::new_execution_state(reference, source, String::new(), 10, Default::default(), Default::default(), Default::default()).unwrap();
-    execution.creation = "ready".into();
-    alinery_core::execution::write_execution_state_unlocked(repo, &task.slug, &mut execution).unwrap();
-    write_task(repo, &task).unwrap();
-    task
 }
 
 #[test]

@@ -332,7 +332,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         )
         .unwrap();
     // The task page's reads, answered by the host: a session meta written there is listed,
-    // and the sub-task, artifact, worktree and launch-field reads agree with the task.
+    // and the sub-task, worktree and launch-field reads agree with the task.
     let meta = alinery_core::SessionMeta {
         id: "s1".into(),
         phase: "build".into(),
@@ -361,327 +361,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .unwrap();
     assert_eq!(subtask.disabled_reason, "Pre-v2 task data is read-only");
-    let tree: Vec<alinery_core::ArtifactTreeNode> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListTaskArtifactTree {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(tree.is_empty());
-    let artifacts: Vec<alinery_core::ArtifactListItem> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListArtifactsWithMetadata {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(artifacts.is_empty());
-    // Artifacts and review comments: the viewer's reads and the whole comment round trip.
-    let artifact = "01-plan.md";
-    let call_ok = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(30)).unwrap();
-    call_ok(RepoOp::WriteFile {
-        path: format!("{repo}/.alinery/tasks/remote-task/artifacts/{artifact}").into(),
-        contents: "# Plan\nline two\n".into(),
-    });
-    let text: String = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadArtifact {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(text, "# Plan\nline two\n");
-    assert!(remote_call::<String>(
-        &state,
-        &id,
-        RepoOp::ReadArtifact {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "../task.md".into()
-        }
-    )
-    .is_err());
-
-    let input = |body: &str| alinery_core::artifact_comments::CommentInput {
-        anchor_id: "h1".into(),
-        anchor_kind: "heading".into(),
-        anchor_label: "Plan".into(),
-        anchor_excerpt: "# Plan".into(),
-        line_start: 1,
-        line_end: 1,
-        body: body.into(),
-    };
-    let added: Vec<crate::ArtifactComment> = remote_call(
-        &state,
-        &id,
-        RepoOp::AddArtifactComment {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-            comment: input("  Needs a rollback step  "),
-        },
-    )
-    .unwrap();
-    assert_eq!(added.len(), 1);
-    assert_eq!(added[0].body, "Needs a rollback step", "the body is trimmed on the host");
-    assert!(remote_call::<Vec<crate::ArtifactComment>>(
-        &state,
-        &id,
-        RepoOp::AddArtifactComment {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-            comment: input("   ")
-        }
-    )
-    .is_err());
-    let listed: Vec<crate::ArtifactComment> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListArtifactComments {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(listed, added);
-
-    // Drafts are saved, listed (not stale while the artifact is unchanged) and deleted.
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::SaveCommentDraft {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-            comment: input("draft text"),
-        },
-    )
-    .unwrap();
-    let drafts: Vec<crate::ArtifactCommentDraft> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListCommentDrafts {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert_eq!((drafts.len(), drafts[0].body.as_str()), (1, "draft text"));
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::DeleteCommentDraft {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-            anchor_id: "h1".into(),
-        },
-    )
-    .unwrap();
-    let drafts: Vec<crate::ArtifactCommentDraft> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListCommentDrafts {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(drafts.is_empty());
-
-    // Prepare the prompt, "send" it (finalize), and the comments become a pending review.
-    let prepared: crate::PreparedSessionMessageAction = remote_call(
-        &state,
-        &id,
-        RepoOp::PrepareArtifactCommentsPrompt {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifacts: vec![artifact.into()],
-        },
-    )
-    .unwrap();
-    assert!(
-        prepared.text.contains(&format!("{repo}/.alinery/tasks/remote-task/artifacts/01-plan.review-001.md")),
-        "the prompt names the host's path: {}",
-        prepared.text
-    );
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::FinalizeSessionMessageActions {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-            actions: vec![prepared.provenance],
-        },
-    )
-    .unwrap();
-    let pending: Option<crate::ArtifactReviewPendingStatus> = remote_call(
-        &state,
-        &id,
-        RepoOp::ArtifactReviewPendingStatus {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(pending.map(|status| status.review), Some("01-plan.review-001.md".to_string()));
-    let after: Vec<crate::ArtifactComment> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListArtifactComments {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert!(after.is_empty(), "sending the comments consumes them");
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::ClearArtifactReviewPending {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    let pending: Option<crate::ArtifactReviewPendingStatus> = remote_call(
-        &state,
-        &id,
-        RepoOp::ArtifactReviewPendingStatus {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert!(pending.is_none());
-
-    // The archive path numbers the next review file and reports the host's path to it.
-    remote_call::<Vec<crate::ArtifactComment>>(
-        &state,
-        &id,
-        RepoOp::AddArtifactComment {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-            comment: input("second pass"),
-        },
-    )
-    .unwrap();
-    let review: String = remote_call(
-        &state,
-        &id,
-        RepoOp::ArchiveArtifactComments {
-            repo: repo.clone().into(),
-            slug: slug(),
-            artifact: artifact.into(),
-        },
-    )
-    .unwrap();
-    assert!(review.ends_with("01-plan.review-002.md"), "{review}");
-    let approval: crate::PreparedSessionMessageAction = remote_call(
-        &state,
-        &id,
-        RepoOp::PrepareReviewApprovalPrompt {
-            repo: repo.clone().into(),
-            slug: slug(),
-            review_artifact: "01-plan.review-002.md".into(),
-        },
-    )
-    .unwrap();
-    assert!(approval.text.contains("Review playbook action"));
-
-    // Attachments (written by the daemon in production; here placed on the host directly): previews read them back intact.
-    // The bytes are UTF-8 because `WriteFile` carries text; the base64 wire for bytes that are not is `rpc_chunk`'s own test.
-    let png: Vec<u8> = b"\x01PNG\r\n\x1a\n-stand-in".to_vec();
-    let attach = |name: &str, data: &[u8]| -> Result<(), String> {
-        remote_call(
-            &state,
-            &id,
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/artifacts/attachments/{name}").into(),
-                contents: String::from_utf8(data.to_vec()).map_err(|e| e.to_string())?,
-            },
-        )
-    };
-    attach("shot.png", &png).unwrap();
-    let wire: alinery_core::repo_service::WireBytes = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadAttachmentImage {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "shot.png".into(),
-            node_id: None,
-        },
-    )
-    .unwrap();
-    assert_eq!(wire.data, png, "image bytes survive the wire, including bytes that are not UTF-8");
-    attach("notes.txt", b"plain").unwrap();
-    assert!(remote_call::<alinery_core::repo_service::WireBytes>(
-        &state,
-        &id,
-        RepoOp::ReadAttachmentImage {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "notes.txt".into(),
-            node_id: None
-        }
-    )
-    .is_err());
-
-    // The artifact tree lists attachments as nodes with a path of their own.
-    let tree: Vec<alinery_core::ArtifactTreeNode> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListTaskArtifactTree {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    let node = tree
-        .iter()
-        .flat_map(|node| std::iter::once(node).chain(node.children.iter()))
-        .find(|node| node.kind == alinery_core::ArtifactTreeNodeKind::Attachment && node.label == "shot.png")
-        .unwrap_or_else(|| panic!("{tree:?}"));
-    let node_path: String = remote_call(
-        &state,
-        &id,
-        RepoOp::ArtifactNodePath {
-            repo: repo.clone().into(),
-            slug: slug(),
-            node_id: node.id.clone(),
-        },
-    )
-    .unwrap();
-    assert!(node_path.ends_with("/attachments/shot.png"), "{node_path}");
-    let by_node: alinery_core::repo_service::WireBytes = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadAttachmentImage {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: String::new(),
-            node_id: Some(node.id.clone()),
-        },
-    )
-    .unwrap();
-    assert_eq!(by_node.data, png);
 
     // A terminal on the host, streamed through the forwarded socket: create the auxiliary
     // session, open it, type a command, read the output come back.
@@ -718,35 +397,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         .unwrap();
 
     client.kill_session(&terminal).unwrap();
-
-    // A second task on the host (the review handoff below targets it): the retained-duplicate fixture, written file by file.
-    let scratch = std::env::temp_dir().join(format!("remote-dup-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).unwrap();
-    let source = super::task::retained_duplicate_fixture(&scratch);
-    let source_dir = scratch.join(".alinery/tasks").join(&source.slug);
-    let mut pending = vec![source_dir.clone()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            let relative = path.strip_prefix(&source_dir).unwrap().display().to_string();
-            session
-                .channel
-                .call(
-                    RepoOp::WriteFile {
-                        path: format!("{repo}/.alinery/tasks/{}/{relative}", source.slug).into(),
-                        contents: std::fs::read_to_string(&path).unwrap(),
-                    },
-                    std::time::Duration::from_secs(30),
-                )
-                .unwrap();
-        }
-    }
-    let _ = std::fs::remove_dir_all(&scratch);
 
     // The GitHub import's token for a remote repo: the host's `config.toml` override over this machine's global one.
     let app_config = crate::app_config_path(&handle).unwrap();
@@ -874,72 +524,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             .unwrap();
         assert_eq!(tree().iter().map(|file| file.path.as_str()).collect::<Vec<_>>(), [".alinery/playbooks/picker.toml"]);
         assert!(!catalog(remote.clone()).candidates.iter().any(|candidate| candidate.source.reference == reference));
-    }
-
-    // The file operations that used to read this machine's disk now read the host's.
-    {
-        // `original` is the retained v2 task the duplicate block wrote to the host.
-        let names: Vec<String> = remote_call(
-            &state,
-            &id,
-            RepoOp::ListArtifacts {
-                repo: repo.clone().into(),
-                slug: slug(),
-            },
-        )
-        .unwrap();
-        assert!(names.contains(&"01-out.md".to_string()), "{names:?}");
-        let comment_path: String = remote_call(
-            &state,
-            &id,
-            RepoOp::ArtifactCommentMarkdownPath {
-                repo: repo.clone().into(),
-                slug: slug(),
-                artifact: "01-out.md".into(),
-            },
-        )
-        .unwrap();
-        assert!(comment_path.starts_with(&repo) && comment_path.ends_with(".md"), "{comment_path}");
-
-        // A review handoff copies an artifact between tasks on the host and starts the target session
-        // through the host's own daemon (here not started: no agent is wanted in a test).
-        let handoff = |start: bool| RepoOp::SendReviewHandoff {
-            source_repo: repo.clone().into(),
-            target_repo: repo.clone().into(),
-            app_config: crate::host_app_config(&state, &id).unwrap(),
-            request: alinery_core::ReviewHandoffRequest {
-                source_slug: slug(),
-                source_session: "s1".into(),
-                source_artifact: "01-out.md".into(),
-                target_slug: "original".into(),
-                target_phase: "implementation".into(),
-                harness: "omp".into(),
-                model: String::new(),
-                prompt_extra: String::new(),
-                start,
-            },
-        };
-        let sent: alinery_core::ReviewHandoffResult = remote_call(&state, &id, handoff(false)).unwrap();
-        assert_eq!(sent.target_record.target_task, "original");
-        assert_eq!(sent.target_session.phase, "implementation");
-        let target_artifacts: Vec<String> = remote_call(
-            &state,
-            &id,
-            RepoOp::ListArtifacts {
-                repo: repo.clone().into(),
-                slug: "original".into(),
-            },
-        )
-        .unwrap();
-        assert!(target_artifacts.contains(&sent.target_artifact), "{target_artifacts:?}");
-        let mut same = handoff(false);
-        if let RepoOp::SendReviewHandoff { request, .. } = &mut same {
-            request.target_slug = slug();
-        }
-        assert!(
-            remote_call::<alinery_core::ReviewHandoffResult>(&state, &id, same).is_err(),
-            "a task cannot hand off to itself"
-        );
     }
 
     // Disconnect: the app forgets the daemon handle; the daemon itself is untouched.
@@ -1524,10 +1108,10 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
         let handle = handle.clone();
         let (id, repo) = (id.clone(), repo.clone());
         std::thread::spawn(move || {
-            remote_call::<Vec<String>>(
+            remote_call::<alinery_core::SubtaskManagerState>(
                 &handle.state::<crate::AppState>(),
                 &id,
-                RepoOp::ListArtifacts {
+                RepoOp::SubtaskState {
                     repo: repo.into(),
                     slug: "remote-task".into(),
                 },
@@ -1538,7 +1122,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
 
     // The command is an async fn: its first poll runs up to the hand-off and returns.
-    let mut rename = Box::pin(crate::list_artifacts(handle.clone(), "remote-task".into()));
+    let mut rename = Box::pin(crate::subtask_state(handle.clone(), handle.state(), "remote-task".into(), None));
     let started = std::time::Instant::now();
     let first = rename.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     let took = started.elapsed();

@@ -329,67 +329,6 @@ fn notification_suppression_is_independent_of_durable_acknowledgments() {
     assert_eq!(app.notification_suppression.as_ref().unwrap().occurrence, "22");
 }
 
-#[test]
-fn unified_message_action_finalization_validates_all_before_mutation() {
-    let repo = init_git_test_repo("message-actions");
-    let task = create_task_for_test(&repo, "Message Actions", true, "", "");
-    let session = SessionMeta {
-        id: "s-actions".into(),
-        worktree: task.worktree.clone(),
-        created: 10,
-        phase: "implementation".into(),
-        harness: "claude".into(),
-        playbook: default_playbook_key(),
-        ..Default::default()
-    };
-    fs::create_dir_all(sessions_dir(&repo, &task.slug)).unwrap();
-    fs::write(session_meta_path(&repo, &task.slug, &session.id), serde_json::to_string(&session).unwrap()).unwrap();
-    fs::create_dir_all(artifacts_dir(&repo, &task.slug)).unwrap();
-    fs::write(artifacts_dir(&repo, &task.slug).join("03-design.md"), "# Design\n").unwrap();
-    fs::write(artifacts_dir(&repo, &task.slug).join("03-review-findings.md"), "# Findings\n\nNo blockers.\n").unwrap();
-    let approval_action = prepare_review_approval_prompt_for(&repo, &task.slug, "03-review-findings.md").unwrap();
-    let review_path = fs::canonicalize(artifacts_dir(&repo, &task.slug).join("03-review-findings.md")).unwrap();
-    assert!(approval_action.text.contains(&format!("Review findings path: {}", review_path.display())));
-    assert_eq!(
-        approval_action.provenance,
-        SessionMessageActionProvenance::ReviewApproval {
-            review_artifact: "03-review-findings.md".into(),
-        }
-    );
-    assert!(prepare_review_approval_prompt_for(&repo, &task.slug, "../outside.md").is_err());
-    add_artifact_comment_for(
-        &repo,
-        &task.slug,
-        "03-design.md",
-        "comment-1".into(),
-        "p".into(),
-        "Design".into(),
-        "Design".into(),
-        1,
-        1,
-        "Clarify this.".into(),
-    )
-    .unwrap();
-    let comment_action = prepare_artifact_comments_prompt_for(&repo, &task.slug, &["03-design.md".into()]).unwrap();
-    let actions = vec![
-        comment_action.provenance,
-        SessionMessageActionProvenance::ReviewApproval {
-            review_artifact: "03-review-findings.md".into(),
-        },
-    ];
-    let mut invalid = actions.clone();
-    invalid.push(SessionMessageActionProvenance::ReviewApproval {
-        review_artifact: "../outside.md".into(),
-    });
-    assert!(finalize_session_message_actions_for(&repo, &session.id, &task.slug, &invalid).is_err());
-    assert!(!artifact_review_pending_path(&repo, &task.slug, "03-design.md").unwrap().exists());
-
-    finalize_session_message_actions_for(&repo, &session.id, &task.slug, &actions).unwrap();
-    assert!(artifact_review_pending_path(&repo, &task.slug, "03-design.md").unwrap().exists());
-    finalize_session_message_actions_for(&repo, &session.id, &task.slug, &actions).unwrap();
-    let _ = fs::remove_dir_all(repo);
-}
-
 fn plant_chat(
     repo: &Path,
     id: &str,

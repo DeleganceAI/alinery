@@ -21,7 +21,6 @@ pub(crate) use alinery_core::task_drafts::{branch_ref_conflicts, slugify};
 #[cfg(test)]
 pub(crate) use alinery_core::Task;
 
-pub(crate) use alinery_core::attachments::read_attachment_image as read_attachment_image_in;
 #[cfg(test)]
 pub(crate) use alinery_core::attachments::MAX_CHAT_IMAGE_BYTES;
 // The daemon's BlobService reads chat images now; the file-level original is the reference its conformance test runs.
@@ -76,32 +75,4 @@ pub(crate) async fn read_local_file(path: String) -> Result<tauri::ipc::Response
     })
     .await
     .map_err(|e| format!("read file: {e}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn read_attachment_image(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    task_slug: String,
-    name: String,
-    node_id: Option<String>,
-) -> Result<tauri::ipc::Response, String> {
-    let target = require_active_target(&state)?;
-    tauri::async_runtime::spawn_blocking(move || match target {
-        ActiveRepo::Local(repo) => read_attachment_image_in(&repo, &task_slug, &name, node_id.as_deref()),
-        ActiveRepo::Remote { host_id, path } => remote_call::<alinery_core::repo_service::WireBytes>(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::ReadAttachmentImage {
-                repo: path.into(),
-                slug: task_slug,
-                name,
-                node_id,
-            },
-        )
-        .map(|wire| wire.data),
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    .map(tauri::ipc::Response::new)
 }

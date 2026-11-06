@@ -80,7 +80,6 @@ mod account;
 #[path = "vinculum_customizations.rs"]
 mod agent_customizations;
 mod app_config;
-mod artifacts;
 mod backup;
 mod chat;
 mod community_playbooks;
@@ -108,7 +107,6 @@ mod update;
 use account::*;
 use agent_customizations::*;
 use app_config::*;
-use artifacts::*;
 use backup::*;
 use chat::*;
 use community_playbooks::*;
@@ -213,36 +211,8 @@ pub fn run() {
             list_harness_models,
             grok_key_ready,
             list_harness_models_for_repo,
-            list_artifacts,
-            list_artifacts_with_metadata,
-            send_review_handoff,
-            read_artifact,
-            read_artifact_for_repo,
-            attachment_path,
             chat_file_stat,
-            read_attachment_image,
-            list_task_artifact_tree,
-            read_task_artifact_node,
-            artifact_node_path,
-            list_artifact_comments,
-            list_artifact_comment_drafts,
-            list_artifact_comment_drafts_for_repo,
-            save_artifact_comment_draft,
-            save_artifact_comment_draft_for_repo,
-            delete_artifact_comment_draft,
-            delete_artifact_comment_draft_for_repo,
-            add_artifact_comment,
-            add_artifact_comment_for_repo,
-            artifact_comment_markdown_path_for,
-            prepare_artifact_comments_prompt,
-            archive_artifact_comments,
-            archive_artifact_comments_for_repo,
-            artifact_review_pending_status,
-            clear_artifact_review_pending,
-            clear_artifact_review_pending_for_repo,
             open_session,
-            prepare_review_approval_prompt,
-            finalize_session_message_actions,
             session_prompt,
             session_abort,
             session_set_model,
