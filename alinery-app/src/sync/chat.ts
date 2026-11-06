@@ -122,12 +122,14 @@ export function settled(repo: string, applied: Cursor | undefined, timeoutMs = 3
 // ---- the writes --------------------------------------------------------------------------------------------
 
 export async function createChatThread(a: { repoPath: string; model?: string | null; createWorktree: boolean }): Promise<CreateExecutionSessionReply> {
+  await ipc.prepareHostedInference(a.model ?? "");
   const reply = await call(() => chatApi.chat(a.repoPath).createChatThread({ meta: newMutationMeta(), model: a.model ?? "", createWorktree: a.createWorktree }));
   await settled(a.repoPath, reply.applied?.cursor);
   return startedOf(reply.started);
 }
 
-export async function startChatThread(repo: string, threadId: string): Promise<CreateExecutionSessionReply> {
+export async function startChatThread(repo: string, threadId: string, model = ""): Promise<CreateExecutionSessionReply> {
+  await ipc.prepareHostedInference(model);
   const reply = await call(() => chatApi.chat(repo).startChatThread({ meta: newMutationMeta(), threadId }));
   await settled(repo, reply.applied?.cursor);
   return startedOf(reply.started);

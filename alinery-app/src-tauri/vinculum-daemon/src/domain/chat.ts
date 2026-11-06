@@ -26,7 +26,7 @@ export type ChatSessions = {
   /** Spawns or resumes the session's process; rejects with the daemon's refusal. */
   open(header: Json): Promise<void>;
   isRunning(id: string): boolean;
-  kill(id: string): void;
+  stop(id: string): void;
 };
 
 const readMeta = (repo: string, id: string): Json | undefined => {
@@ -46,7 +46,7 @@ export function loadChat(repo: string, id: string): Json {
   return meta;
 }
 
-function rootChats(repo: string): Json[] {
+export function rootChats(repo: string): Json[] {
   let names: string[];
   try {
     names = readdirSync(rootDir(repo));
@@ -235,7 +235,7 @@ export function setChatPinned(repo: string, id: string, pinned: boolean): void {
 export async function archiveChatThread(repo: string, sessions: ChatSessions, id: string, removeWorktree: boolean): Promise<void> {
   const meta = loadChat(repo, id);
   stampSessionArchived(repo, "", id);
-  if (sessions.isRunning(id)) sessions.kill(id);
+  if (sessions.isRunning(id)) sessions.stop(id);
   if (removeWorktree) await removeOwnedWorktree(repo, meta);
 }
 
@@ -299,7 +299,7 @@ async function resumeOnce(repo: string, sessions: ChatSessions, predecessorId: s
   try {
     await sessions.open({ op: "resume", id: successorId, cwd, task_slug: "", resume_token: token });
   } catch (error) {
-    if (sessions.isRunning(successorId)) sessions.kill(successorId);
+    if (sessions.isRunning(successorId)) sessions.stop(successorId);
     deleteChatRow(repo, successorId);
     throw error;
   }

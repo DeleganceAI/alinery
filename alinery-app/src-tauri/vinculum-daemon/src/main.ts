@@ -1193,7 +1193,7 @@ const runner: ChatSessions = {
     const row = live.get(id);
     return row !== undefined && row.process !== "exited";
   },
-  kill: killSession,
+  stop: killSession,
 };
 const sessionControl: SessionControl = {
   repo,

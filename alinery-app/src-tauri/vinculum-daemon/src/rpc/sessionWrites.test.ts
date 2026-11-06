@@ -52,7 +52,7 @@ async function start() {
     start: (request) => startSession(repo, request, async (id) => void running.add(id)),
     open: async (header) => void running.add(String(header.id)),
     isRunning: (id) => running.has(id),
-    kill: (id) => {
+    stop: (id) => {
       metaAtKill[id] = JSON.parse(readFileSync(metaPathOf(repo, id.startsWith("t-") ? "t" : "", id), "utf8"));
       running.delete(id);
     },

@@ -73,21 +73,11 @@ pub(crate) fn set_dock_badge_count(app: AppHandle, count: i64) -> Result<(), Str
     Ok(())
 }
 
-// Semantic attention bridge. The frontend calls this on normalized transitions into
-// idle/waiting states; only the three allowed semantic transitions may fire a notification.
-// Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
-pub(crate) use alinery_core::session_actions::session_attention_body;
-
+// Semantic attention bridge. The frontend calls this on normalized transitions into idle/waiting states with the text
+// it composed from the session's own entity (its task's name, the reason); only the three allowed semantic transitions
+// reach it. Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
 #[tauri::command]
-pub(crate) async fn notify_session_attention(app: AppHandle, repo_path: String, slug: Option<String>, reason: String) -> Result<(), String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    let worker = app.clone();
-    let body = off_main_thread("session attention", move || match target {
-        RepoRef::Local(repo) => session_attention_body(&repo, slug, &reason),
-        // The task's name is read on its host; the notification itself is shown here.
-        RepoRef::Remote { host_id, path } => remote_call(&worker.state::<AppState>(), &host_id, RepoOp::SessionAttentionBody { repo: path.into(), slug, reason }),
-    })
-    .await?;
+pub(crate) fn notify_session_attention(app: AppHandle, body: String) -> Result<(), String> {
     fire_app_notification(&app, &body);
     Ok(())
 }

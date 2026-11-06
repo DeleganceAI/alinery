@@ -12,7 +12,7 @@ import { cursor, frame, put, scriptedSync, snapshot, untilAborted } from "../tes
 import { CHAT_SCOPE, copyChatThreadAttachments, readChatThreadImage, useChatThreads, writeChatThreadAttachmentBytes } from "./chat";
 import { acquireScope } from "./hooks";
 
-const ipc = vi.hoisted(() => ({ readLocalFile: vi.fn(), listChatRepos: vi.fn() }));
+const ipc = vi.hoisted(() => ({ readLocalFile: vi.fn(), listChatRepos: vi.fn(), prepareHostedInference: vi.fn(async () => {}) }));
 vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc(ipc));
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
@@ -155,6 +155,8 @@ describe("chat writes", () => {
     const started = await createChatThread({ repoPath: "/r", createWorktree: false });
     expect(started.session.id).toBe("s-new");
     expect(calls.created[0]).toMatchObject({ model: "", createWorktree: false });
+    // The hosted-model credentials the daemon reads at spawn are refreshed in the shell first.
+    expect(ipc.prepareHostedInference).toHaveBeenCalledWith("");
     // The reply came back after cursor 9 reached the replica, so the new row is already there.
     const { replica, release } = acquireScope("/r", CHAT_SCOPE);
     expect(replica.get("session/_/s-new")).toBeDefined();

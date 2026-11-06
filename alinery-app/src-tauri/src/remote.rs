@@ -1319,21 +1319,6 @@ pub(crate) fn require_active_target(state: &AppState) -> Result<ActiveRepo, Stri
     }
 }
 
-/// The daemon client that owns `task_slug` in `repo`. A local task may live on a foreign lane, so
-/// it is found through its retained execution; a remote repo has the one forwarded daemon.
-pub(crate) fn task_client(state: &AppState, app_config: &Path, repo: &RepoRef, task_slug: &str) -> Result<DaemonClient, String> {
-    match repo {
-        RepoRef::Local(path) => {
-            require_repo_owned(state, path)?;
-            task_daemon_for(path, task_slug, app_config)
-        }
-        RepoRef::Remote { host_id, .. } => {
-            connected_session(state, host_id)?;
-            remote_daemon(state, repo)
-        }
-    }
-}
-
 /// The repo's own daemon client (its own lane), for operations that are not about one task.
 pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClient, String> {
     match repo {

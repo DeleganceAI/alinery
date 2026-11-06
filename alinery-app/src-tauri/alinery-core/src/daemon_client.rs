@@ -434,6 +434,12 @@ pub fn set_thinking_level_request(id: &str, level: &str) -> Value {
     json!({"op": ops::SET_THINKING_LEVEL, "id": id, "level": level})
 }
 
+/// A request that names a chat thread; the daemon checks the id is one (`header.chat`).
+fn as_chat(mut request: Value) -> Value {
+    request["chat"] = json!(true);
+    request
+}
+
 /// The model and thinking level the next turn will use. `thinking_levels` is empty when the model cannot think.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct SessionControls {
@@ -1107,6 +1113,23 @@ impl DaemonClient {
 
     pub fn set_thinking_level(&self, id: &str, level: &str) -> Result<SessionControls, String> {
         session_controls(self.call(&set_thinking_level_request(id, level))?)
+    }
+
+    /// The turn controls of a chat thread: the same ops, marked `chat` so the daemon refuses an id that is not a thread.
+    pub fn chat_prompt(&self, id: &str, text: &str) -> Result<(), String> {
+        self.call(&as_chat(prompt_request(id, text))).and_then(expect_ok)
+    }
+
+    pub fn chat_abort(&self, id: &str) -> Result<(), String> {
+        self.call(&as_chat(abort_request(id))).and_then(expect_ok)
+    }
+
+    pub fn chat_set_model(&self, id: &str, model: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&as_chat(set_model_request(id, model)))?)
+    }
+
+    pub fn chat_set_thinking_level(&self, id: &str, level: &str) -> Result<SessionControls, String> {
+        session_controls(self.call(&as_chat(set_thinking_level_request(id, level)))?)
     }
 
     pub fn provider_catalog(&self) -> Result<ProviderCatalog, String> {

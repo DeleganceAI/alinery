@@ -2,6 +2,7 @@ import { act, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  attentionBody,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   formatAbsolute,
@@ -394,5 +395,14 @@ describe("re-render comparators", () => {
       expect(sameTaskActivityMaps(map(summary()), map(summary({ active_session: { ...active, [field]: value } })))).toBe(false);
     }
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
+  });
+});
+
+describe("attentionBody", () => {
+  it("names the session's label and why it needs the person, as the Rust session_attention_body did", () => {
+    expect(attentionBody("Fix login", "idle")).toBe("Fix login — idle, needs you");
+    expect(attentionBody("Fix login", "waiting_for_input")).toBe("Fix login — waiting for your input");
+    expect(attentionBody("Fix login", "waiting_for_approval")).toBe("Fix login — waiting for your approval");
+    expect(attentionBody("", "idle")).toBe("session — idle, needs you");
   });
 });

@@ -298,6 +298,8 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 
 /** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
 export const listChatRepos = () => invoke<string[]>("list_chat_repos");
+/** Refreshes the hosted-model credentials the daemon reads at spawn; run before a start or create that may launch a hosted model. */
+export const prepareHostedInference = (model: string) => invoke<void>("prepare_hosted_inference", { model });
 export type { SessionControls, VinculumTranscript };
 export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });

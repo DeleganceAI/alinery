@@ -1,0 +1,48 @@
+{
+  "slug": "",
+  "id": "chat1",
+  "steps": [
+    {
+      "name": "  Plan the migration  ",
+      "source": "auto"
+    },
+    {
+      "name": "Retitled as the thread grows",
+      "source": "auto"
+    },
+    {
+      "name": "Mine",
+      "source": "user"
+    },
+    {
+      "name": "Auto after a person named it",
+      "source": "auto"
+    },
+    {
+      "name": "Mine again",
+      "source": "user"
+    },
+    {
+      "name": "   ",
+      "source": "user"
+    },
+    {
+      "name": "two\nlines",
+      "source": "user"
+    },
+    {
+      "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "source": "user"
+    },
+    {
+      "name": "Elsewhere",
+      "source": "user",
+      "id": "nope"
+    },
+    {
+      "name": "Escape",
+      "source": "user",
+      "id": "../chat1"
+    }
+  ]
+}

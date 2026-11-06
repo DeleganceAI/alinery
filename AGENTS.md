@@ -122,7 +122,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 ## Commands (Rust Tauri)
 
 - Task: `create_task`, `list_tasks`, `archive_task`, `restore_task_for_repo`, `attachment_path`
-- Session (proxy to daemon): `create_session`, `list_sessions`, `archive_session`, `open_session`, `write_session`, `resize_session`, `detach_session`, `session_status`, `kill_session`, `resume_session`, `set_resume_token`, `session_resume_state`, `read_session_history`
+- Session: `open_session`, `session_prompt`, `session_abort`, `session_set_model`, `session_set_thinking_level`, `finalize_session_message_actions`, `notify_session_attention`, `prepare_hosted_inference`, `list_chat_repos`, `chat_prompt`, `chat_abort`, `chat_set_model`, `chat_set_thinking_level`. Create, start, rename, archive, kill, notification marks, history and chat threads are daemon RPCs (`SessionService`, `ChatService`, `BlobService`) called from the frontend (`src/sync/sessions.ts`, `src/sync/chat.ts`)
 - Playbook/Harness: `list_phases`, `list_playbooks`, `list_harness_models`, `list_artifacts`
 - Daemon/repo: `prepare_repo_takeover`, `confirm_repo_takeover`, `cancel_repo_takeover`, `stop_daemon`, `close_all_repos`, `repo_live_sessions`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `read_app_config`
 - Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear`, `import_github`

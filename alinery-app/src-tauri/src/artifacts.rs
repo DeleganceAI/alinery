@@ -71,7 +71,7 @@ pub(crate) fn list_artifacts_for(repo: &Path, task_slug: &str) -> Result<Vec<Str
 // List artifact filenames for task detail (read-only; rendering is later polish).
 // Returns [] if the dir doesn't exist yet (task made before its first phase session).
 #[tauri::command]
-pub(crate) async fn list_artifacts(app: AppHandle, task_slug: String) -> Result<Vec<String>, String> {
+pub(crate) async fn list_artifacts<R: tauri::Runtime>(app: AppHandle<R>, task_slug: String) -> Result<Vec<String>, String> {
     let target = active_repo_ref()?;
     off_main_thread("list artifacts", move || match target {
         RepoRef::Local(repo) => list_artifacts_for(&repo, &task_slug),

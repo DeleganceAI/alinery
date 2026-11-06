@@ -151,6 +151,17 @@ fn telemetry(case: &Path) -> Value {
         },
         "task.draft_delete" => TelemetryEvent::TaskDraftDelete { source, task_id },
         "task.archive" => TelemetryEvent::TaskArchive { source, task_id },
+        "session.archive" => TelemetryEvent::SessionArchive {
+            source,
+            killed_live: event["killedLive"].as_bool().unwrap(),
+            session_id: event["sessionId"].as_str().unwrap().to_string(),
+            task_id,
+        },
+        "session.kill" => TelemetryEvent::SessionKill {
+            source,
+            session_id: event["sessionId"].as_str().unwrap().to_string(),
+            task_id,
+        },
         other => panic!("{other} has not moved to the daemon"),
     };
     let mut record = alinery_core::event_record(&telemetry_event, "11111111-2222-3333-4444-555555555555");
@@ -237,6 +248,110 @@ fn task_create(case: &Path) -> Value {
     out.into()
 }
 
+/// A scratch copy of `case/input/`, and the case's `command.json`.
+fn scratch_of(case: &Path, tag: &str) -> (PathBuf, Value) {
+    let scratch = std::env::temp_dir().join(format!("alinery-conf-{tag}-{}-{}", std::process::id(), case.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&scratch);
+    copy_tree(&case.join("input"), &scratch);
+    let command = serde_json::from_str(&fs::read_to_string(case.join("command.json")).unwrap()).unwrap();
+    (scratch, command)
+}
+
+/// `set_session_name` applied step by step to a copy of the case: what each step answered, then the name file left behind.
+/// The daemon's `setSessionName` (vinculum-daemon/src/domain/sessionOps.ts) must give the same answers.
+fn session_name(case: &Path) -> Value {
+    use alinery_core::{SessionNameSource, SessionNameWriteStatus};
+    let (scratch, command) = scratch_of(case, "name");
+    let slug = command["slug"].as_str().unwrap();
+    let mut answers = Vec::new();
+    for step in command["steps"].as_array().unwrap() {
+        let id = step["id"].as_str().unwrap_or(command["id"].as_str().unwrap());
+        let source = if step["source"] == "user" { SessionNameSource::User } else { SessionNameSource::Auto };
+        answers.push(match alinery_core::set_session_name(&scratch, slug, id, step["name"].as_str().unwrap(), source) {
+            Ok(outcome) => serde_json::json!({
+                "status": if outcome.status == SessionNameWriteStatus::Saved { "saved" } else { "unchanged" },
+                "name": outcome.value.name,
+                "source": if outcome.value.source == SessionNameSource::User { "user" } else { "auto" },
+            }),
+            Err(_) => serde_json::json!({ "error": true }),
+        });
+    }
+    let stored = alinery_core::read_session_name(&scratch, slug, command["id"].as_str().unwrap()).unwrap().map(|n| n.name);
+    let _ = fs::remove_dir_all(&scratch);
+    serde_json::json!({ "steps": answers, "stored": stored })
+}
+
+/// The scrollback windows and the OMP journal pages `read_session_history` and `read_omp_window` give for the case.
+/// (The tail read renders a terminal screen and has no TypeScript twin: the daemon returns the replay bytes themselves.)
+fn history(case: &Path) -> Value {
+    let (scratch, command) = scratch_of(case, "history");
+    let slug = command["slug"].as_str().unwrap();
+    let id_of = |read: &Value| read["id"].as_str().unwrap_or(command["id"].as_str().unwrap()).to_string();
+    let reads: Vec<Value> = command["reads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|read| {
+            let outcome = alinery_core::read_session_history(&scratch, slug, &id_of(read), read["offset"].as_u64(), read["limit"].as_u64());
+            match outcome {
+                Ok(r) => serde_json::json!({ "data": String::from_utf8_lossy(&r.data), "length": r.length, "next_offset": r.next_offset, "eof": r.eof }),
+                Err(_) => serde_json::json!({ "error": true }),
+            }
+        })
+        .collect();
+    let mut previous_start = None;
+    let mut windows = Vec::new();
+    for window in command["windows"].as_array().unwrap() {
+        let end = if window["end"] == "previous_start" { previous_start } else { window["end"].as_u64() };
+        match alinery_core::read_omp_window(&scratch, slug, &id_of(window), end, window["want"].as_u64()) {
+            Ok(w) => {
+                previous_start = Some(w.start);
+                windows.push(serde_json::json!({ "data": String::from_utf8_lossy(&w.data), "start": w.start, "end": w.end, "length": w.length }));
+            }
+            Err(_) => windows.push(serde_json::json!({ "error": true })),
+        }
+    }
+    let _ = fs::remove_dir_all(&scratch);
+    serde_json::json!({ "reads": reads, "windows": windows })
+}
+
+/// The chat rail `list_chat_threads_in` makes of a repository's root sessions, with and without the archived ones. The case
+/// is made a git checkout on `main` first, so a thread without a worktree of its own reports that branch. The daemon's
+/// `ChatPublisher` rows (chat.ts) plus its session rows must give the same threads.
+fn chat(case: &Path) -> Value {
+    let (scratch, command) = scratch_of(case, "chat");
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.email", "t@example.com"],
+        &["config", "user.name", "t"],
+        &["commit", "--allow-empty", "-q", "-m", "init"],
+    ] {
+        let out = alinery_core::git_cmd(&scratch).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut out = Map::new();
+    for include in command["include_archived"].as_array().unwrap() {
+        let include = include.as_bool().unwrap();
+        let threads = alinery_core::chat::list_chat_threads_in(std::slice::from_ref(&scratch), include).unwrap();
+        let rows: Vec<Value> = threads
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "id": t.session.id,
+                    "name": t.name,
+                    "branch_label": t.branch_label,
+                    "checkout": t.checkout,
+                    "archived": t.session.archived,
+                    "pinned": t.session.pinned,
+                })
+            })
+            .collect();
+        out.insert(format!("include_archived_{include}"), rows.into());
+    }
+    let _ = fs::remove_dir_all(&scratch);
+    out.into()
+}
+
 fn run(domain: &str, case: &Path, update: bool) -> Value {
     let input = case.join("input");
     match domain {
@@ -246,6 +361,9 @@ fn run(domain: &str, case: &Path, update: bool) -> Value {
         "settings_write" => settings_write(case, update),
         "telemetry" => telemetry(case),
         "task_create" => task_create(case),
+        "session_name" => session_name(case),
+        "history" => history(case),
+        "chat" => chat(case),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
 }
@@ -275,5 +393,5 @@ fn rust_readers_match_expected_json() {
             cases += 1;
         }
     }
-    assert!(cases >= 11, "found only {cases} conformance cases");
+    assert!(cases >= 16, "found only {cases} conformance cases");
 }

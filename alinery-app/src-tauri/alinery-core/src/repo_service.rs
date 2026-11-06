@@ -61,44 +61,6 @@ pub enum RepoOp {
         slug: String,
         node_id: String,
     },
-    /// Sets the user's name for a session; the reply is the stored name.
-    RenameSession {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-        name: String,
-    },
-    MarkSessionNotificationRead {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-    },
-    /// Flags a session archived. Stopping its process is the daemon's job, done first.
-    StampSessionArchived {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-    },
-    /// A session's scrollback; the reply carries the bytes as base64.
-    ReadSessionHistory {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-        #[serde(default)]
-        offset: Option<u64>,
-        #[serde(default)]
-        limit: Option<u64>,
-    },
-    /// One backward page of a session's journal.
-    ReadOmpWindow {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-        #[serde(default)]
-        end: Option<u64>,
-        #[serde(default)]
-        want: Option<u64>,
-    },
     ReadArtifact {
         repo: PathBuf,
         slug: String,
@@ -221,11 +183,6 @@ pub enum RepoOp {
         slug: String,
         node_id: String,
     },
-    ReadChatImage {
-        repo: PathBuf,
-        slug: String,
-        name: String,
-    },
     /// An attachment (or artifact-tree attachment node) image; the reply carries the bytes as base64.
     ReadAttachmentImage {
         repo: PathBuf,
@@ -234,77 +191,10 @@ pub enum RepoOp {
         #[serde(default)]
         node_id: Option<String>,
     },
-    /// Chat threads of one repo. `repo_path` in each row is the host path.
-    ListChatThreads {
-        repo: PathBuf,
-        include_archived: bool,
-    },
-    /// The chat thread's session meta; refuses an id that is not a chat thread.
-    ChatThreadMeta {
-        repo: PathBuf,
-        session_id: String,
-    },
-    ChatThreadName {
-        repo: PathBuf,
-        session_id: String,
-    },
-    ChatBranchLabel {
-        repo: PathBuf,
-        session_id: String,
-    },
-    SetChatPinned {
-        repo: PathBuf,
-        session_id: String,
-        pinned: bool,
-    },
-    /// The chat ops below that also touch a process run beside the host's own daemon.
-    CreateChatThread {
-        repo: PathBuf,
-        app_config: PathBuf,
-        model: String,
-        create_worktree: bool,
-    },
-    ArchiveChatThread {
-        repo: PathBuf,
-        app_config: PathBuf,
-        session_id: String,
-        remove_worktree: bool,
-    },
-    RemoveChatWorktree {
-        repo: PathBuf,
-        app_config: PathBuf,
-        session_id: String,
-    },
-    ResumeChatThread {
-        repo: PathBuf,
-        app_config: PathBuf,
-        session_id: String,
-    },
-    WriteChatThreadAttachment {
-        repo: PathBuf,
-        session_id: String,
-        file_name: String,
-        #[serde(with = "crate::rpc_chunk::base64_bytes")]
-        data: Vec<u8>,
-    },
-    ReadChatThreadImage {
-        repo: PathBuf,
-        session_id: String,
-        name: String,
-    },
     /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
     /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
     ReadRepoOverrides {
         repo: PathBuf,
-    },
-    SessionArtifactReady {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-    },
-    ClearSessionNotifications {
-        repo: PathBuf,
-        refs: Vec<crate::session_actions::SessionNotificationClearRef>,
     },
     /// The URL of the repository's `origin` remote, if it has one.
     GitOriginUrl {
@@ -329,13 +219,6 @@ pub enum RepoOp {
         repo: PathBuf,
         slug: String,
         artifact: String,
-    },
-    /// The text of an attention notification for a task.
-    SessionAttentionBody {
-        repo: PathBuf,
-        #[serde(default)]
-        slug: Option<String>,
-        reason: String,
     },
     /// Copy a review artifact between two repositories on this host and start the target session
     /// through the host's own daemon.
@@ -498,26 +381,6 @@ pub struct WireBytes {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WireOmpWindow {
-    pub start: u64,
-    pub end: u64,
-    pub length: u64,
-    #[serde(with = "crate::rpc_chunk::base64_bytes")]
-    pub data: Vec<u8>,
-}
-
-impl From<WireOmpWindow> for crate::OmpWindow {
-    fn from(wire: WireOmpWindow) -> Self {
-        Self {
-            start: wire.start,
-            end: wire.end,
-            length: wire.length,
-            data: wire.data,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirEntry {
     pub name: String,
     pub git: bool,
@@ -572,33 +435,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
         RepoOp::ListTaskArtifactTree { repo, slug } => to_value(crate::list_task_artifact_tree(&repo, &slug)?),
         RepoOp::ReadTaskArtifactNode { repo, slug, node_id } => to_value(crate::read_task_artifact_node(&repo, &slug, &node_id)?),
-        RepoOp::RenameSession { repo, slug, session_id, name } => to_value(crate::set_session_name(&repo, &slug, &session_id, &name, crate::SessionNameSource::User)?.value),
-        RepoOp::MarkSessionNotificationRead { repo, slug, session_id } => crate::session_actions::mark_notification_read(&repo, &slug, &session_id).map(|()| Value::Null),
-        RepoOp::StampSessionArchived { repo, slug, session_id } => crate::session_actions::stamp_session_archived(&repo, &slug, &session_id).map(|()| Value::Null),
-        RepoOp::ReadSessionHistory {
-            repo,
-            slug,
-            session_id,
-            offset,
-            limit,
-        } => to_value(WireBytes {
-            data: crate::read_session_history(&repo, &slug, &session_id, offset, limit)?.data,
-        }),
-        RepoOp::ReadOmpWindow {
-            repo,
-            slug,
-            session_id,
-            end,
-            want,
-        } => {
-            let window = crate::read_omp_window(&repo, &slug, &session_id, end, want)?;
-            to_value(WireOmpWindow {
-                start: window.start,
-                end: window.end,
-                length: window.length,
-                data: window.data,
-            })
-        }
         RepoOp::ReadArtifact { repo, slug, name } => to_value(crate::artifact_comments::read_artifact_text(&repo, &slug, &name)?),
         RepoOp::ListArtifactComments { repo, slug, artifact } => to_value(crate::artifact_comments::load_artifact_comments_for(&repo, &slug, &artifact)?),
         RepoOp::AddArtifactComment { repo, slug, artifact, comment } => to_value(crate::artifact_comments::add_artifact_comment_for(
@@ -659,47 +495,10 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
         RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
         RepoOp::ArtifactNodePath { repo, slug, node_id } => to_value(crate::artifact_node_path(&repo, &slug, &node_id)?),
-        RepoOp::ReadChatImage { repo, slug, name } => to_value(crate::attachments::read_chat_image(&repo, &slug, &name)?),
         RepoOp::ReadAttachmentImage { repo, slug, name, node_id } => to_value(WireBytes {
             data: crate::attachments::read_attachment_image(&repo, &slug, &name, node_id.as_deref())?,
         }),
-        RepoOp::ListChatThreads { repo, include_archived } => to_value(crate::chat::list_chat_threads_in(&[repo], include_archived)?),
-        RepoOp::ChatThreadMeta { repo, session_id } => to_value(crate::chat::load_root_omp(&repo, &session_id)?),
-        RepoOp::ChatThreadName { repo, session_id } => {
-            crate::chat::load_root_omp(&repo, &session_id)?;
-            to_value(crate::read_session_name(&repo, "", &session_id)?.map(|name| name.name))
-        }
-        RepoOp::ChatBranchLabel { repo, session_id } => to_value(crate::chat::chat_branch_of(&repo, &crate::chat::load_root_omp(&repo, &session_id)?)),
-        RepoOp::SetChatPinned { repo, session_id, pinned } => crate::chat::set_chat_pinned_in(&repo, &session_id, pinned).map(|()| Value::Null),
-        RepoOp::CreateChatThread {
-            repo,
-            app_config,
-            model,
-            create_worktree,
-        } => {
-            let daemon = host_daemon(&repo, &app_config).ok_or("daemon not connected")?;
-            to_value(crate::chat::create_chat_thread_in(&repo, &daemon, &model, create_worktree)?)
-        }
-        RepoOp::ArchiveChatThread {
-            repo,
-            app_config,
-            session_id,
-            remove_worktree,
-        } => crate::chat::archive_chat_thread_in(&repo, &session_id, remove_worktree, host_daemon(&repo, &app_config).as_ref()).map(|()| Value::Null),
-        RepoOp::RemoveChatWorktree { repo, app_config, session_id } => {
-            crate::chat::remove_chat_worktree_in(&repo, &session_id, host_daemon(&repo, &app_config).as_ref()).map(|()| Value::Null)
-        }
-        RepoOp::ResumeChatThread { repo, app_config, session_id } => to_value(crate::chat::resume_chat_thread_in(&repo, &session_id, host_daemon(&repo, &app_config).as_ref())?),
-        RepoOp::WriteChatThreadAttachment {
-            repo,
-            session_id,
-            file_name,
-            data,
-        } => to_value(crate::chat::write_chat_thread_attachment_bytes_in(&repo, &session_id, &file_name, &data)?),
-        RepoOp::ReadChatThreadImage { repo, session_id, name } => to_value(crate::chat::read_chat_thread_image_in(&repo, &session_id, &name)?),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
-        RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
-        RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
         RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
@@ -707,7 +506,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::ArtifactCommentMarkdownPath { repo, slug, artifact } => {
             to_value(crate::artifact_comments::artifact_comment_markdown_path(&repo, &slug, &artifact)?.display().to_string())
         }
-        RepoOp::SessionAttentionBody { repo, slug, reason } => to_value(crate::session_actions::session_attention_body(&repo, slug, &reason)?),
         RepoOp::SendReviewHandoff {
             source_repo,
             target_repo,
@@ -1036,86 +834,13 @@ mod tests {
                 slug: "t".into(),
                 node_id: "n".into(),
             },
-            RepoOp::ReadChatImage {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                name: "a.png".into(),
-            },
             RepoOp::ReadAttachmentImage {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
                 name: "a.png".into(),
                 node_id: Some("n".into()),
             },
-            RepoOp::ListChatThreads {
-                repo: "/srv/a".into(),
-                include_archived: true,
-            },
-            RepoOp::ChatThreadMeta {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::ChatThreadName {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::ChatBranchLabel {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::SetChatPinned {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-                pinned: true,
-            },
-            RepoOp::CreateChatThread {
-                repo: "/srv/a".into(),
-                app_config: "/c/app.toml".into(),
-                model: "m".into(),
-                create_worktree: true,
-            },
-            RepoOp::ArchiveChatThread {
-                repo: "/srv/a".into(),
-                app_config: "/c/app.toml".into(),
-                session_id: "s".into(),
-                remove_worktree: true,
-            },
-            RepoOp::RemoveChatWorktree {
-                repo: "/srv/a".into(),
-                app_config: "/c/app.toml".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::ResumeChatThread {
-                repo: "/srv/a".into(),
-                app_config: "/c/app.toml".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::WriteChatThreadAttachment {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-                file_name: "a.bin".into(),
-                data: vec![0, 255, 7],
-            },
-            RepoOp::ReadChatThreadImage {
-                repo: "/srv/a".into(),
-                session_id: "s".into(),
-                name: "a.png".into(),
-            },
             RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
-            RepoOp::SessionArtifactReady {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::ClearSessionNotifications {
-                repo: "/srv/a".into(),
-                refs: vec![crate::session_actions::SessionNotificationClearRef {
-                    repo_path: "k".into(),
-                    task_slug: "t".into(),
-                    id: "s".into(),
-                    notification_suppression: None,
-                }],
-            },
             RepoOp::GitOriginUrl { repo: "/srv/a".into() },
             RepoOp::ReadPlaybookTree { repo: "/srv/a".into() },
             RepoOp::ApplyPlaybookTree {
@@ -1142,11 +867,6 @@ mod tests {
                 slug: "t".into(),
                 artifact: "01.md".into(),
             },
-            RepoOp::SessionAttentionBody {
-                repo: "/srv/a".into(),
-                slug: Some("t".into()),
-                reason: "idle".into(),
-            },
             RepoOp::SendReviewHandoff {
                 source_repo: "/srv/a".into(),
                 target_repo: "/srv/b".into(),
@@ -1162,36 +882,6 @@ mod tests {
                     prompt_extra: String::new(),
                     start: true,
                 },
-            },
-            RepoOp::RenameSession {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-                name: "n".into(),
-            },
-            RepoOp::MarkSessionNotificationRead {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::StampSessionArchived {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-            },
-            RepoOp::ReadSessionHistory {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-                offset: Some(1),
-                limit: Some(2),
-            },
-            RepoOp::ReadOmpWindow {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
-                end: None,
-                want: Some(3),
             },
             RepoOp::WriteFile {
                 path: "/srv/a/app.toml".into(),

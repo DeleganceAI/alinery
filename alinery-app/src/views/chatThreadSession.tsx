@@ -715,7 +715,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.started_at == null) {
       registry.setSending(key);
       try {
-        const started = await startChatThread(repo, id);
+        const started = await startChatThread(repo, id, currentThread.session.model ?? "");
         if (started.start === "failed") {
           registry.setSending(null);
           registry.setError(started.errors?.[0]?.message ?? "start failed");

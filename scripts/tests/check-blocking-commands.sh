@@ -12,7 +12,6 @@ const root = process.argv[2];
 const commands = {
   "backup.rs": ["pre_archive_backup"],
   "git_ops.rs": ["remove_worktree", "remove_worktree_for_repo", "push_and_compare_url", "push_and_compare_url_for_repo", "commit_worktree", "commit_worktree_for_repo"],
-  "session.rs": ["archive_session", "archive_session_for_repo"],
   "settings.rs": ["delete_all_archived_storage"],
   "daemon.rs": ["prepare_repo_takeover", "confirm_repo_takeover"],
 };

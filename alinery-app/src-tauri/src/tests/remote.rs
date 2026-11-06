@@ -619,18 +619,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         )
     };
     attach("shot.png", &png).unwrap();
-    let image: crate::ChatImage = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadChatImage {
-            repo: repo.clone().into(),
-            slug: slug(),
-            name: "shot.png".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(image.mime_type, "image/png");
-    assert_eq!(alinery_core::rpc_chunk::decode_base64(&image.data).unwrap(), png);
     let wire: alinery_core::repo_service::WireBytes = remote_call(
         &state,
         &id,
@@ -729,276 +717,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         })
         .unwrap();
 
-    // Scrollback reads come back from the host as base64 and decode to the exact bytes, including
-    // bytes that are not valid UTF-8. (Task sessions only: a taskless drawer has no history.)
-    let scrollback: Vec<u8> = b"\x1b[1mhello alinery-42\r\n\xff\xfe tail".to_vec();
-    session
-        .channel
-        .call(
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s1.scrollback").into(),
-                // WriteFile carries text; the binary tail is appended by the host-side shell below.
-                contents: "\u{1b}[1mhello alinery-42\r\n".into(),
-            },
-            std::time::Duration::from_secs(30),
-        )
-        .unwrap();
-    session
-        .conn
-        .exec_ok(
-            &format!("printf '\\377\\376 tail' >> '{repo}/.alinery/tasks/remote-task/sessions/s1.scrollback'"),
-            RemoteStdin::None,
-            std::time::Duration::from_secs(20),
-        )
-        .unwrap();
-    let wire: alinery_core::repo_service::WireBytes = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadSessionHistory {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-            offset: None,
-            limit: None,
-        },
-    )
-    .unwrap();
-    // The default read is the terminal replayed (rendered), so only its text is stable.
-    assert!(String::from_utf8_lossy(&wire.data).contains("hello alinery-42"));
-    let raw: alinery_core::repo_service::WireBytes = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadSessionHistory {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-            offset: Some(0),
-            limit: Some(1000),
-        },
-    )
-    .unwrap();
-    assert_eq!(raw.data, scrollback, "raw windows are byte-exact, including bytes that are not UTF-8");
-    let window: alinery_core::repo_service::WireBytes = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadSessionHistory {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-            offset: Some(4),
-            limit: Some(5),
-        },
-    )
-    .unwrap();
-    assert_eq!(window.data, &scrollback[4..9]);
-    assert!(
-        remote_call::<alinery_core::repo_service::WireBytes>(
-            &state,
-            &id,
-            RepoOp::ReadSessionHistory {
-                repo: repo.clone().into(),
-                slug: slug(),
-                session_id: "s1".into(),
-                offset: Some(1),
-                limit: None
-            }
-        )
-        .is_err(),
-        "offset and limit travel together"
-    );
-
     client.kill_session(&terminal).unwrap();
-
-    // Session and task actions run on the host.
-    let named: alinery_core::SessionName = remote_call(
-        &state,
-        &id,
-        RepoOp::RenameSession {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-            name: "Fix the build".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(named.name, "Fix the build");
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::MarkSessionNotificationRead {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-        },
-    )
-    .unwrap();
-    assert!(remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::MarkSessionNotificationRead {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "../s1".into()
-        }
-    )
-    .is_err());
-
-    crate::archive_remote_session(&state, &id, repo.clone(), slug(), "s1".into()).unwrap();
-    assert!(
-        crate::archive_remote_session(&state, &id, repo.clone(), "  ".into(), "s1".into()).is_err(),
-        "a taskless session cannot be archived"
-    );
-
-    // Chat threads: created beside the host's daemon, listed under the repo's key, pinned, given
-    // attachments, archived. The terminal made above is a session but not a chat thread.
-    let app_config = crate::host_app_config(&state, &id).unwrap();
-    let new_thread = |create_worktree: bool| -> alinery_core::task_creation::CreateExecutionSessionReply {
-        remote_call(
-            &state,
-            &id,
-            RepoOp::CreateChatThread {
-                repo: repo.clone().into(),
-                app_config: app_config.clone(),
-                model: String::new(),
-                create_worktree,
-            },
-        )
-        .unwrap()
-    };
-    let thread = new_thread(false).session.id;
-    let chat_meta = |session_id: &str| {
-        remote_call::<crate::SessionMeta>(
-            &state,
-            &id,
-            RepoOp::ChatThreadMeta {
-                repo: repo.clone().into(),
-                session_id: session_id.into(),
-            },
-        )
-    };
-    assert_eq!(chat_meta(&thread).unwrap().id, thread);
-    assert!(chat_meta(&terminal).is_err(), "a terminal session is not a chat thread");
-    assert!(chat_meta("../x").is_err());
-    assert_eq!(crate::open_chat_repos_in(std::slice::from_ref(&key), &state), [std::path::PathBuf::from(&key)]);
-    let listed = crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], false).unwrap();
-    assert_eq!(listed.len(), 1, "{}", listed.len());
-    assert_eq!(listed[0].repo_path, key, "the rail addresses the repo by its key, not the host path");
-    assert!(listed[0].checkout && !listed[0].session.pinned);
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::SetChatPinned {
-            repo: repo.clone().into(),
-            session_id: thread.clone(),
-            pinned: true,
-        },
-    )
-    .unwrap();
-    assert!(chat_meta(&thread).unwrap().pinned);
-    let branch: crate::ChatBranch = remote_call(
-        &state,
-        &id,
-        RepoOp::ChatBranchLabel {
-            repo: repo.clone().into(),
-            session_id: thread.clone(),
-        },
-    )
-    .unwrap();
-    assert!(branch.checkout);
-    assert_eq!(
-        remote_call::<Option<String>>(
-            &state,
-            &id,
-            RepoOp::ChatThreadName {
-                repo: repo.clone().into(),
-                session_id: thread.clone()
-            }
-        )
-        .unwrap(),
-        None
-    );
-
-    // The thread's attachments live beside its session on the host and come back byte for byte.
-    let put = |name: &str, data: &[u8]| {
-        remote_call::<String>(
-            &state,
-            &id,
-            RepoOp::WriteChatThreadAttachment {
-                repo: repo.clone().into(),
-                session_id: thread.clone(),
-                file_name: name.into(),
-                data: data.to_vec(),
-            },
-        )
-    };
-    assert_eq!(put("shot.png", &png).unwrap(), "shot.png");
-    assert!(put("../shot.png", &png).is_err());
-    let back: crate::ChatImage = remote_call(
-        &state,
-        &id,
-        RepoOp::ReadChatThreadImage {
-            repo: repo.clone().into(),
-            session_id: thread.clone(),
-            name: "shot.png".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(alinery_core::rpc_chunk::decode_base64(&back.data).unwrap(), png);
-    assert!(remote_call::<crate::ChatImage>(
-        &state,
-        &id,
-        RepoOp::ReadChatThreadImage {
-            repo: repo.clone().into(),
-            session_id: thread.clone(),
-            name: "missing.png".into()
-        }
-    )
-    .is_err());
-    let local = std::env::temp_dir().join(format!("chat-note-{}.txt", std::process::id()));
-    std::fs::write(&local, "chat note\n").unwrap();
-    let sent = crate::send_files_to_host(&[local.display().to_string()], |file_name, data| put(&file_name, &data));
-    assert_eq!(sent.copied, ["chat-note-".to_string() + &std::process::id().to_string() + ".txt"], "{:?}", sent.failures);
-    let _ = std::fs::remove_file(local);
-
-    // A thread cannot be continued without a journal; archiving stops it and hides it from the rail.
-    assert!(remote_call::<crate::SessionMeta>(
-        &state,
-        &id,
-        RepoOp::ResumeChatThread {
-            repo: repo.clone().into(),
-            app_config: app_config.clone(),
-            session_id: thread.clone()
-        }
-    )
-    .is_err());
-    remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::ArchiveChatThread {
-            repo: repo.clone().into(),
-            app_config: app_config.clone(),
-            session_id: thread.clone(),
-            remove_worktree: false,
-        },
-    )
-    .unwrap();
-    assert!(crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], false).unwrap().is_empty());
-    let all = crate::chat::chat_threads_across(&state, &[std::path::PathBuf::from(&key)], true).unwrap();
-    assert!(all.len() == 1 && all[0].session.archived);
-
-    // The checkout is never deleted as if it were a thread's worktree.
-    let other = new_thread(false).session.id;
-    assert!(remote_call::<()>(
-        &state,
-        &id,
-        RepoOp::ArchiveChatThread {
-            repo: repo.clone().into(),
-            app_config: app_config.clone(),
-            session_id: other,
-            remove_worktree: true
-        }
-    )
-    .is_err());
 
     // A second task on the host (the review handoff below targets it): the retained-duplicate fixture, written file by file.
     let scratch = std::env::temp_dir().join(format!("remote-dup-{}", std::process::id()));
@@ -1047,67 +766,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .unwrap();
     assert_eq!(crate::remote_github_token(&app_config, &state, &host_id, host_path.as_ref()).unwrap(), "host-token");
-
-    // The sessions list, artifact readiness, notification clearing and task activity
-    // all read the host's files; live states come through the forward.
-    let ready = |sid: &str| {
-        remote_call::<bool>(
-            &state,
-            &id,
-            RepoOp::SessionArtifactReady {
-                repo: repo.clone().into(),
-                slug: slug(),
-                session_id: sid.into(),
-            },
-        )
-        .unwrap()
-    };
-    session
-        .channel
-        .call(
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s-art.meta.json").into(),
-                contents: serde_json::to_string(&crate::SessionMeta {
-                    id: "s-art".into(),
-                    artifact: "01-out.md".into(),
-                    ..Default::default()
-                })
-                .unwrap(),
-            },
-            std::time::Duration::from_secs(30),
-        )
-        .unwrap();
-    assert!(!ready("s-art"), "no artifact yet");
-    session
-        .channel
-        .call(
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/artifacts/01-out.md").into(),
-                contents: "# Out\n".into(),
-            },
-            std::time::Duration::from_secs(30),
-        )
-        .unwrap();
-    assert!(ready("s-art"));
-    assert!(!ready("missing"));
-
-    let clear = |sid: &str| {
-        remote_call::<()>(
-            &state,
-            &id,
-            RepoOp::ClearSessionNotifications {
-                repo: repo.clone().into(),
-                refs: vec![crate::SessionNotificationClearRef {
-                    repo_path: key.clone(),
-                    task_slug: slug(),
-                    id: sid.into(),
-                    notification_suppression: None,
-                }],
-            },
-        )
-    };
-    clear("s-art").unwrap();
-    assert!(clear("../s-art").is_err());
 
     // Repo-scope playbooks: the library code runs on a scratch copy of the host's files and only
     // what changed goes back, with host paths in what the UI sees.
@@ -1242,22 +900,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         )
         .unwrap();
         assert!(comment_path.starts_with(&repo) && comment_path.ends_with(".md"), "{comment_path}");
-
-        // The notification text uses the task's current name on the host.
-        let attention = |slug: &str, reason: &str| {
-            remote_call::<String>(
-                &state,
-                &id,
-                RepoOp::SessionAttentionBody {
-                    repo: repo.clone().into(),
-                    slug: Some(slug.into()),
-                    reason: reason.into(),
-                },
-            )
-        };
-        assert_eq!(attention("remote-task", "waiting_for_input").unwrap(), "Remote task — waiting for your input");
-        assert_eq!(attention("no-such-task", "idle").unwrap(), "no-such-task — idle, needs you");
-        assert!(attention("remote-task", "on_fire").is_err());
 
         // A review handoff copies an artifact between tasks on the host and starts the target session
         // through the host's own daemon (here not started: no agent is wanted in a test).
@@ -1882,13 +1524,12 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
         let handle = handle.clone();
         let (id, repo) = (id.clone(), repo.clone());
         std::thread::spawn(move || {
-            remote_call::<bool>(
+            remote_call::<Vec<String>>(
                 &handle.state::<crate::AppState>(),
                 &id,
-                RepoOp::SessionArtifactReady {
+                RepoOp::ListArtifacts {
                     repo: repo.into(),
                     slug: "remote-task".into(),
-                    session_id: "s1".into(),
                 },
             )
         })
@@ -1897,7 +1538,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
 
     // The command is an async fn: its first poll runs up to the hand-off and returns.
-    let mut rename = Box::pin(crate::read_chat_image(handle.clone(), "remote-task".into(), "missing.png".into()));
+    let mut rename = Box::pin(crate::list_artifacts(handle.clone(), "remote-task".into()));
     let started = std::time::Instant::now();
     let first = rename.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     let took = started.elapsed();
@@ -1906,8 +1547,8 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
 
     // Resumed, the host answers both, and the command finishes with the host's result.
     resume.now();
-    assert!(tauri::async_runtime::block_on(rename).is_err(), "the host answers that the image is not there");
-    assert!(!direct.join().unwrap().unwrap());
+    let listed = tauri::async_runtime::block_on(rename).unwrap();
+    assert_eq!(listed, direct.join().unwrap().unwrap(), "the command finishes with the host's answer");
     drop(resume);
     disconnect_host(&handle, &id);
     let _ = std::fs::remove_dir_all(&session.secrets_dir);

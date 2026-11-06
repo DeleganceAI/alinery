@@ -43,7 +43,7 @@ function rig(opts: { failStart?: boolean; failOpen?: boolean } = {}) {
       log.push(`open ${JSON.stringify(header)}`);
     },
     isRunning: (id) => running.has(id),
-    kill: (id) => {
+    stop: (id) => {
       metaAtKill[id] = JSON.parse(readFileSync(metaPathOf(repo, "", id), "utf8"));
       running.delete(id);
       log.push(`kill ${id}`);
