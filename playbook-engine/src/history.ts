@@ -48,7 +48,9 @@ export function snapshotOccurrence(historyDir: string, execId: string, occurrenc
     else renameSync(tmp, target);
     record.sha256 = sha256;
     record.size = size;
-  } catch {
+  } catch (error) {
+    // The record keeps no sha256, which is how a reader tells a step whose input was not captured.
+    console.error(`playbook-engine: ${execId} ${occurrence.id}: ${occurrence.path} not captured: ${error}`);
     rmSync(tmp, { force: true });
   }
   return record;

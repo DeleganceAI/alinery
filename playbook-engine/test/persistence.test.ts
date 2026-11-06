@@ -8,7 +8,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSyn
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { Engine } from '../src/engine.ts';
-import { findObject } from '../src/history.ts';
+import { findObject, snapshotOccurrence } from '../src/history.ts';
 import type { Launch } from '../src/harness.ts';
 import type { Execution, State } from '../src/state.ts';
 import { stateFromJson, stateToJson } from '../src/state.ts';
@@ -222,6 +222,82 @@ test('history: a coding step records its worktree tree under a ref, and it survi
   assert.deepEqual(engine.state.executions.get('e1')!.manifest!.worktree, recorded);
   assert.equal(git('cat-file', '-t', recorded.tree), 'tree');
   assert.equal(git('rev-parse', `${recorded.ref}^{tree}`), recorded.tree);
+});
+
+test('two completion requests that overlap while the worktree is being recorded are accepted once', async () => {
+  const dir = taskDir();
+  const harness = new FakeHarness(async (launch) => {
+    for (const path of Object.values(launch.outputs)) writeText(path, 'done');
+    await new Promise(() => {}); // the test is the one calling for completion
+  });
+  let recorded = 0;
+  const engine = Engine.open({
+    playbook: playbook([step('build', { isCodingStep: true, inputs: [input('ticket.md')], outputs: [out('built.md')] })]),
+    harness,
+    cwd: dir.root,
+    artifactsDir: dir.artifactsDir,
+    historyDir: dir.historyDir,
+    recordWorktree: async () => {
+      const n = ++recorded;
+      await new Promise((r) => setTimeout(r, 30));
+      return { ref: `refs/alinery/executions/t/e${n}`, tree: 'a'.repeat(40) };
+    },
+    ...fileStore(dir.statePath),
+  });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const replies = await Promise.all([engine.requestCompletion('e1'), engine.requestCompletion('e1')]);
+  assert.deepEqual(replies.map((r) => r.kind), ['accepted', 'accepted']);
+  const e1 = engine.state.executions.get('e1')!;
+  assert.equal(e1.manifest!.worktree!.ref, 'refs/alinery/executions/t/e1', 'the first record is the one kept');
+  assert.equal(e1.receipt!.length, 1);
+  await engine.flush();
+});
+
+test('a completion request is rejected when the execution fails while its worktree is being recorded', async () => {
+  const dir = taskDir();
+  const harness = new FakeHarness(async (launch) => {
+    for (const path of Object.values(launch.outputs)) writeText(path, 'done');
+    await new Promise(() => {});
+  });
+  let engine: Engine;
+  engine = Engine.open({
+    playbook: playbook([step('build', { isCodingStep: true, inputs: [input('ticket.md')], outputs: [out('built.md')] })]),
+    harness,
+    cwd: dir.root,
+    artifactsDir: dir.artifactsDir,
+    historyDir: dir.historyDir,
+    recordWorktree: async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      engine.confirmExited('e1'); // a human asserts the session has stopped, with nothing accepted yet
+      return { ref: 'refs/alinery/executions/t/e1', tree: 'a'.repeat(40) };
+    },
+    ...fileStore(dir.statePath),
+  });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  await new Promise((r) => setImmediate(r));
+  const reply = await engine.requestCompletion('e1');
+  assert.equal(reply.kind, 'rejected');
+  const e1 = engine.state.executions.get('e1')!;
+  assert.equal(e1.status, 'failed');
+  assert.ok(!e1.receipt);
+});
+
+test('history: a consumed input that cannot be copied is logged and recorded with no hash', async () => {
+  const dir = taskDir();
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => void lines.push(args.join(' '));
+  try {
+    const record = snapshotOccurrence(dir.historyDir, 'e1', { id: 'seed/gone.md', role: 'gone.md', path: join(dir.root, 'gone.md'), producer: null });
+    assert.equal(record.sha256, undefined);
+  } finally {
+    console.error = original;
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /gone\.md not captured/);
 });
 
 test('history: the inputs are captured before the agent is started, so a launch that edits one cannot change what was recorded', async () => {

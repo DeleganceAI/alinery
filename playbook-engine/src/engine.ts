@@ -181,6 +181,12 @@ export class Engine {
     if (!result.ok) return { kind: 'rejected', problems: result.problems };
     const published: Occurrence[] = result.published.map((p) => ({ id: `${e.id}/${p.role}`, role: p.role, path: p.path, producer: e.id }));
     const worktree = this.#step(e.step).isCodingStep && this.#opts.recordWorktree ? await this.#opts.recordWorktree(e) : undefined;
+    // The record above can await: a duplicate request may have been accepted meanwhile, and nothing below may run twice.
+    if (e.receipt) {
+      await this.flush();
+      return { kind: 'accepted', published: e.receipt.map((o) => o.path) };
+    }
+    if (e.status !== 'live') return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
     this.#append({ t: 'accepted', execId: e.id, published, ...(this.#opts.historyDir ? { files: published.map((o) => snapshotOccurrence(this.#opts.historyDir!, e.id, o)) } : {}), ...(worktree ? { worktree } : {}) });
     await this.flush();
     return { kind: 'accepted', published: published.map((o) => o.path) };
