@@ -99,7 +99,6 @@ mod remote;
 mod session;
 mod settings;
 mod state;
-mod subtask;
 mod task;
 mod telemetry;
 mod update;
@@ -126,7 +125,6 @@ use remote::*;
 use session::*;
 use settings::*;
 use state::*;
-use subtask::*;
 use task::*;
 use telemetry::*;
 use update::*;
@@ -182,16 +180,13 @@ pub fn run() {
             pre_archive_backup,
             lookup_task_pull_request,
             publish_git_backup,
+            publish_pre_archive_backup,
             ensure_drawer_terminal,
             list_chat_repos,
             chat_prompt,
             chat_abort,
             chat_set_model,
             chat_set_thinking_level,
-            subtask_state,
-            start_subtask_manager,
-            recover_subtask_manager,
-            discard_subtask,
             list_community_playbooks,
             list_community_imports,
             forget_community_import,

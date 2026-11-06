@@ -61,6 +61,7 @@ import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
+import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
@@ -366,7 +367,7 @@ export function TaskDetail({
 
   const load = async () => {
     const isCurrent = beginNameRead();
-    const managerResult = await ipc.subtaskState(slug, repoPath).then(
+    const managerResult = await fetchSubtaskState(repoPath, slug).then(
       (value) => ({ ok: true, value }) as const,
       () => ({ ok: false }) as const,
     );
@@ -378,7 +379,7 @@ export function TaskDetail({
 
   const refreshLiveTaskState = async () => {
     const isCurrent = beginNameRead();
-    const managerResult = await ipc.subtaskState(slug, repoPath).then(
+    const managerResult = await fetchSubtaskState(repoPath, slug).then(
       (value) => ({ ok: true, value }) as const,
       () => ({ ok: false }) as const,
     );
@@ -582,8 +583,7 @@ export function TaskDetail({
       const isCurrent = beginNameRead();
       setTask((current) => (current ? { ...current, archived: false } : current));
       setSubtaskState(null);
-      void ipc
-        .subtaskState(slug, repoPath)
+      void fetchSubtaskState(repoPath, slug)
         .then((value) => commitFetchedSubtaskState(value, isCurrent))
         .catch(() => {});
       toast("Task restored", "success");
@@ -627,8 +627,7 @@ export function TaskDetail({
   const startManager = () => {
     setBusy("subtask-manager");
     setErr(null);
-    ipc
-      .startSubtaskManager(slug)
+    startSubtaskManager(repoPath, slug)
       .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't start the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
@@ -637,8 +636,7 @@ export function TaskDetail({
   const recoverManager = () => {
     setBusy("subtask-recovery");
     setErr(null);
-    ipc
-      .recoverSubtaskManager(slug)
+    startSubtaskManager(repoPath, slug, true)
       .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't recover the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
@@ -660,7 +658,7 @@ export function TaskDetail({
     setBusy(`discard-subtask:${busyKey}`);
     setErr(null);
     try {
-      await ipc.discardSubtask(slug, manager?.id || "");
+      await discardSubtaskForRepo(repoPath, slug, manager?.id || "");
       await load();
     } catch (error) {
       setErr({ msg: setupOnly ? "Couldn't discard the sub-task setup." : "Couldn't kill the sub-task.", detail: String(error) });

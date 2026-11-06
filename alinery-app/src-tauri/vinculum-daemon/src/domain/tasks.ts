@@ -58,6 +58,8 @@ export type CreateTaskParams = {
   linearId?: string;
   githubIssue?: string;
   relatedTasks?: RelatedRef[];
+  /** A sub-task names its parent; only `createSubtask` sets it, and then the identity may not be suffixed (it is refused if occupied). */
+  parentTask?: string;
   playbook: { reference: { scope: string; key: string }; source: string };
   branchName?: string;
   worktreeName?: string;
@@ -156,12 +158,15 @@ function installSeed(state: Json, logicalPath: string, relativePath: string): vo
 
 export type CreateDeps = { repo: string; lane: string; identity: string };
 
+/** A sub-task joins its parent inside the reservation: `before` re-checks the premises under the lock, `after` writes the links. */
+export type ProvisionHooks = { before?: () => void | Promise<void>; after?: (task: TaskRecord) => void | Promise<void> };
+
 /**
  * Validates the whole package and the branch namespace before reserving anything, reserves the slug, branch and worktree
  * name under the lock, adds the worktree outside it, then installs the ticket and attachments and commits `ready`.
  * A failure after the reservation is recorded as `creation: "partial"` and the reservation is kept, as Rust did.
  */
-export async function provisionTask(d: CreateDeps, p: CreateTaskParams): Promise<CreateReply> {
+export async function provisionTask(d: CreateDeps, p: CreateTaskParams, hooks: ProvisionHooks = {}): Promise<CreateReply> {
   const { repo } = d;
   const parsed = parsePlaybookMd(p.playbook.source);
   if (!parsed.playbook) throw new DomainError("invalid_argument", `invalid playbook: ${parsed.diagnostics.map((x) => x.message).join("; ")}`);
@@ -184,12 +189,17 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams): Promise
 
   // The lock file lives in `.alinery/`; a repository the app has not readied yet has none.
   mkdirSync(alineryDir(repo), { recursive: true });
+  let reservationError: string | undefined;
   const task = await withTaskMutation(repo, "reserve task provisioning", async () => {
+    await hooks.before?.();
     const reserved = listActiveTasks(repo);
     const refs = await localBranches(repo);
     const branches = () => [...refs, ...reserved.map((t) => String(t.branch))];
     const branchOccupied = (candidate: string) => branches().some((existing) => branchNamesConflict(existing, candidate));
     const registered = await registeredWorktrees(repo);
+    if (p.parentTask && (existsSync(taskDir(repo, requested)) || existsSync(join(worktreesDir(repo), worktreeBase)) || branchOccupied(branchBase))) {
+      throw new DomainError("failed_precondition", "child task identity is already occupied");
+    }
     // Suffixing the leaf cannot escape an occupied parent namespace.
     const parent = branches().find((existing) => branchIsParent(existing, branchBase));
     if (parent) throw new DomainError("invalid_argument", `branch '${branchBase}' is blocked by existing or reserved parent branch '${parent}'; choose a branch outside '${parent}/'`);
@@ -238,11 +248,20 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams): Promise
       ...(Object.keys((state.step_models as Json) ?? {}).length ? { step_models: state.step_models } : {}),
       draft: false,
       ...(related.length ? { related_tasks: related } : {}),
+      ...(p.parentTask ? { parent_task: p.parentTask } : {}),
       telemetry_id: crypto.randomUUID(),
     };
     await writeDurable(join(taskDir(repo, slug), "playbook.md"), p.playbook.source);
     await writeTaskUnlocked(repo, record);
     await writeExecutionState(repo, slug, state);
+    try {
+      await hooks.after?.(record);
+    } catch (e) {
+      reservationError = e instanceof Error ? e.message : String(e);
+      state.creation = "partial";
+      state.creation_error = `relationships: ${reservationError}`;
+      await writeExecutionState(repo, slug, state);
+    }
     return record;
   });
 
@@ -250,6 +269,10 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams): Promise
   const attachmentErrors = [...(p.attachmentErrors ?? [])];
   let failure: string | undefined;
   try {
+    if (reservationError !== undefined) {
+      stage = "relationships";
+      throw new Error(reservationError);
+    }
     await worktreeAdd(repo, String(task.worktree), String(task.branch), p.baseRef?.trim() || undefined);
     stage = "install_inputs";
     const copied: string[] = [];

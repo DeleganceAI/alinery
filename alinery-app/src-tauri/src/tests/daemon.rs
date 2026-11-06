@@ -1404,11 +1404,6 @@ fn two_legacy_owners_require_two_confirmations() {
     let adopted = alinery_core::execution::read_execution_state(&repo.0, "task").unwrap();
     assert_eq!(adopted.owning_lane, crate::alineryd_socket_namespace().as_deref().unwrap_or(""));
     assert_eq!(adopted.owning_app_config_identity, alinery_core::app_config_identity(&repo.0.join("app.toml")));
-    let routed = crate::task_daemon_for(&repo.0, "task", &repo.0.join("app.toml")).unwrap();
-    let reply = routed
-        .get_task_execution(&alinery_core::daemon_client::GetTaskExecutionRequest { task_slug: "task".into() })
-        .unwrap();
-    assert_eq!(reply.state.owning_lane, adopted.owning_lane);
 }
 
 #[test]

@@ -400,20 +400,6 @@ pub struct TaskRelationships {
     pub active_subtask: Option<TaskSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SubtaskManagerState {
-    pub parent_manager_session: Option<SessionMeta>,
-    pub parent_manager_owner_task_slug: String,
-    pub task: TaskSummary,
-    pub parent_task: Option<TaskSummary>,
-    pub active_subtask: Option<TaskSummary>,
-    pub manager_session: Option<SessionMeta>,
-    pub manager_owner_task_slug: String,
-    pub can_start: bool,
-    pub can_recover: bool,
-    pub disabled_reason: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSubtaskInput {

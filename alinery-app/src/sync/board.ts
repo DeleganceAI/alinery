@@ -87,8 +87,11 @@ export function activityOf(e: Entity | undefined): TaskActivitySummary {
 
 /** The meta and display name a Session entity stands for. */
 export function sessionDisplayOf(e: Entity): SessionDisplayMeta | undefined {
-  if (e.value.case !== "session") return undefined;
-  const s: Session = e.value.value;
+  return e.value.case === "session" ? sessionDisplayFromProto(e.value.value) : undefined;
+}
+
+/** The same, from the `Session` message itself, which a reply carries without the entity around it. */
+export function sessionDisplayFromProto(s: Session): SessionDisplayMeta {
   const sem = s.semantic;
   const meta: SessionMeta = {
     id: s.id,

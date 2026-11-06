@@ -27,7 +27,6 @@ pub mod playbook_library;
 pub mod playbook_tree;
 pub mod prompts;
 pub mod protocol;
-pub mod provision_ffi;
 pub mod repo_ownership;
 pub mod repo_service;
 pub mod rpc_chunk;

@@ -1,0 +1,71 @@
+// proto/alinery/v1/subtasks.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+import "alinery/v1/sessions.proto";
+
+// The life of a parent task's sub-task (S4.8): what the task page offers, the manager session that designs the child, and
+// killing a child or throwing away a setup that never made one. Creating the child is the manager agent's own call
+// (`alinery_create_subtask`, still the legacy wire op until S5.1), so it is not here. The daemon owns every file these touch
+// and stops the sessions itself, so a repository on another machine answers the same calls. A write that changes a file the
+// store holds answers with the cursor that covers it.
+service SubtaskService {
+  rpc SubtaskState(SubtaskStateRequest) returns (SubtaskStateResponse);        // VIEW
+  rpc StartManager(StartManagerRequest) returns (StartManagerResponse);  // ACT
+  rpc DiscardSubtask(DiscardSubtaskRequest) returns (DiscardSubtaskResponse);   // ACT
+}
+
+// The fields of a task that a sub-task view shows (`TaskSummary` in alinery-core).
+message SubtaskTaskSummary {
+  string name = 1;
+  string slug = 2;
+  string branch = 3;
+  string worktree = 4;
+  bool has_worktree = 5;
+  string playbook = 6;
+  bool archived = 7;
+  bool draft = 8;
+  string subtask_outcome = 9;
+}
+
+message SubtaskStateRequest {
+  string slug = 1;
+}
+// What the sub-task controls on a task page need: the links, the manager sessions, and why starting one is or is not allowed.
+message SubtaskStateResponse {
+  SubtaskTaskSummary task = 1;
+  optional SubtaskTaskSummary parent_task = 2;
+  optional SubtaskTaskSummary active_subtask = 3;
+  optional Session manager_session = 4;
+  string manager_owner_task_slug = 5;
+  optional Session parent_manager_session = 6;
+  string parent_manager_owner_task_slug = 7;
+  bool can_start = 8;
+  bool can_recover = 9;
+  string disabled_reason = 10;
+}
+
+// Creates the manager session of `slug`, and starts it. `recover` binds a new manager to the task's active child.
+message StartManagerRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  bool recover = 3;
+}
+message StartManagerResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+
+// Kills the child `manager_session_id` is bound to (and its active descendants) as history, or, for a manager with no child
+// yet (and for "" when the task has an active child), stops and removes the setup session. Every session it owns is stopped first.
+message DiscardSubtaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string manager_session_id = 3;
+}
+message DiscardSubtaskResponse {
+  Applied applied = 1;
+  repeated string stopped_session_ids = 2;
+}

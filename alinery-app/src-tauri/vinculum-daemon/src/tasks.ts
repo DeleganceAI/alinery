@@ -1,6 +1,5 @@
 // The task operations the UI still sends as daemon ops. Replies match the Rust structs the app decodes.
-// Sub-task creation calls alinery-core until S4.8; creating a task is TaskService (rpc/tasks.ts). The helper is not asked.
-import { dlopen, FFIType, ptr, CString } from "bun:ffi";
+// Creating a task is TaskService (rpc/tasks.ts) and a sub-task's life is SubtaskService (rpc/subtasks.ts); the helper is not asked.
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
@@ -11,17 +10,9 @@ import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
 import { projectExecution, projectionContext, taskAutoApproveAll } from "./domain/executionProjection.ts";
 import { EMPTY_ENGINE, executionPath, loadEngineState, mergedRecords } from "./domain/executionStore.ts";
+import { createManagerSession } from "./domain/subtasks.ts";
 
 type Request = Record<string, unknown>;
-
-type CoreLib = {
-  symbols: {
-    alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
-    alinery_string_free: (reply: number | null) => void;
-  };
-};
-
-let coreLib: CoreLib | undefined;
 
 export function ownershipLibrary(): string {
   const fromEnv = process.env.ALINERY_OWNERSHIP_LIB;
@@ -33,29 +24,6 @@ export function ownershipLibrary(): string {
     }
   }
   throw new Error("libalinery_core was not found beside the daemon");
-}
-
-function core(): CoreLib {
-  if (coreLib) return coreLib;
-  const library = ownershipLibrary();
-  coreLib = dlopen(library, {
-    alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
-    alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
-  }) as CoreLib;
-  return coreLib;
-}
-
-function cstr(value: string) {
-  return ptr(Buffer.from(`${value}\0`));
-}
-
-function coreCall(repo: string, lane: string, identity: string, request: string): Request {
-  const lib = core();
-  const reply = lib.symbols.alinery_create_subtask(cstr(repo), cstr(lane), cstr(identity), cstr(request));
-  const text = reply ? new CString(reply).toString() : "";
-  if (reply) lib.symbols.alinery_string_free(reply);
-  if (!text) return { error: "empty provisioning reply" };
-  return JSON.parse(text) as Request;
 }
 
 function definitionOf(playbook: Playbook): Record<string, unknown> {
@@ -284,19 +252,8 @@ export async function createExecutionSession(
   const rejected = rejectHandoff(repo, slug, handoff);
   if (rejected) return { error: rejected };
   if (target.kind === "subtask_manager") {
-    const id = randomUUID();
-    const meta = {
-      id,
-      worktree: taskWorktree(repo, slug),
-      created: Math.floor(Date.now() / 1000),
-      harness: recordedHarness(target.harness),
-      model: target.model ?? "",
-      subtask_manager: true,
-    };
-    const dir = join(repo, ".alinery", "tasks", slug, "sessions");
-    mkdirSync(dir, { recursive: true });
-    writeAtomic(join(dir, `${id}.meta.json`), JSON.stringify(meta));
-    return { session: meta, execution: null, start: "not_requested", errors: [] };
+    const t = request.target as { subtask_slug?: string | null; recover?: boolean; harness?: string; model?: string | null };
+    return createManagerSession(repo, { slug, subtaskSlug: t.subtask_slug, recover: t.recover === true, harness: recordedHarness(t.harness), model: t.model, start: request.start === true }, openSession);
   }
   if (target.kind === "primary" && !request.start) {
     const id = randomUUID();
@@ -377,15 +334,6 @@ export async function startSession(
   };
 }
 
-export async function createSubtask(repo: string, lane: string, appIdentity: string, request: Request): Promise<Record<string, unknown>> {
-  const reply = coreCall(repo, lane, appIdentity, JSON.stringify(request));
-  if (typeof reply.error === "string") return reply;
-  const provisioning = reply.provisioning as Request | undefined;
-  if (!provisioning) return reply;
-  reply.provisioning = await overlayStart(repo, provisioning, Boolean(request.start));
-  return reply;
-}
-
 export async function taskOp(
   repo: string,
   lane: string,
@@ -400,6 +348,5 @@ export async function taskOp(
   }
   if (op === "create_execution_session") return createExecutionSession(repo, (header.request ?? {}) as Request, openSession);
   if (op === "start_session") return startSession(repo, (header.request ?? {}) as Request, openSession);
-  if (op === "create_subtask") return createSubtask(repo, lane, appIdentity, (header.request ?? {}) as Request);
   return undefined;
 }

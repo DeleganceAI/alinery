@@ -187,6 +187,14 @@ const sessionWrites = vi.hoisted(() => ({
 }));
 vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), ...sessionWrites }));
 
+// The sub-task controls are the daemon's SubtaskService (sync/subtasks), not ipc.
+const subtaskMocks = vi.hoisted(() => ({
+  subtaskState: vi.fn(),
+  startSubtaskManager: vi.fn(),
+  discardSubtask: vi.fn(),
+}));
+vi.mock("./sync/subtasks", () => subtaskMocks);
+
 // The task's git work is the daemon's GitService (sync/git), not ipc.
 const gitMocks = vi.hoisted(() => ({
   taskSourceBranchesForRepo: vi.fn(),
@@ -211,7 +219,6 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     })),
     getName: vi.fn(async () => "Alinery"),
     getVersion: vi.fn(async () => "0.11.1"),
-    subtaskState: vi.fn(),
     getTaskExecution: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
@@ -1364,7 +1371,7 @@ describe("session work names", () => {
     const parent = { ...task, slug: "parent", name: "Parent" };
     const manager = { ...globalSession, task_slug: "parent", task_name: "Parent", name: "Coordinate work", subtask_manager: true, subtask_slug: "task", subtask_name: child.name };
     fakeBoard.set({ anyRepoTasks: [child, parent] as never, tasks: [child, parent] as never });
-    ipcMocks.subtaskState.mockResolvedValue({
+    subtaskMocks.subtaskState.mockResolvedValue({
       task: child,
       parent_task: parent,
       active_subtask: null,

@@ -203,7 +203,8 @@ pub(crate) fn write_global_settings(app: AppHandle, global: alinery_core::Global
 }
 
 #[tauri::command]
-pub(crate) async fn storage_info(app: AppHandle, repo_path: String) -> Result<alinery_core::StorageInfo, String> {
+// Generic over the runtime only so a test can poll the command on a mock app.
+pub(crate) async fn storage_info<R: tauri::Runtime>(app: AppHandle<R>, repo_path: String) -> Result<alinery_core::StorageInfo, String> {
     // `storage_stats` walks the whole `.alinery` tree. Settings loads this when Storage
     // opens; a sync command runs that walk on the main thread.
     let target = target_repo_ref_for_app(&app, &repo_path)?;

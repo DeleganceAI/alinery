@@ -179,7 +179,7 @@ export function composeTicket(name: string, description: string, evidence: strin
 // ---- related tasks ---------------------------------------------------------------------------------------
 
 export const relatedLinksDir = (repo: string, slug: string) => join(taskDir(repo, slug), "related");
-const RELATED_MARKDOWN = "related-tasks.md";
+export const RELATED_MARKDOWN = "related-tasks.md";
 
 /** task.rs `related_link_name`: the slug and a 64-bit FNV-1a of `repo_path NUL slug`, 8 hex digits at least. */
 export function relatedLinkName(repoPath: string, slug: string): string {

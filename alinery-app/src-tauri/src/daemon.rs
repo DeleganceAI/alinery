@@ -6,15 +6,6 @@ use std::cell::Cell;
 
 pub(crate) static EFFECTIVE_APP_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
-pub(crate) fn task_daemon_for(repo: &Path, task_slug: &str, app_config: &Path) -> Result<DaemonClient, String> {
-    // Live execution queries and mutations must reach the durable owning lane.
-    let execution = alinery_core::execution::read_execution_state(repo, task_slug)?;
-    let socket = alinery_core::alineryd_socket_path(repo, (!execution.owning_lane.is_empty()).then_some(execution.owning_lane.as_str()));
-    daemon_client::connect_compatible(socket, app_config)
-        .map(|(client, _)| client)
-        .map_err(|error| error.to_string())
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct TakeoverSession {
     pub(crate) id: String,

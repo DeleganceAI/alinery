@@ -44,26 +44,6 @@ pub enum RepoOp {
         #[serde(default)]
         show_hidden: bool,
     },
-    SubtaskState {
-        repo: PathBuf,
-        slug: String,
-    },
-    SubtaskManagerRequest {
-        repo: PathBuf,
-        slug: String,
-        recover: bool,
-    },
-    /// The (owner task, session) pairs that discarding a sub-task has to stop first.
-    SubtaskDiscardSessions {
-        repo: PathBuf,
-        slug: String,
-        manager_session_id: String,
-    },
-    DiscardSubtask {
-        repo: PathBuf,
-        slug: String,
-        manager_session_id: String,
-    },
     /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
     /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
     ReadRepoOverrides {
@@ -285,10 +265,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Classify { path } => to_value(classify_folder(&path)?),
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
-        RepoOp::SubtaskState { repo, slug } => to_value(crate::subtask::subtask_manager_state(&repo, &slug)?),
-        RepoOp::SubtaskManagerRequest { repo, slug, recover } => to_value(crate::subtask::subtask_manager_request(&repo, slug, recover)?),
-        RepoOp::SubtaskDiscardSessions { repo, slug, manager_session_id } => to_value(crate::subtask_discard_sessions(&repo, &slug, &manager_session_id)?),
-        RepoOp::DiscardSubtask { repo, slug, manager_session_id } => crate::discard_subtask(&repo, &slug, &manager_session_id).map(|_| Value::Null),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
         RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
         RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
@@ -462,25 +438,6 @@ mod tests {
             RepoOp::ListDir {
                 path: "/srv".into(),
                 show_hidden: true,
-            },
-            RepoOp::SubtaskState {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::SubtaskManagerRequest {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                recover: true,
-            },
-            RepoOp::SubtaskDiscardSessions {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                manager_session_id: "m".into(),
-            },
-            RepoOp::DiscardSubtask {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                manager_session_id: "m".into(),
             },
             RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
             RepoOp::GitOriginUrl { repo: "/srv/a".into() },

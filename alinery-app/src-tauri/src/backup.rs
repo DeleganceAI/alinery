@@ -97,16 +97,6 @@ pub(crate) fn publish_auto_backup(app: &AppHandle, repo: &Path, trigger: alinery
     LazyLock::force(&BACKUP_WORKER);
 }
 
-/// `publish_auto_backup` for a repo on a host, as the trigger sites hold it (host id and path).
-pub(crate) fn publish_remote_backup(app: &AppHandle, host_id: &str, path: &str, trigger: alinery_core::BackupTrigger) {
-    let key = RepoRef::Remote {
-        host_id: host_id.to_string(),
-        path: path.to_string(),
-    }
-    .uri();
-    publish_auto_backup(app, Path::new(&key), trigger);
-}
-
 /// A queued automatic backup of a remote repo: the host checks its own settings and either skips
 /// (`None`) or writes the archive on its disk.
 pub(crate) fn create_queued_remote_backup<R: tauri::Runtime>(
@@ -280,6 +270,15 @@ pub(crate) async fn pre_archive_backup(app: AppHandle, state: State<'_, AppState
             },
         );
     }
+    Ok(())
+}
+
+/// The backup a discard or kill of a sub-task queues (`PreArchive`): the daemon archives the lineage, and the queue is this
+/// process's until S4.9 (the same split as `publish_git_backup`). The frontend calls it first, and a failure never stops the discard.
+#[tauri::command]
+pub(crate) async fn publish_pre_archive_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
+    let target = owned_target(&app, &state, &repo_path)?;
+    publish_auto_backup(&app, Path::new(&target.uri()), alinery_core::BackupTrigger::PreArchive);
     Ok(())
 }
 

@@ -12,9 +12,10 @@ import type { Task } from "alinery-proto/alinery/v1/entities_pb";
 import type { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import type { BlobStore } from "../domain/blobs.ts";
 import { deleteDraft, writeDraft } from "../domain/drafts.ts";
+import { parseCreateSubtaskInput, prepareSubtask } from "../domain/subtasks.ts";
 import { deleteExecutionRefs } from "../domain/gitActions.ts";
 import { alineryDir, readTaskChecked } from "../domain/taskFiles.ts";
-import { type AttachmentSource, archiveTask, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
+import { type AttachmentSource, archiveTask, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, type ProvisionHooks, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
 import { writeAtomic } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
@@ -45,10 +46,10 @@ async function settleFiles(d: TaskDeps, slug: string, ...more: string[]) {
 }
 
 /** The create both the TaskService and the legacy `create_task` wire op run: files, then sessions or the first step. */
-async function runCreate(d: TaskDeps, params: CreateTaskParams, release: string[], draftSlug: string | undefined) {
+async function runCreate(d: TaskDeps, params: CreateTaskParams, release: string[], draftSlug: string | undefined, hooks?: ProvisionHooks) {
   let reply: CreateReply;
   try {
-    reply = await provisionTask(d, params);
+    reply = await provisionTask(d, params, hooks);
   } finally {
     for (const id of release) d.blobs.release(id);
   }
@@ -115,6 +116,25 @@ export async function createFromWire(d: TaskDeps, request: WireRequest): Promise
     return { error: e instanceof Error ? e.message : String(e) };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The `create_subtask` op `alinery-mcp` calls for the manager agent (plan: MCP stays on this wire until S5.1). The reply is the
+ * JSON `CreateSubtaskResult`: the parent and child summaries, the manager session as the file now holds it, and the child's
+ * `CreateTaskReply`. A refusal is `{ error }`, as every legacy op answers.
+ */
+export async function createSubtaskFromWire(d: TaskDeps, request: unknown): Promise<Record<string, unknown>> {
+  try {
+    const plan = await prepareSubtask(d, parseCreateSubtaskInput(request));
+    const { reply, tail } = await runCreate(d, plan.params, [], undefined, plan.hooks);
+    const owner = String(plan.params.parentTask);
+    const managerFile = `sessions/${String((request as Record<string, unknown>).manager_session_id)}.meta.json`;
+    await settleFiles(d, owner, `tasks/${owner}/${managerFile}`);
+    const provisioning = { task: reply.task, sessions: tail.sessions, executions: tail.executions, creation: reply.creation, start: tail.start, errors: tail.errors };
+    return plan.result(reply, provisioning);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 

@@ -7,16 +7,16 @@
 //! Shared imports and fixtures live here; each child starts with `use super::*`.
 pub(crate) use super::{
     account_auth_path_in, account_lock_path, account_status_from_path, accounts_url, active_github_repo, alineryd_socket_namespace_for, apply_credits_to_hosted_view,
-    artifacts_dir, attach_repo_daemon, backup_now_with, backup_queue_lock, begin_sign_in_attempt, cancel_sign_in_at, classify_refresh_response, clear_curated_alinery_data,
-    clear_linear_account_in, configure_detached_process, credits_view_from, curl_http, curl_request, curl_request_with_timeouts, current_alineryd_socket_path,
-    discard_subtask_with, display_label, end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id, finish_sign_in, git_cmd, github_repo_from_remote,
-    gui_lock_held_elsewhere, hold_lock_after_compare_then_clear, hosted_refresh_needed, inference_path, is_hosted_model, is_paid_plan, linear_account_path_in, list_tasks_for_repo,
-    loopback_html, open_chat_repos_in, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref,
-    parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label,
-    production_livemode, read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins, remove_mcp_lane_runtime_files,
+    attach_repo_daemon, backup_now_with, backup_queue_lock, begin_sign_in_attempt, cancel_sign_in_at, classify_refresh_response, clear_curated_alinery_data,
+    clear_linear_account_in, configure_detached_process, credits_view_from, curl_http, curl_request, curl_request_with_timeouts, current_alineryd_socket_path, display_label,
+    end_sign_in_attempt, entitlement_url, fetch_desktop_credits_at, file_content_id, finish_sign_in, git_cmd, github_repo_from_remote, gui_lock_held_elsewhere,
+    hold_lock_after_compare_then_clear, hosted_refresh_needed, inference_path, is_hosted_model, is_paid_plan, linear_account_path_in, list_tasks_for_repo, loopback_html,
+    open_chat_repos_in, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback, parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body,
+    parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode, pkce_challenge, plan_label, production_livemode,
+    read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins, remove_mcp_lane_runtime_files,
     remove_repo_from_config, require_explicit_daemon, require_repo_owned, resolve_hosted_catalog, restore_backup_into, route_socket_path, sanitize_app_config, sanitize_appearance,
-    session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, subtask_state_in, sync_hosted_inference, task_dir,
-    validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry, worktrees_dir,
+    session_meta_path, sessions_dir, set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, sync_hosted_inference, task_dir,
+    validate_known_target_repo, wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry,
     write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, AuthAttempt, AuthRetryError, BackupSlot, Command,
     DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMeta, SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
 };
@@ -47,7 +47,6 @@ mod pi_durable;
 mod remote;
 mod session;
 mod settings;
-mod subtask;
 mod task;
 mod update;
 mod vinculum_customizations;
@@ -81,33 +80,6 @@ fn init_git_test_repo(name: &str) -> std::path::PathBuf {
 
 fn default_playbook_key() -> String {
     "superdevelop".into()
-}
-
-fn create_task_for_test(repo: &Path, name: &str, use_worktree: bool, branch_name: &str, worktree_name: &str) -> Task {
-    let slug = alinery_core::slugify(name);
-    let branch = if branch_name.is_empty() { slug.clone() } else { branch_name.to_string() };
-    let worktree = if use_worktree {
-        let path = worktrees_dir(repo).join(if worktree_name.is_empty() { &slug } else { worktree_name });
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let out = git_cmd(repo).args(["worktree", "add", "-b", &branch]).arg(&path).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        path
-    } else {
-        repo.to_path_buf()
-    };
-    let task = Task {
-        name: name.into(),
-        slug,
-        branch,
-        worktree: worktree.to_string_lossy().into_owned(),
-        has_worktree: use_worktree,
-        created: 1,
-        ..Default::default()
-    };
-    fs::create_dir_all(sessions_dir(repo, &task.slug)).unwrap();
-    fs::create_dir_all(artifacts_dir(repo, &task.slug)).unwrap();
-    write_task(repo, &task).unwrap();
-    task
 }
 
 fn write_retained_discovery_task(repo: &Path, slug: &str, lane: &str, archived: bool) -> Task {

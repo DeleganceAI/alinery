@@ -19,7 +19,7 @@ import { takeSecretFile } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
-import { createFromWire, type TaskDeps } from "./rpc/tasks.ts";
+import { createFromWire, createSubtaskFromWire, type TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
 import { BoardProjector } from "./domain/board.ts";
@@ -52,7 +52,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 32;
+const PROTOCOL = 33;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -1048,7 +1048,11 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     reply(socket, await createFromWire(taskDeps, request));
     return;
   }
-  if (["get_task_execution", "create_execution_session", "start_session", "create_subtask"].includes(op)) {
+  if (op === "create_subtask") {
+    reply(socket, await createSubtaskFromWire(taskDeps, header.request));
+    return;
+  }
+  if (["get_task_execution", "create_execution_session", "start_session"].includes(op)) {
     try {
       reply(socket, (await taskOp(repo, lane, identity, op, header, openCreated)) ?? { error: "unhandled" });
     } catch (error) {

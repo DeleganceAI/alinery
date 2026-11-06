@@ -36,7 +36,6 @@ import type {
   CommunityMineResult,
   CommunityPlaybookPage,
   ConnectionStatus,
-  CreateExecutionSessionReply,
   DaemonStatus,
   DesktopCreditsView,
   DownloadStatusRow,
@@ -59,7 +58,6 @@ import type {
   SshTarget,
   StagedUpdate,
   StorageInfo,
-  SubtaskManagerState,
   TakeoverOutcome,
   TakeoverPreview,
   UpdateResult,
@@ -183,12 +181,6 @@ export const notifySessionAttention = (body: string) => invoke<void>("notify_ses
 export const notifyTest = () => invoke<void>("notify_test");
 export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge_count", { count });
 
-// ── subtask.rs ────────────────────────────────────────────────────────
-export const subtaskState = (taskSlug: string, repoPath?: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug, repoPath });
-export const startSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("start_subtask_manager", { taskSlug });
-export const recoverSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("recover_subtask_manager", { taskSlug });
-export const discardSubtask = (taskSlug: string, managerSessionId: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId });
-
 // ── session.rs ────────────────────────────────────────────────────────
 
 /** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
@@ -246,6 +238,7 @@ export type ChatImage = { mime_type: string; data: string };
 export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_file", { path });
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>("pre_archive_backup", { repoPath, slug });
+export const publishPreArchiveBackup = (repoPath: string) => invoke<void>("publish_pre_archive_backup", { repoPath });
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 
 // ── playbook.rs ───────────────────────────────────────────────────────

@@ -331,37 +331,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             std::time::Duration::from_secs(30),
         )
         .unwrap();
-    // The task page's reads, answered by the host: a session meta written there is listed,
-    // and the sub-task, worktree and launch-field reads agree with the task.
-    let meta = alinery_core::SessionMeta {
-        id: "s1".into(),
-        phase: "build".into(),
-        harness: alinery_core::NO_HARNESS_KEY.into(),
-        created: 1_700_000_001,
-        ..Default::default()
-    };
-    session
-        .channel
-        .call(
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/sessions/s1.meta.json").into(),
-                contents: serde_json::to_string(&meta).unwrap(),
-            },
-            std::time::Duration::from_secs(30),
-        )
-        .unwrap();
-    let slug = || "remote-task".to_string();
-    let subtask: alinery_core::SubtaskManagerState = remote_call(
-        &state,
-        &id,
-        RepoOp::SubtaskState {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert_eq!(subtask.disabled_reason, "Pre-v2 task data is read-only");
-
     // A terminal on the host, streamed through the forwarded socket: create the auxiliary
     // session, open it, type a command, read the output come back.
     let client = repo_client(&state, &crate::RepoRef::parse(&key).unwrap()).unwrap();
@@ -1079,23 +1048,6 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
     let key = add_remote_repo(&handle, &id, &repo).unwrap();
     crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
-    let task = alinery_core::Task {
-        name: "Remote task".into(),
-        slug: "remote-task".into(),
-        branch: "remote-task".into(),
-        created: 1_700_000_000,
-        ..Default::default()
-    };
-    session
-        .channel
-        .call(
-            RepoOp::WriteFile {
-                path: format!("{repo}/.alinery/tasks/remote-task/task.md").into(),
-                contents: toml::to_string(&task).unwrap(),
-            },
-            std::time::Duration::from_secs(30),
-        )
-        .unwrap();
 
     let resume = Resume(session.clone());
     sh("pkill -STOP -f '[a]linery-mcp --repo-service'");
@@ -1104,12 +1056,13 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
         let handle = handle.clone();
         let (id, repo) = (id.clone(), repo.clone());
         std::thread::spawn(move || {
-            remote_call::<alinery_core::SubtaskManagerState>(
-                &handle.state::<crate::AppState>(),
+            let state = handle.state::<crate::AppState>();
+            remote_call::<alinery_core::StorageInfo>(
+                &state,
                 &id,
-                RepoOp::SubtaskState {
+                RepoOp::StorageInfo {
                     repo: repo.into(),
-                    slug: "remote-task".into(),
+                    app_config: crate::host_app_config(&state, &id)?,
                 },
             )
         })
@@ -1118,17 +1071,22 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
 
     // The command is an async fn: its first poll runs up to the hand-off and returns.
-    let mut rename = Box::pin(crate::subtask_state(handle.clone(), handle.state(), "remote-task".into(), None));
+    let mut storage = Box::pin(crate::storage_info(handle.clone(), key.clone()));
     let started = std::time::Instant::now();
-    let first = rename.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    let first = storage.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     let took = started.elapsed();
     assert!(matches!(first, Poll::Pending), "the command must wait for the host off this thread");
     assert!(took < std::time::Duration::from_millis(250), "the command held its caller for {took:?}");
 
     // Resumed, the host answers both, and the command finishes with the host's result.
     resume.now();
-    let listed = tauri::async_runtime::block_on(rename).unwrap();
-    assert_eq!(listed, direct.join().unwrap().unwrap(), "the command finishes with the host's answer");
+    let listed = tauri::async_runtime::block_on(storage).unwrap();
+    let direct = direct.join().unwrap().unwrap();
+    assert_eq!(
+        (listed.repo_path, listed.tasks_dir),
+        (direct.repo_path, direct.tasks_dir),
+        "the command finishes with the host's answer"
+    );
     drop(resume);
     disconnect_host(&handle, &id);
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
@@ -1175,44 +1133,10 @@ fn live_origin_url_and_sub_task_requests_run_on_the_host() {
     })
     .unwrap();
     let repo_path = || std::path::PathBuf::from(&repo);
-    let slug = || "feat".to_string();
 
     // The origin URL is what a bare `#123` GitHub import resolves against.
     let origin_url: Option<String> = serde_json::from_value(call(RepoOp::GitOriginUrl { repo: repo_path() }).unwrap()).unwrap();
     assert_eq!(origin_url.as_deref(), Some("https://github.com/acme/widgets.git"));
-
-    // Sub-tasks: the manager request is built from the host's files.
-    let request: alinery_core::task_creation::CreateExecutionSessionRequest = serde_json::from_value(
-        call(RepoOp::SubtaskManagerRequest {
-            repo: repo_path(),
-            slug: slug(),
-            recover: false,
-        })
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(request.task_slug, "feat");
-    assert!(
-        call(RepoOp::SubtaskManagerRequest {
-            repo: repo_path(),
-            slug: slug(),
-            recover: true
-        })
-        .is_err(),
-        "nothing to recover without an active sub-task"
-    );
-    assert!(call(RepoOp::SubtaskDiscardSessions {
-        repo: repo_path(),
-        slug: slug(),
-        manager_session_id: "nope".into()
-    })
-    .is_err());
-    assert!(call(RepoOp::DiscardSubtask {
-        repo: repo_path(),
-        slug: slug(),
-        manager_session_id: "nope".into()
-    })
-    .is_err());
 
     sh(&format!("rm -rf '{repo}' '{origin}'"));
     session.conn.exit_master();

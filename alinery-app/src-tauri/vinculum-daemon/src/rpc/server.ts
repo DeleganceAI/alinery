@@ -11,6 +11,7 @@ import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { GitService } from "alinery-proto/alinery/v1/git_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
+import { SubtaskService } from "alinery-proto/alinery/v1/subtasks_pb";
 import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
 import { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
@@ -32,6 +33,7 @@ import { jobService } from "./jobs.ts";
 import { type PlaybookDeps, playbookService } from "./playbooks.ts";
 import { chatService } from "./chat.ts";
 import { type SessionControl, sessionService, type Transcripts } from "./sessions.ts";
+import { subtaskService } from "./subtasks.ts";
 import { repoService, settingsService, type SettingsDeps } from "./settings.ts";
 import { syncService } from "./sync.ts";
 import { draftService, type TaskDeps, taskService } from "./tasks.ts";
@@ -51,6 +53,7 @@ function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle
   addService(server, JobService, jobService(jobs, dedupe, store, storageScan), values);
   addService(server, SessionService, sessionService(transcripts, sessions, dedupe, store), values);
   if (sessions) addService(server, ChatService, chatService(sessions, dedupe, store), values);
+  if (sessions) addService(server, SubtaskService, subtaskService(sessions, dedupe, store), values);
   addService(server, TerminalService, terminal, values);
   addService(server, ExecutionService, executionService(dedupe, store), values);
   if (settings) {

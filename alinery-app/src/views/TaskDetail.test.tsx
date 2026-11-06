@@ -53,7 +53,6 @@ const scenario = vi.hoisted(() => ({
 
 const ipcSpies = vi.hoisted(() => ({
   startSubtaskManager: vi.fn(),
-  recoverSubtaskManager: vi.fn(),
   discardSubtask: vi.fn(),
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
@@ -100,14 +99,15 @@ vi.mock("../sync/sessions", async (actual) => ({
 }));
 vi.mock("../ipc", () =>
   mockIpc({
-    subtaskState: mocks.subtaskState,
     getTaskExecution: mocks.getTaskExecution,
     sessionAbort: ipcSpies.sessionAbort,
-    startSubtaskManager: ipcSpies.startSubtaskManager,
-    recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
-    discardSubtask: ipcSpies.discardSubtask,
   }),
 );
+vi.mock("../sync/subtasks", () => ({
+  subtaskState: mocks.subtaskState,
+  startSubtaskManager: ipcSpies.startSubtaskManager,
+  discardSubtask: ipcSpies.discardSubtask,
+}));
 
 const parentTask: Task = {
   name: "Parent",
@@ -295,8 +295,12 @@ beforeEach(() => {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
   });
-  ipcSpies.startSubtaskManager.mockResolvedValue({ session: { ...manager }, execution: null, start: "started" });
-  ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
+  // Starting and recovering are one call; `recover` binds the new manager to the active child.
+  ipcSpies.startSubtaskManager.mockReset().mockImplementation(async (_repo: string, _slug: string, recover?: boolean) => ({
+    session: recover ? { ...manager, subtask_slug: "child" } : { ...manager },
+    execution: null,
+    start: "started",
+  }));
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
   ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
@@ -977,7 +981,7 @@ describe("Task Detail sub-task manager projection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start sub-task" }));
 
     await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledOnce());
-    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("parent");
+    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent");
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -1139,7 +1143,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Discard setup",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     await waitFor(() => expect(screen.queryByText("Sub-task setup")).toBeNull());
     expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1177,7 +1181,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Kill sub-task",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -1259,14 +1263,14 @@ describe("Task Detail sub-task manager projection", () => {
     });
     scenario.sessions = [unavailableManager, session({ id: "unrelated", created: 1 })];
     const { onOpenSession } = await renderDetail();
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
 
     const childRow = screen.getByText("Child", { selector: "span" }).closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("Manager unavailable")).toBeDefined();
     const replace = within(childRow).getByRole("button", { name: "Replace manager session" });
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
-    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
+    await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent", true));
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -1277,8 +1281,8 @@ describe("Task Detail sub-task manager projection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Kill sub-task" }));
 
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", ""));
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", ""));
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
