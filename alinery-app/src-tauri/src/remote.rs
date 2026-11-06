@@ -1177,7 +1177,6 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
                 binary: format!("{runtime}/alinery-vinculum-daemon").into(),
                 build_id: session.runtime_hash.clone(),
                 namespace: None,
-                ownership_lib: Some(format!("{runtime}/libalinery_core.so").into()),
                 log: format!("{}/logs/daemon-{}.log", session.config_dir, &repo_hash[..12]).into(),
                 launch,
                 unit,

@@ -362,15 +362,6 @@ pub fn prune_execution_objects(repo: &Path, slug: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn interrupt_unproven_owners(state: &mut TaskExecutionState, proven_live_sessions: &BTreeSet<String>) {
-    for record in state.executions.values_mut() {
-        if record.lifecycle.holds_capacity() && !proven_live_sessions.contains(&record.owner_session_id) {
-            record.lifecycle = ExecutionLifecycle::Interrupted;
-            record.error = Some("previous process disposition is unknown; ownership retained".into());
-        }
-    }
-}
-
 pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutionState, id: &str) -> Result<String, String> {
     use std::fmt::Write;
     let record = state.executions.get(id).ok_or("unknown execution")?;

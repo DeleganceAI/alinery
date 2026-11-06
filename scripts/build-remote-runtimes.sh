@@ -2,11 +2,9 @@
 # Cross-build the runtime that remote (SSH) repos install on a Linux host, and bundle it as
 # app resources: alinery-app/src-tauri/resources/remote/<triple>.tar.gz plus manifest.json.
 #
-# Each archive holds the three files the remote needs side by side (the daemon finds the
-# other two next to itself):
+# Each archive holds the two files the remote needs side by side:
 #   alinery-vinculum-daemon   bun build --compile for the target
-#   libalinery_core.so        cargo zigbuild, pinned to a glibc floor
-#   alinery-mcp               cargo zigbuild (also hosts the remote repo service)
+#   alinery-mcp               cargo zigbuild, pinned to a glibc floor (also hosts the remote repo service)
 # plus a MANIFEST in `sha256sum -c` format that the remote verifies after unpacking.
 #
 # Explicit and skippable: the Bun cross targets download from the network, which
@@ -79,13 +77,12 @@ for entry in "${TARGETS[@]}"; do
   echo "== $triple"
 
   bun build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --target="$bun_target" --outfile "$dir/alinery-vinculum-daemon"
-  cargo zigbuild --release -p alinery-core -p alinery-mcp --manifest-path "$TAURI/Cargo.toml" --target "$triple.$GLIBC_FLOOR"
-  cp "$TARGET_DIR/$triple/release/libalinery_core.so" "$dir/libalinery_core.so"
+  cargo zigbuild --release -p alinery-mcp --manifest-path "$TAURI/Cargo.toml" --target "$triple.$GLIBC_FLOOR"
   cp "$TARGET_DIR/$triple/release/alinery-mcp" "$dir/alinery-mcp"
   chmod +x "$dir/alinery-vinculum-daemon" "$dir/alinery-mcp"
 
   # The floor is a promise to the remote probe: refuse to ship anything that asks for more.
-  for file in alinery-vinculum-daemon libalinery_core.so alinery-mcp; do
+  for file in alinery-vinculum-daemon alinery-mcp; do
     need_glibc="$(max_glibc "$dir/$file")"
     if [ -n "$need_glibc" ] && [ "$(printf '%s\n%s\n' "$need_glibc" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
       echo "ERROR: $triple/$file needs glibc $need_glibc, above the $GLIBC_FLOOR floor" >&2
@@ -93,9 +90,9 @@ for entry in "${TARGETS[@]}"; do
     fi
   done
 
-  (cd "$dir" && for file in alinery-vinculum-daemon libalinery_core.so alinery-mcp; do echo "$(sha256 "$file")  $file"; done > MANIFEST)
+  (cd "$dir" && for file in alinery-vinculum-daemon alinery-mcp; do echo "$(sha256 "$file")  $file"; done > MANIFEST)
   # --no-xattrs: keep macOS provenance attributes out of the archive (they trigger warnings on extract).
-  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon libalinery_core.so alinery-mcp MANIFEST
+  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon alinery-mcp MANIFEST
   echo "archive ready: $OUT/$triple.tar.gz"
 done
 

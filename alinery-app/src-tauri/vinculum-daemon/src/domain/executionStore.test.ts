@@ -283,16 +283,6 @@ describe("the task-mutation lock around an engine save", () => {
 
 describe("Rust and TypeScript writers on one repository", () => {
   const tauri = new URL("../../../", import.meta.url).pathname;
-  const library = join(tauri, "target", "debug", process.platform === "darwin" ? "libalinery_core.dylib" : "libalinery_core.so");
-  beforeAll(() => {
-    const build = Bun.spawnSync(["cargo", "build", "-p", "alinery-core"], { cwd: tauri, stderr: "inherit" });
-    if (build.exitCode !== 0) throw new Error("cargo build of alinery-core failed");
-    process.env.ALINERY_OWNERSHIP_LIB = library;
-  }, 300_000);
-  afterAll(() => {
-    delete process.env.ALINERY_OWNERSHIP_LIB;
-  });
-
   /** A repository with one commit. Fixture setup only: the product spawns git through alinery_core::git_cmd. */
   function gitRepo() {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-interop-"));

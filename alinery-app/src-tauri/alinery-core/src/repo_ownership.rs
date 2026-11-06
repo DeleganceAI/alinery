@@ -1,17 +1,14 @@
-//! One repository owner, with lane-specific sockets and historical session identities.
+//! The read-only half of repository ownership: what the shell shows in the conflict banner and checks before a takeover.
+//! Taking ownership (the lease, adoption of retained tasks) is the daemon's, `vinculum-daemon/src/domain/ownership.ts`;
+//! the two must agree on what a lane, a lease and a retained record are.
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 
-use crate::execution::{interrupt_unproven_owners, read_execution_state, read_task_playbook, write_execution_state_unlocked, TaskExecutionState};
+use crate::execution::{read_execution_state, read_task_playbook};
 use crate::lockfile::{try_lock_exclusive, LockFile};
-
-/// Permanent inode leases, retained until the daemon exits. Never unlink these files.
-pub struct RepoOwnership {
-    _leases: Vec<LockFile>,
-}
 
 #[derive(Debug)]
 pub struct RepoOwnerReport {
@@ -77,7 +74,6 @@ fn entries(path: &Path, issues: &mut Vec<String>) -> Vec<fs::DirEntry> {
 #[derive(Default)]
 struct Evidence {
     lanes: BTreeSet<String>,
-    states: Vec<(String, TaskExecutionState)>,
     issues: Vec<String>,
 }
 
@@ -89,8 +85,7 @@ fn regular_file(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Collect independent evidence even if a different record is corrupt. Acquisition
-/// rejects any issue before using the collected states or writing anything.
+/// Collect independent evidence even if a different record is corrupt.
 fn enumerate(repo: &Path) -> Evidence {
     let mut evidence = Evidence {
         lanes: BTreeSet::from([String::new()]),
@@ -174,7 +169,6 @@ fn enumerate(repo: &Path) -> Evidence {
         if state.revision.checked_add(1).is_none() {
             evidence.issues.push("execution revision overflow".into());
         }
-        evidence.states.push((slug, state));
     }
     evidence
 }
@@ -221,17 +215,13 @@ pub fn inspect_owners(repo: &Path) -> Result<RepoOwnerReport, String> {
     Ok(report)
 }
 
-fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<(String, TaskExecutionState)>), String> {
+fn discover(repo: &Path) -> Result<Vec<LockFile>, String> {
     let root = crate::alinery_dir(repo);
     fs::create_dir_all(&root).map_err(|error| format!("create {}: {error}", root.display()))?;
     let mut leases = vec![lease(&root.join(".repo-owner.lock"))?];
-    let mut evidence = enumerate(repo);
+    let evidence = enumerate(repo);
     if let Some(error) = evidence.issues.into_iter().next() {
         return Err(error);
-    }
-    if let Some(lane) = lane {
-        validate_lane(lane)?;
-        evidence.lanes.insert(lane.to_owned());
     }
     for lane in evidence.lanes {
         leases.push(lease(&crate::alineryd_lock_path(repo, Some(&lane)))?);
@@ -242,56 +232,12 @@ fn discover(repo: &Path, lane: Option<&str>) -> Result<(RepoOwnership, Vec<(Stri
             ));
         }
     }
-    Ok((RepoOwnership { _leases: leases }, evidence.states))
+    Ok(leases)
 }
 
 /// Diagnostic availability fence: no task writes; all leases released on return.
 pub fn check_available(repo: &Path) -> Result<(), String> {
-    crate::with_task_mutation_lock_waiting(repo, "check project ownership", crate::TASK_MUTATION_CONTENTION_WAIT, || discover(repo, None).map(|_| ()))
-}
-
-#[cfg(test)]
-thread_local! {
-    static FAIL_ADOPTION_WRITE_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-
-/// Thread-scoped private test seam: real writes until the selected write fails.
-#[cfg(test)]
-pub(crate) fn with_adoption_write_failure<T>(after: usize, run: impl FnOnce() -> T) -> T {
-    struct Reset(Option<usize>);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            FAIL_ADOPTION_WRITE_AFTER.set(self.0);
-        }
-    }
-    let _reset = Reset(FAIL_ADOPTION_WRITE_AFTER.replace(Some(after)));
-    run()
-}
-
-/// Authoritative startup fence. All owners and records are checked before any write.
-pub fn acquire(repo: &Path, lane: &str, app_config_identity: &str) -> Result<RepoOwnership, String> {
-    crate::with_task_mutation_lock_waiting(repo, "acquire project ownership", crate::TASK_MUTATION_CONTENTION_WAIT, || {
-        let (guard, states) = discover(repo, Some(lane))?;
-        for (slug, mut state) in states {
-            // Always interrupt uncertain work, including retries after a partial durable
-            // batch. Ownership adoption is not proof that any child process stopped.
-            let interrupted = state.executions.values().any(|record| record.lifecycle.holds_capacity());
-            interrupt_unproven_owners(&mut state, &BTreeSet::new());
-            if state.owning_lane != lane || state.owning_app_config_identity != app_config_identity || interrupted {
-                state.owning_lane = lane.into();
-                state.owning_app_config_identity = app_config_identity.into();
-                #[cfg(test)]
-                if let Some(remaining) = FAIL_ADOPTION_WRITE_AFTER.get() {
-                    if remaining == 0 {
-                        return Err("injected adoption write failure".into());
-                    }
-                    FAIL_ADOPTION_WRITE_AFTER.set(Some(remaining - 1));
-                }
-                write_execution_state_unlocked(repo, &slug, &mut state)?;
-            }
-        }
-        Ok(guard)
-    })
+    crate::with_task_mutation_lock_waiting(repo, "check project ownership", crate::TASK_MUTATION_CONTENTION_WAIT, || discover(repo).map(|_| ()))
 }
 
 #[cfg(test)]
@@ -384,7 +330,6 @@ mod tests {
             assert!(row.issue.is_some());
         }
         assert!(check_available(repo).is_err());
-        assert!(acquire(repo, "replacement", "config").is_err());
         drop((listener, leases));
         assert!(check_available(repo).is_err(), "symlinked lease remains unsafe after owner exit");
         fs::remove_file(invalid).unwrap();

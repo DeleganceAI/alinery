@@ -14,18 +14,6 @@ import { createManagerSession } from "./domain/subtasks.ts";
 
 type Request = Record<string, unknown>;
 
-export function ownershipLibrary(): string {
-  const fromEnv = process.env.ALINERY_OWNERSHIP_LIB;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const dir = dirname(process.execPath);
-  for (const name of ["libalinery_core.dylib", "libalinery_core.so", "alinery_core.dll"]) {
-    for (const candidate of [join(dir, name), join(dir, "..", "Resources", "ownership", name)]) {
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  throw new Error("libalinery_core was not found beside the daemon");
-}
-
 function definitionOf(playbook: Playbook): Record<string, unknown> {
   const step = (item: Step) => ({
     key: item.key,

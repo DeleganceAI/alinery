@@ -21,22 +21,8 @@ pub(crate) fn resolve_alongside(name: &str) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-fn ownership_library() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let directory = executable.parent()?;
-    for name in ["libalinery_core.dylib", "libalinery_core.so", "alinery_core.dll"] {
-        for candidate in [directory.join(name), directory.join("../Resources/ownership").join(name)] {
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
 fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
     let binary = resolve_alongside("alinery-vinculum-daemon").ok_or("alinery-vinculum-daemon binary not found beside the app")?;
-    let library = ownership_library().ok_or("ownership library not found beside the app")?;
     let namespace = alineryd_socket_namespace();
     let host_executable = canonical_host_executable(std::env::current_exe());
     // The token is kept before the daemon exists, as for a remote daemon, so a started daemon never
@@ -58,7 +44,6 @@ fn start_pi_daemon(repo: &Path, app_config: &Path) -> Result<(), String> {
         host_executable.as_deref(),
         Some(&handoff),
     )
-    .env("ALINERY_OWNERSHIP_LIB", library)
     .spawn();
     match spawned {
         Ok(_) => Ok(()),

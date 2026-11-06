@@ -86,8 +86,6 @@ pub enum RepoOp {
         build_id: String,
         #[serde(default)]
         namespace: Option<String>,
-        #[serde(default)]
-        ownership_lib: Option<PathBuf>,
         log: PathBuf,
         launch: Launch,
         /// systemd unit name; required for `SystemdRun`.
@@ -236,7 +234,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             binary,
             build_id,
             namespace,
-            ownership_lib,
             log,
             launch,
             unit,
@@ -248,7 +245,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
             &binary,
             &build_id,
             namespace.as_deref(),
-            ownership_lib.as_deref(),
             &log,
             launch,
             unit.as_deref(),
@@ -272,7 +268,6 @@ fn spawn_daemon(
     binary: &Path,
     build_id: &str,
     namespace: Option<&str>,
-    ownership_lib: Option<&Path>,
     log: &Path,
     launch: Launch,
     unit: Option<&str>,
@@ -290,9 +285,6 @@ fn spawn_daemon(
         .map_err(|error| format!("open {}: {error}", log.display()))?;
     let log_again = log_file.try_clone().map_err(|error| error.to_string())?;
     let mut daemon = crate::daemon_command(binary, repo, app_config, build_id.as_ref(), namespace, None, rpc_secret_file);
-    if let Some(library) = ownership_lib {
-        daemon.env("ALINERY_OWNERSHIP_LIB", library);
-    }
     if let Some(file) = ui_secret_file {
         daemon.arg("--ui-secret-file").arg(file);
     }
@@ -383,7 +375,6 @@ mod tests {
                 binary: "/srv/rt/d".into(),
                 build_id: "abc".into(),
                 namespace: Some("dev".into()),
-                ownership_lib: Some("/srv/rt/lib.so".into()),
                 log: "/srv/c/logs/d.log".into(),
                 launch: Launch::SystemdRun,
                 unit: Some("alinery-daemon-abc".into()),
@@ -556,8 +547,8 @@ mod tests {
     fn spawn_daemon_launches_detached_with_the_shared_recipe_and_logs_output() {
         let root = temp_dir("spawn");
         let binary = root.join("fake-daemon");
-        // Print the arguments and the one env var the repo service adds, then exit.
-        fs::write(&binary, "#!/bin/sh\necho \"args: $*\"\necho \"lib: $ALINERY_OWNERSHIP_LIB\"\n").unwrap();
+        // Print the arguments, then exit.
+        fs::write(&binary, "#!/bin/sh\necho \"args: $*\"\n").unwrap();
         fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         let log = root.join("logs/d.log");
         run(RepoOp::SpawnDaemon {
@@ -566,7 +557,6 @@ mod tests {
             binary,
             build_id: "hash1".into(),
             namespace: Some("ns".into()),
-            ownership_lib: Some("/opt/lib.so".into()),
             log: log.clone(),
             launch: Launch::Direct,
             unit: None,
@@ -577,7 +567,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..100 {
             text = fs::read_to_string(&log).unwrap_or_default();
-            if text.contains("lib:") {
+            if text.contains("--rpc-secret-file") {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -585,7 +575,6 @@ mod tests {
         assert!(text.contains("--repo"), "{text}");
         assert!(text.contains("--build-id hash1"), "{text}");
         assert!(text.contains("--socket-namespace ns"), "{text}");
-        assert!(text.contains("lib: /opt/lib.so"), "{text}");
         assert!(text.contains(&format!("--ui-secret-file {}", root.join("ui.secret").display())), "{text}");
         assert!(text.contains(&format!("--rpc-secret-file {}", root.join("rpc.secret").display())), "{text}");
         assert!(run(RepoOp::SpawnDaemon {
@@ -596,7 +585,6 @@ mod tests {
             binary: root.clone(),
             build_id: "x".into(),
             namespace: None,
-            ownership_lib: None,
             log,
             ui_secret_file: None,
             rpc_secret_file: None,

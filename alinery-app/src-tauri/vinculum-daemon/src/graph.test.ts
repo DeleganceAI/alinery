@@ -232,16 +232,6 @@ describe("playbook host", () => {
 });
 
 describe("a coding step records its worktree", () => {
-  const tauri = new URL("../../", import.meta.url).pathname;
-  beforeAll(() => {
-    const build = Bun.spawnSync(["cargo", "build", "-p", "alinery-core"], { cwd: tauri, stderr: "inherit" });
-    if (build.exitCode !== 0) throw new Error("cargo build of alinery-core failed");
-    process.env.ALINERY_OWNERSHIP_LIB = join(tauri, "target", "debug", process.platform === "darwin" ? "libalinery_core.dylib" : "libalinery_core.so");
-  }, 300_000);
-  afterAll(() => {
-    delete process.env.ALINERY_OWNERSHIP_LIB;
-  });
-
   test("accepting a coding step keeps the working files under a ref, and a step outside git still accepts", async () => {
     const env = { PATH: process.env.PATH ?? "", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
     const git = (repo: string, ...args: string[]) => {

@@ -650,7 +650,7 @@ impl Default for UpdatePrefs {
 }
 
 /// Global-only. Each alineryd re-reads this from the app config to decide whether to hold an
-/// idle-sleep inhibit (`alineryd/src/idle_inhibit.rs`); a missing or unreadable file is off.
+/// idle-sleep inhibit (`vinculum-daemon/src/platform/keepawake.ts`); a missing or unreadable file is off.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PowerPrefs {
     #[serde(default)]

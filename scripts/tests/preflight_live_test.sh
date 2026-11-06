@@ -75,8 +75,7 @@ git -C "$TMPR" init -q .
 mkdir -p "$TMPR/.alinery"
 
 # --- bring up a real daemon -----------------------------------------------------------
-ALINERY_OWNERSHIP_LIB="$ROOT/alinery-app/src-tauri/target/debug/libalinery_core.dylib" \
-  "$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
+"$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
   >"$TMPR/alineryd.log" 2>&1 &
 DAEMON_PID=$!
 SOCK="$(repo_daemon_socket "$TMPR")"

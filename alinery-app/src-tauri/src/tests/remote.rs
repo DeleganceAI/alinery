@@ -621,7 +621,6 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
                 binary: format!("{runtime}/alinery-vinculum-daemon").into(),
                 build_id: session.runtime_hash.clone(),
                 namespace: None,
-                ownership_lib: Some(format!("{runtime}/libalinery_core.so").into()),
                 log: format!("{config_dir}/logs/old-daemon.log").into(),
                 // The test host has no systemd user manager; the daemon still detaches.
                 launch: alinery_core::repo_service::Launch::Direct,

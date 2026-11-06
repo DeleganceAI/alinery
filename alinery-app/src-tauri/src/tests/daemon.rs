@@ -1332,14 +1332,6 @@ fn two_legacy_owners_require_two_confirmations() {
         fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
         let debug = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug");
         std::os::unix::fs::symlink(debug.join("alinery-vinculum-daemon"), install.0.join("alinery-vinculum-daemon")).unwrap();
-        let library = if cfg!(target_os = "macos") {
-            "libalinery_core.dylib"
-        } else if cfg!(target_os = "windows") {
-            "alinery_core.dll"
-        } else {
-            "libalinery_core.so"
-        };
-        std::os::unix::fs::symlink(debug.join(library), install.0.join(library)).unwrap();
         let result = Command::new(executable)
             .args(["--exact", "tests::daemon::two_legacy_owners_require_two_confirmations", "--nocapture"])
             .env("ALINERY_TEST_TAKEOVER_INSTALL", "1")

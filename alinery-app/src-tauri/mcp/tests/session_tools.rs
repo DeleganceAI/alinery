@@ -135,13 +135,6 @@ env = {{ ALINERY_RUNNER_TOKENS = "{}" }}
         fs::set_permissions(&host, fs::Permissions::from_mode(0o755)).unwrap();
         let runner = fixture.root.join("fake-alinery-runner");
         let daemon = std::env::current_exe().unwrap().parent().and_then(Path::parent).unwrap().join("alinery-vinculum-daemon");
-        let library = daemon.parent().unwrap().join(if cfg!(target_os = "macos") {
-            "libalinery_core.dylib"
-        } else if cfg!(target_os = "windows") {
-            "alinery_core.dll"
-        } else {
-            "libalinery_core.so"
-        });
         let child = Command::new(daemon)
             .arg("--repo")
             .arg(&fixture.root)
@@ -149,7 +142,6 @@ env = {{ ALINERY_RUNNER_TOKENS = "{}" }}
             .arg("mcp-session-tools")
             .arg("--app-config")
             .arg(&fixture.app_config)
-            .env("ALINERY_OWNERSHIP_LIB", library)
             .env("ALINERY_HOST_EXECUTABLE", &host)
             .env("ALINERY_RUNNER_PATH", runner)
             .env("ALINERY_RUNNER_TOKENS", &fixture.runner_tokens)

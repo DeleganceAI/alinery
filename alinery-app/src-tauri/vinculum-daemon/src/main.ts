@@ -2,7 +2,6 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type Socket } from "node:net";
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
@@ -39,11 +38,13 @@ import { BackupHost } from "./jobs/backupHost.ts";
 import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
-import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, ownershipLibrary, startSession, taskOp, taskWorktree } from "./tasks.ts";
+import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, startSession, taskOp, taskWorktree } from "./tasks.ts";
 import { ChatPublisher, type ChatSessions, loadChat } from "./domain/chat.ts";
 import { setSessionName } from "./domain/sessionOps.ts";
 import { readTask } from "./domain/taskFiles.ts";
 import { DomainError } from "./platform/lock.ts";
+import { acquireRepoOwnership } from "./domain/ownership.ts";
+import { KeepAwake } from "./platform/keepawake.ts";
 import type { SessionControl } from "./rpc/sessions.ts";
 import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
@@ -162,7 +163,13 @@ parsers.push(executionParser(repo, lane, identity), settingsParser(join(repo, ".
 // The version in a telemetry event: the app passes its own, since a daemon binary has none.
 const telemetry = telemetrySender(appConfig, flag("--app-version") || "unknown");
 const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId, watchExhausted: () => watcher.status.enospc });
-acquireOwnership(repo, lane, identity);
+// One owner per repository (S4.11): a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
+try {
+  await acquireRepoOwnership(repo, lane ?? "", identity);
+} catch (error) {
+  console.error(`${error instanceof DomainError ? error.code : "ownership_failed"}: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
+}
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
 const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
 try {
@@ -270,24 +277,11 @@ function appConfigIdentity(path: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
-let releaseKeepAwake = () => undefined as void;
-
-function startKeepAwake(library: string) {
-  const lib = dlopen(library, {
-    alinery_keep_awake_start: { args: [FFIType.cstring], returns: FFIType.void },
-    alinery_keep_awake_sessions: { args: [FFIType.u32], returns: FFIType.void },
-    alinery_keep_awake_release: { args: [], returns: FFIType.void },
-  });
-  lib.symbols.alinery_keep_awake_start(ptr(Buffer.from(`${appConfig}\0`)));
-  setInterval(() => {
-    const count = [...live.values()].filter((row) => row.process !== "exited").length;
-    lib.symbols.alinery_keep_awake_sessions(count);
-  }, 1000);
-  releaseKeepAwake = () => lib.symbols.alinery_keep_awake_release();
-}
+const keepAwake = new KeepAwake({ appConfig, liveSessions: () => [...live.values()].filter((row) => row.process !== "exited").length });
+const releaseKeepAwake = () => keepAwake.release();
 
 // These consts are initialized above. Calling the extensions any earlier reads sessionNameTool and releaseKeepAwake in the temporal dead zone, and the bundled daemon exits before it listens.
-startKeepAwake(ownershipLibrary());
+keepAwake.start();
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
@@ -300,20 +294,6 @@ registry.install(
 );
 const mcpHub = new McpHub(registry, { repo, appConfig, agentDir });
 void mcpHub.refresh();
-
-function acquireOwnership(repoPath: string, laneName: string, configIdentity: string) {
-  const library = ownershipLibrary();
-  const lib = dlopen(library, {
-    alinery_pi_acquire: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
-    alinery_pi_acquire_error: { args: [], returns: FFIType.cstring },
-  });
-  const code = lib.symbols.alinery_pi_acquire(ptr(Buffer.from(`${repoPath}\0`)), ptr(Buffer.from(`${laneName}\0`)), ptr(Buffer.from(`${configIdentity}\0`)));
-  if (code !== 0) {
-    const message = lib.symbols.alinery_pi_acquire_error();
-    const text = typeof message === "string" ? message : typeof message === "number" && message !== 0 ? new CString(message).toString() : "ownership acquire failed";
-    throw new Error(text || "ownership acquire failed");
-  }
-}
 
 function sqlitePath(taskSlug: string, id: string): string {
   return taskSlug ? join(repo, ".alinery", "tasks", taskSlug, "sessions", `${id}.pi.sqlite`) : join(repo, ".alinery", "sessions", `${id}.pi.sqlite`);

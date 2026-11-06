@@ -199,8 +199,9 @@ JS
 #   terminal.ts:session-kill   the user's kill of a Terminal session
 #   mcp.ts:mcp-restart         closing an MCP child (restart, or the owning session ending)
 #   jobs/runner.ts:job-cancel  a user's cancel of a running job (SIGTERM to its child, never a session)
+#   platform/keepawake.ts:keepawake-release  ending the idle-sleep hold (caffeinate or systemd-inhibit), never a session
 DAEMON_SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
-SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart jobs/runner.ts:job-cancel"
+SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart jobs/runner.ts:job-cancel platform/keepawake.ts:keepawake-release"
 if [ ! -f "$DAEMON_SRC/platform/process.ts" ]; then
   echo "ERROR: $DAEMON_SRC/platform/process.ts is missing — the daemon scan has drifted from the code." >&2
   exit 1
