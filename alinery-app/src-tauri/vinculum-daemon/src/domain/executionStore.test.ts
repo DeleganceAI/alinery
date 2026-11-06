@@ -255,6 +255,26 @@ describe("the task-mutation lock", () => {
   }, 30_000);
 });
 
+describe("the task-mutation lock around an engine save", () => {
+  beforeAll(() => void holderBinary(), 120_000);
+  test("saveEngineState writes nothing while a Rust process holds the lock, and lands within 100 ms of its release", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-savewait-"));
+    forkJoin(repo, "t", { revision: 4 });
+    const before = readFileSync(executionPath(repo, "t"), "utf8");
+    const holder = await holdFromRust(join(repo, ".alinery", ".task-mutation.lock"));
+    let finished = 0;
+    const call = saveEngineState(repo, "t", { seeds: [], executions: new Map(), ambiguities: [] }).then(() => void (finished = Date.now()));
+    await Bun.sleep(400);
+    expect(finished).toBe(0);
+    expect(readFileSync(executionPath(repo, "t"), "utf8")).toBe(before);
+    const released = Date.now();
+    await holder.release();
+    await call;
+    expect(finished - released).toBeLessThan(100);
+    expect(JSON.parse(readFileSync(executionPath(repo, "t"), "utf8")).revision).toBe(5);
+  }, 30_000);
+});
+
 describe("Rust and TypeScript writers on one repository", () => {
   const tauri = new URL("../../../", import.meta.url).pathname;
   const library = join(tauri, "target", "debug", process.platform === "darwin" ? "libalinery_core.dylib" : "libalinery_core.so");
