@@ -189,6 +189,27 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** with consent on, one `POST` arrives within 3 s whose JSON body has `"event":"settings.change"`, `"source":"alineryd"` and `"scope":"repo"` and no repository path, slug or token; with consent off the listener receives nothing within 3 s, and the setting still saves.
 - **Status:** open
 
+### L-S4.2-a: Approve a gated step and watch the execution views follow the daemon
+
+- **Session:** S4.2. Plan: S4.2 Accept; ledger R-S4.2-1, R-S4.2-2, R-S4.2-8.
+- **Steps:** launch the app on a scratch git repo with a playbook that has a locked (human-gated) step. Create a task and start its first session. (1) Open the task detail and the session: they show the execution, with no 1.5 s or 3 s poll in the network panel. (2) When the locked step is ready, press Approve in the session. (3) With the task page also open, watch it move without a reload. (4) Press Approve a second time quickly, or from two windows.
+- **Expected:** (1) the page updates on the daemon's push; (2) the step completes and the receipt shows; (3) the task detail shows the same state; (4) the second approval is refused with a revision mismatch message and the first stands. `<repo>/.alinery/tasks/<slug>/execution.json` has an `engine` block and its `revision` rose.
+- **Status:** open
+
+### L-S4.2-b: A task from the old runner shows as history and cannot be approved or started
+
+- **Session:** S4.2. Plan: S4.2 Accept (O21); ledger R-S4.2-3.
+- **Steps:** put a task from an earlier build in a scratch repo (an `execution.json` with records, no `engine` block and no `engine.jsonl`). Open the repo in the app, then the task and its queued session. Restart the daemon (Settings, Stop daemon, reopen).
+- **Expected:** the task shows its execution records; Approve and "Start this queued session" are disabled; no session starts after the restart; `execution.json` is unchanged byte for byte.
+- **Status:** open
+
+### L-S4.2-c: A step's file states survive a live edit and an archive prunes them
+
+- **Session:** S4.2. Plan: S4.2 Accept (O27); ledger R-S4.2-5, R-S4.2-6.
+- **Steps:** run a fork and join to completion. In `<repo>/.alinery/tasks/<slug>/executions/<execId>/` note the manifest hashes and `ls objects/`. Edit an artifact an earlier step had consumed, restart the daemon, and `shasum -a 256` the object named in the manifest. Then archive the task in the app.
+- **Expected:** the object's hash equals its file name and the original bytes, whatever the live file now holds; after the archive `objects/` is gone and the manifests remain.
+- **Status:** open
+
 ## Needs a signing identity
 
 ### L-S0.5-a: bun:ffi under the hardened runtime
@@ -275,6 +296,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Session:** S4.1. Plan: S4.1 (remote hosts); ledger R-S4.1-1, R-S4.1-2, R-S4.1-7.
 - **Steps:** after L-S1.3-a and with the runtime rebuilt (`scripts/build-remote-runtimes.sh`, since `alinery-core`, `mcp/` and `vinculum-daemon/` changed), run the live remote tests as in L-S1.3-b. They now include the `remote_github_token` case (a host `config.toml` override over the Mac's global token). Then in the app, with the container host connected and a repository on it open: change a setting in Settings (repository scope); `ssh` to the host and `cat <repo>/.alinery/config.toml`; `cat ~/.local/share/alinery-remote/config/*/app.toml`.
 - **Expected:** the live tests pass; the host's `config.toml` holds the new value; the host's `app.toml` has a `[telemetry]` section with this Mac's `enabled`, `prompted`, `install_id` and `endpoint`; a freshly added remote repo has `config.toml`, `harnesses.toml` and the ignore entry before any task is created.
+- **Status:** open
+
+### L-S4.2-d: The Linux runtime with protocol 27 and the engine's save on a remote host
+
+- **Session:** S4.2. Plan: S4.2 (remote hosts); ledger R-S4.2-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` all changed) and run the live remote tests as in L-S1.3-b. Then in the app, with the container host connected and a repository on it open, run L-S4.2-a there; on the host `cat <repo>/.alinery/tasks/<slug>/execution.json | head -c 400`.
+- **Expected:** the live tests pass against protocol 27 (a host still on 26 shows the daemon-conflict banner and Restart daemon, not a failure); the approval goes through the forwarded RPC socket; the host file has the `engine` block.
 - **Status:** open
 
 ## Needs a Linux machine (any arch)

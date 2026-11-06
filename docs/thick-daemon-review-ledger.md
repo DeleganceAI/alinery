@@ -274,6 +274,57 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 - **What:** `vinculum-daemon/node_modules/alinery-proto` holds one symlink per generated file, so a new `proto/gen` file (here `settings_pb`) was not importable in the daemon's tests until I linked it by hand in this worktree. A fresh `bun install` should create the link; I did not run one to confirm (unverified).
 - **Files:** `vinculum-daemon/package.json`.
 
+### R-S4.2-1: the engine block is opaque JSON to Rust
+- **Kind:** decision (provisional).
+- **What:** `TaskExecutionState` gains `engine: Option<serde_json::Value>`, so every remaining Rust writer (S4.3, S4.8 and S4.11 own them) reads the file whole and writes the block back unchanged. Rust never interprets it.
+- **Options:** a typed Rust mirror of the engine `State` (a second schema to keep in step, against rule 2); a separate file for the engine state (O14 b says `execution.json` is the one truth).
+- **Why:** smallest diff that keeps one file and loses nothing across a Rust write. Covered by the interop test in `executionStore.test.ts` (100 interleaved rounds of TypeScript saves, manual records, Rust reads and Rust provisioning) and by the Rust test `a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_block`.
+- **Reverse:** drop the field and the block is lost on the next Rust write; do not.
+- **Files:** `alinery-core/src/execution.rs`, `alinery-core/tests/fixtures/ts-engine-state.json`.
+
+### R-S4.2-2: how the engine's records and the Rust-shaped records share `execution.json`
+- **Kind:** decision (provisional).
+- **What:** `saveEngineState` rewrites the file's `executions` and `occurrences` maps from the engine State (so Rust readers such as artifact projection still see the engine's executions) and keeps records it did not write. It tells them apart by id shape: engine ids are `e<N>`, `seed/<role>` and `e<N>/<role>`; Rust's are UUIDs. Paths inside the `engine` block are stored relative to the task directory and made absolute on load, so a repository moved on disk still resolves (the O14 trace's absolute-path problem). The `EMPTY_ENGINE` block marks a task this daemon has handled, so `loadEngineState` does not mistake it for O21.
+- **Why:** Rust readers did not have to change. **Risk:** a Rust record whose id matches the engine shape would be overwritten; Rust ids are UUIDs, so it cannot happen today.
+- **Files:** `vinculum-daemon/src/domain/executionStore.ts`, `executionProjection.ts`.
+
+### R-S4.2-3: O21 tasks are `history_only` and the views disable approve and start
+- **Kind:** decision (provisional; O21 itself is user-decided).
+- **What:** records the old Rust runner wrote, with no `engine` block and no `engine.jsonl`, load as `history_only`: never opened, seeded or launched. The entity carries `history_only`, and `SessionView` computes `executionAvailable` false for it, so the Approve and "Start this queued session" buttons are disabled. The entity equals the records on disk (tested). **Needs a person:** L-S4.2-b.
+- **Files:** `executionStore.ts`, `rpc/executions.ts`, `SessionView.tsx`, `TaskDetail.tsx`.
+
+### R-S4.2-4: `engine.jsonl` conversion
+- **Kind:** decision (provisional).
+- **What:** a task with `engine.jsonl` and no `engine` block is folded once and saved (`converted`); the log is never written again and its bytes are unchanged afterwards. Nothing deletes it.
+- **Files:** `executionStore.ts`. `rg -n 'appendLog|readLog'` over the daemon and engine sources finds only the conversion read.
+
+### R-S4.2-5: O27 history objects and archive
+- **Kind:** decision (O27 is user-decided; this is how it was built).
+- **What:** each execution keeps `executions/<execId>/objects/<sha256>` as a clone where the filesystem has one, else a plain copy, never a hard link, with no size cap (a 200 MB file is tested). The object is named by the hash of the copy, so it is always the bytes its name says. A coding step records its worktree tree (`manifest.worktree`). Archive prunes `objects/` Rust-side (`prune_execution_objects`, called from `archive_task_guarded` in `subtask.rs`, under the task lock) and keeps the manifests, so a pruned object reads as `pruned`, not `missing`.
+- **Not done:** the archive prune is tested in Rust only, not through a running daemon (L-S4.2-c).
+- **Files:** `playbook-engine/src/history.ts`, `alinery-core/src/execution.rs`, `alinery-core/src/subtask.rs`.
+
+### R-S4.2-6: serving stored file states to the UI is not built
+- **Kind:** deviation.
+- **What:** the History Accept line is met at the manifest level: the first step's manifest lists the original sha256 and size after the live file changed and the daemon restarted. No RPC returns the stored bytes yet. The plan's `BlobService.ReadBlob` (blobs.proto, in the Part 2 sketch) is the natural carrier; `findObject` in `history.ts` is ready for it. Left for the session that builds blobs.
+- **Reverse / close:** add the `BlobRef` kind for an execution object over `findObject`.
+
+### R-S4.2-7: `execution_tests.rs` cases dropped, and why
+- **Kind:** deviation.
+- **What:** 12 of the 53 cases are dropped (the table in 4.1): non-UTF-8 directory entries and wildcard-member disappearance (they guard Rust's listing; the engine lists a family once per acceptance), case-folded role directories and reserved-namespace overwrite (there is no reservation step), manual-reservation input smuggling (manual reservation went with the transitions), the `999`-collision limit (engine ids are an unbounded `e<N>` counter), and six explicit-launch-choice cases (the production resolver, `executionModel` in `graph.ts`, has no explicit choice or harness check; its four precedence cases are in `graph.test.ts`). If you want any as engine rules, each is a new rule, not a port.
+- **Files:** `alinery-core/src/execution_tests.rs`.
+
+### R-S4.2-8: protocol 27, and `uiAuthorized`
+- **Kind:** decision.
+- **What:** `ExecutionService.AllowCompletion` and the new entity fields are a wire change: `PROTOCOL_VERSION` 27, with `audited_shutdown_protocol` accepting 27 (R-S4.1-4). The `uiAuthorized` helper in `main.ts`, used only by the removed allow path, is gone; the `ui_control` op and its secret check stay.
+- **Reverse:** none.
+- **Files:** `alinery-core/src/protocol.rs`, `vinculum-daemon/src/main.ts`, `proto/alinery/v1/executions.proto`.
+
+### R-S4.2-9: test races found in the full run
+- **Kind:** flaky (fixed).
+- **What:** the first full `check.sh` of S4.2 failed vitest on a different test in each run, none of them passing alone: `SessionView.test.tsx` "opens queued work without starting it" (the Start button exists but is disabled until the daemon's execution row is pushed, and the test clicked it at once; now it waits for it to be enabled) and two tests in `sync/sessionObservation.test.tsx` (the attention notification fires in a passive effect after the badge text appears; now `waitFor`). The sessionObservation tests were not touched by the engine work; their race is older and shows under load. Five full vitest runs in a row passed after the fix. `check.sh` then stopped at `cargo fmt` (three files), fixed in `9deae66`; the next full run passed (exit 0). `a_repo_being_closed_is_not_respawned_by_attach` (R-FLAKE-1) did not fail in it.
+- **Files:** `alinery-app/src/views/SessionView.test.tsx`, `alinery-app/src/sync/sessionObservation.test.tsx`.
+
 ---
 
 ## D. Dustin's PR #154 comments (dtdannen, 2026-11-05): dispositions
