@@ -27,6 +27,17 @@
 #      up to the prompt. A declined install touches nothing: no daemon, no session, no
 #      bundle, no mv of `.alinery` or app-support dirs.
 #
+# WHAT THE INSTALLER CAN ASK A DAEMON (plan S5.3). A daemon serves the typed alinery.v1 wire
+# on `<repo>/.alinery/rpc.sock` and nothing else; every call on it needs a bearer token the
+# installer does not hold (it is neither the app nor a minted agent). So against a current
+# daemon the installer does three things without speaking the wire: it CONNECTS to the socket
+# (liveness), COUNTS live sessions from the session metas the daemon keeps current
+# (`started_at` set, `ended_at` unset, not archived: the daemon's own resume rule), and ends
+# the daemon with SIGTERM, which the daemon turns into the same teardown as `Shutdown`. A
+# daemon from before the single listener answers the old JSON-lines wire on
+# `<repo>/.alinery/alineryd.sock`; the gate still probes and stops that one the old way, so an
+# update from a released build keeps its quiet-machine check.
+#
 # Plain bash + base macOS tools, no jq (matching scripts/homebrew/check-version-sync.sh).
 
 # Live == running + idle. `exited` sessions stay registered for replay and must never
@@ -54,13 +65,77 @@ probe_op() {
 
 # `version` is the liveness probe: a daemon that answers it is real, a socket file that
 # does not is debris. The reply's *contents* are no longer read by the installer.
-probe_version() { probe_op "${1-}" version; }
+#
+# A current daemon's rpc.sock speaks HTTP/2, not JSON lines: for it the probe is a bare
+# connect (a dead socket file refuses at once), and the reply is the word `alive`.
+is_legacy_daemon_socket() { case "$(basename "${1-}")" in alineryd*.sock) return 0 ;; *) return 1 ;; esac; }
+probe_version() {
+  local sock="${1-}"
+  if is_legacy_daemon_socket "$sock"; then
+    probe_op "$sock" version
+  elif [ -n "$sock" ] && command -v nc >/dev/null 2>&1 && nc -U -w 1 "$sock" </dev/null >/dev/null 2>&1; then
+    printf 'alive'
+  fi
+  return 0
+}
 probe_list() { probe_op "${1-}" list; }
+
+# Live sessions of a repository, counted from its session metas (see the header). Used for a
+# current daemon, which cannot be asked without a token. A meta that does not parse as the
+# daemon writes it counts as not live; the count only sizes a warning.
+live_sessions_from_metas() {
+  local repo="${1-}" meta n=0
+  for meta in "${repo%/}"/.alinery/tasks/*/sessions/*.meta.json "${repo%/}"/.alinery/sessions/*.meta.json; do
+    [ -f "$meta" ] || continue
+    grep -qE '"started_at"[[:space:]]*:[[:space:]]*[1-9]' "$meta" || continue
+    grep -qE '"ended_at"[[:space:]]*:[[:space:]]*[1-9]' "$meta" && continue
+    grep -qE '"archived"[[:space:]]*:[[:space:]]*true' "$meta" && continue
+    n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+# The live session count the prompt shows, by whichever wire the daemon speaks.
+daemon_live_sessions() {
+  if is_legacy_daemon_socket "${2-}"; then
+    live_sessions_from_list_reply "$(probe_list "${2-}")"
+  else
+    live_sessions_from_metas "${1-}"
+  fi
+}
 
 # End one repo's daemon. `shutdown` SIGTERM/SIGKILLs every harness process group and
 # reaps it, so the meta gets its `ended_at`/`exit_code` and sessions show as exited
 # rather than interrupted on next launch. Only ever called after an explicit yes.
 probe_shutdown() { probe_op "${1-}" shutdown; }
+
+# Process ids of the product daemons whose `--repo` is this repository.
+daemon_pids_for_repo() {
+  local want line repo
+  want="$(normalize_repo_path "${1-}")"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    is_product_daemon_ps_line "$line" || continue
+    repo="$(parse_alineryd_repo_from_ps_line "$line")"
+    [ "$repo" = "$want" ] || continue
+    printf '%s\n' "${line%% *}"
+  done < <(_pgrep_daemon_listing)
+}
+
+# End one repo's daemon, by the wire it speaks. A current daemon takes SIGTERM as a
+# `Shutdown` (it ends its sessions, records them as ended, removes rpc.sock and exits).
+# Only ever called after an explicit yes.
+stop_repo_daemon() {
+  local repo="${1-}" sock="${2-}" pid
+  if is_legacy_daemon_socket "$sock"; then
+    probe_shutdown "$sock" >/dev/null
+    return 0
+  fi
+  for pid in $(daemon_pids_for_repo "$repo"); do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  return 0
+}
 
 # Block until a socket stops answering, or give up. 0 = quiet, 1 = still answering.
 #
@@ -70,7 +145,7 @@ probe_shutdown() { probe_op "${1-}" shutdown; }
 wait_socket_quiet() {
   local sock="${1-}" tries="${2-10}" i=0
   while [ "$i" -lt "$tries" ]; do
-    [ -n "$(probe_op "$sock" version)" ] || return 0
+    [ -n "$(probe_version "$sock")" ] || return 0
     i=$((i + 1))
     sleep 0.3
   done
@@ -95,10 +170,11 @@ known_repos_from_app_config() {
 }
 
 # Current per-repository daemon socket.
-repo_daemon_socket() { printf '%s/.alinery/alineryd.sock' "${1%/}"; }
+repo_daemon_socket() { printf '%s/.alinery/rpc.sock' "${1%/}"; }
 
-# The current daemon socket for a repository.
-repo_daemon_sockets() { repo_daemon_socket "$1"; printf '\n'; }
+# Every socket a daemon of this repository may be listening on: the current one, then the
+# JSON-lines socket of a daemon from before the single listener.
+repo_daemon_sockets() { repo_daemon_socket "$1"; printf '\n%s/.alinery/alineryd.sock\n' "${1%/}"; }
 
 # First candidate that answers `version`. Empty if none are live.
 first_live_daemon_socket() {
@@ -305,7 +381,7 @@ preflight_gate() {
     # Probe the socket; do not infer liveness from its presence.
     sock="$(first_live_daemon_socket "$r")"
     [ -n "$sock" ] || continue
-    live="$(live_sessions_from_list_reply "$(probe_list "$sock")")"
+    live="$(daemon_live_sessions "$r" "$sock")"
     live_total=$((live_total + live))
     live_repos+=("$r")
     live_socks+=("$sock")
@@ -376,12 +452,12 @@ preflight_gate() {
     sock="${live_socks[$i]}"
     i=$((i + 1))
     echo "  stopping daemon: $r"
-    probe_shutdown "$sock" >/dev/null
+    stop_repo_daemon "$r" "$sock"
   done
 
   # `shutdown` is acknowledged before the daemon has finished SIGTERM/SIGKILLing its
   # harness process groups and unwinding. Returning here would let install.sh `rm -rf`
-  # the bundle out from under a process still running from inside it — and alineryd IS in
+  # the bundle out from under a process still running from inside it — and the daemon IS in
   # that bundle. Wait for each socket to actually go quiet.
   i=0
   while [ "$i" -lt "${#live_repos[@]}" ]; do

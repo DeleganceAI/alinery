@@ -592,10 +592,15 @@ fn ensure_daemon_reuses_an_answering_daemon_of_our_protocol_and_config() {
 // The relaunch case (S5.3): a daemon started by one app process is found by the next one with the token the first kept on disk.
 // Nothing but that file carries over, so the second attach has no in-memory state to lean on. It must be the same process
 // (PID and epoch unchanged), and it must not have been started again. Runs the real sidecar, which `copy-sidecar.sh debug` puts
-// beside the test binary; without it there is nothing to launch and the test says so.
+// beside the test binary; without it there is nothing to launch and the test says so, unless ALINERY_REQUIRE_SIDECAR is set
+// (`scripts/check.sh` sets it after copying the sidecar), when the missing binary fails the test.
 #[test]
 fn a_relaunched_app_reattaches_to_the_daemon_that_outlived_it_with_the_stored_token() {
     if alinery_core::resolve_alineryd_path().is_none() {
+        assert!(
+            std::env::var_os("ALINERY_REQUIRE_SIDECAR").is_none(),
+            "ALINERY_REQUIRE_SIDECAR is set and no alinery-vinculum-daemon sits beside the test binary"
+        );
         eprintln!("skipped: no alinery-vinculum-daemon beside the test binary (run src-tauri/scripts/copy-sidecar.sh debug)");
         return;
     }

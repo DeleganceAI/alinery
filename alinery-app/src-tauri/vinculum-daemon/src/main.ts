@@ -1044,6 +1044,13 @@ await serveRpc({
     };
   },
 });
+// The installer and the updater hold no token for the wire, so a user's yes to "stop everything and install" reaches the daemon as
+// SIGTERM (scripts/lib/preflight.sh). It runs the teardown `Shutdown` runs, so sessions are recorded ended rather than interrupted.
+process.once("SIGTERM", () => {
+  console.error("SIGTERM: ending sessions and exiting");
+  stopEverything();
+  void exitWhenJobsEnded();
+});
 void resumeInterrupted().then(() => startGraphs(repo, {
   executionChanged: (taskSlug) => {
     commitExecution(store, repo, taskSlug, lane, identity);

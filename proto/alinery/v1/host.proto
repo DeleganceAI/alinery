@@ -156,7 +156,7 @@ message HostSpawnDaemon {
   string log = 6;
   Launch launch = 7;
   string unit = 8;               // systemd unit name; required for LAUNCH_SYSTEMD_RUN
-  reserved 9;                    // ui_secret_file: the RPC token replaced it (S5.3)
+  reserved 9;                    // the secret file of the retired control wire: the RPC token replaced it (S5.3)
   string rpc_secret_file = 10;   // the same for the RPC socket's bearer token
   string app_version = 11;       // the version a telemetry event carries (--app-version)
 }

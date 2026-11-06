@@ -79,6 +79,8 @@ step "playbook engine: bun test"
 # ---------- rust ----------
 step "rust: sidecars"
 bash "$TAURI/scripts/copy-sidecar.sh" debug >/dev/null
+# The sidecar exists from here on: a test that would skip for want of it fails instead.
+export ALINERY_REQUIRE_SIDECAR=1
 
 step "rust: fmt"
 (cd "$TAURI" && cargo fmt --all --check)
