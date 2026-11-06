@@ -484,10 +484,13 @@ pub(crate) fn remote_config_dir(root: &str, local_identity: &str) -> String {
 /// new session come from `defaults`, and the Grok key is handed to the daemon as `XAI_API_KEY` when
 /// it starts (a provider credential, so only when the user chose to share it). Everything else in
 /// the Mac's settings is either a UI preference or something that must not leave it: the GitHub
-/// token (imports and PR discovery run here, and the host pushes with its own git credentials), the
-/// telemetry install id and endpoint (the host records no events under this install), harness rows
-/// that name Mac paths and may carry keys in `env`, and the backup destination. Those stay at their
-/// defaults.
+/// token (imports and PR discovery run here, and the host pushes with its own git credentials),
+/// harness rows that name Mac paths and may carry keys in `env`, and the backup destination. Those
+/// stay at their defaults.
+///
+/// The telemetry preferences are copied whole (enabled, prompted, install id, endpoint): the host's
+/// daemon sends the events for what it does there (plan S4.1, O17 c), under this install and this
+/// consent, so a user who declined, or never answered, sends nothing from the host either.
 pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[String], share_grok: bool) -> Result<String, String> {
     let mut config = AppConfig {
         settings_version: local.settings_version,
@@ -498,12 +501,7 @@ pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[Str
     if share_grok {
         config.global.experiments.grok_api_key = local.global.experiments.grok_api_key.clone();
     }
-    config.global.telemetry = alinery_core::TelemetryPrefs {
-        enabled: false,
-        prompted: true,
-        install_id: String::new(),
-        ..config.global.telemetry
-    };
+    config.global.telemetry = local.global.telemetry.clone();
     toml::to_string(&config).map_err(|error| format!("render remote app.toml: {error}"))
 }
 
@@ -1367,7 +1365,7 @@ pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> 
 /// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry. A daemon this
 /// app cannot use is recorded as a conflict and is not an error: the repo opens, shows only its
 /// banner (no board is read through the repo service), and the banner offers to restart the daemon.
-fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path: &str) -> Result<(), String> {
+fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Path, key: &str, path: &str) -> Result<(), String> {
     let claim = session.channel.call(RepoOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
     if claim["claimed"] != true {
         return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
@@ -1376,10 +1374,20 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path
     let (client, compat, warning) = ensure_remote_daemon(session, path, &identity)?;
     if compat.usable() {
         state.set_daemon(Path::new(key), client, compat, identity, warning);
+        // The repository half of readying a repo, which a remote one never had (plan S4.1). A failure leaves the repo as it was.
+        if let Err(error) = ensure_remote_repo_ready(session, path) {
+            crate::daemon::log_ensure_ready_failed(app_config, key, &error);
+        }
     } else {
         state.set_daemon_conflict(Path::new(key), remote_conflict(key, &client, compat, &identity));
     }
     Ok(())
+}
+
+fn ensure_remote_repo_ready(session: &RemoteSession, repo_path: &str) -> Result<(), String> {
+    let (local, remote_socket) = rpc_forward(&session.conn.host_id, repo_path)?;
+    let _ = session.conn.forward(&local, &remote_socket);
+    crate::daemon_rpc::ensure_repo_ready_at(&local, &crate::daemon::rpc_secret_path(&session.secrets_dir, repo_path, ""))
 }
 
 /// Longest the host may take to let go of a stopped daemon's socket and lock.
@@ -1424,7 +1432,7 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
         state.clear_daemon(Path::new(&key));
     }
     let done = while_down(&state, &session);
-    let attached = attach_remote_repo(&state, &session, &key, path);
+    let attached = attach_remote_repo(&state, &session, &app_config_path(app)?, &key, path);
     // The caller's own failure is the one worth reading; a failed attach still shows on the banner.
     done.and_then(|value| attached.map(|()| value))
 }
@@ -1446,17 +1454,16 @@ fn attach_host_repos<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, se
     for key in load_app_config(app).known_repos {
         if let Ok(RepoRef::Remote { host_id: id, path }) = RepoRef::parse(&key) {
             if id == host_id {
-                if let Err(error) = attach_remote_repo(state, session, &key, &path) {
-                    if let Ok(app_config) = app_config_path(app) {
-                        alinery_core::append_exception(
-                            &app_config,
-                            &format!(
-                                "app.remote-attach-failed repo={} err={}",
-                                alinery_core::quote_log_value(&key),
-                                alinery_core::quote_log_value(&error)
-                            ),
-                        );
-                    }
+                let Ok(app_config) = app_config_path(app) else { continue };
+                if let Err(error) = attach_remote_repo(state, session, &app_config, &key, &path) {
+                    alinery_core::append_exception(
+                        &app_config,
+                        &format!(
+                            "app.remote-attach-failed repo={} err={}",
+                            alinery_core::quote_log_value(&key),
+                            alinery_core::quote_log_value(&error)
+                        ),
+                    );
                 }
             }
         }
@@ -1473,7 +1480,7 @@ pub(crate) fn activate_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, state:
         return Err(format!("unknown repository: {key}"));
     }
     let session = connected_session(state, &host_id)?;
-    attach_remote_repo(state, &session, key, &path)?;
+    attach_remote_repo(state, &session, &app_config_path(app)?, key, &path)?;
     config.active_repo = key.to_string();
     write_app_config(app, &config)?;
     set_active_repo_global(Some(PathBuf::from(key)))?;

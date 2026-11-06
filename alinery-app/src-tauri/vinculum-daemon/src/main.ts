@@ -24,6 +24,8 @@ import { Reconciler } from "./sync/reconcile.ts";
 import { BoardProjector } from "./domain/board.ts";
 import { commitExecution, executionParser } from "./domain/executions.ts";
 import { parsers } from "./sync/parsers/index.ts";
+import { settingsParser } from "./sync/parsers/settings.ts";
+import { telemetrySender } from "./platform/telemetry.ts";
 import { SessionPublisher } from "./domain/sessions.ts";
 import { runJobChild } from "./jobs/child.ts";
 import { JobRunner } from "./jobs/runner.ts";
@@ -38,7 +40,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 25;
+const PROTOCOL = 26;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -140,8 +142,10 @@ const lane = namespace;
 const identity = appConfigIdentity(appConfig);
 const store = new Store();
 const board = new BoardProjector(store, join(repo, ".alinery"));
-const feed = new Feed(store, join(repo, ".alinery"), (entity) => board.decorate(publisher.decorate(entity)), board.dependents);
-parsers.push(executionParser(repo, lane, identity));
+const feed = new Feed(store, join(repo, ".alinery"), (entity) => board.decorate(publisher.decorate(entity)), board.dependents, { "app.toml": appConfig });
+parsers.push(executionParser(repo, lane, identity), settingsParser(join(repo, ".alinery"), appConfig));
+// The version in a telemetry event: the app passes its own, since a daemon binary has none.
+const telemetry = telemetrySender(appConfig, flag("--app-version") || "unknown");
 const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), { protocol: PROTOCOL, buildId, watchExhausted: () => watcher.status.enospc });
 acquireOwnership(repo, lane, identity);
 const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
@@ -1122,7 +1126,7 @@ repairSessionMetas();
 // Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
 // then does the RPC server listen, so a first Subscribe never sees a half-built store.
 await feed.scan();
-const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line) });
+const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line), appConfig });
 watcher.start();
 publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
@@ -1136,6 +1140,7 @@ await serveRpc({
   store,
   jobs: new JobRunner(store),
   storageScan: { repo, appConfig, namespace: lane },
+  settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
     if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;

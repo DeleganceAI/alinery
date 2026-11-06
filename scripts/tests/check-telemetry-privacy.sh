@@ -6,6 +6,10 @@
 #   the wrapper may construct OpenObserve requests or shell out to curl. Hosted
 #   inference may use ureq against accounts.alinery.ai; that is not ingest.
 #
+# The daemon sends its own events for what it does (plan O17 c, S4.1), so the same holds for its
+# TypeScript: only vinculum-daemon/src/platform/telemetry.ts builds an ingest request, and the
+# banned fields apply to it too.
+#
 # A unit test that serializes a closed enum cannot catch a later author reaching
 # for `ureq::` or stuffing `worktree` into TelemetryEvent. Hence a source-level
 # check, same shape as check-no-auto-session-kill.sh.
@@ -14,12 +18,16 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TELEMETRY_RS="$ROOT/alinery-app/src-tauri/alinery-core/src/telemetry.rs"
+DAEMON_SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
+TELEMETRY_TS="$DAEMON_SRC/platform/telemetry.ts"
 CORE_SRC="$ROOT/alinery-app/src-tauri"
 
-if [ ! -f "$TELEMETRY_RS" ]; then
-  echo "ERROR: missing $TELEMETRY_RS" >&2
-  exit 1
-fi
+for f in "$TELEMETRY_RS" "$TELEMETRY_TS"; do
+  if [ ! -f "$f" ]; then
+    echo "ERROR: missing $f" >&2
+    exit 1
+  fi
+done
 
 status=0
 
@@ -30,6 +38,11 @@ if ! grep -q 'enum TelemetryEvent' "$TELEMETRY_RS"; then
 fi
 if ! grep -q 'fn record_event' "$TELEMETRY_RS"; then
   echo "ERROR: record_event missing from telemetry.rs (guard drifted?)" >&2
+  status=1
+fi
+
+if ! grep -q 'export function eventRecord' "$TELEMETRY_TS" || ! grep -q 'export const ingestUrl' "$TELEMETRY_TS"; then
+  echo "ERROR: eventRecord or ingestUrl missing from platform/telemetry.ts (guard drifted?)" >&2
   status=1
 fi
 
@@ -48,6 +61,10 @@ fi
 blocklist_pat='(^|[^A-Za-z0-9_])(worktree|prompt_extra|prompt|slug|scrollback|linear_id|github_issue|pr_url|harness_resume_token|resume_token|event_token|omp_session_id|omp_turn_id|correlation_id|email|api_key|token)([^A-Za-z0-9_]|$)'
 if grep -nE "$blocklist_pat" "$TELEMETRY_RS"; then
   echo "ERROR: blocklisted identifier in telemetry.rs" >&2
+  status=1
+fi
+if grep -nE "$blocklist_pat" "$TELEMETRY_TS"; then
+  echo "ERROR: blocklisted identifier in platform/telemetry.ts" >&2
   status=1
 fi
 
@@ -69,6 +86,14 @@ while IFS= read -r f; do
     status=1
   fi
 done < <(find "$CORE_SRC" -name '*.rs' -print)
+
+# The same for the daemon: the ingest URL and the Basic credential are built in platform/telemetry.ts only.
+while IFS= read -r f; do
+  if grep -nE 'Authorization: Basic|Basic \$\{|/_json|/api/\$\{' "$f"; then
+    echo "ERROR: OpenObserve ingest leaked outside platform/telemetry.ts: $f" >&2
+    status=1
+  fi
+done < <(find "$DAEMON_SRC" -name '*.ts' ! -name '*.test.ts' ! -path "$TELEMETRY_TS" -print)
 
 # No curl helper in the wrapper (or a sibling telemetry helper).
 if grep -nE 'Command::new\("curl"\)' "$TELEMETRY_RS"; then

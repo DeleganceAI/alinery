@@ -1,4 +1,4 @@
-// Writes golden/admin.json: the bytes protobuf-es produces for the admin messages the Rust shell
+// Writes golden/admin.json: the bytes protobuf-es produces for the admin and settings messages the Rust shell
 // hand-encodes (src-tauri/src/daemon_rpc.rs). Every field is set to a value that differs from its
 // default and from its neighbours, so a renumbered or retyped field changes the bytes. The shell's
 // `tests::daemon_rpc` decodes these; check-proto-gen.sh regenerates the file and diffs it.
@@ -6,6 +6,7 @@
 //   bun golden.ts            writes golden/admin.json
 import { mkdirSync, writeFileSync } from "node:fs";
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
+import { EnsureReadyRequestSchema } from "./gen/alinery/v1/settings_pb";
 import { Capability, HelloRequestSchema, HelloResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
 
 const hex = <D extends DescMessage>(schema: D, init: MessageInitShape<D>) => Buffer.from(toBinary(schema, create(schema, init))).toString("hex");
@@ -22,6 +23,7 @@ const golden = {
     repoRoot: "/repo",
     appConfigIdentity: "identity-1",
   }),
+  EnsureReadyRequest: hex(EnsureReadyRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-1" } }),
 };
 
 mkdirSync(new URL("./golden", import.meta.url), { recursive: true });

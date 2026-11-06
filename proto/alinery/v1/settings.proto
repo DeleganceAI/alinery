@@ -1,0 +1,43 @@
+// proto/alinery/v1/settings.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+
+// Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
+// stay in the shell.
+service SettingsService {
+  rpc WriteOverrides(WriteOverridesRequest) returns (WriteOverridesResponse);  // ACT
+  rpc ClearOverride(ClearOverrideRequest) returns (ClearOverrideResponse);     // ACT
+}
+
+message WriteOverridesRequest {
+  MutationMeta meta = 1;
+  RepoOverrides overrides = 2;  // the whole file
+  uint64 expected_revision = 3;  // 0: no check; a mismatch is ABORTED
+}
+message WriteOverridesResponse {
+  Applied applied = 1;
+}
+message ClearOverrideRequest {
+  MutationMeta meta = 1;
+  string field = 2;  // a dotted key such as "defaults.model"; an unknown key is INVALID_ARGUMENT
+  uint64 expected_revision = 3;
+}
+message ClearOverrideResponse {
+  Applied applied = 1;
+}
+
+// The repository half of `set_active_repo` (plan 2.3.4).
+service RepoService {
+  rpc EnsureReady(EnsureReadyRequest) returns (EnsureReadyResponse);  // ADMIN
+}
+
+// Idempotent: `.alinery/`, the `.gitignore` entry, `harnesses.toml` and `config.toml`, each created only when missing.
+message EnsureReadyRequest {
+  MutationMeta meta = 1;
+}
+message EnsureReadyResponse {
+  Applied applied = 1;
+}

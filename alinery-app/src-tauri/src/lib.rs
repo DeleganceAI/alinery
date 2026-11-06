@@ -50,7 +50,7 @@ use alinery_core::daemon_client::{read_socket_line, DaemonClient};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
-use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
+use alinery_core::{alinery_app_lock_path, alinery_dir, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,

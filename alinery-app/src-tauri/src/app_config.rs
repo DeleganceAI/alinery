@@ -439,7 +439,7 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
         format!("{name} is open in another Alinery window.")
     })?;
 
-    ensure_repo_ready(&repo)?;
+    ensure_alinery_dir(&repo)?;
     let app_config = app_config_path(&app)?;
     let previous_repo = active_repo().ok();
     let repo_s = repo.to_string_lossy().to_string();

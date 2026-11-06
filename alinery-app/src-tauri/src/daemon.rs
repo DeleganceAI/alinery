@@ -718,7 +718,13 @@ pub(crate) fn attach_repo_daemon_locked(state: &AppState, repo: &Path, app_confi
         return;
     }
     match result {
-        Ok((client, compat, identity, warning)) => state.set_daemon(repo, client, compat, identity, warning),
+        Ok((client, compat, identity, warning)) => {
+            state.set_daemon(repo, client, compat, identity, warning);
+            // Idempotent, so every attach asks. A daemon that cannot answer it leaves the repo as it was: the board still works.
+            if let Err(error) = crate::daemon_rpc::ensure_repo_ready(&repo.to_string_lossy(), app_config) {
+                log_ensure_ready_failed(app_config, &repo.display().to_string(), &error);
+            }
+        }
         Err(EnsureDaemonError::Mismatch(conflict)) => state.set_daemon_conflict(repo, *conflict),
         Err(error) => alinery_core::append_exception(
             app_config,
@@ -729,6 +735,13 @@ pub(crate) fn attach_repo_daemon_locked(state: &AppState, repo: &Path, app_confi
             ),
         ),
     }
+}
+
+pub(crate) fn log_ensure_ready_failed(app_config: &Path, repo: &str, error: &str) {
+    alinery_core::append_exception(
+        app_config,
+        &format!("app.ensure-ready-failed repo={} err={}", alinery_core::quote_log_value(repo), alinery_core::quote_log_value(error)),
+    );
 }
 
 pub(crate) fn takeover_allowed(state: &AppState, repo: &Path) -> Result<(), String> {

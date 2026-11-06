@@ -1,0 +1,9 @@
+[global.defaults]
+harness = "omp"
+model = "gpt-5"
+thinking = "high"
+draft_autosave = true
+
+[global.backup]
+enabled = true
+retention = 7

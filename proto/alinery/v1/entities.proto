@@ -226,7 +226,121 @@ message StorageInfo {
   uint64 archived_bytes = 14;
   uint64 active_bytes = 15;
 }
-message Settings {}
+// Where a setting's value comes from (alinery-core `SettingSource`).
+enum SettingSource {
+  SETTING_SOURCE_UNSPECIFIED = 0;
+  SETTING_SOURCE_GLOBAL = 1;
+  SETTING_SOURCE_REPOSITORY = 2;
+}
+message NotificationPrefs {
+  bool enabled = 1;
+  bool sound = 2;
+  bool bounce = 3;
+  bool banner = 4;
+  bool dock_badge = 5;
+  bool dock_badge_input_waits = 6;
+  bool dock_badge_approval_waits = 7;
+  bool dock_badge_failures = 8;
+  bool dock_badge_completions = 9;
+}
+message BackupSettings {
+  string destination = 1;
+  bool enabled = 2;
+  uint32 retention = 3;
+  bool trigger_pre_archive = 4;
+  bool trigger_post_artifact_change = 5;
+  bool trigger_post_push_commit = 6;
+}
+message TelemetryPrefs {
+  bool enabled = 1;
+  bool prompted = 2;
+  string install_id = 3;
+  string endpoint = 4;
+}
+message HarnessChoice {
+  string harness = 1;
+  string model = 2;
+  string thinking = 3;
+  PlaybookRef playbook = 4;
+  bool draft_autosave = 5;
+}
+message ChoiceProvenance {
+  SettingSource harness = 1;
+  SettingSource model = 2;
+  SettingSource thinking = 3;
+  SettingSource playbook = 4;
+  SettingSource draft_autosave = 5;
+}
+// `EffectiveConfig` (alinery-core types.rs): the global tier with the repository's overrides over it, and
+// where each value came from. Notifications and telemetry are global-only.
+message EffectiveSettings {
+  NotificationPrefs notifications = 1;
+  string github_token = 2;
+  HarnessChoice defaults = 3;
+  SettingSource github_token_source = 4;
+  ChoiceProvenance defaults_source = 5;
+  BackupSettings backup = 6;
+  TelemetryPrefs telemetry = 7;
+}
+// The repository's `config.toml`, field for field. An unset field inherits the global value; a field
+// set to "" is a value.
+message RepoGitHubOverrides {
+  optional string token = 1;
+}
+message RepoDefaultsOverrides {
+  optional string harness = 1;
+  optional string model = 2;
+  optional string thinking = 3;
+  optional PlaybookRef playbook = 4;
+  optional bool draft_autosave = 5;
+}
+message RepoBackupOverrides {
+  optional string destination = 1;
+  optional bool enabled = 2;
+  optional uint32 retention = 3;  // 0 to 255; the effective value is clamped to 1..100
+  optional bool trigger_pre_archive = 4;
+  optional bool trigger_post_artifact_change = 5;
+  optional bool trigger_post_push_commit = 6;
+}
+message RepoOverrides {
+  RepoGitHubOverrides github = 1;
+  RepoDefaultsOverrides defaults = 2;
+  RepoBackupOverrides backup = 3;
+}
+message HarnessResume {
+  bool enabled = 1;
+  string id_source = 2;
+  repeated string launch_args = 3;
+  repeated string resume_args = 4;
+}
+message Harness {
+  string key = 1;
+  string name = 2;
+  string binary = 3;
+  repeated string args = 4;
+  repeated string model_arg = 5;
+  repeated string prompt_arg = 6;
+  map<string, string> env = 7;
+  string prompt_injection = 8;
+  string adapter = 9;          // omp or unsupported
+  string message_adapter = 10;  // omp_bracketed_paste or unsupported
+  repeated string models = 11;
+  string models_cmd = 12;
+  optional HarnessResume resume = 13;
+}
+message EffectiveHarness {
+  Harness harness = 1;
+  SettingSource source = 2;
+}
+// `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
+// the repository's `config.toml` and `harnesses.toml` and the daemon's `app.toml`. When a file
+// is refused, as serde refuses it, only `error` is set.
+message Settings {
+  RepoOverrides overrides = 1;
+  EffectiveSettings effective = 2;
+  repeated EffectiveHarness harnesses = 3;
+  string error = 4;
+}
 // The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
 // are the shell's, because only it can see them.
 message DaemonStatus {

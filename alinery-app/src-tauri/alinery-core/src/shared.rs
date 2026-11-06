@@ -885,10 +885,6 @@ pub fn clear_repo_override(overrides: &mut RepoOverrides, field: &str) -> Result
     Ok(())
 }
 
-pub fn ensure_harnesses_toml(repo: &Path) -> Result<(), String> {
-    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())
-}
-
 pub fn read_local_harness_overrides(repo: &Path) -> HarnessFile {
     let Some(text) = fs::read_to_string(harnesses_toml_path(repo)).ok() else {
         return HarnessFile::default();

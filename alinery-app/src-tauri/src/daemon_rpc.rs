@@ -455,6 +455,26 @@ pub(crate) struct ShutdownResponse {
     pub sessions_stopped: u32,
 }
 
+/// proto/alinery/v1/common.proto `MutationMeta`: what makes a mutation safe to retry.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct MutationMeta {
+    #[prost(string, tag = "1")]
+    pub client_id: String,
+    #[prost(string, tag = "2")]
+    pub mutation_id: String,
+}
+
+/// proto/alinery/v1/settings.proto. The reply is `Applied`, which the shell has no use for: decoding it as
+/// this empty message skips its fields.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct EnsureReadyRequest {
+    #[prost(message, optional, tag = "1")]
+    pub meta: Option<MutationMeta>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct EnsureReadyResponse {}
+
 /// One unary call on the bridge's pooled connection to `socket`, with the messages typed.
 pub(crate) async fn unary<Req: prost::Message, Res: prost::Message + Default>(socket: &Path, token: &str, path: &str, request: &Req) -> Result<Res, String> {
     let reply = BRIDGE.unary(socket, token, path, &request.encode_to_vec()).await?;
@@ -472,6 +492,30 @@ pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, S
     tokio::time::timeout(Duration::from_secs(10), unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
         .await
         .map_err(|_| "Hello timed out".to_string())?
+}
+
+/// `RepoService.EnsureReady` (plan S4.1): the daemon readies the repository (`.alinery/`, the ignore entry,
+/// `harnesses.toml`, `config.toml`), each only when missing. Blocking; the callers are off the main thread.
+pub(crate) fn ensure_repo_ready_at(socket: &Path, committed_token: &Path) -> Result<(), String> {
+    tauri::async_runtime::block_on(async {
+        let token = rpc_token(socket, committed_token).await?;
+        let request = EnsureReadyRequest {
+            meta: Some(MutationMeta {
+                client_id: "alinery-shell".into(),
+                mutation_id: uuid::Uuid::new_v4().to_string(),
+            }),
+        };
+        tokio::time::timeout(DAEMON_CONTROL_TIMEOUT, unary::<_, EnsureReadyResponse>(socket, &token, "/alinery.v1.RepoService/EnsureReady", &request))
+            .await
+            .map_err(|_| "EnsureReady timed out".to_string())??;
+        Ok(())
+    })
+}
+
+/// The same for a local repo, at the socket and token `resolve` names.
+pub(crate) fn ensure_repo_ready(repo_key: &str, app_config: &Path) -> Result<(), String> {
+    let (socket, secret_path) = resolve(repo_key, app_config_dir_of(app_config).ok_or("app config root unavailable")?, alineryd_socket_namespace().as_deref())?;
+    ensure_repo_ready_at(&socket, &secret_path)
 }
 
 /// The token for the daemon on `socket`. A start keeps its new token as pending (see

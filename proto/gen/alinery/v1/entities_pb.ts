@@ -13,7 +13,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/entities.proto.
  */
 export const file_alinery_v1_entities: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIikKC1BsYXlib29rUmVmEg0KBXNjb3BlGAEgASgJEgsKA2tleRgCIAEoCSIvCg1MYXVuY2hDaG9pY2VzEg8KB2hhcm5lc3MYASABKAkSDQoFbW9kZWwYAiABKAkiPwoOUmVsYXRlZFRhc2tSZWYSEQoJcmVwb19wYXRoGAEgASgJEgwKBHNsdWcYAiABKAkSDAoEbmFtZRgDIAEoCSInCglCb2FyZFN0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJIukBCg9Cb2FyZFByb2plY3Rpb24SFQoNc2Vzc2lvbl9jb3VudBgBIAEoBBIWCg50b3RhbF9zZXNzaW9ucxgCIAEoBBIWCg5wbGF5Ym9va190aXRsZRgDIAEoCRItCg5wbGF5Ym9va19zdGVwcxgEIAMoCzIVLmFsaW5lcnkudjEuQm9hcmRTdGVwEg8KB3VwZGF0ZWQYBSABKAQSFQoNY3VycmVudF9waGFzZRgGIAEoCRIaChJjdXJyZW50X3N0ZXBfdGl0bGUYByABKAkSHAoUbGF0ZXN0X3Nlc3Npb25fdGl0bGUYCCABKAkimQEKE1Rhc2tBY3Rpdml0eVNlc3Npb24SCgoCaWQYASABKAkSEAoId29ya3RyZWUYAiABKAkSDQoFcGhhc2UYAyABKAkSDwoHaGFybmVzcxgEIAEoCRINCgVtb2RlbBgFIAEoCRIQCghwbGF5Ym9vaxgGIAEoCRIPCgdnZW5lcmljGAcgASgIEhIKCnN0ZXBfdGl0bGUYCCABKAkibwoMVGFza0FjdGl2aXR5Eg4KBnN0YXR1cxgBIAEoCRI8Cg5hY3RpdmVfc2Vzc2lvbhgCIAEoCzIfLmFsaW5lcnkudjEuVGFza0FjdGl2aXR5U2Vzc2lvbkgAiAEBQhEKD19hY3RpdmVfc2Vzc2lvbiLMBgoEVGFzaxIMCgRzbHVnGAEgASgJEgwKBG5hbWUYAiABKAkSFgoOcmVxdWVzdGVkX3NsdWcYAyABKAkSDgoGYnJhbmNoGAQgASgJEhAKCHdvcmt0cmVlGAUgASgJEhQKDGhhc193b3JrdHJlZRgGIAEoCBIPCgdjcmVhdGVkGAcgASgEEhAKCGFyY2hpdmVkGAggASgIEg4KBnByX3VybBgJIAEoCRIRCglsaW5lYXJfaWQYCiABKAkSFAoMZ2l0aHViX2lzc3VlGAsgASgJEhAKCHBsYXlib29rGAwgASgJEhYKDmVuZ2luZV92ZXJzaW9uGA0gASgNEjIKDHBsYXlib29rX3JlZhgOIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWZIAIgBARIZChFtYXhfbGl2ZV9zZXNzaW9ucxgPIAEoDRIyCg9sYXVuY2hfZGVmYXVsdHMYECABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXMSFAoMYXV0b19hZHZhbmNlGBEgAygJEhgKEGF1dG9fYXBwcm92ZV9hbGwYEiABKAgSNQoLc3RlcF9tb2RlbHMYEyADKAsyIC5hbGluZXJ5LnYxLlRhc2suU3RlcE1vZGVsc0VudHJ5EhMKC3BhcmVudF90YXNrGBQgASgJEhYKDmFjdGl2ZV9zdWJ0YXNrGBUgASgJEhcKD3N1YnRhc2tfb3V0Y29tZRgWIAEoCRINCgVkcmFmdBgXIAEoCBIbCg5kcmFmdF9iYXNlX3JlZhgYIAEoCUgBiAEBEjEKDXJlbGF0ZWRfdGFza3MYGSADKAsyGi5hbGluZXJ5LnYxLlJlbGF0ZWRUYXNrUmVmEhQKDHRlbGVtZXRyeV9pZBgaIAEoCRIqCgVib2FyZBgoIAEoCzIbLmFsaW5lcnkudjEuQm9hcmRQcm9qZWN0aW9uEioKCGFjdGl2aXR5GCkgASgLMhguYWxpbmVyeS52MS5UYXNrQWN0aXZpdHkaMQoPU3RlcE1vZGVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDwoNX3BsYXlib29rX3JlZkIRCg9fZHJhZnRfYmFzZV9yZWYiBwoFRHJhZnQibgoJRXhlY3V0aW9uEgwKBHNsdWcYASABKAkSJgoFc3RhdGUYAiABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EisKCmRlZmluaXRpb24YAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IqYBChJTZW1hbnRpY0NoZWNrcG9pbnQSHwoScGhhc2VfY29tcGxldGVkX2F0GAEgASgESACIAQESGwoOb21wX3Nlc3Npb25faWQYAiABKAlIAYgBARIYCgtvbXBfdHVybl9pZBgDIAEoBEgCiAEBQhUKE19waGFzZV9jb21wbGV0ZWRfYXRCEQoPX29tcF9zZXNzaW9uX2lkQg4KDF9vbXBfdHVybl9pZCI9ChdOb3RpZmljYXRpb25TdXBwcmVzc2lvbhIOCgZub3RpY2UYASABKAkSEgoKb2NjdXJyZW5jZRgCIAEoCSLLAQoNU2Vzc2lvblN0YXR1cxIPCgdwcm9jZXNzGAEgASgJEg0KBWFnZW50GAIgASgJEhwKFGFnZW50X2NvcnJlbGF0aW9uX2lkGAMgASgJEhQKDGFnZW50X3JlYXNvbhgEIAEoCRIQCghwbGF5Ym9vaxgFIAEoCRIXCg9wbGF5Ym9va19yZWFzb24YBiABKAkSDwoHYWRhcHRlchgHIAEoCRIXCg9tZXNzYWdlX2FkYXB0ZXIYCCABKAkSEQoJdHJhbnNwb3J0GAkgASgJIlMKC1Nlc3Npb25XYWl0EgwKBGtpbmQYASABKAkSFgoOY29ycmVsYXRpb25faWQYAiABKAkSEwoGcHJvbXB0GAMgASgJSACIAQFCCQoHX3Byb21wdCK7CQoHU2Vzc2lvbhIjCgNyZWYYASABKAsyFi5hbGluZXJ5LnYxLlNlc3Npb25SZWYSKQoGc3RhdHVzGAIgASgLMhkuYWxpbmVyeS52MS5TZXNzaW9uU3RhdHVzEgoKAmlkGAMgASgJEhAKCHdvcmt0cmVlGAQgASgJEg8KB2NyZWF0ZWQYBSABKAQSEAoIYXJjaGl2ZWQYBiABKAgSDgoGcGlubmVkGAcgASgIEg0KBXBoYXNlGAggASgJEg8KB2hhcm5lc3MYCSABKAkSDQoFbW9kZWwYCiABKAkSEAoIcGxheWJvb2sYCyABKAkSFAoMZXhlY3V0aW9uX2lkGAwgASgJEhoKEmV4ZWN1dGlvbl9yZXZpc2lvbhgNIAEoBBIPCgdnZW5lcmljGA4gASgIEhcKD3N1YnRhc2tfbWFuYWdlchgPIAEoCBIUCgxzdWJ0YXNrX3NsdWcYECABKAkSEAoIYXJ0aWZhY3QYESABKAkSGAoQaGFuZG9mZl9hcnRpZmFjdBgSIAEoCRIUCgxwcm9tcHRfZXh0cmEYEyABKAkSEwoGcHJvbXB0GBQgASgJSACIAQESFwoKc3RhcnRlZF9hdBgVIAEoBEgBiAEBEh4KEXN0YXR1c19jaGFuZ2VkX2F0GBYgASgESAKIAQESGAoLYWN0aXZpdHlfYXQYFyABKARIA4gBARIXCg9zdGF0dXNfcmV2aXNpb24YGCABKAQSFQoIZW5kZWRfYXQYGSABKARIBIgBARIWCglleGl0X2NvZGUYGiABKAVIBYgBARIcChRoYXJuZXNzX3Jlc3VtZV90b2tlbhgbIAEoCRIWCglyZXN1bWVfb2YYHCABKAlIBogBARIYChBkYWVtb25fbmFtZXNwYWNlGB0gASgJEiEKFG5vdGlmaWNhdGlvbl9yZWFkX2F0GB4gASgESAeIAQESJgoZZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdBgfIAEoBEgIiAEBEkoKGG5vdGlmaWNhdGlvbl9zdXBwcmVzc2lvbhggIAEoCzIjLmFsaW5lcnkudjEuTm90aWZpY2F0aW9uU3VwcHJlc3Npb25ICYgBARIwCghzZW1hbnRpYxghIAEoCzIeLmFsaW5lcnkudjEuU2VtYW50aWNDaGVja3BvaW50EhQKDHRlbGVtZXRyeV9pZBgiIAEoCRIlCgR3YWl0GCMgASgLMhcuYWxpbmVyeS52MS5TZXNzaW9uV2FpdBIRCgRuYW1lGCQgASgJSAqIAQESEwoLbmFtZV9zb3VyY2UYJSABKAkSFwoKbmFtZV9lcnJvchgmIAEoCUgLiAEBQgkKB19wcm9tcHRCDQoLX3N0YXJ0ZWRfYXRCFAoSX3N0YXR1c19jaGFuZ2VkX2F0Qg4KDF9hY3Rpdml0eV9hdEILCglfZW5kZWRfYXRCDAoKX2V4aXRfY29kZUIMCgpfcmVzdW1lX29mQhcKFV9ub3RpZmljYXRpb25fcmVhZF9hdEIcChpfZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdEIbChlfbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uQgcKBV9uYW1lQg0KC19uYW1lX2Vycm9yIgoKCEFydGlmYWN0IgkKB0NvbW1lbnQiDAoKQ2hhdFRocmVhZCLyAQoDSm9iEgoKAmlkGAEgASgJEiEKBGtpbmQYAiABKA4yEy5hbGluZXJ5LnYxLkpvYktpbmQSIwoFc3RhdGUYAyABKA4yFC5hbGluZXJ5LnYxLkpvYlN0YXRlEiYKCHByb2dyZXNzGAQgASgLMhQuYWxpbmVyeS52MS5Qcm9ncmVzcxINCgVlcnJvchgFIAEoCRIVCg1zdGFydGVkX2F0X21zGAYgASgDEhMKC2VuZGVkX2F0X21zGAcgASgDEioKB3N0b3JhZ2UYCyABKAsyFy5hbGluZXJ5LnYxLlN0b3JhZ2VJbmZvSABCCAoGcmVzdWx0IjYKCFByb2dyZXNzEgwKBGRvbmUYASABKAQSDQoFdG90YWwYAiABKAQSDQoFbGFiZWwYAyABKAkigQMKC1N0b3JhZ2VJbmZvEhcKD2FwcF9jb25maWdfcGF0aBgBIAEoCRIRCglyZXBvX3BhdGgYAiABKAkSEwoLYWxpbmVyeV9kaXIYAyABKAkSGAoQcmVwb19jb25maWdfcGF0aBgEIAEoCRIWCg5oYXJuZXNzZXNfcGF0aBgFIAEoCRIRCgl0YXNrc19kaXIYBiABKAkSFQoNd29ya3RyZWVzX2RpchgHIAEoCRIcChRhbGluZXJ5ZF9zb2NrZXRfcGF0aBgIIAEoCRIaChJhbGluZXJ5ZF9sb2NrX3BhdGgYCSABKAkSFwoPbWNwX3NvY2tldF9wYXRoGAogASgJEhcKD21jcF9zdGF0dXNfcGF0aBgLIAEoCRIbChNhcmNoaXZlZF90YXNrX2NvdW50GAwgASgNEh4KFmFyY2hpdmVkX3Nlc3Npb25fY291bnQYDSABKA0SFgoOYXJjaGl2ZWRfYnl0ZXMYDiABKAQSFAoMYWN0aXZlX2J5dGVzGA8gASgEIgoKCFNldHRpbmdzIsUBCgxEYWVtb25TdGF0dXMSEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSFQoNbGl2ZV9zZXNzaW9ucxgDIAEoDRIaChJob3N0X2d1YXJkX3dhcm5pbmcYBCABKAkSFwoPd2F0Y2hfZXhoYXVzdGVkGAUgASgIEgwKBGJ1c3kYBiABKA0SGQoRd2FpdGluZ19mb3JfaW5wdXQYByABKA0SHAoUd2FpdGluZ19mb3JfYXBwcm92YWwYCCABKA0iCgoIUGxheWJvb2siDAoKQXR0YWNobWVudCKgBAoGRW50aXR5EgsKA2tleRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoBBIgCgR0YXNrGAogASgLMhAuYWxpbmVyeS52MS5UYXNrSAASIgoFZHJhZnQYCyABKAsyES5hbGluZXJ5LnYxLkRyYWZ0SAASKgoJZXhlY3V0aW9uGAwgASgLMhUuYWxpbmVyeS52MS5FeGVjdXRpb25IABImCgdzZXNzaW9uGA0gASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAASKAoIYXJ0aWZhY3QYDiABKAsyFC5hbGluZXJ5LnYxLkFydGlmYWN0SAASJgoHY29tbWVudBgPIAEoCzITLmFsaW5lcnkudjEuQ29tbWVudEgAEi0KC2NoYXRfdGhyZWFkGBAgASgLMhYuYWxpbmVyeS52MS5DaGF0VGhyZWFkSAASHgoDam9iGBEgASgLMg8uYWxpbmVyeS52MS5Kb2JIABIoCghzZXR0aW5ncxgSIAEoCzIULmFsaW5lcnkudjEuU2V0dGluZ3NIABIxCg1kYWVtb25fc3RhdHVzGBMgASgLMhguYWxpbmVyeS52MS5EYWVtb25TdGF0dXNIABIoCghwbGF5Ym9vaxgUIAEoCzIULmFsaW5lcnkudjEuUGxheWJvb2tIABIsCgphdHRhY2htZW50GBUgASgLMhYuYWxpbmVyeS52MS5BdHRhY2htZW50SABCBwoFdmFsdWUqfAoHSm9iS2luZBIYChRKT0JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUpPQl9LSU5EX1NUT1JBR0VfU0NBThABEhMKD0pPQl9LSU5EX0JBQ0tVUBACEhIKDkpPQl9LSU5EX1BVUkdFEAMSEwoPSk9CX0tJTkRfSU1QT1JUEAQqlQEKCEpvYlN0YXRlEhkKFUpPQl9TVEFURV9VTlNQRUNJRklFRBAAEhQKEEpPQl9TVEFURV9RVUVVRUQQARIVChFKT0JfU1RBVEVfUlVOTklORxACEhIKDkpPQl9TVEFURV9ET05FEAMSFAoQSk9CX1NUQVRFX0ZBSUxFRBAEEhcKE0pPQl9TVEFURV9DQU5DRUxMRUQQBWIGcHJvdG8z", [file_google_protobuf_struct]);
+  fileDesc("ChlhbGluZXJ5L3YxL2VudGl0aWVzLnByb3RvEgphbGluZXJ5LnYxIisKClNlc3Npb25SZWYSEQoJdGFza19zbHVnGAEgASgJEgoKAmlkGAIgASgJIikKC1BsYXlib29rUmVmEg0KBXNjb3BlGAEgASgJEgsKA2tleRgCIAEoCSIvCg1MYXVuY2hDaG9pY2VzEg8KB2hhcm5lc3MYASABKAkSDQoFbW9kZWwYAiABKAkiPwoOUmVsYXRlZFRhc2tSZWYSEQoJcmVwb19wYXRoGAEgASgJEgwKBHNsdWcYAiABKAkSDAoEbmFtZRgDIAEoCSInCglCb2FyZFN0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJIukBCg9Cb2FyZFByb2plY3Rpb24SFQoNc2Vzc2lvbl9jb3VudBgBIAEoBBIWCg50b3RhbF9zZXNzaW9ucxgCIAEoBBIWCg5wbGF5Ym9va190aXRsZRgDIAEoCRItCg5wbGF5Ym9va19zdGVwcxgEIAMoCzIVLmFsaW5lcnkudjEuQm9hcmRTdGVwEg8KB3VwZGF0ZWQYBSABKAQSFQoNY3VycmVudF9waGFzZRgGIAEoCRIaChJjdXJyZW50X3N0ZXBfdGl0bGUYByABKAkSHAoUbGF0ZXN0X3Nlc3Npb25fdGl0bGUYCCABKAkimQEKE1Rhc2tBY3Rpdml0eVNlc3Npb24SCgoCaWQYASABKAkSEAoId29ya3RyZWUYAiABKAkSDQoFcGhhc2UYAyABKAkSDwoHaGFybmVzcxgEIAEoCRINCgVtb2RlbBgFIAEoCRIQCghwbGF5Ym9vaxgGIAEoCRIPCgdnZW5lcmljGAcgASgIEhIKCnN0ZXBfdGl0bGUYCCABKAkibwoMVGFza0FjdGl2aXR5Eg4KBnN0YXR1cxgBIAEoCRI8Cg5hY3RpdmVfc2Vzc2lvbhgCIAEoCzIfLmFsaW5lcnkudjEuVGFza0FjdGl2aXR5U2Vzc2lvbkgAiAEBQhEKD19hY3RpdmVfc2Vzc2lvbiLMBgoEVGFzaxIMCgRzbHVnGAEgASgJEgwKBG5hbWUYAiABKAkSFgoOcmVxdWVzdGVkX3NsdWcYAyABKAkSDgoGYnJhbmNoGAQgASgJEhAKCHdvcmt0cmVlGAUgASgJEhQKDGhhc193b3JrdHJlZRgGIAEoCBIPCgdjcmVhdGVkGAcgASgEEhAKCGFyY2hpdmVkGAggASgIEg4KBnByX3VybBgJIAEoCRIRCglsaW5lYXJfaWQYCiABKAkSFAoMZ2l0aHViX2lzc3VlGAsgASgJEhAKCHBsYXlib29rGAwgASgJEhYKDmVuZ2luZV92ZXJzaW9uGA0gASgNEjIKDHBsYXlib29rX3JlZhgOIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWZIAIgBARIZChFtYXhfbGl2ZV9zZXNzaW9ucxgPIAEoDRIyCg9sYXVuY2hfZGVmYXVsdHMYECABKAsyGS5hbGluZXJ5LnYxLkxhdW5jaENob2ljZXMSFAoMYXV0b19hZHZhbmNlGBEgAygJEhgKEGF1dG9fYXBwcm92ZV9hbGwYEiABKAgSNQoLc3RlcF9tb2RlbHMYEyADKAsyIC5hbGluZXJ5LnYxLlRhc2suU3RlcE1vZGVsc0VudHJ5EhMKC3BhcmVudF90YXNrGBQgASgJEhYKDmFjdGl2ZV9zdWJ0YXNrGBUgASgJEhcKD3N1YnRhc2tfb3V0Y29tZRgWIAEoCRINCgVkcmFmdBgXIAEoCBIbCg5kcmFmdF9iYXNlX3JlZhgYIAEoCUgBiAEBEjEKDXJlbGF0ZWRfdGFza3MYGSADKAsyGi5hbGluZXJ5LnYxLlJlbGF0ZWRUYXNrUmVmEhQKDHRlbGVtZXRyeV9pZBgaIAEoCRIqCgVib2FyZBgoIAEoCzIbLmFsaW5lcnkudjEuQm9hcmRQcm9qZWN0aW9uEioKCGFjdGl2aXR5GCkgASgLMhguYWxpbmVyeS52MS5UYXNrQWN0aXZpdHkaMQoPU3RlcE1vZGVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDwoNX3BsYXlib29rX3JlZkIRCg9fZHJhZnRfYmFzZV9yZWYiBwoFRHJhZnQibgoJRXhlY3V0aW9uEgwKBHNsdWcYASABKAkSJgoFc3RhdGUYAiABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EisKCmRlZmluaXRpb24YAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0IqYBChJTZW1hbnRpY0NoZWNrcG9pbnQSHwoScGhhc2VfY29tcGxldGVkX2F0GAEgASgESACIAQESGwoOb21wX3Nlc3Npb25faWQYAiABKAlIAYgBARIYCgtvbXBfdHVybl9pZBgDIAEoBEgCiAEBQhUKE19waGFzZV9jb21wbGV0ZWRfYXRCEQoPX29tcF9zZXNzaW9uX2lkQg4KDF9vbXBfdHVybl9pZCI9ChdOb3RpZmljYXRpb25TdXBwcmVzc2lvbhIOCgZub3RpY2UYASABKAkSEgoKb2NjdXJyZW5jZRgCIAEoCSLLAQoNU2Vzc2lvblN0YXR1cxIPCgdwcm9jZXNzGAEgASgJEg0KBWFnZW50GAIgASgJEhwKFGFnZW50X2NvcnJlbGF0aW9uX2lkGAMgASgJEhQKDGFnZW50X3JlYXNvbhgEIAEoCRIQCghwbGF5Ym9vaxgFIAEoCRIXCg9wbGF5Ym9va19yZWFzb24YBiABKAkSDwoHYWRhcHRlchgHIAEoCRIXCg9tZXNzYWdlX2FkYXB0ZXIYCCABKAkSEQoJdHJhbnNwb3J0GAkgASgJIlMKC1Nlc3Npb25XYWl0EgwKBGtpbmQYASABKAkSFgoOY29ycmVsYXRpb25faWQYAiABKAkSEwoGcHJvbXB0GAMgASgJSACIAQFCCQoHX3Byb21wdCK7CQoHU2Vzc2lvbhIjCgNyZWYYASABKAsyFi5hbGluZXJ5LnYxLlNlc3Npb25SZWYSKQoGc3RhdHVzGAIgASgLMhkuYWxpbmVyeS52MS5TZXNzaW9uU3RhdHVzEgoKAmlkGAMgASgJEhAKCHdvcmt0cmVlGAQgASgJEg8KB2NyZWF0ZWQYBSABKAQSEAoIYXJjaGl2ZWQYBiABKAgSDgoGcGlubmVkGAcgASgIEg0KBXBoYXNlGAggASgJEg8KB2hhcm5lc3MYCSABKAkSDQoFbW9kZWwYCiABKAkSEAoIcGxheWJvb2sYCyABKAkSFAoMZXhlY3V0aW9uX2lkGAwgASgJEhoKEmV4ZWN1dGlvbl9yZXZpc2lvbhgNIAEoBBIPCgdnZW5lcmljGA4gASgIEhcKD3N1YnRhc2tfbWFuYWdlchgPIAEoCBIUCgxzdWJ0YXNrX3NsdWcYECABKAkSEAoIYXJ0aWZhY3QYESABKAkSGAoQaGFuZG9mZl9hcnRpZmFjdBgSIAEoCRIUCgxwcm9tcHRfZXh0cmEYEyABKAkSEwoGcHJvbXB0GBQgASgJSACIAQESFwoKc3RhcnRlZF9hdBgVIAEoBEgBiAEBEh4KEXN0YXR1c19jaGFuZ2VkX2F0GBYgASgESAKIAQESGAoLYWN0aXZpdHlfYXQYFyABKARIA4gBARIXCg9zdGF0dXNfcmV2aXNpb24YGCABKAQSFQoIZW5kZWRfYXQYGSABKARIBIgBARIWCglleGl0X2NvZGUYGiABKAVIBYgBARIcChRoYXJuZXNzX3Jlc3VtZV90b2tlbhgbIAEoCRIWCglyZXN1bWVfb2YYHCABKAlIBogBARIYChBkYWVtb25fbmFtZXNwYWNlGB0gASgJEiEKFG5vdGlmaWNhdGlvbl9yZWFkX2F0GB4gASgESAeIAQESJgoZZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdBgfIAEoBEgIiAEBEkoKGG5vdGlmaWNhdGlvbl9zdXBwcmVzc2lvbhggIAEoCzIjLmFsaW5lcnkudjEuTm90aWZpY2F0aW9uU3VwcHJlc3Npb25ICYgBARIwCghzZW1hbnRpYxghIAEoCzIeLmFsaW5lcnkudjEuU2VtYW50aWNDaGVja3BvaW50EhQKDHRlbGVtZXRyeV9pZBgiIAEoCRIlCgR3YWl0GCMgASgLMhcuYWxpbmVyeS52MS5TZXNzaW9uV2FpdBIRCgRuYW1lGCQgASgJSAqIAQESEwoLbmFtZV9zb3VyY2UYJSABKAkSFwoKbmFtZV9lcnJvchgmIAEoCUgLiAEBQgkKB19wcm9tcHRCDQoLX3N0YXJ0ZWRfYXRCFAoSX3N0YXR1c19jaGFuZ2VkX2F0Qg4KDF9hY3Rpdml0eV9hdEILCglfZW5kZWRfYXRCDAoKX2V4aXRfY29kZUIMCgpfcmVzdW1lX29mQhcKFV9ub3RpZmljYXRpb25fcmVhZF9hdEIcChpfZXhpdF9ub3RpZmljYXRpb25fcmVhZF9hdEIbChlfbm90aWZpY2F0aW9uX3N1cHByZXNzaW9uQgcKBV9uYW1lQg0KC19uYW1lX2Vycm9yIgoKCEFydGlmYWN0IgkKB0NvbW1lbnQiDAoKQ2hhdFRocmVhZCLyAQoDSm9iEgoKAmlkGAEgASgJEiEKBGtpbmQYAiABKA4yEy5hbGluZXJ5LnYxLkpvYktpbmQSIwoFc3RhdGUYAyABKA4yFC5hbGluZXJ5LnYxLkpvYlN0YXRlEiYKCHByb2dyZXNzGAQgASgLMhQuYWxpbmVyeS52MS5Qcm9ncmVzcxINCgVlcnJvchgFIAEoCRIVCg1zdGFydGVkX2F0X21zGAYgASgDEhMKC2VuZGVkX2F0X21zGAcgASgDEioKB3N0b3JhZ2UYCyABKAsyFy5hbGluZXJ5LnYxLlN0b3JhZ2VJbmZvSABCCAoGcmVzdWx0IjYKCFByb2dyZXNzEgwKBGRvbmUYASABKAQSDQoFdG90YWwYAiABKAQSDQoFbGFiZWwYAyABKAkigQMKC1N0b3JhZ2VJbmZvEhcKD2FwcF9jb25maWdfcGF0aBgBIAEoCRIRCglyZXBvX3BhdGgYAiABKAkSEwoLYWxpbmVyeV9kaXIYAyABKAkSGAoQcmVwb19jb25maWdfcGF0aBgEIAEoCRIWCg5oYXJuZXNzZXNfcGF0aBgFIAEoCRIRCgl0YXNrc19kaXIYBiABKAkSFQoNd29ya3RyZWVzX2RpchgHIAEoCRIcChRhbGluZXJ5ZF9zb2NrZXRfcGF0aBgIIAEoCRIaChJhbGluZXJ5ZF9sb2NrX3BhdGgYCSABKAkSFwoPbWNwX3NvY2tldF9wYXRoGAogASgJEhcKD21jcF9zdGF0dXNfcGF0aBgLIAEoCRIbChNhcmNoaXZlZF90YXNrX2NvdW50GAwgASgNEh4KFmFyY2hpdmVkX3Nlc3Npb25fY291bnQYDSABKA0SFgoOYXJjaGl2ZWRfYnl0ZXMYDiABKAQSFAoMYWN0aXZlX2J5dGVzGA8gASgEIucBChFOb3RpZmljYXRpb25QcmVmcxIPCgdlbmFibGVkGAEgASgIEg0KBXNvdW5kGAIgASgIEg4KBmJvdW5jZRgDIAEoCBIOCgZiYW5uZXIYBCABKAgSEgoKZG9ja19iYWRnZRgFIAEoCBIeChZkb2NrX2JhZGdlX2lucHV0X3dhaXRzGAYgASgIEiEKGWRvY2tfYmFkZ2VfYXBwcm92YWxfd2FpdHMYByABKAgSGwoTZG9ja19iYWRnZV9mYWlsdXJlcxgIIAEoCBIeChZkb2NrX2JhZGdlX2NvbXBsZXRpb25zGAkgASgIIq4BCg5CYWNrdXBTZXR0aW5ncxITCgtkZXN0aW5hdGlvbhgBIAEoCRIPCgdlbmFibGVkGAIgASgIEhEKCXJldGVudGlvbhgDIAEoDRIbChN0cmlnZ2VyX3ByZV9hcmNoaXZlGAQgASgIEiQKHHRyaWdnZXJfcG9zdF9hcnRpZmFjdF9jaGFuZ2UYBSABKAgSIAoYdHJpZ2dlcl9wb3N0X3B1c2hfY29tbWl0GAYgASgIIlkKDlRlbGVtZXRyeVByZWZzEg8KB2VuYWJsZWQYASABKAgSEAoIcHJvbXB0ZWQYAiABKAgSEgoKaW5zdGFsbF9pZBgDIAEoCRIQCghlbmRwb2ludBgEIAEoCSKEAQoNSGFybmVzc0Nob2ljZRIPCgdoYXJuZXNzGAEgASgJEg0KBW1vZGVsGAIgASgJEhAKCHRoaW5raW5nGAMgASgJEikKCHBsYXlib29rGAQgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIWCg5kcmFmdF9hdXRvc2F2ZRgFIAEoCCL1AQoQQ2hvaWNlUHJvdmVuYW5jZRIqCgdoYXJuZXNzGAEgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEigKBW1vZGVsGAIgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEisKCHRoaW5raW5nGAMgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEisKCHBsYXlib29rGAQgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlEjEKDmRyYWZ0X2F1dG9zYXZlGAUgASgOMhkuYWxpbmVyeS52MS5TZXR0aW5nU291cmNlItYCChFFZmZlY3RpdmVTZXR0aW5ncxI0Cg1ub3RpZmljYXRpb25zGAEgASgLMh0uYWxpbmVyeS52MS5Ob3RpZmljYXRpb25QcmVmcxIUCgxnaXRodWJfdG9rZW4YAiABKAkSKwoIZGVmYXVsdHMYAyABKAsyGS5hbGluZXJ5LnYxLkhhcm5lc3NDaG9pY2USNgoTZ2l0aHViX3Rva2VuX3NvdXJjZRgEIAEoDjIZLmFsaW5lcnkudjEuU2V0dGluZ1NvdXJjZRI1Cg9kZWZhdWx0c19zb3VyY2UYBSABKAsyHC5hbGluZXJ5LnYxLkNob2ljZVByb3ZlbmFuY2USKgoGYmFja3VwGAYgASgLMhouYWxpbmVyeS52MS5CYWNrdXBTZXR0aW5ncxItCgl0ZWxlbWV0cnkYByABKAsyGi5hbGluZXJ5LnYxLlRlbGVtZXRyeVByZWZzIjMKE1JlcG9HaXRIdWJPdmVycmlkZXMSEgoFdG9rZW4YASABKAlIAIgBAUIICgZfdG9rZW4i6AEKFVJlcG9EZWZhdWx0c092ZXJyaWRlcxIUCgdoYXJuZXNzGAEgASgJSACIAQESEgoFbW9kZWwYAiABKAlIAYgBARIVCgh0aGlua2luZxgDIAEoCUgCiAEBEi4KCHBsYXlib29rGAQgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZkgDiAEBEhsKDmRyYWZ0X2F1dG9zYXZlGAUgASgISASIAQFCCgoIX2hhcm5lc3NCCAoGX21vZGVsQgsKCV90aGlua2luZ0ILCglfcGxheWJvb2tCEQoPX2RyYWZ0X2F1dG9zYXZlItECChNSZXBvQmFja3VwT3ZlcnJpZGVzEhgKC2Rlc3RpbmF0aW9uGAEgASgJSACIAQESFAoHZW5hYmxlZBgCIAEoCEgBiAEBEhYKCXJldGVudGlvbhgDIAEoDUgCiAEBEiAKE3RyaWdnZXJfcHJlX2FyY2hpdmUYBCABKAhIA4gBARIpChx0cmlnZ2VyX3Bvc3RfYXJ0aWZhY3RfY2hhbmdlGAUgASgISASIAQESJQoYdHJpZ2dlcl9wb3N0X3B1c2hfY29tbWl0GAYgASgISAWIAQFCDgoMX2Rlc3RpbmF0aW9uQgoKCF9lbmFibGVkQgwKCl9yZXRlbnRpb25CFgoUX3RyaWdnZXJfcHJlX2FyY2hpdmVCHwodX3RyaWdnZXJfcG9zdF9hcnRpZmFjdF9jaGFuZ2VCGwoZX3RyaWdnZXJfcG9zdF9wdXNoX2NvbW1pdCKmAQoNUmVwb092ZXJyaWRlcxIvCgZnaXRodWIYASABKAsyHy5hbGluZXJ5LnYxLlJlcG9HaXRIdWJPdmVycmlkZXMSMwoIZGVmYXVsdHMYAiABKAsyIS5hbGluZXJ5LnYxLlJlcG9EZWZhdWx0c092ZXJyaWRlcxIvCgZiYWNrdXAYAyABKAsyHy5hbGluZXJ5LnYxLlJlcG9CYWNrdXBPdmVycmlkZXMiXQoNSGFybmVzc1Jlc3VtZRIPCgdlbmFibGVkGAEgASgIEhEKCWlkX3NvdXJjZRgCIAEoCRITCgtsYXVuY2hfYXJncxgDIAMoCRITCgtyZXN1bWVfYXJncxgEIAMoCSLjAgoHSGFybmVzcxILCgNrZXkYASABKAkSDAoEbmFtZRgCIAEoCRIOCgZiaW5hcnkYAyABKAkSDAoEYXJncxgEIAMoCRIRCgltb2RlbF9hcmcYBSADKAkSEgoKcHJvbXB0X2FyZxgGIAMoCRIpCgNlbnYYByADKAsyHC5hbGluZXJ5LnYxLkhhcm5lc3MuRW52RW50cnkSGAoQcHJvbXB0X2luamVjdGlvbhgIIAEoCRIPCgdhZGFwdGVyGAkgASgJEhcKD21lc3NhZ2VfYWRhcHRlchgKIAEoCRIOCgZtb2RlbHMYCyADKAkSEgoKbW9kZWxzX2NtZBgMIAEoCRIuCgZyZXN1bWUYDSABKAsyGS5hbGluZXJ5LnYxLkhhcm5lc3NSZXN1bWVIAIgBARoqCghFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQgkKB19yZXN1bWUiYwoQRWZmZWN0aXZlSGFybmVzcxIkCgdoYXJuZXNzGAEgASgLMhMuYWxpbmVyeS52MS5IYXJuZXNzEikKBnNvdXJjZRgCIAEoDjIZLmFsaW5lcnkudjEuU2V0dGluZ1NvdXJjZSKqAQoIU2V0dGluZ3MSLAoJb3ZlcnJpZGVzGAEgASgLMhkuYWxpbmVyeS52MS5SZXBvT3ZlcnJpZGVzEjAKCWVmZmVjdGl2ZRgCIAEoCzIdLmFsaW5lcnkudjEuRWZmZWN0aXZlU2V0dGluZ3MSLwoJaGFybmVzc2VzGAMgAygLMhwuYWxpbmVyeS52MS5FZmZlY3RpdmVIYXJuZXNzEg0KBWVycm9yGAQgASgJIsUBCgxEYWVtb25TdGF0dXMSEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSFQoNbGl2ZV9zZXNzaW9ucxgDIAEoDRIaChJob3N0X2d1YXJkX3dhcm5pbmcYBCABKAkSFwoPd2F0Y2hfZXhoYXVzdGVkGAUgASgIEgwKBGJ1c3kYBiABKA0SGQoRd2FpdGluZ19mb3JfaW5wdXQYByABKA0SHAoUd2FpdGluZ19mb3JfYXBwcm92YWwYCCABKA0iCgoIUGxheWJvb2siDAoKQXR0YWNobWVudCKgBAoGRW50aXR5EgsKA2tleRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoBBIgCgR0YXNrGAogASgLMhAuYWxpbmVyeS52MS5UYXNrSAASIgoFZHJhZnQYCyABKAsyES5hbGluZXJ5LnYxLkRyYWZ0SAASKgoJZXhlY3V0aW9uGAwgASgLMhUuYWxpbmVyeS52MS5FeGVjdXRpb25IABImCgdzZXNzaW9uGA0gASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAASKAoIYXJ0aWZhY3QYDiABKAsyFC5hbGluZXJ5LnYxLkFydGlmYWN0SAASJgoHY29tbWVudBgPIAEoCzITLmFsaW5lcnkudjEuQ29tbWVudEgAEi0KC2NoYXRfdGhyZWFkGBAgASgLMhYuYWxpbmVyeS52MS5DaGF0VGhyZWFkSAASHgoDam9iGBEgASgLMg8uYWxpbmVyeS52MS5Kb2JIABIoCghzZXR0aW5ncxgSIAEoCzIULmFsaW5lcnkudjEuU2V0dGluZ3NIABIxCg1kYWVtb25fc3RhdHVzGBMgASgLMhguYWxpbmVyeS52MS5EYWVtb25TdGF0dXNIABIoCghwbGF5Ym9vaxgUIAEoCzIULmFsaW5lcnkudjEuUGxheWJvb2tIABIsCgphdHRhY2htZW50GBUgASgLMhYuYWxpbmVyeS52MS5BdHRhY2htZW50SABCBwoFdmFsdWUqfAoHSm9iS2luZBIYChRKT0JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUpPQl9LSU5EX1NUT1JBR0VfU0NBThABEhMKD0pPQl9LSU5EX0JBQ0tVUBACEhIKDkpPQl9LSU5EX1BVUkdFEAMSEwoPSk9CX0tJTkRfSU1QT1JUEAQqlQEKCEpvYlN0YXRlEhkKFUpPQl9TVEFURV9VTlNQRUNJRklFRBAAEhQKEEpPQl9TVEFURV9RVUVVRUQQARIVChFKT0JfU1RBVEVfUlVOTklORxACEhIKDkpPQl9TVEFURV9ET05FEAMSFAoQSk9CX1NUQVRFX0ZBSUxFRBAEEhcKE0pPQl9TVEFURV9DQU5DRUxMRUQQBSppCg1TZXR0aW5nU291cmNlEh4KGlNFVFRJTkdfU09VUkNFX1VOU1BFQ0lGSUVEEAASGQoVU0VUVElOR19TT1VSQ0VfR0xPQkFMEAESHQoZU0VUVElOR19TT1VSQ0VfUkVQT1NJVE9SWRACYgZwcm90bzM", [file_google_protobuf_struct]);
 
 /**
  * @generated from message alinery.v1.SessionRef
@@ -1057,9 +1057,550 @@ export const StorageInfoSchema: GenMessage<StorageInfo> = /*@__PURE__*/
   messageDesc(file_alinery_v1_entities, 21);
 
 /**
+ * @generated from message alinery.v1.NotificationPrefs
+ */
+export type NotificationPrefs = Message<"alinery.v1.NotificationPrefs"> & {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: bool sound = 2;
+   */
+  sound: boolean;
+
+  /**
+   * @generated from field: bool bounce = 3;
+   */
+  bounce: boolean;
+
+  /**
+   * @generated from field: bool banner = 4;
+   */
+  banner: boolean;
+
+  /**
+   * @generated from field: bool dock_badge = 5;
+   */
+  dockBadge: boolean;
+
+  /**
+   * @generated from field: bool dock_badge_input_waits = 6;
+   */
+  dockBadgeInputWaits: boolean;
+
+  /**
+   * @generated from field: bool dock_badge_approval_waits = 7;
+   */
+  dockBadgeApprovalWaits: boolean;
+
+  /**
+   * @generated from field: bool dock_badge_failures = 8;
+   */
+  dockBadgeFailures: boolean;
+
+  /**
+   * @generated from field: bool dock_badge_completions = 9;
+   */
+  dockBadgeCompletions: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.NotificationPrefs.
+ * Use `create(NotificationPrefsSchema)` to create a new message.
+ */
+export const NotificationPrefsSchema: GenMessage<NotificationPrefs> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 22);
+
+/**
+ * @generated from message alinery.v1.BackupSettings
+ */
+export type BackupSettings = Message<"alinery.v1.BackupSettings"> & {
+  /**
+   * @generated from field: string destination = 1;
+   */
+  destination: string;
+
+  /**
+   * @generated from field: bool enabled = 2;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: uint32 retention = 3;
+   */
+  retention: number;
+
+  /**
+   * @generated from field: bool trigger_pre_archive = 4;
+   */
+  triggerPreArchive: boolean;
+
+  /**
+   * @generated from field: bool trigger_post_artifact_change = 5;
+   */
+  triggerPostArtifactChange: boolean;
+
+  /**
+   * @generated from field: bool trigger_post_push_commit = 6;
+   */
+  triggerPostPushCommit: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.BackupSettings.
+ * Use `create(BackupSettingsSchema)` to create a new message.
+ */
+export const BackupSettingsSchema: GenMessage<BackupSettings> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 23);
+
+/**
+ * @generated from message alinery.v1.TelemetryPrefs
+ */
+export type TelemetryPrefs = Message<"alinery.v1.TelemetryPrefs"> & {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: bool prompted = 2;
+   */
+  prompted: boolean;
+
+  /**
+   * @generated from field: string install_id = 3;
+   */
+  installId: string;
+
+  /**
+   * @generated from field: string endpoint = 4;
+   */
+  endpoint: string;
+};
+
+/**
+ * Describes the message alinery.v1.TelemetryPrefs.
+ * Use `create(TelemetryPrefsSchema)` to create a new message.
+ */
+export const TelemetryPrefsSchema: GenMessage<TelemetryPrefs> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 24);
+
+/**
+ * @generated from message alinery.v1.HarnessChoice
+ */
+export type HarnessChoice = Message<"alinery.v1.HarnessChoice"> & {
+  /**
+   * @generated from field: string harness = 1;
+   */
+  harness: string;
+
+  /**
+   * @generated from field: string model = 2;
+   */
+  model: string;
+
+  /**
+   * @generated from field: string thinking = 3;
+   */
+  thinking: string;
+
+  /**
+   * @generated from field: alinery.v1.PlaybookRef playbook = 4;
+   */
+  playbook?: PlaybookRef | undefined;
+
+  /**
+   * @generated from field: bool draft_autosave = 5;
+   */
+  draftAutosave: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.HarnessChoice.
+ * Use `create(HarnessChoiceSchema)` to create a new message.
+ */
+export const HarnessChoiceSchema: GenMessage<HarnessChoice> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 25);
+
+/**
+ * @generated from message alinery.v1.ChoiceProvenance
+ */
+export type ChoiceProvenance = Message<"alinery.v1.ChoiceProvenance"> & {
+  /**
+   * @generated from field: alinery.v1.SettingSource harness = 1;
+   */
+  harness: SettingSource;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource model = 2;
+   */
+  model: SettingSource;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource thinking = 3;
+   */
+  thinking: SettingSource;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource playbook = 4;
+   */
+  playbook: SettingSource;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource draft_autosave = 5;
+   */
+  draftAutosave: SettingSource;
+};
+
+/**
+ * Describes the message alinery.v1.ChoiceProvenance.
+ * Use `create(ChoiceProvenanceSchema)` to create a new message.
+ */
+export const ChoiceProvenanceSchema: GenMessage<ChoiceProvenance> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 26);
+
+/**
+ * `EffectiveConfig` (alinery-core types.rs): the global tier with the repository's overrides over it, and
+ * where each value came from. Notifications and telemetry are global-only.
+ *
+ * @generated from message alinery.v1.EffectiveSettings
+ */
+export type EffectiveSettings = Message<"alinery.v1.EffectiveSettings"> & {
+  /**
+   * @generated from field: alinery.v1.NotificationPrefs notifications = 1;
+   */
+  notifications?: NotificationPrefs | undefined;
+
+  /**
+   * @generated from field: string github_token = 2;
+   */
+  githubToken: string;
+
+  /**
+   * @generated from field: alinery.v1.HarnessChoice defaults = 3;
+   */
+  defaults?: HarnessChoice | undefined;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource github_token_source = 4;
+   */
+  githubTokenSource: SettingSource;
+
+  /**
+   * @generated from field: alinery.v1.ChoiceProvenance defaults_source = 5;
+   */
+  defaultsSource?: ChoiceProvenance | undefined;
+
+  /**
+   * @generated from field: alinery.v1.BackupSettings backup = 6;
+   */
+  backup?: BackupSettings | undefined;
+
+  /**
+   * @generated from field: alinery.v1.TelemetryPrefs telemetry = 7;
+   */
+  telemetry?: TelemetryPrefs | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.EffectiveSettings.
+ * Use `create(EffectiveSettingsSchema)` to create a new message.
+ */
+export const EffectiveSettingsSchema: GenMessage<EffectiveSettings> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 27);
+
+/**
+ * The repository's `config.toml`, field for field. An unset field inherits the global value; a field
+ * set to "" is a value.
+ *
+ * @generated from message alinery.v1.RepoGitHubOverrides
+ */
+export type RepoGitHubOverrides = Message<"alinery.v1.RepoGitHubOverrides"> & {
+  /**
+   * @generated from field: optional string token = 1;
+   */
+  token?: string | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RepoGitHubOverrides.
+ * Use `create(RepoGitHubOverridesSchema)` to create a new message.
+ */
+export const RepoGitHubOverridesSchema: GenMessage<RepoGitHubOverrides> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 28);
+
+/**
+ * @generated from message alinery.v1.RepoDefaultsOverrides
+ */
+export type RepoDefaultsOverrides = Message<"alinery.v1.RepoDefaultsOverrides"> & {
+  /**
+   * @generated from field: optional string harness = 1;
+   */
+  harness?: string | undefined;
+
+  /**
+   * @generated from field: optional string model = 2;
+   */
+  model?: string | undefined;
+
+  /**
+   * @generated from field: optional string thinking = 3;
+   */
+  thinking?: string | undefined;
+
+  /**
+   * @generated from field: optional alinery.v1.PlaybookRef playbook = 4;
+   */
+  playbook?: PlaybookRef | undefined;
+
+  /**
+   * @generated from field: optional bool draft_autosave = 5;
+   */
+  draftAutosave?: boolean | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RepoDefaultsOverrides.
+ * Use `create(RepoDefaultsOverridesSchema)` to create a new message.
+ */
+export const RepoDefaultsOverridesSchema: GenMessage<RepoDefaultsOverrides> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 29);
+
+/**
+ * @generated from message alinery.v1.RepoBackupOverrides
+ */
+export type RepoBackupOverrides = Message<"alinery.v1.RepoBackupOverrides"> & {
+  /**
+   * @generated from field: optional string destination = 1;
+   */
+  destination?: string | undefined;
+
+  /**
+   * @generated from field: optional bool enabled = 2;
+   */
+  enabled?: boolean | undefined;
+
+  /**
+   * 0 to 255; the effective value is clamped to 1..100
+   *
+   * @generated from field: optional uint32 retention = 3;
+   */
+  retention?: number | undefined;
+
+  /**
+   * @generated from field: optional bool trigger_pre_archive = 4;
+   */
+  triggerPreArchive?: boolean | undefined;
+
+  /**
+   * @generated from field: optional bool trigger_post_artifact_change = 5;
+   */
+  triggerPostArtifactChange?: boolean | undefined;
+
+  /**
+   * @generated from field: optional bool trigger_post_push_commit = 6;
+   */
+  triggerPostPushCommit?: boolean | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RepoBackupOverrides.
+ * Use `create(RepoBackupOverridesSchema)` to create a new message.
+ */
+export const RepoBackupOverridesSchema: GenMessage<RepoBackupOverrides> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 30);
+
+/**
+ * @generated from message alinery.v1.RepoOverrides
+ */
+export type RepoOverrides = Message<"alinery.v1.RepoOverrides"> & {
+  /**
+   * @generated from field: alinery.v1.RepoGitHubOverrides github = 1;
+   */
+  github?: RepoGitHubOverrides | undefined;
+
+  /**
+   * @generated from field: alinery.v1.RepoDefaultsOverrides defaults = 2;
+   */
+  defaults?: RepoDefaultsOverrides | undefined;
+
+  /**
+   * @generated from field: alinery.v1.RepoBackupOverrides backup = 3;
+   */
+  backup?: RepoBackupOverrides | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RepoOverrides.
+ * Use `create(RepoOverridesSchema)` to create a new message.
+ */
+export const RepoOverridesSchema: GenMessage<RepoOverrides> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 31);
+
+/**
+ * @generated from message alinery.v1.HarnessResume
+ */
+export type HarnessResume = Message<"alinery.v1.HarnessResume"> & {
+  /**
+   * @generated from field: bool enabled = 1;
+   */
+  enabled: boolean;
+
+  /**
+   * @generated from field: string id_source = 2;
+   */
+  idSource: string;
+
+  /**
+   * @generated from field: repeated string launch_args = 3;
+   */
+  launchArgs: string[];
+
+  /**
+   * @generated from field: repeated string resume_args = 4;
+   */
+  resumeArgs: string[];
+};
+
+/**
+ * Describes the message alinery.v1.HarnessResume.
+ * Use `create(HarnessResumeSchema)` to create a new message.
+ */
+export const HarnessResumeSchema: GenMessage<HarnessResume> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 32);
+
+/**
+ * @generated from message alinery.v1.Harness
+ */
+export type Harness = Message<"alinery.v1.Harness"> & {
+  /**
+   * @generated from field: string key = 1;
+   */
+  key: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string binary = 3;
+   */
+  binary: string;
+
+  /**
+   * @generated from field: repeated string args = 4;
+   */
+  args: string[];
+
+  /**
+   * @generated from field: repeated string model_arg = 5;
+   */
+  modelArg: string[];
+
+  /**
+   * @generated from field: repeated string prompt_arg = 6;
+   */
+  promptArg: string[];
+
+  /**
+   * @generated from field: map<string, string> env = 7;
+   */
+  env: { [key: string]: string };
+
+  /**
+   * @generated from field: string prompt_injection = 8;
+   */
+  promptInjection: string;
+
+  /**
+   * omp or unsupported
+   *
+   * @generated from field: string adapter = 9;
+   */
+  adapter: string;
+
+  /**
+   * omp_bracketed_paste or unsupported
+   *
+   * @generated from field: string message_adapter = 10;
+   */
+  messageAdapter: string;
+
+  /**
+   * @generated from field: repeated string models = 11;
+   */
+  models: string[];
+
+  /**
+   * @generated from field: string models_cmd = 12;
+   */
+  modelsCmd: string;
+
+  /**
+   * @generated from field: optional alinery.v1.HarnessResume resume = 13;
+   */
+  resume?: HarnessResume | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.Harness.
+ * Use `create(HarnessSchema)` to create a new message.
+ */
+export const HarnessSchema: GenMessage<Harness> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 33);
+
+/**
+ * @generated from message alinery.v1.EffectiveHarness
+ */
+export type EffectiveHarness = Message<"alinery.v1.EffectiveHarness"> & {
+  /**
+   * @generated from field: alinery.v1.Harness harness = 1;
+   */
+  harness?: Harness | undefined;
+
+  /**
+   * @generated from field: alinery.v1.SettingSource source = 2;
+   */
+  source: SettingSource;
+};
+
+/**
+ * Describes the message alinery.v1.EffectiveHarness.
+ * Use `create(EffectiveHarnessSchema)` to create a new message.
+ */
+export const EffectiveHarnessSchema: GenMessage<EffectiveHarness> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_entities, 34);
+
+/**
+ * `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
+ * the repository's `config.toml` and `harnesses.toml` and the daemon's `app.toml`. When a file
+ * is refused, as serde refuses it, only `error` is set.
+ *
  * @generated from message alinery.v1.Settings
  */
 export type Settings = Message<"alinery.v1.Settings"> & {
+  /**
+   * @generated from field: alinery.v1.RepoOverrides overrides = 1;
+   */
+  overrides?: RepoOverrides | undefined;
+
+  /**
+   * @generated from field: alinery.v1.EffectiveSettings effective = 2;
+   */
+  effective?: EffectiveSettings | undefined;
+
+  /**
+   * @generated from field: repeated alinery.v1.EffectiveHarness harnesses = 3;
+   */
+  harnesses: EffectiveHarness[];
+
+  /**
+   * @generated from field: string error = 4;
+   */
+  error: string;
 };
 
 /**
@@ -1067,7 +1608,7 @@ export type Settings = Message<"alinery.v1.Settings"> & {
  * Use `create(SettingsSchema)` to create a new message.
  */
 export const SettingsSchema: GenMessage<Settings> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 22);
+  messageDesc(file_alinery_v1_entities, 35);
 
 /**
  * The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
@@ -1130,7 +1671,7 @@ export type DaemonStatus = Message<"alinery.v1.DaemonStatus"> & {
  * Use `create(DaemonStatusSchema)` to create a new message.
  */
 export const DaemonStatusSchema: GenMessage<DaemonStatus> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 23);
+  messageDesc(file_alinery_v1_entities, 36);
 
 /**
  * @generated from message alinery.v1.Playbook
@@ -1143,7 +1684,7 @@ export type Playbook = Message<"alinery.v1.Playbook"> & {
  * Use `create(PlaybookSchema)` to create a new message.
  */
 export const PlaybookSchema: GenMessage<Playbook> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 24);
+  messageDesc(file_alinery_v1_entities, 37);
 
 /**
  * @generated from message alinery.v1.Attachment
@@ -1156,7 +1697,7 @@ export type Attachment = Message<"alinery.v1.Attachment"> & {
  * Use `create(AttachmentSchema)` to create a new message.
  */
 export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 25);
+  messageDesc(file_alinery_v1_entities, 38);
 
 /**
  * @generated from message alinery.v1.Entity
@@ -1259,7 +1800,7 @@ export type Entity = Message<"alinery.v1.Entity"> & {
  * Use `create(EntitySchema)` to create a new message.
  */
 export const EntitySchema: GenMessage<Entity> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_entities, 26);
+  messageDesc(file_alinery_v1_entities, 39);
 
 /**
  * @generated from enum alinery.v1.JobKind
@@ -1337,4 +1878,32 @@ export enum JobState {
  */
 export const JobStateSchema: GenEnum<JobState> = /*@__PURE__*/
   enumDesc(file_alinery_v1_entities, 1);
+
+/**
+ * Where a setting's value comes from (alinery-core `SettingSource`).
+ *
+ * @generated from enum alinery.v1.SettingSource
+ */
+export enum SettingSource {
+  /**
+   * @generated from enum value: SETTING_SOURCE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: SETTING_SOURCE_GLOBAL = 1;
+   */
+  GLOBAL = 1,
+
+  /**
+   * @generated from enum value: SETTING_SOURCE_REPOSITORY = 2;
+   */
+  REPOSITORY = 2,
+}
+
+/**
+ * Describes the enum alinery.v1.SettingSource.
+ */
+export const SettingSourceSchema: GenEnum<SettingSource> = /*@__PURE__*/
+  enumDesc(file_alinery_v1_entities, 2);
 

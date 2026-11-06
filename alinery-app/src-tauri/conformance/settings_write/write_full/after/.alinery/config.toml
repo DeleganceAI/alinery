@@ -1,0 +1,20 @@
+[github]
+token = "ghp-x"
+
+[defaults]
+harness = "omp"
+model = "gpt-5"
+thinking = "high"
+draft_autosave = true
+
+[defaults.playbook]
+scope = "bundled"
+key = "superdevelop"
+
+[backup]
+destination = "/srv/backups"
+enabled = true
+retention = 12
+trigger_pre_archive = true
+trigger_post_artifact_change = false
+trigger_post_push_commit = true

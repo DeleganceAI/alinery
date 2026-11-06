@@ -5,11 +5,12 @@
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { route } from "./parsers/index.ts";
+import { parsers, route } from "./parsers/index.ts";
 import type { Store } from "./store.ts";
 
 const BATCH = 256; // stats or reads in flight at once; a synchronous pass would block the loop (2.2.8)
 
+const MISSING = -1; // a `present` path whose file does not exist
 type Tracked = { key: string; mtimeMs: number; size: number };
 
 export class Feed {
@@ -23,7 +24,13 @@ export class Feed {
     private readonly decorate: (entity: Entity) => Entity = (e) => e,
     /** The paths to re-read after a path changed: rows derived from more than their own file (S3.5). Applied once, never to a path it caused. */
     private readonly dependents: (rel: string) => string[] = () => [],
+    /** Paths that live outside `.alinery/`, by the name the feed knows them as (`app.toml`, S4.1). */
+    private readonly outside: Record<string, string> = {},
   ) {}
+
+  private abs(rel: string): string {
+    return this.outside[rel] ?? join(this.alinery, rel);
+  }
 
   /** The path re-read, then the paths derived from it. */
   async refresh(rel: string): Promise<void> {
@@ -31,29 +38,31 @@ export class Feed {
     for (const d of this.dependents(rel)) await this.reread(d).catch(() => {});
   }
 
-  /** One path at a time per file, so a slow read can't land after a newer one. */
+  /** One read at a time per row, so a slow read can't land after a newer one (several paths may feed one row). */
   private reread(rel: string): Promise<void> {
-    if (!route(rel)) return Promise.resolve();
-    const run = (this.chains.get(rel) ?? Promise.resolve()).then(() => this.read(rel));
+    const r = route(rel);
+    if (!r) return Promise.resolve();
+    const run = (this.chains.get(r.key) ?? Promise.resolve()).then(() => this.read(rel));
     const tail = run.catch(() => {});
-    this.chains.set(rel, tail);
-    void tail.then(() => this.chains.get(rel) === tail && this.chains.delete(rel));
+    this.chains.set(r.key, tail);
+    void tail.then(() => this.chains.get(r.key) === tail && this.chains.delete(r.key));
     return run;
   }
 
   private async read(rel: string): Promise<void> {
     const r = route(rel);
     if (!r) return;
-    const abs = join(this.alinery, rel);
+    const abs = this.abs(rel);
     // Stat first: a write that lands during the read changes mtime or size, so the next pass re-reads.
     const s = await stat(abs).catch(() => undefined);
-    if (!s?.isFile()) {
+    const present = r.parser.present?.includes(rel) ?? false;
+    if (!s?.isFile() && !present) {
       this.tracked.delete(rel);
       this.store.commit([], [r.key]);
       return;
     }
     const entity = await r.parser.parse(abs, r.m);
-    this.tracked.set(rel, { key: r.key, mtimeMs: s.mtimeMs, size: s.size });
+    this.tracked.set(rel, { key: r.key, mtimeMs: s?.isFile() ? s.mtimeMs : MISSING, size: s?.isFile() ? s.size : MISSING });
     if (entity) this.store.commit([this.decorate(entity)]);
     else this.store.commit([], [r.key]);
   }
@@ -69,6 +78,7 @@ export class Feed {
     };
     await list("");
     await list("sessions");
+    out.push(...parsers.flatMap((p) => p.present ?? []).filter((rel) => !out.includes(rel)));
     const slugs = await readdir(join(this.alinery, "tasks")).catch(() => [] as string[]);
     for (let i = 0; i < slugs.length; i += BATCH) {
       await Promise.all(slugs.slice(i, i + BATCH).flatMap((s) => [list(`tasks/${s}`), list(`tasks/${s}/sessions`), list(`tasks/${s}/artifacts`)]));
@@ -95,8 +105,9 @@ export class Feed {
     for (let i = 0; i < entries.length; i += BATCH) {
       await Promise.all(
         entries.slice(i, i + BATCH).map(async ([rel, t]) => {
-          const s = await stat(join(this.alinery, rel)).catch(() => undefined);
-          if (!s || s.mtimeMs !== t.mtimeMs || s.size !== t.size) stale.push(rel);
+          const s = await stat(this.abs(rel)).catch(() => undefined);
+          const file = s?.isFile() ? s : undefined;
+          if ((file?.mtimeMs ?? MISSING) !== t.mtimeMs || (file?.size ?? MISSING) !== t.size) stale.push(rel);
         }),
       );
     }

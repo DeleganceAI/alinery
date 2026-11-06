@@ -1400,6 +1400,9 @@ pub fn daemon_command(
         .arg(app_config)
         .arg("--build-id")
         .arg(build_id)
+        // The version a telemetry event carries (plan S4.1). All three crates move together, so this is the app's.
+        .arg("--app-version")
+        .arg(env!("CARGO_PKG_VERSION"))
         .env("PATH", login_shell_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -2078,6 +2081,8 @@ mod tests {
                 "/c/app.toml",
                 "--build-id",
                 "b",
+                "--app-version",
+                env!("CARGO_PKG_VERSION"),
                 "--socket-namespace",
                 "ns",
                 "--rpc-secret-file",

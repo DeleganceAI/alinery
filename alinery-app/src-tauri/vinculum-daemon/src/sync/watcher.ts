@@ -4,7 +4,7 @@
 // matter (`*.scrollback`, which every PTY byte appends to, and `.tmp.` files) are dropped before any
 // I/O, the rest are debounced per path and handed on to be re-read. The 30 s reconcile covers misses.
 import { type FSWatcher, existsSync, watch } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export const CONFIG_FILES = new Set(["config.toml", "harnesses.toml", "playbooks.toml"]);
 
@@ -23,17 +23,23 @@ export class Watcher {
   constructor(
     private readonly alinery: string,
     private readonly onPath: (rel: string) => void,
-    private readonly o: { debounceMs?: number; log?: (line: string) => void } = {},
+    private readonly o: {
+      debounceMs?: number;
+      log?: (line: string) => void;
+      /** The global `app.toml`, which sits outside `.alinery/`: its directory is watched and the file reported as `app.toml`. */
+      appConfig?: string;
+    } = {},
   ) {}
 
   start() {
-    this.add("tasks", true, (f) => `tasks/${f}`);
-    this.add("", false, (f) => (CONFIG_FILES.has(f) ? f : undefined));
-    this.add("sessions", false, (f) => `sessions/${f}`);
+    this.add(join(this.alinery, "tasks"), true, (f) => `tasks/${f}`);
+    this.add(this.alinery, false, (f) => (CONFIG_FILES.has(f) ? f : undefined));
+    this.add(join(this.alinery, "sessions"), false, (f) => `sessions/${f}`);
+    const app = this.o.appConfig;
+    if (app) this.add(dirname(app), false, (f) => (f === basename(app) ? "app.toml" : undefined));
   }
 
-  private add(dir: string, recursive: boolean, toRel: (filename: string) => string | undefined) {
-    const abs = join(this.alinery, dir);
+  private add(abs: string, recursive: boolean, toRel: (filename: string) => string | undefined) {
     if (!existsSync(abs)) return; // the reconcile pass finds what appears later
     try {
       const w = watch(abs, { recursive }, (_event, filename) => {

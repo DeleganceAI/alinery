@@ -1,0 +1,107 @@
+{
+  "settings/_/repo": {
+    "effective": {
+      "backup": {
+        "destination": "",
+        "enabled": false,
+        "retention": 1,
+        "trigger_post_artifact_change": false,
+        "trigger_post_push_commit": false,
+        "trigger_pre_archive": false
+      },
+      "defaults": {
+        "draft_autosave": true,
+        "harness": "",
+        "model": "",
+        "playbook": {
+          "key": "superdevelop",
+          "scope": "bundled"
+        },
+        "thinking": ""
+      },
+      "github": {
+        "token": ""
+      },
+      "notifications": {
+        "banner": true,
+        "bounce": false,
+        "dock_badge": true,
+        "dock_badge_approval_waits": true,
+        "dock_badge_completions": true,
+        "dock_badge_failures": true,
+        "dock_badge_input_waits": true,
+        "enabled": true,
+        "sound": true
+      },
+      "provenance": {
+        "defaults": {
+          "draft_autosave": "global",
+          "harness": "global",
+          "model": "global",
+          "playbook": "global",
+          "thinking": "global"
+        },
+        "github_token": "global"
+      },
+      "telemetry": {
+        "enabled": true,
+        "endpoint": "https://telemetry.alinery.ai",
+        "install_id": "",
+        "prompted": false
+      }
+    },
+    "harnesses": [
+      {
+        "adapter": "unsupported",
+        "args": [],
+        "binary": "",
+        "env": {},
+        "key": "no-harness",
+        "message_adapter": "unsupported",
+        "model_arg": [],
+        "models": [],
+        "models_cmd": "",
+        "name": "Terminal",
+        "prompt_arg": [],
+        "prompt_injection": "",
+        "resume": null,
+        "source": "global"
+      },
+      {
+        "adapter": "omp",
+        "args": [],
+        "binary": "omp",
+        "env": {},
+        "key": "omp",
+        "message_adapter": "omp_bracketed_paste",
+        "model_arg": [
+          "--model={model}"
+        ],
+        "models": [],
+        "models_cmd": "{binary} models --json 2>/dev/null | grep -oE '\"selector\":\"[^\"]*\"' | cut -d'\"' -f4",
+        "name": "OMP CLI",
+        "prompt_arg": [
+          "--",
+          "{prompt}"
+        ],
+        "prompt_injection": "arg",
+        "resume": {
+          "enabled": true,
+          "id_source": "manual",
+          "launch_args": [],
+          "resume_args": [
+            "--resume={resume_token}"
+          ]
+        },
+        "source": "global"
+      }
+    ],
+    "overrides": {
+      "backup": {
+        "retention": 0
+      },
+      "defaults": {},
+      "github": {}
+    }
+  }
+}

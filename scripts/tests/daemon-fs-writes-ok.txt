@@ -4,3 +4,7 @@
 # The session scrollback is an append-only log of every PTY byte, not a replace: there is nothing to
 # make atomic, no old file to keep.
 terminal\.ts:[0-9]*:.*appendFileSync(shell\.scrollback, data);
+#
+# The process log (platform/log.ts) is append-only and shared with the app and alinery-mcp under one flock;
+# a torn last line is the same loss the Rust writer has.
+platform/log\.ts:[0-9]*:.*appendFileSync(path,

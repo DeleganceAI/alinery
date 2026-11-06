@@ -200,11 +200,10 @@ pub(crate) fn artifact_file_path(repo: &Path, slug: &str, name: &str) -> Result<
     alinery_core::artifact_file_path(repo, slug, name)
 }
 
-pub(crate) fn ensure_repo_ready(repo: &Path) -> Result<(), String> {
-    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
-    ensure_gitignore(repo)?;
-    ensure_harnesses_toml(repo)?;
-    ensure_config_toml(repo)
+/// What selecting a repo needs before its daemon exists. The rest of readying it (the ignore entry,
+/// `harnesses.toml`, `config.toml`) is the daemon's `RepoService.EnsureReady`, called once it answers.
+pub(crate) fn ensure_alinery_dir(repo: &Path) -> Result<(), String> {
+    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())
 }
 
 // read_session_meta moved into the daemon (alinery_core::read_meta_harness_model) —
@@ -214,7 +213,3 @@ pub(crate) fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-// Keep task data + worktrees out of the active repo's `git status` (like `.git`).
-pub(crate) fn ensure_gitignore(repo: &Path) -> Result<(), String> {
-    alinery_core::task_creation::ensure_task_data_ignored(repo)
-}

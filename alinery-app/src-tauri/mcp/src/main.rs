@@ -1157,8 +1157,16 @@ fn write_toml_file(path: std::path::PathBuf, args: &Value, app_config: Option<&P
         return text_result(format!("error: not valid TOML ({}); not written", e));
     }
     let is_config = path.file_name().is_some_and(|n| n == "config.toml");
-    let prior_text = if is_config && app_config.is_some() { std::fs::read_to_string(&path).ok() } else { None };
-    match std::fs::write(&path, content) {
+    // The daemon writes this file too (plan S4.1), so the read of the prior text and the write share its lock.
+    let locked = alinery_core::with_task_mutation_lock_waiting(repo, "write settings", alinery_core::TASK_MUTATION_CONTENTION_WAIT, || {
+        let prior_text = if is_config && app_config.is_some() { std::fs::read_to_string(&path).ok() } else { None };
+        Ok((prior_text, std::fs::write(&path, content)))
+    });
+    let (prior_text, written) = match locked {
+        Ok(done) => done,
+        Err(error) => return text_result(format!("error: {error}; not written")),
+    };
+    match written {
         Ok(_) => {
             if is_config {
                 if let Some(cfg) = app_config {
@@ -2535,6 +2543,24 @@ args = ["--token", "harness-secret"]
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         assert!(!log_text(&app_config).contains("harnesses.toml"));
         let _ = std::fs::remove_dir_all(app_dir);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn write_config_waits_on_the_task_mutation_lock_the_daemon_shares_and_writes_nothing_while_it_is_held() {
+        let repo = unique_repo("write-config-lock");
+        std::fs::create_dir_all(repo.join(".alinery")).unwrap();
+        let path = repo.join(".alinery/config.toml");
+        std::fs::write(&path, "[backup]\nenabled = false\n").unwrap();
+        alinery_core::with_task_mutation_lock(&repo, "test hold", || {
+            let resp = write_toml_file(path.clone(), &json!({"content": "[backup]\nenabled = true\n"}), None, &repo, alinery_core::SettingsChangeScope::Repo);
+            assert_eq!(text_content(&resp), "error: task mutation busy during write settings; not written");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[backup]\nenabled = false\n");
+        let resp = write_toml_file(path.clone(), &json!({"content": "[backup]\nenabled = true\n"}), None, &repo, alinery_core::SettingsChangeScope::Repo);
+        assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         let _ = std::fs::remove_dir_all(repo);
     }
 

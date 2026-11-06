@@ -11,6 +11,8 @@ export type Parser = {
   match: RegExp;
   key(m: RegExpMatchArray): string;
   parse(absPath: string, m: RegExpMatchArray): Promise<Entity | null>;
+  /** Paths that keep a row when the file is missing: the feed asks the parser anyway, and lists them as candidates. */
+  present?: string[];
 };
 
 export const parsers: Parser[] = [sessionMeta, task, touch];

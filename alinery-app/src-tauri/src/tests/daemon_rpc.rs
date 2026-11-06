@@ -1,7 +1,7 @@
 //! The webview bridge against a stand-in daemon: a hyper HTTP/2 server on a temp unix socket.
 
 use super::*;
-use crate::daemon_rpc::{hello, resolve, shutdown_daemon, Bridge, Call, Capability, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse};
+use crate::daemon_rpc::{hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse};
 use bytes::Bytes;
 use http::HeaderMap;
 use http_body_util::BodyExt;
@@ -58,6 +58,9 @@ impl Drop for Feed {
         }
     }
 }
+
+/// Every EnsureReady any stand-in received: the Authorization header, then the decoded request.
+static ENSURE_READY: Mutex<Vec<(String, EnsureReadyRequest)>> = Mutex::new(Vec::new());
 
 /// Every Shutdown any stand-in received: the Authorization header, then the decoded request.
 static SHUTDOWNS: Mutex<Vec<(String, ShutdownRequest)>> = Mutex::new(Vec::new());
@@ -137,6 +140,17 @@ async fn answer(req: http::Request<Incoming>, aborted: Arc<AtomicUsize>, held: H
                 tx.send(Frame::data(Bytes::from(body))).unwrap();
                 tx.send(trailers("0")).unwrap();
             }
+        }
+        "/alinery.v1.RepoService/EnsureReady" => {
+            let token = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let sent = req.into_body().collect().await.unwrap().to_bytes();
+            ENSURE_READY.lock().unwrap().push((token, EnsureReadyRequest::decode(&sent[5..]).unwrap()));
+            // `Applied { cursor { seq: 1 } }`, which the shell has no use for.
+            let message = [0x0a, 0x02, 0x0a, 0x00];
+            let mut body = vec![0, 0, 0, 0, message.len() as u8];
+            body.extend_from_slice(&message);
+            tx.send(Frame::data(Bytes::from(body))).unwrap();
+            tx.send(trailers("0")).unwrap();
         }
         "/trailers-only" => {
             builder = builder.header("grpc-status", "16");
@@ -532,6 +546,16 @@ fn golden_hello_response_decodes_field_by_field_and_encodes_back_to_the_same_byt
     assert_eq!(response.encode_to_vec(), bytes);
 }
 
+#[test]
+fn golden_ensure_ready_request_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
+    let bytes = golden("EnsureReadyRequest");
+    let request = EnsureReadyRequest::decode(bytes.as_slice()).unwrap();
+    let meta = request.meta.clone().expect("EnsureReadyRequest.meta");
+    assert_eq!(meta.client_id, "client-1", "MutationMeta.client_id");
+    assert_eq!(meta.mutation_id, "mutation-1", "MutationMeta.mutation_id");
+    assert_eq!(request.encode_to_vec(), bytes);
+}
+
 /// A repo whose `.alinery/rpc[-lane].sock` is served by a stand-in, with the token this app would have
 /// kept for it. Plain `#[test]`, because `shutdown_daemon` blocks on the app's own runtime.
 struct Teardown {
@@ -577,6 +601,26 @@ fn shutdown_goes_over_rpc_with_its_origin_and_confirmation_and_skips_the_old_op(
             }]
         );
     }
+}
+
+#[test]
+fn ensure_repo_ready_calls_repo_service_with_the_kept_token_and_a_fresh_mutation_id() {
+    let t = teardown_fixture(crate::daemon::alineryd_socket_namespace().as_deref(), "ensure-token");
+    let key = t.repo.display().to_string();
+    crate::daemon_rpc::ensure_repo_ready(&key, &t.app_config).unwrap();
+    crate::daemon_rpc::ensure_repo_ready(&key, &t.app_config).unwrap();
+    let calls: Vec<_> = ENSURE_READY.lock().unwrap().iter().filter(|(token, _)| token == "Bearer ensure-token").map(|(_, r)| r.clone()).collect();
+    assert_eq!(calls.len(), 2);
+    let ids: Vec<_> = calls.iter().map(|r| r.meta.clone().unwrap()).collect();
+    assert!(ids.iter().all(|m| m.client_id == "alinery-shell" && !m.mutation_id.is_empty()), "{ids:?}");
+    assert_ne!(ids[0].mutation_id, ids[1].mutation_id, "a second ask is a new mutation, not a retry");
+}
+
+#[test]
+fn ensure_repo_ready_reports_a_daemon_that_does_not_answer() {
+    let t = teardown_fixture(Some("a"), "x");
+    let error = crate::daemon_rpc::ensure_repo_ready(&t.repo.display().to_string(), &t.app_config).unwrap_err();
+    assert!(!error.is_empty());
 }
 
 #[test]

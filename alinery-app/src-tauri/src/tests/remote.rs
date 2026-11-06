@@ -2585,8 +2585,6 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
     );
     for private in [
         "ghp_mac_only_token",
-        "install-id-mac",
-        "telemetry.example",
         "/Users/me",
         "harness-secret",
         "CUSTOM_API_KEY",
@@ -2605,14 +2603,29 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
     assert_eq!(host.defaults.thinking, "high");
     assert_eq!(host.experiments.grok_api_key, "xai-shared-key");
     assert!(host.github.token.is_empty());
-    assert!(
-        !host.telemetry.enabled && host.telemetry.install_id.is_empty(),
-        "the host records nothing under this install"
-    );
+    assert_eq!(host.telemetry, local.global.telemetry, "the host's daemon sends under this install and this consent");
     assert!(!host.power.keep_awake);
     assert!(!host.harnesses.harness.iter().any(|row| row.key == "custom"), "harness rows name this Mac's paths");
     assert_eq!(toml::from_str::<crate::AppConfig>(&rendered).unwrap().settings_version, 7);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The host's daemon sends under this Mac's consent, so a Mac that declined, or was never asked, tells the host to send nothing.
+#[test]
+fn remote_app_toml_carries_a_refusal_of_telemetry_as_a_refusal() {
+    for (enabled, prompted) in [(false, true), (true, false)] {
+        let mut local = crate::AppConfig::default();
+        local.global.telemetry = alinery_core::TelemetryPrefs {
+            enabled,
+            prompted,
+            install_id: "install-id-mac".into(),
+            endpoint: "https://telemetry.example/ingest".into(),
+        };
+        let rendered = render_remote_app_toml(&local, &[], false).unwrap();
+        let host = toml::from_str::<crate::AppConfig>(&rendered).unwrap().global.telemetry;
+        assert_eq!((host.enabled, host.prompted), (enabled, prompted), "{rendered}");
+        assert!(!(host.enabled && host.prompted), "{rendered}");
+    }
 }
 
 /// A Mac config directory with API keys, a browser sign-in, custom providers and a hosted token.
