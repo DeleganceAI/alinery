@@ -5,9 +5,8 @@ import { ModelInput } from "./shared";
 const ipcSpies = vi.hoisted(() => ({
   readModelFavorites: vi.fn(),
   setModelFavorite: vi.fn(),
-  listHarnessModels: vi.fn(),
-  listHarnessModelsForRepo: vi.fn(),
 }));
+const providerSpies = vi.hoisted(() => ({ listModels: vi.fn() }));
 const toastSpies = vi.hoisted(() => ({
   show: vi.fn(),
   error: vi.fn(),
@@ -18,6 +17,8 @@ vi.mock("./ipc", async () => {
   const { mockIpc } = await import("./test/mockIpc");
   return mockIpc(ipcSpies);
 });
+// The model list is ProviderService.ListModels on the daemon of `repoPath` (else the active repository).
+vi.mock("./sync/providers", () => ({ listModels: providerSpies.listModels }));
 vi.mock("./toast", () => ({
   toast: Object.assign(toastSpies.show, { error: toastSpies.error }),
 }));
@@ -57,8 +58,7 @@ async function openModels() {
 beforeEach(() => {
   ipcSpies.readModelFavorites.mockReset().mockResolvedValue([]);
   ipcSpies.setModelFavorite.mockReset().mockResolvedValue([]);
-  ipcSpies.listHarnessModels.mockReset().mockResolvedValue(["opus", "sonnet"]);
-  ipcSpies.listHarnessModelsForRepo.mockReset().mockResolvedValue(["opus", "sonnet"]);
+  providerSpies.listModels.mockReset().mockResolvedValue(["opus", "sonnet"]);
   toastSpies.show.mockReset();
   toastSpies.error.mockReset();
   const storedModels = new Map<string, string>();
@@ -112,12 +112,12 @@ describe("ModelInput trigger", () => {
     renderModelInput({ onOpenPicker });
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     expect(onOpenPicker).toHaveBeenCalledTimes(1);
-    expect(ipcSpies.listHarnessModels).not.toHaveBeenCalled();
+    expect(providerSpies.listModels).not.toHaveBeenCalled();
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
   });
 
   it("offers a typed id that is not in the harness list as a custom model", async () => {
-    ipcSpies.listHarnessModels.mockResolvedValue(["opus", "sonnet"]);
+    providerSpies.listModels.mockResolvedValue(["opus", "sonnet"]);
     const { props } = renderModelInput();
     await openModels();
     fireEvent.change(screen.getByRole("textbox", { name: "Filter models" }), { target: { value: "vendor/preview-7" } });
@@ -134,7 +134,7 @@ describe("ModelInput favorites", () => {
     const favoriteRead = deferred<string[]>();
     const discovery = deferred<string[]>();
     ipcSpies.readModelFavorites.mockReturnValue(favoriteRead.promise);
-    ipcSpies.listHarnessModels.mockReturnValue(discovery.promise);
+    providerSpies.listModels.mockReturnValue(discovery.promise);
     const { props } = renderModelInput();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
@@ -155,7 +155,7 @@ describe("ModelInput favorites", () => {
     const favoriteRead = deferred<string[]>();
     const discovery = deferred<string[]>();
     ipcSpies.readModelFavorites.mockReturnValue(favoriteRead.promise);
-    ipcSpies.listHarnessModels.mockReturnValue(discovery.promise);
+    providerSpies.listModels.mockReturnValue(discovery.promise);
     renderModelInput();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
@@ -173,7 +173,7 @@ describe("ModelInput favorites", () => {
   it("ignores obsolete discovery after a repository change", async () => {
     const obsolete = deferred<string[]>();
     const current = deferred<string[]>();
-    ipcSpies.listHarnessModelsForRepo.mockReturnValueOnce(obsolete.promise).mockReturnValueOnce(current.promise);
+    providerSpies.listModels.mockReturnValueOnce(obsolete.promise).mockReturnValueOnce(current.promise);
 
     const view = renderModelInput({ harness: "omp", repoPath: "/repo-a" });
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
@@ -194,7 +194,7 @@ describe("ModelInput favorites", () => {
 
   it("renders filter-first stable ordering, duplicates, and no unavailable rows", async () => {
     ipcSpies.readModelFavorites.mockResolvedValue(["anthropic-sonnet", "claude-sonnet", "missing"]);
-    ipcSpies.listHarnessModels.mockResolvedValue(["claude-opus", "claude-sonnet", "anthropic-sonnet", "claude-sonnet", "haiku"]);
+    providerSpies.listModels.mockResolvedValue(["claude-opus", "claude-sonnet", "anthropic-sonnet", "claude-sonnet", "haiku"]);
     const { props } = renderModelInput();
 
     const list = await openModels();
@@ -212,7 +212,7 @@ describe("ModelInput favorites", () => {
   });
 
   it("keeps duplicate rows hoverable and selectable by mouse", async () => {
-    ipcSpies.listHarnessModels.mockResolvedValue(["opus", "sonnet", "sonnet"]);
+    providerSpies.listModels.mockResolvedValue(["opus", "sonnet", "sonnet"]);
     const { props } = renderModelInput();
 
     await openModels();
@@ -228,7 +228,7 @@ describe("ModelInput favorites", () => {
   });
 
   it("keeps search arrow, Enter, and Escape behavior", async () => {
-    ipcSpies.listHarnessModels.mockResolvedValue(["opus", "sonnet"]);
+    providerSpies.listModels.mockResolvedValue(["opus", "sonnet"]);
     const { props } = renderModelInput();
 
     await openModels();
@@ -250,7 +250,7 @@ describe("ModelInput favorites", () => {
   it("toggles only favorite membership and uses the canonical response after pending", async () => {
     const mutation = deferred<string[]>();
     ipcSpies.readModelFavorites.mockResolvedValue(["sonnet"]);
-    ipcSpies.listHarnessModels.mockResolvedValue(["opus", "opus", "sonnet", "haiku"]);
+    providerSpies.listModels.mockResolvedValue(["opus", "opus", "sonnet", "haiku"]);
     ipcSpies.setModelFavorite.mockReturnValue(mutation.promise);
     localStorage.setItem("alinery.lastmodel.omp", "remembered-model");
     const { props } = renderModelInput({ value: "selected-model" });
@@ -279,7 +279,7 @@ describe("ModelInput favorites", () => {
     expect(props.onChange).not.toHaveBeenCalled();
     expect(props.onCommit).not.toHaveBeenCalled();
     expect(localStorage.getItem("alinery.lastmodel.omp")).toBe("remembered-model");
-    expect(ipcSpies.listHarnessModels).toHaveBeenCalledTimes(1);
+    expect(providerSpies.listModels).toHaveBeenCalledTimes(1);
 
     await act(async () => mutation.resolve(["sonnet", "opus", "haiku"]));
     const removeOpus = await screen.findAllByRole("button", { name: "Remove opus from favorites" });
@@ -289,7 +289,7 @@ describe("ModelInput favorites", () => {
   });
 
   it.each([" ", "Enter"])("keeps native keyboard %s favorite activation isolated from selection", async (key) => {
-    ipcSpies.listHarnessModels.mockResolvedValue(["opus"]);
+    providerSpies.listModels.mockResolvedValue(["opus"]);
     ipcSpies.setModelFavorite.mockResolvedValue(["opus"]);
     const { props } = renderModelInput({ value: "selected-model" });
 
@@ -321,7 +321,7 @@ describe("ModelInput favorites", () => {
     { favorites: ["opus"], model: "opus", label: "Remove opus from favorites" },
   ])("retains membership and reports context when $label fails", async ({ favorites, model, label }) => {
     ipcSpies.readModelFavorites.mockResolvedValue(favorites);
-    ipcSpies.listHarnessModels.mockResolvedValue([model]);
+    providerSpies.listModels.mockResolvedValue([model]);
     ipcSpies.setModelFavorite.mockRejectedValue(new Error("disk full"));
     renderModelInput({ value: "selected-model" });
 
@@ -335,7 +335,7 @@ describe("ModelInput favorites", () => {
 
   it("keeps empty and failed discovery closed without synthesizing saved favorites", async () => {
     ipcSpies.readModelFavorites.mockResolvedValue(["missing"]);
-    ipcSpies.listHarnessModels.mockResolvedValue([]);
+    providerSpies.listModels.mockResolvedValue([]);
     const view = renderModelInput();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
@@ -343,10 +343,10 @@ describe("ModelInput favorites", () => {
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
     expect(screen.queryByText("missing")).toBeNull();
 
-    ipcSpies.listHarnessModelsForRepo.mockRejectedValue(new Error("discovery failed"));
+    providerSpies.listModels.mockRejectedValue(new Error("discovery failed"));
     view.rerender(<ModelInput {...view.props} repoPath="/repo" />);
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
-    await waitFor(() => expect(ipcSpies.listHarnessModelsForRepo).toHaveBeenCalledWith("/repo", "omp"));
+    await waitFor(() => expect(providerSpies.listModels).toHaveBeenCalledWith("omp", "/repo"));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
     expect(screen.queryByText("missing")).toBeNull();
   });

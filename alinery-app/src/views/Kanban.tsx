@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
+import { KANBAN_COLUMNS } from "../kanbanColumns";
 import { PullRequestIndicator } from "../PullRequestIndicator";
 import {
   ArchiveTaskModal,
@@ -11,13 +11,13 @@ import {
   formatAge,
   InlineStatus,
   LoadingState,
+  RepoLinkNotices,
   repoName,
-  sameBoardBuckets,
-  sameKanbanColumns,
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
+import { useRepoBoard } from "../sync/board";
 import type { BoardNav, BoardTask, KanbanColumn, TaskActivitySession } from "../types";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 
@@ -52,6 +52,7 @@ function BoardGate({ columns, onCreate }: { columns: KanbanColumn[]; onCreate: (
 
 export function Kanban({
   allRepos,
+  repos,
   onOpen,
   onDuplicate,
   registerNav,
@@ -59,63 +60,46 @@ export function Kanban({
   onCreate,
 }: {
   allRepos: boolean;
+  /** The repos this board shows: every known repo, or the active one. Each has its own stream. */
+  repos: string[];
   onOpen: (task: BoardTask) => void;
   onDuplicate: (task: BoardTask) => void;
   registerNav: (n: BoardNav | null) => void;
   onOpenActiveSession: (task: BoardTask, session: TaskActivitySession) => void;
   onCreate: () => void;
 }) {
-  const [columns, setColumns] = useState<KanbanColumn[]>([]);
-  const [byColumn, setByColumn] = useState<Record<string, BoardTask[]>>({});
+  const baseColumns = KANBAN_COLUMNS;
   const [selectedTaskKey, setSelectedTaskKey] = useState("");
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showChildren, setShowChildren] = useState(false);
   const [showEmptyColumns, setShowEmptyColumns] = useState(true);
+  const board = useRepoBoard(repos);
   // Every task in scope, archived included. The gate asks "does a task exist at all",
   // which is not the same question as "is the board showing anything" — a repo whose
   // only tasks are archived has work to come back to, so it is not gated.
-  const [taskTotal, setTaskTotal] = useState(0);
+  const taskTotal = board.tasks.length;
   const [err, setErr] = useState<ErrState>(null);
-  const [loaded, setLoaded] = useState(false);
+  const loaded = board.loaded;
+  const { columns, byColumn } = useMemo(() => {
+    const tasks = board.tasks.filter((task) => showArchived || !task.archived);
+    const cols = [...baseColumns];
+    tasks.forEach((t) => {
+      if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key || "Other" });
+    });
+    const buckets: Record<string, BoardTask[]> = Object.fromEntries(cols.map((col) => [col.key, []]));
+    tasks.forEach((t) => {
+      buckets[t.current_column_key] ||= [];
+      buckets[t.current_column_key].push(t);
+    });
+    return { columns: cols, byColumn: buckets };
+  }, [board.tasks, baseColumns, showArchived]);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
   // Keyboard selection (j/k/h/l, arrows) must stay visible while columns scroll.
   useEffect(() => {
     boardRef.current?.querySelector(".card.sel")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [selectedTaskKey]);
-
-  const load = () =>
-    (async () => {
-      try {
-        const [baseColumns, allTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
-        const tasks = allTasks.filter((task) => showArchived || !task.archived);
-        setTaskTotal(allTasks.length);
-        const cols = [...baseColumns];
-        tasks.forEach((t) => {
-          if (!cols.some((c) => c.key === t.current_column_key)) cols.push({ key: t.current_column_key, title: t.current_column_title || t.current_column_key || "Other" });
-        });
-        const buckets: Record<string, BoardTask[]> = Object.fromEntries(cols.map((col) => [col.key, []]));
-        tasks.forEach((t) => {
-          buckets[t.current_column_key] ||= [];
-          buckets[t.current_column_key].push(t);
-        });
-        setColumns((current) => (sameKanbanColumns(current, cols) ? current : cols));
-        setByColumn((current) => (sameBoardBuckets(current, buckets) ? current : buckets));
-        setSelectedTaskKey((prev) => (prev && tasks.some((task) => taskKey(task) === prev) ? prev : tasks[0] ? taskKey(tasks[0]) : ""));
-        setErr(null);
-      } catch (e) {
-        setErr({ msg: "Couldn't load the board.", detail: String(e) });
-      } finally {
-        setLoaded(true);
-      }
-    })();
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 3000);
-    return () => window.clearInterval(timer);
-  }, [allRepos, showArchived]);
 
   useEffect(() => {
     void import("../views/TaskDetail");
@@ -131,7 +115,6 @@ export function Kanban({
       setErr(failure);
       return;
     }
-    void load();
   };
 
   const cardsIn = (columnIndex: number) => (byColumn[columns[columnIndex]?.key] ?? []).filter((task) => showChildren || !task.parent_task);
@@ -215,6 +198,7 @@ export function Kanban({
           {err.msg}
         </InlineStatus>
       )}
+      <RepoLinkNotices repos={board.repos} />
       {!loaded && <LoadingState label="Loading board" state={ORB_STATE} />}
       <div className="board" ref={boardRef}>
         {locked && <BoardGate columns={columns} onCreate={onCreate} />}

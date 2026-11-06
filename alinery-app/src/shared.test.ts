@@ -2,6 +2,7 @@ import { act, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  attentionBody,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   formatAbsolute,
@@ -12,7 +13,6 @@ import {
   repoName,
   SessionTimestamp,
   sameBoardTasks,
-  sameKanbanColumns,
   sameLifecycleMaps,
   sameSessionMetas,
   sameTask,
@@ -20,7 +20,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "./shared";
-import type { ArtifactTreeNode, BoardTask, KanbanColumn, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
+import type { ArtifactTreeNode, BoardTask, LifecycleState, SessionMeta, Task, TaskActivityMap, TaskActivitySummary } from "./types";
 
 // shared.tsx imports ipc at module scope. Before the IPC seam existed that made this file
 // unimportable in a test at all — there was no single module to stub.
@@ -276,21 +276,6 @@ describe("re-render comparators", () => {
     expect(sameSessionMetas([manager], [{ ...manager, subtask_slug: "other-child" } as SessionMeta])).toBe(false);
   });
 
-  it("sameKanbanColumns notices a renamed or reordered column", () => {
-    const a: KanbanColumn[] = [
-      { key: "a", title: "A" },
-      { key: "b", title: "B" },
-    ] as KanbanColumn[];
-    expect(sameKanbanColumns(a, [...a])).toBe(true);
-    expect(
-      sameKanbanColumns(a, [
-        { key: "a", title: "Renamed" },
-        { key: "b", title: "B" },
-      ] as KanbanColumn[]),
-    ).toBe(false);
-    expect(sameKanbanColumns(a, [a[1], a[0]])).toBe(false);
-  });
-
   it("sameBoardTasks notices a phase move, which is the whole point of the board", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
@@ -394,5 +379,14 @@ describe("re-render comparators", () => {
       expect(sameTaskActivityMaps(map(summary()), map(summary({ active_session: { ...active, [field]: value } })))).toBe(false);
     }
     expect(sameTaskActivityMaps(map(summary()), {})).toBe(false);
+  });
+});
+
+describe("attentionBody", () => {
+  it("names the session's label and why it needs the person, as the Rust session_attention_body did", () => {
+    expect(attentionBody("Fix login", "idle")).toBe("Fix login — idle, needs you");
+    expect(attentionBody("Fix login", "waiting_for_input")).toBe("Fix login — waiting for your input");
+    expect(attentionBody("Fix login", "waiting_for_approval")).toBe("Fix login — waiting for your approval");
+    expect(attentionBody("", "idle")).toBe("session — idle, needs you");
   });
 });

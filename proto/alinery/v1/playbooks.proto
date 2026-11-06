@@ -1,0 +1,169 @@
+// proto/alinery/v1/playbooks.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+
+// The playbook library (S4.6): bundled playbooks (compiled in), the machine's global ones, and the repository's own. The catalog
+// is the repo scope's `playbook/<scope>/<key>` rows plus `playbook/_/picker`, `playbook/_/picker-global` and `playbook/_/library`;
+// these are the reads of one whole definition, the two computed answers, and the writes. A refusal carries a tagged
+// `PlaybookLoadError` or `PlaybookSaveError` as JSON in `ErrorDetail.fields["error"]` (the plan's 2.3.2 table), and a message.
+service PlaybookService {
+  rpc ReadPlaybook(ReadPlaybookRequest) returns (ReadPlaybookResponse);              // VIEW
+  rpc ValidatePlaybook(ValidatePlaybookRequest) returns (ValidatePlaybookResponse);  // VIEW; unary, a computed answer (2.1.6)
+  rpc RenderPlaybook(RenderPlaybookRequest) returns (RenderPlaybookResponse);        // VIEW; unary
+  // `expected_revision` is the definition row's revision as the client last saw it (0: no check, 0 also for a new key). A row
+  // that moved on is ABORTED and nothing is written. `overwrite` is the earlier rule that a save may not replace a file by chance.
+  rpc SavePlaybook(SavePlaybookRequest) returns (SavePlaybookResponse);              // ACT
+  rpc DeletePlaybook(DeletePlaybookRequest) returns (DeletePlaybookResponse);        // ACT
+  rpc SavePicker(SavePickerRequest) returns (SavePickerResponse);            // ACT
+  // The community import registry (S4.10; the rows are `playbook/_/community`). The shell downloads a package with this machine's
+  // account and stages it through BlobService (a `staged` upload); these two write it into the repository, on the host that owns it.
+  rpc ImportCommunityPlaybook(ImportCommunityPlaybookRequest) returns (ImportCommunityPlaybookResponse);  // ACT
+  rpc UpdateCommunityImport(UpdateCommunityImportRequest) returns (UpdateCommunityImportResponse);      // ACT
+}
+
+message PlaybookInput {
+  string path = 1;
+  string mode = 2;
+}
+message PlaybookOutput {
+  string path = 1;
+  bool required = 2;
+}
+message PlaybookStep {
+  string key = 1;
+  string title = 2;
+  string short = 3;
+  bool is_coding_step = 4;
+  bool auto_advance_default = 5;
+  repeated PlaybookInput inputs = 6;
+  repeated PlaybookOutput outputs = 7;
+  string model = 8;
+  string harness = 9;
+  string prompt = 10;
+}
+// `NormalizedPlaybook`: the file's metadata, each step with the prompt of its section, the text before the first section and the
+// sections' order. An unknown field in the JSON form is refused by name.
+message PlaybookDefinition {
+  uint32 version = 1;
+  string key = 2;
+  string title = 3;
+  string description = 4;
+  string default_model = 5;
+  string default_harness = 6;
+  repeated PlaybookStep step = 7;
+  string preamble = 8;
+  repeated string section_order = 9;
+}
+
+message ReadPlaybookRequest {
+  PlaybookRef reference = 1;
+}
+message ReadPlaybookResponse {
+  PlaybookRef reference = 1;
+  optional string path = 2;
+  PlaybookDefinition definition = 3;
+  string source_text = 4;
+  optional uint64 modified_at_ms = 5;
+  // The definition row's revision as the daemon holds it (0: no row, e.g. a bundled playbook that was deleted). A save that replaces
+  // this file sends it back as `expected_revision`.
+  uint64 revision = 6;
+}
+
+message ValidatePlaybookRequest {
+  string source = 1;
+}
+// `definition` is absent when `diagnostics` is not empty.
+message ValidatePlaybookResponse {
+  optional PlaybookDefinition definition = 1;
+  repeated PlaybookDiagnostic diagnostics = 2;
+}
+
+message RenderPlaybookRequest {
+  PlaybookDefinition definition = 1;
+}
+message RenderPlaybookResponse {
+  string source = 1;
+}
+
+message SavePlaybookRequest {
+  MutationMeta meta = 1;
+  PlaybookRef target = 2;
+  string source = 3;
+  bool overwrite = 4;
+  uint64 expected_revision = 5;
+}
+message SavePlaybookResponse {
+  Applied applied = 1;
+  ReadPlaybookResponse saved = 2;
+}
+
+message DeletePlaybookRequest {
+  MutationMeta meta = 1;
+  PlaybookRef reference = 2;
+  uint64 expected_revision = 3;
+}
+message DeletePlaybookResponse {
+  Applied applied = 1;
+}
+
+// `global` saves the picker file a window with no repository uses; otherwise the repository's. `expected_revision` is that row's.
+message SavePickerRequest {
+  MutationMeta meta = 1;
+  bool global = 2;
+  repeated PlaybookRef order = 3;
+  repeated PickerEntry entries = 4;
+  uint64 expected_revision = 5;
+}
+message SavePickerResponse {
+  Applied applied = 1;
+}
+
+// What the shell downloaded: the staged upload that holds the playbook document, and what the library said about it.
+message CommunityPackage {
+  string upload_id = 1;
+  uint64 version = 2;
+  string label = 3;
+  string playbook_key = 4;
+}
+message ImportCommunityPlaybookRequest {
+  MutationMeta meta = 1;
+  string id = 2;  // the publication id (a lowercase uuid)
+  CommunityPackage package = 3;
+  bool overwrite = 4;  // replace a repo playbook of the same key
+}
+message UpdateCommunityImportRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+  CommunityPackage package = 3;
+  bool overwrite_edited = 4;  // replace the local copy even when it no longer matches what was imported
+}
+enum CommunityImportOutcome {
+  COMMUNITY_IMPORT_OUTCOME_UNSPECIFIED = 0;
+  COMMUNITY_IMPORT_OUTCOME_SAVED = 1;
+  COMMUNITY_IMPORT_OUTCOME_CONFLICT = 2;            // a repo playbook of that key exists and `overwrite` was false (`local_key`)
+  COMMUNITY_IMPORT_OUTCOME_ALREADY_DOWNLOADED = 3;
+  COMMUNITY_IMPORT_OUTCOME_EDITED = 4;              // update only: the local copy was edited and `overwrite_edited` was false
+  COMMUNITY_IMPORT_OUTCOME_INVALID = 5;             // `diagnostics`
+  COMMUNITY_IMPORT_OUTCOME_FAILED = 6;              // `message`
+}
+// A refusal the person can act on is an outcome, not a gRPC error: the page shows a different question for each.
+message CommunityImportResult {
+  CommunityImportOutcome outcome = 1;
+  PlaybookRef reference = 2;  // SAVED
+  uint64 imported_version = 3;
+  string local_sha256 = 4;
+  string local_key = 5;       // CONFLICT
+  repeated PlaybookDiagnostic diagnostics = 6;
+  string message = 7;
+}
+message ImportCommunityPlaybookResponse {
+  Applied applied = 1;
+  CommunityImportResult result = 2;
+}
+message UpdateCommunityImportResponse {
+  Applied applied = 1;
+  CommunityImportResult result = 2;
+}

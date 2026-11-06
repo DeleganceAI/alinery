@@ -11,12 +11,17 @@
 #   under-reports the live session count in the prompt (the user says yes to losing more
 #   than they were told) or fails to stop a daemon the installer promised to stop.
 #
-#   So this script talks to a REAL daemon over a REAL unix socket and pins the three
-#   things the installer does to it:
-#     1. `version` answers ⇒ this repo has a daemon. (Liveness, not content.)
-#     2. `list` scrapes to the live session count the prompt shows.
-#     3. `shutdown` actually ends the process — the installer's only destructive act,
-#        and the one it makes a promise about after the user says yes.
+#   So this script runs a REAL daemon and pins the three things the installer does to it
+#   (the daemon serves only the token-gated alinery.v1 wire on rpc.sock, so the installer
+#   connects, reads the session metas, and signals; see the header of preflight.sh):
+#     1. a connect to rpc.sock answers ⇒ this repo has a daemon. (Liveness, not content.)
+#     2. the session metas count to the live session count the prompt shows.
+#     3. SIGTERM actually ends the process and removes rpc.sock — the installer's only
+#        destructive act, and the one it makes a promise about after the user says yes.
+#
+#   A daemon that starts and never produces the socket this script probes FAILS the run.
+#   An earlier version of this file skipped in that case, and went green for a whole
+#   release after the daemon stopped listening on the socket the installer still probed.
 #
 #   Plus the rule the whole probe strategy rests on: dead lane socket FILES on disk are
 #   not daemons (connect, never stat), or the installer prompts about work that is not
@@ -52,15 +57,22 @@ proc_state() {
   esac
 }
 
-command -v nc >/dev/null 2>&1 || { echo "SKIP: nc(1) unavailable"; exit 0; }
+# check.sh copies the sidecar first and sets ALINERY_REQUIRE_SIDECAR: from there a missing
+# binary is a failure, not a skip.
+skip_or_fail() {
+  if [ -n "${ALINERY_REQUIRE_SIDECAR:-}" ]; then
+    echo "FAIL: $1 (ALINERY_REQUIRE_SIDECAR is set)"
+    exit 1
+  fi
+  echo "SKIP: $1"
+  exit 0
+}
+command -v nc >/dev/null 2>&1 || skip_or_fail "nc(1) unavailable"
 
 ALINERYD="$ROOT/alinery-app/src-tauri/target/debug/alinery-vinculum-daemon"
-if [ ! -x "$ALINERYD" ]; then
-  echo "SKIP: $ALINERYD not built (scripts/dev-fetch-bun.sh)"
-  exit 0
-fi
+[ -x "$ALINERYD" ] || skip_or_fail "$ALINERYD not built (scripts/dev-fetch-bun.sh)"
 
-# /tmp, not $TMPDIR: alineryd's socket has to fit in macOS's 104-byte sun_path.
+# /tmp, not $TMPDIR: the daemon's socket has to fit in macOS's 104-byte sun_path.
 TMPR="$(mktemp -d /tmp/saga-preflight-live.XXXXXX)"
 DAEMON_PID=""
 cleanup() {
@@ -75,32 +87,42 @@ git -C "$TMPR" init -q .
 mkdir -p "$TMPR/.alinery"
 
 # --- bring up a real daemon -----------------------------------------------------------
-ALINERY_OWNERSHIP_LIB="$ROOT/alinery-app/src-tauri/target/debug/libalinery_core.dylib" \
-  "$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
+"$ALINERYD" --repo "$TMPR" --build-id live-test --app-config /nonexistent/app.toml \
   >"$TMPR/alineryd.log" 2>&1 &
 DAEMON_PID=$!
 SOCK="$(repo_daemon_socket "$TMPR")"
-for _ in $(seq 1 40); do
-  [ -S "$SOCK" ] && break
+for _ in $(seq 1 100); do
+  [ -n "$(probe_version "$SOCK")" ] && break
   sleep 0.1
 done
 
 REPLY="$(probe_version "$SOCK")"
-[ -n "$REPLY" ] || { echo "SKIP: daemon never came up ($(cat "$TMPR/alineryd.log"))"; exit 0; }
+if [ -z "$REPLY" ]; then
+  echo "FAIL: the daemon started but never answered on $SOCK"
+  tail -n 20 "$TMPR/alineryd.log"
+  exit 1
+fi
 
 # --- 1. liveness: a daemon that answers is a daemon -------------------------------------
-check "a running daemon answers the liveness probe" "1" \
-  "$(printf '%s' "$REPLY" | grep -c . | tr -d '[:space:]')"
+check "a running daemon answers the liveness probe" "alive" "$REPLY"
+check "the daemon is found through the repo's candidate sockets" "$SOCK" "$(first_live_daemon_socket "$TMPR")"
 
 # --- 2. the live session count the prompt shows -----------------------------------------
-LIST="$(probe_list "$SOCK")"
-check "the list reply is scrapeable" "0" "$(live_sessions_from_list_reply "$LIST")"
-check "a fresh daemon reports no live sessions" "0" "$(live_sessions_from_list_reply "$LIST")"
+check "a fresh daemon reports no live sessions" "0" "$(daemon_live_sessions "$TMPR" "$SOCK")"
+# Two sessions as the daemon records them (compact JSON): one running, one ended. Written
+# after the daemon is up so it does not try to resume them.
+mkdir -p "$TMPR/.alinery/tasks/t1/sessions"
+printf '{"id":"live","worktree":"%s","created":1,"started_at":1700000000}' "$TMPR" \
+  >"$TMPR/.alinery/tasks/t1/sessions/live.meta.json"
+printf '{"id":"done","worktree":"%s","created":1,"started_at":1700000000,"ended_at":1700000050,"exit_code":0}' "$TMPR" \
+  >"$TMPR/.alinery/tasks/t1/sessions/done.meta.json"
+check "one running and one ended session count as one live" "1" "$(daemon_live_sessions "$TMPR" "$SOCK")"
+rm -rf "$TMPR/.alinery/tasks"
 
 # --- 3. connect, never stat -------------------------------------------------------------
-: >"$TMPR/.alinery/alineryd-deadlane.sock"
+: >"$TMPR/.alinery/rpc-deadlane.sock"
 check "a dead lane socket file is not a daemon" \
-  "" "$(probe_version "$TMPR/.alinery/alineryd-deadlane.sock")"
+  "" "$(probe_version "$TMPR/.alinery/rpc-deadlane.sock")"
 check "an absent repo's socket is not a daemon" \
   "" "$(probe_version "$(repo_daemon_socket /does/not/exist)")"
 
@@ -114,7 +136,7 @@ check "known_repos is read out of app.toml" \
 # --- 4. the WHOLE GATE against real disk state ------------------------------------------
 # install_prompt_test.sh drives the gate over stubbed probes, so it cannot tell a gate
 # that connects from one that just `stat`s the socket path. Here the state is real: one
-# repo with a live daemon, one whose `.alinery/alineryd.sock` is stale debris left by a crash.
+# repo with a live daemon, one whose `.alinery/rpc.sock` is stale debris left by a crash.
 #
 # Decline path: ask_tty deliberately opens /dev/tty (not stdin) so `curl | bash` still
 # prompts. Redirecting stdin with </dev/null therefore does NOT isolate a developer who
@@ -125,7 +147,9 @@ check "known_repos is read out of app.toml" \
 # in preflight_test.sh.
 CFGDIR="$TMPR/home/Library/Application Support/ai.delegance.alinery"
 mkdir -p "$CFGDIR" "$TMPR/stale-repo/.alinery"
-: >"$TMPR/stale-repo/.alinery/alineryd.sock" # debris, not a socket anything listens on
+: >"$TMPR/stale-repo/.alinery/rpc.sock" # debris, not a socket anything listens on
+: >"$TMPR/stale-repo/.alinery/alineryd.sock"
+
 printf 'known_repos = ["%s", "%s"]\n' "$TMPR" "$TMPR/stale-repo" >"$CFGDIR/app.toml"
 
 # Stub process discovery: a developer's machine may have other product alineryd processes.
@@ -186,11 +210,11 @@ check "probing did not take the daemon down" \
   "alive" "$(proc_state "$DAEMON_PID")"
 
 # --- 6. a yes really ends it, BEFORE the gate returns -----------------------------------
-# The installer's next statement after preflight_gate is `rm -rf "$DEST"`, and alineryd lives
-# inside $DEST. `shutdown` is acked when the daemon ACCEPTS it, not when it has finished
-# killing its harness process groups and unwinding — so a gate that fires and returns
-# races the delete against a process still running out of the bundle. This asserts the
-# machine is quiet the instant the gate hands back, with no polling of its own.
+# The installer's next statement after preflight_gate is `rm -rf "$DEST"`, and the daemon lives
+# inside $DEST. A SIGTERM is delivered before the daemon has finished killing its harness
+# process groups and unwinding — so a gate that signals and returns races the delete against a
+# process still running out of the bundle. This asserts the machine is quiet the instant the
+# gate hands back, with no polling of its own.
 GATE_RC=0
 HOME="$TMPR/home" bash -c '
   . "'"$ROOT"'/scripts/lib/preflight.sh"
@@ -199,14 +223,18 @@ HOME="$TMPR/home" bash -c '
   preflight_gate 1 >/dev/null 2>&1
 ' </dev/null || GATE_RC=$?
 check "the gate accepted the teardown" "0" "$GATE_RC"
-# NOT `kill -0`: alineryd is a child of this script, and an exited-but-unreaped child is a
+# NOT `kill -0`: the daemon is a child of this script, and an exited-but-unreaped child is a
 # zombie that `kill -0` reports as alive. Ask ps for the state instead — empty (reaped)
 # or Z (zombie) both mean the process is over.
 check "the daemon is ALREADY gone when the gate returns" \
   "gone" "$(proc_state "$DAEMON_PID")"
 check "and its socket stops answering" "" "$(probe_version "$SOCK")"
-wait "$DAEMON_PID" 2>/dev/null
-DAEMON_PID=""
+# The default action of SIGTERM kills the process and leaves rpc.sock behind; only the
+# daemon's own teardown removes it.
+check "the daemon tore down gracefully (rpc.sock removed)" "gone" "$([ -e "$SOCK" ] && echo present || echo gone)"
+# Reap it only when it is over: `wait` on a daemon the gate failed to stop would hang the
+# suite, and cleanup() kills a survivor.
+[ "$(proc_state "$DAEMON_PID")" = gone ] && { wait "$DAEMON_PID" 2>/dev/null; DAEMON_PID=""; }
 
 if [ "$fails" -ne 0 ]; then
   echo "FAILED: $fails check(s)"

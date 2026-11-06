@@ -1,16 +1,18 @@
 /**
- * Durable execution state as a fold over an append-only event log.
+ * Durable execution state: a value the engine changes by applying events and saves whole.
  *
  * The paper's abstract state is the set of available artifact filenames. The
  * engine needs more: which execution produced each artifact occurrence, which
  * occurrences each execution read, and where each execution is in its life.
- * All of that is derived here from events, so the log is both the persistence
- * format and the inspectable "path to a result" the paper promises.
+ * `apply` derives all of that from events. The host stores the State itself
+ * (`stateToJson`), not the events, so the stored copy is the truth and a restart
+ * loads it as is.
  *
- * One JSON object per line in `execution.jsonl`. Replaying the file rebuilds
- * the state exactly; a torn final line (crash mid-write) is dropped.
+ * The event log of earlier builds (`engine.jsonl`, one JSON object per line) is
+ * only read once, by `readLog` and `fold`, to convert a task that has no stored
+ * State yet. A torn final line (crash mid-write) is dropped.
  */
-import { closeSync, fsyncSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 /**
  * One accepted publication. Two occurrences with the same role and identical
@@ -38,6 +40,26 @@ export type ExecutionStatus =
   | 'done'
   /** Needs a human: launch failed, process lost, exited without completing, or shutdown failed. */
   | 'failed';
+
+/** One file a step consumed or published, as it was when the step read or finished it. */
+export interface FileRecord {
+  /** The occurrence this file was. */
+  occurrence: string;
+  role: string;
+  /** Where the live file was. Presentation; the bytes are in `objects/` under `sha256`. */
+  path: string;
+  /** Absent when the file could not be read at that moment. */
+  sha256?: string;
+  size?: number;
+}
+
+/** What one execution consumed and published (O27). The bytes live in the execution's `objects/` directory. */
+export interface Manifest {
+  consumed: FileRecord[];
+  published: FileRecord[];
+  /** A step that produced a worktree: the tree, kept alive under `ref`. */
+  worktree?: { ref: string; tree: string };
+}
 
 export interface Execution {
   id: string;
@@ -67,6 +89,8 @@ export interface Execution {
   /** Immutable publication set. Set once on acceptance; later files never join it. */
   receipt: Occurrence[] | null;
   failure: string | null;
+  /** Set when the execution first starts, extended when it is accepted. Absent before then and on a state converted from an old log. */
+  manifest?: Manifest;
 }
 
 /** A step whose companion inputs cannot be resolved without guessing. Recorded, never resolved by the engine. */
@@ -89,10 +113,10 @@ export interface State {
 export type Event =
   | { t: 'seeded'; occurrences: Occurrence[] }
   | { t: 'reserved'; execution: Pick<Execution, 'id' | 'step' | 'depth' | 'inputs' | 'outDir' | 'origin' | 'automatic'> }
-  | { t: 'started'; execId: string; sessionId: string }
-  | { t: 'resumed'; execId: string; sessionId: string }
+  | { t: 'started'; execId: string; sessionId: string; consumed?: FileRecord[] }
+  | { t: 'resumed'; execId: string; sessionId: string; consumed?: FileRecord[] }
   | { t: 'permitted'; execId: string }
-  | { t: 'accepted'; execId: string; published: Occurrence[] }
+  | { t: 'accepted'; execId: string; published: Occurrence[]; files?: FileRecord[]; worktree?: { ref: string; tree: string } }
   | { t: 'exited'; execId: string }
   | { t: 'failed'; execId: string; reason: string }
   | { t: 'ambiguity'; ambiguity: Ambiguity };
@@ -115,6 +139,7 @@ export function apply(state: State, ev: Event): void {
     case 'resumed':
       if (!e) return;
       e.sessionId = ev.sessionId;
+      if (ev.consumed && !e.manifest) e.manifest = { consumed: ev.consumed, published: [] };
       e.status = 'live';
       e.failure = null;
       if (ev.t === 'resumed') e.permitted = false; // permission belonged to the previous owner
@@ -125,6 +150,11 @@ export function apply(state: State, ev: Event): void {
     case 'accepted':
       if (!e || e.receipt) return;
       e.receipt = ev.published;
+      if (ev.files || ev.worktree) {
+        const m = (e.manifest ??= { consumed: [], published: [] });
+        m.published = ev.files ?? [];
+        if (ev.worktree) m.worktree = ev.worktree;
+      }
       e.status = 'finishing';
       return;
     case 'exited':
@@ -193,12 +223,17 @@ export function readLog(path: string): Event[] {
   return out;
 }
 
-export function appendLog(path: string, ev: Event): void {
-  const fd = openSync(path, 'a');
-  try {
-    writeSync(fd, `${JSON.stringify(ev)}\n`);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+/** The stored form: executions as an array, so reservation order survives. */
+export interface StateJson {
+  seeds: Occurrence[];
+  executions: Execution[];
+  ambiguities: Ambiguity[];
+}
+
+export function stateToJson(state: State): StateJson {
+  return { seeds: state.seeds, executions: [...state.executions.values()], ambiguities: state.ambiguities };
+}
+
+export function stateFromJson(json: StateJson): State {
+  return { seeds: json.seeds ?? [], executions: new Map((json.executions ?? []).map((e) => [e.id, e])), ambiguities: json.ambiguities ?? [] };
 }

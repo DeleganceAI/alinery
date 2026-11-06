@@ -1,0 +1,47 @@
+// proto/alinery/v1/jobs.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// One Start RPC per kind (O24 b), so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN (S4.9);
+// S4.10 adds StartImport. The Job entity (entities.proto) carries progress and the result.
+service JobService {
+  rpc StartStorageScan(StartStorageScanRequest) returns (StartStorageScanResponse);  // ACT
+  rpc StartBackup(StartBackupRequest) returns (StartBackupResponse);                // ACT
+  rpc StartPurge(StartPurgeRequest) returns (StartPurgeResponse);                   // ADMIN
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);                      // ACT
+}
+
+message StartStorageScanRequest {
+  MutationMeta meta = 1;
+}
+message StartStorageScanResponse {
+  Applied applied = 1;
+  string job_id = 2;
+}
+message CancelJobRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message CancelJobResponse {
+  Applied applied = 1;
+}
+
+// A manual backup of the repository, to the destination its effective settings name (the same gate as BACKUP NOW:
+// the feature must be on and the destination usable). The automatic triggers start their own jobs in the daemon.
+message StartBackupRequest {
+  MutationMeta meta = 1;
+}
+message StartBackupResponse {
+  Applied applied = 1;
+  string job_id = 2;
+}
+// Deletes every archived task, every archived session's files and the worktrees of archived tasks. Irreversible.
+message StartPurgeRequest {
+  MutationMeta meta = 1;
+}
+message StartPurgeResponse {
+  Applied applied = 1;
+  string job_id = 2;
+}

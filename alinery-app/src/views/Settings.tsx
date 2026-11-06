@@ -28,7 +28,13 @@ import { confirmDanger } from "../confirm";
 import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, normalizeGridViews, withGridViewSlots } from "../gridViews";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { useLiveSessionsByRepo } from "../sync/hooks";
+import { useOverlay } from "../sync/overlay";
+import { listPlaybookCatalog } from "../sync/playbooks";
+import { clearRepoOverride, SettingsConflict, useRepoSettings, writeRepoOverrides } from "../sync/settings";
+import * as storageApi from "../sync/storage";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -55,7 +61,10 @@ import type {
 } from "../types";
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { VinculumCustomizations } from "./VinculumCustomizations";
+
+const NO_REPOS: string[] = [];
 
 /** Kebab menu for a connected row: the actions that only make sense once a connection exists.
  *  Follows RepoSelect's dropdown idiom — outside click and Escape close it, Escape returns focus. */
@@ -175,15 +184,41 @@ const EMPTY_OVERRIDES: RepoOverrides = {
   backup: {},
 };
 
+/** The effective values a write sets, shown before the daemon's row arrives. A cleared override is left for the row to answer: its value is the global tier's, which the daemon owns. */
+function withWritten(cfg: Config, prev: RepoOverrides, next: RepoOverrides): Config {
+  const out: Config = {
+    ...cfg,
+    github: { ...cfg.github },
+    defaults: { ...cfg.defaults },
+    backup: { ...cfg.backup },
+    provenance: { ...cfg.provenance, defaults: { ...cfg.provenance.defaults } },
+  };
+  const changed = (a: unknown, b: unknown) => b != null && JSON.stringify(a ?? null) !== JSON.stringify(b);
+  if (changed(prev.github?.token, next.github?.token)) {
+    out.github.token = next.github.token as string;
+    out.provenance.github_token = REPO_SOURCE;
+  }
+  for (const [field, value] of Object.entries(next.defaults ?? {})) {
+    if (!changed((prev.defaults as Record<string, unknown>)?.[field], value)) continue;
+    (out.defaults as Record<string, unknown>)[field] = value;
+    (out.provenance.defaults as Record<string, string>)[field] = REPO_SOURCE;
+  }
+  for (const [field, value] of Object.entries(next.backup ?? {})) {
+    if (changed((prev.backup as Record<string, unknown>)?.[field], value)) (out.backup as Record<string, unknown>)[field] = value;
+  }
+  return out;
+}
+
 /** Full host mcpServers envelope for Claude Desktop / Cursor / other command+args hosts.
  *  No `args`: one process now serves every repo, and `repo` is a per-call tool argument
  *  (a path from `alinery_list_repos`), not a launch flag. */
-function stdioHostConfigJson(binaryPath: string): string {
+function stdioHostConfigJson(binaryPath: string, args: string[]): string {
   return JSON.stringify(
     {
       mcpServers: {
         alinery: {
           command: binaryPath,
+          args,
         },
       },
     },
@@ -264,6 +299,22 @@ export function Settings({
   const [focusGridViewId, setFocusGridViewId] = useState("");
   const globalSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const [overrides, setOverrides] = useState<RepoOverrides>(EMPTY_OVERRIDES);
+  // A repository's values come from the daemon's settings row. A write shows at once through the overlay and is
+  // dropped once the row has passed the write's cursor (plan 2.2.7).
+  const repoRead = useRepoSettings(scope.kind === "repo" ? scope.repoPath : "");
+  const written = useOverlay<{ cfg: Config; overrides: RepoOverrides }>();
+  const repoBase = useMemo(() => (repoRead.settings ? { cfg: repoRead.settings.effective, overrides: repoRead.settings.overrides } : undefined), [repoRead.settings]);
+  const repoShown = repoBase ? written.overlay.read(repoBase, repoRead.cursor) : undefined;
+  useEffect(() => {
+    if (scope.kind !== "repo") return;
+    // Until the repository's row arrives nothing of another repository is shown, or written over.
+    setCfg(repoShown?.cfg ?? null);
+    setOverrides(repoShown?.overrides ?? EMPTY_OVERRIDES);
+  }, [repoShown, scope.kind]);
+  const repoError = scope.kind === "repo" ? repoRead.error : undefined;
+  useEffect(() => {
+    if (repoError) toast.error(`Couldn't load settings: ${repoError}`);
+  }, [repoError]);
   const report = (text: string, length?: ToastLength) => toast.success(text, length);
   const reportError = (e: unknown, what = "The action failed") => toast.error(`${what}: ${String(e)}`);
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -274,11 +325,16 @@ export function Settings({
   const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
-  const [backupBusy, setBackupBusy] = useState(false);
+  // A manual backup or a restore this window is running; a run anyone started shows through the daemon's job rows.
+  const [backupWorking, setBackupWorking] = useState(false);
+  const backupJobRunning = storageApi.useBackupBusy(activeSection === "backup" && scope.kind === "repo" ? scope.repoPath : "");
+  const backupBusy = backupWorking || backupJobRunning;
   const [connections, setConnections] = useState<ConnectionStatus[] | null>(null);
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
   // Local while dragging so the slider does not write config.toml on every step.
   const [retentionDraft, setRetentionDraft] = useState<number | null>(null);
+  // A remote repo's destination is a folder on its host, typed here (the Finder picker cannot browse it).
+  const [destinationDraft, setDestinationDraft] = useState<string | null>(null);
   const [scaleDraft, setScaleDraft] = useState<number | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [localUpdate, setLocalUpdate] = useState<UpdateStatus | null>(null);
@@ -314,8 +370,7 @@ export function Settings({
     let alive = true;
     setPlaybookCatalog(null);
     setPlaybookError("");
-    ipc
-      .listPlaybookCatalog(selectedRepo || undefined)
+    listPlaybookCatalog(selectedRepo || undefined)
       .then((catalog) => {
         if (!alive) return;
         setPlaybookCatalog(catalog);
@@ -332,28 +387,10 @@ export function Settings({
   // or every open repository under "All repositories". The footer's daemon poll only knows
   // the ACTIVE repo, so the loss-of-work numbers come from a per-repo probe instead.
   const sessionTargets = useMemo(() => (scope.kind === "repo" ? (scope.repoPath ? [scope.repoPath] : []) : repoOptions), [scope, repoOptions]);
-  const [liveByRepo, setLiveByRepo] = useState<Record<string, number>>({});
   const [sessionsBusy, setSessionsBusy] = useState(false);
 
-  // Unreachable daemon ⇒ 0 (the command swallows that), so a repo never disappears from the list.
-  const probeLiveSessions = (targets: string[]) =>
-    Promise.all(targets.map((repo) => ipc.repoLiveSessions(repo).then((live) => [repo, live] as const))).then((pairs) => Object.fromEntries(pairs));
-
-  useEffect(() => {
-    if (activeSection !== "harness") return;
-    let alive = true;
-    const tick = () =>
-      probeLiveSessions(sessionTargets)
-        .then((next) => alive && setLiveByRepo(next))
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 2000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, sessionTargets]);
+  // Each repo's stream keeps the count current; an unreachable daemon reads 0, so a repo never disappears from the list.
+  const liveByRepo = useLiveSessionsByRepo(activeSection === "harness" ? sessionTargets : NO_REPOS);
 
   useEffect(() => {
     ipc
@@ -403,18 +440,15 @@ export function Settings({
       return;
     }
 
+    // The repository's own values arrive from its settings row; the global tier is the shell's.
     ipc
-      .readScopedSettingsForRepo(nextScope.repoPath)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setCfg(payload.effective);
-        setOverrides(payload.overrides);
-      })
+      .readGlobalSettings()
+      .then(setGlobal)
       .catch((e) => reportError(e, "Couldn't load settings"));
   };
 
   const loadStorage = (repoPath: string) =>
-    ipc
+    storageApi
       .storageInfo(repoPath)
       .then((info) => {
         setStorage(info);
@@ -427,7 +461,7 @@ export function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
 
-  // storageInfo walks disk — load it lazily when Storage is opened on a repository
+  // The scan walks the disk (a job of the daemon) — load it lazily when Storage is opened on a repository
   // chip. All repositories skips the walk; the panel shows the shared empty placeholder.
   useEffect(() => {
     if (activeSection !== "storage") return;
@@ -440,7 +474,7 @@ export function Settings({
     let alive = true;
     setStorage(null);
     setStorageErr("");
-    ipc
+    storageApi
       .storageInfo(repoPath)
       .then((info) => {
         if (alive) {
@@ -478,45 +512,19 @@ export function Settings({
   // rather than on every settings mount.
   useEffect(() => {
     if (activeSection !== "backup" || scope.kind !== "repo") return;
+    setDestinationDraft(null);
     refreshBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global", cfg?.backup.destination]);
 
-  // A backup outlives this view: the zip runs in the backend, so `backupBusy` alone would forget
-  // an in-flight run the moment you navigate away. Poll the queue instead — it is the one place
-  // that knows about a manual BACKUP NOW, a restore, and a trigger-driven run alike.
+  // A backup outlives this view: it is a job of the daemon, so `useBackupBusy` shows a run started elsewhere (another window,
+  // an automatic trigger) the moment this view opens. When a run ends the list is read again.
+  const wasRunning = useRef(false);
   useEffect(() => {
-    if (activeSection !== "backup" || scope.kind !== "repo") return;
-    const repoPath = scope.repoPath;
-    let alive = true;
-    // Only a run we actually observed may be declared finished: the poll can otherwise land in
-    // the gap between clicking BACKUP NOW and the backend claiming the slot, and re-enable the
-    // button mid-zip.
-    let observed = false;
-    const poll = () => {
-      ipc
-        .backupBusy(repoPath)
-        .then((busy) => {
-          if (!alive) return;
-          if (busy) {
-            observed = true;
-            setBackupBusy(true);
-          } else if (observed) {
-            observed = false;
-            setBackupBusy(false);
-            refreshBackups();
-          }
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = setInterval(poll, 1000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
+    if (wasRunning.current && !backupJobRunning && activeSection === "backup") refreshBackups();
+    wasRunning.current = backupJobRunning;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
+  }, [backupJobRunning]);
 
   const saveGlobal = (next: GlobalSettings, message = "Saved") => {
     const notificationsChanged = next.notifications !== global?.notifications;
@@ -536,30 +544,32 @@ export function Settings({
   };
 
   const saveRepoOverrides = (next: RepoOverrides, message = "Saved") => {
-    if (scope.kind !== "repo") return;
+    if (scope.kind !== "repo" || !cfg) return;
+    const repoPath = scope.repoPath;
+    // A second write while the first is still settling cannot name the revision it will land on, so only a write from a settled view is checked.
+    const expected = written.overlay.pending ? undefined : repoRead.settings?.revision;
     setOverrides(next);
-    ipc
-      .writeRepoOverridesForRepo(scope.repoPath, next)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setOverrides(payload.overrides);
-        setCfg(payload.effective);
+    const shown = { cfg: withWritten(cfg, overrides, next), overrides: next };
+    setCfg(shown.cfg);
+    written.show(shown);
+    writeRepoOverrides(repoPath, next, expected)
+      .then((cursor) => {
+        written.applied(cursor);
         report(message);
       })
-      .catch((e) => reportError(e, "Couldn't save repository overrides"));
+      .catch((e) => {
+        written.drop();
+        if (e instanceof SettingsConflict) reportError("these settings were changed elsewhere; showing the newer values", "Not saved");
+        else reportError(e, "Couldn't save repository overrides");
+      });
   };
 
   const clearRepoField = (field: string) => {
     if (scope.kind !== "repo") return;
-    ipc
-      .clearRepoOverrideForRepo(scope.repoPath, field)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setOverrides(payload.overrides);
-        setCfg(payload.effective);
-        report("Using the global value");
-      })
-      .catch((e) => reportError(e, "Couldn't clear the override"));
+    // No layer: the value that applies again is the global tier's, which the daemon works out, so the row shows it when it arrives.
+    clearRepoOverride(scope.repoPath, field, written.overlay.pending ? undefined : repoRead.settings?.revision)
+      .then(() => report("Using the global value"))
+      .catch((e) => reportError(e instanceof SettingsConflict ? "these settings were changed elsewhere; showing the newer values" : e, "Couldn't clear the override"));
   };
 
   // ---- Backup (issue #79) ----
@@ -568,7 +578,7 @@ export function Settings({
 
   const refreshBackups = () => {
     if (scope.kind !== "repo") return;
-    ipc
+    storageApi
       .listBackups(scope.repoPath)
       .then((items) => {
         setBackups(items);
@@ -595,6 +605,18 @@ export function Settings({
       .catch((e) => reportError(e));
   };
 
+  // The host checks the folder (outside `.alinery`, writable) and answers with the path it will use.
+  const setHostBackupFolder = () => {
+    if (scope.kind !== "repo" || !destinationDraft?.trim()) return;
+    storageApi
+      .checkBackupDestination(scope.repoPath, destinationDraft.trim())
+      .then((checked) => {
+        setBackupOverride({ destination: checked }, "Backup destination set");
+        setDestinationDraft(null);
+      })
+      .catch((e) => reportError(e, "That folder can't hold backups"));
+  };
+
   const clearBackupFolder = () => {
     // No destination means no feature: turn it off rather than leaving a dead toggle on.
     setBackupOverride({ destination: "", enabled: false }, "Backup destination cleared");
@@ -604,23 +626,34 @@ export function Settings({
 
   const runBackupNow = () => {
     if (scope.kind !== "repo" || backupBusy) return;
-    setBackupBusy(true);
-    ipc
+    setBackupWorking(true);
+    storageApi
       .backupNow(scope.repoPath)
       .then((meta) => {
         report(`Backup created — ${meta.repo_name} @ ${new Date(meta.created_at * 1000).toLocaleString()}`);
         refreshBackups();
       })
       .catch((e) => reportError(e, "Backup failed"))
-      .finally(() => setBackupBusy(false));
+      .finally(() => setBackupWorking(false));
   };
 
   const restoreBackup = async (item: BackupListItem) => {
     if (scope.kind !== "repo" || backupBusy) return;
+    // The daemon checks the archive is this repository's before anything is stopped: a wrong file costs no session.
+    try {
+      await storageApi.verifyBackup(scope.repoPath, item.path);
+    } catch (e) {
+      reportError(e, "Can't restore that backup");
+      return;
+    }
     const ok = await confirmDanger(
       "Restore this backup?",
       <ul className="confirm-list">
-        <li>Background processes for this repo will be stopped (daemon shut down).</li>
+        <li>
+          {isRemoteRepo(scope.repoPath)
+            ? "Every running session of this repo on its host will be ended (its daemon is restarted)."
+            : "Background processes for this repo will be stopped (daemon shut down)."}
+        </li>
         <li className="confirm-loss">Current Alinery data (tasks, settings, artifacts, sessions) will be CLEARED and replaced.</li>
         <li>This does not merge. Worktrees, locks, and sockets are left alone.</li>
         <li>Make a backup of the current state first if you want to keep it.</li>
@@ -628,7 +661,7 @@ export function Settings({
       "Restore",
     );
     if (!ok) return;
-    setBackupBusy(true);
+    setBackupWorking(true);
     ipc
       .restoreBackup(scope.repoPath, item.path)
       .then(() => {
@@ -637,7 +670,7 @@ export function Settings({
         refreshBackups();
       })
       .catch((e) => reportError(e, "Restore failed"))
-      .finally(() => setBackupBusy(false));
+      .finally(() => setBackupWorking(false));
   };
 
   const setGlobalNotif = (key: keyof GlobalSettings["notifications"], value: boolean) => {
@@ -770,7 +803,7 @@ export function Settings({
     setPurgeBusy(true);
     setPurgeErrors([]);
     try {
-      const res = await ipc.deleteAllArchivedStorage(scope.repoPath);
+      const res = await storageApi.deleteAllArchivedStorage(scope.repoPath);
       setPurgeErrors(res.errors);
       if (res.errors.length) {
         toast.error(`Deleted ${res.deleted_tasks} task(s), ${res.deleted_sessions} session(s) — ${res.errors.length} failed (listed below)`);
@@ -799,9 +832,6 @@ export function Settings({
       }
     }
     setSessionsBusy(false);
-    probeLiveSessions(repos)
-      .then(setLiveByRepo)
-      .catch(() => {});
     const stopped = repos.length - problems.length;
     if (problems.length === 0) {
       report(`Sessions stopped for ${label}; daemon${repos.length === 1 ? "" : "s"} restarted`);
@@ -952,20 +982,23 @@ export function Settings({
 
   const updatesCheck = (label: string) => <Checkbox checked={global.updates.check_enabled} disabled={!isGlobal} onChange={(v) => setGlobalUpdatesEnabled(v)} label={label} />;
 
+  // A remote repo's paths are on its host, so there is nothing to reveal here; they can still be copied.
   const storageRow = (label: string, value: string) => (
     <div key={label} className="storage-path-row">
       <div className="storage-path-head">
         <h4>{label}</h4>
         <div className="storage-actions">
-          <button
-            className="btn ghost small icon"
-            type="button"
-            title={`Reveal ${label} in Finder`}
-            aria-label={`Reveal ${label} in Finder`}
-            onClick={() => revealStoragePath(value)}
-          >
-            <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
-          </button>
+          {!isRemoteRepo(selectedRepo) && (
+            <button
+              className="btn ghost small icon"
+              type="button"
+              title={`Reveal ${label} in Finder`}
+              aria-label={`Reveal ${label} in Finder`}
+              onClick={() => revealStoragePath(value)}
+            >
+              <ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          )}
           <button className="btn ghost small icon" type="button" title={`Copy ${label} path`} aria-label={`Copy ${label} path`} onClick={() => copyStoragePath(value)}>
             <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
           </button>
@@ -1067,6 +1100,7 @@ export function Settings({
           ))}
         </ul>
       )}
+      <RemoteHostsSettings />
       <p className="dim connections-note">
         Connections are shared across all repositories. GitHub uses the <span className="mono">gh</span> CLI store; only Linear OAuth tokens go in the macOS Keychain.
       </p>
@@ -1902,6 +1936,7 @@ export function Settings({
     if (scope.kind !== "repo") return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
     const backup = effective.backup;
     const hasDest = backup.destination.trim() !== "";
+    const remote = isRemoteRepo(scope.repoPath);
     const retention = retentionDraft ?? backup.retention;
     const commitRetention = () => {
       if (retentionDraft === null || retentionDraft === backup.retention) {
@@ -1919,11 +1954,28 @@ export function Settings({
       <>
         <div className="field">
           <label>Destination folder</label>
-          <input className="field-input mono" type="text" value={backup.destination} placeholder="Choose a folder outside this repository" readOnly />
+          {remote ? (
+            <input
+              className="field-input mono"
+              type="text"
+              value={destinationDraft ?? backup.destination}
+              placeholder="/absolute/folder/on/the/host"
+              onChange={(e) => setDestinationDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && setHostBackupFolder()}
+            />
+          ) : (
+            <input className="field-input mono" type="text" value={backup.destination} placeholder="Choose a folder outside this repository" readOnly />
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button className="btn ghost small" type="button" onClick={chooseBackupFolder}>
-              Choose folder…
-            </button>
+            {remote ? (
+              <button className="btn ghost small" type="button" disabled={!destinationDraft?.trim()} onClick={setHostBackupFolder}>
+                Set folder
+              </button>
+            ) : (
+              <button className="btn ghost small" type="button" onClick={chooseBackupFolder}>
+                Choose folder…
+              </button>
+            )}
             {hasDest && (
               <button className="btn ghost small" type="button" onClick={clearBackupFolder}>
                 Clear
@@ -1931,6 +1983,7 @@ export function Settings({
             )}
           </div>
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginTop: 6 }}>
+            {remote ? "A folder on the host, not on this Mac: the host writes its own backups. " : ""}
             Must be outside this repository's <span className="mono">.alinery/</span> folder. Backup stays off until a destination is set.
           </div>
         </div>
@@ -2094,7 +2147,7 @@ export function Settings({
             <div className="settings-subsection">
               <h2>Misc</h2>
               {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
-                (alinery-core idle_inhibit); the note states the same rule it enforces. */}
+                (the daemon's platform/keepawake.ts); the note states the same rule it enforces. */}
               <Checkbox
                 checked={global.power?.keep_awake ?? false}
                 disabled={!isGlobal}
@@ -2346,10 +2399,10 @@ export function Settings({
       }
       case "mcp": {
         const installReady = mcpInstallReady(mcp);
-        const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-mcp");
+        const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-vinculum-daemon", installReady ? mcp.host_args : ["--mcp"]);
         const copyHostConfig = () => {
           if (!installReady) return;
-          copyTextToClipboard(stdioHostConfigJson(mcp.binary_path))
+          copyTextToClipboard(stdioHostConfigJson(mcp.binary_path, mcp.host_args))
             .then(() => report("Config copied", "short"))
             .catch((e) => reportError(e, "Couldn't copy the config"));
         };
@@ -2391,7 +2444,7 @@ export function Settings({
         // A disabled toggle owes the user the reason next to it. The same sentences appear
         // on the Advanced rows, but Advanced is closed by default and the one user who
         // cannot start the server is the one who should not have to go looking.
-        const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-mcp binary not found next to the app — rebuild."].filter(
+        const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-vinculum-daemon binary not found next to the app — rebuild."].filter(
           (hint): hint is string => typeof hint === "string",
         );
         return (
@@ -2459,7 +2512,7 @@ export function Settings({
                   className="btn ghost mcp-copy-btn"
                   type="button"
                   disabled={!installReady}
-                  title={installReady ? "Copy full mcpServers config" : "Ensure alinery-mcp is found"}
+                  title={installReady ? "Copy full mcpServers config" : "Ensure alinery-vinculum-daemon is found"}
                   onClick={copyHostConfig}
                 >
                   Copy config
@@ -2474,13 +2527,14 @@ export function Settings({
               </summary>
               <div className="mcp-advanced-body">
                 <p className="mcp-caption">
-                  Stdio FS/task tools work without the Alinery window open. There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
+                  Stdio tools call the repository's daemon with a token the Alinery app hands out, so they work while the daemon runs (the window can be closed once the app has
+                  started it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
                 </p>
-                {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-mcp binary not found next to the app — rebuild.")}
+                {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
                 <h4 className="mcp-section-title">Managed socket</h4>
                 <p className="mcp-caption">
-                  App-local <span className="mono">alinery-mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or switch repos. Useful
-                  for same-machine debugging only.
+                  App-local <span className="mono">alinery-vinculum-daemon --mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or
+                  switch repos. Useful for same-machine debugging only.
                 </p>
                 {checkRow(!!mcp.socket_path, "Socket path", mcp.socket_path, "Select a repo to see the socket path.")}
               </div>

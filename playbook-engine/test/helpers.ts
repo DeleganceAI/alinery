@@ -1,20 +1,34 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Engine, type EngineOptions } from '../src/engine.ts';
 import type { Playbook, Step } from '../src/playbook.ts';
 import type { Harness } from '../src/harness.ts';
+import { type State, stateFromJson, stateToJson } from '../src/state.ts';
+
+/** The stored State in a JSON file, the way a host keeps it. `saves` counts the writes. */
+export function fileStore(path: string): { load: () => State | undefined; save: (state: State) => void; saves: { count: number } } {
+  const saves = { count: 0 };
+  return {
+    saves,
+    load: () => (existsSync(path) ? stateFromJson(JSON.parse(readFileSync(path, 'utf8'))) : undefined),
+    save: (state) => {
+      saves.count++;
+      writeFileSync(path, JSON.stringify(stateToJson(state)));
+    },
+  };
+}
 
 /** A fresh task directory with the layout the engine expects. */
-export function taskDir(): { root: string; artifactsDir: string; logPath: string } {
+export function taskDir(): { root: string; artifactsDir: string; statePath: string; historyDir: string } {
   const root = mkdtempSync(join(tmpdir(), 'playbook-engine-'));
   const artifactsDir = join(root, 'artifacts');
   mkdirSync(artifactsDir);
-  return { root, artifactsDir, logPath: join(root, 'execution.jsonl') };
+  return { root, artifactsDir, statePath: join(root, 'state.json'), historyDir: join(root, 'executions') };
 }
 
 export function openEngine(playbook: Playbook, harness: Harness, dir = taskDir(), extra: Partial<EngineOptions> = {}): Engine {
-  return Engine.open({ playbook, harness, cwd: dir.root, artifactsDir: dir.artifactsDir, logPath: dir.logPath, ...extra });
+  return Engine.open({ playbook, harness, cwd: dir.root, artifactsDir: dir.artifactsDir, ...fileStore(dir.statePath), historyDir: dir.historyDir, ...extra });
 }
 
 /**

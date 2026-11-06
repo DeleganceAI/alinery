@@ -1,0 +1,35 @@
+{
+  "session/_/c1": {
+    "archived": false,
+    "artifact": "",
+    "created": 1700000020,
+    "daemon_namespace": "",
+    "ended_at": null,
+    "execution_id": "",
+    "execution_revision": 0,
+    "exit_code": null,
+    "exit_notification_read_at": null,
+    "generic": true,
+    "handoff_artifact": "",
+    "harness": "vinculum",
+    "harness_resume_token": "",
+    "id": "c1",
+    "model": "",
+    "notification_read_at": null,
+    "phase": "",
+    "pinned": false,
+    "playbook": "",
+    "prompt": null,
+    "prompt_extra": "",
+    "resume_of": null,
+    "semantic": {
+      "omp_session_id": null,
+      "omp_turn_id": null,
+      "phase_completed_at": null
+    },
+    "started_at": null,
+    "status_changed_at": null,
+    "status_revision": 0,
+    "worktree": "/repo"
+  }
+}

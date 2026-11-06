@@ -1,8 +1,8 @@
 import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { ArtifactComment, ArtifactCommentAnchor } from "../ArtifactMarkdown";
+import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
 import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
@@ -12,10 +12,11 @@ import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassificat
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
-import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
+import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
+import { revealPath } from "../revealPath";
 import {
   classifySessionNotice,
   DEFAULT_TASK_SESSION_SORT,
@@ -24,7 +25,6 @@ import {
   orderTaskPanelRows,
   PRIORITY_SESSION_SORT,
   type SessionSort,
-  sameSessionObservationMaps,
   selectSessionSort,
   sessionSortArrow,
   sessionStartedAt,
@@ -54,7 +54,14 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
+import { addComment, attachmentFilePath, clearReviewPending, readArtifactText, readNodeText, useTaskArtifacts } from "../sync/artifacts";
+import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
+import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { pushAndCompareUrlForRepo } from "../sync/git";
+import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
+import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
+import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
+import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
 import type {
@@ -62,12 +69,10 @@ import type {
   ArtifactListItem,
   ArtifactTreeNode,
   BoardNav,
-  BoardTask,
   NameCommit,
   RelatedTaskRef,
   SessionDisplayMeta,
   SessionMeta,
-  SessionObservation,
   SubtaskManagerState,
   Task,
   TaskActivitySummary,
@@ -76,9 +81,9 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
-import { readTaskExecution } from "../useExecutionObservation";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
+import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -105,11 +110,6 @@ function subtaskOutcomeLabel(task: Pick<Task, "archived" | "subtask_outcome">): 
 function subtaskOutcomeClass(task: Pick<Task, "subtask_outcome">): string {
   return task.subtask_outcome ? `subtask-outcome-${task.subtask_outcome}` : "session-archived";
 }
-type ArtifactReviewPendingStatus = {
-  artifact: string;
-  review: string;
-};
-
 type ErrState = { msg: string; detail: string } | null;
 
 const TASK_SESSION_VIEW_KEY = "alinery.taskSessionView";
@@ -120,23 +120,6 @@ function readStoredTaskSessionView(): "graph" | "list" {
   } catch {
     return "graph";
   }
-}
-
-// Sessions and artifacts fail (and recover) independently, so each keeps its own detail
-// string and the warning bar is derived. A shared warning could not be cleared by whichever
-// resource recovered first, leaving a stale "Couldn't load sessions." above healthy rows.
-function combineLoadWarnings(sessions: string, artifacts: string): ErrState {
-  const parts: string[] = [];
-  const details: string[] = [];
-  if (sessions) {
-    parts.push("sessions");
-    details.push(sessions);
-  }
-  if (artifacts) {
-    parts.push("artifacts");
-    details.push(artifacts);
-  }
-  return parts.length ? { msg: `Couldn't load ${parts.join(" and ")}.`, detail: details.join(" | ") } : null;
 }
 
 // ---- task detail --------------------------------------------------------------
@@ -208,7 +191,7 @@ export function TaskDetail({
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionRequest = useRef(0);
+  const feed = useTaskExecution(repoPath, slug);
   const steps = executionView?.definition.step ?? [];
   const executions = Object.values(executionView?.state.executions ?? {});
   const executionForSession = (session: SessionMeta) =>
@@ -217,21 +200,42 @@ export function TaskDetail({
   const queuedExecutionCount = executions.filter((execution) => execution.lifecycle === "queued" && execution.start_requested).length;
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessions, setSessions] = useState<SessionDisplayMeta[]>([]);
-  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionObservation>>({});
+  // Status is read from the task's session stream, by session id.
+  const statusRefs = useMemo(() => sessions.map((session) => ({ repo_path: repoPath, task_slug: slug, id: session.id })), [sessions, repoPath, slug]);
+  const observed = useSessionObservations(statusRefs);
+  const observationsById = useMemo(
+    () =>
+      Object.fromEntries(
+        sessions.flatMap((session) =>
+          observed[sessionObservationKey(repoPath, slug, session.id)] ? [[session.id, observed[sessionObservationKey(repoPath, slug, session.id)]]] : [],
+        ),
+      ),
+    [sessions, observed, repoPath, slug],
+  );
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
-  const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
-  const [childPlaybookStep, setChildPlaybookStep] = useState("");
   const [err, setErr] = useState<ErrState>(null);
-  const [sessionsError, setSessionsError] = useState("");
-  const [artifactsError, setArtifactsError] = useState("");
-  const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
   const sessionStopPending = useRef(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
-  const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
+  // The task, its siblings and its sessions arrive on streams; the state above mirrors them so a local edit can show before the stream catches up.
+  const boardRepos = useMemo(() => [...new Set([repoPath, ...(knownRepos ?? []).filter((repo) => sameMachine(repo, repoPath))])], [repoPath, knownRepos]);
+  const boardTasks = useRepoBoard(boardRepos).tasks;
+  const liveTask = useBoardTask(repoPath, slug);
+  const liveRepoTasks = useRepoTasks(repoPath);
+  const liveSessions = useTaskSessions(repoPath, slug);
+  const liveArtifacts = useTaskArtifacts(repoPath, slug);
+  const childSlug = subtaskState?.active_subtask?.slug ?? "";
+  const childRefs = useMemo(() => (childSlug ? [{ repoPath, taskSlug: childSlug }] : []), [repoPath, childSlug]);
+  const childActivity = useTaskActivityMap(childRefs)[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY;
+  const childTask = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
+  const childPlaybookStep = childSlug
+    ? childTask
+      ? [childTask.playbook_title, childTask.current_step_title].filter(Boolean).join(" · ")
+      : (subtaskState?.active_subtask?.playbook ?? "")
+    : "";
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
   const [sessionSort, setSessionSort] = useSessionSort(
@@ -247,7 +251,7 @@ export function TaskDetail({
   const unacknowledgedExitedSessions = sessions.filter((session) => !session.archived && hasUnacknowledgedExit(session));
   const prioritySessions = orderTaskPanelRows(
     filteredSessions.map<TaskPanelRow>((session) => ({ kind: "session", session })),
-    sessionStatuses,
+    observationsById,
     hasExpectedArtifact,
     PRIORITY_SESSION_SORT,
   ).flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]));
@@ -294,7 +298,7 @@ export function TaskDetail({
     projectedRows.push(currentManagerRow);
   }
   projectedRows.push(...managerlessFinishedRows);
-  const taskPanelRows = orderTaskPanelRows(projectedRows, sessionStatuses, hasExpectedArtifact, sessionSort);
+  const taskPanelRows = orderTaskPanelRows(projectedRows, observationsById, hasExpectedArtifact, sessionSort);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact);
@@ -306,11 +310,16 @@ export function TaskDetail({
   const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const selectedArtifactTreeId = selectedArtifactNode?.id;
-  const [artifactComments, setArtifactComments] = useState<ArtifactComment[]>([]);
+  const commentsEnabled = selectedArtifactIsDirect && Boolean(selectedArtifact) && !selectedArtifact.endsWith(".comments.md");
+  // Comments and the waiting-for-review mark of the open artifact are rows of the task's stream: another window's change shows here with no poll.
+  const artifactComments = useMemo(
+    () => (commentsEnabled ? liveArtifacts.comments.filter((comment) => comment.artifact === selectedArtifact) : []),
+    [commentsEnabled, liveArtifacts.comments, selectedArtifact],
+  );
+  const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === selectedArtifact)) || null;
   const [commentAnchor, setCommentAnchor] = useState<ArtifactCommentAnchor | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
-  const [reviewPending, setReviewPending] = useState<ArtifactReviewPendingStatus | null>(null);
   const [artifactWidth, artifactResizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
   const [worktreeMissing, setWorktreeMissing] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<Task | null>(null);
@@ -335,53 +344,19 @@ export function TaskDetail({
     artifactTab,
   );
 
-  const refreshChildActivity = async (managerState: SubtaskManagerState, isCurrent: () => boolean) => {
-    const childSlug = managerState.active_subtask?.slug;
-    if (!childSlug) {
-      if (!isCurrent()) return;
-      setChildActivity(EMPTY_TASK_ACTIVITY);
-      setChildPlaybookStep("");
-      return;
-    }
-    const [activity, boardTasks] = await Promise.all([
-      ipc.listTaskActivity([{ repoPath, taskSlug: childSlug }]).catch(() => ({}) as Record<string, TaskActivitySummary>),
-      ipc.listBoardTasks(true).catch(() => []),
-    ]);
-    if (!isCurrent()) return;
-    const child = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
-    setChildActivity(activity[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY);
-    setChildPlaybookStep(child ? [child.playbook_title, child.current_step_title].filter(Boolean).join(" · ") : (managerState.active_subtask?.playbook ?? ""));
-  };
-
   const commitFetchedSubtaskState = async (fetched: SubtaskManagerState, isCurrent: () => boolean) => {
     if (!isCurrent()) return;
     setSubtaskState(fetched);
-    await refreshChildActivity(fetched, isCurrent);
   };
 
   const commitFetchedTask = (fetched: Task | null) => {
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
-  const refreshExecution = async () => {
-    const request = ++executionRequest.current;
-    const capturedScope = scope;
-    try {
-      const value = await readTaskExecution(repoPath, slug);
-      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
-      setExecutionView(value);
-      setExecutionError("");
-    } catch (error) {
-      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
-      setExecutionError(String(error));
-    }
-  };
-
-  const allowCompletion = async (executionId: string, sessionId: string) => {
-    if (executionView?.live?.status !== "available" || executionError || busy) return;
+  const allowCompletion = async (executionId: string) => {
+    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionError || busy) return;
     setBusy(`allow:${executionId}`);
     try {
-      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
-      await refreshExecution();
+      await allowExecutionCompletion(repoPath, slug, executionId, executionView.revision);
     } catch (error) {
       setExecutionError(String(error));
     } finally {
@@ -391,158 +366,25 @@ export function TaskDetail({
 
   const load = async () => {
     const isCurrent = beginNameRead();
-    // Every optional read is pre-wrapped so one rejection can never fail the shared
-    // Promise.all — a removed custom playbook or a transient artifact-scan error must not
-    // discard whatever else in this wave succeeded.
-    const [taskResult, managerResult, tasksResult, , sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
-      ipc.getTask(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
-      ipc.subtaskState(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listTasks(repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      refreshExecution(),
-      ipc.listSessions(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
-      ipc.listArtifactsWithMetadata(slug).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
-      ipc.listTaskArtifactTree(slug).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-    ]);
+    const managerResult = await fetchSubtaskState(repoPath, slug).then(
+      (value) => ({ ok: true, value }) as const,
+      () => ({ ok: false }) as const,
+    );
     if (!scope.alive || scopeRef.current !== scope) return;
-    if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
-    if (artifactsResult.ok) {
-      setArtifactItems((current) => (sameArtifactListItems(current, artifactsResult.value) ? current : artifactsResult.value));
-      setArtifactsError("");
-    } else {
-      setArtifactsError(String(artifactsResult.error));
-    }
     if (!isCurrent()) return;
 
-    // getTask's success is independent of every other request here: its failure is the only
-    // one that belongs in the "Couldn't load the task." error bar, and it must never discard
-    // an already-seeded header.
-    const t = taskResult.ok ? taskResult.value : null;
-    if (taskResult.ok) {
-      commitFetchedTask(t);
-      ipc
-        .listBoardTasks(true)
-        .then((value) => {
-          if (isCurrent()) setBoardTasks(value);
-        })
-        .catch(() => {});
-      if (tasksResult.ok) setRepoTasks(tasksResult.value);
-      if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
-      if (!isCurrent()) return;
-      if (t?.worktree) {
-        ipc
-          .worktreeExists(slug)
-          .then((ok) => {
-            if (isCurrent()) setWorktreeMissing(!ok);
-          })
-          .catch(() => {
-            if (isCurrent()) setWorktreeMissing(false);
-          });
-      } else {
-        setWorktreeMissing(false);
-      }
-    } else {
-      setErr({ msg: "Couldn't load the task.", detail: String(taskResult.error) });
-    }
-
-    // Sessions and artifacts commit independently — an artifact scan failure must still show
-    // sessions, and vice versa. "No sessions yet." is gated on sessionsLoaded so it can never
-    // appear when listSessions itself never completed.
-    const ss = sessionsResult.ok ? sessionsResult.value : [];
-    if (sessionsResult.ok) {
-      setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
-      setSessionsLoaded(true);
-      setSessionsError("");
-    } else {
-      setSessionsError(String(sessionsResult.error));
-    }
-
-    const statuses = await ipc
-      .sessionStatuses(
-        ss.map((session) => session.id),
-        slug,
-      )
-      .catch(() => ({}) as Record<string, SessionObservation>);
-    if (!isCurrent()) return;
-    setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
+    if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
   };
 
   const refreshLiveTaskState = async () => {
     const isCurrent = beginNameRead();
-    // Same independence as load(): a failing artifact scan on a 3s poll must not discard a
-    // good listSessions result, and vice versa.
-    const [tasksResult, managerResult, sessionsResult, artifactsResult, artifactTreeResult, boardResult] = await Promise.all([
-      ipc.listTasks(repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.subtaskState(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listSessions(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listArtifactsWithMetadata(slug).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listTaskArtifactTree(slug).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listBoardTasks(true).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      refreshExecution(),
-    ]);
+    const managerResult = await fetchSubtaskState(repoPath, slug).then(
+      (value) => ({ ok: true, value }) as const,
+      () => ({ ok: false }) as const,
+    );
     if (!scope.alive || scopeRef.current !== scope) return;
-    if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
-    if (artifactsResult.ok) {
-      setArtifactItems((current) => (sameArtifactListItems(current, artifactsResult.value) ? current : artifactsResult.value));
-      setArtifactsError("");
-    }
     if (!isCurrent()) return;
-    if (boardResult.ok) setBoardTasks(boardResult.value);
-    if (tasksResult.ok) {
-      const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
-      commitFetchedTask(refreshedTask);
-      setRepoTasks(tasksResult.value);
-    }
     if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
-    if (!isCurrent()) return;
-    if (!sessionsResult.ok) return;
-    const ss = sessionsResult.value;
-    setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
-    setSessionsLoaded(true);
-    setSessionsError("");
-    const statuses = await ipc
-      .sessionStatuses(
-        ss.map((session) => session.id),
-        slug,
-      )
-      .catch(() => ({}) as Record<string, SessionObservation>);
-    if (!isCurrent()) return;
-    setSessionStatuses((current) => (sameSessionObservationMaps(current, statuses) ? current : statuses));
   };
 
   useEffect(() => {
@@ -554,13 +396,10 @@ export function TaskDetail({
     nameTrigger.current = null;
     setTask(initialTask ?? null);
     setRepoTasks([]);
-    setBoardTasks([]);
     setSessions([]);
     setSessionsLoaded(false);
     setSubtaskState(null);
     setErr(null);
-    setSessionsError("");
-    setArtifactsError("");
     setExecutionView(null);
     setExecutionError("");
     // Every read inside load() is individually wrapped, so this only fires on an unexpected
@@ -570,7 +409,7 @@ export function TaskDetail({
     load().catch((e) => {
       if (scope.alive && scopeRef.current === scope && loadEpoch === taskMutationEpoch.current) setErr({ msg: "Couldn't load the task.", detail: String(e) });
     });
-    // alineryd owns auto-advance creation; Task Detail only polls sessions/artifacts for display.
+    // alineryd owns auto-advance creation; Task Detail only polls the sub-task state for display.
     const poll = () => {
       refreshLiveTaskState()
         .catch(() => {})
@@ -584,10 +423,45 @@ export function TaskDetail({
       scope.alive = false;
       taskMutationEpoch.current += 1;
       nameReadRequest.current += 1;
-      executionRequest.current += 1;
       window.clearTimeout(timer);
     };
   }, [repoPath, slug]);
+
+  // The execution row arrives as a delta; an approval or a conflict is shown as it lands.
+  useEffect(() => {
+    if (feed.reply) setExecutionView(feed.reply);
+    setExecutionError(feed.error);
+  }, [feed, repoPath, slug]);
+
+  // Declared after the scope reset below so that on a scope change the streams' rows land last.
+  useEffect(() => {
+    if (liveTask !== undefined) commitFetchedTask(liveTask);
+  }, [liveTask, repoPath, slug]);
+  useEffect(() => {
+    if (liveRepoTasks) setRepoTasks(liveRepoTasks);
+  }, [liveRepoTasks, repoPath, slug]);
+  useEffect(() => {
+    if (!liveSessions) return;
+    setSessions((current) => (sameSessionMetas(current, liveSessions) ? current : liveSessions));
+    setSessionsLoaded(true);
+  }, [liveSessions, repoPath, slug]);
+  useEffect(() => {
+    if (!liveArtifacts.ready) return;
+    setArtifactItems((current) => (sameArtifactListItems(current, liveArtifacts.items) ? current : liveArtifacts.items));
+    setArtifactTree(liveArtifacts.tree);
+  }, [liveArtifacts.ready, liveArtifacts.items, liveArtifacts.tree, repoPath, slug]);
+  // Whether the recorded worktree still exists is a file question, asked when the task is first seen.
+  const worktreePath = task?.worktree ?? "";
+  useEffect(() => {
+    if (!worktreePath) return setWorktreeMissing(false);
+    let alive = true;
+    worktreeExists(repoPath, slug)
+      .then((ok) => alive && setWorktreeMissing(!ok))
+      .catch(() => alive && setWorktreeMissing(false));
+    return () => {
+      alive = false;
+    };
+  }, [slug, worktreePath]);
 
   useEffect(() => {
     registerNav({
@@ -608,43 +482,16 @@ export function TaskDetail({
 
   useEffect(() => {
     let alive = true;
+    setArtifactText("");
+    setCommentAnchor(null);
+    setCommentDraft("");
     if (!selectedArtifact || (!selectedArtifactIsDirect && !selectedArtifactTreeId)) {
-      setArtifactText("");
-      setArtifactComments([]);
-      setReviewPending(null);
-      setCommentAnchor(null);
-      setCommentDraft("");
       return () => {
         alive = false;
       };
     }
-    const commentsDisabled = !selectedArtifactIsDirect || selectedArtifact.endsWith(".comments.md");
-    setArtifactText("");
     setArtifactErr(null);
-    setReviewPending(null);
-    setCommentAnchor(null);
-    setCommentDraft("");
-    if (commentsDisabled) {
-      setArtifactComments([]);
-    } else {
-      ipc
-        .listArtifactComments(slug, selectedArtifact)
-        .then((comments) => {
-          if (alive) setArtifactComments(comments);
-        })
-        .catch((e) => {
-          if (alive) setArtifactErr({ msg: "Couldn't load artifact comments.", detail: String(e) });
-        });
-      ipc
-        .artifactReviewPendingStatus(slug, selectedArtifact)
-        .then((pending) => {
-          if (alive) setReviewPending(pending);
-        })
-        .catch((e) => {
-          if (alive) setArtifactErr({ msg: "Couldn't check review status.", detail: String(e) });
-        });
-    }
-    const read = selectedArtifactTreeId && !selectedArtifactIsDirect ? ipc.readTaskArtifactNode(slug, selectedArtifactTreeId) : ipc.readArtifact(slug, selectedArtifact);
+    const read = selectedArtifactTreeId && !selectedArtifactIsDirect ? readNodeText(repoPath, slug, selectedArtifactTreeId) : readArtifactText(repoPath, slug, selectedArtifact);
     read
       .then((text) => {
         if (alive) setArtifactText(text);
@@ -655,7 +502,7 @@ export function TaskDetail({
     return () => {
       alive = false;
     };
-  }, [slug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
+  }, [repoPath, slug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
 
   const trimmedCommentDraft = commentDraft.trim();
   const canSaveArtifactComment = Boolean(commentAnchor && selectedArtifact && trimmedCommentDraft && !commentBusy);
@@ -668,21 +515,19 @@ export function TaskDetail({
   const saveArtifactComment = () => {
     if (!canSaveArtifactComment || !commentAnchor || !selectedArtifact) return;
     setCommentBusy(true);
-    ipc
-      .addArtifactCommentForRepo({
-        repoPath,
-        taskSlug: slug,
-        artifact: selectedArtifact,
-        anchorId: commentAnchor.anchor_id,
-        anchorKind: commentAnchor.anchor_kind,
-        anchorLabel: commentAnchor.anchor_label,
-        anchorExcerpt: commentAnchor.anchor_excerpt,
-        lineStart: commentAnchor.line_start,
-        lineEnd: commentAnchor.line_end,
-        body: trimmedCommentDraft,
-      })
-      .then((comments) => {
-        setArtifactComments(comments);
+    addComment({
+      repoPath,
+      taskSlug: slug,
+      artifact: selectedArtifact,
+      anchorId: commentAnchor.anchor_id,
+      anchorKind: commentAnchor.anchor_kind,
+      anchorLabel: commentAnchor.anchor_label,
+      anchorExcerpt: commentAnchor.anchor_excerpt,
+      lineStart: commentAnchor.line_start,
+      lineEnd: commentAnchor.line_end,
+      body: trimmedCommentDraft,
+    })
+      .then(() => {
         void discardCommentDraft(selectedArtifact, commentAnchor.anchor_id).catch(() => {});
         setCommentAnchor(null);
         setCommentDraft("");
@@ -724,24 +569,20 @@ export function TaskDetail({
 
   const clearPendingReview = () => {
     if (!selectedArtifact) return;
-    ipc
-      .clearArtifactReviewPendingForRepo(repoPath, slug, selectedArtifact)
-      .then(() => setReviewPending(null))
-      .catch((e) => setArtifactErr({ msg: "Couldn't clear the waiting state.", detail: String(e) }));
+    clearReviewPending(repoPath, slug, selectedArtifact).catch((e) => setArtifactErr({ msg: "Couldn't clear the waiting state.", detail: String(e) }));
   };
 
   const restoreTask = async () => {
     setErr(null);
     setBusy("restore");
     try {
-      await ipc.restoreTaskForRepo(repoPath, slug);
+      await restoreTaskForRepo(repoPath, slug);
       if (!scope.alive || scopeRef.current !== scope) return;
       taskMutationEpoch.current += 1;
       const isCurrent = beginNameRead();
       setTask((current) => (current ? { ...current, archived: false } : current));
       setSubtaskState(null);
-      void ipc
-        .subtaskState(slug, repoPath)
+      void fetchSubtaskState(repoPath, slug)
         .then((value) => commitFetchedSubtaskState(value, isCurrent))
         .catch(() => {});
       toast("Task restored", "success");
@@ -762,13 +603,13 @@ export function TaskDetail({
     onBack();
   };
 
-  const archiveSession = async (id: string) => {
+  const archiveSessionRow = async (id: string) => {
     if (busy || sessionArchivePending.current) return;
     sessionArchivePending.current = true;
     setBusy(`archive-session:${id}`);
     setErr(null);
     try {
-      await ipc.archiveSessionForRepo(repoPath, slug, id);
+      await archiveSession(repoPath, slug, id);
       await load();
     } catch (error) {
       setErr({ msg: "Couldn't archive the session.", detail: String(error) });
@@ -785,8 +626,7 @@ export function TaskDetail({
   const startManager = () => {
     setBusy("subtask-manager");
     setErr(null);
-    ipc
-      .startSubtaskManager(slug)
+    startSubtaskManager(repoPath, slug)
       .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't start the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
@@ -795,8 +635,7 @@ export function TaskDetail({
   const recoverManager = () => {
     setBusy("subtask-recovery");
     setErr(null);
-    ipc
-      .recoverSubtaskManager(slug)
+    startSubtaskManager(repoPath, slug, true)
       .then((reply) => openManagerSession(slug, reply.session))
       .catch((error) => setErr({ msg: "Couldn't recover the sub-task manager.", detail: String(error) }))
       .finally(() => setBusy(""));
@@ -818,7 +657,7 @@ export function TaskDetail({
     setBusy(`discard-subtask:${busyKey}`);
     setErr(null);
     try {
-      await ipc.discardSubtask(slug, manager?.id || "");
+      await discardSubtaskForRepo(repoPath, slug, manager?.id || "");
       await load();
     } catch (error) {
       setErr({ msg: setupOnly ? "Couldn't discard the sub-task setup." : "Couldn't kill the sub-task.", detail: String(error) });
@@ -831,7 +670,7 @@ export function TaskDetail({
     setBusy("acknowledge-exits");
     setErr(null);
     try {
-      await Promise.all(unacknowledgedExitedSessions.map((session) => ipc.markSessionNotificationRead(repoPath, slug, session.id)));
+      await Promise.all(unacknowledgedExitedSessions.map((session) => markSessionNotificationRead(repoPath, slug, session.id)));
       await load();
     } catch (error) {
       setErr({ msg: "Couldn't acknowledge exited sessions.", detail: String(error) });
@@ -891,7 +730,7 @@ export function TaskDetail({
               const capturedScope = scope;
               const editor = editorVersion.current;
               if (kind === "session" && sessionId) {
-                const committed = await ipc.renameSession({ repoPath, taskSlug: owner, sessionId, name });
+                const committed = await renameSession({ repoPath, taskSlug: owner, sessionId, name });
                 onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: owner, session_id: sessionId, value: committed });
                 if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
                 taskMutationEpoch.current += 1;
@@ -904,13 +743,12 @@ export function TaskDetail({
                     : current,
                 );
               } else {
-                const updated = await ipc.renameTask(repoPath, owner, name);
+                const updated = await renameTask(repoPath, owner, name);
                 onNameCommitted?.({ kind: "task", repo_path: repoPath, task_slug: owner, task: updated });
                 if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
                 taskMutationEpoch.current += 1;
                 setTask((current) => (current?.slug === owner ? updated : current));
                 setRepoTasks((current) => current.map((item) => (item.slug === owner ? updated : item)));
-                setBoardTasks((current) => current.map((item) => (item.repo_path === repoPath && item.slug === owner ? { ...item, ...updated } : item)));
                 setSubtaskState((current) =>
                   current
                     ? {
@@ -937,8 +775,7 @@ export function TaskDetail({
     setBusy("auto-approve");
     setErr(null);
     const epoch = taskMutationEpoch.current;
-    ipc
-      .setAutoApproveAllForRepo(repoPath, slug, enabled)
+    setAutoApproveAllForRepo(repoPath, slug, enabled)
       .then((updated) => {
         if (!scope.alive || scopeRef.current !== scope) return;
         if (epoch === taskMutationEpoch.current) {
@@ -958,17 +795,18 @@ export function TaskDetail({
   };
 
   const relatedTags = task?.related_tasks ?? [];
+  // Related tasks are linked, not copied, so only tasks on this task's machine can be tagged.
   const relatedCandidates = boardTasks.filter((candidate) => {
     if (candidate.archived || candidate.draft) return false;
+    if (!sameMachine(candidate.repo_path, repoPath)) return false;
     if (candidate.repo_path === repoPath && candidate.slug === slug) return false;
-    return !relatedTags.some((tag) => tag.repo_path === candidate.repo_path && tag.slug === candidate.slug);
+    return !relatedTags.some((tag) => relatedRepoKey(repoPath, tag.repo_path) === candidate.repo_path && tag.slug === candidate.slug);
   });
   const saveRelated = (next: RelatedTaskRef[]) => {
     setBusy("related");
     setErr(null);
     const epoch = taskMutationEpoch.current;
-    ipc
-      .setRelatedTasksForRepo(repoPath, slug, next)
+    setRelatedTasksForRepo(repoPath, slug, next)
       .then((updated) => {
         if (!scope.alive || scopeRef.current !== scope) return;
         if (epoch === taskMutationEpoch.current) {
@@ -1076,8 +914,7 @@ export function TaskDetail({
                 onClick={() => {
                   setBusy("push");
                   setErr(null);
-                  ipc
-                    .pushAndCompareUrlForRepo(repoPath, slug)
+                  pushAndCompareUrlForRepo(repoPath, slug)
                     .then(async (url) => {
                       setTask((current) => (current ? { ...current, pr_url: url } : current));
                       await copyTextToClipboard(url).catch(() => undefined);
@@ -1103,7 +940,7 @@ export function TaskDetail({
                   const key = event.target.value;
                   const candidate = relatedCandidates.find((item) => taskKey(item) === key);
                   if (!candidate) return;
-                  saveRelated([...relatedTags, { repo_path: candidate.repo_path, slug: candidate.slug, name: candidate.name }]);
+                  saveRelated([...relatedTags, { repo_path: relatedStoredPath(repoPath, candidate.repo_path) ?? candidate.repo_path, slug: candidate.slug, name: candidate.name }]);
                 }}
               >
                 <option value="">{relatedCandidates.length ? "Tag a related task…" : "No other open tasks"}</option>
@@ -1118,8 +955,9 @@ export function TaskDetail({
             {relatedTags.length > 0 && (
               <div className="task-related-tags">
                 {relatedTags.map((tag) => {
-                  const open = !knownRepos || knownRepos.includes(tag.repo_path);
-                  const label = boardTasks.find((candidate) => candidate.repo_path === tag.repo_path && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
+                  const tagRepo = relatedRepoKey(repoPath, tag.repo_path);
+                  const open = !knownRepos || knownRepos.includes(tagRepo);
+                  const label = boardTasks.find((candidate) => candidate.repo_path === tagRepo && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
                   return (
                     <span key={`${tag.repo_path}:${tag.slug}`} className={`task-related-tag${open ? "" : " closed"}`}>
                       <button
@@ -1128,10 +966,10 @@ export function TaskDetail({
                         aria-label={open ? `Open ${label}` : `${label} (repository closed)`}
                         disabled={!open}
                         title={open ? `Open ${label}` : "Repository is closed"}
-                        onClick={() => open && onOpenRelatedTask(tag.slug, tag.repo_path)}
+                        onClick={() => open && onOpenRelatedTask(tag.slug, tagRepo)}
                       >
                         {label}
-                        {tag.repo_path !== repoPath ? <span className="dim"> · {repoName(tag.repo_path)}</span> : null}
+                        {tagRepo !== repoPath ? <span className="dim"> · {repoName(tagRepo)}</span> : null}
                       </button>
                       <button
                         type="button"
@@ -1274,19 +1112,14 @@ export function TaskDetail({
               {err.msg}
             </InlineStatus>
           )}
-          {loadWarning && (
-            <InlineStatus tone="warning" detail={loadWarning.detail}>
-              {loadWarning.msg}
-            </InlineStatus>
-          )}
           {sessionView === "graph" ? (
             <>
-              {!sessionsLoaded && !sessionsError && <p className="dim">Loading sessions…</p>}
+              {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
               {sessionsLoaded && (
                 <TaskRunGraph
                   sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
                   state={executionView?.state ?? null}
-                  observations={sessionStatuses}
+                  observations={observationsById}
                   onOpenSession={(session) => {
                     const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
                     const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
@@ -1395,7 +1228,7 @@ export function TaskDetail({
                       );
                     }
                     const s = row.session;
-                    const obs = sessionStatuses[s.id] ?? null;
+                    const obs = observationsById[s.id] ?? null;
                     const isLive = obs ? obs.lifecycle.state === "live" : false;
                     if (row.kind === "subtask_manager") {
                       const label = row.child ? row.child.name : s.subtask_slug || "Sub-task setup";
@@ -1559,7 +1392,12 @@ export function TaskDetail({
                             <span className="dim" title={sessionType}>
                               {sessionType}
                             </span>
-                            {execution && <span className="pill">{sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ?? execution.lifecycle}</span>}
+                            {execution && (
+                              <span className="pill">
+                                {sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ??
+                                  execution.lifecycle}
+                              </span>
+                            )}
                             {s.archived && <span className="pill session-archived">Archived</span>}
                             {resumedBy && <span className="pill dim">Resumed</span>}
                           </div>
@@ -1587,7 +1425,7 @@ export function TaskDetail({
                                 setBusy(`stop-session:${s.id}`);
                                 setErr(null);
                                 try {
-                                  await ipc.sessionAbort(s.id);
+                                  await abortSession(repoPath, s.id);
                                   await load();
                                 } catch (error) {
                                   setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
@@ -1600,7 +1438,7 @@ export function TaskDetail({
                               <Square className="chat-composer-icon" fill="currentColor" />
                             </button>
                             <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                            <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
+                            <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSessionRow(s.id)}>
                               {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
                             </button>
                             {s.archived && (
@@ -1876,12 +1714,12 @@ export function TaskDetail({
                           Completion permission: {execution.permission.kind}
                           {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
                         </p>
-                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
                           <button
                             type="button"
                             className="btn small"
                             disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
+                            onClick={() => void allowCompletion(execution.id)}
                           >
                             Allow this session to complete · {execution.owner_session_id}
                           </button>
@@ -1928,7 +1766,7 @@ export function TaskDetail({
                   {displayedArtifactItems.map((item) => {
                     if (item.attachment && classifyAttachment(item) === "image") {
                       return (
-                        <AttachmentPreview key={item.name} taskSlug={slug} name={item.name}>
+                        <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
                           <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                         </AttachmentPreview>
                       );
@@ -1952,10 +1790,7 @@ export function TaskDetail({
                         }}
                         onClick={() => {
                           if (item.attachment) {
-                            ipc
-                              .attachmentPath(slug, item.name)
-                              .then(ipc.revealItemInDir)
-                              .catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
+                            revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
                             return;
                           }
                           if (!node) return;
@@ -1974,6 +1809,7 @@ export function TaskDetail({
                   {contextualArtifactTree.length > 0 && (
                     <ArtifactTree
                       taskSlug={slug}
+                      repoPath={repoPath}
                       nodes={contextualArtifactTree}
                       selectedId={selectedArtifactTreeId}
                       onSelect={(node) => {

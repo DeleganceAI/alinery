@@ -6,10 +6,11 @@ import { ArchiveTaskModal } from "./shared";
 
 const commands = vi.hoisted(() => ({ archiveTaskForRepo: vi.fn(), removeWorktreeForRepo: vi.fn() }));
 // The hoisted IPC factory runs before static imports; load its test seam inside the factory.
-vi.mock("./ipc", async () => {
-  const { mockIpc } = await import("./test/mockIpc");
-  return mockIpc(commands);
-});
+vi.mock("./ipc", async () => (await import("./test/mockIpc")).mockIpc());
+// The worktree removal is the daemon's GitService; sync/git has its own test for the call.
+vi.mock("./sync/git", () => ({ removeWorktreeForRepo: commands.removeWorktreeForRepo }));
+// The archive itself is the daemon's TaskService; sync/tasks has its own test for the call and the backup before it.
+vi.mock("./sync/tasks", () => ({ archiveTaskForRepo: commands.archiveTaskForRepo }));
 vi.mock("./toast", () => ({ toast: vi.fn() }));
 
 function deferred() {

@@ -1,0 +1,55 @@
+{
+  "slug": "t",
+  "id": "s1",
+  "reads": [
+    {
+      "offset": 0,
+      "limit": 4
+    },
+    {
+      "offset": 8,
+      "limit": 100
+    },
+    {
+      "offset": 28,
+      "limit": 4
+    },
+    {
+      "offset": 500,
+      "limit": 4
+    },
+    {
+      "offset": 1
+    },
+    {
+      "limit": 5
+    },
+    {
+      "id": "nope",
+      "offset": 0,
+      "limit": 1
+    },
+    {
+      "id": "../s1",
+      "offset": 0,
+      "limit": 1
+    }
+  ],
+  "windows": [
+    {},
+    {
+      "want": 40
+    },
+    {
+      "want": 40,
+      "end": "previous_start"
+    },
+    {
+      "want": 40,
+      "end": "previous_start"
+    },
+    {
+      "id": "nope"
+    }
+  ]
+}

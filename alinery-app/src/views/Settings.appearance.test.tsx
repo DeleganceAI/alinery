@@ -44,7 +44,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
     // Storage loads eagerly with the view; keep it pending — no test visits it.
-    storageInfo: () => new Promise(() => {}),
     writeAppearance: vi.fn(async (appearance: AppearancePrefs) => appConfigFor(appearance)),
   }),
 );
@@ -59,6 +58,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",

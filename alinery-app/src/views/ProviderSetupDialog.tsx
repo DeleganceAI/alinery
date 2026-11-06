@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
-import { settleOpenUrl } from "../chat/openUrl";
 import { useProviderAccess } from "../chat/providerAccess";
 import { needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
-import { type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
-import { cancelExtensionUi, extensionUiConfirm, extensionUiValue } from "../ompRpc";
+import { SignInTarget } from "../SignInTarget";
+import * as agent from "../sync/agent";
 import type { HostedCatalogView } from "../types";
-import { ChatEntryRow } from "./ChatEntryRow";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 
@@ -58,7 +55,7 @@ export function ProviderSetupDialog({
   onPick?: (model: string) => void;
   onClose: (reason: ProviderSetupClose) => void;
 }) {
-  const [chat, setChat] = useState<ChatTranscriptState>(emptyTranscript);
+  const [currentModel, setCurrentModel] = useState<string | undefined>(undefined);
   const [modelRoles, setModelRoles] = useState<ModelRolesMap>({});
   const [modelError, setModelError] = useState<string | null>(null);
   const [tab, setTab] = useState<ProvidersDialogTab>(initialTab);
@@ -68,10 +65,6 @@ export function ProviderSetupDialog({
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [grokReady, setGrokReady] = useState(false);
-  const chatRef = useRef(emptyTranscript());
-  const sessionIdRef = useRef("");
-  const loginOpenUrlRef = useRef(false);
-  const handledUiRef = useRef(new Set<string>());
   const unsignedSwitchedRef = useRef(false);
 
   useEffect(() => {
@@ -82,8 +75,8 @@ export function ProviderSetupDialog({
         if (!cancelled) setFavorites(rows);
       })
       .catch(() => undefined);
-    void ipc
-      .readOmpModelRoles()
+    void agent
+      .readModelRoles()
       .then((roles) => {
         if (!cancelled) setModelRoles(roles);
       })
@@ -111,63 +104,9 @@ export function ProviderSetupDialog({
     };
   }, []);
 
-  const openBrowser = useCallback(async (request: PendingUi) => {
-    try {
-      await settleOpenUrl(sessionIdRef.current, request.id, request.launchUrl || request.url, setModelError);
-      const next = dismissPendingUi(chatRef.current, request.id);
-      chatRef.current = next;
-      setChat(next);
-    } catch (error) {
-      setModelError(String(error));
-    }
-  }, []);
-
-  useEffect(() => {
-    for (const request of chat.pendingUi) {
-      if (handledUiRef.current.has(request.id)) continue;
-      if (isPresentationUi(request.method)) {
-        handledUiRef.current.add(request.id);
-        void ipc.rpcWriteSession(sessionIdRef.current, cancelExtensionUi(request.id)).catch(() => undefined);
-      } else if (request.method === "open_url" && loginOpenUrlRef.current) {
-        // Sign in authorizes only its first browser request; further links need approval.
-        loginOpenUrlRef.current = false;
-        handledUiRef.current.add(request.id);
-        void openBrowser(request);
-      }
-    }
-  }, [chat.pendingUi, openBrowser]);
-
-  const replyUi = async (requestId: string, response: ReturnType<typeof extensionUiValue> | ReturnType<typeof extensionUiConfirm> | ReturnType<typeof cancelExtensionUi>) => {
-    if (handledUiRef.current.has(requestId)) return;
-    handledUiRef.current.add(requestId);
-    try {
-      await ipc.rpcWriteSession(sessionIdRef.current, response);
-      const next = dismissPendingUi(chatRef.current, requestId);
-      chatRef.current = next;
-      setChat(next);
-    } catch (error) {
-      setModelError(String(error));
-    }
-  };
-
-  const approveUi = (requestId: string, allow: boolean) => {
-    if (handledUiRef.current.has(requestId)) return;
-    const request = chat.pendingUi.find((pending) => pending.id === requestId);
-    if (allow && request?.method === "open_url") {
-      handledUiRef.current.add(requestId);
-      void openBrowser(request);
-    } else {
-      void replyUi(requestId, extensionUiConfirm(requestId, allow));
-    }
-  };
-
   const applyModel = useCallback((provider: string, modelId: string) => {
     setModelError(null);
-    setChat((current) => {
-      const next = { ...current, sessionMeta: { ...current.sessionMeta, model: `${provider}/${modelId}` } };
-      chatRef.current = next;
-      return next;
-    });
+    setCurrentModel(`${provider}/${modelId}`);
   }, []);
 
   const startLogin = useCallback(
@@ -188,7 +127,7 @@ export function ProviderSetupDialog({
       if (model) next[role] = model;
       else delete next[role];
       try {
-        setModelRoles(await ipc.writeOmpModelRoles(next));
+        setModelRoles(await agent.writeModelRoles(next));
       } catch (error) {
         setModelError(String(error));
       }
@@ -214,7 +153,7 @@ export function ProviderSetupDialog({
       busy: false,
       providers: providers ?? [],
       models,
-      currentModel: chat.sessionMeta.model,
+      currentModel,
       hostedReady: hosted?.ready === true,
     });
   useEffect(() => {
@@ -236,7 +175,7 @@ export function ProviderSetupDialog({
       tab={tab}
       setup={mode === "auto"}
       models={shownModels}
-      current={current || (onPick ? undefined : chat.sessionMeta.model)}
+      current={current || (onPick ? undefined : currentModel)}
       preselect={preselect}
       loginProviders={providers}
       livePromotedIds={[]}
@@ -292,22 +231,8 @@ export function ProviderSetupDialog({
       }}
       footer={<CustomEndpointForm access={access} />}
     >
+      <SignInTarget />
       <ProviderAccessPanel access={access} />
-      {chat.entries
-        .filter((entry) => entry.type === "approval" && !handledUiRef.current.has(entry.requestId))
-        .map((entry) => (
-          <ChatEntryRow key={entry.id} entry={entry} onApprove={approveUi} showDate={false} showTime={false} />
-        ))}
-      {chat.pendingUi
-        .filter((request) => ["input", "editor", "select"].includes(request.method ?? "") && !handledUiRef.current.has(request.id))
-        .map((request) => (
-          <ChatExtensionPrompt
-            key={request.id}
-            request={request}
-            onSubmit={(value) => void replyUi(request.id, extensionUiValue(request.id, value))}
-            onCancel={() => void replyUi(request.id, cancelExtensionUi(request.id))}
-          />
-        ))}
     </ChatModelDialog>
   );
 }

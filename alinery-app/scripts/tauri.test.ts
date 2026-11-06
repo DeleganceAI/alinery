@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { childEnvironment, parseDevPort, piDaemonCompile, reserveDevPort, selectTauriLaunch } from "./tauri.mjs";
+import { childEnvironment, parseDevPort, piDaemonCompile, remoteRuntimesProblem, reserveDevPort, selectTauriLaunch } from "./tauri.mjs";
 
 const DEV_CONFIG_ARGS = ["--config", "src-tauri/tauri.dev.conf.json"];
 
@@ -143,5 +143,17 @@ describe("piDaemonCompile", () => {
     expect(piDaemonCompile(["info"])).toBeUndefined();
     expect(piDaemonCompile(["--version"])).toBeUndefined();
     expect(piDaemonCompile([])).toBeUndefined();
+  });
+});
+
+describe("remoteRuntimesProblem", () => {
+  it("accepts a manifest that lists at least one target", () => {
+    expect(remoteRuntimesProblem(JSON.stringify({ version: 1, targets: { "x86_64-unknown-linux-gnu": {} } }))).toBeUndefined();
+  });
+
+  it("reports an empty, absent or unreadable manifest", () => {
+    for (const manifest of [JSON.stringify({ version: 1, targets: {} }), undefined, "", "not json"]) {
+      expect(remoteRuntimesProblem(manifest)).toContain("scripts/build-remote-runtimes.sh");
+    }
   });
 });

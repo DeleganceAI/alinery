@@ -1,0 +1,35 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"before\\n+++\\nafter\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\\\"quoted\\\" \\\\\\n\\r\\t\\b\\f\\u0000\\u001F\\u007F café\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"plain\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"other.md\" }]\n+++\nPreamble\r\n<!-- ordinary comment -->\r\n<!-- alinery:step other -->\n# Arbitrary heading\r\n```toml\r\n+++\r\n```\r\n\\{{NOT_A_TOKEN}}\r\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\", required = true }]\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"other.md\" }]\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    }
+  ]
+}

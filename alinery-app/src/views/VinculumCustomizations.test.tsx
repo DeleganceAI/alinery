@@ -7,18 +7,30 @@ import type { VinculumCustomizations as Inventory, VinculumDaemonCustomizations 
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
 const mocks = vi.hoisted(() => ({
-  readVinculumCustomizations: vi.fn(),
-  vinculumCustomizations: vi.fn(),
+  readCustomizations: vi.fn(),
+  agentHost: vi.fn(),
+  agentDirIsLocal: vi.fn(),
+  readMcpStatus: vi.fn(),
   openVinculumAgentDir: vi.fn(),
-  vinculumCustomizationPrompt: vi.fn(),
+  customizationPrompt: vi.fn(),
   revealItemInDir: vi.fn(),
   pickVinculumSkillDialog: vi.fn(),
-  installVinculumSkill: vi.fn(),
-  deleteVinculumSkill: vi.fn(),
+  installSkill: vi.fn(),
+  deleteSkill: vi.fn(),
   confirmDanger: vi.fn(async () => true),
   askConfirm: vi.fn(async () => "replace"),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
+// The agent directory is the host daemon's (sync/agent, daemon agent.test.ts); the page reads and edits it through these calls.
+vi.mock("../sync/agent", () => ({
+  readCustomizations: mocks.readCustomizations,
+  agentHost: mocks.agentHost,
+  agentDirIsLocal: mocks.agentDirIsLocal,
+  readMcpStatus: mocks.readMcpStatus,
+  customizationPrompt: mocks.customizationPrompt,
+  installSkill: mocks.installSkill,
+  deleteSkill: mocks.deleteSkill,
+}));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
 const installed: Inventory = {
@@ -31,14 +43,16 @@ const live: VinculumDaemonCustomizations = {
 };
 
 beforeEach(() => {
-  mocks.readVinculumCustomizations.mockResolvedValue(installed);
-  mocks.vinculumCustomizations.mockResolvedValue(live);
+  mocks.readCustomizations.mockResolvedValue(installed);
+  mocks.agentHost.mockResolvedValue("/repo");
+  mocks.agentDirIsLocal.mockReturnValue(true);
+  mocks.readMcpStatus.mockResolvedValue(live);
   mocks.openVinculumAgentDir.mockResolvedValue(undefined);
-  mocks.vinculumCustomizationPrompt.mockResolvedValue("Inspect this Vinculum installation; append your requested change.");
+  mocks.customizationPrompt.mockResolvedValue("Inspect this Vinculum installation; append your requested change.");
   mocks.revealItemInDir.mockResolvedValue(undefined);
   mocks.pickVinculumSkillDialog.mockResolvedValue(null);
-  mocks.installVinculumSkill.mockResolvedValue({ name: "demo-skill", exists: false });
-  mocks.deleteVinculumSkill.mockResolvedValue(undefined);
+  mocks.installSkill.mockResolvedValue({ name: "demo-skill", exists: false });
+  mocks.deleteSkill.mockResolvedValue(undefined);
   mocks.confirmDanger.mockResolvedValue(true);
   mocks.askConfirm.mockResolvedValue("replace");
 });
@@ -64,24 +78,34 @@ describe("Vinculum customizations", () => {
 
   it("uploads a skill and deletes one after confirmation", async () => {
     mocks.pickVinculumSkillDialog.mockResolvedValue("/tmp/demo.md");
-    mocks.installVinculumSkill.mockResolvedValueOnce({ name: "demo-skill", exists: true }).mockResolvedValueOnce({ name: "demo-skill", exists: false });
+    mocks.installSkill.mockResolvedValueOnce({ name: "demo-skill", exists: true }).mockResolvedValueOnce({ name: "demo-skill", exists: false });
     render(<VinculumCustomizations />);
     await screen.findByText("Ponytail");
     fireEvent.click(screen.getByRole("button", { name: "Upload skill" }));
-    await waitFor(() => expect(mocks.installVinculumSkill).toHaveBeenCalledWith("/tmp/demo.md", true));
+    await waitFor(() => expect(mocks.installSkill).toHaveBeenCalledWith("/tmp/demo.md", true));
     fireEvent.click(screen.getByRole("button", { name: "Delete Ponytail" }));
-    await waitFor(() => expect(mocks.deleteVinculumSkill).toHaveBeenCalledWith("ponytail"));
+    await waitFor(() => expect(mocks.deleteSkill).toHaveBeenCalledWith("ponytail"));
+  });
+
+  it("does not offer the Finder for an agent directory on another machine", async () => {
+    mocks.agentHost.mockResolvedValue("alinery+ssh://box/srv/repo");
+    mocks.agentDirIsLocal.mockReturnValue(false);
+    render(<VinculumCustomizations />);
+    await screen.findByText("Ponytail");
+    expect(screen.queryByRole("button", { name: "Open configuration folder" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show Ponytail in file manager" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Delete Ponytail" })).toBeTruthy();
   });
 
   it("keeps discovered items visible with partial discovery errors", async () => {
-    mocks.readVinculumCustomizations.mockResolvedValueOnce({ ...installed, errors: ["Could not read MCP definitions in mcp.json."] });
+    mocks.readCustomizations.mockResolvedValueOnce({ ...installed, errors: ["Could not read MCP definitions in mcp.json."] });
     render(<VinculumCustomizations />);
     expect(await screen.findByText("Ponytail")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("Could not read MCP definitions in mcp.json.");
   });
 
   it("retains previous results after a failed refresh", async () => {
-    mocks.readVinculumCustomizations.mockResolvedValueOnce(installed).mockRejectedValueOnce(new Error("sensitive internal failure"));
+    mocks.readCustomizations.mockResolvedValueOnce(installed).mockRejectedValueOnce(new Error("sensitive internal failure"));
     render(<VinculumCustomizations />);
     await screen.findByText("Ponytail");
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -91,7 +115,7 @@ describe("Vinculum customizations", () => {
   });
 
   it("reports unavailable rather than empty when the initial inventory fails", async () => {
-    mocks.readVinculumCustomizations.mockRejectedValue(new Error("read failed"));
+    mocks.readCustomizations.mockRejectedValue(new Error("read failed"));
     render(<VinculumCustomizations />);
     expect((await screen.findByRole("alert")).textContent).toContain("inventory is unavailable");
     expect(screen.queryByText("read")).toBeNull();
@@ -99,7 +123,7 @@ describe("Vinculum customizations", () => {
 
   it("ignores a stale mount response after the effect has restarted", async () => {
     let resolveOld!: (value: Inventory) => void;
-    mocks.readVinculumCustomizations
+    mocks.readCustomizations
       .mockImplementationOnce(
         () =>
           new Promise<Inventory>((resolve) => {
@@ -130,7 +154,7 @@ describe("Vinculum customizations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Inspect this Vinculum installation; append your requested change."));
     expect(await screen.findByText("Instructions copied")).toBeTruthy();
-    mocks.vinculumCustomizationPrompt.mockRejectedValue(new Error("private stderr"));
+    mocks.customizationPrompt.mockRejectedValue(new Error("private stderr"));
     fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
     expect(await screen.findByText(/Couldn't copy the customization instructions/)).toBeTruthy();
     expect(screen.queryByText(/OMP/)).toBeNull();
@@ -138,7 +162,7 @@ describe("Vinculum customizations", () => {
   });
 
   it("says the session daemon is not running instead of inventing tools", async () => {
-    mocks.vinculumCustomizations.mockRejectedValue(new Error("daemon not connected"));
+    mocks.readMcpStatus.mockRejectedValue(new Error("daemon not connected"));
     render(<VinculumCustomizations />);
     expect(await screen.findByText("The session daemon is not running.")).toBeTruthy();
     expect(screen.queryByRole("list", { name: "Built-in tools" })).toBeNull();

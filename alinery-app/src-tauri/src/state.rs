@@ -10,19 +10,15 @@ pub(crate) struct ManagedMcpChild {
 }
 
 /// What the app knows about one repo's daemon. Exactly the two outcomes of
-/// `ensure_daemon`, so "conflicted but still holding a client" is unrepresentable.
+/// `ensure_daemon`, so "conflicted but still attached" is unrepresentable. The shell holds no
+/// connection to it: the bridge opens one per call, at the socket and token `daemon_rpc::resolve` names.
 #[derive(Clone)]
 pub(crate) enum RepoDaemon {
     Connected {
-        client: DaemonClient,
         /// Decided once at attach; build drift is informational only.
         compat: DaemonCompat,
-        /// Expected identity accepted during the handshake. Foreign lanes reuse it.
-        app_config_identity: String,
-        /// The connected daemon reports that it lacks a canonical host executable.
-        host_guard_warning: bool,
     },
-    /// A daemon owns the repo but fails a hard reuse gate. No client, no kill.
+    /// A daemon owns the repo but fails a hard reuse gate. No kill.
     Conflicted(DaemonConflict),
 }
 
@@ -33,9 +29,6 @@ pub(crate) struct AppState {
     // remote daemons reuse this map instead of redoing it. The active repo is a
     // *selection* over this map, no longer the only slot that can hold a client.
     pub(crate) daemons: Mutex<HashMap<PathBuf, RepoDaemon>>,
-    // Cache of foreign-lane clients keyed by session id (Fix 3 / #71 Mode A).
-    // Cleared whenever own daemon is replaced (repo switch / restart).
-    pub(crate) session_routes: Mutex<HashMap<String, DaemonClient>>,
     // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
     pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
     pub(crate) mcp_spawn_error: Mutex<Option<String>>,
@@ -65,6 +58,8 @@ pub(crate) struct AppState {
     // Never evict a mutex while a lifecycle waiter can retain its Arc.
     pub(crate) repo_lifecycles: Mutex<HashMap<PathBuf, std::sync::Arc<Mutex<()>>>>,
     pub(crate) prepared_takeovers: Mutex<HashMap<String, PreparedTakeover>>,
+    // Remote (SSH) hosts: connection phase, the ssh master and the repo-service channel.
+    pub(crate) remotes: RemoteManager,
 }
 
 /// Scope guard for `AppState::closing_repos` — teardown has several fallible steps and an
@@ -111,52 +106,20 @@ impl AppState {
     pub(crate) fn repo_daemon(&self, repo: &Path) -> Option<RepoDaemon> {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).get(repo).cloned()
     }
-    pub(crate) fn daemon_for(&self, repo: &Path) -> Option<DaemonClient> {
-        match self.repo_daemon(repo)? {
-            RepoDaemon::Connected { client, .. } => Some(client),
-            RepoDaemon::Conflicted(_) => None,
-        }
+    /// Whether a usable daemon is attached for `repo` (a remote repo is keyed by its `alinery+ssh://` URI).
+    pub(crate) fn daemon_attached(&self, repo: &Path) -> bool {
+        matches!(self.repo_daemon(repo), Some(RepoDaemon::Connected { .. }))
     }
-    /// The active repo's client — what every session command still routes through.
-    pub(crate) fn daemon(&self) -> Option<DaemonClient> {
-        self.daemon_for(&active_repo().ok()?)
-    }
-    pub(crate) fn set_daemon(&self, repo: &Path, client: DaemonClient, compat: DaemonCompat, app_config_identity: String, host_guard_warning: bool) {
-        self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            repo.to_path_buf(),
-            RepoDaemon::Connected {
-                client,
-                compat,
-                app_config_identity,
-                host_guard_warning,
-            },
-        );
-        // Own-lane identity changed — drop any foreign route cache entries.
-        self.session_routes.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    }
-    /// Refresh fields reported by the daemon currently answering this repo's socket.
-    /// Keep the existing client and foreign session routes: the socket identity did not change.
-    pub(crate) fn refresh_daemon_observation(&self, repo: &Path, observed_compat: DaemonCompat, observed_app_config_identity: String, observed_host_guard_warning: bool) -> bool {
-        let mut daemons = self.daemons.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(RepoDaemon::Connected {
-            compat,
-            app_config_identity,
-            host_guard_warning,
-            ..
-        }) = daemons.get_mut(repo)
-        else {
-            return false;
-        };
-        *compat = observed_compat;
-        *app_config_identity = observed_app_config_identity;
-        *host_guard_warning = observed_host_guard_warning;
-        true
+    pub(crate) fn set_daemon(&self, repo: &Path, compat: DaemonCompat) {
+        self.daemons
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(repo.to_path_buf(), RepoDaemon::Connected { compat });
     }
     pub(crate) fn set_daemon_conflict(&self, repo: &Path, c: DaemonConflict) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(repo.to_path_buf(), RepoDaemon::Conflicted(c));
         // Do not keep the other owner's GUI out while refusing its daemon.
         self.release_repo(repo);
-        self.session_routes.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
     /// A6: `BuildDrift` means the running daemon is a different build of the same wire
     /// protocol. Informational for the footer — never a reason to restart or kill it.
@@ -167,18 +130,6 @@ impl AppState {
         }
     }
 
-    pub(crate) fn daemon_app_config_identity(&self, repo: &Path) -> Option<String> {
-        match self.repo_daemon(repo)? {
-            RepoDaemon::Connected { app_config_identity, .. } => Some(app_config_identity),
-            RepoDaemon::Conflicted(_) => None,
-        }
-    }
-    pub(crate) fn daemon_host_guard_warning(&self, repo: &Path) -> bool {
-        match self.repo_daemon(repo) {
-            Some(RepoDaemon::Connected { host_guard_warning, .. }) => host_guard_warning,
-            Some(RepoDaemon::Conflicted(_)) | None => false,
-        }
-    }
     pub(crate) fn daemon_conflict(&self, repo: &Path) -> Option<DaemonConflict> {
         match self.repo_daemon(repo)? {
             RepoDaemon::Conflicted(c) => Some(c),
@@ -195,6 +146,10 @@ impl AppState {
             return Ok(Some(RepoReservation::AlreadyOwned));
         }
 
+        // A remote repo's lock lives on its host (taken through the repo service), never here.
+        if is_remote_repo_key(&repo.to_string_lossy()) {
+            return Err(format!("remote repository {} cannot be locked from this machine yet", repo.display()));
+        }
         fs::create_dir_all(alinery_dir(repo)).map_err(|e| format!("prepare repository lock for {}: {e}", repo.display()))?;
         try_lock_exclusive(&alinery_app_lock_path(repo))
             .map(|lock| lock.map(|lock| RepoReservation::Candidate { repo: repo.to_path_buf(), lock }))
@@ -256,10 +211,6 @@ impl AppState {
     // the app list must never kill its live sessions (teardown stays explicit).
     pub(crate) fn clear_daemon(&self, repo: &Path) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).remove(repo);
-        self.session_routes.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    }
-    pub(crate) fn clear_session_route(&self, id: &str) {
-        self.session_routes.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     }
     pub(crate) fn set_mcp_error(&self, msg: Option<String>) {
         *self.mcp_spawn_error.lock().unwrap_or_else(|e| e.into_inner()) = msg;

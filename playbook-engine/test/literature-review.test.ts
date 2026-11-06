@@ -11,7 +11,7 @@ import { Engine } from '../src/engine.ts';
 import type { Launch } from '../src/harness.ts';
 import { parsePlaybookMd } from '../src/playbook-md.ts';
 import { complete, FakeHarness, type FakeSession } from './fake-harness.ts';
-import { byStep, openEngine, settle, taskDir, writeJson, writeText } from './helpers.ts';
+import { byStep, fileStore, openEngine, settle, taskDir, writeJson, writeText } from './helpers.ts';
 
 const EXAMPLES = join(import.meta.dirname, '../../whitepaper/examples');
 const parsed = parsePlaybookMd(readFileSync(join(EXAMPLES, 'alinery/playbook.md'), 'utf8'));
@@ -103,8 +103,8 @@ test('the appendix rollout: two rounds, three readers, one review', async () => 
   // frame 1, discover 2, read 3, synthesize 4, decide 5, discover 6, read 7.
   assert.deepEqual(byStep(engine, 'read').map((e) => e.depth), [3, 3, 7]);
 
-  // Replaying the log reproduces the state exactly.
-  const replayed = Engine.open({ playbook: PLAYBOOK, harness, cwd: dir.root, artifactsDir: dir.artifactsDir, logPath: dir.logPath });
+  // Loading the stored state reproduces it exactly.
+  const replayed = Engine.open({ playbook: PLAYBOOK, harness, cwd: dir.root, artifactsDir: dir.artifactsDir, ...fileStore(dir.statePath) });
   assert.deepEqual([...replayed.state.executions.values()], [...engine.state.executions.values()]);
   assert.deepEqual(replayed.state.seeds, engine.state.seeds);
 });

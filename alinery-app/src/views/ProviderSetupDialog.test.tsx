@@ -5,17 +5,19 @@ import type { HostedCatalogView } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 const mocks = vi.hoisted(() => ({
-  ompSetupSession: vi.fn(),
-  rpcAttachSession: vi.fn(),
-  rpcWriteSession: vi.fn(),
-  readOmpModelRoles: vi.fn(),
+  readModelRoles: vi.fn(),
   readModelFavorites: vi.fn(),
   hostedCatalog: vi.fn(),
+  providerCatalog: vi.fn(),
   grokKeyReady: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
+// The catalog is the host daemon's ProviderService (sync/providers).
+vi.mock("../sync/providers", () => ({ providerCatalog: mocks.providerCatalog }));
+// The model roles are the host daemon's (sync/agent).
+vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
 
 const emptyHosted: HostedCatalogView = {
   provider: "alinery",
@@ -37,9 +39,10 @@ const readyHosted: HostedCatalogView = {
 };
 
 function settleIpc(hosted: HostedCatalogView = emptyHosted, grok = false) {
-  mocks.readOmpModelRoles.mockResolvedValue({});
+  mocks.readModelRoles.mockResolvedValue({});
   mocks.readModelFavorites.mockResolvedValue([]);
   mocks.hostedCatalog.mockResolvedValue(hosted);
+  mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
   mocks.grokKeyReady.mockResolvedValue(grok);
 }
 
@@ -53,10 +56,6 @@ describe("ProviderSetupDialog", () => {
     settleIpc(readyHosted);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
-    expect(screen.queryByText(/OMP process sessions are not available/)).toBeNull();
-    expect(mocks.ompSetupSession).not.toHaveBeenCalled();
-    expect(mocks.rpcAttachSession).not.toHaveBeenCalled();
-    expect(mocks.rpcWriteSession).not.toHaveBeenCalled();
   });
 
   it("adds Grok models when a key is saved", async () => {
@@ -68,9 +67,10 @@ describe("ProviderSetupDialog", () => {
 
   it("shows Connecting… until the hosted catalog returns", async () => {
     let resolveHosted: (view: HostedCatalogView) => void = () => undefined;
-    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.readModelRoles.mockResolvedValue({});
     mocks.readModelFavorites.mockResolvedValue([]);
     mocks.grokKeyReady.mockResolvedValue(false);
+    mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
     mocks.hostedCatalog.mockReturnValue(
       new Promise<HostedCatalogView>((resolve) => {
         resolveHosted = resolve;
@@ -81,7 +81,7 @@ describe("ProviderSetupDialog", () => {
     await act(async () => {
       resolveHosted(readyHosted);
     });
-    expect(await screen.findByText("alinery/Qwen3.6-35B-A3B")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
     expect(screen.queryByText("Connecting…")).toBeNull();
   });
 
@@ -90,7 +90,6 @@ describe("ProviderSetupDialog", () => {
     const onClose = vi.fn();
     render(<ProviderSetupDialog mode="auto" onClose={onClose} />);
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
-    expect(mocks.ompSetupSession).not.toHaveBeenCalled();
   });
 
   it("refreshes entitlement after Alinery sign-in before reloading the catalog", async () => {

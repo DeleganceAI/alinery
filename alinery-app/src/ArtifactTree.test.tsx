@@ -5,12 +5,14 @@ import { ArtifactTree, isDirectOwnedArtifactNode } from "./ArtifactTree";
 import type { ArtifactTreeNode } from "./types";
 
 const ipcMocks = vi.hoisted(() => ({
-  artifactNodePath: vi.fn(() => Promise.resolve("/tmp/evidence.png")),
   revealItemInDir: vi.fn(),
-  readAttachmentImage: vi.fn(() => new Promise<ArrayBuffer>(() => {})),
 }));
 
 vi.mock("./ipc", () => ipcMocks);
+vi.mock("./sync/artifacts", async (actual) => ({
+  ...(await actual<typeof import("./sync/artifacts")>()),
+  readNodeBytes: () => new Promise<Uint8Array>(() => {}),
+}));
 
 const nodes: ArtifactTreeNode[] = [
   {
@@ -44,6 +46,7 @@ const nodes: ArtifactTreeNode[] = [
         owner_task_slug: "child",
         source: "snapshot",
         children: [],
+        reveal_path: "tasks/child/artifacts/attachments/evidence.png",
       },
     ],
   },
@@ -59,7 +62,7 @@ const nodes: ArtifactTreeNode[] = [
 
 describe("ArtifactTree", () => {
   it("renders recursive ownership sources and attachments", () => {
-    const html = renderToStaticMarkup(<ArtifactTree taskSlug="task" nodes={nodes} onSelect={() => {}} onError={() => {}} />);
+    const html = renderToStaticMarkup(<ArtifactTree taskSlug="task" repoPath="/repo" nodes={nodes} onSelect={() => {}} onError={() => {}} />);
     expect(html).toContain("Parent context");
     expect(html).toContain("01-parent.md");
     expect(html).toContain("Snapshot");
@@ -73,10 +76,9 @@ describe("ArtifactTree", () => {
     expect(isDirectOwnedArtifactNode(nodes[1].children[0])).toBe(false);
   });
 
-  it("resolves attachment nodes through the opaque backend ID before reveal", async () => {
-    render(<ArtifactTree taskSlug="task" nodes={nodes} onSelect={() => {}} onError={() => {}} />);
+  it("reveals an attachment node at the path the daemon gave, below the repo's .alinery", async () => {
+    render(<ArtifactTree taskSlug="task" repoPath="/repo" nodes={nodes} onSelect={() => {}} onError={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Show evidence.png in folder" }));
-    await waitFor(() => expect(ipcMocks.artifactNodePath).toHaveBeenCalledWith("task", "attachment"));
-    expect(ipcMocks.revealItemInDir).toHaveBeenCalledWith("/tmp/evidence.png");
+    await waitFor(() => expect(ipcMocks.revealItemInDir).toHaveBeenCalledWith("/repo/.alinery/tasks/child/artifacts/attachments/evidence.png"));
   });
 });

@@ -1,0 +1,195 @@
+// proto/alinery/v1/tasks.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "google/protobuf/struct.proto";
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+
+// Tasks (S4.3). The read side is the `task/<slug>/<slug>` entity (entities.proto); these are the writes. A task that
+// is created, renamed, archived or restored shows through the sync stream; the response also carries the stored
+// task, so a caller that needs it at once does not wait for the delta.
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);                    // ACT
+  rpc DuplicateTask(DuplicateTaskRequest) returns (DuplicateTaskResponse);              // ACT
+  rpc RenameTask(RenameTaskRequest) returns (RenameTaskResponse);                          // ACT
+  rpc ArchiveTask(ArchiveTaskRequest) returns (ArchiveTaskResponse);                 // ACT
+  rpc RestoreTask(RestoreTaskRequest) returns (RestoreTaskResponse);                 // ACT
+  rpc SetAutoApproveAll(SetAutoApproveAllRequest) returns (SetAutoApproveAllResponse);            // APPROVE
+  rpc SetRelatedTasks(SetRelatedTasksRequest) returns (SetRelatedTasksResponse);                // ACT
+  rpc WorktreeExists(WorktreeExistsRequest) returns (WorktreeExistsResponse);                  // VIEW
+}
+
+// A task's drafts are the create form's autosave: a task with `draft = true`. The read side is the `draft/<slug>/<slug>`
+// entity (its attachment entries and image names); the images' bytes are read through BlobService.
+service DraftService {
+  rpc WriteDraft(WriteDraftRequest) returns (WriteDraftResponse);   // ACT
+  rpc DeleteDraft(DeleteDraftRequest) returns (DeleteDraftResponse);  // ACT
+}
+
+// A file the person added to the create form, already uploaded through BlobService (its `StagedBlob` ref).
+message StagedAttachment {
+  string name = 1;       // the name the file keeps in artifacts/attachments/; no separator and no `..`
+  string upload_id = 2;  // from CommitUploadResponse.ref
+}
+
+message AutoAdvance {
+  repeated string steps = 1;
+}
+
+message CreateTaskRequest {
+  MutationMeta meta = 1;
+  string name = 2;
+  string draft_slug = 3;       // "": not promoted from a draft
+  string requested_slug = 4;   // "": derived from the name
+  string description = 5;
+  string evidence = 6;
+  repeated StagedAttachment attachments = 7;
+  optional string original_ticket = 8;  // a duplicate keeps its source's ticket text as it was
+  repeated string attachment_urls = 9;
+  repeated string attachment_errors = 10;  // files the caller could not read; the ticket lists them
+  string linear_id = 11;
+  string github_issue = 12;
+  repeated RelatedTaskRef related_tasks = 13;
+  PlaybookRef playbook_ref = 14;
+  string playbook_source = 15;
+  optional string branch_name = 16;
+  optional string worktree_name = 17;
+  optional string base_ref = 18;
+  LaunchChoices launch_defaults = 19;
+  optional AutoAdvance auto_advance = 20;  // unset: the playbook's defaults
+  map<string, string> step_models = 21;
+  optional uint32 max_live_sessions = 22;  // unset: 10
+  bool start = 23;
+}
+
+message CreationError {
+  string stage = 1;
+  string code = 2;
+  string message = 3;
+}
+
+// What a create (or a duplicate) did: the task, and how far provisioning got.
+message TaskCreated {
+  optional Task task = 1;          // unset when nothing was reserved
+  string creation = 2;             // ready or partial
+  string start = 3;                // not_requested, started, queued or failed
+  repeated CreationError errors = 4;
+  // The sessions and executions the create reserved (or started), in the JSON form the app has always decoded. Typed
+  // when the session views read them from entities.
+  repeated google.protobuf.Struct sessions = 5;
+  repeated google.protobuf.Struct executions = 6;
+}
+message CreateTaskResponse {
+  Applied applied = 1;
+  TaskCreated created = 2;
+}
+message DuplicateTaskResponse {
+  Applied applied = 1;
+  TaskCreated created = 2;
+}
+
+message DuplicateTaskRequest {
+  MutationMeta meta = 1;
+  string source_slug = 2;
+}
+
+
+message RenameTaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string name = 3;
+  uint64 expected_revision = 4;  // 0: no check; a mismatch is ABORTED
+}
+message RenameTaskResponse {
+  Applied applied = 1;
+  Task task = 2;
+}
+
+message ArchiveTaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  uint64 expected_revision = 3;
+}
+message ArchiveTaskResponse {
+  Applied applied = 1;
+}
+
+message RestoreTaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  uint64 expected_revision = 3;
+}
+message RestoreTaskResponse {
+  Applied applied = 1;
+}
+
+message SetAutoApproveAllRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  bool enabled = 3;
+  uint64 expected_revision = 4;
+}
+message SetAutoApproveAllResponse {
+  Applied applied = 1;
+  Task task = 2;
+}
+
+message SetRelatedTasksRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  repeated RelatedTaskRef related = 3;
+  uint64 expected_revision = 4;
+}
+message SetRelatedTasksResponse {
+  Applied applied = 1;
+  Task task = 2;
+}
+
+// Whether the worktree a task recorded is still on disk. It can go away outside the app, which no file watch sees, so
+// this is asked, not read from the entity.
+message WorktreeExistsRequest {
+  string slug = 1;
+}
+message WorktreeExistsResponse {
+  bool exists = 1;
+}
+
+message DraftImage {
+  string name = 1;
+  string mime_type = 2;
+  bytes bytes = 3;
+}
+message WriteDraftRequest {
+  MutationMeta meta = 1;
+  string draft_slug = 2;  // "": a new draft, or the newest draft with this name
+  string task_slug = 3;   // the slug the draft asks for when it becomes a task
+  string name = 4;
+  string description = 5;
+  string evidence = 6;
+  string linear_id = 7;
+  string github_issue = 8;
+  PlaybookRef playbook = 9;
+  LaunchChoices launch = 10;
+  optional AutoAdvance auto_advance = 11;
+  map<string, string> step_models = 12;
+  uint32 max_live_sessions = 13;
+  string branch_name = 14;
+  string worktree_name = 15;
+  optional string draft_base_ref = 16;
+  bool write_attachments = 17;  // false: leave the stored attachments as they are
+  repeated string attachment_entries = 18;
+  repeated DraftImage images = 19;
+}
+message WriteDraftResponse {
+  Applied applied = 1;
+  Task task = 2;
+}
+
+message DeleteDraftRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+}
+message DeleteDraftResponse {
+  Applied applied = 1;
+}

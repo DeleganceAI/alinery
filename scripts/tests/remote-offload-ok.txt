@@ -1,0 +1,3 @@
+# Commands that reach a remote call and are not async commands that offload it. See scripts/tests/check-remote-offload.sh.
+#
+# command          why it stays synchronous

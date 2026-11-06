@@ -1,0 +1,66 @@
+syntax = "proto3";
+package alinery.v1;
+
+service AdminService {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN (S5.1, O20 c)
+  // The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
+  rpc LiveSessions(LiveSessionsRequest) returns (LiveSessionsResponse);  // ADMIN
+}
+
+message LiveSessionsRequest {}
+message LiveSession { string id = 1; }
+message LiveSessionsResponse { repeated LiveSession sessions = 1; }
+
+// Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
+// daemon's memory and dies with it. A second mint with the same `label` replaces the first, so a client that refreshes its
+// token does not pile them up. `label` is for the log only.
+message MintTokenRequest {
+  Capability capability = 1;
+  string label = 2;
+}
+message MintTokenResponse { string token = 1; }
+
+message HelloRequest {
+  string client_id = 1;
+  string client_kind = 2;  // "desktop", "mcp"
+  uint32 protocol = 3;
+}
+
+message HelloResponse {
+  uint32 protocol = 1;
+  string build_id = 2;
+  string epoch = 3;
+  repeated Capability capabilities = 4;
+  string repo_root = 5;
+  string app_config_identity = 6;  // ensure_daemon reuses only on protocol and identity match
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_VIEW = 1;     // read entities, read-only terminal attach
+  CAPABILITY_ACT = 2;      // commands, terminal input
+  CAPABILITY_APPROVE = 3;  // approvals, auto-approve
+  CAPABILITY_ADMIN = 4;    // Shutdown, daemon-wide settings
+  CAPABILITY_AGENT = 5;    // MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
+}
+
+// Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
+enum ShutdownOrigin {
+  SHUTDOWN_ORIGIN_UNSPECIFIED = 0;
+  SHUTDOWN_ORIGIN_STOP_DAEMON = 1;
+  SHUTDOWN_ORIGIN_CLOSE_REPO = 2;
+  SHUTDOWN_ORIGIN_RESTORE_BACKUP = 3;
+  SHUTDOWN_ORIGIN_CONFIRMED_TAKEOVER = 4;
+  SHUTDOWN_ORIGIN_STOP_REMOTE = 5;
+}
+
+message ShutdownRequest {
+  ShutdownOrigin origin = 1;
+  string confirmation_id = 2;
+}
+
+message ShutdownResponse {
+  uint32 sessions_stopped = 1;
+}

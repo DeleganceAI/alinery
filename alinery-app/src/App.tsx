@@ -24,7 +24,6 @@ import { ThinkingOrb } from "thinking-orbs";
 import { afterPaint } from "./afterPaint";
 import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
-import type { QueuedFollowUp } from "./chat/queue";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
@@ -34,10 +33,29 @@ import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
-import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
+import {
+  isHostOnboarded,
+  markHostOnboarded,
+  migrateLegacyOnboarding,
+  type OnboardingStepId,
+  readSavedOnboardingStep,
+  type StarterTaskPreset,
+  withHostOnboarded,
+} from "./onboarding";
+import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
+import { isRemoteRepo, machineOf, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
+import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
+import { shouldShowSetup } from "./setup";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { useRepoBoard, useSessionItems } from "./sync/board";
+import { liveSessionsNow } from "./sync/hooks";
+import { readPlaybook } from "./sync/playbooks";
+import { observationNow } from "./sync/sessionObservation";
+import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
+import { readEffectiveConfig } from "./sync/settings";
+import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -66,6 +84,7 @@ import { useDaemonStatus } from "./useDaemonStatus";
 import { useDockBadgeCount } from "./useDockBadgeCount";
 import { useHotkeys } from "./useHotkeys";
 import { useMcpStatus } from "./useMcpStatus";
+import { useRemoteHosts } from "./useRemoteHosts";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 import { readStoredTaskSessionSort, writeStoredTaskSessionSort } from "./useSessionSort";
 import { useUpdateStatus } from "./useUpdateStatus";
@@ -82,6 +101,7 @@ import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
+import { SetupScreen, type SetupTab } from "./views/SetupScreen";
 import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
 
@@ -125,10 +145,7 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 
 // Live (running + idle) sessions on a repo's daemon — the number every loss-of-work
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
-const liveSessions = (repo: string) => ipc.repoLiveSessions(repo).catch(() => 0);
-
-type SearchData = { tasks: BoardTask[]; sessions: SessionListItem[] };
-const EMPTY_SEARCH_DATA: SearchData = { tasks: [], sessions: [] };
+const liveSessions = (repo: string) => liveSessionsNow(repo);
 
 function initialView(): View {
   try {
@@ -210,21 +227,23 @@ export default function App() {
   }, [appConfig?.active_repo, onboardingOpen, consentPending]);
   const [repoErr, setRepoErr] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
-  const searchRequest = useRef(0);
-  const [searchRefresh, setSearchRefresh] = useState(0);
-  const searchScope = `${appConfig?.active_repo || ""}\u0000${appConfig?.known_repos.join("\u0000") || ""}`;
-  const currentSearchScope = useRef(searchScope);
-  if (currentSearchScope.current !== searchScope) {
-    currentSearchScope.current = searchScope;
-    searchRequest.current += 1;
-  }
+  // The repos a board shows: every known repo in "all" scope, else the active one; each has its own stream.
+  const boardRepos = useMemo(
+    () => (scope === "all" ? [...new Set(appConfig?.known_repos ?? [])] : appConfig?.active_repo ? [appConfig.active_repo] : []),
+    [scope, appConfig?.known_repos, appConfig?.active_repo],
+  );
+  // Global search reads the same streams the boards do, opened only while the palette is.
+  const searchRepos = useMemo(
+    () => (searchOpen && appConfig?.active_repo ? [...new Set(appConfig.known_repos)] : []),
+    [searchOpen, appConfig?.active_repo, appConfig?.known_repos],
+  );
+  const searchBoard = useRepoBoard(searchRepos, searchRepos.length > 0);
+  const searchSessions = useSessionItems(searchRepos, false, searchRepos.length > 0);
+  const searchLoading = searchRepos.length > 0 && !(searchBoard.loaded && searchSessions.loaded);
+  const searchError = "";
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
-  const [sessionQueuedFollowUps, setSessionQueuedFollowUps] = useState<Map<string, QueuedFollowUp[]>>(() => new Map());
   const [productName, setProductName] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [busy, setBusy] = useState<ToastBusy | null>(null);
@@ -301,7 +320,6 @@ export default function App() {
       // The in-memory route still works when browser storage is unavailable.
     }
   }, [appConfig, gridViews, selectedGridViewId]);
-  const knownReposRef = useRef<string | null>(null);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
@@ -309,8 +327,16 @@ export default function App() {
   }, []);
 
   const daemon = useDaemonStatus(appConfig?.active_repo ?? "");
+  const [remoteDialog, setRemoteDialog] = useState<RemoteModalEntry | null>(null);
+  const activeRepoKey = appConfig?.active_repo ?? "";
+  useEffect(() => setRevealRepo(activeRepoKey), [activeRepoKey]);
+  // The setup screen over the board (null when closed). With no repo open it is the whole window and has no state of its own.
+  const [setupTab, setSetupTab] = useState<SetupTab | null>(null);
+  const remoteHosts = useRemoteHosts(remoteDialog !== null || setupTab !== null || !appConfig?.active_repo || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
+  const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();
-  const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
+  const noticeRepos = useMemo(() => [...new Set(appConfig?.known_repos ?? [])], [appConfig?.known_repos]);
+  const noticeSnapshot = useSessionNoticeSnapshot(noticeRepos, Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
   const isFullscreen = useWindowFullscreen();
 
@@ -371,11 +397,11 @@ export default function App() {
   // an independently observed exit). Otherwise the handle stays so the user can retry.
   const stopDrawerTab = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await ipc.killSession(id, "");
+      await killSession((await ipc.readAppConfig()).active_repo, id, "");
       return true;
     } catch {
       try {
-        const state = (await ipc.sessionStatus(id, "")).lifecycle.state;
+        const state = (await observationNow((await ipc.readAppConfig()).active_repo, "", id)).lifecycle.state;
         return state !== "live" && state !== "never_started";
       } catch {
         return false;
@@ -409,14 +435,14 @@ export default function App() {
     setDrawerCreating(true);
     const generation = drawerGeneration.current;
     try {
-      const meta = await ipc.ensureDrawerTerminal();
+      const meta = await createDrawerTerminal(repoAtCreate);
       inFlightDrawerId.current = meta.id;
       while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
       if (drawerGeneration.current !== generation || inFlightDrawerId.current !== meta.id) {
         if (inFlightDrawerId.current === meta.id) {
           inFlightDrawerId.current = null;
           try {
-            await ipc.killSessionForRepo(repoAtCreate, meta.id, "");
+            await killSession(repoAtCreate, meta.id, "");
           } catch {
             // The id belongs to the repo that created it, which may no longer be active.
           }
@@ -462,18 +488,19 @@ export default function App() {
       .catch(() => {});
     ipc
       .readAppConfig()
+      .then(migrateLegacyOnboarding)
       .then((cfg) => {
         const normalized = applyAppearance(cfg.appearance);
         setAppConfig({ ...cfg, appearance: normalized });
-        const firstRun = !cfg.active_repo;
-        const wizardOpens = firstRun || !isOnboardingCompleted();
+        // With no repo the setup screen is shown instead; onboarding follows it once a repo is open.
+        const wizardOpens = Boolean(cfg.active_repo) && !isHostOnboarded(cfg, cfg.active_repo);
         if (wizardOpens) {
-          setOnboardingStep(firstRun ? undefined : readSavedOnboardingStep(true));
+          setOnboardingStep(readSavedOnboardingStep());
           setOnboardingOpen(true);
         }
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
           // Never on top of the wizard: the prompt is deferred until onboarding finishes.
-          if (wizardOpens) telemetryUnpromptedRef.current = true;
+          if (wizardOpens || !cfg.active_repo) telemetryUnpromptedRef.current = true;
           else promptTelemetryConsent();
         }
       })
@@ -484,69 +511,8 @@ export default function App() {
       });
   }, []);
 
-  useEffect(() => {
-    if (!appConfig?.active_repo) {
-      knownReposRef.current = null;
-      return;
-    }
-    const key = appConfig.known_repos.join("\u0000");
-    if (knownReposRef.current === null) {
-      knownReposRef.current = key;
-      return;
-    }
-    if (knownReposRef.current !== key) {
-      knownReposRef.current = key;
-      noticeSnapshot.requestRefresh();
-    }
-  }, [appConfig?.active_repo, appConfig?.known_repos, noticeSnapshot.requestRefresh]);
-
-  useEffect(() => {
-    setSearchData(EMPTY_SEARCH_DATA);
-  }, [searchScope]);
-
-  useEffect(() => {
-    const request = ++searchRequest.current;
-    if (!searchOpen || !appConfig?.active_repo) return;
-    setSearchLoading(true);
-    setSearchError("");
-    Promise.all([ipc.listBoardTasks(true), ipc.listSessionItems(true, false)])
-      .then(([tasks, sessions]) => {
-        if (request === searchRequest.current) setSearchData({ tasks, sessions });
-      })
-      .catch((error) => {
-        if (request === searchRequest.current) setSearchError(String(error));
-      })
-      .finally(() => {
-        if (request === searchRequest.current) setSearchLoading(false);
-      });
-    return () => {
-      searchRequest.current += 1;
-    };
-  }, [searchOpen, searchScope, searchRefresh]);
-
+  // Names reach every list through the streams; a task rename only needs the keyed views to remount.
   const onNameCommitted = useCallback((change: NameCommit) => {
-    // Invalidate synchronously, before React runs the refetch effect.
-    searchRequest.current += 1;
-    setSearchData((current) => ({
-      tasks:
-        change.kind === "task"
-          ? current.tasks.map((task) => (task.repo_path === change.repo_path && task.slug === change.task_slug ? { ...task, ...change.task } : task))
-          : current.tasks,
-      sessions: current.sessions.map((session) => {
-        if (session.repo_path !== change.repo_path) return session;
-        if (change.kind === "session") {
-          return session.task_slug === change.task_slug && session.id === change.session_id
-            ? { ...session, name: change.value.name, name_source: change.value.source, name_error: null }
-            : session;
-        }
-        return {
-          ...session,
-          task_name: session.task_slug === change.task_slug ? change.task.name : session.task_name,
-          subtask_name: session.subtask_manager && session.subtask_slug === change.task_slug ? change.task.name : session.subtask_name,
-        };
-      }),
-    }));
-    setSearchRefresh((value) => value + 1);
     if (change.kind === "task") setReloadNonce((value) => value + 1);
   }, []);
 
@@ -560,24 +526,23 @@ export default function App() {
     const normalized = applyAppearance(next);
     setAppConfig((cfg) => (cfg ? { ...cfg, appearance: normalized } : { active_repo: "", known_repos: [], mcp_enabled: true, appearance: normalized }));
   };
-  const onNotificationsChange = useCallback(
-    (notifications: NotificationPrefs) => {
-      setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
-      noticeSnapshot.requestRefresh();
-    },
-    [noticeSnapshot.requestRefresh],
-  );
+  const onNotificationsChange = useCallback((notifications: NotificationPrefs) => {
+    setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
+  }, []);
 
-  // The backend reserves the candidate before it kills the old repo's drawer sessions.
-  // Clear the drawer UI only after that transactional switch succeeds. Do not claim the
-  // in-flight id here: a thrown switch must still be able to insert it.
+  // The backend reserves the candidate and writes the config. Only after that switch succeeds are the old repo's drawer shells
+  // stopped (in the daemon that made them; a refusal is ignored, the shell is then left running) and the drawer UI cleared.
+  // Do not claim the in-flight id here: a thrown switch must still be able to insert it.
   const switchActiveRepo = async (path: string): Promise<AppConfig> => {
     const previousRepo = appConfigRef.current?.active_repo;
     beginRepoSwitch();
     const drawerSessionIds = drawerIds(false);
     try {
-      const cfg = await ipc.setActiveRepo(path, drawerSessionIds);
-      if (cfg.active_repo !== previousRepo) clearDrawerUi();
+      const cfg = await ipc.setActiveRepo(path);
+      if (cfg.active_repo !== previousRepo) {
+        if (previousRepo) for (const id of drawerSessionIds) void killSession(previousRepo, id, "").catch(() => undefined);
+        clearDrawerUi();
+      }
       return { ...cfg, appearance: applyAppearance(cfg.appearance) };
     } finally {
       endRepoSwitch();
@@ -594,10 +559,17 @@ export default function App() {
     return current;
   };
 
-  const setRepo = async (path: string): Promise<boolean> => {
+  // `connected` is the remote modal vouching for its host: the polled state lags a fresh connect.
+  const setRepo = async (path: string, connected = false): Promise<boolean> => {
     const p = path.trim();
     if (!p) return false;
     setRepoErr("");
+    // A remote repo whose host is not connected reconnects first, then opens.
+    const remote = parseRemoteRepo(p);
+    if (remote && !connected && remoteStates[remote.hostId] !== "connected") {
+      setRemoteDialog({ kind: "reconnect", hostId: remote.hostId, repoKey: p });
+      return false;
+    }
     try {
       const cfg = await switchActiveRepo(p);
       setAppConfig(cfg);
@@ -717,11 +689,9 @@ export default function App() {
         setAppConfig(await switchActiveRepo(repoPath));
       }
       try {
-        await ipc.markSessionNotificationRead(repoPath, taskSlug, session.id);
+        await markSessionNotificationRead(repoPath, taskSlug, session.id);
       } catch (error) {
         setRepoErr(String(error));
-      } finally {
-        noticeSnapshot.requestRefresh();
       }
       setView({
         kind: "session",
@@ -763,15 +733,12 @@ export default function App() {
     }
     const reply =
       choice.kind === "existing"
-        ? await ipc.startSession(task.slug, choice.session_id, task.repo_path)
-        : await ipc.createSessionForRepo({
-            repoPath: task.repo_path,
-            request: {
-              task_slug: task.slug,
-              target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
-              ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
-              start: true,
-            },
+        ? await startSession(task.repo_path, task.slug, choice.session_id)
+        : await createSession(task.repo_path, {
+            task_slug: task.slug,
+            target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
+            ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
+            start: true,
           });
     if (reply.start !== "started") toast(`Session ${reply.start}`);
     const targetTaskView: View = view.kind === "createSession" ? { kind: "task", slug: task.slug, repoPath: task.repo_path, from: view.from } : view;
@@ -788,34 +755,22 @@ export default function App() {
     });
   };
 
-  const addRepo = async (): Promise<boolean> => {
+  const openSetup = (tab: SetupTab = "local") => {
     setRepoErr("");
-    try {
-      const path = await ipc.pickRepoDialog();
-      if (!path) return false;
-      const classified = await ipc.classifyPickedFolder(path);
-      if (classified.kind === "checkout") {
-        return await setRepo(classified.root);
-      }
-      if (classified.kind === "refused") {
-        setRepoErr(classified.message);
-        return false;
-      }
-      const choice = await askConfirm({
-        title: "Initialize Git?",
-        body: `${classified.path} is not a Git repository. Initialize Git in this folder before opening it? Cancel leaves the folder unchanged.`,
-        choices: [
-          { key: "init", label: "Initialize Git" },
-          { key: "cancel", label: "Cancel", tone: "ghost" },
-        ],
-      });
-      if (choice !== "init") return false;
-      const initialized = await ipc.initPickedFolder(classified.path);
-      return await setRepo(initialized.root);
-    } catch (e) {
-      setRepoErr(String(e));
-      return false;
+    setSetupTab(tab);
+  };
+
+  // The setup screen picked a repo: open it, and run onboarding there when its host has not run it (D9).
+  const openFromSetup = async (key: string, hostConnected: boolean): Promise<boolean> => {
+    if (!(await setRepo(key, hostConnected))) return false;
+    setSetupTab(null);
+    const hosts = await ipc.listHosts().catch(() => []);
+    const entry = hosts.find((candidate) => candidate.host_id === (machineOf(key) || "local"));
+    if (entry && !entry.onboarded) {
+      setOnboardingStep("playbooks");
+      setOnboardingOpen(true);
     }
+    return true;
   };
 
   // B4 / #132: closing a repo releases ownership — its daemon is stopped, its alineryd lock
@@ -825,6 +780,30 @@ export default function App() {
   const removeRepo = async (path: string) => {
     setRepoErr("");
     const wasActive = path === appConfig?.active_repo;
+    if (isRemoteRepo(path)) {
+      const choice = await askConfirm({
+        title: `Remove ${repoName(path)}?`,
+        body: "It is removed from this list. Its daemon and every session keep running on the host, and you can add it again later to pick them back up. Files are untouched.",
+        choices: [
+          { key: "remove", label: "Remove, leave sessions running" },
+          { key: "cancel", label: "Cancel", tone: "ghost" },
+        ],
+      });
+      if (choice !== "remove") return;
+      try {
+        const cfg = await ipc.removeRemoteRepoKeepRunning(path);
+        setAppConfig({ ...cfg, appearance: applyAppearance(cfg.appearance) });
+        if (wasActive) {
+          setScope("active");
+          setView({ kind: "list" });
+          if (cfg.known_repos.length > 0) await setRepo(cfg.known_repos[0]);
+        }
+        toast(`Removed ${repoName(path)}`, "success");
+      } catch (e) {
+        setRepoErr(String(e));
+      }
+      return;
+    }
     const live = await liveSessions(path);
     const ok = await confirmDanger(
       `Remove ${repoName(path)}?`,
@@ -874,24 +853,24 @@ export default function App() {
       const repos = appConfigRef.current?.known_repos ?? [];
       if (repos.length > 0) {
         const counts = await Promise.all(repos.map(liveSessions));
-        const total = counts.reduce((a, b) => a + b, 0);
+        const total = quitLossCount(repos, counts);
+        const rows = quitRows(repos, counts);
         const choice = await askConfirm({
           title: "Quit Alinery",
           body: (
             <>
               <p>Session daemons keep running after Alinery quits, so harnesses stay alive and reattach on the next launch.</p>
               <ul className="confirm-list">
-                {repos.map((repo, i) => (
+                {rows.map(({ repo, text }) => (
                   <li key={repo}>
                     <span className="confirm-repo">{repoName(repo)}</span>
-                    <span className="dim">
-                      {counts[i]} live session{counts[i] === 1 ? "" : "s"}
-                    </span>
+                    <span className="dim">{text}</span>
                   </li>
                 ))}
               </ul>
               <p className="dim">
                 Closing every repo stops each daemon and releases its locks — nothing is left running in the background.
+                {repos.some(isRemoteRepo) && " Remote repositories are only disconnected: their sessions keep running on the host."}
                 {total > 0 && (
                   <span className="confirm-loss">
                     {" "}
@@ -1046,7 +1025,11 @@ export default function App() {
   };
 
   const completeOnboarding = () => {
-    markOnboardingCompleted();
+    // The mark is for the host the repo lives on; with no repo yet, this computer.
+    const repo = appConfigRef.current?.active_repo ?? "";
+    markHostOnboarded(repo)
+      .then(() => setAppConfig((latest) => (latest ? withHostOnboarded(latest, repo) : latest)))
+      .catch((e) => setRepoErr(`Could not record that onboarding finished: ${e}`));
     setOnboardingStep(undefined);
     setOnboardingOpen(false);
     if (telemetryUnpromptedRef.current) {
@@ -1077,11 +1060,11 @@ export default function App() {
     flushSync(() => setBusy("create"));
     await afterPaint();
     try {
-      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), ipc.readConfigForRepo(repoPath)]);
+      const [scoped, repoCfg] = await Promise.all([readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
       const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
       const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
       const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
-      const result = await ipc.createTaskForRepo({
+      const result = await createTaskForRepo({
         repoPath,
         request: {
           name: preset.name,
@@ -1118,7 +1101,7 @@ export default function App() {
     try {
       let created: CreateTaskResult;
       try {
-        created = await ipc.duplicateTaskForRepo(repoPath, sourceSlug);
+        created = await duplicateTaskForRepo(repoPath, sourceSlug);
       } catch (e) {
         toast.error(`TASK DUPLICATION FAILED: ${e}`);
         return;
@@ -1282,12 +1265,12 @@ export default function App() {
       setOnboardingOpen(true);
     }),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
-    action("add-repo", pi(FolderPlus), "Add repo", "", addRepo),
+    action("add-repo", pi(FolderPlus), "Add repo", "", () => openSetup()),
   ];
 
   const searchItems: SearchItem[] = [
     ...actions,
-    ...searchData.tasks.map((task) => ({
+    ...searchBoard.tasks.map((task) => ({
       id: `task:${task.repo_path}:${task.slug}`,
       kind: "task" as const,
       title: task.name,
@@ -1295,7 +1278,7 @@ export default function App() {
       searchText: [task.slug, task.playbook, task.playbook_title, task.current_phase, task.current_column_title, task.linear_id, task.github_issue].join(" "),
       run: () => void openBoardTask(task),
     })),
-    ...searchData.sessions
+    ...searchSessions.items
       .filter((session) => Boolean(session.task_worktree))
       .map((session) => ({
         id: `session:${session.repo_path}:${session.task_slug}:${session.id}`,
@@ -1358,6 +1341,31 @@ export default function App() {
             }}
           />
         )}
+        {setupTab !== null && appConfig && !shouldShowSetup(appConfig, remoteHosts.hosts) && (
+          <SetupScreen
+            appConfig={appConfig}
+            hosts={remoteHosts.hosts}
+            initialTab={setupTab}
+            repoError={repoErr}
+            refreshHosts={remoteHosts.refresh}
+            onOpen={openFromSetup}
+            onRemoveRepo={removeRepo}
+            onClose={() => setSetupTab(null)}
+          />
+        )}
+        {remoteDialog && (
+          <RemoteModal
+            entry={remoteDialog}
+            hosts={remoteHosts.hosts}
+            onClose={() => {
+              setRemoteDialog(null);
+              void remoteHosts.refresh();
+            }}
+            onOpened={async (key) => {
+              await setRepo(key, true);
+            }}
+          />
+        )}
         <ResizeHandles />
         <div className="app-shell">
           <div className={drawerOpen ? "app app-with-drawer" : "app"} style={drawerOpen ? ({ ["--drawer-width" as string]: `${drawerWidth}px` } as CSSProperties) : undefined}>
@@ -1391,7 +1399,7 @@ export default function App() {
                 </div>
               )}
               {header}
-              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
+              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => openSetup()} />}
               <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
               {/* Backend ownership gate is the source of truth; blank main so the busy
               strip is the only actionable surface (defense-in-depth). */}
@@ -1406,7 +1414,12 @@ export default function App() {
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
                 {showChat && (chatVisited || view.kind === "chat") && (
                   <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
-                    <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
+                    <ChatView
+                      active={view.kind === "chat" && !daemon.repo_busy}
+                      terminalFontSize={appearance.terminal_font_size}
+                      visibility={chatViewVisibility}
+                      knownRepos={appConfig?.known_repos}
+                    />
                   </div>
                 )}
               </main>
@@ -1426,7 +1439,15 @@ export default function App() {
             </div>
           </div>
           {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
-          {showChat ? <QuickChat open={quickChatOpen} visibility={chatViewVisibility} onOpenInChat={() => switchTop("chat")} onHide={() => setQuickChatOpen(false)} /> : null}
+          {showChat ? (
+            <QuickChat
+              open={quickChatOpen}
+              visibility={chatViewVisibility}
+              knownRepos={appConfig?.known_repos}
+              onOpenInChat={() => switchTop("chat")}
+              onHide={() => setQuickChatOpen(false)}
+            />
+          ) : null}
         </div>
         <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
         <Toast busy={busy} />
@@ -1461,24 +1482,10 @@ export default function App() {
       </div>,
       minimalHeader,
     );
-  if (!appConfig.active_repo)
+  if (shouldShowSetup(appConfig, remoteHosts.hosts))
     return chrome(
       <div hidden={view.kind === "playbooks"} style={{ display: view.kind === "playbooks" ? "none" : "contents" }}>
-        <OnboardingFlow
-          appConfig={appConfig}
-          repoError={repoErr}
-          initialStep="workspace"
-          onSelectRepo={setRepo}
-          onAddRepo={addRepo}
-          onRemoveRepo={removeRepo}
-          onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
-          onCompleteToWorkspace={completeOnboarding}
-          onOpenCreateWithPlaybook={(playbook, preset) => {
-            completeOnboarding();
-            openCreate(playbook, preset);
-          }}
-          onLaunchStarterTask={handleLaunchStarterTask}
-        />
+        <SetupScreen appConfig={appConfig} hosts={remoteHosts.hosts} repoError={repoErr} refreshHosts={remoteHosts.refresh} onOpen={openFromSetup} onRemoveRepo={removeRepo} />
       </div>,
       minimalHeader,
     );
@@ -1499,7 +1506,9 @@ export default function App() {
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
       onSelectRepo={selectRepoValue}
-      onAddRepo={addRepo}
+      onAddRepo={() => openSetup()}
+      onAddRemote={() => openSetup("ssh")}
+      remoteStates={remoteStates}
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}
       onSearch={() => setSearchOpen(true)}
@@ -1514,11 +1523,11 @@ export default function App() {
     <Dialog className="onboarding-overlay" ariaLabel="Alinery onboarding" onClose={completeOnboarding}>
       <OnboardingFlow
         appConfig={appConfig}
-        repoError={repoErr}
         initialStep={onboardingStep}
-        onSelectRepo={setRepo}
-        onAddRepo={addRepo}
-        onRemoveRepo={removeRepo}
+        onChangeRepo={() => {
+          completeOnboarding();
+          openSetup();
+        }}
         onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
         onCompleteToWorkspace={completeOnboarding}
         onOpenCreateWithPlaybook={(playbook, preset) => {
@@ -1540,6 +1549,7 @@ export default function App() {
               <TaskList
                 key={`list:${repoKey}`}
                 allRepos={scope === "all"}
+                repos={boardRepos}
                 onOpen={openBoardTask}
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
@@ -1586,6 +1596,7 @@ export default function App() {
               <Kanban
                 key={`kanban:${repoKey}`}
                 allRepos={scope === "all"}
+                repos={boardRepos}
                 onOpen={openBoardTask}
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
@@ -1600,6 +1611,7 @@ export default function App() {
                 key={`sessions:${repoKey}`}
                 allRepos={scope === "all"}
                 activeRepo={appConfig.active_repo}
+                knownRepos={appConfig.known_repos}
                 onOpen={openSessionItem}
                 registerNav={registerNav}
                 onCreateSession={() => setView({ kind: "createSession", from: view })}
@@ -1629,7 +1641,14 @@ export default function App() {
           )}
           {view.kind === "createSession" && (
             <div className="view scroll">
-              <CreateSessionPage allRepos={scope === "all"} activeRepo={appConfig.active_repo} initialTask={view.initialTask} onCancel={goBack} onCreated={createSessionFromTask} />
+              <CreateSessionPage
+                allRepos={scope === "all"}
+                repos={boardRepos}
+                activeRepo={appConfig.active_repo}
+                initialTask={view.initialTask}
+                onCancel={goBack}
+                onCreated={createSessionFromTask}
+              />
             </div>
           )}
           {view.kind === "settings" && (
@@ -1710,7 +1729,7 @@ export default function App() {
               >
                 <ReviewHandoffPage
                   source={view.source}
-                  allRepos={true}
+                  repos={noticeRepos}
                   activeRepo={appConfig.active_repo}
                   onCancel={goBack}
                   onConfirmed={async (result) => {
@@ -1757,16 +1776,6 @@ export default function App() {
                       return next;
                     });
                   }}
-                  queuedFollowUps={sessionQueuedFollowUps.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? []}
-                  onQueuedFollowUpsChange={(items) => {
-                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
-                    setSessionQueuedFollowUps((current) => {
-                      const next = new Map(current);
-                      if (items.length === 0) next.delete(key);
-                      else next.set(key, items);
-                      return next;
-                    });
-                  }}
                   onStartReviewHandoff={(source) => setView({ kind: "reviewHandoff", from: view, source: { ...source, source_repo_path: appConfig.active_repo } })}
                   onOpenRelatedTask={openRelatedTask}
                   appearance={appearance}
@@ -1790,7 +1799,7 @@ export default function App() {
             <Grid
               active={active}
               allRepos={scope === "all"}
-              repoPaths={scope === "all" ? appConfig.known_repos : [appConfig.active_repo]}
+              repoPaths={boardRepos}
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}

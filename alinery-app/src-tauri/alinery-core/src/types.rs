@@ -400,20 +400,6 @@ pub struct TaskRelationships {
     pub active_subtask: Option<TaskSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SubtaskManagerState {
-    pub parent_manager_session: Option<SessionMeta>,
-    pub parent_manager_owner_task_slug: String,
-    pub task: TaskSummary,
-    pub parent_task: Option<TaskSummary>,
-    pub active_subtask: Option<TaskSummary>,
-    pub manager_session: Option<SessionMeta>,
-    pub manager_owner_task_slug: String,
-    pub can_start: bool,
-    pub can_recover: bool,
-    pub disabled_reason: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSubtaskInput {
@@ -664,7 +650,7 @@ impl Default for UpdatePrefs {
 }
 
 /// Global-only. Each alineryd re-reads this from the app config to decide whether to hold an
-/// idle-sleep inhibit (`alineryd/src/idle_inhibit.rs`); a missing or unreadable file is off.
+/// idle-sleep inhibit (`vinculum-daemon/src/platform/keepawake.ts`); a missing or unreadable file is off.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PowerPrefs {
     #[serde(default)]
@@ -766,6 +752,24 @@ impl Default for BackupDefaults {
     }
 }
 
+/// The bundled playbook keys a legacy default could name (the library that held them moved to the daemon, S5.1).
+const LEGACY_BUNDLED_PLAYBOOK_KEYS: &[&str] = &[
+    "superdevelop",
+    "one-shot",
+    "review",
+    "bug-hunting",
+    "free-form",
+    "generic-session",
+    "natural-planning-brainstorm",
+    "systematic-naming",
+    "primed-feature-development",
+    "systematic-evidence-review",
+    "build-playbook",
+    "academic-survey",
+    "spec",
+    "solution-exploration",
+];
+
 // Legacy defaults used repository registry keys, including the bundled keys copied
 // into that registry. Upgrade only settings fields: task/command PlaybookRef stays
 // strict. Reads leave files untouched; the next normal save writes scoped values.
@@ -786,7 +790,7 @@ impl SettingsPlaybookRef {
                 if !valid_playbook_key(&key) {
                     return Err(E::custom("legacy playbook default must be a valid playbook key"));
                 }
-                let scope = if crate::playbook_library::BUNDLED_PLAYBOOKS.iter().any(|(bundled, _)| *bundled == key) {
+                let scope = if LEGACY_BUNDLED_PLAYBOOK_KEYS.contains(&key.as_str()) {
                     PlaybookScope::Bundled
                 } else {
                     PlaybookScope::Repo

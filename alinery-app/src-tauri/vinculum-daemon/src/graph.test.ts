@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, logHasStart, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { completeSession, engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -30,6 +31,7 @@ describe("task record", () => {
     expect(taskShouldHold(false, false)).toBe(true);
     expect(taskShouldHold(true, false)).toBe(false);
     expect(taskShouldHold(false, true)).toBe(false);
+    expect(stateHasStart(undefined)).toBe(false);
     expect(liveSessionCap(3)).toBe(3);
     expect(liveSessionCap(0)).toBe(0);
     expect(liveSessionCap(1.5)).toBe(0);
@@ -47,7 +49,6 @@ describe("task record", () => {
     expect(review.PROMPT_EXTRA).toBe("keep the tests");
     expect(review.REVIEW_HANDOFF_FILE).toBe(join(artifacts, "review-handoff-001.md"));
     expect(handoffForStep(sessions, artifacts, "build")).toEqual({ PROMPT_EXTRA: "", REVIEW_HANDOFF_FILE: "" });
-    expect(logHasStart(join(root, "missing.jsonl"))).toBe(false);
   });
 
   test("a failed row is failed, and waiting is not", () => {
@@ -99,7 +100,7 @@ function recordingHooks(): SessionHooks & { opened: Array<{ id: string; model: s
 }
 
 describe("playbook host", () => {
-  test("create without starting does not launch, and a log that already started does", async () => {
+  test("create without starting does not launch, and an old log that already started is converted once", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-hold-"));
     const hooks = recordingHooks();
     resetGraphs();
@@ -109,10 +110,25 @@ describe("playbook host", () => {
     expect(hooks.opened).toEqual([]);
 
     taskFixture(repo, "again", { start: false });
-    writeFileSync(join(repo, ".alinery", "tasks", "again", "engine.jsonl"), `${JSON.stringify({ t: "started", execId: "gone", sessionId: "s" })}\n`);
+    const dir = join(repo, ".alinery", "tasks", "again");
+    const ticket = join(dir, "artifacts", "ticket.md");
+    writeFileSync(ticket, "the task");
+    const log = [
+      { t: "seeded", occurrences: [{ id: "seed/ticket.md", role: "ticket.md", path: ticket, producer: null }] },
+      { t: "reserved", execution: { id: "e1", step: "work", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(dir, "artifacts", "1-work-1"), origin: null, automatic: true } },
+      { t: "started", execId: "e1", sessionId: "old-session" },
+    ];
+    const bytes = `${log.map((line) => JSON.stringify(line)).join("\n")}\n`;
+    writeFileSync(join(dir, "engine.jsonl"), bytes);
     await tickGraphs();
-    expect(hooks.opened.map((row) => row.prompt.length > 0)).toEqual([true]);
+    // The log showed a start, so the task is not held; its execution continues with the session it had.
+    expect(hooks.opened).toEqual([]);
+    expect(engineExecutions("again").map((row) => [row.id, row.status, row.sessionId])).toEqual([["e1", "live", "old-session"]]);
     expect(engineExecutions("waiting")).toEqual([]);
+    // The state moved into execution.json and the log was left as it was.
+    const stored = JSON.parse(readFileSync(join(dir, "execution.json"), "utf8"));
+    expect(stored.engine.executions.map((row: { id: string }) => row.id)).toEqual(["e1"]);
+    expect(readFileSync(join(dir, "engine.jsonl"), "utf8")).toBe(bytes);
   });
 
   test("runTask releases a held task", async () => {
@@ -213,4 +229,58 @@ describe("playbook host", () => {
     expect(hooks.opened).toHaveLength(before);
     expect(engineExecutions("ended")[0]?.status).toBe("failed");
   });
+});
+
+describe("a coding step records its worktree", () => {
+  test("accepting a coding step keeps the working files under a ref, and a step outside git still accepts", async () => {
+    const env = { PATH: process.env.PATH ?? "", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    const git = (repo: string, ...args: string[]) => {
+      const result = Bun.spawnSync(["git", ...args], { cwd: repo, env });
+      if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
+      return result.stdout.toString().trim();
+    };
+    const coding = (flag: boolean) =>
+      `[[step]]\nkey = "work"\ntitle = "Work"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "out.md" }]\nmodel = ""\nharness = ""\nis_coding_step = ${flag}\nauto_advance_default = true`;
+    const accept = async (repo: string, slug: string, isCoding: boolean) => {
+      const hooks = recordingHooks();
+      resetGraphs();
+      prepareGraphs(repo, hooks);
+      taskFixture(repo, slug, { approve: true, steps: coding(isCoding) });
+      await tickGraphs();
+      const execution = engineExecutions(slug)[0];
+      writeFileSync(join(execution.outDir, "out.md"), "done");
+      const reply = await completeSession(hooks.opened[0].id);
+      expect(reply?.outcome).toBe("accepted");
+      return engineExecutions(slug)[0];
+    };
+
+    const repo = mkdtempSync(join(tmpdir(), "vinculum-worktree-"));
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "a.txt"), "first");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "one");
+    writeFileSync(join(repo, "a.txt"), "uncommitted edit");
+    const accepted = await accept(repo, "coding", true);
+    const recorded = accepted.manifest?.worktree;
+    expect(recorded?.ref).toBe(`refs/alinery/executions/coding/${accepted.id}`);
+    expect(git(repo, "show", `${recorded?.tree}:a.txt`)).toBe("uncommitted edit");
+    expect(git(repo, "rev-parse", `${recorded?.ref}^{tree}`)).toBe(recorded?.tree ?? "");
+    // A second task in the same repository gets the same execution id (ids are per task) and
+    // must not move the first task's ref: both trees survive a gc.
+    writeFileSync(join(repo, "a.txt"), "second task edit");
+    const second = await accept(repo, "coding-two", true);
+    expect(second.id).toBe(accepted.id);
+    expect(second.manifest?.worktree?.ref).toBe(`refs/alinery/executions/coding-two/${second.id}`);
+    git(repo, "checkout", "--", "a.txt");
+    git(repo, "gc", "-q", "--prune=now");
+    expect(git(repo, "show", `${recorded?.tree}:a.txt`)).toBe("uncommitted edit");
+    expect(git(repo, "show", `${second.manifest?.worktree?.tree}:a.txt`)).toBe("second task edit");
+    // Not a coding step: nothing is recorded.
+    const other = mkdtempSync(join(tmpdir(), "vinculum-worktree-plain-"));
+    git(other, "init", "-q", "-b", "main");
+    expect((await accept(other, "plain", false)).manifest?.worktree).toBeUndefined();
+    // A coding step in a directory that is not a git working tree is accepted with no record.
+    const bare = mkdtempSync(join(tmpdir(), "vinculum-worktree-nogit-"));
+    expect((await accept(bare, "nogit", true)).manifest?.worktree).toBeUndefined();
+  }, 120_000);
 });

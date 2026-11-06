@@ -1,0 +1,116 @@
+// The RPC socket (T1, plan 2.1.8): grpc-js over HTTP/2 with prior knowledge on `<repo>/.alinery/rpc[-ns].sock`.
+// A grpc-js handler can't see its connection's socket, so the peer check runs once per connection,
+// at accept, on our own node:net listener, and picks the server built for that peer class.
+import { rmSync } from "node:fs";
+import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import * as grpc from "@grpc/grpc-js";
+import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
+import { BackupService } from "alinery-proto/alinery/v1/backups_pb";
+import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
+import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
+import { GitService } from "alinery-proto/alinery/v1/git_pb";
+import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
+import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
+import { SubtaskService } from "alinery-proto/alinery/v1/subtasks_pb";
+import { AgentService } from "alinery-proto/alinery/v1/agent_pb";
+import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
+import { ProviderService } from "alinery-proto/alinery/v1/providers_pb";
+import { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
+import { SyncService } from "alinery-proto/alinery/v1/sync_pb";
+import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
+import { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
+import { TerminalService } from "alinery-proto/alinery/v1/terminal_pb";
+import { adminService, type DaemonInfo, type Lifecycle } from "./admin.ts";
+import { credentials, PEER_CLASSES, type PeerClass, TokenRegistry } from "./auth.ts";
+import { addService } from "./grpc.ts";
+import type { BackupHost } from "../jobs/backupHost.ts";
+import type { JobRunner } from "../jobs/runner.ts";
+import type { StorageParams } from "../jobs/storage.ts";
+import { Dedupe } from "../sync/dedupe.ts";
+import type { Store } from "../sync/store.ts";
+import { type ArtifactDeps, artifactService } from "./artifacts.ts";
+import { backupService, type BackupServiceDeps } from "./backups.ts";
+import { blobService } from "./blobs.ts";
+import { executionService } from "./executions.ts";
+import { gitService } from "./git.ts";
+import { jobService } from "./jobs.ts";
+import { type AgentDeps, agentService } from "./agent.ts";
+import { type PlaybookDeps, playbookService } from "./playbooks.ts";
+import { type ProviderDeps, providerService } from "./providers.ts";
+import { chatService } from "./chat.ts";
+import { type SessionControl, sessionService, type Transcripts } from "./sessions.ts";
+import { subtaskService } from "./subtasks.ts";
+import { repoService, settingsService, type SettingsDeps } from "./settings.ts";
+import { syncService } from "./sync.ts";
+import { draftService, type TaskDeps, taskService } from "./tasks.ts";
+import { terminalService } from "./terminal.ts";
+import { peerExecutable, samePath } from "./peer.ts";
+
+const MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
+
+type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps; playbooks?: PlaybookDeps; agent?: AgentDeps; providers?: ProviderDeps; backups?: BackupHost; backupReads?: BackupServiceDeps };
+
+function makeServer(peer: PeerClass, secret: Buffer, tokens: TokenRegistry, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions, artifacts, playbooks, agent, providers, backups, backupReads }: Hosted) {
+  // A draft carries its pasted images in one message (up to the 100 MB attachment set); grpc-js defaults to 4 MiB.
+  const server = new grpc.Server({ "grpc.max_receive_message_length": MAX_MESSAGE_BYTES });
+  const values = (header: Headers, method: string) => credentials(header, peer, secret, tokens, method);
+  addService(server, AdminService, adminService(info, lifecycle, store.epoch, tokens), values);
+  addService(server, SyncService, syncService(store), values);
+  addService(server, JobService, jobService(jobs, dedupe, store, storageScan, backups), values);
+  if (backupReads) addService(server, BackupService, backupService(backupReads), values);
+  addService(server, SessionService, sessionService(transcripts, sessions, dedupe, store), values);
+  if (sessions) addService(server, ChatService, chatService(sessions, dedupe, store), values);
+  if (sessions) addService(server, SubtaskService, subtaskService(sessions, dedupe, store, tasks), values);
+  addService(server, TerminalService, terminal, values);
+  addService(server, ExecutionService, executionService(dedupe, store), values);
+  if (settings) {
+    addService(server, SettingsService, settingsService(settings, dedupe, store), values);
+    addService(server, RepoService, repoService(settings, dedupe, store), values);
+  }
+  if (tasks) {
+    addService(server, TaskService, taskService(tasks, dedupe, store), values);
+    addService(server, DraftService, draftService(tasks, dedupe, store), values);
+    addService(server, BlobService, blobService(tasks, dedupe, store), values);
+    addService(server, GitService, gitService(tasks, dedupe, store), values);
+  }
+  if (artifacts) addService(server, ArtifactService, artifactService(artifacts, dedupe, store), values);
+  if (playbooks) addService(server, PlaybookService, playbookService(playbooks, dedupe, store), values);
+  if (agent) addService(server, AgentService, agentService(agent, dedupe, store), values);
+  if (providers) addService(server, ProviderService, providerService(providers, dedupe), values);
+  return server.createConnectionInjector(grpc.ServerCredentials.createInsecure());
+}
+
+/** Without a host executable the daemon was started over ssh and every peer is sshd. */
+function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable: string | undefined): PeerClass {
+  if (!hostExecutable) return "ssh";
+  const peer = peerExecutable(socket);
+  return peer && samePath(peer, hostExecutable) ? "shell" : "other";
+}
+
+export type RpcOptions = { socketPath: string; secret: Buffer; tokens?: TokenRegistry; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps; playbooks?: PlaybookDeps; agent?: AgentDeps; providers?: ProviderDeps; backups?: BackupHost; backupReads?: BackupServiceDeps };
+
+export function serveRpc(options: RpcOptions): Promise<NetServer> {
+  // One dedupe and one attach table for all three peer classes: a client's retry lands on a new connection, not a new class.
+  const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks, sessions: options.sessions, artifacts: options.artifacts, playbooks: options.playbooks, agent: options.agent, providers: options.providers, backups: options.backups, backupReads: options.backupReads };
+  const tokens = options.tokens ?? new TokenRegistry();
+  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, tokens, options.info, options.lifecycle, hosted)]));
+  const net = createNetServer((sock) => {
+    sock.on("error", () => {});
+    servers.get(peerClass(sock, options.hostExecutable))!.injectConnection(sock);
+  });
+  rmSync(options.socketPath, { force: true });
+  // bind(2) gives a socket 0777 minus the umask, and a chmod after listen would leave a window, so
+  // the umask is 0177 (mode 0600) around listen. Bun binds synchronously inside listen(); the umask
+  // is process-wide, so it is put back before anything else runs.
+  const previous = process.umask(0o177);
+  try {
+    net.listen(options.socketPath);
+  } finally {
+    process.umask(previous);
+  }
+  return new Promise((resolve, reject) => {
+    net.once("error", reject);
+    net.once("listening", () => resolve(net));
+  });
+}

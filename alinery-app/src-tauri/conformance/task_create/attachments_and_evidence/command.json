@@ -1,0 +1,18 @@
+{
+  "request": {
+    "name": "Evidence Task",
+    "description": "See the attached log.",
+    "evidence": "Stack trace at the bottom.",
+    "attachment_urls": ["https://example.com/issue/1"],
+    "attachment_errors": ["/gone/file.bin - No such file or directory"],
+    "linear_id": "ENG-1",
+    "github_issue": "o/r#2",
+    "requested_slug": "evidence-slug",
+    "playbook": { "reference": { "scope": "bundled", "key": "one-shot" }, "source": "@one-shot" },
+    "start": false
+  },
+  "attachments": [
+    { "name": "trace.log", "text": "line one\n" },
+    { "name": "notes.md", "text": "# notes\n" }
+  ]
+}

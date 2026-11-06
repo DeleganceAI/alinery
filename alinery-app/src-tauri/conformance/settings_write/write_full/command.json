@@ -1,0 +1,26 @@
+{
+  "op": "write",
+  "overrides": {
+    "github": {
+      "token": "ghp-x"
+    },
+    "defaults": {
+      "harness": "omp",
+      "model": "gpt-5",
+      "thinking": "high",
+      "playbook": {
+        "scope": "bundled",
+        "key": "superdevelop"
+      },
+      "draft_autosave": true
+    },
+    "backup": {
+      "destination": "/srv/backups",
+      "enabled": true,
+      "retention": 12,
+      "trigger_pre_archive": true,
+      "trigger_post_artifact_change": false,
+      "trigger_post_push_commit": true
+    }
+  }
+}

@@ -27,9 +27,9 @@
 //     PRD track, SQLite, session resurrection, stream-json/rich adapters, auto-advance,
 //     per-repo windows.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,15 +40,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-mod backup_queue;
-use alinery_core::daemon_client;
+use alinery_core::legacy_daemon::read_socket_line;
 #[cfg(test)]
-use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
-use alinery_core::daemon_client::{format_daemon_timeout, read_socket_line, DaemonClient, DaemonSessionStatus, SocketReadError, DAEMON_CONTROL_TIMEOUT};
+use alinery_core::legacy_daemon::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT, DAEMON_OBSERVATION_TIMEOUT};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
+pub(crate) use alinery_core::write_owner_only_bytes;
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
-use alinery_core::{alinery_app_lock_path, alinery_dir, ensure_harnesses_toml, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
+use alinery_core::{alinery_app_lock_path, alinery_dir, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,
@@ -69,8 +68,6 @@ pub use alinery_core::{
 };
 #[cfg(test)]
 use alinery_core::{configure_detached_process, file_content_id};
-pub(crate) use alinery_core::{write_bytes_atomic, write_owner_only_bytes};
-use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
@@ -79,13 +76,14 @@ mod account;
 #[path = "vinculum_customizations.rs"]
 mod agent_customizations;
 mod app_config;
-mod artifacts;
 mod backup;
 mod chat;
 mod community_playbooks;
 mod connections;
 mod daemon;
+mod daemon_rpc;
 mod git_ops;
+mod host_wire;
 mod hosted;
 mod imports;
 mod mcp;
@@ -93,11 +91,10 @@ mod notify;
 mod omp_update;
 mod paths;
 mod pi_durable;
-mod playbook;
+mod remote;
 mod session;
 mod settings;
 mod state;
-mod subtask;
 mod task;
 mod telemetry;
 mod update;
@@ -105,12 +102,12 @@ mod update;
 use account::*;
 use agent_customizations::*;
 use app_config::*;
-use artifacts::*;
 use backup::*;
 use chat::*;
 use community_playbooks::*;
 use connections::*;
 use daemon::*;
+use daemon_rpc::*;
 use git_ops::*;
 use hosted::*;
 use imports::*;
@@ -118,12 +115,10 @@ use mcp::*;
 use notify::*;
 use omp_update::*;
 use paths::*;
-use pi_durable::*;
-use playbook::*;
+use remote::*;
 use session::*;
 use settings::*;
 use state::*;
-use subtask::*;
 use task::*;
 use telemetry::*;
 use update::*;
@@ -144,207 +139,70 @@ pub fn run() {
         .setup(|app| {
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
-            spawn_pi_supervisor(app.handle().clone());
+            spawn_remote_supervisor(app.handle().clone());
             spawn_pi_hosted_refresh(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ping,
             read_app_config,
+            daemon_rpc,
+            daemon_rpc_cancel,
             write_appearance,
             set_active_repo,
             remove_repo,
+            remote_hosts,
+            list_hosts,
+            set_host_onboarded,
+            remote_add_host,
+            remote_ssh_aliases,
+            remote_describe_destination,
+            remote_test_host,
+            remote_discard_host,
+            remote_sharing,
+            remote_set_sharing,
+            remote_connect,
+            remote_disconnect,
+            remote_list_dir,
+            remote_classify,
+            remote_init,
+            remote_add_repo,
+            remove_remote_repo_keep_running,
             pick_repo_dialog,
             classify_picked_folder,
             init_picked_folder,
             pick_attachment_files_dialog,
-            create_task,
-            create_task_for_repo,
-            prepare_task_attachments,
-            duplicate_task_for_repo,
-            get_task,
-            write_draft,
-            write_draft_for_repo,
-            read_draft_attachments_for_repo,
-            delete_draft,
-            delete_draft_for_repo,
-            list_tasks,
-            list_board_tasks,
-            list_task_activity,
-            list_task_pull_requests,
-            archive_task,
-            archive_task_for_repo,
-            restore_task_for_repo,
-            set_auto_approve_all_for_repo,
-            set_related_tasks_for_repo,
-            create_session,
-            create_session_for_repo,
-            ensure_drawer_terminal,
+            read_local_file,
+            lookup_task_pull_request,
             list_chat_repos,
-            list_chat_threads,
-            chat_thread_name,
-            create_chat_thread,
-            start_chat_thread,
-            set_chat_pinned,
-            archive_chat_thread,
-            remove_chat_worktree,
-            resume_chat_thread,
-            chat_branch_label,
-            chat_transcript,
-            chat_prompt,
-            chat_abort,
-            chat_set_model,
-            chat_set_thinking_level,
-            chat_rpc_write,
-            chat_rpc_attach,
-            chat_detach,
-            chat_session_status,
-            chat_restate,
-            chat_pty_attach,
-            chat_pty_write,
-            chat_pty_resize,
-            read_chat_omp,
-            list_sessions,
-            rename_session,
-            rename_task,
-            get_session_display,
-            list_session_items,
-            observe_task_executions,
-            start_session,
-            allow_execution_completion,
-            session_list_statuses,
-            archive_session,
-            archive_session_for_repo,
-            mark_session_notification_read,
-            clear_session_notifications,
-            subtask_state,
-            start_subtask_manager,
-            recover_subtask_manager,
-            discard_subtask,
-            list_playbook_catalog,
             list_community_playbooks,
-            list_community_imports,
-            community_download_status,
-            import_community_playbook,
-            update_community_import,
+            community_remote_status,
+            download_community_source,
             preview_community_playbook,
             list_my_community_playbooks,
             publish_community_playbook,
-            read_playbook,
-            validate_playbook_source,
-            render_playbook_source,
-            save_playbook_source,
-            delete_playbook_source,
-            read_playbook_picker_preferences,
-            save_playbook_picker_preferences,
-            list_kanban_columns,
-            list_harness_models,
             grok_key_ready,
-            session_artifact_ready,
-            list_harness_models_for_repo,
-            list_artifacts,
-            list_artifacts_with_metadata,
-            send_review_handoff,
-            read_artifact,
-            read_artifact_for_repo,
-            attachment_path,
             chat_file_stat,
-            copy_chat_attachments,
-            write_chat_attachment_bytes,
-            read_chat_image,
-            copy_chat_thread_attachments,
-            write_chat_thread_attachment_bytes,
-            read_chat_thread_image,
-            read_attachment_image,
-            list_task_artifact_tree,
-            read_task_artifact_node,
-            artifact_node_path,
-            list_artifact_comments,
-            list_artifact_comment_drafts,
-            list_artifact_comment_drafts_for_repo,
-            save_artifact_comment_draft,
-            save_artifact_comment_draft_for_repo,
-            delete_artifact_comment_draft,
-            delete_artifact_comment_draft_for_repo,
-            add_artifact_comment,
-            add_artifact_comment_for_repo,
-            artifact_comment_markdown_path_for,
-            prepare_artifact_comments_prompt,
-            archive_artifact_comments,
-            archive_artifact_comments_for_repo,
-            artifact_review_pending_status,
-            clear_artifact_review_pending,
-            clear_artifact_review_pending_for_repo,
-            open_session,
-            detach_session,
-            write_session,
-            prepare_review_approval_prompt,
-            finalize_session_message_actions,
-            resize_session,
-            restate_session,
-            rpc_attach_session,
-            rpc_write_session,
-            session_transcript,
-            session_prompt,
-            session_abort,
-            session_set_model,
-            session_set_thinking_level,
-            provider_catalog,
-            provider_logout,
-            provider_login_start,
-            provider_login_poll,
-            provider_login_reply,
-            custom_provider_save,
-            custom_provider_delete,
-            omp_setup_session,
-            session_status,
-            session_statuses,
-            kill_session,
-            kill_session_for_repo,
-            read_session_history,
-            read_session_omp,
             daemon_status,
             prepare_repo_takeover,
             confirm_repo_takeover,
             cancel_repo_takeover,
-            read_config,
-            read_config_for_repo,
-            write_config,
             read_global_settings,
             write_global_settings,
             read_model_favorites,
             set_model_favorite,
-            read_scoped_settings_for_repo,
-            read_repo_overrides_for_repo,
-            write_repo_overrides_for_repo,
-            clear_repo_override_for_repo,
-            storage_info,
-            delete_all_archived_storage,
             notify_test,
             set_dock_badge_count,
             notify_session_attention,
+            prepare_hosted_inference,
             stop_daemon,
-            repo_live_sessions,
             close_all_repos,
             cancel_quit,
             mcp_status,
             start_mcp_server,
             stop_mcp_server,
             pick_backup_destination_dialog,
-            backup_now,
-            backup_busy,
-            list_backups,
             restore_backup,
-            remove_worktree,
-            remove_worktree_for_repo,
-            worktree_exists,
-            task_source_branches_for_repo,
-            push_and_compare_url,
-            push_and_compare_url_for_repo,
-            set_pr_url,
-            set_pr_url_for_repo,
-            commit_worktree,
-            commit_worktree_for_repo,
             connection_statuses,
             connect_github,
             connect_linear,
@@ -358,23 +216,13 @@ pub fn run() {
             hosted_catalog,
             account_credits,
             account_open_plans,
-            import_linear,
             import_linear_for_repo,
-            import_github,
             import_github_for_repo,
             check_update,
             download_update,
             apply_update,
-            omp_agent_sessions_dir,
-            read_omp_model_roles,
-            write_omp_model_roles,
             open_vinculum_agent_dir,
-            vinculum_customization_prompt,
-            read_vinculum_customizations,
             pick_vinculum_skill_dialog,
-            install_vinculum_skill,
-            delete_vinculum_skill,
-            vinculum_customizations,
         ])
         .build(context)
         .expect("error while building tauri application")
@@ -386,11 +234,6 @@ pub fn run() {
             }
             // alineryd remains detached (on purpose)
         });
-}
-
-#[cfg(test)]
-pub(crate) fn observation_dispatch_builder(builder: tauri::Builder<tauri::test::MockRuntime>) -> tauri::Builder<tauri::test::MockRuntime> {
-    builder.invoke_handler(tauri::generate_handler![observe_task_executions, ping])
 }
 
 #[cfg(test)]

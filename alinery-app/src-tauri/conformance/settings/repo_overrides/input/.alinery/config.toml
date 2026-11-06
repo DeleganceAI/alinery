@@ -1,0 +1,17 @@
+# a comment and a legacy block that Rust ignores
+[notifications]
+enabled = false
+
+[defaults]
+harness = "omp"
+model = "claude-x"
+thinking = "low"
+
+[defaults.playbook]
+scope = "repo"
+key = "team-flow"
+
+[backup]
+retention = 200
+trigger_post_push_commit = true
+trigger_post_artifact_change = false

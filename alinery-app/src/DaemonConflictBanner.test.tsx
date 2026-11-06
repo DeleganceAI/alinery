@@ -373,3 +373,44 @@ describe("repository status without a takeover", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 });
+
+describe("a remote repository's daemon", () => {
+  const remote: DaemonConflict = {
+    repo: "alinery+ssh://box-1/srv/app",
+    app_protocol: 24,
+    app_config_identity: "current",
+    owners: [
+      {
+        lane: "",
+        pid: null,
+        protocol: 22,
+        build_id: "old-build",
+        app_config_identity: "old-config",
+        impact: { status: "known", sessions: [{ id: "s1", name: null }] },
+        takeover_unavailable: "Restart the daemon on the host to replace it.",
+      },
+    ],
+    issues: ["The daemon on the host speaks protocol 22; this app speaks 24."],
+  };
+
+  it("offers a confirmed restart that names the sessions it ends, and stops nothing before the answer", async () => {
+    vi.mocked(ipc.stopDaemon).mockResolvedValue();
+    const { refresh } = mount(remote);
+    expect(screen.queryByRole("button", { name: /Take over/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Restart daemon…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Restart the daemon for app?" });
+    expect(confirm.textContent).toContain("Restarting stops 1 live session.");
+    expect(ipc.stopDaemon).not.toHaveBeenCalled();
+    accept(confirm, "Stop 1 session and restart");
+    await waitFor(() => expect(ipc.stopDaemon).toHaveBeenCalledWith("alinery+ssh://box-1/srv/app"));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("does nothing when the dialog is cancelled", async () => {
+    mount(remote);
+    fireEvent.click(screen.getByRole("button", { name: "Restart daemon…" }));
+    cancel(await screen.findByRole("alertdialog", { name: "Restart the daemon for app?" }));
+    await act(async () => {});
+    expect(ipc.stopDaemon).not.toHaveBeenCalled();
+  });
+});

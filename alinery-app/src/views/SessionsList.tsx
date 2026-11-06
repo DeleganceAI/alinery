@@ -1,7 +1,6 @@
 import { ChevronRight, Pencil } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
@@ -11,7 +10,6 @@ import {
   orderSessionListItems,
   PRIORITY_SESSION_SORT,
   type SessionSort,
-  sameSessionObservationMaps,
   selectSessionSort,
   sessionDisplayKind,
   sessionListItemKey,
@@ -29,10 +27,12 @@ import {
   repoName,
   SessionTimestamp,
   StatusDot,
-  sameSessionMetas,
   useMinuteNow,
 } from "../shared";
-import type { BoardNav, NameCommit, SessionListItem, SessionObservation, SessionStatusRef } from "../types";
+import { useRepoBoard, useSessionItems } from "../sync/board";
+import { useSessionObservations } from "../sync/sessionObservation";
+import { renameSession } from "../sync/sessions";
+import type { BoardNav, NameCommit, SessionListItem, SessionObservation } from "../types";
 import { useSessionSort } from "../useSessionSort";
 import "./SessionsList.css";
 
@@ -62,7 +62,7 @@ const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: StatusFilter; label: string 
 // Groups a row by the status its StatusDot renders, from the same canonical
 // observation and exit metadata. A row with no observation yet is Unknown —
 // absence of evidence is never reported as Not started.
-function sessionStatusGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
+function observationGroup(item: SessionListItem, observation: SessionObservation | undefined, superseded: boolean): Exclude<StatusFilter, "all"> {
   if (item.archived) return "archived";
   const kind = sessionDisplayKind(observation, superseded, item.exit_code, hasAcknowledgedExit(item));
   switch (kind) {
@@ -90,28 +90,10 @@ function sessionStatusGroup(item: SessionListItem, observation: SessionObservati
   }
 }
 
-function sameSessionListItems(left: SessionListItem[], right: SessionListItem[]) {
-  return (
-    sameSessionMetas(left, right) &&
-    left.every((item, index) => {
-      const other = right[index];
-      return (
-        item.task_slug === other.task_slug &&
-        item.task_name === other.task_name &&
-        item.subtask_name === other.subtask_name &&
-        item.task_worktree === other.task_worktree &&
-        item.repo_path === other.repo_path &&
-        item.playbook_title === other.playbook_title &&
-        item.step_title === other.step_title &&
-        item.is_playbook_step === other.is_playbook_step
-      );
-    })
-  );
-}
-
 export function SessionsList({
   allRepos,
   activeRepo,
+  knownRepos,
   onOpen,
   registerNav,
   onCreateSession,
@@ -122,6 +104,7 @@ export function SessionsList({
 }: {
   allRepos: boolean;
   activeRepo: string;
+  knownRepos: string[];
   onOpen: (item: SessionListItem) => void;
   registerNav: (n: BoardNav | null) => void;
   onCreateSession: () => void;
@@ -130,12 +113,13 @@ export function SessionsList({
   onSessionSortChange?: (sort: SessionSort) => void;
   onNameCommitted?: (change: NameCommit) => void;
 }) {
-  const [items, setItems] = useState<SessionListItem[]>([]);
-  const [observations, setObservations] = useState<Record<string, SessionObservation>>({});
   const [selectedKey, setSelectedKey] = useState("");
-  const [err, setErr] = useState("");
-  const [loaded, setLoaded] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // Rows come from each repo's streams; a repo whose daemon is down contributes none.
+  const repos = useMemo(() => (allRepos ? [...new Set(knownRepos)] : activeRepo ? [activeRepo] : []), [allRepos, knownRepos, activeRepo]);
+  const { items, loaded } = useSessionItems(repos, showArchived);
+  const board = useRepoBoard(repos);
+  const err = "";
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const statusFilterId = useId();
@@ -147,19 +131,6 @@ export function SessionsList({
   // Only consulted when there are no sessions, to pick the empty state's one
   // action. A session needs a task to live on, so with zero tasks "New session"
   // lands on a picker with nothing to pick — the real next step is a task.
-  const [taskCount, setTaskCount] = useState<number | null>(null);
-  const itemsRef = useRef<SessionListItem[]>([]);
-  const statusRequest = useRef(0);
-  const itemRequest = useRef(0);
-  const scopeVersion = useRef(0);
-  const scopeKey = `${allRepos}:${activeRepo}:${showArchived}`;
-  const currentScope = useRef(scopeKey);
-  if (currentScope.current !== scopeKey) {
-    currentScope.current = scopeKey;
-    scopeVersion.current += 1;
-    itemRequest.current += 1;
-    statusRequest.current += 1;
-  }
   const [editingKey, setEditingKey] = useState("");
   const renameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
@@ -169,116 +140,26 @@ export function SessionsList({
     renameTrigger.current?.focus();
   };
 
-  const refreshStatuses = (rows: SessionListItem[]) => {
-    const statusRows = rows.filter((item) => !item.archived);
-    const request = ++statusRequest.current;
-    if (statusRows.length === 0) {
-      setObservations((current) => (Object.keys(current).length === 0 ? current : {}));
-      return Promise.resolve();
-    }
-    const refs: SessionStatusRef[] = statusRows.map((item) => ({
-      repo_path: item.repo_path,
-      task_slug: item.task_slug,
-      id: item.id,
-    }));
-    return ipc
-      .sessionListStatuses(refs)
-      .catch(() => ({}) as Record<string, SessionObservation>)
-      .then((observed) => {
-        if (request !== statusRequest.current) return;
-        setObservations((current) => (sameSessionObservationMaps(current, observed) ? current : observed));
-      });
-  };
-
-  const load = async () => {
-    const version = scopeVersion.current;
-    const request = ++itemRequest.current;
-    const current = () => version === scopeVersion.current && request === itemRequest.current;
-    try {
-      const rows = await ipc.listSessionItems(allRepos, showArchived, activeRepo);
-      if (!current()) return;
-      itemsRef.current = rows;
-      setItems((previous) => (sameSessionListItems(previous, rows) ? previous : rows));
-      setSelectedKey((prev) => (prev && rows.some((row) => rowKey(row) === prev) ? prev : rows[0] ? rowKey(rows[0]) : ""));
-      setErr("");
-      void refreshStatuses(rows);
-    } catch (error) {
-      if (current()) setErr(String(error));
-    } finally {
-      if (current()) setLoaded(true);
-    }
-  };
+  // Status comes from the daemons' session streams, one per task, not from a poll.
+  const statusRefs = useMemo(() => items.filter((item) => !item.archived).map((item) => ({ repo_path: item.repo_path, task_slug: item.task_slug, id: item.id })), [items]);
+  const observations = useSessionObservations(statusRefs);
 
   const saveName = async (item: SessionListItem, name: string) => {
-    const version = scopeVersion.current;
     const editor = editorVersion.current;
-    const value = await ipc.renameSession({ repoPath: item.repo_path, taskSlug: item.task_slug, sessionId: item.id, name });
-    if (version === scopeVersion.current) {
-      itemRequest.current += 1;
-      const rows = itemsRef.current.map((row) => (rowKey(row) === rowKey(item) ? { ...row, name: value.name, name_source: value.source, name_error: null } : row));
-      itemsRef.current = rows;
-      setItems(rows);
-      if (editor === editorVersion.current) closeEditor();
-      void load();
-    }
+    const value = await renameSession({ repoPath: item.repo_path, taskSlug: item.task_slug, sessionId: item.id, name });
+    if (editor === editorVersion.current) closeEditor();
     onNameCommitted?.({ kind: "session", repo_path: item.repo_path, task_slug: item.task_slug, session_id: item.id, value });
   };
 
+  // The selection follows the rows: kept while its row exists, else the first.
   useEffect(() => {
-    itemsRef.current = [];
-    setItems([]);
-    setObservations({});
-    setSelectedKey("");
-    setErr("");
-    setLoaded(false);
-    let alive = true;
-    let timer = 0;
-    setEditingKey("");
-    const poll = () => {
-      load().finally(() => {
-        if (alive) timer = window.setTimeout(poll, 3000);
-      });
-    };
-    poll();
-    return () => {
-      alive = false;
-      scopeVersion.current += 1;
-      itemRequest.current += 1;
-      statusRequest.current += 1;
-      window.clearTimeout(timer);
-    };
-  }, [allRepos, activeRepo, showArchived]);
+    setSelectedKey((prev) => (prev && items.some((row) => rowKey(row) === prev) ? prev : items[0] ? rowKey(items[0]) : ""));
+  }, [items]);
 
   const empty = loaded && items.length === 0;
 
-  // Fetched once on reaching empty, not on the 3s poll — the answer only decides
-  // which button the empty state offers, and there are no sessions to refresh.
-  useEffect(() => {
-    if (!empty) return;
-    let alive = true;
-    ipc
-      .listBoardTasks(allRepos)
-      .then((tasks) => alive && setTaskCount(tasks.filter((task) => !task.archived).length))
-      .catch(() => alive && setTaskCount(null));
-    return () => {
-      alive = false;
-    };
-  }, [empty, allRepos, activeRepo]);
-
-  useEffect(() => {
-    let alive = true;
-    let timer = 0;
-    const poll = () => {
-      refreshStatuses(itemsRef.current).finally(() => {
-        if (alive) timer = window.setTimeout(poll, 1500);
-      });
-    };
-    timer = window.setTimeout(poll, 1500);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-    };
-  }, []);
+  // Only decides which button the empty state offers.
+  const taskCount = empty && board.loaded ? board.tasks.filter((task) => !task.archived).length : null;
 
   // Attention follows the fetched collection, not rows that filters can unmount.
   const previousKinds = useRef(new Map<string, ObservationDisplayKind>());
@@ -289,7 +170,7 @@ export function SessionsList({
       const key = rowKey(item);
       const observation = observations[key];
       const kind = observation ? observationDisplayKind(observation) : "loading";
-      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, item.repo_path, item.task_slug);
+      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, observation?.attention_label ?? "");
       next.set(key, kind);
     }
     previousKinds.current = next;
@@ -313,7 +194,7 @@ export function SessionsList({
   const filtered = queryTerms.length > 0 || statusFilter !== "all";
   const visibleItems = filtered
     ? orderedItems.filter((item) => {
-        if (statusFilter !== "all" && sessionStatusGroup(item, observations[rowKey(item)], isSuperseded(item)) !== statusFilter) return false;
+        if (statusFilter !== "all" && observationGroup(item, observations[rowKey(item)], isSuperseded(item)) !== statusFilter) return false;
         if (queryTerms.length === 0) return true;
         const text = [
           item.name,
@@ -562,9 +443,7 @@ export function SessionsList({
                       Could not read session name.
                     </InlineStatus>
                   )}
-                  {editingKey === key && (
-                    <NameEditor key={`${scopeKey}:${key}`} value={item.name || ""} label="Session name" onSave={(name) => saveName(item, name)} onCancel={closeEditor} />
-                  )}
+                  {editingKey === key && <NameEditor key={key} value={item.name || ""} label="Session name" onSave={(name) => saveName(item, name)} onCancel={closeEditor} />}
                 </div>
                 <div className="session-row-status">
                   {item.archived ? (
@@ -587,7 +466,7 @@ export function SessionsList({
                   <SessionTimestamp kind="updated" value={sessionUpdatedAt(item)} now={now} />
                 </div>
                 <div className="session-row-actions">
-                  {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} onKilled={load} />}
+                  {!item.archived && <KillButton id={item.id} slug={item.task_slug} repoPath={item.repo_path} live={item.repo_path === activeRepo && isLive} />}
                 </div>
                 <span className="session-row-open" aria-hidden="true">
                   {openable && <ChevronRight size={16} strokeWidth={1.5} />}

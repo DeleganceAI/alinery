@@ -1,6 +1,8 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeArtifacts } from "../test/artifactHooks";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
@@ -24,27 +26,14 @@ const task = (over: Partial<Task> = {}): Task =>
     ...over,
   }) as Task;
 
-const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listSessions: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
-  sessionStatuses: vi.fn(),
-}));
-
-vi.mock("../ipc", () =>
-  mockIpc({
-    getTask: mocks.getTask,
-    listSessions: mocks.listSessions,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    sessionStatuses: mocks.sessionStatuses,
-  }),
-);
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../ipc", () => mockIpc({}));
 
 beforeEach(() => {
-  mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listSessions.mockReset().mockResolvedValue([]);
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  fakeBoard.reset();
+
+  fakeArtifacts.reset();
 });
 
 afterEach(cleanup);

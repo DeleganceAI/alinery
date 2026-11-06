@@ -1,8 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactCommentAnchor } from "./ArtifactMarkdown";
-import { mockIpc } from "./test/mockIpc";
-import { useArtifactCommentDrafts } from "./useArtifactCommentDrafts";
+import { fakeArtifacts } from "./test/artifactHooks";
+import { type ArtifactCommentDraft, useArtifactCommentDrafts } from "./useArtifactCommentDrafts";
 
 // Coverage for PR #169 second review, item 1: the draft hook was the one TaskDetail write
 // still resolving against the mutable `active_repo()` global. Its debounce (400ms) outlives
@@ -23,25 +23,44 @@ const anchor = (over: Partial<ArtifactCommentAnchor> = {}): ArtifactCommentAncho
   ...over,
 });
 
-const mocks = vi.hoisted(() => ({
-  listArtifactCommentDraftsForRepo: vi.fn(),
-  saveArtifactCommentDraftForRepo: vi.fn(),
-  deleteArtifactCommentDraftForRepo: vi.fn(),
-}));
-
-vi.mock("./ipc", () =>
-  mockIpc({
-    listArtifactCommentDraftsForRepo: mocks.listArtifactCommentDraftsForRepo,
-    saveArtifactCommentDraftForRepo: mocks.saveArtifactCommentDraftForRepo,
-    deleteArtifactCommentDraftForRepo: mocks.deleteArtifactCommentDraftForRepo,
-  }),
-);
+vi.mock("./sync/artifacts", async (actual) => (await import("./test/artifactHooks")).artifactHooks(await actual()));
 
 beforeEach(() => {
   vi.useFakeTimers();
-  mocks.listArtifactCommentDraftsForRepo.mockReset().mockResolvedValue([]);
-  mocks.saveArtifactCommentDraftForRepo.mockReset().mockResolvedValue(undefined);
-  mocks.deleteArtifactCommentDraftForRepo.mockReset().mockResolvedValue(undefined);
+  fakeArtifacts.reset();
+});
+
+const liveDraft = (over: Partial<ArtifactCommentDraft> = {}): ArtifactCommentDraft => ({
+  ...anchor(),
+  artifact: "02-research.md",
+  body: "from elsewhere",
+  artifact_hash: "h",
+  updated_at_ms: 1,
+  stale: false,
+  ...over,
+});
+
+describe("drafts the daemon holds", () => {
+  it("shows a draft another window saved, with no poll", () => {
+    const { result } = renderHook(() => useArtifactCommentDrafts("/repo-a", "task-x"));
+    expect(result.current.drafts).toEqual([]);
+    act(() => fakeArtifacts.set("task-x", { drafts: [liveDraft()] }));
+    expect(result.current.drafts.map((d) => d.body)).toEqual(["from elsewhere"]);
+    expect(result.current.getDraft("02-research.md", "a1")?.body).toBe("from elsewhere");
+  });
+
+  it("lets what is being typed win over the daemon's row until it is saved, then the row speaks again", async () => {
+    fakeArtifacts.set("task-x", { drafts: [liveDraft()] });
+    const { result } = renderHook(() => useArtifactCommentDrafts("/repo-a", "task-x"));
+    act(() => result.current.updateDraft("02-research.md", anchor(), "mine"));
+    expect(result.current.drafts.map((d) => d.body)).toEqual(["mine"]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(result.current.drafts.map((d) => d.body)).toEqual(["mine"]);
+    act(() => fakeArtifacts.set("task-x", { drafts: [liveDraft({ body: "newer elsewhere" })] }));
+    expect(result.current.drafts.map((d) => d.body)).toEqual(["newer elsewhere"]);
+  });
 });
 
 describe("a draft still inside its debounce window", () => {
@@ -52,15 +71,15 @@ describe("a draft still inside its debounce window", () => {
       result.current.updateDraft("02-research.md", anchor(), "half-typed");
     });
     // Still debounced: nothing written yet.
-    expect(mocks.saveArtifactCommentDraftForRepo).not.toHaveBeenCalled();
+    expect(fakeArtifacts.saveDraft).not.toHaveBeenCalled();
 
     unmount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(mocks.saveArtifactCommentDraftForRepo).toHaveBeenCalledTimes(1);
-    expect(mocks.saveArtifactCommentDraftForRepo).toHaveBeenCalledWith(
+    expect(fakeArtifacts.saveDraft).toHaveBeenCalledTimes(1);
+    expect(fakeArtifacts.saveDraft).toHaveBeenCalledWith(
       expect.objectContaining({ repoPath: "/repo-a", taskSlug: "task-x", artifact: "02-research.md", anchorId: "a1", body: "half-typed" }),
     );
   });
@@ -75,12 +94,12 @@ describe("a draft still inside its debounce window", () => {
       await vi.advanceTimersByTimeAsync(400);
     });
 
-    expect(mocks.saveArtifactCommentDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo-a", body: "typed" }));
+    expect(fakeArtifacts.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo-a", body: "typed" }));
   });
 });
 
 describe("switching repository with the same task slug", () => {
-  it("flushes the pending draft to the old repo and re-hydrates from the new one", async () => {
+  it("flushes the pending draft to the old repo", async () => {
     const { result, rerender } = renderHook(({ repo }: { repo: string }) => useArtifactCommentDrafts(repo, "task-x"), { initialProps: { repo: "/repo-a" } });
 
     act(() => {
@@ -92,10 +111,8 @@ describe("switching repository with the same task slug", () => {
     });
 
     // The queued draft carries repo A, not whichever repository is active at flush time.
-    expect(mocks.saveArtifactCommentDraftForRepo).toHaveBeenCalledTimes(1);
-    expect(mocks.saveArtifactCommentDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo-a", body: "half-typed" }));
-    // And the remount reads repo B's drafts, never repo A's leftovers.
-    expect(mocks.listArtifactCommentDraftsForRepo).toHaveBeenLastCalledWith("/repo-b", "task-x");
+    expect(fakeArtifacts.saveDraft).toHaveBeenCalledTimes(1);
+    expect(fakeArtifacts.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo-a", body: "half-typed" }));
   });
 });
 
@@ -107,6 +124,6 @@ describe("discarding a draft", () => {
       await result.current.discardDraft("02-research.md", "a1");
     });
 
-    expect(mocks.deleteArtifactCommentDraftForRepo).toHaveBeenCalledWith("/repo-a", "task-x", "02-research.md", "a1");
+    expect(fakeArtifacts.deleteDraft).toHaveBeenCalledWith("/repo-a", "task-x", "02-research.md", "a1");
   });
 });

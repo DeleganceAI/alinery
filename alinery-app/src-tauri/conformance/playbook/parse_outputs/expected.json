@@ -1,0 +1,1255 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"x.md\" overlaps step run output \"x.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "x.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "x.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "x.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "x.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"result-*.md\" overlaps step run output \"result-a.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"result-*.md\" overlaps step run output \"result-a.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"result-a.md\" overlaps step run output \"result-*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"*bc.md\" overlaps step run output \"ab*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"*bc.md\" overlaps step run output \"ab*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"ab*.md\" overlaps step run output \"*bc.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "*a.md"
+              },
+              {
+                "path": "*b.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "*a.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "*b.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "*b.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "*a.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result-a*.md"
+              },
+              {
+                "path": "result-b*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result-a*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result-b*.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result-b*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result-a*.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a/*.md"
+              },
+              {
+                "path": "b/*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a/*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "b/*.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "b/*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a/*.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"abc*.md\" overlaps step run output \"abc.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"abc*.md\" overlaps step run output \"abc.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"abc.md\" overlaps step run output \"abc*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a.md"
+              },
+              {
+                "path": "a*a.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a*a.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a*a.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "a.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"request*.md\" overlaps step run output \"request.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"request*.md\" overlaps step run output \"request.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"request.md\" overlaps step run output \"request*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"requests/*.md\" overlaps step run output \"requests/design.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"requests/*.md\" overlaps step run output \"requests/design.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"requests/design.md\" overlaps step run output \"requests/*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"requests/*sign.md\" overlaps step run output \"requests/design*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"requests/*sign.md\" overlaps step run output \"requests/design*.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[other].outputs[0].path",
+          "line": null,
+          "message": "step other output \"requests/design*.md\" overlaps step run output \"requests/*sign.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "request.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "request.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "requests/design.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "requests/design.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "request.md"
+              },
+              {
+                "path": "Request.md"
+              },
+              {
+                "path": "requests/design.md"
+              },
+              {
+                "path": "Requests/design.md"
+              },
+              {
+                "path": "other/design.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"request.md\" overlaps step run output \"request.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[run].outputs[1].path",
+          "line": null,
+          "message": "step run output \"requests/design.md\" overlaps step run output \"requests/design.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "overlapping_outputs",
+          "field": "step[wildcard].outputs[0].path",
+          "line": null,
+          "message": "step wildcard output \"requests/*.md\" overlaps step other output \"requests/design.md\"",
+          "severity": "error"
+        },
+        {
+          "code": "overlapping_outputs",
+          "field": "step[wildcard].outputs[0].path",
+          "line": null,
+          "message": "step wildcard output \"requests/*.md\" overlaps step run output \"requests/design.md\"",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run",
+          "other"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "result.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "ticket.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          },
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "other",
+            "model": "",
+            "outputs": [
+              {
+                "path": "x.md"
+              }
+            ],
+            "prompt": "Do other.\n",
+            "short": "",
+            "title": "Other"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        },
+        {
+          "code": "missing_step_section",
+          "field": "step[run].prompt",
+          "line": null,
+          "message": "missing section for run",
+          "severity": "error"
+        },
+        {
+          "code": "unknown_step",
+          "field": "step[missing].prompt",
+          "line": 20,
+          "message": "section refers to unknown step missing",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

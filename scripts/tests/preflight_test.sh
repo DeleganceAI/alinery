@@ -50,27 +50,82 @@ check "a session id that merely says running is not a status" \
   "0" "$(live_sessions_from_list_reply '{"sessions":[{"id":"running","status":"exited"}]}')"
 
 # --- repo_daemon_socket: one socket per repo, no lane suffix ------------------
-check "socket path is the repo's .alinery/alineryd.sock" \
-  "/x/y/.alinery/alineryd.sock" "$(repo_daemon_socket /x/y)"
+check "socket path is the repo's .alinery/rpc.sock" \
+  "/x/y/.alinery/rpc.sock" "$(repo_daemon_socket /x/y)"
 check "a trailing slash does not double up" \
-  "/x/y/.alinery/alineryd.sock" "$(repo_daemon_socket /x/y/)"
-check "candidate sockets are the product alineryd path" \
-  "/x/y/.alinery/alineryd.sock" "$(repo_daemon_sockets /x/y)"
+  "/x/y/.alinery/rpc.sock" "$(repo_daemon_socket /x/y/)"
+check "candidate sockets are rpc.sock, then the JSON-lines alineryd.sock of an older daemon" \
+  "/x/y/.alinery/rpc.sock
+/x/y/.alinery/alineryd.sock" "$(repo_daemon_sockets /x/y | grep .)"
 
-# first_live_daemon_socket: public preflight only probes alineryd.sock.
+# first_live_daemon_socket takes the first candidate that answers.
 probe_version() {
   case "$1" in
-    */.alinery/alineryd.sock) printf '{"ok":true}' ;;
+    */.alinery/rpc.sock) printf 'alive' ;;
     *) printf '' ;;
   esac
 }
-check "first live socket is alineryd when that is what answers" \
-  "/tmp/r/.alinery/alineryd.sock" "$(first_live_daemon_socket /tmp/r)"
+check "first live socket is rpc.sock when that is what answers" \
+  "/tmp/r/.alinery/rpc.sock" "$(first_live_daemon_socket /tmp/r)"
+check "an older daemon that answers only on alineryd.sock is still found" \
+  "/tmp/r/.alinery/alineryd.sock" "$(
+    probe_version() { if [ "${1##*/}" = alineryd.sock ]; then printf '{"ok":true}'; fi; }
+    first_live_daemon_socket /tmp/r
+  )"
 . "$LIB"
 check "first live socket is empty when nothing answers" \
   "" "$(
     probe_version() { printf ''; }
     first_live_daemon_socket /tmp/r
+  )"
+
+# --- live_sessions_from_metas: the count for a daemon the installer cannot ask ---------
+# The metas are what the daemon keeps current; its own resume rule is started_at set and
+# ended_at unset. Compact JSON, the way the daemon writes it.
+metas="$(mktemp -d "${TMPDIR:-/tmp}/saga-preflight-metas.XXXXXX")"
+mkdir -p "$metas/.alinery/tasks/t1/sessions" "$metas/.alinery/tasks/t2/sessions" "$metas/.alinery/sessions"
+printf '{"id":"a","created":1,"started_at":1700000000}' >"$metas/.alinery/tasks/t1/sessions/a.meta.json"
+printf '{"id":"b","started_at":1700000000,"status_changed_at":5}' >"$metas/.alinery/tasks/t2/sessions/b.meta.json"
+printf '{"id":"c","started_at":1700000000,"ended_at":1700000100,"exit_code":0}' >"$metas/.alinery/tasks/t1/sessions/c.meta.json"
+printf '{"id":"d","created":1}' >"$metas/.alinery/tasks/t1/sessions/d.meta.json"
+printf '{"id":"e","started_at":1700000000,"archived":true}' >"$metas/.alinery/tasks/t2/sessions/e.meta.json"
+printf '{"id":"f","started_at":1700000000}' >"$metas/.alinery/sessions/f.meta.json"
+printf 'not json at all' >"$metas/.alinery/tasks/t2/sessions/g.meta.json"
+check "counts started, not-ended, not-archived sessions (task-level and repo-level)" \
+  "3" "$(live_sessions_from_metas "$metas")"
+check "a repo with no sessions dir counts zero" "0" "$(live_sessions_from_metas "$metas/nope")"
+rm -rf "$metas"
+
+# daemon_live_sessions picks the wire by the socket it was handed.
+check "a legacy socket is counted from the list reply" "1" "$(
+  probe_list() { printf '{"sessions":[{"status":"running"}]}'; }
+  live_sessions_from_metas() { printf 99; }
+  daemon_live_sessions /r /r/.alinery/alineryd.sock
+)"
+check "rpc.sock is counted from the metas" "99" "$(
+  probe_list() { printf '{"sessions":[{"status":"running"}]}'; }
+  live_sessions_from_metas() { printf 99; }
+  daemon_live_sessions /r /r/.alinery/rpc.sock
+)"
+
+# --- stop_repo_daemon: SIGTERM to the repo's own daemon, JSON shutdown to an older one ----
+# `kill` is shadowed: no real process is signalled.
+check "a current daemon is sent SIGTERM, and only the pids whose --repo is this repo" \
+  "TERM 4242" "$(
+    _pgrep_daemon_listing() {
+      printf '%s\n' '4242 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /tmp/r --app-config /x' \
+        '4343 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /tmp/other --app-config /x' \
+        '4444 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /tmp/r --mcp'
+    }
+    kill() { printf 'TERM %s\n' "$2"; }
+    probe_shutdown() { echo "unexpected JSON shutdown"; }
+    stop_repo_daemon /tmp/r /tmp/r/.alinery/rpc.sock
+  )"
+check "an older daemon is stopped over its JSON-lines socket and nothing is signalled" \
+  "JSON /tmp/r/.alinery/alineryd.sock" "$(
+    kill() { echo "unexpected kill $*"; }
+    probe_shutdown() { printf 'JSON %s' "$1" >&2; }
+    stop_repo_daemon /tmp/r /tmp/r/.alinery/alineryd.sock 2>&1
   )"
 
 # --- known_repos_from_app_config ----------------------------------------------
@@ -148,16 +203,17 @@ check "collapses repeated trailing slashes" "/tmp/x" "$(normalize_repo_path '/tm
 check "leaves an already-normal path alone" "/tmp/x" "$(normalize_repo_path '/tmp/x')"
 check "never eats the root slash" "/" "$(normalize_repo_path '/')"
 
-# --- probe_op: connect, never stat ---------------------------------------------
+# --- probe_version: connect, never stat ---------------------------------------------
 # `.alinery/` accumulates dead lane sockets; a file-exists check would report phantom
-# daemons and prompt the user about work that is not there.
+# daemons and prompt the user about work that is not there. A regular file named like a
+# socket refuses a connect, which is what is under test for both wires.
 : >"$tmp/stale.sock"
-out="$(probe_version "$tmp/stale.sock")"; rc=$?
-check "stale socket file answers nothing" "" "$out"
-check "stale socket probe does not fail the installer" "0" "$rc"
-out="$(probe_version "$tmp/missing.sock")"; rc=$?
-check "absent socket answers nothing" "" "$out"
-check "absent socket probe does not fail the installer" "0" "$rc"
+: >"$tmp/alineryd-stale.sock"
+for dead in "$tmp/stale.sock" "$tmp/alineryd-stale.sock" "$tmp/missing.sock" "$tmp/alineryd-missing.sock"; do
+  out="$(probe_version "$dead")"; rc=$?
+  check "dead socket $(basename "$dead") answers nothing" "" "$out"
+  check "…and its probe does not fail the installer" "0" "$rc"
+done
 out="$(probe_shutdown "$tmp/missing.sock")"; rc=$?
 check "shutting down a socket nobody holds is not an error" "0" "$rc"
 check "…and reports nothing" "" "$out"
@@ -241,6 +297,10 @@ check "product daemon line accepts alineryd" "yes" \
   "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alineryd --repo /x')"
 check "product daemon line accepts vinculum" "yes" \
   "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /x')"
+check "product daemon line rejects the daemon binary's MCP child (--mcp)" "no" \
+  "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --mcp --app-config /a --repo /x')"
+check "product daemon line rejects the managed MCP child (--mcp --serve)" "no" \
+  "$(yesno is_product_daemon_ps_line '42 /Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon --repo /x --mcp --serve --managed')"
 check "product daemon line rejects leftover sagad" "no" \
   "$(yesno is_product_daemon_ps_line '42 /Applications/Saga.app/Contents/MacOS/sagad --repo /x')"
 check "product daemon line rejects a lookalike helper" "no" \

@@ -28,10 +28,12 @@ case "$SRC" in
   *"version_ok"*) echo "ok   - fetch fails an older compiler" ;;
   *) echo "FAIL - fetch fails an older compiler"; fails=$((fails + 1)) ;;
 esac
-case "$(cat "$CHECK")" in
-  *"dev-fetch-bun.sh"*) echo "FAIL - check.sh must not invoke the fetch"; fails=$((fails + 1)) ;;
-  *) echo "ok   - check.sh does not invoke the fetch" ;;
-esac
+# check.sh may name the script in an error message; it must not run it.
+if grep -Eq '^[[:space:]]*("\$ROOT/scripts/|bash |\.?/?scripts/)dev-fetch-bun\.sh' "$CHECK"; then
+  echo "FAIL - check.sh must not invoke the fetch"; fails=$((fails + 1))
+else
+  echo "ok   - check.sh does not invoke the fetch"
+fi
 
 case "$SRC" in
   *"--release"*) echo "ok   - fetch selects the cargo profile" ;;
@@ -63,14 +65,14 @@ import json, sys
 pkg = json.load(open(sys.argv[1]))
 deps = pkg.get("dependencies", {})
 expected = {
-    "@earendil-works/pi-durable": "1.3.0",
-    "@earendil-works/pi-ai": "1.3.0",
-    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/chord": "1.4.0",
 }
 bad = [f"{name}={deps.get(name)!r}" for name, pin in expected.items() if deps.get(name) != pin]
 if bad:
-    raise SystemExit("FAIL - packages are not exactly 1.3.0: " + ", ".join(bad))
-print("ok   - three packages are exactly 1.3.0")
+    raise SystemExit("FAIL - packages are not exactly 1.4.0: " + ", ".join(bad))
+print("ok   - three packages are exactly 1.4.0")
 PY
 status=$?
 if [ "$status" -ne 0 ]; then fails=$((fails + 1)); fi

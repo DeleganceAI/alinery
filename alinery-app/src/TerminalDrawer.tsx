@@ -1,7 +1,10 @@
 import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
+import { useRepoTasks } from "./sync/board";
+import { sessionObservationKey, useSessionObservations } from "./sync/sessionObservation";
+import { writeTerminal } from "./sync/terminal";
 import type { RepoScope, View } from "./types";
 
 export const DRAWER_MIN_WIDTH = 260;
@@ -34,40 +37,29 @@ export function shellCdCommand(path: string): string {
   return `cd ${shellSingleQuote(p)}\n`;
 }
 
-async function worktreeForSlug(slug: string): Promise<string | null> {
-  if (!slug.trim()) return null;
-  try {
-    const tasks = await ipc.listTasks();
-    const task = tasks.find((t) => t.slug === slug);
-    const wt = task?.worktree?.trim();
-    return wt || null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Resolve the "cd here" target from app navigation context.
  * Priority: session/task/create-draft worktree → active repo root → home
  * (home when all-repos scope or no active repo / unresolved).
  */
-export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope; activeRepo: string | undefined; home: string }): Promise<string> {
-  const { view, scope, activeRepo, home } = opts;
+export function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope; activeRepo: string | undefined; home: string; tasks: { slug: string; worktree: string }[] }): string {
+  const { view, scope, activeRepo, home, tasks } = opts;
+  const worktreeForSlug = (slug: string) => (slug.trim() ? tasks.find((t) => t.slug === slug)?.worktree?.trim() || null : null);
   const homeFallback = home.trim() || "~";
 
   if (view.kind === "session") {
     if (view.cwd.trim()) return view.cwd.trim();
-    const fromTask = await worktreeForSlug(view.taskSlug);
+    const fromTask = worktreeForSlug(view.taskSlug);
     if (fromTask) return fromTask;
   }
 
   if (view.kind === "task") {
-    const fromTask = await worktreeForSlug(view.slug);
+    const fromTask = worktreeForSlug(view.slug);
     if (fromTask) return fromTask;
   }
 
   if (view.kind === "reviewHandoff") {
-    const fromTask = await worktreeForSlug(view.source.source_slug);
+    const fromTask = worktreeForSlug(view.source.source_slug);
     if (fromTask) return fromTask;
   }
 
@@ -83,9 +75,8 @@ export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope
 }
 
 function CdHereButton({ sessionId, target }: { sessionId: string | null; target: string }) {
-  const [busy, setBusy] = useState(false);
   const dest = target.trim();
-  const ready = Boolean(sessionId && dest && !busy);
+  const ready = Boolean(sessionId && dest);
   return (
     <button
       type="button"
@@ -95,10 +86,7 @@ function CdHereButton({ sessionId, target }: { sessionId: string | null; target:
       aria-label={dest ? `cd here: ${dest}` : "cd here (resolving path)"}
       onClick={() => {
         if (!sessionId || !dest) return;
-        setBusy(true);
-        void Promise.resolve(ipc.writeSession(sessionId, shellCdCommand(dest)))
-          .catch(() => {})
-          .finally(() => setBusy(false));
+        writeTerminal(sessionId, shellCdCommand(dest));
       }}
     >
       <CornerDownRight size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -140,7 +128,9 @@ export function TerminalDrawer({
   activeRepo: string | undefined;
 }) {
   const [home, setHome] = useState("");
-  const [cdTarget, setCdTarget] = useState("");
+  // The task rows come from the active repo's stream, so the target is known as soon as the view is.
+  const tasks = useRepoTasks(activeRepo) ?? [];
+  const cdTarget = resolveDrawerCdTarget({ view, scope, activeRepo, home, tasks });
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
@@ -167,16 +157,6 @@ export function TerminalDrawer({
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    resolveDrawerCdTarget({ view, scope, activeRepo, home }).then((t) => {
-      if (alive) setCdTarget(t);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [view, scope, activeRepo, home]);
-
-  useEffect(() => {
     activeTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeId]);
 
@@ -188,34 +168,27 @@ export function TerminalDrawer({
     if (!focused || focused === document.body || tabListRef.current?.contains(focused)) activeTabRef.current?.focus();
   }, [tabIds]);
 
+  // A tab whose session has stopped is reported once, as the subscription shows it.
+  const drawerRefs = useMemo(
+    () =>
+      activeRepo
+        ? tabIds
+            .split("\n")
+            .filter(Boolean)
+            .map((id) => ({ repo_path: activeRepo, task_slug: "", id }))
+        : [],
+    [tabIds, activeRepo],
+  );
+  const observed = useSessionObservations(drawerRefs);
+  const reportedExit = useRef(new Set<string>());
   useEffect(() => {
-    const ids = tabIds.split("\n").filter(Boolean);
-    if (ids.length === 0) return;
-    const reported = new Set<string>();
-    let alive = true;
-    const tick = () => {
-      for (const id of ids) {
-        if (reported.has(id)) continue;
-        ipc
-          .sessionStatus(id, "")
-          .then((obs) => {
-            if (!alive || reported.has(id)) return;
-            const state = obs.lifecycle.state;
-            if (state !== "live" && state !== "never_started") {
-              reported.add(id);
-              onTabExited(id);
-            }
-          })
-          .catch(() => {});
-      }
-    };
-    tick();
-    const timer = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [tabIds, onTabExited]);
+    for (const ref of drawerRefs) {
+      const state = observed[sessionObservationKey(ref.repo_path, "", ref.id)]?.lifecycle.state;
+      if (!state || state === "live" || state === "never_started" || reportedExit.current.has(ref.id)) continue;
+      reportedExit.current.add(ref.id);
+      onTabExited(ref.id);
+    }
+  }, [drawerRefs, observed, onTabExited]);
 
   if (!open && tabs.length === 0) return null;
 

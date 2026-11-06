@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { taskKey } from "../shared";
+import { fakeBoard } from "../test/boardHooks";
 import type * as IpcFixtures from "../test/mockIpc";
-import type { BoardTask, NormalizedPlaybook, ReviewHandoffResult, ScopedSettings, TaskExecutionReply } from "../types";
+import type { BoardTask, Config, NormalizedPlaybook, ReviewHandoffResult, TaskExecutionReply } from "../types";
 import { ReviewHandoffPage } from "./ReviewHandoffPage";
 
 const sourceTask = {
@@ -93,11 +94,14 @@ const handoffResult: ReviewHandoffResult = {
   target_record: { ...handoffRecord, direction: "inbound" },
 };
 const mocks = vi.hoisted(() => ({
-  listBoardTasks: vi.fn(),
-  readScopedSettingsForRepo: vi.fn(),
   getTaskExecution: vi.fn(),
   sendReviewHandoff: vi.fn(),
 }));
+const readEffectiveConfig = vi.hoisted(() => vi.fn());
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
+vi.mock("../sync/artifacts", async (actual) => ({ ...(await actual<typeof import("../sync/artifacts")>()), sendReviewHandoff: mocks.sendReviewHandoff }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", async () => {
   // The hoisted IPC factory runs before shared.tsx finishes importing its dependencies.
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
@@ -106,8 +110,8 @@ vi.mock("../ipc", async () => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.listBoardTasks.mockResolvedValue([sourceTask, foreignTask, otherTask]);
-  mocks.readScopedSettingsForRepo.mockResolvedValue({ effective: { defaults: { harness: "omp", model: "gpt-5" } } } as ScopedSettings);
+  fakeBoard.set({ tasks: [sourceTask, foreignTask, otherTask] });
+  readEffectiveConfig.mockResolvedValue({ defaults: { harness: "omp", model: "gpt-5" } } as Config);
   mocks.getTaskExecution.mockResolvedValue({ definition } as TaskExecutionReply);
 });
 afterEach(cleanup);
@@ -116,7 +120,7 @@ function renderPage(onConfirmed = vi.fn()) {
   return render(
     <ReviewHandoffPage
       source={{ source_repo_path: "/a", source_slug: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md" }}
-      allRepos
+      repos={fakeBoard.repos()}
       activeRepo="/a"
       onCancel={() => {}}
       onConfirmed={onConfirmed}
@@ -149,6 +153,27 @@ describe("ReviewHandoffPage", () => {
     await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(result));
   });
 
+  it("offers only targets on the source's machine", async () => {
+    const remoteSource = { ...sourceTask, repo_path: "alinery+ssh://box-a1b2c3/srv/a", name: "Remote source" };
+    const sameHost = { ...foreignTask, repo_path: "alinery+ssh://box-a1b2c3/srv/b", name: "Same host" };
+    const otherHost = { ...foreignTask, repo_path: "alinery+ssh://other-00aa11/srv/c", name: "Other host", slug: "elsewhere" };
+    const onThisMac = { ...foreignTask, name: "On this Mac", slug: "mac" };
+    fakeBoard.set({ tasks: [remoteSource, sameHost, otherHost, onThisMac] });
+    render(
+      <ReviewHandoffPage
+        source={{ source_repo_path: remoteSource.repo_path, source_slug: "shared", source_session: "s1", source_artifact: "review/3-findings-1.md" }}
+        repos={fakeBoard.repos()}
+        activeRepo={remoteSource.repo_path}
+        onCancel={() => {}}
+        onConfirmed={() => {}}
+      />,
+    );
+    await screen.findByRole("option", { name: /Same host/ });
+    expect(screen.queryByRole("option", { name: /Other host/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /On this Mac/ })).toBeNull();
+    expect(screen.getByText("Source repository: box-a1b2c3:/srv/a")).toBeTruthy();
+  });
+
   it("keeps a created session inspectable when the handoff reports a partial failure", async () => {
     const result: ReviewHandoffResult = {
       ...handoffResult,
@@ -170,7 +195,7 @@ describe("ReviewHandoffPage", () => {
   });
 
   it("clears a leftover claude-owned default model from the selected target repository", async () => {
-    mocks.readScopedSettingsForRepo.mockResolvedValue({ effective: { defaults: { harness: "claude", model: "sonnet" } } } as ScopedSettings);
+    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "claude", model: "sonnet" } } as Config);
     renderPage();
     await selectTarget();
     expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe("");

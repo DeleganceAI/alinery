@@ -368,9 +368,72 @@ export type Harness = {
 };
 export type EffectiveHarness = Harness & { source: SettingSource };
 export type HarnessFile = { harness: Harness[] };
+/** An SSH host that remote repos (`alinery+ssh://<host-id>/<path>`) live on. */
+export type RemoteHost = {
+  label: string;
+  ssh_args: string[];
+  home?: string | null;
+  platform?: string | null;
+  glibc?: string | null;
+  /** Whether the onboarding steps have run on this host. */
+  onboarded?: boolean;
+};
+export type RemoteHostView = {
+  host_id: string;
+  label: string;
+  destination: string;
+  /** `reconnecting`: the connection dropped and the app is retrying on its own. */
+  state: "idle" | "connecting" | "reconnecting" | "connected" | "failed";
+  /** A `failed` host nothing will retry. `failed` alone also shows briefly while a dropped link is about to be retried. */
+  gave_up: boolean;
+  /** What the connect dialog shows while `connecting`. */
+  phase: string;
+  error: string | null;
+  home: string | null;
+  platform: string | null;
+  /** False for a host that has not been told what it may receive yet. */
+  sharing_reviewed: boolean;
+  /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
+  erased_sign_ins: string[];
+};
+/** One row of the host list: this computer first (`host_id` "local"), then each remote host. */
+export type HostEntry = {
+  host_id: string;
+  label: string;
+  local: boolean;
+  onboarded: boolean;
+  remote: RemoteHostView | null;
+};
+/** Why a host cannot run a daemon, found by the probe before anything is installed (`Refusal` in remote.rs). */
+export type RefusalKind = "not_linux" | "unsupported_cpu" | "no_glibc" | "old_glibc" | "large_pages" | "missing_tools" | "no_runtime" | "stops_processes";
+export type HostRefusal = { kind: RefusalKind; message: string; missing_tools: string[]; fix: string | null };
+/** What "Test connection" learned about a host the probe accepts. */
+export type HostTestReport = { platform: string; glibc: string | null };
+/** Where a destination resolves to, as `ssh -G` reports it. */
+export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
+/** What this Mac could give a host, and what the host is set to receive. */
+export type RemoteSharingView = {
+  reviewed: boolean;
+  /** Items to show ticked: `hosted-models`, `custom-providers`, `grok`, `key:<provider>`. */
+  shared: string[];
+  keys: string[];
+  /** Browser sign-ins on this Mac. Never copied. */
+  sign_ins: string[];
+  custom_providers: boolean;
+  grok: boolean;
+  hosted: boolean;
+  /** Unix seconds. */
+  hosted_expires_at: number | null;
+  erased_sign_ins: string[];
+};
+export type RemoteDirEntry = { name: string; git: boolean; symlink: boolean };
+export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; truncated: boolean };
 export type AppConfig = {
   active_repo: string;
   known_repos: string[];
+  /** Whether the onboarding steps have run on this computer. */
+  local_onboarded?: boolean;
+  remote_hosts?: Record<string, RemoteHost>;
   mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;
@@ -572,6 +635,8 @@ export type SessionObservation = {
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
   transport?: SessionTransport | null;
+  /** What an attention notification calls the session: its task's name (S4.4). */
+  attention_label?: string;
 };
 
 export type ChatPart =
@@ -687,6 +752,13 @@ export type DownloadStatusRow = {
   locallyEdited: boolean;
   error: string | null;
 };
+/** What the library says about one publication (the shell asks it, without the account). */
+export type RemoteStatusRow = { id: string; title: string | null; description: string | null; remoteVersion: number | null; remoteMissing: boolean; error: string | null };
+/** A package downloaded with this machine's account, for the repository's daemon to import. */
+export type CommunitySourceResult =
+  | { kind: "downloaded"; document: string; version: number; label: string; playbookKey: string }
+  | { kind: "needs_account" }
+  | { kind: "failed"; message: string };
 export type ImportResult =
   | { kind: "saved"; reference: PlaybookRef; importedVersion: number; localSha256: string }
   | { kind: "needs_account" }
@@ -767,6 +839,8 @@ export type TaskExecutionState = {
   max_live_sessions: number;
   enabled_steps: string[];
   auto_approve_all?: boolean;
+  /** O21: the records are the old runner's. They show as finished history, with no approve or resume. */
+  history_only?: boolean;
   launch_defaults: LaunchChoices;
   executions: Record<string, ExecutionRecord>;
   occurrences: Record<string, ArtifactOccurrence>;
@@ -786,16 +860,25 @@ export type TaskExecutionState = {
   >;
 };
 export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
-export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook; live: ExecutionAvailability };
+export type TaskExecutionReply = {
+  state: TaskExecutionState;
+  definition: NormalizedPlaybook;
+  live: ExecutionAvailability;
+  /** The execution row's revision, sent back as `expected_revision` when the person approves from this view. */
+  revision?: bigint;
+};
 export type TaskAttachment = { name: string; bytes: string };
-export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
+/** A file already uploaded to the daemon's staging area (`prepareTaskAttachments`); CreateTask names it by this id. */
+export type StagedUpload = { name: string; upload_id: string };
+export type PreparedTaskAttachments = { attachments: StagedUpload[]; attachment_urls: string[]; attachment_errors: string[] };
+export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
 export type CreateTaskRequest = {
   name: string;
   draft_slug?: string | null;
   requested_slug?: string | null;
   description?: string;
   evidence?: string;
-  attachments?: TaskAttachment[];
+  attachments?: (TaskAttachment | StagedUpload)[];
   attachment_urls?: string[];
   attachment_errors?: string[];
   linear_id?: string;
@@ -829,6 +912,8 @@ export type RepoScope = "active" | "all";
 export type ReviewHandoffRecord = {
   version: number;
   direction: string;
+  source_repo_path?: string;
+  target_repo_path?: string;
   source_task: string;
   source_session: string;
   source_artifact: string;
@@ -874,6 +959,8 @@ export type ArtifactTreeNode = {
   owner_task_slug: string;
   source: ArtifactTreeSource;
   children: ArtifactTreeNode[];
+  /** An attachment's path below `.alinery/` on the daemon's machine, for Reveal; never read as a file name. */
+  reveal_path?: string;
 };
 
 export type SessionMessageActionProvenance =
@@ -1030,9 +1117,12 @@ export type TakeoverPreview = {
 
 export type TakeoverOutcome = { status: "attached" } | { status: "blocked"; conflict: DaemonConflict } | { status: "reconfirm"; preview: TakeoverPreview };
 
+/** What only the shell knows about a repo's daemon (the `daemon_status` command); the rest of `DaemonStatus` is the daemon's own entity. */
+export type ShellDaemonStatus = Pick<DaemonStatus, "mode" | "extra_lanes" | "stale_lanes" | "repo" | "build_drift" | "conflict" | "repo_busy">;
+
 export type DaemonStatus = {
   reachable: boolean;
-  mode: string; // "local" today; "remote" reserved for a future remote daemon
+  mode: string; // "local", or "remote" for a daemon behind an SSH forward
   // Independent process-level count (alive PTY processes).
   alive: number;
   // Agent-state counts (OMP-only; unsupported/unknown sessions excluded from agent counts).
@@ -1052,7 +1142,7 @@ export type DaemonStatus = {
   conflict: DaemonConflict | null;
   /** B6: another live alinery holds this repo's `.alinery/.alinery-app.lock`. */
   repo_busy: boolean;
-  /** The selected daemon lacks a canonical executable for dynamic host screening. */
+  /** The daemon reports (entity `daemon/_/status`) that it lacks a canonical executable for dynamic host screening. */
   host_guard_warning: boolean;
 };
 
@@ -1063,6 +1153,7 @@ export type McpStatus = {
   socket_reachable: boolean;
   binary_found: boolean;
   binary_path: string;
+  host_args: string[];
   repo: string;
   socket_path: string;
   error: string;

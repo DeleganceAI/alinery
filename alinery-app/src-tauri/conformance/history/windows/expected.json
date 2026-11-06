@@ -1,0 +1,69 @@
+{
+  "reads": [
+    {
+      "data": "0123",
+      "eof": false,
+      "length": 29,
+      "next_offset": 4
+    },
+    {
+      "data": "89abcdef\nsecond line\n",
+      "eof": true,
+      "length": 29,
+      "next_offset": 29
+    },
+    {
+      "data": "\n",
+      "eof": true,
+      "length": 29,
+      "next_offset": 29
+    },
+    {
+      "data": "",
+      "eof": true,
+      "length": 29,
+      "next_offset": 500
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    }
+  ],
+  "windows": [
+    {
+      "data": "{\"id\":\"row-one\",\"text\":\"row-one\"}\n{\"id\":\"row-two\",\"text\":\"row-two\"}\n{\"id\":\"row-three\",\"text\":\"row-three\"}\n",
+      "end": 106,
+      "length": 106,
+      "start": 0
+    },
+    {
+      "data": "{\"id\":\"row-three\",\"text\":\"row-three\"}\n",
+      "end": 106,
+      "length": 106,
+      "start": 68
+    },
+    {
+      "data": "{\"id\":\"row-two\",\"text\":\"row-two\"}\n",
+      "end": 68,
+      "length": 106,
+      "start": 34
+    },
+    {
+      "data": "{\"id\":\"row-one\",\"text\":\"row-one\"}\n",
+      "end": 34,
+      "length": 106,
+      "start": 0
+    },
+    {
+      "error": true
+    }
+  ]
+}

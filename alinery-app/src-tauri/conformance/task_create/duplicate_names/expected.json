@@ -1,0 +1,94 @@
+{
+  "same-name": {
+    "artifacts/00-ticket.md": "# Same Name\n\n## Evidence & Pointers\n\n- attachments/a.txt\n- attachments/a-2.txt\n- attachments/a-3.txt\n",
+    "artifacts/attachments/a-2.txt": "second",
+    "artifacts/attachments/a-3.txt": "third",
+    "artifacts/attachments/a.txt": "first",
+    "execution.json": {
+      "creation": "ready",
+      "definition_identity": "77824ddb9d5e8a28",
+      "enabled_steps": [],
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "max_live_sessions": 10,
+      "owning_lane": "",
+      "reference": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "version": 1
+    },
+    "task.md": {
+      "archived": false,
+      "auto_advance": [],
+      "auto_approve_all": false,
+      "branch": "same-name",
+      "draft": false,
+      "engine_version": 2,
+      "github_issue": "",
+      "has_worktree": true,
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "linear_id": "",
+      "max_live_sessions": 10,
+      "name": "Same Name",
+      "playbook": "",
+      "playbook_ref": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "pr_url": "",
+      "slug": "same-name"
+    }
+  },
+  "same-name-1": {
+    "artifacts/00-ticket.md": "# Same Name\n\n## Evidence & Pointers\n\n- attachments/a.txt\n- attachments/a-2.txt\n- attachments/a-3.txt\n",
+    "artifacts/attachments/a-2.txt": "second",
+    "artifacts/attachments/a-3.txt": "third",
+    "artifacts/attachments/a.txt": "first",
+    "execution.json": {
+      "creation": "ready",
+      "definition_identity": "77824ddb9d5e8a28",
+      "enabled_steps": [],
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "max_live_sessions": 10,
+      "owning_lane": "",
+      "reference": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "version": 1
+    },
+    "task.md": {
+      "archived": false,
+      "auto_advance": [],
+      "auto_approve_all": false,
+      "branch": "same-name-1",
+      "draft": false,
+      "engine_version": 2,
+      "github_issue": "",
+      "has_worktree": true,
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "linear_id": "",
+      "max_live_sessions": 10,
+      "name": "Same Name",
+      "playbook": "",
+      "playbook_ref": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "pr_url": "",
+      "slug": "same-name-1"
+    }
+  }
+}

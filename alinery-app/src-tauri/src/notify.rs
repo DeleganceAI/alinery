@@ -73,28 +73,11 @@ pub(crate) fn set_dock_badge_count(app: AppHandle, count: i64) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn session_attention_body(repo: &Path, slug: Option<String>, reason: &str) -> Result<String, String> {
-    let suffix = match reason {
-        "idle" => "idle, needs you",
-        "waiting_for_input" => "waiting for your input",
-        "waiting_for_approval" => "waiting for your approval",
-        _ => return Err(format!("unsupported attention reason: {reason}")),
-    };
-    let label = slug
-        .as_ref()
-        .and_then(|slug| read_task(repo, slug).ok().map(|task| task.name))
-        .or(slug)
-        .unwrap_or_else(|| "session".to_string());
-    Ok(format!("{label} — {suffix}"))
-}
-
-// Semantic attention bridge. The frontend calls this on normalized transitions into
-// idle/waiting states; only the three allowed semantic transitions may fire a notification.
-// Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
+// Semantic attention bridge. The frontend calls this on normalized transitions into idle/waiting states with the text
+// it composed from the session's own entity (its task's name, the reason); only the three allowed semantic transitions
+// reach it. Unsupported/unknown sessions must never reach this path (plan Step 3, TDD 3C).
 #[tauri::command]
-pub(crate) fn notify_session_attention(app: AppHandle, repo_path: String, slug: Option<String>, reason: String) -> Result<(), String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    let body = session_attention_body(&repo, slug, &reason)?;
+pub(crate) fn notify_session_attention(app: AppHandle, body: String) -> Result<(), String> {
     fire_app_notification(&app, &body);
     Ok(())
 }

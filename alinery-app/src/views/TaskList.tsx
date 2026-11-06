@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import {
   ArchiveTaskModal,
@@ -11,13 +10,14 @@ import {
   formatAge,
   InlineStatus,
   LoadingState,
+  RepoLinkNotices,
   repoName,
-  sameBoardTasks,
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
   useMinuteNow,
 } from "../shared";
+import { useRepoBoard } from "../sync/board";
 import type { BoardNav, BoardTask, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
 import "./TaskList.css";
 
@@ -107,6 +107,7 @@ export function flattenTaskRows(tasks: BoardTask[], compare = compareTaskRows): 
 type ErrState = { msg: string; detail: string } | null;
 export function TaskList({
   allRepos,
+  repos,
   onOpen,
   onDuplicate,
   registerNav,
@@ -114,18 +115,21 @@ export function TaskList({
   onCreate,
 }: {
   allRepos: boolean;
+  /** The repos this list shows: every known repo, or the active one. Each has its own stream. */
+  repos: string[];
   onOpen: (task: BoardTask) => void;
   onDuplicate: (task: BoardTask) => void;
   registerNav: (n: BoardNav | null) => void;
   onOpenActiveSession: (task: BoardTask, session: TaskActivitySession) => void;
   onCreate: () => void;
 }) {
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
-  const [loaded, setLoaded] = useState(false);
   const [selectedKey, setSelectedKey] = useState("");
   const [err, setErr] = useState<ErrState>(null);
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const board = useRepoBoard(repos);
+  const loaded = board.loaded;
+  const tasks = useMemo(() => board.tasks.filter((task) => showArchived || !task.archived), [board.tasks, showArchived]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [playbookFilter, setPlaybookFilter] = useState("");
@@ -186,23 +190,6 @@ export function TaskList({
   };
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
 
-  const load = () =>
-    ipc
-      .listBoardTasks(allRepos)
-      .then((ts) => {
-        const visible = ts.filter((task) => showArchived || !task.archived);
-        setTasks((current) => (sameBoardTasks(current, visible) ? current : visible));
-        setErr(null);
-      })
-      .catch((e) => setErr({ msg: "Couldn't load tasks.", detail: String(e) }))
-      .finally(() => setLoaded(true));
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 3000);
-    return () => window.clearInterval(timer);
-  }, [allRepos, showArchived]);
-
   useEffect(() => {
     void import("../views/TaskDetail");
   }, []);
@@ -255,7 +242,6 @@ export function TaskList({
       setErr(failure);
       return;
     }
-    void load();
   };
 
   const heading = (
@@ -344,6 +330,7 @@ export function TaskList({
           {err.msg}
         </InlineStatus>
       )}
+      <RepoLinkNotices repos={board.repos} />
       {!loaded && <LoadingState label="Loading tasks" state={ORB_STATE} />}
       {empty ? (
         <div className="list list-empty">

@@ -1,0 +1,7 @@
+[global.harnesses]
+[[global.harnesses.harness]]
+key = "omp"
+name = "Global OMP"
+binary = "/opt/omp"
+models_cmd = "{binary} models"
+adapter = "omp"

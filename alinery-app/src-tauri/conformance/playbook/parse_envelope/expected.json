@@ -1,0 +1,158 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "errors": [
+        {
+          "code": "missing_frontmatter",
+          "field": null,
+          "line": 1,
+          "message": "expected v2 TOML +++ frontmatter at the beginning of the file",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_frontmatter",
+          "field": null,
+          "line": 1,
+          "message": "expected v2 TOML +++ frontmatter at the beginning of the file",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_frontmatter",
+          "field": null,
+          "line": 1,
+          "message": "expected v2 TOML +++ frontmatter at the beginning of the file",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_frontmatter",
+          "field": null,
+          "line": 1,
+          "message": "expected v2 TOML +++ frontmatter at the beginning of the file",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_frontmatter_end",
+          "field": null,
+          "line": 1,
+          "message": "missing closing +++ delimiter",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_toml",
+          "field": null,
+          "line": 3,
+          "message": "TOML parse error at line 2, column 1\n  |\n2 | key = \"test\"\n  | ^\ninvalid array\nexpected `]`\n",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unsupported_version",
+          "field": "version",
+          "line": null,
+          "message": "only playbook version 2 is supported",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unsupported_version",
+          "field": "version",
+          "line": null,
+          "message": "only playbook version 2 is supported",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_field_type",
+          "field": "version",
+          "line": null,
+          "message": "version must be integer",
+          "severity": "error"
+        },
+        {
+          "code": "unsupported_version",
+          "field": "version",
+          "line": null,
+          "message": "only playbook version 2 is supported",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\r\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\r\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\r\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\r\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    }
+  ]
+}

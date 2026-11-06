@@ -1,0 +1,78 @@
+{
+  "include_archived_false": [
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-pin",
+      "name": "Pinned one",
+      "pinned": true
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-next",
+      "name": null,
+      "pinned": false
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-new",
+      "name": "New thread",
+      "pinned": false
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-omp",
+      "name": null,
+      "pinned": false
+    }
+  ],
+  "include_archived_true": [
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-pin",
+      "name": "Pinned one",
+      "pinned": true
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-next",
+      "name": null,
+      "pinned": false
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-new",
+      "name": "New thread",
+      "pinned": false
+    },
+    {
+      "archived": false,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-omp",
+      "name": null,
+      "pinned": false
+    },
+    {
+      "archived": true,
+      "branch_label": "main",
+      "checkout": true,
+      "id": "c-gone",
+      "name": null,
+      "pinned": false
+    }
+  ]
+}

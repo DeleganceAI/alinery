@@ -1,26 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_STATE_ART } from "../emptyStateArt";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, TaskActivityMap, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, TaskActivitySummary } from "../types";
 import { flattenTaskRows, TaskList } from "./TaskList";
 
-const scenario = vi.hoisted(() => ({
-  tasks: [] as BoardTask[],
-  error: "",
-}));
-let activity: TaskActivityMap = {};
-
-vi.mock("../ipc", () =>
-  mockIpc({
-    listBoardTasks: async () => {
-      if (scenario.error) throw new Error(scenario.error);
-      return structuredClone(scenario.tasks);
-    },
-    listTaskActivity: async () => activity,
-  }),
-);
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../ipc", () => mockIpc());
 
 function task(slugOrOverrides: string | Partial<BoardTask> = "a-task", taskOverrides: Partial<BoardTask> = {}): BoardTask {
   const slug = typeof slugOrOverrides === "string" ? slugOrOverrides : "a-task";
@@ -74,29 +62,26 @@ const summary = (overrides: Partial<TaskActivitySummary> = {}): TaskActivitySumm
 
 beforeEach(() => {
   window.localStorage.clear();
-  scenario.tasks = [];
-  scenario.error = "";
-  activity = {};
+  fakeBoard.reset();
 });
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
-  scenario.tasks = [];
-  activity = {};
+  fakeBoard.reset();
   vi.clearAllMocks();
 });
 
 describe("Task List duplicate selection", () => {
   it("passes the repository-qualified highlighted row and renders no row action", async () => {
-    scenario.tasks = [
-      task("same", { name: "First", repo_path: "/repo-a", worktree: "/repo-a/same" }),
-      task("same", { name: "Second", repo_path: "/repo-b", worktree: "/repo-b/same" }),
-    ];
+    fakeBoard.set({
+      tasks: [task("same", { name: "First", repo_path: "/repo-a", worktree: "/repo-a/same" }), task("same", { name: "Second", repo_path: "/repo-b", worktree: "/repo-b/same" })],
+    });
     const onDuplicate = vi.fn();
     let nav: BoardNav | null = null;
     render(
       <TaskList
+        repos={["/repo-a", "/repo-b"]}
         allRepos
         onOpen={() => {}}
         onDuplicate={onDuplicate}
@@ -165,11 +150,12 @@ describe("flattenTaskRows", () => {
 
 describe("Task List relationship projection", () => {
   it("renders nested rows and moves keyboard selection over the flattened order", async () => {
-    scenario.tasks = [task("child", { parent_task: "parent", created: 2 }), task("parent", { active_subtask: "child", created: 1 })];
+    fakeBoard.set({ tasks: [task("child", { parent_task: "parent", created: 2 }), task("parent", { active_subtask: "child", created: 1 })] });
     const onOpen = vi.fn();
     let nav: BoardNav | null = null;
     render(
       <TaskList
+        repos={["/r"]}
         allRepos={false}
         onOpen={onOpen}
         onDuplicate={() => {}}
@@ -192,8 +178,8 @@ describe("Task List relationship projection", () => {
   });
 
   it("includes archived child history alongside active tasks and can hide it again", async () => {
-    scenario.tasks = [task("parent", { created: 1 }), task("child", { parent_task: "parent", archived: true, created: 2 })];
-    render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
+    fakeBoard.set({ tasks: [task("parent", { created: 1 }), task("child", { parent_task: "parent", archived: true, created: 2 })] });
+    render(<TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await screen.findByText("PARENT");
     expect(screen.queryByText("CHILD")).toBeNull();
 
@@ -208,23 +194,25 @@ describe("Task List relationship projection", () => {
   });
 
   it("marks a visible child whose parent is filtered out", async () => {
-    scenario.tasks = [task("child", { parent_task: "filtered-parent" })];
-    render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
+    fakeBoard.set({ tasks: [task("child", { parent_task: "filtered-parent" })] });
+    render(<TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await screen.findByText("CHILD");
     expect(screen.getByText("Child of filtered-parent")).toBeDefined();
   });
 
-  it("surfaces backend relationship corruption and refuses stale rows", async () => {
-    scenario.error = "relationship corruption: active-child cycle reaches 'a'";
-    render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/relationship corruption/)).toBeDefined());
+  it("shows a repo without a daemon connection as its banner and no rows", async () => {
+    fakeBoard.set({ tasks: [task()], down: ["/r"] });
+    render(<TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
+    await screen.findByText("r: no daemon connection");
     expect(document.querySelectorAll(".task-name-text")).toHaveLength(0);
   });
 });
 
 describe("TaskList empty", () => {
   it("renders a catalog plate on the major empty surface", async () => {
-    const { container } = render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    const { container } = render(
+      <TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />,
+    );
     await screen.findByText("No tasks yet.");
     const img = container.querySelector("img.empty-state-art");
     expect(img).not.toBeNull();
@@ -234,11 +222,13 @@ describe("TaskList empty", () => {
 
   it("shows only the highest-priority session status and opens the selected active session", async () => {
     const row = task();
-    scenario.tasks = [row];
-    activity = { "/r:a-task": summary() };
+    fakeBoard.set({ tasks: [row] });
+    fakeBoard.set({ activity: { "/r:a-task": summary() } });
     const onOpen = vi.fn();
     const onOpenActiveSession = vi.fn();
-    render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={onOpenActiveSession} registerNav={() => {}} onCreate={() => {}} />);
+    render(
+      <TaskList repos={["/r"]} allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={onOpenActiveSession} registerNav={() => {}} onCreate={() => {}} />,
+    );
 
     const activeButton = await screen.findByRole("button", { name: "Design" });
     const table = within(screen.getByRole("table"));
@@ -251,9 +241,11 @@ describe("TaskList empty", () => {
   });
 
   it("renders an em dash when no session is active", async () => {
-    scenario.tasks = [task()];
-    activity = { "/r:a-task": summary({ status: null, active_session: null }) };
-    const { container } = render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    fakeBoard.set({ tasks: [task()] });
+    fakeBoard.set({ activity: { "/r:a-task": summary({ status: null, active_session: null }) } });
+    const { container } = render(
+      <TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />,
+    );
     await screen.findByText("A task");
     expect(container.querySelector("tbody tr td:nth-child(3)")?.textContent).toBe("—");
   });
@@ -270,11 +262,12 @@ describe("Task List column sorting", () => {
       window.localStorage.setItem("alinery:task-list:sort", JSON.stringify({ field: "updated", direction: "desc" }));
       const alpha = task("alpha", { created: epoch - 120, updated: epoch - 60 });
       const beta = task("beta", { created: epoch - 120, updated: epoch - 60 });
-      scenario.tasks = [beta, alpha];
+      fakeBoard.set({ tasks: [beta, alpha] });
       let nav: BoardNav | null = null;
       const onOpen = vi.fn();
       render(
         <TaskList
+          repos={["/r"]}
           allRepos={false}
           onOpen={onOpen}
           onDuplicate={() => {}}
@@ -292,7 +285,7 @@ describe("Task List column sorting", () => {
         [alpha, beta],
         [beta, alpha],
       ]) {
-        scenario.tasks = tasks;
+        fakeBoard.set({ tasks: tasks });
         await act(async () => {
           await vi.advanceTimersByTimeAsync(30_000);
         });
@@ -301,7 +294,7 @@ describe("Task List column sorting", () => {
       }
       expect([...document.querySelectorAll(".age-cell:last-child")].map((cell) => cell.textContent)).toEqual(["2m", "2m"]);
 
-      scenario.tasks = [alpha, { ...beta, updated: epoch + 60 }];
+      fakeBoard.set({ tasks: [alpha, { ...beta, updated: epoch + 60 }] });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3_000);
       });
@@ -315,8 +308,8 @@ describe("Task List column sorting", () => {
   });
 
   it("restores the selected column and direction after leaving and remounting the task list", async () => {
-    scenario.tasks = [task("alpha", { created: 1, session_count: 2 }), task("beta", { created: 2, session_count: 10 })];
-    const list = <TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />;
+    fakeBoard.set({ tasks: [task("alpha", { created: 1, session_count: 2 }), task("beta", { created: 2, session_count: 10 })] });
+    const list = <TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />;
     const { rerender } = render(list);
     await screen.findByText("ALPHA");
     fireEvent.click(screen.getByRole("button", { name: "Sort by Sessions" }));
@@ -338,8 +331,8 @@ describe("Task List column sorting", () => {
 
   it.each([null, JSON.stringify({ field: "removed-column", direction: "desc" })])("shows recently updated tasks first without a valid saved sort (%s)", async (saved) => {
     if (saved !== null) window.localStorage.setItem("alinery:task-list:sort", saved);
-    scenario.tasks = [task("alpha", { created: 1, updated: 30 }), task("beta", { created: 2, updated: 20 }), task("legacy", { created: 25, updated: 0 })];
-    render(<TaskList allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    fakeBoard.set({ tasks: [task("alpha", { created: 1, updated: 30 }), task("beta", { created: 2, updated: 20 }), task("legacy", { created: 25, updated: 0 })] });
+    render(<TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByText("ALPHA");
     expect(names()).toEqual(["ALPHA", "LEGACY", "BETA"]);
     expect(screen.getByRole("button", { name: "Sort by Updated" }).closest("th")?.getAttribute("aria-sort")).toBe("descending");
@@ -348,20 +341,24 @@ describe("Task List column sorting", () => {
   });
 
   it("sorts every column in both directions using displayed values, numeric counts, and missing activity last", async () => {
-    scenario.tasks = [
-      task("zulu", { name: "Zulu", created: 10, updated: 0, session_count: 2, playbook_title: "Charlie" }),
-      task("alpha", { name: "Alpha", created: 20, updated: 5, session_count: 10, playbook_title: "", playbook: "Alpha" }),
-      task("beta", { name: "Beta", created: 30, updated: 15, session_count: 1, playbook_title: "Bravo" }),
-    ];
-    activity = {
-      "/r:zulu": summary({ status: "running" }),
-      "/r:alpha": summary({
-        status: "failed",
-        active_session: { id: "build", worktree: "/w/alpha", phase: "build", harness: "omp", model: "", playbook: "superdevelop", generic: false, step_title: "Build" },
-      }),
-    };
+    fakeBoard.set({
+      tasks: [
+        task("zulu", { name: "Zulu", created: 10, updated: 0, session_count: 2, playbook_title: "Charlie" }),
+        task("alpha", { name: "Alpha", created: 20, updated: 5, session_count: 10, playbook_title: "", playbook: "Alpha" }),
+        task("beta", { name: "Beta", created: 30, updated: 15, session_count: 1, playbook_title: "Bravo" }),
+      ],
+    });
+    fakeBoard.set({
+      activity: {
+        "/r:zulu": summary({ status: "running" }),
+        "/r:alpha": summary({
+          status: "failed",
+          active_session: { id: "build", worktree: "/w/alpha", phase: "build", harness: "omp", model: "", playbook: "superdevelop", generic: false, step_title: "Build" },
+        }),
+      },
+    });
     const onOpen = vi.fn();
-    render(<TaskList allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<TaskList repos={["/r"]} allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await screen.findByRole("button", { name: "Build" });
 
     const cases = [
@@ -387,17 +384,20 @@ describe("Task List column sorting", () => {
   });
 
   it("sorts siblings within their parents and preserves selection and sorted navigation after reload", async () => {
-    scenario.tasks = [
-      task("zulu", { created: 1 }),
-      task("child-10", { parent_task: "zulu", created: 2 }),
-      task("child-2", { parent_task: "zulu", created: 3 }),
-      task("alpha", { created: 4 }),
-      task("archived", { parent_task: "zulu", archived: true, created: 5 }),
-    ];
+    fakeBoard.set({
+      tasks: [
+        task("zulu", { created: 1 }),
+        task("child-10", { parent_task: "zulu", created: 2 }),
+        task("child-2", { parent_task: "zulu", created: 3 }),
+        task("alpha", { created: 4 }),
+        task("archived", { parent_task: "zulu", archived: true, created: 5 }),
+      ],
+    });
     let nav: BoardNav | null = null;
     const onOpen = vi.fn();
     render(
       <TaskList
+        repos={["/r"]}
         allRepos={false}
         onOpen={onOpen}
         onDuplicate={() => {}}
@@ -437,11 +437,12 @@ describe("Task List age refresh", () => {
     vi.useFakeTimers();
     vi.setSystemTime(epoch * 1000);
     try {
-      scenario.tasks = [task({ created: epoch, updated: epoch })];
+      fakeBoard.set({ tasks: [task({ created: epoch, updated: epoch })] });
       const onOpen = vi.fn();
       let nav: BoardNav | null = null;
       render(
         <TaskList
+          repos={["/r"]}
           allRepos={false}
           onOpen={onOpen}
           onDuplicate={() => {}}
@@ -486,16 +487,19 @@ describe("Task List filters", () => {
   const selectedName = () => document.querySelector("tr.sel .task-name-text")?.textContent;
 
   it("keeps parent context and every keyboard action on visible rows while searching", async () => {
-    scenario.tasks = [
-      task("parent", { name: "Payments epic", created: 1 }),
-      task("child", { name: "Fix refund rounding", parent_task: "parent", branch: "fix-refunds", created: 2 }),
-      task("other", { name: "Docs refresh", playbook_title: "Writing", created: 3 }),
-    ];
+    fakeBoard.set({
+      tasks: [
+        task("parent", { name: "Payments epic", created: 1 }),
+        task("child", { name: "Fix refund rounding", parent_task: "parent", branch: "fix-refunds", created: 2 }),
+        task("other", { name: "Docs refresh", playbook_title: "Writing", created: 3 }),
+      ],
+    });
     const onOpen = vi.fn();
     const onDuplicate = vi.fn();
     let nav: BoardNav | null = null;
     render(
       <TaskList
+        repos={["/r"]}
         allRepos={false}
         onOpen={onOpen}
         onDuplicate={onDuplicate}
@@ -556,16 +560,21 @@ describe("Task List filters", () => {
   it("filters by status and playbook and keeps filters and selection through polls", async () => {
     vi.useFakeTimers();
     try {
-      scenario.tasks = [task("alpha", { created: 1 }), task("beta", { created: 2 }), task("gamma", { created: 3, playbook_title: "Hotfix" }), task("unknown", { created: 5 })];
-      activity = {
-        "/r:alpha": summary({ status: "running" }),
-        "/r:beta": summary({ status: null, active_session: null }),
-        "/r:gamma": summary({ status: null, active_session: null }),
-      };
+      fakeBoard.set({
+        tasks: [task("alpha", { created: 1 }), task("beta", { created: 2 }), task("gamma", { created: 3, playbook_title: "Hotfix" }), task("unknown", { created: 5 })],
+      });
+      fakeBoard.set({
+        activity: {
+          "/r:alpha": summary({ status: "running" }),
+          "/r:beta": summary({ status: null, active_session: null }),
+          "/r:gamma": summary({ status: null, active_session: null }),
+        },
+      });
       const onOpen = vi.fn();
       let nav: BoardNav | null = null;
       render(
         <TaskList
+          repos={["/r"]}
           allRepos={false}
           onOpen={onOpen}
           onDuplicate={() => {}}
@@ -592,8 +601,15 @@ describe("Task List filters", () => {
       expect(names()).toEqual(["BETA", "GAMMA"]);
       fireEvent.click(screen.getByText("GAMMA"));
 
-      scenario.tasks = [task("gamma", { created: 3, playbook_title: "Hotfix" }), task("delta", { created: 4 }), task("alpha", { created: 1 }), task("beta", { created: 2 })];
-      activity["/r:delta"] = summary({ status: null, active_session: null });
+      fakeBoard.set({
+        tasks: [task("gamma", { created: 3, playbook_title: "Hotfix" }), task("delta", { created: 4 }), task("alpha", { created: 1 }), task("beta", { created: 2 })],
+        activity: {
+          "/r:alpha": summary({ status: "running" }),
+          "/r:beta": summary({ status: null, active_session: null }),
+          "/r:gamma": summary({ status: null, active_session: null }),
+          "/r:delta": summary({ status: null, active_session: null }),
+        },
+      });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3_000);
       });

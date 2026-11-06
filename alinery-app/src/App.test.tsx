@@ -5,13 +5,18 @@ import App from "./App";
 import { DEFAULT_APPEARANCE } from "./appearance";
 import * as ipc from "./ipc";
 import type { SessionNoticeRow } from "./sessionAttention";
+import { fakeBoard } from "./test/boardHooks";
+import { fakeExecution } from "./test/executionFeed";
 import type {
   AppConfig,
   BoardTask,
   Config,
   CreateTaskResult,
+  HostEntry,
   NotificationPrefs,
   PlaybookCatalog,
+  PlaybookRef,
+  RemoteHostView,
   ReviewHandoffResult,
   ScopedPlaybook,
   SessionListItem,
@@ -24,16 +29,6 @@ import { executionReply } from "./views/executionTestFixture";
 import type * as ProviderSetupModule from "./views/ProviderSetupDialog";
 import type { SessionsList as SessionsListComponent } from "./views/SessionsList";
 import type { TaskDetail as TaskDetailComponent } from "./views/TaskDetail";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 const task: BoardTask = {
   name: "Task",
@@ -145,6 +140,7 @@ const notificationPrefs: NotificationPrefs = {
 const appConfig: AppConfig = {
   active_repo: task.repo_path,
   known_repos: [task.repo_path],
+  local_onboarded: true,
   mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
   global: {
@@ -171,46 +167,67 @@ const actualCreation = vi.hoisted(() => ({ enabled: false }));
 const actualProviders = vi.hoisted(() => ({ enabled: false }));
 const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
 
-const { ipcMocks, ipcModule } = vi.hoisted(() => {
+// The task writes live in sync/tasks (the daemon), not in ipc.
+const taskWrites = vi.hoisted(() => ({
+  createTaskForRepo: vi.fn(),
+  writeDraftForRepo: vi.fn(),
+  duplicateTaskForRepo: vi.fn(),
+  readDraftAttachmentsForRepo: vi.fn(),
+  deleteDraftForRepo: vi.fn(),
+  prepareTaskAttachments: vi.fn(),
+  worktreeExists: vi.fn(),
+  renameTask: vi.fn(),
+}));
+vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), ...taskWrites }));
+
+// The session writes live in sync/sessions (the daemon's SessionService), not in ipc.
+const sessionWrites = vi.hoisted(() => ({
+  createSession: vi.fn(),
+  startSession: vi.fn(),
+  markSessionNotificationRead: vi.fn(async () => {}),
+  renameSession: vi.fn(),
+  clearSessionNotifications: vi.fn(),
+}));
+vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), ...sessionWrites }));
+
+// The sub-task controls are the daemon's SubtaskService (sync/subtasks), not ipc.
+const subtaskMocks = vi.hoisted(() => ({
+  subtaskState: vi.fn(),
+  startSubtaskManager: vi.fn(),
+  discardSubtask: vi.fn(),
+}));
+vi.mock("./sync/subtasks", () => subtaskMocks);
+
+// The task's git work is the daemon's GitService (sync/git), not ipc.
+const gitMocks = vi.hoisted(() => ({
+  taskSourceBranchesForRepo: vi.fn(),
+  listTaskPullRequests: vi.fn(async () => ({})),
+  removeWorktreeForRepo: vi.fn(async () => {}),
+  pushAndCompareUrlForRepo: vi.fn(async () => ""),
+}));
+vi.mock("./sync/git", () => gitMocks);
+
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+const playbookMocks = vi.hoisted(() => ({
+  listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
+  readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>(() => Promise.reject(new Error("Unstubbed readPlaybook call"))),
+}));
+vi.mock("./sync/playbooks", async (actual) => ({ ...(await actual<typeof import("./sync/playbooks")>()), ...playbookMocks }));
+
+const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   const ipcMocks = {
-    createSessionForRepo: vi.fn(),
-    startSession: vi.fn(),
-    listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
     getCurrentWindow: vi.fn(() => ({
       destroy: vi.fn(),
       onCloseRequested: vi.fn(async () => () => {}),
     })),
     getName: vi.fn(async () => "Alinery"),
     getVersion: vi.fn(async () => "0.11.1"),
-    markSessionNotificationRead: vi.fn(async () => {}),
-    listSessionItems: vi.fn(),
-    sessionListStatuses: vi.fn(),
-    renameSession: vi.fn(),
-    listBoardTasks: vi.fn(),
-    renameTask: vi.fn(),
-    getTask: vi.fn(),
-    listTasks: vi.fn(),
-    subtaskState: vi.fn(),
-    listSessions: vi.fn(),
     getTaskExecution: vi.fn(),
-    observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
-      Promise.all(
-        tasks.map(async (task) => {
-          try {
-            return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMocks.getTaskExecution(task.taskSlug, task.repoPath) };
-          } catch (error) {
-            return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
-          }
-        }),
-      ),
-    ),
-    listArtifactsWithMetadata: vi.fn(),
-    listTaskArtifactTree: vi.fn(),
-    listArtifactCommentDraftsForRepo: vi.fn(),
-    worktreeExists: vi.fn(),
-    clearSessionNotifications: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
+    remoteHosts: vi.fn<() => Promise<RemoteHostView[]>>(async () => []),
+    setHostOnboarded: vi.fn(),
+    listHosts: vi.fn(),
     setActiveRepo: vi.fn(),
     pickRepoDialog: vi.fn(),
     classifyPickedFolder: vi.fn(),
@@ -230,10 +247,16 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     },
     has: () => true,
   });
-  return { ipcMocks, ipcModule };
+  const readEffectiveConfig = vi.fn<(repo: string) => Promise<unknown>>(() => Promise.reject(new Error("Unstubbed readEffectiveConfig call")));
+  return { ipcMocks, ipcModule, readEffectiveConfig };
 });
 
+vi.mock("./sync/artifacts", async (actual) => (await import("./test/artifactHooks")).artifactHooks(await actual()));
+vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
+vi.mock("./sync/execution", async (actual) => (await import("./test/executionFeed")).executionHooks(await actual()));
+fakeExecution.source = (slug, repo) => ipcMocks.getTaskExecution(slug, repo);
 vi.mock("./ipc", () => ipcModule);
+vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig }));
 vi.mock("./tabMotion", () => {
   const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
   return {
@@ -281,6 +304,7 @@ vi.mock("./useMcpStatus", () => ({
     socket_reachable: false,
     binary_found: true,
     binary_path: "",
+    host_args: [],
     repo: "/repo",
     socket_path: "",
     error: "",
@@ -592,24 +616,28 @@ vi.mock("./views/ReviewHandoffPage", () => ({
   ),
 }));
 
+/** The host list the setup screen reads to decide whether onboarding runs on the repo it just opened. */
+const localHost = (onboarded: boolean): HostEntry => ({ host_id: "local", label: "This computer", local: true, onboarded, remote: null });
+
 beforeEach(() => {
-  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   actualCreation.enabled = false;
   actualProviders.enabled = false;
   namingScenario.realSessions = false;
   namingScenario.realTaskDetail = false;
   Element.prototype.scrollIntoView = vi.fn();
-  ipcMocks.listBoardTasks.mockReset().mockResolvedValue([task]);
-  ipcMocks.renameSession.mockReset();
+  fakeBoard.reset();
+  fakeBoard.set({ tasks: [task] as never });
+  sessionWrites.renameSession.mockReset();
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
-  ipcMocks.createSessionForRepo.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
-  ipcMocks.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
-  ipcMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
-  ipcMocks.markSessionNotificationRead.mockResolvedValue(undefined);
+  sessionWrites.createSession.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
+  sessionWrites.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
+  playbookMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
+  sessionWrites.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
-  ipcMocks.listSessionItems.mockResolvedValue([]);
-  ipcMocks.sessionListStatuses.mockResolvedValue({});
-  ipcMocks.clearSessionNotifications.mockResolvedValue(undefined);
+  ipcMocks.setHostOnboarded.mockResolvedValue(undefined);
+  ipcMocks.listHosts.mockResolvedValue([localHost(true)]);
+  ipcMocks.remoteHosts.mockResolvedValue([]);
+  sessionWrites.clearSessionNotifications.mockResolvedValue(undefined);
   ipcMocks.setDockBadgeCount.mockResolvedValue(undefined);
 });
 
@@ -623,7 +651,7 @@ afterEach(() => {
 it("opens Playbooks from the top tab after selecting a repository, without an intro shortcut", async () => {
   ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
   render(<App />);
-  await screen.findByRole("button", { name: "Add a repository" });
+  await screen.findByTestId("setup-screen");
   expect(screen.queryByRole("button", { name: "Playbooks" })).toBeNull();
 
   fireEvent.click(screen.getByTitle(task.repo_path));
@@ -631,14 +659,17 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
   await screen.findByRole("table", { name: "Playbook library" });
 });
 
+/** The state of an install whose first host has not run onboarding. */
+const notOnboarded = () => ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, local_onboarded: false });
+
 describe("onboarding gate", () => {
   it.each([
     { creation: "ready" as const, error: null },
     { creation: "partial" as const, error: "Worktree could not be created" },
   ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => ({
+    vi.mocked(playbookMocks.readPlaybook).mockImplementation(async (reference) => ({
       source: { reference, path: null },
       source_text: `+++\nversion = 2\nkey = "${reference.key}"\ntitle = "${reference.key}"\ndefault_harness = "omp"\n[[step]]\nkey = "inspect"\ntitle = "Inspect"\noutputs = [{ path = "result.md" }]\nauto_advance_default = false\n+++\n# Inspect\nInspect the work.`,
       modified_at_ms: null,
@@ -667,8 +698,8 @@ describe("onboarding gate", () => {
         ],
       },
     }));
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+    vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue({
       task,
       sessions: [],
       executions: [],
@@ -682,11 +713,66 @@ describe("onboarding gate", () => {
     const notifications = screen.getByRole("status", { name: "Notifications" });
     if (error) expect(notifications.textContent).toContain(error);
     else expect(notifications.textContent).toBe("");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
+  });
+
+  it("opens a repository on a host that has run onboarding straight onto its board", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByTitle(task.repo_path));
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
+  });
+
+  it("runs onboarding on the first repository of an ssh host, marks only that host, and skips it for the second", async () => {
+    const remoteKey = "alinery+ssh://box-a1b2c3/srv/app";
+    const remoteHost: RemoteHostView = {
+      host_id: "box-a1b2c3",
+      label: "box",
+      destination: "me@box",
+      state: "connected",
+      gave_up: false,
+      phase: "",
+      error: null,
+      home: "/home/me",
+      platform: "Linux x86_64",
+      sharing_reviewed: true,
+      erased_sign_ins: [],
+    };
+    ipcMocks.remoteHosts.mockResolvedValue([remoteHost]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: [remoteKey, "alinery+ssh://box-a1b2c3/srv/second"] });
+    ipcMocks.setActiveRepo.mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [remoteKey, "alinery+ssh://box-a1b2c3/srv/second"] }));
+    // This computer has run onboarding; the new host has not.
+    ipcMocks.listHosts.mockResolvedValue([localHost(true), { host_id: "box-a1b2c3", label: "box", local: false, onboarded: false, remote: remoteHost }]);
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
+    fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/app"));
+    await screen.findByTestId("onboarding-step-playbooks");
+    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith(remoteKey);
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
+    await waitFor(() => expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("box-a1b2c3", true));
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalledWith("local", true);
+
+    // The mark is now set on that host, so a second repository there skips onboarding.
+    ipcMocks.listHosts.mockResolvedValue([localHost(true), { host_id: "box-a1b2c3", label: "box", local: false, onboarded: true, remote: remoteHost }]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: ["alinery+ssh://box-a1b2c3/srv/second"] });
+    cleanup();
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
+    fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/second"));
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
   it("offers a configured install the guide once at Playbooks, then lands on the grid after Skip", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
     // With a repository the guide is a modal over the board, not a replacement for it.
@@ -695,16 +781,18 @@ describe("onboarding gate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
     await screen.findByTestId("grid:view:default-kanban-plus");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
 
+    // The shell now answers with the mark set.
     cleanup();
+    ipcMocks.readAppConfig.mockResolvedValue(appConfig);
     render(<App />);
     await screen.findByTestId("grid:view:default-kanban-plus");
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
   it("keeps workspace shortcuts and focus inside the open guide", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
@@ -726,7 +814,7 @@ describe("onboarding gate", () => {
 
   it("lets a nested provider dialog dismiss without completing the guide", async () => {
     actualProviders.enabled = true;
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
@@ -736,44 +824,43 @@ describe("onboarding gate", () => {
     expect(fireEvent.keyDown(accounts, { key: "Escape" })).toBe(true);
     fireEvent(provider, new Event("cancel", { bubbles: true, cancelable: true }));
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
     fireEvent(guide, new Event("cancel", { bubbles: true, cancelable: true }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
   it("resumes an interrupted first run at the saved step once a repository exists", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
     await screen.findByTestId("onboarding-step-models");
   });
 
-  it("opens the wizard on first run and keeps it open through the first repository pick", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+  it("opens the setup screen on first run, then onboarding on the repository it opens", async () => {
+    notOnboarded();
+    ipcMocks.listHosts.mockResolvedValue([localHost(false)]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", local_onboarded: false });
     render(<App />);
-    await screen.findByTestId("onboarding-step-workspace");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    // The setup screen comes first; onboarding does not open until a repository does.
+    await screen.findByTestId("setup-screen");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTitle(task.repo_path));
-    await screen.findByRole("button", { name: "Add another repository" });
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(screen.queryByTestId("onboarding-step-playbooks")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByTestId("onboarding-step-playbooks");
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
     await screen.findByTestId("grid:view:default-kanban-plus");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
   it("asks about usage sharing only after onboarding finishes, and offers provider setup only after the answer", async () => {
     telemetryScenario.ask = true;
     try {
-      window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+      notOnboarded();
       render(<App />);
       await screen.findByTestId("onboarding-step-playbooks");
       expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
@@ -830,7 +917,7 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open created task" }));
     await screen.findByText("task detail:task");
     expect(screen.queryByText("session:root-a")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
   it("attaches only the session explicitly selected from the creation result", async () => {
@@ -839,8 +926,8 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open second created session" }));
     await screen.findByText("session:root-b");
     expect(screen.getByText("session intent:attach")).toBeTruthy();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "root-b");
-    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "root-b");
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
   });
 
   it("stays on creation when the result has no task", async () => {
@@ -849,7 +936,7 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "report failed creation" }));
     expect(screen.getByRole("button", { name: "open created task" })).toBeTruthy();
     expect(screen.queryByText("task detail:task")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 });
 
@@ -892,23 +979,22 @@ describe("Playbooks navigation", () => {
         ],
       },
     }));
-    ipcMocks.listPlaybookCatalog.mockResolvedValue({
+    playbookMocks.listPlaybookCatalog.mockResolvedValue({
       candidates: sources.map((source) => ({ source: source.source, title: source.definition.title, description: "", modified_at_ms: null, diagnostics: [] })),
       picker_preferences: { order: [], entries: [] },
       diagnostics: [],
     });
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+    vi.mocked(playbookMocks.readPlaybook).mockImplementation(async (reference) => {
       const source = sources.find((source) => source.source.reference.scope === reference.scope);
       if (!source) throw new Error("Unknown preview scope");
       return source;
     });
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
-    vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
+    vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    gitMocks.taskSourceBranchesForRepo.mockResolvedValue({
       branches: [{ full_ref: "refs/heads/main", name: "main" }],
       head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
       selected: null,
     });
-    vi.mocked(ipc.listHarnessModelsForRepo).mockResolvedValue([]);
     vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
@@ -917,8 +1003,8 @@ describe("Playbooks navigation", () => {
     expect(await screen.findByRole("radio", { name: /repo review/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", false);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "");
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await screen.findByRole("button", { name: "Create task from this playbook" });
     expect(screen.queryByRole("radio", { name: /repo review/ })).toBeNull();
@@ -943,14 +1029,14 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     await screen.findByRole("button", { name: "open detail session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     cleanup();
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     await screen.findByRole("button", { name: "open detail session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
   it("acknowledges task-card and global-list sessions before navigation", async () => {
@@ -962,20 +1048,20 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
     await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
 
     cleanup();
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open active list session" }));
     await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
 
     cleanup();
 
     await renderApp();
     let release: (() => void) | undefined;
-    ipcMocks.markSessionNotificationRead.mockImplementationOnce(
+    sessionWrites.markSessionNotificationRead.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -984,28 +1070,28 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open global session" }));
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
     await act(async () => release?.());
     await screen.findByText("session:global-design");
   });
   it("opens the session when notification acknowledgment fails", async () => {
-    ipcMocks.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
+    sessionWrites.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
     await renderApp();
 
     await openGlobalSession();
 
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
   });
   it("renders the scoped Notifications tab and routes its exact session through acknowledgment", async () => {
     await renderApp();
     await openNotifications();
     const row = await screen.findByRole("button", { name: "open notification session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     fireEvent.click(row);
     await screen.findByText("session:global-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledOnce();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledOnce();
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
   });
 
   it("switches repositories before acknowledging a foreign notification row", async () => {
@@ -1019,9 +1105,9 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open foreign notification" }));
     await screen.findByText("session:foreign-design");
 
-    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/foreign", []);
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/foreign", "task", "foreign-design");
-    expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.markSessionNotificationRead.mock.invocationCallOrder[0]);
+    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/foreign");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/foreign", "task", "foreign-design");
+    expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(sessionWrites.markSessionNotificationRead.mock.invocationCallOrder[0]);
   });
 
   it("acknowledges Task Detail and newly created sessions exactly", async () => {
@@ -1029,7 +1115,7 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
     await screen.findByText("session:detail-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "detail-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "detail-design");
 
     cleanup();
     await renderApp();
@@ -1037,17 +1123,14 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish create session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: {
-        task_slug: "task",
-        target: { kind: "primary", step_key: "implementation" },
-        launch_override: { harness: "omp", model: "" },
-        prompt_extra: "  edited\nlaunch prompt ✓  ",
-        start: true,
-      },
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
+      task_slug: "task",
+      target: { kind: "primary", step_key: "implementation" },
+      launch_override: { harness: "omp", model: "" },
+      prompt_extra: "  edited\nlaunch prompt ✓  ",
+      start: true,
     });
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "created-implementation");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "created-implementation");
   });
 
   it("preserves an explicit empty prompt and omits terminal prompts", async () => {
@@ -1056,10 +1139,7 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish empty-prompt session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true },
-    });
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true });
 
     cleanup();
     await renderApp();
@@ -1067,9 +1147,10 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish terminal session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: { task_slug: "task", target: { kind: "auxiliary", harness: "no-harness", model: "", prompt: undefined }, start: true },
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
+      task_slug: "task",
+      target: { kind: "auxiliary", harness: "no-harness", model: "", prompt: undefined },
+      start: true,
     });
   });
 
@@ -1079,15 +1160,15 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "start fresh" }));
     fireEvent.click(await screen.findByRole("button", { name: "start queued session" }));
     await screen.findByText("session:queued-design");
-    expect(ipcMocks.startSession).toHaveBeenCalledWith("task", "queued-design", "/repo");
-    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).toHaveBeenCalledWith("/repo", "task", "queued-design");
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
     expect(screen.getByText("session intent:attach")).toBeTruthy();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "queued-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "queued-design");
 
     fireEvent.click(screen.getByRole("button", { name: "review handoff" }));
     fireEvent.click(await screen.findByRole("button", { name: "confirm review handoff" }));
     await screen.findByText("session:review-target");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
   });
 
   it("lists the remapped top-level actions in the command palette", async () => {
@@ -1216,52 +1297,48 @@ describe("session sort lifetime", () => {
 });
 
 describe("global notification owner", () => {
-  it("polls outside Notifications and does not add a view-local owner", async () => {
+  it("reads rows from the streams outside Notifications and does not add a view-local owner", async () => {
+    const failure = { ...globalSession, id: "failure", ended_at: 20, exit_code: 2 };
+    fakeBoard.set({ sessions: [failure] as never });
     await renderApp();
-    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalledWith(true, false));
-    expect(ipcMocks.sessionListStatuses).toHaveBeenCalledWith([]);
-    const calls = ipcMocks.listSessionItems.mock.calls.length;
+    await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledWith(1));
+    const badges = ipcMocks.setDockBadgeCount.mock.calls.length;
 
     await openNotifications();
     await screen.findByRole("button", { name: "open notification session" });
-    expect(ipcMocks.listSessionItems).toHaveBeenCalledTimes(calls);
+    expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledTimes(badges);
   });
 
-  it("refreshes after acknowledgment settles on both success and failure", async () => {
+  it("opens the session whether acknowledgment succeeds or fails", async () => {
+    fakeBoard.set({ sessions: [globalSession] as never });
     await renderApp();
-    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalled());
-    ipcMocks.listSessionItems.mockClear();
     await openGlobalSession();
-    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalledWith(true, false));
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
 
     cleanup();
-    ipcMocks.listSessionItems.mockClear();
-    ipcMocks.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
+    sessionWrites.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
     await renderApp();
-    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalled());
-    ipcMocks.listSessionItems.mockClear();
     await openGlobalSession();
-    await waitFor(() => expect(ipcMocks.listSessionItems).toHaveBeenCalledWith(true, false));
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledTimes(2);
   });
 
-  it("applies saved badge preferences immediately and requests a refresh", async () => {
+  it("applies saved badge preferences immediately", async () => {
     const failure = { ...globalSession, id: "failure", ended_at: 20, exit_code: 2 };
-    ipcMocks.listSessionItems.mockResolvedValue([failure]);
+    fakeBoard.set({ sessions: [failure] as never });
     await renderApp();
     await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledWith(1));
-    ipcMocks.listSessionItems.mockClear();
 
     fireEvent.click(await screen.findByRole("button", { name: "Account" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "save notification settings" }));
     await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenLastCalledWith(0));
-    expect(ipcMocks.listSessionItems).toHaveBeenCalledWith(true, false);
   });
 
   it("keeps badge and clear sources global while active scope filters presentation", async () => {
     const active = { ...globalSession, id: "active-completion", semantic: { phase_completed_at: 20 } };
     const foreign = { ...foreignSession, id: "foreign-completion", semantic: { phase_completed_at: 21 } };
-    ipcMocks.listSessionItems.mockResolvedValue([active, foreign]);
+    fakeBoard.set({ sessions: [active, foreign] as never });
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, known_repos: ["/repo", "/foreign"] });
     await renderApp();
     await waitFor(() => expect(ipcMocks.setDockBadgeCount).toHaveBeenCalledWith(2));
 
@@ -1270,8 +1347,8 @@ describe("global notification owner", () => {
     expect(notificationView?.getAttribute("data-scope")).toBe("/repo");
     expect(notificationView?.getAttribute("data-global-rows")).toBe("2");
     fireEvent.click(screen.getByRole("button", { name: "clear shared notifications" }));
-    await waitFor(() => expect(ipcMocks.clearSessionNotifications).toHaveBeenCalled());
-    const refs = ipcMocks.clearSessionNotifications.mock.calls[0][0] as Array<Record<string, unknown>>;
+    await waitFor(() => expect(sessionWrites.clearSessionNotifications).toHaveBeenCalled());
+    const refs = sessionWrites.clearSessionNotifications.mock.calls[0][0] as Array<Record<string, unknown>>;
     expect(refs).toHaveLength(2);
     expect(refs).toEqual(
       expect.arrayContaining([
@@ -1285,7 +1362,7 @@ describe("global notification owner", () => {
 describe("collection filter shortcuts", () => {
   it("keeps global search and view shortcuts available without opening a row from filter confirmation", async () => {
     namingScenario.realSessions = true;
-    ipcMocks.listSessionItems.mockResolvedValue([{ ...globalSession, name: "Keyboard work" }]);
+    fakeBoard.set({ sessions: [{ ...globalSession, name: "Keyboard work" }] as never });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Keyboard work");
@@ -1294,7 +1371,7 @@ describe("collection filter shortcuts", () => {
     fireEvent.keyDown(status, { key: "Enter", metaKey: true });
     await act(async () => {});
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     fireEvent.keyDown(status, { key: "k", metaKey: true });
     const search = await screen.findByRole("combobox", { name: "Search actions, tasks, and sessions" });
@@ -1308,7 +1385,7 @@ describe("collection filter shortcuts", () => {
 describe("session work names", () => {
   it("keyboard activation of a real session Rename does not open the selected session", async () => {
     namingScenario.realSessions = true;
-    ipcMocks.listSessionItems.mockResolvedValue([{ ...globalSession, name: "Keyboard work" }]);
+    fakeBoard.set({ sessions: [{ ...globalSession, name: "Keyboard work" }] as never });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     const rename = await screen.findByRole("button", { name: "Rename session" });
@@ -1318,53 +1395,37 @@ describe("session work names", () => {
     expect(fireEvent.keyDown(rename, { key: "Enter" })).toBe(true);
     await act(async () => {});
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
     fireEvent.click(rename);
     expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keyboard work");
   });
 
-  it("open_search_keeps_committed_name_when_old_results_arrive", async () => {
+  it("search shows a committed session name at once and the stream's later name after it", async () => {
     namingScenario.realSessions = true;
     const original = { ...globalSession, name: "Original work", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" };
-    ipcMocks.listSessionItems.mockResolvedValue([original]);
+    fakeBoard.set({ sessions: [original] as never });
     await renderApp();
-    await waitFor(() => expect(ipcMocks.sessionListStatuses).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Original work");
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
-    await waitFor(() => expect(within(screen.getByRole("listbox")).getByText("Original work")).toBeDefined());
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
-    const commit = deferred<{ name: string; source: string }>();
-    ipcMocks.renameSession.mockReturnValue(commit.promise);
+    sessionWrites.renameSession.mockImplementation(async () => {
+      fakeBoard.set({ sessions: [{ ...original, name: "Committed work", name_source: "user" }] as never });
+      return { name: "Committed work", source: "user" };
+    });
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed work" } });
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
-    const oldRead = deferred<SessionListItem[]>();
-    ipcMocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
+    });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await act(async () => {});
     fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Current child" } });
-    const committed = { ...original, name: "Committed work", name_source: "user" as const };
-    const freshRead = deferred<SessionListItem[]>();
-    ipcMocks.listSessionItems.mockReturnValue(freshRead.promise);
-    await act(async () => {
-      commit.resolve({ name: "Committed work", source: "user" });
-    });
-    const palette = screen.getByRole("listbox");
-    expect(within(palette).getByText("Committed work")).toBeDefined();
-    expect(within(palette).getByText(/Current child/)).toBeDefined();
-    await act(async () => {
-      oldRead.resolve([original]);
-    });
-    expect(within(palette).getByText("Committed work")).toBeDefined();
+    const palette = await screen.findByRole("listbox");
+    await waitFor(() => expect(within(palette).getByText("Committed work")).toBeDefined());
     expect(within(palette).queryByText("Original work")).toBeNull();
-    await act(async () => {
-      freshRead.resolve([{ ...committed, name: "External work" }]);
-    });
+    act(() => fakeBoard.set({ sessions: [{ ...original, name: "External work", name_source: "user" }] as never }));
+    await waitFor(() => expect(within(palette).getByText("External work")).toBeDefined());
     fireEvent.click(within(palette).getByText("External work"));
     await screen.findByText("session:global-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
   });
 
   it("a real child rename patches task and manager search names without replacing manager work names", async () => {
@@ -1379,10 +1440,8 @@ describe("session work names", () => {
     const child = { ...task, name: "Original child", parent_task: "parent" };
     const parent = { ...task, slug: "parent", name: "Parent" };
     const manager = { ...globalSession, task_slug: "parent", task_name: "Parent", name: "Coordinate work", subtask_manager: true, subtask_slug: "task", subtask_name: child.name };
-    ipcMocks.getTask.mockResolvedValue(child);
-    ipcMocks.listTasks.mockResolvedValue([child, parent]);
-    ipcMocks.listBoardTasks.mockResolvedValue([child, parent]);
-    ipcMocks.subtaskState.mockResolvedValue({
+    fakeBoard.set({ anyRepoTasks: [child, parent] as never, tasks: [child, parent] as never });
+    subtaskMocks.subtaskState.mockResolvedValue({
       task: child,
       parent_task: parent,
       active_subtask: null,
@@ -1394,13 +1453,9 @@ describe("session work names", () => {
       can_recover: false,
       disabled_reason: "",
     });
-    ipcMocks.listSessions.mockResolvedValue([]);
     ipcMocks.getTaskExecution.mockResolvedValue(executionReply([]));
-    ipcMocks.listArtifactsWithMetadata.mockResolvedValue([]);
-    ipcMocks.listTaskArtifactTree.mockResolvedValue([]);
-    ipcMocks.listArtifactCommentDraftsForRepo.mockResolvedValue([]);
-    ipcMocks.worktreeExists.mockResolvedValue(true);
-    ipcMocks.listSessionItems.mockResolvedValue([manager]);
+    taskWrites.worktreeExists.mockResolvedValue(true);
+    fakeBoard.set({ sessions: [manager] as never });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
@@ -1410,21 +1465,20 @@ describe("session work names", () => {
     await within(screen.getByRole("listbox")).findByText("Coordinate work");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { key: "Escape" });
     const committed = { ...child, name: "Renamed child" };
-    const commit = deferred<typeof child>();
-    ipcMocks.renameTask.mockReturnValue(commit.promise);
+    taskWrites.renameTask.mockImplementation(async () => {
+      fakeBoard.set({ anyRepoTasks: [committed, parent] as never, tasks: [committed, parent] as never, sessions: [{ ...manager, subtask_name: committed.name }] as never });
+      return committed;
+    });
     fireEvent.click(screen.getByRole("button", { name: "Rename task" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Task name" }), { target: { value: committed.name } });
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Task name" }), { key: "Enter" });
-    const pending = deferred<SessionListItem[]>();
-    ipcMocks.listSessionItems.mockReturnValue(pending.promise);
+    await act(async () => {
+      fireEvent.keyDown(screen.getByRole("textbox", { name: "Task name" }), { key: "Enter" });
+    });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Search actions, tasks, and sessions" }), { target: { value: "Renamed child" } });
-    await act(async () => {
-      commit.resolve(committed);
-    });
     expect(within(screen.getByRole("listbox")).getByText("Renamed child")).toBeDefined();
     expect(within(screen.getByRole("listbox")).getByText("Coordinate work")).toBeDefined();
-    expect(ipcMocks.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
+    expect(taskWrites.renameTask).toHaveBeenCalledWith("/repo", "task", "Renamed child");
   });
 });
 
@@ -1507,11 +1561,16 @@ describe("repository switch keeps the current page", () => {
   });
 });
 
-describe("addRepo", () => {
-  async function openPicker() {
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+describe("setup screen: this computer", () => {
+  /** The folder is chosen first; opening waits for it. Returns the button that opens it. */
+  async function chooseFolder(path: string | null) {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: [] });
     render(<App />);
-    return screen.findByRole("button", { name: "Add a repository" });
+    await screen.findByTestId("setup-screen");
+    ipcMocks.pickRepoDialog.mockResolvedValue(path);
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+    return screen.getByRole("button", { name: "Open repository" });
   }
 
   beforeEach(() => {
@@ -1521,34 +1580,30 @@ describe("addRepo", () => {
     ipcMocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [path] }));
   });
 
-  it("stops when the folder picker is cancelled", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue(null);
-    fireEvent.click(add);
-    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+  it("stays disabled when the folder picker is cancelled", async () => {
+    const open = await chooseFolder(null);
     await act(async () => {
       await Promise.resolve();
     });
+    expect((open as HTMLButtonElement).disabled).toBe(true);
     expect(ipcMocks.classifyPickedFolder).not.toHaveBeenCalled();
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
   });
 
   it("opens a checkout without asking or initializing", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/canonical" });
-    fireEvent.click(add);
-    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical", []));
+    fireEvent.click(open);
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical"));
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
   });
 
   it("leaves an absent folder unchanged when initialize is cancelled", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
-    fireEvent.click(add);
+    fireEvent.click(open);
     const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
     const focused = dialog.querySelector("[data-autofocus]");
     expect(focused?.textContent).toBe("Cancel");
@@ -1559,26 +1614,24 @@ describe("addRepo", () => {
   });
 
   it("initializes an absent folder and opens the returned root", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     ipcMocks.initPickedFolder.mockResolvedValue({ kind: "initialized", root: "/inited" });
-    fireEvent.click(add);
+    fireEvent.click(open);
     const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
     await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
-    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited", []));
+    await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited"));
     expect(ipcMocks.initPickedFolder.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]);
   });
 
   it("shows a named refusal without opening", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({
       kind: "refused",
       message: "This folder is a Git repository, but not a working tree. Alinery will not initialize a new repository here.\nfatal: this operation must be run in a work tree",
     });
-    fireEvent.click(add);
+    fireEvent.click(open);
     expect(await screen.findByText(/fatal: this operation must be run in a work tree/)).toBeTruthy();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
@@ -1586,11 +1639,10 @@ describe("addRepo", () => {
   });
 
   it("shows an init failure without opening", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     ipcMocks.initPickedFolder.mockRejectedValue("Couldn't initialize Git in /canon.\nPermission denied");
-    fireEvent.click(add);
+    fireEvent.click(open);
     fireEvent.click(await screen.findByRole("button", { name: "Initialize Git" }));
     expect(await screen.findByText(/Permission denied/)).toBeTruthy();
     expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();

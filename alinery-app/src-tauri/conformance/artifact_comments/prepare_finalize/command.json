@@ -1,0 +1,102 @@
+{
+  "slug": "gamma",
+  "steps": [
+    {
+      "op": "prepare",
+      "artifacts": [
+        "02-plan.md"
+      ]
+    },
+    {
+      "op": "add",
+      "artifact": "02-plan.md",
+      "anchor_id": "p1",
+      "anchor_kind": "line",
+      "anchor_label": "L1",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 1,
+      "line_end": 1,
+      "body": "needs work"
+    },
+    {
+      "op": "add",
+      "artifact": "research/notes.md",
+      "anchor_id": "n1",
+      "anchor_kind": "line",
+      "anchor_label": "L3",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 3,
+      "line_end": 3,
+      "body": "nested"
+    },
+    {
+      "op": "prepare",
+      "artifacts": []
+    },
+    {
+      "op": "prepare",
+      "artifacts": [
+        "02-plan.md"
+      ]
+    },
+    {
+      "op": "prepare",
+      "artifacts": [
+        "02-plan.md"
+      ]
+    },
+    {
+      "op": "prepare",
+      "artifacts": [
+        "02-plan.md",
+        "research/notes.md"
+      ]
+    },
+    {
+      "op": "finalize",
+      "from": 6
+    },
+    {
+      "op": "pending_status",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "pending_status",
+      "artifact": "research/notes.md"
+    },
+    {
+      "op": "list_comments",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "finalize",
+      "from": 6
+    },
+    {
+      "op": "finalize_tampered",
+      "from": 6
+    },
+    {
+      "op": "prepare_approval",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "prepare_approval",
+      "artifact": "nope.md"
+    },
+    {
+      "op": "finalize_actions",
+      "session": "s1",
+      "from": [
+        13
+      ]
+    },
+    {
+      "op": "finalize_actions",
+      "session": "other",
+      "from": [
+        13
+      ]
+    }
+  ]
+}

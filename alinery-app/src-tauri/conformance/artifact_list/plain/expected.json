@@ -1,0 +1,160 @@
+{
+  "items": [
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "notes/b.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "notes/a.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [
+        {
+          "created_at_ms": 100,
+          "direction": "inbound",
+          "source_artifact": "x.md",
+          "source_repo_path": "/r",
+          "source_session": "s1",
+          "source_task": "beta",
+          "target_artifact": "10-final.md",
+          "target_phase": "review",
+          "target_repo_path": "/r2",
+          "target_session": "t1",
+          "target_task": "alpha",
+          "version": 2
+        }
+      ],
+      "logical_path": null,
+      "modified_at_ms": 9000,
+      "name": "10-final.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "02-plan.md",
+      "playbook_step": "plan",
+      "session_id": "s1",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "02-plan.comments.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "2-note.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": false,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [
+        {
+          "created_at_ms": 200,
+          "direction": "outbound",
+          "source_artifact": "01-spec.md",
+          "source_repo_path": "/r",
+          "source_session": "s1",
+          "source_task": "alpha",
+          "target_artifact": "review-handoff-001.md",
+          "target_phase": "review",
+          "target_repo_path": "/r2",
+          "target_session": "t1",
+          "target_task": "beta",
+          "version": 2
+        }
+      ],
+      "logical_path": null,
+      "modified_at_ms": 5000,
+      "name": "01-spec.md",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": true,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 7000,
+      "name": "pic.png",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    },
+    {
+      "accepted": null,
+      "attachment": true,
+      "depth": null,
+      "discriminator": null,
+      "execution_id": null,
+      "handoffs": [],
+      "logical_path": null,
+      "modified_at_ms": 6000,
+      "name": "log.txt",
+      "playbook_step": "",
+      "session_id": "",
+      "step_key": null
+    }
+  ]
+}

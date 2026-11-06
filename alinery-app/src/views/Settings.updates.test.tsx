@@ -39,7 +39,6 @@ vi.mock("../ipc", () =>
     readGlobalSettings: async () => globalSettings,
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
     getVersion: async () => "0.10.0",
-    storageInfo: () => new Promise(() => {}),
   }),
 );
 
@@ -53,6 +52,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",

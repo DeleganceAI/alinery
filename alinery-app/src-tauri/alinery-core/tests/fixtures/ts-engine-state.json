@@ -1,0 +1,435 @@
+{
+ "engine": {
+  "ambiguities": [],
+  "executions": [
+   {
+    "automatic": true,
+    "depth": 1,
+    "failure": null,
+    "id": "e1",
+    "inputs": {
+     "ticket.md": [
+      "seed/ticket.md"
+     ]
+    },
+    "manifest": {
+     "consumed": [
+      {
+       "occurrence": "seed/ticket.md",
+       "path": "artifacts/ticket.md",
+       "role": "ticket.md",
+       "sha256": "fd27a43ca87fa5cdc982e88f601a0ef6b7e8affd3ee86b04531e405b950aacbc",
+       "size": 8
+      }
+     ],
+     "published": [
+      {
+       "occurrence": "e1/numbers.md",
+       "path": "artifacts/1-seed-1/numbers.md",
+       "role": "numbers.md",
+       "sha256": "88abf658fcf1c03e504db57c4e2a36d00c9c11886a8065877edc68447d19e8d8",
+       "size": 11
+      }
+     ]
+    },
+    "origin": null,
+    "outDir": "artifacts/1-seed-1",
+    "permitted": false,
+    "receipt": [
+     {
+      "id": "e1/numbers.md",
+      "path": "artifacts/1-seed-1/numbers.md",
+      "producer": "e1",
+      "role": "numbers.md"
+     }
+    ],
+    "sessionId": "c069d786-6f9d-486f-94ac-01da3edf1f62",
+    "status": "done",
+    "step": "seed"
+   },
+   {
+    "automatic": true,
+    "depth": 2,
+    "failure": null,
+    "id": "e2",
+    "inputs": {
+     "numbers.md": [
+      "e1/numbers.md"
+     ]
+    },
+    "manifest": {
+     "consumed": [
+      {
+       "occurrence": "e1/numbers.md",
+       "path": "artifacts/1-seed-1/numbers.md",
+       "role": "numbers.md",
+       "sha256": "88abf658fcf1c03e504db57c4e2a36d00c9c11886a8065877edc68447d19e8d8",
+       "size": 11
+      }
+     ],
+     "published": [
+      {
+       "occurrence": "e2/sum.md",
+       "path": "artifacts/2-sum-1/sum.md",
+       "role": "sum.md",
+       "sha256": "79fb35bea5e96127dfaa7d67371f40a98fcec6144d9a21653451ef81da216e15",
+       "size": 10
+      }
+     ]
+    },
+    "origin": null,
+    "outDir": "artifacts/2-sum-1",
+    "permitted": false,
+    "receipt": [
+     {
+      "id": "e2/sum.md",
+      "path": "artifacts/2-sum-1/sum.md",
+      "producer": "e2",
+      "role": "sum.md"
+     }
+    ],
+    "sessionId": "9f7d06ed-32eb-4bb8-af45-d114883a68d8",
+    "status": "done",
+    "step": "sum"
+   },
+   {
+    "automatic": true,
+    "depth": 2,
+    "failure": null,
+    "id": "e3",
+    "inputs": {
+     "numbers.md": [
+      "e1/numbers.md"
+     ]
+    },
+    "manifest": {
+     "consumed": [
+      {
+       "occurrence": "e1/numbers.md",
+       "path": "artifacts/1-seed-1/numbers.md",
+       "role": "numbers.md",
+       "sha256": "88abf658fcf1c03e504db57c4e2a36d00c9c11886a8065877edc68447d19e8d8",
+       "size": 11
+      }
+     ],
+     "published": [
+      {
+       "occurrence": "e3/product.md",
+       "path": "artifacts/2-product-1/product.md",
+       "role": "product.md",
+       "sha256": "33e4c7e3359b32b32c814ef4250705022b5c4e1a6cb5a3231fe24ba6fb64056d",
+       "size": 14
+      }
+     ]
+    },
+    "origin": null,
+    "outDir": "artifacts/2-product-1",
+    "permitted": false,
+    "receipt": [
+     {
+      "id": "e3/product.md",
+      "path": "artifacts/2-product-1/product.md",
+      "producer": "e3",
+      "role": "product.md"
+     }
+    ],
+    "sessionId": "afb02985-a9d4-4b6e-9dcd-095a541910ef",
+    "status": "done",
+    "step": "product"
+   },
+   {
+    "automatic": true,
+    "depth": 3,
+    "failure": null,
+    "id": "e4",
+    "inputs": {
+     "product.md": [
+      "e3/product.md"
+     ],
+     "sum.md": [
+      "e2/sum.md"
+     ]
+    },
+    "manifest": {
+     "consumed": [
+      {
+       "occurrence": "e2/sum.md",
+       "path": "artifacts/2-sum-1/sum.md",
+       "role": "sum.md",
+       "sha256": "79fb35bea5e96127dfaa7d67371f40a98fcec6144d9a21653451ef81da216e15",
+       "size": 10
+      },
+      {
+       "occurrence": "e3/product.md",
+       "path": "artifacts/2-product-1/product.md",
+       "role": "product.md",
+       "sha256": "33e4c7e3359b32b32c814ef4250705022b5c4e1a6cb5a3231fe24ba6fb64056d",
+       "size": 14
+      }
+     ],
+     "published": [
+      {
+       "occurrence": "e4/final.md",
+       "path": "artifacts/3-combine-1/final.md",
+       "role": "final.md",
+       "sha256": "cd8633425e1fc42747e2e96d38ac937eeb88f988f71d8084ea68291a8cb39ba7",
+       "size": 14
+      }
+     ]
+    },
+    "origin": null,
+    "outDir": "artifacts/3-combine-1",
+    "permitted": false,
+    "receipt": [
+     {
+      "id": "e4/final.md",
+      "path": "artifacts/3-combine-1/final.md",
+      "producer": "e4",
+      "role": "final.md"
+     }
+    ],
+    "sessionId": "93a7a199-be79-498f-b3b9-0eab0bfa569c",
+    "status": "done",
+    "step": "combine"
+   }
+  ],
+  "seeds": [
+   {
+    "id": "seed/ticket.md",
+    "path": "artifacts/ticket.md",
+    "producer": null,
+    "role": "ticket.md"
+   }
+  ]
+ },
+ "executions": {
+  "e1": {
+   "binding_key": "e1",
+   "candidate": {
+    "complete_collection_id": null,
+    "context_id": "root",
+    "each_collection_id": null,
+    "each_member_id": null,
+    "inputs": {
+     "ticket.md": [
+      "seed/ticket.md"
+     ]
+    },
+    "manual": false,
+    "step_key": "seed"
+   },
+   "depth": 1,
+   "error": null,
+   "exit_code": null,
+   "id": "e1",
+   "is_coding_step": false,
+   "launch": {
+    "harness": "omp",
+    "model": ""
+   },
+   "lifecycle": "completed",
+   "outputs": [
+    {
+     "discriminator": 0,
+     "relative_path": "1-seed-1/numbers.md",
+     "selector": "numbers.md"
+    }
+   ],
+   "owner_session_id": "c069d786-6f9d-486f-94ac-01da3edf1f62",
+   "parent_execution_ids": [],
+   "permission": {
+    "kind": "automatic"
+   },
+   "previous_session_ids": [],
+   "receipt_id": "e1",
+   "shutdown_confirmed": true,
+   "start_requested": true
+  },
+  "e2": {
+   "binding_key": "e2",
+   "candidate": {
+    "complete_collection_id": null,
+    "context_id": "root",
+    "each_collection_id": null,
+    "each_member_id": null,
+    "inputs": {
+     "numbers.md": [
+      "e1/numbers.md"
+     ]
+    },
+    "manual": false,
+    "step_key": "sum"
+   },
+   "depth": 2,
+   "error": null,
+   "exit_code": null,
+   "id": "e2",
+   "is_coding_step": false,
+   "launch": {
+    "harness": "omp",
+    "model": ""
+   },
+   "lifecycle": "completed",
+   "outputs": [
+    {
+     "discriminator": 0,
+     "relative_path": "2-sum-1/sum.md",
+     "selector": "sum.md"
+    }
+   ],
+   "owner_session_id": "9f7d06ed-32eb-4bb8-af45-d114883a68d8",
+   "parent_execution_ids": [],
+   "permission": {
+    "kind": "automatic"
+   },
+   "previous_session_ids": [],
+   "receipt_id": "e2",
+   "shutdown_confirmed": true,
+   "start_requested": true
+  },
+  "e3": {
+   "binding_key": "e3",
+   "candidate": {
+    "complete_collection_id": null,
+    "context_id": "root",
+    "each_collection_id": null,
+    "each_member_id": null,
+    "inputs": {
+     "numbers.md": [
+      "e1/numbers.md"
+     ]
+    },
+    "manual": false,
+    "step_key": "product"
+   },
+   "depth": 2,
+   "error": null,
+   "exit_code": null,
+   "id": "e3",
+   "is_coding_step": false,
+   "launch": {
+    "harness": "omp",
+    "model": ""
+   },
+   "lifecycle": "completed",
+   "outputs": [
+    {
+     "discriminator": 0,
+     "relative_path": "2-product-1/product.md",
+     "selector": "product.md"
+    }
+   ],
+   "owner_session_id": "afb02985-a9d4-4b6e-9dcd-095a541910ef",
+   "parent_execution_ids": [],
+   "permission": {
+    "kind": "automatic"
+   },
+   "previous_session_ids": [],
+   "receipt_id": "e3",
+   "shutdown_confirmed": true,
+   "start_requested": true
+  },
+  "e4": {
+   "binding_key": "e4",
+   "candidate": {
+    "complete_collection_id": null,
+    "context_id": "root",
+    "each_collection_id": null,
+    "each_member_id": null,
+    "inputs": {
+     "product.md": [
+      "e3/product.md"
+     ],
+     "sum.md": [
+      "e2/sum.md"
+     ]
+    },
+    "manual": false,
+    "step_key": "combine"
+   },
+   "depth": 3,
+   "error": null,
+   "exit_code": null,
+   "id": "e4",
+   "is_coding_step": false,
+   "launch": {
+    "harness": "omp",
+    "model": ""
+   },
+   "lifecycle": "completed",
+   "outputs": [
+    {
+     "discriminator": 0,
+     "relative_path": "3-combine-1/final.md",
+     "selector": "final.md"
+    }
+   ],
+   "owner_session_id": "93a7a199-be79-498f-b3b9-0eab0bfa569c",
+   "parent_execution_ids": [],
+   "permission": {
+    "kind": "automatic"
+   },
+   "previous_session_ids": [],
+   "receipt_id": "e4",
+   "shutdown_confirmed": true,
+   "start_requested": true
+  }
+ },
+ "occurrences": {
+  "e1/numbers.md": {
+   "collection_ids": [],
+   "context_id": "root",
+   "depth": 1,
+   "discriminator": 0,
+   "id": "e1/numbers.md",
+   "logical_path": "numbers.md",
+   "producer_execution_id": "e1",
+   "relative_path": "1-seed-1/numbers.md",
+   "selector": "numbers.md"
+  },
+  "e2/sum.md": {
+   "collection_ids": [],
+   "context_id": "root",
+   "depth": 2,
+   "discriminator": 0,
+   "id": "e2/sum.md",
+   "logical_path": "sum.md",
+   "producer_execution_id": "e2",
+   "relative_path": "2-sum-1/sum.md",
+   "selector": "sum.md"
+  },
+  "e3/product.md": {
+   "collection_ids": [],
+   "context_id": "root",
+   "depth": 2,
+   "discriminator": 0,
+   "id": "e3/product.md",
+   "logical_path": "product.md",
+   "producer_execution_id": "e3",
+   "relative_path": "2-product-1/product.md",
+   "selector": "product.md"
+  },
+  "e4/final.md": {
+   "collection_ids": [],
+   "context_id": "root",
+   "depth": 3,
+   "discriminator": 0,
+   "id": "e4/final.md",
+   "logical_path": "final.md",
+   "producer_execution_id": "e4",
+   "relative_path": "3-combine-1/final.md",
+   "selector": "final.md"
+  },
+  "seed/ticket.md": {
+   "collection_ids": [],
+   "context_id": "root",
+   "depth": 0,
+   "discriminator": 0,
+   "id": "seed/ticket.md",
+   "logical_path": "ticket.md",
+   "producer_execution_id": null,
+   "relative_path": "ticket.md",
+   "selector": "ticket.md"
+  }
+ }
+}

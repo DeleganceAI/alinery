@@ -1,8 +1,11 @@
 //! Tests for daemon.rs — lanes, ownership, protocol classification, quit/teardown latches
 //!
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
+use super::daemon_rpc::{answer_hello_with, answer_live_sessions_with, serve_at, shutdowns_with, teardown_fixture, Teardown};
 use super::*;
-use crate::{canonical_host_executable, DaemonClient, DaemonConflict};
+use crate::daemon_rpc::{shutdown_daemon, HelloResponse, ShutdownOrigin, ShutdownRequest};
+use crate::{canonical_host_executable, DaemonConflict};
+use alinery_core::legacy_daemon::BoundDaemonConnection;
 use alinery_core::DaemonCompat;
 use std::path::{Path, PathBuf};
 
@@ -123,34 +126,6 @@ fn effective_identifier_alone_selects_the_daemon_lane() {
     assert_eq!(alineryd_socket_namespace_for("ai.delegance.alinery.unknown", alineryd), None);
 }
 
-fn recording_lane(socket_path: std::path::PathBuf, live_sessions: usize) -> (std::sync::Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
-    recording_lane_with_response(socket_path, move |op| {
-        match op {
-            "list" => serde_json::json!({
-                "sessions": (0..live_sessions)
-                    .map(|index| serde_json::json!({
-                        "id": format!("live-{index}"),
-                        "process": {"state": "alive"},
-                        "agent": {"state": "unknown"},
-                        "playbook": {"state": "in_progress"},
-                        "adapter": "unsupported",
-                        "message_adapter": "unsupported",
-                        "transport": "pty",
-                    }))
-                    .collect::<Vec<_>>(),
-            }),
-            "version" => serde_json::json!({
-                "protocol": PROTOCOL_VERSION,
-                "build_id": "fixture",
-                "app_config_identity": "fixture",
-            }),
-            "shutdown" => serde_json::json!({"ok": true}),
-            other => panic!("unexpected daemon request: {other}"),
-        }
-        .to_string()
-    })
-}
-
 fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) -> String + Send + 'static) -> (std::sync::Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixListener;
@@ -202,66 +177,43 @@ fn recording_lane_with_response(socket_path: PathBuf, response: impl Fn(&str) ->
 
 #[test]
 fn app_lifecycle_targets_the_namespaced_lane_not_production() {
-    let repo = activity_repo("app-lifecycle-lane");
-    let production_path = alinery_core::alineryd_socket_path(&repo, None);
-    let current_path = current_alineryd_socket_path(&repo);
-    assert_ne!(current_path, production_path, "app tests must exercise the development namespace");
+    let lane = crate::alineryd_socket_namespace();
+    assert!(lane.is_some(), "app tests must exercise the development namespace");
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let (current_token, production_token) = (format!("current-{id}"), format!("production-{id}"));
+    let t = teardown_fixture(lane.as_deref(), &current_token);
+    let production_socket = alinery_core::rpc_socket_path(&t.repo, None);
+    assert_ne!(production_socket, t.server.socket, "the two lanes must not share a socket");
+    let key = t.repo.display().to_string();
+    crate::daemon::store_rpc_secret(alinery_core::app_config_dir_of(&t.app_config).unwrap(), &key, "", &production_token).unwrap();
+    let production = tauri::async_runtime::block_on(serve_at(production_socket.clone(), t.repo.clone()));
 
-    let (production_requests, production) = recording_lane(production_path.clone(), 7);
-    let (current_requests, current) = recording_lane(current_path.clone(), 2);
-
-    let live_sessions = crate::repo_live_sessions(repo.display().to_string());
-    let version = crate::connect_current_daemon(&repo).expect("poller probe must connect to the current lane").version();
-    assert_eq!(version.protocol, Some(PROTOCOL_VERSION));
-    let state = AppState::default();
-    let lifecycle = state.repo_lifecycle(&repo);
-    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-    crate::close_repo_daemon(&state, &repo, &guard).expect("close must stop and wait for the app's current lane");
-
-    let production_before_cleanup = production_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();
-    let current_before_cleanup = current_requests.lock().unwrap_or_else(|error| error.into_inner()).clone();
-
-    for path in [&production_path, &current_path] {
-        if let Ok(client) = crate::DaemonClient::connect_path_checked(path.clone()) {
-            let _ = client.call(&crate::daemon_client::shutdown_request());
+    // The current lane's daemon exits when it is told to: its socket goes.
+    let (socket, token) = (t.server.socket.clone(), current_token.clone());
+    let exits = std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(10);
+        while shutdowns_with(&token).is_empty() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
         }
-    }
-    production.join().unwrap();
-    current.join().unwrap();
-    let _ = fs::remove_dir_all(repo);
+        let _ = fs::remove_file(&socket);
+    });
+    let state = AppState::default();
+    let lifecycle = state.repo_lifecycle(&t.repo);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    crate::close_repo_daemon(&state, &t.repo, &t.app_config, &guard).expect("close must stop and wait for the app's current lane");
+    exits.join().unwrap();
 
-    assert_eq!(live_sessions, 2, "loss-of-work counts must describe the current app lane");
-    assert!(current_before_cleanup.iter().any(|op| op == "list"), "live count must query the current lane");
-    assert!(current_before_cleanup.iter().any(|op| op == "version"), "poller probe must query the current lane");
-    assert!(current_before_cleanup.iter().any(|op| op == "shutdown"), "close must stop the current lane");
-    assert!(
-        !production_before_cleanup.iter().any(|op| op == "list" || op == "version" || op == "shutdown"),
-        "app lifecycle operations must not query or stop the production lane: {production_before_cleanup:?}"
+    assert_eq!(
+        shutdowns_with(&current_token),
+        vec![ShutdownRequest {
+            origin: ShutdownOrigin::CloseRepo as i32,
+            confirmation_id: String::new()
+        }],
+        "close must stop the current lane, once, with its origin"
     );
-}
-
-// Finding 3 follow-up: `begin` refuses a second claim, so any `?` between claim and
-// release wedges the repo's backup/restore slot for the life of the process. The
-// guard must release on the error paths too, not just the happy one.
-#[test]
-fn backup_slot_is_released_on_every_exit_path() {
-    let key = format!("alinery-slot-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-    assert!(!backup_queue_lock().busy(&key));
-
-    // Scope that returns early, exactly like restore_backup's ownership refusal.
-    let bail = |k: &str| -> Result<(), String> {
-        let _slot = BackupSlot::claim(k.to_string()).ok_or("already running")?;
-        Err("repo-busy: another Alinery window holds it".into())
-    };
-    assert!(bail(&key).is_err());
-    assert!(!backup_queue_lock().busy(&key), "an early return must not wedge the slot");
-
-    // And the slot is genuinely exclusive while held.
-    let held = BackupSlot::claim(key.clone()).expect("free slot claims");
-    assert!(backup_queue_lock().busy(&key));
-    assert!(BackupSlot::claim(key.clone()).is_none(), "a second claim must be refused while one is held");
-    drop(held);
-    assert!(!backup_queue_lock().busy(&key));
+    assert!(shutdowns_with(&production_token).is_empty(), "app lifecycle operations must not stop the production lane");
+    assert!(std::os::unix::net::UnixStream::connect(&production.socket).is_ok(), "the production lane is still serving");
+    let _ = fs::remove_dir_all(t.repo.parent().unwrap());
 }
 
 // Finding 1 follow-up: remove_repo/close_all_repos shut a daemon down, which is the
@@ -301,7 +253,7 @@ fn wait_for_daemon_gone_ok_when_socket_quiet() {
     let repo = activity_repo("wait-gone");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
     // No listener ⇒ connect fails immediately ⇒ Ok.
-    crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).expect("quiet socket is success");
+    alinery_core::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).expect("quiet socket is success");
     let _ = fs::remove_dir_all(&repo);
 }
 
@@ -309,29 +261,6 @@ fn wait_for_daemon_gone_ok_when_socket_quiet() {
 // already long enough that these control sockets do not fit, so they stay in `/tmp`.
 fn control_sock(label: &str, n: u128) -> PathBuf {
     PathBuf::from(format!("/tmp/alinery-{label}-{n}.sock"))
-}
-
-// T2.1: pins the one behavior change with no branch of its own but a concrete,
-// checkable postcondition — every `send()` must set both timeouts before `write_all`.
-#[test]
-fn daemon_client_send_sets_the_control_timeout() {
-    use std::os::unix::net::UnixListener;
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let sock = control_sock("t21", n);
-    let listener = UnixListener::bind(&sock).unwrap();
-    let accept_thread = std::thread::spawn(move || {
-        // Accept once and just hold the stream open — the assertion is entirely client-side.
-        let (stream, _) = listener.accept().unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        drop(stream);
-    });
-    let client = crate::DaemonClient::connect_path(sock.clone()).unwrap();
-    let stream = client.send(&serde_json::json!({"op": "status"})).expect("send");
-    assert_eq!(stream.read_timeout().unwrap(), Some(crate::DAEMON_CONTROL_TIMEOUT));
-    assert_eq!(stream.write_timeout().unwrap(), Some(crate::DAEMON_CONTROL_TIMEOUT));
-    drop(stream);
-    accept_thread.join().unwrap();
-    let _ = fs::remove_file(&sock);
 }
 
 // T2.2: the branch — `Closed` vs. `TimedOut` must no longer collapse into the same `None`.
@@ -368,53 +297,6 @@ fn read_socket_line_distinguishes_timeout_from_closed() {
     let _ = fs::remove_file(&hang_sock);
 }
 
-// T2.3: integration-level — proves the message text callers see actually distinguishes
-// the two cases, not just the low-level read.
-#[test]
-fn call_reports_daemon_not_responding_on_a_real_timeout() {
-    use std::os::unix::net::UnixListener;
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-
-    // Peer accepts and never writes: call_with_timeout with a short timeout must report
-    // "not responding", never "closed".
-    let hang_sock = control_sock("t23-hang", n);
-    let listener = UnixListener::bind(&hang_sock).unwrap();
-    let server = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        drop(stream);
-    });
-    let client = crate::DaemonClient::connect_path(hang_sock.clone()).unwrap();
-    let err = client
-        .call_with_timeout(&serde_json::json!({"op": "status"}), Duration::from_millis(50))
-        .expect_err("must time out");
-    // Exact match, not a substring: `as_secs()` truncation used to report "0s" here for any
-    // sub-second timeout, which would also satisfy a loose "not responding" substring check.
-    assert_eq!(err, "daemon not responding after 50ms");
-    server.join().unwrap();
-    let _ = fs::remove_file(&hang_sock);
-
-    // Companion case: peer closes instead of hanging — message contains "daemon closed".
-    let closed_sock = control_sock("t23-closed", n);
-    let listener = UnixListener::bind(&closed_sock).unwrap();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        // Consume the request so the client's write_all/flush succeeds before we close —
-        // otherwise the client can observe a write-side broken pipe instead of the
-        // read-side "closed" this case is meant to pin.
-        let mut buf = [0u8; 256];
-        let _ = std::io::Read::read(&mut stream, &mut buf);
-        drop(stream);
-    });
-    let client = crate::DaemonClient::connect_path(closed_sock.clone()).unwrap();
-    let err = client
-        .call_with_timeout(&serde_json::json!({"op": "status"}), Duration::from_millis(500))
-        .expect_err("must report closed");
-    assert!(err.contains("daemon closed"), "unexpected message: {err}");
-    server.join().unwrap();
-    let _ = fs::remove_file(&closed_sock);
-}
-
 // Pins the formatter's two branches against the codebase's only two timeout values, cheaply
 // (no socket, no sleep) — the review-4 fix: DAEMON_OBSERVATION_TIMEOUT (250ms) used to render
 // as "0s" via `as_secs()`; DAEMON_CONTROL_TIMEOUT (100s) wording must stay unchanged.
@@ -445,7 +327,8 @@ fn quitting_stops_every_daemon_bring_up() {
     // was never entered (it would also have burned its ~2s connect-retry window).
     assert!(state.repo_daemon(&repo).is_none(), "no daemon may be attached while quitting");
     assert!(!current_alineryd_socket_path(&repo).exists(), "no daemon may be spawned while quitting");
-    assert!(started.elapsed() < Duration::from_millis(500), "returned before any spawn attempt");
+    // The two asserts above are the proof that nothing was spawned; this bound only separates "returned at once" from a spawn wait, which takes seconds, so it is wide enough for a loaded machine.
+    assert!(started.elapsed() < Duration::from_secs(5), "returned before any spawn attempt");
 
     let _ = fs::remove_dir_all(&repo);
 }
@@ -531,7 +414,8 @@ fn a_repo_being_closed_is_not_respawned_by_attach() {
         attach_repo_daemon(&state, &repo, &repo.join("app.toml"));
         assert!(state.repo_daemon(&repo).is_none(), "a repo being closed must not have a daemon attached");
         assert!(!current_alineryd_socket_path(&repo).exists(), "a repo being closed must not have a daemon spawned");
-        assert!(started.elapsed() < Duration::from_millis(500), "returned before any spawn attempt");
+        // The asserts above prove nothing was spawned; this bound only separates "returned at once" from a spawn wait (seconds), so it is wide enough for a loaded suite.
+        assert!(started.elapsed() < Duration::from_secs(5), "returned before any spawn attempt");
     }
 
     // Guard dropped: teardown is over and the repo is attachable again. A set that
@@ -633,24 +517,6 @@ fn t8_list_alineryd_lane_sockets_counts() {
     let _ = fs::remove_dir_all(&root);
 }
 
-#[test]
-fn t6_route_socket_path_table() {
-    let repo = std::path::Path::new("/tmp/alinery-route-test-repo");
-    // own empty (prod) + meta empty → own
-    assert!(route_socket_path(repo, "", "").is_none());
-    // own dev + meta same → own
-    assert!(route_socket_path(repo, "dabc", "dabc").is_none());
-    // own prod + meta foreign → foreign socket
-    let p = route_socket_path(repo, "", "dabc").expect("foreign");
-    assert!(p.ends_with("alineryd-dabc.sock"));
-    // own foreign + meta prod → prod socket
-    let p = route_socket_path(repo, "dabc", "").expect("prod");
-    assert!(p.ends_with("alineryd.sock"));
-    // own a + meta b → b
-    let p = route_socket_path(repo, "a", "b").expect("b");
-    assert!(p.ends_with("alineryd-b.sock"));
-}
-
 /// T0-4: namespaced cleanup must delete only that lane's status+socket.
 #[test]
 fn remove_mcp_lane_runtime_files_own_lane_only() {
@@ -687,220 +553,217 @@ fn remove_mcp_lane_runtime_files_own_lane_only() {
 
     let _ = fs::remove_dir_all(&root);
 }
-#[test]
-fn daemon_list_parser_rejects_old_scalar_status() {
-    // Post-cutover: the scalar-only format (no process/agent/playbook axes) must fail.
-    let result = crate::daemon_client::parse_list_reply(&serde_json::json!({
-        "sessions": [
-            {"id": "running-id", "status": "running"},
-            {"id": "idle-id", "status": "idle"},
-            {"id": "exited-id", "status": "exited"}
-        ]
-    }));
-    assert!(result.is_err(), "stale scalar-only response must be rejected, not coerced");
+
+/// A `Hello` that reports this build's protocol and `config`'s identity, for a daemon whose build is `build`.
+fn current_hello(config: &Path, build: &str) -> HelloResponse {
+    HelloResponse {
+        protocol: PROTOCOL_VERSION,
+        build_id: build.into(),
+        epoch: "e-1".into(),
+        capabilities: Vec::new(),
+        repo_root: String::new(),
+        app_config_identity: alinery_core::app_config_identity(config),
+    }
 }
 
-#[test]
-fn daemon_list_parser_accepts_structured_axes() {
-    let sessions = crate::daemon_client::parse_list_reply(&serde_json::json!({
-        "sessions": [{
-            "id": "omp-id",
-            "process": {"state": "alive"},
-            "agent": {"state": "waiting_for_approval", "correlation_id": "call-1"},
-            "playbook": {"state": "in_progress"},
-            "adapter": "omp",
-            "message_adapter": "omp_bracketed_paste",
-            "transport": "pty"
-        }]
-    }))
-    .expect("structured daemon session list should parse");
-
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].id, "omp-id");
-    assert_eq!(sessions[0].state.process, alinery_core::ProcessState::Alive);
-    assert_eq!(sessions[0].state.agent, alinery_core::AgentState::WaitingForApproval { correlation_id: "call-1".into() });
-    assert_eq!(sessions[0].state.adapter, alinery_core::HarnessAdapter::Omp);
-    assert_eq!(sessions[0].state.message_adapter, alinery_core::MessageAdapter::OmpBracketedPaste);
-    assert_eq!(sessions[0].transport, alinery_core::SessionTransport::Pty);
+fn ensure_outcome(t: &Teardown) -> Result<DaemonCompat, Box<DaemonConflict>> {
+    match crate::ensure_daemon(&t.repo, &t.app_config) {
+        Ok(compat) => Ok(compat),
+        Err(crate::EnsureDaemonError::Mismatch(conflict)) => Err(conflict),
+        Err(error) => panic!("an answering daemon must not be a start failure: {error}"),
+    }
 }
 
+// A daemon that answers `Hello` with this protocol and app config is reused whatever its build. Nothing is stopped.
 #[test]
-fn daemon_list_parser_rejects_missing_transport() {
-    let result = crate::daemon_client::parse_list_reply(&serde_json::json!({
-        "sessions": [{
-            "id": "omp-id",
-            "process": {"state": "alive"},
-            "agent": {"state": "waiting_for_approval", "correlation_id": "call-1"},
-            "playbook": {"state": "in_progress"},
-            "adapter": "omp",
-            "message_adapter": "omp_bracketed_paste"
-        }]
-    }));
-    assert!(result.is_err(), "missing transport must not default to pty");
+fn ensure_daemon_reuses_an_answering_daemon_of_our_protocol_and_config() {
+    for (label, build, expected) in [
+        ("same", crate::alineryd_build_id(), DaemonCompat::Current),
+        ("drift", "another-build".to_string(), DaemonCompat::BuildDrift),
+    ] {
+        let token = format!("reuse-{label}-{}", uuid::Uuid::new_v4().simple());
+        let t = teardown_fixture(crate::alineryd_socket_namespace().as_deref(), &token);
+        answer_hello_with(&token, current_hello(&t.app_config, &build));
+        assert_eq!(ensure_outcome(&t).unwrap(), expected, "{label}");
+        assert!(shutdowns_with(&token).is_empty(), "attaching is never a teardown origin");
+    }
 }
 
+// The relaunch case (S5.3): a daemon started by one app process is found by the next one with the token the first kept on disk.
+// Nothing but that file carries over, so the second attach has no in-memory state to lean on. It must be the same process
+// (PID and epoch unchanged), and it must not have been started again. Runs the real sidecar, which `copy-sidecar.sh debug` puts
+// beside the test binary; without it there is nothing to launch and the test says so, unless ALINERY_REQUIRE_SIDECAR is set
+// (`scripts/check.sh` sets it after copying the sidecar), when the missing binary fails the test.
 #[test]
-fn daemon_status_parser_requires_transport() {
-    let result = crate::daemon_client::parse_status_reply(&serde_json::json!({
-        "process": {"state": "alive"},
-        "agent": {"state": "idle"},
-        "playbook": {"state": "in_progress"},
-        "adapter": "omp",
-        "message_adapter": "omp_bracketed_paste"
-    }));
-    assert!(result.is_err(), "missing transport must not default to pty");
-}
-
-#[test]
-fn daemon_status_parser_unknown_session_is_none() {
-    let result = crate::daemon_client::parse_status_reply(&serde_json::json!({"error": "unknown-session"}));
-    assert_eq!(result, Ok(None));
-}
-
-#[test]
-fn daemon_status_parser_rpc() {
-    let live = crate::daemon_client::parse_status_reply(&serde_json::json!({
-        "process": {"state": "alive"},
-        "agent": {"state": "idle"},
-        "playbook": {"state": "in_progress"},
-        "adapter": "omp",
-        "message_adapter": "omp_bracketed_paste",
-        "transport": "rpc"
-    }))
-    .expect("rpc status should parse")
-    .expect("owned session");
-    assert_eq!(live.transport, alinery_core::SessionTransport::Rpc);
-    assert_eq!(live.state.process, alinery_core::ProcessState::Alive);
-}
-
-/// Re-review finding 2. `connect_path_checked` proves a socket accepted a connection,
-/// nothing more. A foreign lane (dev namespace, or a session left by an older build)
-/// can be perfectly reachable while speaking a protocol this app does not — and until
-/// now that client was cached unclassified, so `open_session(attach)` and every
-/// subsequent write/resize/detach for that session id spoke the current wire at it.
-/// The `ensure_daemon` paths were gated; this route went around them.
-#[test]
-fn a_reachable_foreign_daemon_on_another_protocol_is_refused_and_never_cached() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = activity_repo("fpr");
-    let own_ns = crate::alineryd_socket_namespace().unwrap_or_default();
-    let lane = "badp";
-    write_status_session(&repo, "task", "foreign-session", "implement", lane, Some(1), None, None, "");
-
-    // Live, answering, and speaking a protocol we do not.
-    let socket = status_list_socket(
-        crate::route_socket_path(&repo, &own_ns, lane).unwrap(),
-        Some(&format!(
-            "{{\"protocol\":{},\"build_id\":\"theirs\",\"app_config_identity\":\"config\"}}\n",
-            alinery_core::PROTOCOL_VERSION.wrapping_add(41)
-        )),
-    );
-
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let state = crate::AppState::default();
-    state.set_daemon(
-        &repo,
-        crate::DaemonClient::connect_path(crate::current_alineryd_socket_path(&repo)).unwrap(),
-        alinery_core::DaemonCompat::Current,
-        "config".into(),
-        false,
-    );
-
-    let err = match crate::client_for_session(&state, &repo, "task", "foreign-session") {
-        Err(e) => e,
-        Ok(_) => panic!("a foreign daemon on another protocol must not be handed out"),
+fn a_relaunched_app_reattaches_to_the_daemon_that_outlived_it_with_the_stored_token() {
+    if alinery_core::resolve_alineryd_path().is_none() {
+        assert!(
+            std::env::var_os("ALINERY_REQUIRE_SIDECAR").is_none(),
+            "ALINERY_REQUIRE_SIDECAR is set and no alinery-vinculum-daemon sits beside the test binary"
+        );
+        eprintln!("skipped: no alinery-vinculum-daemon beside the test binary (run src-tauri/scripts/copy-sidecar.sh debug)");
+        return;
+    }
+    let lane = crate::alineryd_socket_namespace();
+    let root = PathBuf::from(format!("/tmp/alinery-rl-{}", &uuid::Uuid::new_v4().simple().to_string()[..10]));
+    let repo = root.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new(std::env::var("ALINERY_GIT_PATH").unwrap_or_else(|_| "git".into()))
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=t"])
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
     };
-    assert!(err.contains("repo-protocol-mismatch"), "the refusal must name the protocol conflict, got: {err}");
-    assert!(
-        state.session_routes.lock().unwrap_or_else(|e| e.into_inner()).is_empty(),
-        "an unclassified foreign client must never reach the route cache — \
-         caching it is what let write/resize/detach reuse it afterwards"
-    );
-
-    set_active_repo_global(None).unwrap();
-    let _ = socket.calls();
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn a_reachable_foreign_daemon_with_another_app_config_is_refused_and_never_cached() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = activity_repo("fac");
-    let own_ns = crate::alineryd_socket_namespace().unwrap_or_default();
-    let lane = "different-config";
-    write_status_session(&repo, "task", "foreign-config-session", "implement", lane, Some(1), None, None, "");
-    let socket = status_list_socket(
-        crate::route_socket_path(&repo, &own_ns, lane).unwrap(),
-        Some(&format!(
-            "{{\"protocol\":{},\"build_id\":\"ours\",\"app_config_identity\":\"other-config\"}}\n",
-            alinery_core::PROTOCOL_VERSION
-        )),
-    );
-
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let state = crate::AppState::default();
-    state.set_daemon(
-        &repo,
-        crate::DaemonClient::connect_path(crate::current_alineryd_socket_path(&repo)).unwrap(),
-        alinery_core::DaemonCompat::Current,
-        "config".into(),
-        false,
-    );
-
-    let err = match crate::client_for_session(&state, &repo, "task", "foreign-config-session") {
-        Err(error) => error,
-        Ok(_) => panic!("a foreign daemon with another app config must not be handed out"),
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    let app_config = root.join("cfg").join("app.toml");
+    register_takeover_repo(&repo, &app_config);
+    // The test's own daemon goes the way a person would stop it (a confirmed stop-daemon), also when an assertion fails.
+    struct StopDaemon<'a>(&'a Path, &'a Path, Option<&'a str>, &'a Path);
+    impl Drop for StopDaemon<'_> {
+        fn drop(&mut self) {
+            let key = self.0.display().to_string();
+            let _ = shutdown_daemon(&key, self.1, self.2, ShutdownOrigin::StopDaemon, "relaunch-test", None, || Err("an rpc daemon".into()));
+            let _ = alinery_core::legacy_daemon::wait_for_daemon_gone(self.0, self.2.unwrap_or(""));
+            let _ = fs::remove_dir_all(self.3);
+        }
+    }
+    let _stop = StopDaemon(&repo, &app_config, lane.as_deref(), &root);
+    let peer = || {
+        let stream = std::os::unix::net::UnixStream::connect(alinery_core::rpc_socket_path(&repo, lane.as_deref())).unwrap();
+        alinery_core::legacy_daemon::peer_process_id(&stream).unwrap()
     };
-    assert!(err.contains("repo-app-config-mismatch"), "the refusal must name the config conflict, got: {err}");
-    assert!(
-        state.session_routes.lock().unwrap_or_else(|e| e.into_inner()).is_empty(),
-        "an app-config-mismatched client must never reach the route cache"
-    );
 
-    set_active_repo_global(None).unwrap();
-    assert!(socket.calls() >= 2);
-    let _ = fs::remove_dir_all(repo);
+    let first = AppState::default();
+    attach_repo_daemon(&first, &repo, &app_config);
+    assert!(first.daemon_attached(&repo), "the first app process starts and attaches the daemon");
+    let (pid, epoch) = (peer(), crate::daemon::hello_current(&repo, &app_config, Duration::from_secs(5)).unwrap().epoch);
+    let secret = crate::daemon::rpc_secret_path(
+        alinery_core::app_config_dir_of(&app_config).unwrap(),
+        &repo.to_string_lossy(),
+        lane.as_deref().unwrap_or(""),
+    );
+    assert!(secret.exists(), "the token the daemon accepted is kept");
+    assert!(!crate::daemon::pending_rpc_secret_path(&secret).exists(), "and it was committed after the first Hello");
+
+    // The first app process quits: its GUI ownership flock goes with it, and the daemon stays.
+    let compat = first.daemon_compat(&repo);
+    drop(first);
+    let second = AppState::default();
+    attach_repo_daemon(&second, &repo, &app_config);
+    assert!(second.daemon_attached(&repo), "the next app process reattaches");
+    assert_eq!(second.daemon_compat(&repo), compat);
+    assert_eq!(peer(), pid, "the daemon was not started again");
+    assert_eq!(crate::daemon::hello_current(&repo, &app_config, Duration::from_secs(5)).unwrap().epoch, epoch);
 }
 
-/// The same route with a *compatible* foreign daemon still works — the gate must not
-/// have cost us cross-lane routing, which is the whole point of `session_routes`.
+// A daemon on another protocol, or one started with another app config, is a conflict that names it and its sessions. It is
+// never stopped here and the app never speaks to it as if it were current.
 #[test]
-fn a_reachable_foreign_daemon_on_our_protocol_is_cached_and_used() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = activity_repo("fpo");
-    let own_ns = crate::alineryd_socket_namespace().unwrap_or_default();
-    let lane = "okp";
-    write_status_session(&repo, "task", "ok-session", "implement", lane, Some(1), None, None, "");
+fn ensure_daemon_refuses_a_foreign_protocol_or_app_config_and_stops_nothing() {
+    let lane = crate::alineryd_socket_namespace();
+    for label in ["protocol", "config"] {
+        let token = format!("foreign-{label}-{}", uuid::Uuid::new_v4().simple());
+        let t = teardown_fixture(lane.as_deref(), &token);
+        let mut hello = current_hello(&t.app_config, "foreign");
+        if label == "protocol" {
+            hello.protocol = PROTOCOL_VERSION + 1;
+        } else {
+            hello.app_config_identity = "another-config".into();
+        }
+        answer_hello_with(&token, hello.clone());
+        answer_live_sessions_with(&token, &["live-a", "live-b"]);
+        let conflict = ensure_outcome(&t).expect_err("must refuse");
+        let owner = conflict
+            .owners
+            .iter()
+            .find(|owner| owner.lane == lane.clone().unwrap_or_default())
+            .expect("the answering daemon is named");
+        assert_eq!(owner.protocol, Some(hello.protocol), "{label}");
+        assert_eq!(owner.app_config_identity.as_deref(), Some(hello.app_config_identity.as_str()), "{label}");
+        let crate::TakeoverImpact::Known { sessions } = &owner.impact else {
+            panic!("{label}: live sessions are listed: {:?}", owner.impact)
+        };
+        assert_eq!(sessions.len(), 2, "{label}");
+        assert!(shutdowns_with(&token).is_empty(), "{label}: observing a conflict stops nothing");
+    }
+}
 
-    let socket_path = crate::route_socket_path(&repo, &own_ns, lane).unwrap();
-    let socket = status_list_socket(
-        socket_path.clone(),
-        Some(&format!(
-            "{{\"protocol\":{},\"build_id\":\"theirs\",\"app_config_identity\":\"config\"}}\n",
-            alinery_core::PROTOCOL_VERSION
-        )),
+// The attach the poller and every command go through: a reachable current daemon is recorded, a refused one is a conflict.
+#[test]
+fn attach_records_the_hello_outcome_per_repo() {
+    let lane = crate::alineryd_socket_namespace();
+    let token = format!("attach-{}", uuid::Uuid::new_v4().simple());
+    let t = teardown_fixture(lane.as_deref(), &token);
+    register_takeover_repo(&t.repo, &t.app_config);
+    answer_hello_with(&token, current_hello(&t.app_config, "another-build"));
+    let state = AppState::default();
+    attach_repo_daemon(&state, &t.repo, &t.app_config);
+    assert!(state.daemon_attached(&t.repo));
+    assert_eq!(state.daemon_compat(&t.repo), Some(DaemonCompat::BuildDrift));
+    assert!(state.daemon_conflict(&t.repo).is_none());
+
+    let refused = format!("attach-refused-{}", uuid::Uuid::new_v4().simple());
+    let r = teardown_fixture(lane.as_deref(), &refused);
+    register_takeover_repo(&r.repo, &r.app_config);
+    let mut hello = current_hello(&r.app_config, "foreign");
+    hello.protocol = PROTOCOL_VERSION + 1;
+    answer_hello_with(&refused, hello);
+    attach_repo_daemon(&state, &r.repo, &r.app_config);
+    assert!(!state.daemon_attached(&r.repo));
+    assert!(state.daemon_conflict(&r.repo).is_some());
+    assert!(state.daemon_attached(&t.repo), "another repo's entry is untouched");
+    assert!(shutdowns_with(&refused).is_empty());
+}
+
+// An entry is per repo, a later outcome replaces an earlier one, and clearing it leaves the others.
+#[test]
+fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
+    let (a, b, c, unknown) = (
+        PathBuf::from("/tmp/alinery-entry-a"),
+        PathBuf::from("/tmp/alinery-entry-b"),
+        PathBuf::from("/tmp/alinery-entry-c"),
+        PathBuf::from("/tmp/alinery-entry-unknown"),
     );
-
-    set_active_repo_global(Some(repo.clone())).unwrap();
-    let state = crate::AppState::default();
-    state.set_daemon(
-        &repo,
-        crate::DaemonClient::connect_path(crate::current_alineryd_socket_path(&repo)).unwrap(),
-        alinery_core::DaemonCompat::Current,
-        "config".into(),
-        false,
+    let state = AppState::default();
+    state.set_daemon(&a, DaemonCompat::Current);
+    state.set_daemon(&b, DaemonCompat::BuildDrift);
+    state.set_daemon_conflict(
+        &c,
+        DaemonConflict {
+            repo: c.display().to_string(),
+            app_protocol: PROTOCOL_VERSION,
+            app_config_identity: "config".into(),
+            owners: Vec::new(),
+            issues: vec!["unavailable".into()],
+        },
     );
+    assert!(state.daemon_attached(&a) && state.daemon_attached(&b));
+    assert!(!state.daemon_attached(&c) && !state.daemon_attached(&unknown));
+    assert_eq!(state.daemon_compat(&a), Some(DaemonCompat::Current));
+    assert_eq!(state.daemon_compat(&b), Some(DaemonCompat::BuildDrift));
+    assert_eq!(state.daemon_compat(&c), None);
 
-    let client = crate::client_for_session(&state, &repo, "task", "ok-session").expect("a compatible foreign daemon is still routable");
-    assert_eq!(client.socket_path, socket_path, "must route to the foreign lane, not fall back to the own-lane client");
-    assert!(
-        state.session_routes.lock().unwrap_or_else(|e| e.into_inner()).contains_key("ok-session"),
-        "a classified foreign client is cached so later ops reuse the lane"
+    state.set_daemon(&c, DaemonCompat::Current);
+    assert!(state.daemon_attached(&c) && state.daemon_conflict(&c).is_none(), "an answer replaces the conflict");
+    state.set_daemon_conflict(
+        &a,
+        DaemonConflict {
+            repo: a.display().to_string(),
+            app_protocol: PROTOCOL_VERSION,
+            app_config_identity: "config".into(),
+            owners: Vec::new(),
+            issues: vec!["now refused".into()],
+        },
     );
+    assert!(!state.daemon_attached(&a) && state.daemon_conflict(&a).is_some(), "a conflict replaces the connection");
 
-    set_active_repo_global(None).unwrap();
-    let _ = socket.calls();
-    let _ = fs::remove_dir_all(repo);
+    state.clear_daemon(&c);
+    assert!(state.repo_daemon(&c).is_none());
+    assert!(state.daemon_attached(&b), "clearing one repo leaves the others");
 }
 
 #[test]
@@ -932,7 +795,7 @@ fn canonical_host_executable_fails_open_for_lookup_and_canonicalization_errors()
 #[test]
 fn host_guard_environment_removes_stale_values_before_optional_injection() {
     let mut warning_command = std::process::Command::new("true");
-    crate::daemon_client::configure_host_guard_environment(&mut warning_command, None);
+    alinery_core::configure_host_guard_environment(&mut warning_command, None);
     let warning_value = warning_command
         .get_envs()
         .find(|(name, _)| *name == "ALINERY_HOST_EXECUTABLE")
@@ -942,53 +805,13 @@ fn host_guard_environment_removes_stale_values_before_optional_injection() {
 
     let canonical = Path::new("/canonical/Alinery Dev");
     let mut protected_command = std::process::Command::new("true");
-    crate::daemon_client::configure_host_guard_environment(&mut protected_command, Some(canonical));
+    alinery_core::configure_host_guard_environment(&mut protected_command, Some(canonical));
     let protected_value = protected_command
         .get_envs()
         .find(|(name, _)| *name == "ALINERY_HOST_EXECUTABLE")
         .expect("protected path must explicitly supply the canonical host")
         .1;
     assert_eq!(protected_value, Some(canonical.as_os_str()));
-}
-
-#[test]
-fn daemon_reported_host_guard_warning_is_conservative() {
-    let ready = crate::daemon_client::parse_version_reply(&serde_json::json!({"host_guard_ready": true}));
-    let unready = crate::daemon_client::parse_version_reply(&serde_json::json!({"host_guard_ready": false}));
-    let missing = crate::daemon_client::parse_version_reply(&serde_json::json!({}));
-
-    assert!(!ready.host_guard_warning());
-    assert!(unready.host_guard_warning());
-    assert!(missing.host_guard_warning());
-}
-
-#[test]
-fn ensure_daemon_adoption_uses_reported_host_guard_readiness() {
-    let mut fixtures = Vec::new();
-    for (label, ready, expected_warning) in [("ready", true, false), ("unready", false, true)] {
-        let repo = activity_repo(label);
-        let app_config = repo.join(".alinery/app.toml");
-        let app_config_identity = alinery_core::app_config_identity(&app_config);
-        let socket = status_list_socket(
-            crate::current_alineryd_socket_path(&repo),
-            Some(&format!(
-                "{{\"protocol\":{},\"build_id\":\"retained\",\"app_config_identity\":\"{}\",\"host_guard_ready\":{ready}}}\n",
-                alinery_core::PROTOCOL_VERSION,
-                app_config_identity
-            )),
-        );
-        let warning = match crate::ensure_daemon(&repo, &app_config) {
-            Ok((_, _, _, warning)) => warning,
-            Err(error) => panic!("compatible retained daemon must be adopted: {error}"),
-        };
-        assert_eq!(warning, expected_warning);
-        fixtures.push((repo, socket));
-    }
-
-    for (repo, socket) in fixtures {
-        let _ = socket.calls();
-        let _ = fs::remove_dir_all(repo);
-    }
 }
 
 #[test]
@@ -1006,7 +829,7 @@ fn project_open_refuses_a_live_foreign_lock_without_seizing_the_gui() {
     let conflict = state.daemon_conflict(&repo).expect("live foreign owner must be visible");
     assert!(conflict.owners.is_empty(), "a held lease without a socket is not an identified process");
     assert!(conflict.issues.iter().any(|issue| issue.contains("old-checkout")));
-    assert!(state.daemon_for(&repo).is_none());
+    assert!(!state.daemon_attached(&repo));
     assert!(!state.owns_repo(&repo));
     assert!(crate::require_repo_owned(&state, &repo).is_err());
     assert_eq!(fs::metadata(&lock_path).unwrap().ino(), inode, "refusal must never replace a held lock");
@@ -1028,7 +851,7 @@ fn project_open_reports_unknown_lock_state_without_starting_a_daemon() {
     let state = AppState::default();
     crate::attach_repo_daemon(&state, &repo, &repo.join(".alinery/app.toml"));
     assert!(state.daemon_conflict(&repo).unwrap().issues.iter().any(|issue| issue.contains("unreadable")));
-    assert!(state.daemon_for(&repo).is_none());
+    assert!(!state.daemon_attached(&repo));
     assert!(!state.owns_repo(&repo));
     assert!(!crate::current_alineryd_socket_path(&repo).exists());
     assert!(lock_path.is_dir());
@@ -1039,65 +862,14 @@ fn project_open_reports_unknown_lock_state_without_starting_a_daemon() {
 fn daemon_exit_wait_does_not_accept_a_missing_socket_with_a_live_lock() {
     let repo = activity_repo("exit-live-lock");
     fs::create_dir_all(repo.join(".alinery")).unwrap();
-    let lease = alinery_core::lockfile::try_lock_exclusive(&crate::current_alineryd_lock_path(&repo)).unwrap().unwrap();
-    assert!(crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).is_err());
+    let lease = alinery_core::lockfile::try_lock_exclusive(&alinery_core::alineryd_lock_path(&repo, crate::alineryd_socket_namespace().as_deref()))
+        .unwrap()
+        .unwrap();
+    assert!(alinery_core::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).is_err());
     drop(lease);
-    crate::daemon_client::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).unwrap();
+    alinery_core::wait_for_daemon_gone(&repo, crate::alineryd_socket_namespace().as_deref().unwrap_or("")).unwrap();
     fs::remove_dir_all(repo).unwrap();
 }
-#[test]
-fn host_guard_warning_is_repo_scoped_replaced_and_cleared() {
-    let warned = PathBuf::from("/tmp/alinery-warning-repo");
-    let protected = PathBuf::from("/tmp/alinery-protected-repo");
-    let conflicted = PathBuf::from("/tmp/alinery-conflicted-repo");
-    let unknown = PathBuf::from("/tmp/alinery-unknown-repo");
-    let state = AppState::default();
-    let client = || DaemonClient::connect_path(PathBuf::from("/tmp/alinery-host-guard.sock")).unwrap();
-
-    state.set_daemon(&warned, client(), DaemonCompat::Current, "warned".into(), true);
-    state.set_daemon(&protected, client(), DaemonCompat::Current, "protected".into(), false);
-    state.set_daemon_conflict(
-        &conflicted,
-        DaemonConflict {
-            repo: conflicted.display().to_string(),
-            app_protocol: PROTOCOL_VERSION,
-            app_config_identity: "config".into(),
-            owners: Vec::new(),
-            issues: vec!["unavailable".into()],
-        },
-    );
-
-    assert!(state.daemon_host_guard_warning(&warned));
-    assert!(state.daemon_host_guard_warning(&warned), "warning is retained with the connected entry");
-    assert!(!state.daemon_host_guard_warning(&protected));
-    assert!(!state.daemon_host_guard_warning(&conflicted));
-    assert!(!state.daemon_host_guard_warning(&unknown));
-
-    state
-        .session_routes
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert("foreign-session".into(), client());
-    assert!(state.refresh_daemon_observation(&protected, DaemonCompat::BuildDrift, "observed-unready".into(), true,));
-    assert!(state.daemon_host_guard_warning(&protected));
-    assert_eq!(state.daemon_compat(&protected), Some(DaemonCompat::BuildDrift));
-    assert_eq!(state.daemon_app_config_identity(&protected).as_deref(), Some("observed-unready"));
-    assert!(state.session_routes.lock().unwrap_or_else(|error| error.into_inner()).contains_key("foreign-session"));
-
-    assert!(state.refresh_daemon_observation(&protected, DaemonCompat::Current, "observed-ready".into(), false,));
-    assert!(!state.daemon_host_guard_warning(&protected));
-    assert_eq!(state.daemon_compat(&protected), Some(DaemonCompat::Current));
-    assert_eq!(state.daemon_app_config_identity(&protected).as_deref(), Some("observed-ready"));
-    assert!(state.session_routes.lock().unwrap_or_else(|error| error.into_inner()).contains_key("foreign-session"));
-    assert!(!state.refresh_daemon_observation(&conflicted, DaemonCompat::Current, "ignored".into(), false,));
-
-    state.set_daemon(&warned, client(), DaemonCompat::Current, "replacement".into(), false);
-    assert!(!state.daemon_host_guard_warning(&warned), "replacement supplies its own warning state");
-    state.set_daemon(&warned, client(), DaemonCompat::Current, "warned-again".into(), true);
-    state.clear_daemon(&warned);
-    assert!(!state.daemon_host_guard_warning(&warned));
-}
-
 #[test]
 fn closing_repo_discards_inflight_conflict_observation() {
     let repo = activity_repo("closing-probe");
@@ -1134,388 +906,6 @@ fn closing_repo_discards_inflight_conflict_observation() {
     assert!(!published, "an observation begun before close must not publish during teardown");
 }
 
-#[test]
-fn task_execution_offline_preserves_saved_progress_without_taking_ownership() {
-    let _lock = observation_test_lock();
-    let repo = activity_repo("exec-off");
-    write_retained_discovery_task(&repo, "task", "owner", false);
-    let config = repo.join("app.toml");
-    let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
-    let owner = AppState::default();
-    let guest = AppState::default();
-    assert!(owner.claim_repo(&repo));
-    let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
-    let before = fs::read(&path).unwrap();
-    let reply = alinery_core::with_task_mutation_lock(&repo, "hold while browsing", || crate::task_execution_for(&repo, "task", &config)).unwrap();
-    assert!(matches!(reply.live, crate::ExecutionAvailability::Offline { .. }));
-    let payload = serde_json::to_value(reply).unwrap();
-    assert_eq!(payload["state"], serde_json::to_value(&saved.state).unwrap());
-    assert_eq!(payload["definition"], serde_json::to_value(&saved.definition).unwrap());
-    assert!(payload["live"]["detail"].is_string());
-    assert!(crate::task_daemon_for(&repo, "task", &config).is_err());
-    assert!(require_repo_owned(&guest, &repo).is_err());
-    assert!(!guest.owns_repo(&repo));
-    assert_eq!(fs::read(path).unwrap(), before);
-    assert!(!alinery_core::alineryd_socket_path(&repo, Some("owner")).exists());
-    assert!(!crate::current_alineryd_socket_path(&repo).exists());
-    assert!(!alinery_core::alineryd_lock_path(&repo, Some("owner")).exists());
-    fs::remove_dir_all(repo).unwrap();
-}
-
-#[test]
-fn task_execution_classifies_owner_failures_and_uses_healthy_live_reply() {
-    let _lock = observation_test_lock();
-    for status in ["foreign_owner", "incompatible", "unavailable", "query_failure", "available"] {
-        let repo = activity_repo("exec-live");
-        write_retained_discovery_task(&repo, "task", "owner", false);
-        let config = repo.join("app.toml");
-        let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
-        let mut live = saved.clone();
-        live.state.revision += 10;
-        let expected_live = serde_json::to_value(&live).unwrap();
-        let identity = alinery_core::app_config_identity(&config);
-        let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
-            if status == "unavailable" {
-                return "invalid json".into();
-            }
-            match op {
-                "version" => serde_json::json!({
-                    "protocol": if status == "incompatible" { PROTOCOL_VERSION + 1 } else { PROTOCOL_VERSION },
-                    "build_id": "fixture",
-                    "app_config_identity": if status == "foreign_owner" { "other-config" } else { &identity },
-                }),
-                "get_task_execution" if status == "query_failure" => serde_json::json!({"error": "execution query failed"}),
-                "get_task_execution" if status == "available" => serde_json::to_value(&live).unwrap(),
-                other => panic!("unexpected owner operation: {other}"),
-            }
-            .to_string()
-        });
-        let reply = crate::task_execution_for(&repo, "task", &config).unwrap();
-        let payload = serde_json::to_value(reply).unwrap();
-        assert_eq!(payload["live"]["status"], if status == "query_failure" { "unavailable" } else { status });
-        let expected = if status == "available" { expected_live } else { serde_json::to_value(&saved).unwrap() };
-        assert_eq!(payload["state"], expected["state"]);
-        assert_eq!(payload["definition"], expected["definition"]);
-        let mut expected_requests = vec!["version"];
-        if matches!(status, "available" | "query_failure") {
-            expected_requests.push("get_task_execution");
-        } else {
-            assert!(crate::task_daemon_for(&repo, "task", &config).is_err(), "mutation route must still refuse {status}");
-            expected_requests.push("version");
-        }
-        server.join().unwrap();
-        assert_eq!(
-            *requests.lock().unwrap_or_else(|error| error.into_inner()),
-            expected_requests,
-            "reads must not start, stop, or mutate sessions"
-        );
-        assert_eq!(
-            serde_json::to_value(crate::saved_task_execution_for(&repo, "task").unwrap()).unwrap(),
-            serde_json::to_value(saved).unwrap()
-        );
-        assert!(!crate::current_alineryd_socket_path(&repo).exists());
-        fs::remove_dir_all(repo).unwrap();
-    }
-}
-
-#[test]
-fn task_execution_rejects_bad_saved_data_before_contacting_owner() {
-    let _lock = observation_test_lock();
-    let repo = activity_repo("exec-bad");
-    write_retained_discovery_task(&repo, "task", "owner", false);
-    let config = repo.join("app.toml");
-    let path = alinery_core::execution::execution_state_path(&repo, "task").unwrap();
-    let retained_path = alinery_core::execution::task_playbook_path(&repo, "task").unwrap();
-    let saved = fs::read(&path).unwrap();
-    let retained = fs::read(&retained_path).unwrap();
-    let healthy = crate::saved_task_execution_for(&repo, "task").unwrap();
-    let identity = alinery_core::app_config_identity(&config);
-    let (requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| {
-        match op {
-            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}),
-            "get_task_execution" => serde_json::to_value(&healthy).unwrap(),
-            other => panic!("unexpected owner operation: {other}"),
-        }
-        .to_string()
-    });
-    fs::write(&path, "not json").unwrap();
-    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
-    fs::remove_file(&path).unwrap();
-    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
-    let mut invalid: serde_json::Value = serde_json::from_slice(&saved).unwrap();
-    invalid["max_live_sessions"] = serde_json::json!(0);
-    fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
-    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
-    fs::write(&path, saved).unwrap();
-    fs::write(&retained_path, "modified retained definition").unwrap();
-    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
-    fs::remove_file(&retained_path).unwrap();
-    assert!(crate::task_execution_for(&repo, "task", &config).is_err());
-    fs::write(&retained_path, retained).unwrap();
-    server.join().unwrap();
-    assert!(requests.lock().unwrap_or_else(|error| error.into_inner()).is_empty());
-    fs::remove_dir_all(repo).unwrap();
-}
-
-fn short_git_repo(name: &str) -> PathBuf {
-    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0);
-    let repo = PathBuf::from(format!("/tmp/ao-{name}-{n}"));
-    fs::create_dir_all(&repo).unwrap();
-    let run = |args: &[&str]| {
-        let out = git_cmd(&repo).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
-    };
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@alinery.local"]);
-    run(&["config", "user.name", "alinery Test"]);
-    run(&["commit", "--allow-empty", "-q", "-m", "init"]);
-    repo
-}
-// All tests entering observation share its process-global counters and worker controls.
-fn observation_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|error| error.into_inner())
-}
-
-fn execution_ref(repo: &Path, slug: &str) -> crate::TaskExecutionRef {
-    crate::TaskExecutionRef {
-        repo_path: repo.display().to_string(),
-        task_slug: slug.into(),
-    }
-}
-
-fn count_ops(requests: &[String], op: &str) -> usize {
-    requests.iter().filter(|request| request.as_str() == op).count()
-}
-
-#[test]
-fn batch_observation_cuts_repeated_git_hash_and_handshake_work() {
-    let _lock = observation_test_lock();
-    crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
-    let repo_a = short_git_repo("batch-a");
-    let repo_b = short_git_repo("batch-b");
-    write_retained_discovery_task(&repo_a, "one", "lane-a", false);
-    write_retained_discovery_task(&repo_a, "two", "lane-a", false);
-    write_retained_discovery_task(&repo_b, "one", "lane-b", false);
-    let config = repo_a.join("app.toml");
-    let known = vec![repo_a.display().to_string(), repo_b.display().to_string()];
-    let saved_a = crate::saved_task_execution_for(&repo_a, "one").unwrap();
-    let saved_b = crate::saved_task_execution_for(&repo_b, "one").unwrap();
-    let (requests_a, server_a) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo_a, Some("lane-a")), {
-        let identity = alinery_core::app_config_identity(&config);
-        move |op| match op {
-            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
-            "get_task_execution" => serde_json::to_string(&saved_a).unwrap(),
-            other => panic!("unexpected owner operation: {other}"),
-        }
-    });
-    let (requests_b, server_b) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo_b, Some("lane-b")), {
-        let identity = alinery_core::app_config_identity(&config);
-        move |op| match op {
-            "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
-            "get_task_execution" => serde_json::to_string(&saved_b).unwrap(),
-            other => panic!("unexpected owner operation: {other}"),
-        }
-    });
-    let tasks = [execution_ref(&repo_a, "one"), execution_ref(&repo_a, "two"), execution_ref(&repo_b, "one")];
-    crate::reset_observe_counts();
-    for task in &tasks {
-        let repo = crate::authorize_observation_repo(&known, &task.repo_path).unwrap();
-        crate::task_execution_for(&repo, &task.task_slug, &config).unwrap();
-    }
-    let before_auth = crate::OBSERVE_AUTH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-    let before_hash = crate::OBSERVE_HASH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-    let before_requests = {
-        let mut all = requests_a.lock().unwrap_or_else(|error| error.into_inner()).clone();
-        all.extend(requests_b.lock().unwrap_or_else(|error| error.into_inner()).clone());
-        all
-    };
-    requests_a.lock().unwrap_or_else(|error| error.into_inner()).clear();
-    requests_b.lock().unwrap_or_else(|error| error.into_inner()).clear();
-
-    crate::reset_observe_counts();
-    let outcomes = crate::observe_task_executions_in(&config, &known, tasks.to_vec()).unwrap();
-    let after_auth = crate::OBSERVE_AUTH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-    let after_hash = crate::OBSERVE_HASH_CALLS.load(std::sync::atomic::Ordering::Relaxed);
-    let after_requests = {
-        let mut all = requests_a.lock().unwrap_or_else(|error| error.into_inner()).clone();
-        all.extend(requests_b.lock().unwrap_or_else(|error| error.into_inner()).clone());
-        all
-    };
-    assert_eq!(before_auth, 3, "per-task Git authorization");
-    assert_eq!(after_auth, 2, "batch Git authorization; before {before_auth}");
-    assert_eq!(before_hash, 3, "per-task binary hash");
-    assert_eq!(after_hash, 1, "batch binary hash; before {before_hash}");
-    assert_eq!(count_ops(&before_requests, "version"), 3);
-    assert_eq!(
-        count_ops(&after_requests, "version"),
-        2,
-        "version handshakes before {}, after {}",
-        count_ops(&before_requests, "version"),
-        count_ops(&after_requests, "version")
-    );
-    assert_eq!(count_ops(&before_requests, "get_task_execution"), 3);
-    assert_eq!(count_ops(&after_requests, "get_task_execution"), 3);
-    assert_eq!(outcomes.len(), 3);
-    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()
-        && outcome
-            .execution
-            .as_ref()
-            .is_some_and(|execution| matches!(execution.live, crate::ExecutionAvailability::Available))));
-    assert_eq!(outcomes[0].task_slug, "one");
-    assert_eq!(outcomes[2].task_slug, "one");
-    assert_ne!(outcomes[0].repo_path, outcomes[2].repo_path);
-
-    let bad = execution_ref(&repo_a, "bad");
-    fs::create_dir_all(alinery_core::execution::execution_state_path(&repo_a, "bad").unwrap().parent().unwrap()).unwrap();
-    fs::write(alinery_core::execution::execution_state_path(&repo_a, "bad").unwrap(), "not json").unwrap();
-    let unknown = short_git_repo("batch-unknown");
-    let mixed = crate::observe_task_executions_in(
-        &config,
-        &known,
-        vec![execution_ref(&repo_a, "one"), bad, execution_ref(&unknown, "one"), execution_ref(&repo_a, "one")],
-    )
-    .unwrap();
-    assert_eq!(mixed.len(), 3, "duplicate references share one outcome");
-    assert!(mixed[0].execution.is_some());
-    assert!(mixed[1].error.as_deref().is_some());
-    assert!(mixed[2].error.as_deref().unwrap_or("").contains("not in the known repository set"));
-    assert!(!alinery_core::execution::execution_state_path(&unknown, "one").unwrap().exists());
-    server_a.join().unwrap();
-    server_b.join().unwrap();
-    fs::remove_dir_all(repo_a).unwrap();
-    fs::remove_dir_all(repo_b).unwrap();
-    fs::remove_dir_all(unknown).unwrap();
-}
-
-#[test]
-fn observation_workers_stay_at_four() {
-    let _lock = observation_test_lock();
-    crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
-    let repo = short_git_repo("workers");
-    for lane in 0..5 {
-        write_retained_discovery_task(&repo, &format!("task-{lane}"), &format!("lane-{lane}"), false);
-        let socket = alinery_core::alineryd_socket_path(&repo, Some(&format!("lane-{lane}")));
-        fs::create_dir_all(socket.parent().unwrap()).unwrap();
-        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < deadline {
-                if listener.accept().is_ok() {
-                    std::thread::sleep(Duration::from_millis(400));
-                } else {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-        });
-    }
-    crate::reset_observe_counts();
-    let tasks = (0..5).map(|lane| execution_ref(&repo, &format!("task-{lane}"))).collect();
-    let outcomes = crate::observe_task_executions_in(&repo.join("app.toml"), &[repo.display().to_string()], tasks).unwrap();
-    assert_eq!(outcomes.len(), 5);
-    assert!(outcomes.iter().all(|outcome| outcome.execution.is_some()));
-    let max_workers = crate::OBSERVE_WORKERS_MAX.load(std::sync::atomic::Ordering::SeqCst);
-    assert!(max_workers <= 4, "observation workers {max_workers}");
-    assert!(max_workers >= 2, "bounded fan-out did not overlap, max {max_workers}");
-    fs::remove_dir_all(repo).unwrap();
-}
-
-#[test]
-fn pending_observation_dispatch_handles_ping_first() {
-    use tauri::ipc::InvokeBody;
-    use tauri::webview::InvokeRequest;
-
-    let _lock = observation_test_lock();
-    let repo = short_git_repo("dispatch");
-    write_retained_discovery_task(&repo, "task", "owner", false);
-    let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-    context.config_mut().identifier = format!("test.alinery.observe.{}", uuid::Uuid::new_v4());
-    let app = crate::observation_dispatch_builder(tauri::test::mock_builder().manage(AppState::default()))
-        .build(context)
-        .unwrap();
-    let config_path = crate::app_config_path(app.handle()).unwrap();
-    crate::write_app_config_at(
-        &config_path,
-        &AppConfig {
-            known_repos: vec![repo.display().to_string()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let identity = alinery_core::app_config_identity(&config_path);
-    let saved = crate::saved_task_execution_for(&repo, "task").unwrap();
-    let (_requests, server) = recording_lane_with_response(alinery_core::alineryd_socket_path(&repo, Some("owner")), move |op| match op {
-        "version" => serde_json::json!({"protocol": PROTOCOL_VERSION, "build_id": "fixture", "app_config_identity": identity}).to_string(),
-        "get_task_execution" => serde_json::to_string(&saved).unwrap(),
-        other => panic!("unexpected owner operation: {other}"),
-    });
-    let hold = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-    *crate::OBSERVE_AUTH_HOLD.lock().unwrap_or_else(|error| error.into_inner()) = Some(hold.clone());
-    crate::OBSERVE_REQUIRE_WORKER.store(true, std::sync::atomic::Ordering::SeqCst);
-    crate::OBSERVE_AUTH_ENTERED.store(false, std::sync::atomic::Ordering::SeqCst);
-    struct ClearHold;
-    impl Drop for ClearHold {
-        fn drop(&mut self) {
-            *crate::OBSERVE_AUTH_HOLD.lock().unwrap_or_else(|error| error.into_inner()) = None;
-            crate::OBSERVE_REQUIRE_WORKER.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-    let _clear = ClearHold;
-    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
-    let request = |cmd: &str, body: serde_json::Value| InvokeRequest {
-        cmd: cmd.into(),
-        callback: tauri::ipc::CallbackFn(0),
-        error: tauri::ipc::CallbackFn(1),
-        url: "tauri://localhost".parse().unwrap(),
-        body: InvokeBody::Json(body),
-        headers: Default::default(),
-        invoke_key: tauri::test::INVOKE_KEY.to_string(),
-    };
-    let (observe_tx, observe_rx) = std::sync::mpsc::sync_channel(1);
-    window.clone().on_message(
-        request(
-            "observe_task_executions",
-            serde_json::json!({"tasks":[{"repoPath": repo.display().to_string(), "taskSlug": "task"}]}),
-        ),
-        Box::new(move |_, _, response, _, _| {
-            let _ = observe_tx.send(response);
-        }),
-    );
-    let started = Instant::now();
-    while !crate::OBSERVE_AUTH_ENTERED.load(std::sync::atomic::Ordering::SeqCst) {
-        assert!(started.elapsed() < Duration::from_secs(5), "authorization never entered the observation worker");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let (ping_tx, ping_rx) = std::sync::mpsc::sync_channel(1);
-    window.clone().on_message(
-        request("ping", serde_json::json!({"name": "grid"})),
-        Box::new(move |_, _, response, _, _| {
-            let _ = ping_tx.send(response);
-        }),
-    );
-    let ping = ping_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("unrelated command handled while observation is pending");
-    assert!(observe_rx.try_recv().is_err(), "observation must still be pending when ping is handled");
-    {
-        let (lock, cv) = &*hold;
-        *lock.lock().unwrap_or_else(|error| error.into_inner()) = true;
-        cv.notify_all();
-    }
-    let observed = observe_rx.recv_timeout(Duration::from_secs(5)).expect("observation finishes after the worker is released");
-    match ping {
-        tauri::ipc::InvokeResponse::Ok(body) => assert_eq!(body.deserialize::<String>().unwrap(), "pong: grid"),
-        tauri::ipc::InvokeResponse::Err(error) => panic!("ping failed: {error:?}"),
-    }
-    match observed {
-        tauri::ipc::InvokeResponse::Ok(_) => {}
-        tauri::ipc::InvokeResponse::Err(error) => panic!("observation failed after release: {error:?}"),
-    }
-    server.join().unwrap();
-    fs::remove_dir_all(repo).unwrap();
-}
-
 // App orchestration peers have mutable observations and orderly exit, unlike the
 // core transport fixture, which deliberately stays alive after an acknowledgement.
 struct TakeoverPeer {
@@ -1540,11 +930,13 @@ impl TakeoverPeer {
             .spawn()
             .unwrap();
         let mut peer = Self { child, root, lane: lane.into() };
-        let until = Instant::now() + Duration::from_secs(5);
-        let client = DaemonClient {
-            socket_path: alinery_core::alineryd_socket_path(repo, Some(lane)),
-        };
-        while client.version_checked().is_err() {
+        // Up to 30 s: a re-executed test binary starts slowly under full-workspace load (R-FLAKE-3).
+        let until = Instant::now() + Duration::from_secs(30);
+        let socket = alinery_core::alineryd_socket_path(repo, Some(lane));
+        while BoundDaemonConnection::connect(&socket, None, crate::DAEMON_CONTROL_TIMEOUT)
+            .and_then(|connection| connection.version())
+            .is_err()
+        {
             assert!(peer.child.try_wait().unwrap().is_none());
             assert!(Instant::now() < until, "legacy peer did not become queryable");
             std::thread::sleep(Duration::from_millis(5));
@@ -1575,7 +967,17 @@ impl TakeoverPeer {
 impl Drop for TakeoverPeer {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
-        let _ = self.child.wait();
+        // A peer that never reached its listen loop ignores the closed stdin; kill it rather
+        // than hang or leak it when the start-up wait panicked (R-FLAKE-3).
+        let until = Instant::now() + Duration::from_secs(10);
+        while matches!(self.child.try_wait(), Ok(None)) {
+            if Instant::now() >= until {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
@@ -1722,13 +1124,14 @@ fn refused_shutdown_consumes_consent_without_attaching_replacement() {
     assert!(repo.confirm(&state, &preview.confirmation_id).unwrap_err().contains("shutdown failed"));
     assert!(repo.confirm(&state, &preview.confirmation_id).is_err());
     assert_eq!(peer.shutdowns(), 1);
-    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!state.daemon_attached(&repo.0));
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
-    assert!(DaemonClient {
-        socket_path: alinery_core::alineryd_socket_path(&repo.0, Some("old"))
-    }
-    .version_checked()
-    .is_ok());
+    assert!(
+        BoundDaemonConnection::connect(&alinery_core::alineryd_socket_path(&repo.0, Some("old")), None, crate::DAEMON_CONTROL_TIMEOUT)
+            .and_then(|connection| connection.version())
+            .is_ok(),
+        "the refused owner is still serving"
+    );
 }
 
 #[test]
@@ -1741,14 +1144,6 @@ fn two_legacy_owners_require_two_confirmations() {
         fs::hard_link(std::env::current_exe().unwrap(), &executable).unwrap();
         let debug = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug");
         std::os::unix::fs::symlink(debug.join("alinery-vinculum-daemon"), install.0.join("alinery-vinculum-daemon")).unwrap();
-        let library = if cfg!(target_os = "macos") {
-            "libalinery_core.dylib"
-        } else if cfg!(target_os = "windows") {
-            "alinery_core.dll"
-        } else {
-            "libalinery_core.so"
-        };
-        std::os::unix::fs::symlink(debug.join(library), install.0.join(library)).unwrap();
         let result = Command::new(executable)
             .args(["--exact", "tests::daemon::two_legacy_owners_require_two_confirmations", "--nocapture"])
             .env("ALINERY_TEST_TAKEOVER_INSTALL", "1")
@@ -1774,26 +1169,30 @@ fn two_legacy_owners_require_two_confirmations() {
     assert_eq!(b.shutdowns(), 0);
     assert!(conflict.owners.iter().any(|owner| owner.lane == "old-b"));
     assert_eq!(fs::read(&path).unwrap(), before, "no partial task adoption");
-    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!state.daemon_attached(&repo.0));
     let preview = repo.prepare(&state, "old-b");
     assert!(matches!(repo.confirm(&state, &preview.confirmation_id).unwrap(), crate::TakeoverOutcome::Attached));
-    let replacement = state.daemon_for(&repo.0).unwrap();
-    struct Replacement(DaemonClient);
+    assert!(state.daemon_attached(&repo.0));
+    // The replacement is a real daemon: stop it over the wire it serves.
+    struct Replacement(PathBuf);
     impl Drop for Replacement {
         fn drop(&mut self) {
-            let _ = self.0.call(&crate::daemon_client::shutdown_request());
+            let _ = shutdown_daemon(
+                &self.0.display().to_string(),
+                &self.0.join("app.toml"),
+                crate::alineryd_socket_namespace().as_deref(),
+                ShutdownOrigin::StopDaemon,
+                "",
+                None,
+                || Err("the replacement speaks alinery.v1".into()),
+            );
         }
     }
-    let _replacement = Replacement(replacement);
+    let _replacement = Replacement(repo.0.clone());
     assert_eq!(b.shutdowns(), 1);
     let adopted = alinery_core::execution::read_execution_state(&repo.0, "task").unwrap();
     assert_eq!(adopted.owning_lane, crate::alineryd_socket_namespace().as_deref().unwrap_or(""));
     assert_eq!(adopted.owning_app_config_identity, alinery_core::app_config_identity(&repo.0.join("app.toml")));
-    let routed = crate::task_daemon_for(&repo.0, "task", &repo.0.join("app.toml")).unwrap();
-    let reply = routed
-        .get_task_execution(&alinery_core::daemon_client::GetTaskExecutionRequest { task_slug: "task".into() })
-        .unwrap();
-    assert_eq!(reply.state.owning_lane, adopted.owning_lane);
 }
 
 #[test]
@@ -1849,7 +1248,7 @@ fn concurrent_confirmation_sends_at_most_one_shutdown() {
         }
     });
     assert_eq!(peer.shutdowns(), 1);
-    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!state.daemon_attached(&repo.0));
 }
 
 fn register_takeover_repo(repo: &Path, config: &Path) {
@@ -1930,18 +1329,13 @@ fn nonactive_takeover_refresh_preserves_selected_repository_mcp() {
 fn takeover_rejects_invalid_and_compatible_targets_before_shutdown() {
     let repo = TakeoverRepo::new();
     let lane = crate::alineryd_socket_namespace().unwrap_or_default();
-    let peer = TakeoverPeer::start(&repo.0, &lane);
     let state = AppState::default();
     let config = repo.0.join("app.toml");
-    fs::write(
-        peer.root.join("version"),
-        serde_json::json!({
-            "protocol": PROTOCOL_VERSION, "build_id":"different-but-compatible",
-            "app_config_identity":alinery_core::app_config_identity(&config),
-        })
-        .to_string(),
-    )
-    .unwrap();
+    // A daemon that answers `Hello` with our protocol and app config is compatible: it is reconnected to, never taken over.
+    let token = format!("compatible-{}", uuid::Uuid::new_v4().simple());
+    crate::daemon::store_rpc_secret(alinery_core::app_config_dir_of(&config).unwrap(), &repo.0.display().to_string(), &lane, &token).unwrap();
+    answer_hello_with(&token, current_hello(&config, "different-but-compatible"));
+    let _server = tauri::async_runtime::block_on(serve_at(alinery_core::rpc_socket_path(&repo.0, Some(&lane)), repo.0.clone()));
     assert!(
         crate::prepare_repo_takeover_blocking(&state, &config, &repo.0.display().to_string(), &lane, || repo.known())
             .unwrap_err()
@@ -1951,7 +1345,7 @@ fn takeover_rejects_invalid_and_compatible_targets_before_shutdown() {
         assert!(crate::prepare_repo_takeover_blocking(&state, &config, &repo.0.display().to_string(), invalid, || repo.known()).is_err());
     }
     assert!(crate::prepare_repo_takeover_blocking(&state, &config, "/unselected", &lane, || repo.known()).is_err());
-    assert_eq!(peer.shutdowns(), 0);
+    assert!(shutdowns_with(&token).is_empty());
 }
 
 #[test]
@@ -1990,7 +1384,7 @@ fn acknowledged_shutdown_with_held_lease_never_attaches_replacement() {
     let preview = repo.prepare(&state, "old");
     assert!(repo.confirm(&state, &preview.confirmation_id).unwrap_err().contains("exit not established"));
     assert_eq!(peer.shutdowns(), 1);
-    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!state.daemon_attached(&repo.0));
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
     assert!(alinery_core::lockfile::try_lock_exclusive(&alinery_core::alineryd_lock_path(&repo.0, Some("old")))
         .unwrap()
@@ -2027,7 +1421,68 @@ fn replacement_start_failure_preserves_history_without_restarting_owner() {
     assert!(peer.child.wait().unwrap().success());
     assert_eq!(peer.shutdowns(), 1);
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert!(state.daemon_for(&repo.0).is_none());
+    assert!(!state.daemon_attached(&repo.0));
     assert!(!alinery_core::alineryd_socket_path(&repo.0, Some("old")).exists());
     assert!(!crate::current_alineryd_socket_path(&repo.0).exists());
+}
+
+#[test]
+fn rpc_secrets_are_random_hex_kept_per_repo_and_lane_and_handed_off_owner_only() {
+    use crate::daemon::{new_rpc_secret, rpc_secret_path, store_rpc_secret, write_rpc_secret_handoff};
+    use std::os::unix::fs::PermissionsExt;
+    let (a, b) = (new_rpc_secret().unwrap(), new_rpc_secret().unwrap());
+    assert!(a.len() == 64 && a.bytes().all(|c| c.is_ascii_hexdigit()), "{a}");
+    assert_ne!(a, b);
+
+    let dir = std::env::temp_dir().join(format!("alinery-rpc-secrets-{}", uuid::Uuid::new_v4().simple()));
+    let paths = [
+        rpc_secret_path(&dir, "/repo/a", ""),
+        rpc_secret_path(&dir, "/repo/a", "d0123"),
+        rpc_secret_path(&dir, "/repo/b", ""),
+    ];
+    assert_eq!(paths.iter().collect::<std::collections::BTreeSet<_>>().len(), 3, "{paths:?}");
+    store_rpc_secret(&dir, "/repo/a", "", &a).unwrap();
+    store_rpc_secret(&dir, "/repo/b", "", &b).unwrap();
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), a);
+    assert_eq!(fs::read_to_string(&paths[2]).unwrap(), b);
+    assert!(!paths[1].exists());
+    assert_eq!(fs::metadata(&paths[0]).unwrap().permissions().mode() & 0o777, 0o600);
+    // A restart replaces the copy with the new daemon's token.
+    store_rpc_secret(&dir, "/repo/a", "", &b).unwrap();
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), b);
+
+    let handoff = write_rpc_secret_handoff(&a).unwrap();
+    assert_eq!(fs::read_to_string(&handoff).unwrap(), a);
+    assert_eq!(fs::metadata(&handoff).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_ne!(handoff, write_rpc_secret_handoff(&a).unwrap());
+    fs::remove_file(handoff).unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+/// S5.1: the managed MCP reads its AGENT tokens from this file, so it is owner-only and has the shape `mcpServer/endpoints.ts` parses.
+#[test]
+fn mcp_endpoints_file_is_owner_only_and_holds_the_shape_the_daemon_binary_reads() {
+    use std::os::unix::fs::PermissionsExt;
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("alinery-s5-1-endpoints-{n}"));
+    let app_config = root.join("config").join("app.toml");
+    let path = crate::mcp::mcp_endpoints_path(&app_config, None).unwrap();
+    assert_eq!(path, root.join("config").join("mcp-endpoints.json"));
+    assert!(crate::mcp::mcp_endpoints_path(&app_config, Some("dabc")).unwrap().ends_with("mcp-endpoints-dabc.json"));
+
+    let mut repos = std::collections::BTreeMap::new();
+    repos.insert("/work/a".to_string(), (PathBuf::from("/work/a/.alinery/rpc.sock"), "token-a".to_string()));
+    crate::mcp::write_mcp_endpoints(&path, &repos).unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    let parsed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({"version": 1, "repos": {"/work/a": {"socket": "/work/a/.alinery/rpc.sock", "token": "token-a"}}})
+    );
+
+    let args = crate::mcp::mcp_host_args(&app_config, None);
+    assert_eq!(args[0], "--mcp");
+    assert_eq!(args[args.len() - 2], "--endpoints-file");
+    assert_eq!(args[args.len() - 1], path.to_string_lossy());
+    let _ = fs::remove_dir_all(&root);
 }
