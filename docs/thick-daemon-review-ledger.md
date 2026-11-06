@@ -22,38 +22,40 @@ Sections of the full entries (below the review index): A. Decided by the user. B
 
 ## Morning summary
 
-Written at the P4 to P6 wrap-up, 2026-11-06. Branch `remote-daemon`, nothing pushed. Code head before this wrap-up: `e7372ca`.
+Written at the P4 to P6 wrap-up, 2026-11-06. Branch `remote-daemon`, nothing pushed.
 
-**Full check.** `./scripts/check.sh` (full, not `--quick`) was run on `e7372ca` at the wrap-up and ended `OK: check passed`: vitest 1781 passed, 1 skipped; the daemon's `bun test` 600 pass in 76 files; alinery-proto 3 pass; the omp-extension suite 36 pass; the Rust workspace tests all green (app lib 402 passed, 1 ignored; core 210 passed); 256 shell-gate `ok` lines. Earlier runs of the same script passed on each session's code head. Not observed by any agent: the app launched, a signing identity, native x64, a GitHub login, a real network cut. Every such check is in `docs/thick-daemon-live-checks.md` (Part 0 is the 20-minute smoke test to run first).
+**Update 2026-11-06 (after the wrap-up):** the branch was pushed, and its history was then rewritten (one author, no Claude trailers) and force-pushed, tip `ff1dc39` before this note. Every commit SHA quoted in this file and in `docs/thick-daemon-plan.md` was remapped to the new one in a later commit; `docs/thick-daemon-sha-map.md` lists old and new. SHAs quoted in earlier PR comments or chat messages are the old ones; look them up there. The line below that says "nothing pushed" describes the wrap-up moment. Code head before this wrap-up: `8fffcf2`.
+
+**Full check.** `./scripts/check.sh` (full, not `--quick`) was run on `8fffcf2` at the wrap-up and ended `OK: check passed`: vitest 1781 passed, 1 skipped; the daemon's `bun test` 600 pass in 76 files; alinery-proto 3 pass; the omp-extension suite 36 pass; the Rust workspace tests all green (app lib 402 passed, 1 ignored; core 210 passed); 256 shell-gate `ok` lines. Earlier runs of the same script passed on each session's code head. Not observed by any agent: the app launched, a signing identity, native x64, a GitHub login, a real network cut. Every such check is in `docs/thick-daemon-live-checks.md` (Part 0 is the 20-minute smoke test to run first).
 
 **Status per session.** `done` = built, committed, `check.sh` passed on the code. `unverified` = built and `check.sh` passed, but the last review round's fixes were not re-reviewed or a named Accept line did not run. `blocked` and `skipped`: none. P7 (S7.1 to S7.4) is `not started`, by design.
 
 | Session | Status | Commits (git log) | Note |
 |---|---|---|---|
-| P0 S0.1 to S0.7 | done | 29c397b (S0.1), 87b2135 (S0.6); S0.2 to S0.5 spikes by the plan review | hardened-runtime check L-S0.5-a needs a signing identity |
-| P1 S1.1 to S1.4 | done | 93bd464, e8663c9, 3e1e054, 09ecc96, 28f79e0 | app-started and webview checks open |
-| P2 S2.1 to S2.6 | done | cf7ecd7, ffc6c95, c215546, 9723877, e3d09b6, 9a60b01, e77ae76, baa3aa3, 066ce1a | x64 watcher L-S2.3-a open |
-| P3 S3.1 to S3.5 | done | d597112, d574dd1, a5c58d8, e29ad26, 7c4b3fa, 7a1651e, ed8f7e4, 0876982, b57811e, e92f982 | O5 decision (R-O5) provisional |
-| S4.1 Settings | done | cff03b1, d5ac423, c592046, 1fd2f53, 98c4865; docs 3f4ee36 | R-S4.1-7: some Rust readers stay on purpose |
-| S4.2 Executions | unverified | 9a0adfc to 23dd73e (16 commits) | second review round fixed, not re-reviewed (R-S4.2-15) |
-| S4.3 Tasks, drafts, attachments | done | 9ce5679, 32ac7ee, 2b5993a | 14th proto variant kept (R-S4.3-3) |
-| S4.4 Session meta and chat | done | ed92a4a, cce48d1, 73ead78, 515b2bc, e34da59 | close-all acks stay in the shell (R-S4.4-15) |
-| S4.5 Artifacts and comments | done | 2b6f151, cd3625c, f2318a4, 27e1fbc, d80e4e9, 57803e9, 31fc16a, 146d759 | archived-source rule is in the daemon (R-S4.5-14) |
-| S4.6 Playbook library | done | 173ab23, 80e6abc, ce6d399, c925f46 | Rust parser stays until S5.1/S4.10 callers go (R-S4.6-1) |
-| S4.7 Git | done | e71a4d0, bdb7388 | `GitOriginUrl` repo-service op kept until S4.10 (R-S4.7-4) |
-| S4.8 Subtasks | done | 85446d9, 9a2c8a1, a5206f6 | core subtask.rs trimmed, not deleted (R-S4.8-3) |
-| S4.9 Storage and backup | done | c69ed46, e0df8c9, 532d152, c802aa5, e4b08c7 | exit met in part: remote restore ops stay until S5.2 (R-S4.9-2); Linux runtime bundle test not run at the time |
-| S4.10 Imports, community, agent dir | done | db12a95, 7611394 | no bulk `TaskService.Import` (R-S4.10-1) |
-| S4.11 Ownership, takeover, keep-awake | done | 68a5c6a, 290145a, 9e0fd5f, a8eb27c, 60686cd, 1a51997, 55f4688, a415ea7, 46ef95e | push to a real remote host not run (L-S4.11-f) |
-| S4.12 Providers and models | unverified | 5847585, 4fbfa96, 6d1a14b, a2a9df4 | the remote-sshd Accept line did not run (no zig then); bun test covers the service on a real socket; L-S4.12-c |
-| S5.1 MCP as a daemon client | done | 2ddde98, c96796b, c8ad6b7, 383fb14, 056d036, 9b5a6b9, a1059e1 | token overlap (R-S5.1-4, -11) |
-| S5.2 Host bootstrap (O15) | done | 23be437, bf67be3, 0962ba2, 6e3a37f, 07c03a9 | host service has 13 requests, not 11 (R-S5.2-1); x64 archive built, not run (L-S5.2-b) |
-| S5.3 Retire the JSON-lines wire | done | 8e57aac, 7b02900, 6563f36, 700cfca, 46bda92 | SIGTERM handler for the installer (R-S5.3-13) |
-| S5.4 AGENTS.md | done | 3b6994d, 7dc0fe0 | docs only; Harness Registry/Core Model text may describe a dead path (R-S5.4-3, L-S5.4-a) |
-| P5 review | done | bb6f4fc | takeover test flake widened (R-FLAKE-2) |
-| S6.1 Hosts and the onboarded mark | done | 9ea4271, 3f0e821 | marks always written (R-S6.1-1) |
-| S6.2 Setup screen | done | 8c16a93, c9649c3, 960d80f, 4f4fcd0 | refusal typed in `remote.rs`, not `host.proto` (R-S6.2-1); look of the screen not seen by an agent |
-| P6 review | done | feb4e14, e7372ca | setup screen waits for `gave_up` (R-S6.2-8) |
+| P0 S0.1 to S0.7 | done | 25b59f6 (S0.1), b57694f (S0.6); S0.2 to S0.5 spikes by the plan review | hardened-runtime check L-S0.5-a needs a signing identity |
+| P1 S1.1 to S1.4 | done | 67ef6a3, 9c1723f, f22598e, 699cfe2, a159cae | app-started and webview checks open |
+| P2 S2.1 to S2.6 | done | 1e5fc71, a5b28d3, 8d5e4ec, 39574bc, 01f09aa, 6374fa7, 4f10f5d, ebac0b6, c059bc9 | x64 watcher L-S2.3-a open |
+| P3 S3.1 to S3.5 | done | e6ac106, 5bbdf60, 0f0ceff, 42a1bf6, fd65767, 6dcc692, 9d8a23d, ded1bff, 523a8ad, 85be5bf | O5 decision (R-O5) provisional |
+| S4.1 Settings | done | 0ca7dea, 0523d67, b8e4e4b, 4150812, cbc73cb; docs e743f9e | R-S4.1-7: some Rust readers stay on purpose |
+| S4.2 Executions | unverified | 16ed92c to 2a5f817 (16 commits) | second review round fixed, not re-reviewed (R-S4.2-15) |
+| S4.3 Tasks, drafts, attachments | done | 4fb3b9b, c469300, f9e7274 | 14th proto variant kept (R-S4.3-3) |
+| S4.4 Session meta and chat | done | 81a24a7, 550d203, 341e00a, 6f8d7ab, 1c329e3 | close-all acks stay in the shell (R-S4.4-15) |
+| S4.5 Artifacts and comments | done | 08e413d, 56c735d, 1840299, 465fa3d, 7a0754d, a553b34, 63346c9, aa19fd7 | archived-source rule is in the daemon (R-S4.5-14) |
+| S4.6 Playbook library | done | 2d062fb, 3c83f96, 16277e0, 9960161 | Rust parser stays until S5.1/S4.10 callers go (R-S4.6-1) |
+| S4.7 Git | done | 339cc30, eba67b9 | `GitOriginUrl` repo-service op kept until S4.10 (R-S4.7-4) |
+| S4.8 Subtasks | done | 4b5aff1, 119af82, d364a53 | core subtask.rs trimmed, not deleted (R-S4.8-3) |
+| S4.9 Storage and backup | done | 4662537, b42c0d2, 6136bb1, e7d70ee, 2f91bcc | exit met in part: remote restore ops stay until S5.2 (R-S4.9-2); Linux runtime bundle test not run at the time |
+| S4.10 Imports, community, agent dir | done | 3827aa2, d95726e | no bulk `TaskService.Import` (R-S4.10-1) |
+| S4.11 Ownership, takeover, keep-awake | done | 7d3c3b2, b7e62ce, 070a225, 3947fa4, c0d19f2, 6e96c77, 23c03ec, 16c4386, a2b2d05 | push to a real remote host not run (L-S4.11-f) |
+| S4.12 Providers and models | unverified | 9a7c1b1, d35a9db, d3cb7da, 53ef3de | the remote-sshd Accept line did not run (no zig then); bun test covers the service on a real socket; L-S4.12-c |
+| S5.1 MCP as a daemon client | done | a55c699, 10bd362, 3f3a0a1, 3508d38, 1d48c4a, 68c1130, 5bc6f59 | token overlap (R-S5.1-4, -11) |
+| S5.2 Host bootstrap (O15) | done | 1eccf41, 5bf6f7c, 8a98d70, 9c1d1e3, 464ad66 | host service has 13 requests, not 11 (R-S5.2-1); x64 archive built, not run (L-S5.2-b) |
+| S5.3 Retire the JSON-lines wire | done | 9b5739e, f6b6a9f, 1e49020, 979873a, df7fcec | SIGTERM handler for the installer (R-S5.3-13) |
+| S5.4 AGENTS.md | done | 6f1821a, 4df4422 | docs only; Harness Registry/Core Model text may describe a dead path (R-S5.4-3, L-S5.4-a) |
+| P5 review | done | c29c371 | takeover test flake widened (R-FLAKE-2) |
+| S6.1 Hosts and the onboarded mark | done | 02448fe, a0cc64b | marks always written (R-S6.1-1) |
+| S6.2 Setup screen | done | ab1129f, be894db, bc3059e, 495bba6 | refusal typed in `remote.rs`, not `host.proto` (R-S6.2-1); look of the screen not seen by an agent |
+| P6 review | done | ff3d245, 8fffcf2 | setup screen waits for `gave_up` (R-S6.2-8) |
 | S7.1 to S7.4 (P7) | not started | none | keeper and brain (O5), memory, stats, upgrade while sessions run |
 
 **What is left for you, in order.** (1) Run the live checks: Part 0 of `docs/thick-daemon-live-checks.md`, then Parts 1 to 4. (2) Read "Decisions to confirm" below; each has its reverse path. (3) Read "Unverified sessions and open findings". (4) Pass the suggested README text to whoever edits `README.md`. (5) Decide P7 (O5: the provisional answer is one process until P7).
@@ -129,12 +131,12 @@ These were made by a session without you. Each says how to undo it (first 200 ch
 - `R-S4.10-3` the registry is an entity, and writes check the bytes they replace Reverse: drop the projector row and add a unary read. Small.
 - `R-S4.10-6` which host's directory the Settings page shows Reverse: pass a local repo to `agentHost`.
 - `R-S4.10-7` publish reads from the daemon, and the page refuses an invalid playbook Reverse: have the shell parse the source (the Rust parser is still in core for MCP).
-- `R-S4.11-1` O9 built as (b), tested on macOS only Reverse: `git show 68a5c6a^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
+- `R-S4.11-1` O9 built as (b), tested on macOS only Reverse: `git show 7d3c3b2^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
 - `R-S4.11-3` the TypeScript fence reads the fields the daemon uses, not the whole serde shape Reverse: write the validator in `readExecutionState`.
 - `R-S4.11-10` verifier follow-up on S4.11's tests
 - `R-S4.12-1` ProviderService shape, capabilities and what stayed out Reverse: change the `requireCapability` argument in `rpc/providers.ts` and the comment in `providers.proto`; no wire change.
 - `R-S4.12-2` the browser stays in the page; a sign-in is pinned to the daemon that started it Reverse: drop `loginHost` in `chat/providerAccess.ts`.
-- `R-S4.12-3` ListModels is the daemon's catalog, not the harness `models_cmd` Reverse: reinstate `list_harness_models_in` from commit 46ef95e and the two commands; the page switch is one line in `shared.tsx`.
+- `R-S4.12-3` ListModels is the daemon's catalog, not the harness `models_cmd` Reverse: reinstate `list_harness_models_in` from commit a2b2d05 and the two commands; the page switch is one line in `shared.tsx`.
 - `R-S5.1-1` the tool map, and the AGENT set is its 21 RPCs Reverse: edit `AGENT_RPCS` and `tools.ts` together; the test fails until they agree.
 - `R-S5.1-2` three sub-task RPCs were missing, so they were added (wire surface, protocol 38) Reverse: revert the commit; nothing else depends on the new RPCs.
 - `R-S5.1-3` the MCP server is the daemon binary, and the shell's managed child is `--mcp --serve --managed` Reverse: `git revert` the commit; the Rust MCP returns from history.
@@ -263,7 +265,7 @@ Open findings by session, as of the wrap-up:
 - **S4.12:** the Accept line that signs in and lists models against the remote-sshd container did not run (no zig at that time; the host runtime needs only Bun since S5.2). `bun test` serves the real `ProviderService` on a real socket for each peer class. Live: L-S4.12-a to -c.
 - **S4.9:** the remote live restore and the Linux runtime test did not run when written; a host with no `zip`/`unzip` (D6/D9 banner) is not built: L-S4.9-c, -f.
 - **S4.11:** the hosted-token push to a real remote host: L-S4.11-f.
-- **S5.2 / S5.3 / S5.4 / S6.1 / S6.2:** all pass `check.sh`; the docs-only follow-up commits (3f4ee36, 2b5993a, 46bda92, 7dc0fe0, 3f0e821 and the plan commits after the S6.2 code) were first covered by the wrap-up full run on `e7372ca`. S6.2 look and feel, the typed refusal kinds on real hosts (L-S6.2-c) and the offline-host rule (L-S6.2-d) were not seen by an agent.
+- **S5.2 / S5.3 / S5.4 / S6.1 / S6.2:** all pass `check.sh`; the docs-only follow-up commits (e743f9e, f9e7274, df7fcec, 4df4422, a0cc64b and the plan commits after the S6.2 code) were first covered by the wrap-up full run on `8fffcf2`. S6.2 look and feel, the typed refusal kinds on real hosts (L-S6.2-c) and the offline-host rule (L-S6.2-d) were not seen by an agent.
 - **Everything with a live check:** nothing was launched. `docs/thick-daemon-live-checks.md` has 118 entries, all `open`.
 
 ### 5. Flaky tests (11)
@@ -282,7 +284,7 @@ Timing-bound tests that failed under load. Rerun the one test alone before treat
 - `R-S5.1-11` review fixes after the S5.1 verifier, and a known flaky vitest case
 - `R-S5.2-10` the first full check.sh stopped at the daemon `bun test`
 
-Wrap-up note: the full `check.sh` on `e7372ca` passed without a flake. Known to be sensitive: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` (500 ms bound), the `takeover_*` tests (R-FLAKE-2, -3), and the S4.11 two-daemon test (R-S4.11-13).
+Wrap-up note: the full `check.sh` on `8fffcf2` passed without a flake. Known to be sensitive: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` (500 ms bound), the `takeover_*` tests (R-FLAKE-2, -3), and the S4.11 two-daemon test (R-S4.11-13).
 
 ### 6. Suggested README changes (3)
 
@@ -332,7 +334,7 @@ Build records, corrections and environment notes.
 - `R-S5.3-15` drawer-shell cleanup after a switch (verifier minor)
 - `R-S6.2-8` P6 review, "failed" is not "given up"
 
-- `R-WRAP-1` how the two ledgers were reorganised (decision: non-destructive index; reverse with `git show e7372ca:<file>`).
+- `R-WRAP-1` how the two ledgers were reorganised (decision: non-destructive index; reverse with `git show 8fffcf2:<file>`).
 
 ---
 
@@ -448,22 +450,22 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 ### R-S1.4-1: the old JSON `shutdown` op stays as a fallback; a remote restore uses STOP_REMOTE
 - **Kind:** deviation.
 - **What:** the five teardown functions send `AdminService.Shutdown` with their `ShutdownOrigin` and fall back to the JSON `shutdown` op only when there is no kept token or `rpc.sock` does not answer (O23 (a): the new app must still stop an older daemon). A daemon that answers and refuses (wrong token, no ADMIN, bad origin) or goes silent is an error and is never retried on the old wire. A remote restore stops the daemon inside `stop_remote_daemon`, so it sends `STOP_REMOTE`, not `RESTORE_BACKUP` (the plan table around line 1053 still says `RESTORE_BACKUP`). The daemon requires only a non-empty `confirmation_id` for `CONFIRMED_TAKEOVER`; it cannot validate it. The shell binds a takeover to the peer's process incarnation before sending.
-- **Commit hygiene:** 09ecc96 holds only the `main.ts` and `check.sh` hunks; a checkout there alone does not build. 28f79e0 holds the rest. Neither was amended.
+- **Commit hygiene:** 699cfe2 holds only the `main.ts` and `check.sh` hunks; a checkout there alone does not build. a159cae holds the rest. Neither was amended.
 - **Follow-up:** the S1.4 Exit line says the old `shutdown` op is unused by the shell; it should say "except the fallback for a daemon with no reachable `rpc.sock`".
 - **Live check:** L-S1.4-a, L-S1.4-b.
 
 ### R-P1-1: a start no longer overwrites the kept RPC token
-- **Kind:** decision (P1 review fix, 2481d62).
+- **Kind:** decision (P1 review fix, 8b7ec49).
 - **What:** `store_pending_rpc_secret` writes `<token>.pending`; `daemon_rpc::rpc_token` renames it over the kept file only after Hello succeeds with it, otherwise keeps using the kept token. A second daemon that exits on the ownership lock cannot lock the app out of the live one (UNAUTHENTICATED on Stop daemon).
 - **Reverse:** write the token directly (reintroduces the lock-out).
 
 ### R-S0.1-1: StatusDot shows the unread-completion marker ahead of a bare Exited label
-- **Kind:** decision (user, via e5e1f07).
+- **Kind:** decision (user, via 671b81f).
 - **What:** the audit of base-branch failures found `StatusDot`'s unread-completion marker conflicting with a test; the user decided the marker wins. Also fixed: biome formatting, `tsc` on tests, four vitest tests (`TopBar`, `chatTranscript`, `ChatView`, `ProviderSetupDialog`, `SessionView`, `Settings.backup` expectations), one clippy warning, and `takeover_rejects_invalid_and_compatible_targets_before_shutdown`.
-- **Files:** `alinery-app/src/shared.tsx`, the test files in e5e1f07.
+- **Files:** `alinery-app/src/shared.tsx`, the test files in 671b81f.
 
 ### R-S0.1-2: protocol 24 is an audited shutdown dialect
-- **Kind:** decision (user, via 94e3f9a, 7b690ff).
+- **Kind:** decision (user, via 90e568c, 48d8c0a).
 - **What:** `audited_shutdown_protocol` stopped at 18, so a current daemon was never recognised as takeover-compatible. The protocol 24 daemon's handler still takes `{"op":"shutdown"}` and answers `{"ok":true}`, so 24 joins the audited list. Commit trailer: `Protocol-Neutral` (only the app's audited list changes). S1.1 raised `PROTOCOL_VERSION` to 25, and `audited_shutdown_protocol` now lists 9, 10, 12, 15, 16, 18, 24 and 25 (protocol 25 still answers the old `shutdown` op, which S1.4's fallback relies on).
 - **Files:** `alinery-core/src/daemon_client.rs`, `alinery-core/tests/daemon_takeover.rs`.
 
@@ -474,12 +476,12 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 
 ### R-S0.6-1: S0.6 was done on a shared tree
 - **Kind:** deviation.
-- **What:** S0.6 ran with uncommitted S2.1 work in the tree. `main.ts` was committed without its two S2.1 lines (restored afterwards); `check.sh` ran on the working tree, not the committed tree alone; the plan commit c811349 holds only the S0.6 hunks. Removing `restate_session` and `rpc_write_session` from the DaemonClient changes no wire op (Protocol-Neutral).
+- **What:** S0.6 ran with uncommitted S2.1 work in the tree. `main.ts` was committed without its two S2.1 lines (restored afterwards); `check.sh` ran on the working tree, not the committed tree alone; the plan commit 4f7276b holds only the S0.6 hunks. Removing `restate_session` and `rpc_write_session` from the DaemonClient changes no wire op (Protocol-Neutral).
 - **Open:** `writeTemp`/`writeAtomic` leave an orphan `<path>.tmp.*` if `writeSync`, fsync or rename throws; add an `unlinkSync` in a catch. Crash safety of the target file is intact. S0.6's Status line says "check.sh result in the report"; the claim that the full `check.sh` passed cannot be re-verified from the repo (`--quick` passed).
 - **Files:** `vinculum-daemon/src/platform/fs.ts:20-40`.
 
 ### R-S2.1-1: Dedupe is built and unit-tested but not called
-- **Kind:** follow-up. First write RPC (S3.x or S4.x) must wire it in. The 15 s heartbeat is tested with injected timers only. Entities `Task {slug, title}` and `Session {ref, status}` had stand-in fields as the plan prescribes. The plan commit 8f0546a had an `@CODE@` placeholder; 7e07351 fixed it.
+- **Kind:** follow-up. First write RPC (S3.x or S4.x) must wire it in. The 15 s heartbeat is tested with injected timers only. Entities `Task {slug, title}` and `Session {ref, status}` had stand-in fields as the plan prescribes. The plan commit 5581c28 had an `@CODE@` placeholder; e346971 fixed it.
 
 ### R-S2.3-1: parser shape, sessions dir watch, ENOSPC
 - **Kind:** deviation.
@@ -522,7 +524,7 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 
 ### R-S3.4-1: terminal stream, and a Protocol-Neutral that removes ops
 - **Kind:** deviation / judgement call for the user.
-- **What:** `open_session` no longer takes `attach_id`, `stream_token` or a Channel and returns once the shell is started; the daemon's spawn, resume and attach ops for a shell only start it. The daemon ops `write`, `resize`, `detach` (and builders, methods, `chat_pty_*`, `channelFrame.ts`, `ipc.onStreamClosed`, `ipc.nextAttachId`, the `session_stream_closed` emit) were deleted. Commit 7a1651e carries a `Protocol-Neutral` trailer although it removes ops and changes op replies; AGENTS.md says `PROTOCOL_VERSION` moves on op-set changes. The same trailer was used for S3.3. A same-protocol daemon from before the commit has no `TerminalService` and its pane stays on its attach error until restarted. The protocol gate accepts it. **You may prefer a bump (26) before release;** nothing is released yet.
+- **What:** `open_session` no longer takes `attach_id`, `stream_token` or a Channel and returns once the shell is started; the daemon's spawn, resume and attach ops for a shell only start it. The daemon ops `write`, `resize`, `detach` (and builders, methods, `chat_pty_*`, `channelFrame.ts`, `ipc.onStreamClosed`, `ipc.nextAttachId`, the `session_stream_closed` emit) were deleted. Commit 6dcc692 carries a `Protocol-Neutral` trailer although it removes ops and changes op replies; AGENTS.md says `PROTOCOL_VERSION` moves on op-set changes. The same trailer was used for S3.3. A same-protocol daemon from before the commit has no `TerminalService` and its pane stays on its attach error until restarted. The protocol gate accepts it. **You may prefer a bump (26) before release;** nothing is released yet.
 - Replay frames keep true offsets (`replayRanges`), so the "next frame starts at offset + data.length" rule has an exception where a terminal query was dropped. Attach without ACT, or `read_only`, is read-only and the credential lacking ACT is tested by a fake context (no credential in code yields VIEW alone). `TerminalDrawer`'s cd-here button writes through `writeTerminal` (its busy state was dropped). `open_session` no longer routes an attach to a session's old lane socket. The O8 "today's path" baseline is a re-creation of the old op path inside `terminal.bench.ts`, not the old code; 74 of 2,000 samples per run were never matched to an echo in either path.
 - **Live check:** L-S3.4-a, -b, -c.
 
@@ -642,7 +644,7 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 
 ### R-S4.2-9: test races found in the full run
 - **Kind:** flaky (fixed).
-- **What:** the first full `check.sh` of S4.2 failed vitest on a different test in each run, none of them passing alone: `SessionView.test.tsx` "opens queued work without starting it" (the Start button exists but is disabled until the daemon's execution row is pushed, and the test clicked it at once; now it waits for it to be enabled) and two tests in `sync/sessionObservation.test.tsx` (the attention notification fires in a passive effect after the badge text appears; now `waitFor`). The sessionObservation tests were not touched by the engine work; their race is older and shows under load. Five full vitest runs in a row passed after the fix. `check.sh` then stopped at `cargo fmt` (three files), fixed in `9deae66`; the next full run passed (exit 0). `a_repo_being_closed_is_not_respawned_by_attach` (R-FLAKE-1) did not fail in it.
+- **What:** the first full `check.sh` of S4.2 failed vitest on a different test in each run, none of them passing alone: `SessionView.test.tsx` "opens queued work without starting it" (the Start button exists but is disabled until the daemon's execution row is pushed, and the test clicked it at once; now it waits for it to be enabled) and two tests in `sync/sessionObservation.test.tsx` (the attention notification fires in a passive effect after the badge text appears; now `waitFor`). The sessionObservation tests were not touched by the engine work; their race is older and shows under load. Five full vitest runs in a row passed after the fix. `check.sh` then stopped at `cargo fmt` (three files), fixed in `28198b8`; the next full run passed (exit 0). `a_repo_being_closed_is_not_respawned_by_attach` (R-FLAKE-1) did not fail in it.
 - **Files:** `alinery-app/src/views/SessionView.test.tsx`, `alinery-app/src/sync/sessionObservation.test.tsx`.
 
 ### R-S4.2-10: the worktree record is wired through an alinery-core FFI function (review fix)
@@ -768,7 +770,7 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 
 ## D. Dustin's PR #154 comments (dtdannen, 2026-11-05): dispositions
 
-The comment asked the plan to make the execution mechanism explicit. Dispositions, as folded into the plan in 80c5ddc and 33d3754:
+The comment asked the plan to make the execution mechanism explicit. Dispositions, as folded into the plan in b4a9bf8 and 97b3194:
 
 1. **The standalone engine is the execution authority.** Accepted. S4.2 integrates `playbook-engine` (scheduling, input binding, completion permission, output acceptance, recovery decisions) and ports no `execution.rs` transitions: the O14 trace found they have no production caller, so they are retired with their tests. The daemon supplies task configuration, host safeguards (ownership, locking, durability), persistence and client services. Nothing re-implements the engine's rules in `domain/executions.ts`.
 2. **Recovery is two things, kept apart.** Accepted. Execution recovery is everything needed to reopen a swarm from disk: `execution.json` holds the engine state and, per execution, the engine-session to agent-session association and `execution_id` on every engine session; a restarted daemon reopens an execution from disk alone, never from a surviving engine process. Agent-session recovery is the harness's (Pi restores agent context); the daemon hands it the stored session id and rebuilds no context.
@@ -1058,7 +1060,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Gates.** `check-daemon-git-spawn.sh` allows only `platform/git.ts` and has its own test (`daemon_git_spawn_test.sh`: exit 0 clean, exit 1 with `Bun.spawn(["git"` added to another daemon file); both are in `check.sh`. The TypeScript block was removed from `check-git-env-scrub.sh` (it is now Rust-only). `check-blocking-commands.sh`'s `git_ops.rs` entry is `lookup_task_pull_request`.
 - **Hardening in the port.** The lookup order is the Rust one; `git()` takes `{env, input, strict}`: the execution ref sets `GIT_INDEX_FILE` and the author through `env`, the ref deletion feeds `update-ref --stdin` through `input`, and the source-branch reads use `strict` so a non-UTF-8 ref name is an error and not a lossy string, as in the Rust.
 - **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
-- **Full check:** `./scripts/check.sh` passed on `e71a4d0` (vitest 135 files, 1695 tests; daemon `bun test` 415 pass).
+- **Full check:** `./scripts/check.sh` passed on `339cc30` (vitest 135 files, 1695 tests; daemon `bun test` 415 pass).
 - **AGENTS.md** gets one gate line and a clause that the daemon's git goes through `platform/git.ts`; S5.4 rewrites the rest.
 
 ---
@@ -1103,7 +1105,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 
 ### R-S4.8-7: `PROTOCOL_VERSION` 33
 - **Kind:** note.
-- **What:** a new service on the grpc socket bumps the protocol: `protocol.rs`, `main.ts` `PROTOCOL`, `daemon_client.rs`'s shutdown dialect list (the first `check.sh` failed `takeover_rejects_invalid_and_compatible_targets_before_shutdown` until 33 was added there; fixed in 9a2c8a1) and `tests/daemon_takeover.rs`. The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.8-e).
+- **What:** a new service on the grpc socket bumps the protocol: `protocol.rs`, `main.ts` `PROTOCOL`, `daemon_client.rs`'s shutdown dialect list (the first `check.sh` failed `takeover_rejects_invalid_and_compatible_targets_before_shutdown` until 33 was added there; fixed in 119af82) and `tests/daemon_takeover.rs`. The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.8-e).
 
 ### R-S4.8-8: noticed, not changed
 - **Kind:** note.
@@ -1155,7 +1157,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 
 ### R-S4.9-8: `PROTOCOL_VERSION` 34, tests, and environment notes
 - **Kind:** note.
-- **What:** a new service and new job RPCs bumped the protocol to 34 (`protocol.rs`, `main.ts` `PROTOCOL`, the dialect list in `daemon_client.rs`). The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.9-c); that was not done here (no runtime bundle on this machine, Docker is arm64 only), so the remote live restore test was written and compiled but not run. The 70,000-file daemon test takes about 15 s of the daemon suite; `ALINERY_KEEP_BACKUP=<file>` keeps its archive for the Rust read. `vinculum-daemon/node_modules/alinery-proto` links per file, so after the proto regeneration `bun install` was needed (or the two new `backups` links by hand), as in R-S4.7-5. Tests removed with the code: `backup_queue.rs`' own, the `backup_now`, `list_backups` and storage cases in `tests/backup.rs`, the remote live storage test, and the daemon slot test. Core Rust zip cases stay with R-S4.9-3. The first `check.sh` failed only `cargo fmt` (532d152) and the second only clippy's unused import (c802aa5).
+- **What:** a new service and new job RPCs bumped the protocol to 34 (`protocol.rs`, `main.ts` `PROTOCOL`, the dialect list in `daemon_client.rs`). The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.9-c); that was not done here (no runtime bundle on this machine, Docker is arm64 only), so the remote live restore test was written and compiled but not run. The 70,000-file daemon test takes about 15 s of the daemon suite; `ALINERY_KEEP_BACKUP=<file>` keeps its archive for the Rust read. `vinculum-daemon/node_modules/alinery-proto` links per file, so after the proto regeneration `bun install` was needed (or the two new `backups` links by hand), as in R-S4.7-5. Tests removed with the code: `backup_queue.rs`' own, the `backup_now`, `list_backups` and storage cases in `tests/backup.rs`, the remote live storage test, and the daemon slot test. Core Rust zip cases stay with R-S4.9-3. The first `check.sh` failed only `cargo fmt` (6136bb1) and the second only clippy's unused import (e7d70ee).
 - **Flaky:** see R-FLAKE-1 for this session's run.
 
 ### R-S4.10-1: the issue import stays a prefill; there is no bulk `TaskService.Import`
@@ -1220,7 +1222,7 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Kind:** decision (the WA; the plan asked for "a test on both platforms").
 - **What:** `platform/keepawake.ts` holds a child that ends with the daemon: macOS `/usr/bin/caffeinate -i -w <daemon pid>`; Linux `systemd-inhibit --what=idle --who=Alinery --mode=block cat` with a stdin pipe the daemon holds. macOS was measured: `pmset -g assertions` lists one `PreventUserIdleSystemSleep` for the child and no `PreventSystemSleep`; `kill -9` of the parent removes it (`keepawake.test.ts` runs this on darwin). The Linux mechanism (a pipe the daemon holds, closed by its death) was tested with `cat` on macOS, with a second child spawned after the hold, so a session's shell does not keep the pipe open. Not run: the real `systemd-inhibit` (the `debian:12` arm64 image has neither it nor logind) and a Linux run of the test file. Two behaviours differ from the Rust: the macOS hold is a second process instead of an in-process IOKit assertion (the Rust comment named that as the risk; `-w` removes it), and a tool that fails is retried after 30 s (the Rust retried every second and deduplicated only the log line).
 - **Options:** (a) keep the IOKit FFI (needs a Rust library beside the daemon, the thing S4.11 removes); (b) chosen.
-- **Reverse:** `git show 68a5c6a^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
+- **Reverse:** `git show 7d3c3b2^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
 - **Files:** `vinculum-daemon/src/platform/keepawake.ts`, `keepawake.test.ts`, `keepawake.fixture.ts`, `platform/process.ts`, `scripts/tests/check-no-auto-session-kill.sh`. Live: L-S4.11-a, L-S4.11-b.
 
 ### R-S4.11-2: the first Accept line is read as "no libalinery_core"
@@ -1354,7 +1356,7 @@ Edit the plan, or let S5.4 do it.
 ### R-S4.11-13: protocol bump checklist, and a second timing flake
 - **Kind:** follow-up, known flaky test.
 - **What:** a protocol bump also needs `alinery-core/src/daemon_client.rs` `audited_shutdown_protocol` (and its doc comment) to list the new number; without it `tests::daemon::takeover_rejects_invalid_and_compatible_targets_before_shutdown` fails deterministically ("Shutdown compatibility is not established"). Fixed for 36. In the one run that exposed it, `tests::daemon::quitting_stops_every_daemon_bring_up` also failed alongside `a_repo_being_closed_is_not_respawned_by_attach` when the whole `tests::daemon::` group ran in parallel; both pass alone and in the full `check.sh` run (second run, passed). Treat `quitting_stops_every_daemon_bring_up` as load-sensitive like the other.
-- **Commit hygiene:** commit 1a51997 (the code commit) was written without the `Co-Authored-By` trailer; later commits carry it. Not amended (no amends allowed).
+- **Commit hygiene:** commit 6e96c77 (the code commit) was written without the `Co-Authored-By` trailer; later commits carry it. Not amended (no amends allowed).
 
 ## S4.12 Providers and models
 
@@ -1375,7 +1377,7 @@ Edit the plan, or let S5.4 do it.
 - **Kind:** decision, behaviour change the user should know about.
 - **What:** `list_harness_models(_for_repo)` ran the harness row's `models_cmd` (`omp models --json` through `$SHELL -ilc`) on the Mac, for a remote repo too. The daemon has no OMP binary (a Vinculum session runs pi-durable in the daemon; `omp` is only a harness name for it, recorded as `vinculum`), and a remote host has none either, so `ListModels` returns the harness row's own `models` (the effective settings: bundled and the repo's `harnesses.toml` overlay) followed by `provider/id` for every model of a signed-in provider (`models.getAvailable()`, the list a session can actually run). Only `omp` and `vinculum` have a list; `no-harness` and any other key return nothing, as before. The list is therefore what the daemon will accept in `resolveModel`, but may differ from `omp models` (OMP's own catalog).
 - **Left behind:** `models_cmd` is still a serde field with its repo-overlay guard (`adopt_global_models_cmd`) and TypeScript parity, but nothing executes it now. Follow-up for S5 or later: delete the field with the conformance fixtures, or keep it as a harness-row key for a future non-Vinculum harness. `settings::shell_quote` stays (remote install script uses it).
-- **Reverse:** reinstate `list_harness_models_in` from commit 46ef95e and the two commands; the page switch is one line in `shared.tsx`.
+- **Reverse:** reinstate `list_harness_models_in` from commit a2b2d05 and the two commands; the page switch is one line in `shared.tsx`.
 - **Files:** `vinculum-daemon/src/rpc/providers.ts` (`listModels`), `src/settings.rs`, `src/tests/settings.rs`, `alinery-core/src/shared.rs` (comment).
 
 ### R-S4.12-4: the remote-sshd Accept line is not run; protocol 37
@@ -1432,7 +1434,7 @@ Edit the plan, or let S5.4 do it.
 ### R-S5.1-3: the MCP server is the daemon binary, and the shell's managed child is `--mcp --serve --managed`
 - **Kind:** decision (O10 b as the user decided; details mine).
 - **What:** `alinery-vinculum-daemon --mcp` is the whole MCP server (`src/mcpServer/`): stdio, or `--serve` on `mcp[-ns].sock` with `mcp[-ns].status.json` (`{pid, clients}`), the `exit` op the app's reap uses, and `--managed` (exit when stdin closes). The Rust `alinery-mcp` keeps only `--repo-service` until S5.2; `externalBin` still names it for that reason. `mcp.ts` (`McpHub`) launches a harness's MCP as `selfMcpCommand()` with `ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN` in its environment, and the daemon mints one AGENT token at its own start (label `harness-mcp`) for every such child to inherit. The shell's `src/mcp.rs` finds the binary with `pi_durable::resolve_alongside("alinery-vinculum-daemon")` and `resolve_mcp_path` is gone.
-- **Tool replies are the Rust ones.** `mcpServer/fixtures/rust-replies.json` holds 49 calls recorded from Rust `alinery-mcp` at 16fae91 on a fixture repository; `replay.test.ts` makes the same calls against a real daemon and compares after normalising ids, times and the temp root. The named exceptions: `alinery_get_task` and `alinery_read_config` answer `Bun.TOML.stringify` of the entity, not the file's text (the plan said so; a hand-edited file comes back normalised, comments dropped); `alinery_write_config` with invalid TOML gives the same `error: not valid TOML (` prefix with Bun's own parser message; `alinery_list_sessions`, `alinery_create_task` and `alinery_create_session` answer the daemon's entity JSON, which omits a field at its default where the Rust struct wrote it, so those are compared on the fields both name or with defaults dropped.
+- **Tool replies are the Rust ones.** `mcpServer/fixtures/rust-replies.json` holds 49 calls recorded from Rust `alinery-mcp` at 087ae9d on a fixture repository; `replay.test.ts` makes the same calls against a real daemon and compares after normalising ids, times and the temp root. The named exceptions: `alinery_get_task` and `alinery_read_config` answer `Bun.TOML.stringify` of the entity, not the file's text (the plan said so; a hand-edited file comes back normalised, comments dropped); `alinery_write_config` with invalid TOML gives the same `error: not valid TOML (` prefix with Bun's own parser message; `alinery_list_sessions`, `alinery_create_task` and `alinery_create_session` answer the daemon's entity JSON, which omits a field at its default where the Rust struct wrote it, so those are compared on the fields both name or with defaults dropped.
 - **Behaviour changes to tell the user (plan):** `alinery_save_playbook` on a repository playbook no longer fails `repo_busy` while a desktop window owns the repo; it goes through `PlaybookService.SavePlaybook` with `expected_revision`. The two TOML-returning tools normalise as above. MCP's own telemetry calls are gone; the daemon commands emit the events (O17).
 - **Reverse:** `git revert` the commit; the Rust MCP returns from history.
 - **Files:** `vinculum-daemon/src/mcpServer/*`, `main.ts`, `mcp.ts`, `alinery-app/src-tauri/mcp/src/main.rs`, `src/mcp.rs`.
@@ -1464,7 +1466,7 @@ Edit the plan, or let S5.4 do it.
 ### R-S5.1-7: what the Rust deletion removed, and the tests that went with it
 - **Kind:** deviation (the plan's Exit list), follow-up.
 - **What:** `alinery-core` lost `artifact_tree.rs`, `history.rs`, `storage.rs`, `subtask.rs`, `playbook_library.rs` (the whole modules), and the MCP-only functions of `task.rs`, `task_creation.rs` (the wire types stay for the shell's requests), `backup.rs` (the create path), `settings.rs` (the TOML writer), `shared.rs` and `daemon_client.rs` (`ensure_compatible_daemon`, `connect_compatible_once`, `spawn_daemon_detached`). `mcp/src/main.rs` went from 2,576 lines to the `--repo-service` entry; `mcp/tests/{serve_exit,session_tools,stdio_protocol}.rs` are deleted (the daemon's `server.test.ts` covers the socket, exit and stdio cases), and `alinery-core/tests/superdevelop_prompts.rs` with them. `conformance.rs` now runs the Rust side of only the `task`, `telemetry` and `session_name` domains, like R-P4X-2 did for chat and artifact listing; the other domains' `expected.json` files stay and `domain/conformance.test.ts` checks the TypeScript. The tests of the deleted functions in `execution_tests.rs` and `repo_service.rs`, and a handful in `src/tests/{backup,session,settings,task}.rs`, tested only the deleted functions and went with them. The bundled-playbook list test in `settings.test.ts` now compares `bundledPlaybooks.ts` with the key list in `alinery-core/src/types.rs` (it read the deleted `playbook_library.rs`).
-- **How it was done:** compiler-guided (`pub` narrowed, the dead-code warnings followed). That technique deleted too much three times (a helper in `session_name`, `task`, and parts of `account.rs` and `community_playbooks.rs`); those files were restored from HEAD and redone by hand. A reviewer should diff `alinery-core/src` against 16fae91 for any function removed that something still calls; `cargo check --workspace --all-targets` and `cargo test --workspace` pass.
+- **How it was done:** compiler-guided (`pub` narrowed, the dead-code warnings followed). That technique deleted too much three times (a helper in `session_name`, `task`, and parts of `account.rs` and `community_playbooks.rs`); those files were restored from HEAD and redone by hand. A reviewer should diff `alinery-core/src` against 087ae9d for any function removed that something still calls; `cargo check --workspace --all-targets` and `cargo test --workspace` pass.
 - **Not deleted:** the JSON-lines ops (R-S5.1-2). `alinery-core/src/daemon_client.rs` keeps `connect_compatible` (the shell's tests use it).
 - **Reverse:** `git revert` the commit.
 - **Files:** see `git show --stat` of the S5.1 code commit.
@@ -1560,14 +1562,14 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 
 ### R-S5.2-10: the first full check.sh stopped at the daemon `bun test`
 - **Kind:** flaky (fixed), record.
-- **What:** the first `./scripts/check.sh` after bf67be3 failed once in `ops.test.ts` ("an answering socket keeps it waiting; a daemon that exits mid-wait lets it return", `ECONNRESET`), 595 of 596 passing, before reaching the Rust steps. It is R-S5.2-6; six reruns of `bun test src/hostService` passed 37 of 37 after the fix, and the third full `check.sh` is the one in the Status line (the second stopped at the `mcp/src` gates, R-S5.2-3).
+- **What:** the first `./scripts/check.sh` after 5bf6f7c failed once in `ops.test.ts` ("an answering socket keeps it waiting; a daemon that exits mid-wait lets it return", `ECONNRESET`), 595 of 596 passing, before reaching the Rust steps. It is R-S5.2-6; six reruns of `bun test src/hostService` passed 37 of 37 after the fix, and the third full `check.sh` is the one in the Status line (the second stopped at the `mcp/src` gates, R-S5.2-3).
 
 ## S5.3 Retire the JSON-lines wire
 
 ### R-S5.3-1: the op inventory and the last caller of each
 - **Kind:** record.
-- **What:** `handle` in `main.ts` had 18 named ops, plus the `write`, `resize` and `detach` frames on an attach stream. After this session none is served. `version` is `Hello` (`ensure_daemon`, the poller, the remote supervisor). `list` and `status` are `LiveSessions` and the `daemon/_/status` entity. `shutdown` is `AdminService.Shutdown` (the old op is sent only to a daemon of protocol 38 or older, R-S5.3-3). `spawn`, `attach` and `resume` are `ResumeSession` with `TerminalService.Attach`. `kill` is `KillSession`. `create_task` and `create_subtask` are `CreateTask` and `CreateSubtask` (S4.3, S4.8). `vinculum_customizations` is `ReadCustomizations` (S4.10). `ui_control` is the RPC token (2.1.10). `send_message` answered `unsupported` and `event` answered `event-rejected` at 07c03a9 and had no caller. The ops with a caller and no RPC were `prompt`, `abort`, `set_model`, `set_thinking_level` (each for a session and, with `chat: true`, for a chat thread), the MCP status read and the live-session list: R-S5.3-2.
-- **Files:** `vinculum-daemon/src/main.ts` (at 07c03a9, lines 734 to 1073).
+- **What:** `handle` in `main.ts` had 18 named ops, plus the `write`, `resize` and `detach` frames on an attach stream. After this session none is served. `version` is `Hello` (`ensure_daemon`, the poller, the remote supervisor). `list` and `status` are `LiveSessions` and the `daemon/_/status` entity. `shutdown` is `AdminService.Shutdown` (the old op is sent only to a daemon of protocol 38 or older, R-S5.3-3). `spawn`, `attach` and `resume` are `ResumeSession` with `TerminalService.Attach`. `kill` is `KillSession`. `create_task` and `create_subtask` are `CreateTask` and `CreateSubtask` (S4.3, S4.8). `vinculum_customizations` is `ReadCustomizations` (S4.10). `ui_control` is the RPC token (2.1.10). `send_message` answered `unsupported` and `event` answered `event-rejected` at 464ad66 and had no caller. The ops with a caller and no RPC were `prompt`, `abort`, `set_model`, `set_thinking_level` (each for a session and, with `chat: true`, for a chat thread), the MCP status read and the live-session list: R-S5.3-2.
+- **Files:** `vinculum-daemon/src/main.ts` (at 464ad66, lines 734 to 1073).
 
 ### R-S5.3-2: ten RPCs for ops that still had a caller
 - **Kind:** deviation.
@@ -1624,7 +1626,7 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 
 ### R-S5.3-11: what was run
 - **Kind:** record.
-- **What:** `./scripts/check.sh` passes (the code at 7b02900); `bun test` 600 pass; vitest 1,744 pass and 1 skipped; `cargo test --workspace` exits 0. The remote runtimes were rebuilt locally (`scripts/build-remote-runtimes.sh`, gitignored) and the eight `live_*` tests pass against the Debian arm64 sshd. The x64 archive was built and not run. A scratch daemon on a new repository listed `rpc.sock` alone in `.alinery/*.sock`. `daemon_client.rs` does not exist. The `rg` Accept returned one hit, a comment on the reserved field in `proto/alinery/v1/host.proto`; the comment was reworded afterwards (R-S5.3-13) and the `rg` over `alinery-app` and `proto` now returns nothing.
+- **What:** `./scripts/check.sh` passes (the code at f6b6a9f); `bun test` 600 pass; vitest 1,744 pass and 1 skipped; `cargo test --workspace` exits 0. The remote runtimes were rebuilt locally (`scripts/build-remote-runtimes.sh`, gitignored) and the eight `live_*` tests pass against the Debian arm64 sshd. The x64 archive was built and not run. A scratch daemon on a new repository listed `rpc.sock` alone in `.alinery/*.sock`. `daemon_client.rs` does not exist. The `rg` Accept returned one hit, a comment on the reserved field in `proto/alinery/v1/host.proto`; the comment was reworded afterwards (R-S5.3-13) and the `rg` over `alinery-app` and `proto` now returns nothing.
 - **Observation (unverified):** after the scratch daemon received SIGTERM from `pkill`, `rpc.sock` was still on disk (a stale socket). A daemon stopped by `Shutdown` is what the app does; the next start replaces a stale socket, but that replacement was not exercised here. Since R-S5.3-13 the daemon handles SIGTERM as a `Shutdown` teardown and removes `rpc.sock`; a SIGKILLed daemon still leaves it.
 
 ### R-S5.3-12: AGENTS.md
@@ -1634,7 +1636,7 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 
 ### R-S5.3-13: the installer's quiet-machine gate (verifier blocker and major)
 - **Kind:** provisional decision, deviation from the plan (the plan does not mention the installer), and a correction.
-- **What:** `scripts/lib/preflight.sh` (embedded in `update.rs`, also the CDN installer's gate) found a daemon by sending JSON ops to `alineryd.sock`, which S5.3 removed, so it saw no daemon: no session warning and no daemon stop before the bundle swap. Verified by starting the real daemon: `.alinery/` held `rpc.sock` alone. Fixed in 700cfca. The gate now (1) probes liveness by connecting to `rpc.sock` (`nc -U`, exit status; a dead socket file refuses), (2) counts live sessions from the session metas (`started_at` set, `ended_at` unset, not archived: the daemon's own resume rule), (3) ends the daemon with SIGTERM to the pid whose `--repo` is that repository, and waits for the socket to stop answering as before. A daemon from before the single listener is still probed and stopped over `alineryd.sock` with the JSON ops, so an update from a released build keeps its check. The daemon gained `process.once("SIGTERM", ...)` which runs `stopEverything()` (the `Shutdown` teardown: sessions recorded ended, `rpc.sock` removed) and exits after the job grace.
+- **What:** `scripts/lib/preflight.sh` (embedded in `update.rs`, also the CDN installer's gate) found a daemon by sending JSON ops to `alineryd.sock`, which S5.3 removed, so it saw no daemon: no session warning and no daemon stop before the bundle swap. Verified by starting the real daemon: `.alinery/` held `rpc.sock` alone. Fixed in 979873a. The gate now (1) probes liveness by connecting to `rpc.sock` (`nc -U`, exit status; a dead socket file refuses), (2) counts live sessions from the session metas (`started_at` set, `ended_at` unset, not archived: the daemon's own resume rule), (3) ends the daemon with SIGTERM to the pid whose `--repo` is that repository, and waits for the socket to stop answering as before. A daemon from before the single listener is still probed and stopped over `alineryd.sock` with the JSON ops, so an update from a released build keeps its check. The daemon gained `process.once("SIGTERM", ...)` which runs `stopEverything()` (the `Shutdown` teardown: sessions recorded ended, `rpc.sock` removed) and exits after the job grace.
 - **Options:** (a) SIGTERM handler in the daemon, as built; (b) a daemon CLI client mode that calls `Shutdown`: refused, it needs an ADMIN token from a shell peer, which neither the installer nor a user's terminal is, and giving the installer one would widen R8; (c) a process-only gate that signals without a handler: the default SIGTERM kills the daemon without recording its sessions ended and leaves `rpc.sock`; (d) refuse to update while any daemon runs: safe but removes the "stop everything and install" yes the gate offers.
 - **Why (a):** it adds no RPC surface, no token path and no new `ShutdownOrigin`; the only way to reach it is a signal from the same user, after the gate's explicit yes (or the user's own `kill`, or the OS at logout, where the process would die anyway and now records its sessions as ended). The "exactly five `Shutdown` senders" rule is about senders of `Shutdown`; this is a receiver. `check-no-auto-session-kill.sh` passes unchanged.
 - **Known limits (unverified):** the session count is a read of meta files, so a meta the daemon has not yet written can undercount by a moment, and a daemon killed hard leaves metas that look live until its next start (it is not running then, so the gate does not count them). `nc -U -w 1` exit status as the liveness test was observed on macOS only; Linux netcat-openbsd was not run (live check L-S5.3-h). A daemon in a dev namespace (`rpc-<ns>.sock`) is not probed, as before for `alineryd-<ns>.sock`.
@@ -1766,5 +1768,5 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **Kind:** decision (provisional).
 - **What:** the plan said to tidy the review ledger into sections; the ledger's own rule says never rewrite an earlier entry. The tidy-up is non-destructive: a morning summary and a review index (grouped by each entry's Kind line) sit above the unchanged full entries, so an entry is moved by an index line, not by editing it. The grouping is by keyword on the Kind line and the title, so a few entries may sit in a neighbouring group (a `decision` that is really a note, for example); the full entry is the truth. In the live checks file every earlier id is kept. The two entries with the id `L-S6.2-a` (a placeholder written before S6.2 existed, and the real one) became one, with the placeholder text kept inside it. The nine `L-SMOKE-*` entries are new; their expected results come from AGENTS.md and the S6.1/S6.2 entries and have not been observed (nothing was launched).
 - **Options:** (a) physically regroup the full entries by kind; (b) this index. (a) would have rewritten history and broken ids quoted in commit messages.
-- **Reverse:** `git show e7372ca:docs/thick-daemon-live-checks.md` and `...review-ledger.md` hold the files as they were before the wrap-up.
+- **Reverse:** `git show 8fffcf2:docs/thick-daemon-live-checks.md` and `...review-ledger.md` hold the files as they were before the wrap-up.
 - **Files:** `docs/thick-daemon-live-checks.md`, `docs/thick-daemon-review-ledger.md`, `docs/thick-daemon-plan.md` (Status line, v0.10 changelog).
