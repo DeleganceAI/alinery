@@ -1077,5 +1077,4 @@ Edit the plan, or let S5.4 do it.
 
 ### R-P4X-3: flaky test seen again
 - **Kind:** flaky.
-- **What:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` failed ("returned before any spawn attempt") in a full `cargo test --workspace` run while the machine was loaded, and passed alone. Same 500 ms bound as in section E.
-
+- **What:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` failed ("returned before any spawn attempt") in a full `cargo test --workspace` run while the machine was loaded, and passed alone. Same 500 ms bound as in section E. It also failed the first full `./scripts/check.sh` of this session and passed alone and on the second full run ("OK: check passed"). It returns before any spawn attempt when `attach_repo_daemon` is slow to notice the closing mark, so the 500 ms bound measures machine load, not the change (a closing repo returns before ownership, which `wait_for_daemon_gone` is not part of).
