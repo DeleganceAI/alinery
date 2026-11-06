@@ -836,6 +836,8 @@ describe("held task sessions", () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]));
     renderSession({ intent: undefined });
     const start = await screen.findByRole("button", { name: "Start this queued session" });
+    // The button stays disabled until the daemon's execution row has been pushed.
+    await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
     expect(startSession).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
     startSession.mockImplementation(async () => {
