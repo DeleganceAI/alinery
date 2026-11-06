@@ -23,7 +23,8 @@
  *
  * Call `tick()` on a timer. Each tick observes sessions, requests shutdown of
  * accepted ones, reserves newly eligible work, and launches what capacity
- * allows. Everything durable goes through the log; in-memory state is a replay.
+ * allows. Every change is applied to the in-memory State and then saved whole
+ * through `save`; a restart is `load`, nothing else.
  */
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -31,15 +32,28 @@ import { inspectOutputs } from './accept.ts';
 import type { CompletionReply, Harness, Launch } from './harness.ts';
 import { type Playbook, type Step, validatePlaybook } from './playbook.ts';
 import { type Blocked, schedule, SchedulerCache } from './schedule.ts';
-import { type Ambiguity, appendLog, apply, type Event, type Execution, fold, type Occurrence, occurrences, readLog, type State } from './state.ts';
+import { snapshotOccurrence } from './history.ts';
+import { type Ambiguity, apply, emptyState, type Event, type Execution, type FileRecord, type Occurrence, occurrences, type State } from './state.ts';
 
 export interface EngineOptions {
   playbook: Playbook;
-  /** Called after every logged event is applied. An exception is logged and never fails the engine. */
-  onEvent?: (ev: Event, state: State) => void;
+  /** Called after a save has reached the store. An exception is logged and never fails the engine. */
+  onSaved?: (state: State) => void;
   harness: Harness;
-  /** Append-only JSONL event log for this task. Created on first write. */
-  logPath: string;
+  /** The stored State of this task, or undefined for a task the engine has not saved yet. */
+  load: () => State | undefined;
+  /**
+   * Store the whole State. Saves are one at a time and coalesced: a save that finds newer changes waiting
+   * runs again, so the last one written is always the latest. The host must serialize `state` before its
+   * first await. A rejection leaves the changes unsaved; the next `flush` tries again.
+   */
+  save: (state: State) => void | Promise<void>;
+  /**
+   * Parent of every execution's `objects/` directory (O27). Omit it and no file states are kept.
+   */
+  historyDir?: string;
+  /** Records the worktree an accepted coding step produced, as a tree kept alive under a ref. */
+  recordWorktree?: (execution: Execution) => { ref: string; tree: string } | undefined | Promise<{ ref: string; tree: string } | undefined>;
   /** Parent of every execution's output directory. */
   artifactsDir: string;
   /** Agent working directory: the task's repo checkout or worktree. */
@@ -83,6 +97,9 @@ export class Engine {
   #state: State;
   /** Executions whose shutdown this process has already requested. Rebuilt lazily after restart; stop() is idempotent. */
   readonly #stopping = new Set<string>();
+  #saving: Promise<void> | null = null;
+  #dirty = false;
+  #saveError: unknown;
   /** Derived ancestry, kept across ticks. Purely an optimisation; see schedule.ts. */
   readonly #cache = new SchedulerCache();
 
@@ -91,11 +108,11 @@ export class Engine {
     this.#state = state;
   }
 
-  /** Validate the playbook and replay the log. Throws on an invalid definition: a task never runs a playbook the engine cannot honour. */
+  /** Validate the playbook and load the stored State. Throws on an invalid definition: a task never runs a playbook the engine cannot honour. */
   static open(opts: EngineOptions): Engine {
     const problems = validatePlaybook(opts.playbook);
     if (problems.length) throw new Error(`invalid playbook: ${problems.map((p) => p.message).join('; ')}`);
-    return new Engine(opts, fold(readLog(opts.logPath)));
+    return new Engine(opts, opts.load() ?? emptyState());
   }
 
   get state(): State {
@@ -116,12 +133,27 @@ export class Engine {
     });
   }
 
-  /** One scheduling round. Safe to call as often as you like. */
+  /** One scheduling round. Safe to call as often as you like. Ends with every change saved, or throws the save's error. */
   async tick(): Promise<void> {
     await this.#observe();
     this.#requestShutdowns();
     this.#reserve();
     await this.#launch();
+    await this.flush();
+  }
+
+  /** Wait until the state on disk is the state in memory. One retry after a failed save, then the error. */
+  async flush(): Promise<void> {
+    for (let retried = false; ; ) {
+      if (this.#saving) {
+        await this.#saving;
+        continue;
+      }
+      if (!this.#dirty) return;
+      if (retried) throw this.#saveError;
+      retried = true;
+      this.#drain();
+    }
   }
 
   /**
@@ -133,13 +165,18 @@ export class Engine {
   async requestCompletion(execId: string): Promise<CompletionReply> {
     const e = this.#state.executions.get(execId);
     if (!e) return { kind: 'rejected', problems: [`unknown execution ${execId}`] };
-    if (e.receipt) return { kind: 'accepted', published: e.receipt.map((o) => o.path) };
+    if (e.receipt) {
+      await this.flush(); // never answer "accepted" for a receipt that is only in memory
+      return { kind: 'accepted', published: e.receipt.map((o) => o.path) };
+    }
     if (e.status !== 'live') return { kind: 'rejected', problems: [`execution is ${e.status}, not live`] };
     if (!this.#permitted(e)) return { kind: 'permission-required' };
     const result = inspectOutputs(e.outDir, this.#step(e.step).outputs);
     if (!result.ok) return { kind: 'rejected', problems: result.problems };
     const published: Occurrence[] = result.published.map((p) => ({ id: `${e.id}/${p.role}`, role: p.role, path: p.path, producer: e.id }));
-    this.#append({ t: 'accepted', execId: e.id, published });
+    const worktree = this.#step(e.step).isCodingStep && this.#opts.recordWorktree ? await this.#opts.recordWorktree(e) : undefined;
+    this.#append({ t: 'accepted', execId: e.id, published, ...(this.#opts.historyDir ? { files: published.map((o) => snapshotOccurrence(this.#opts.historyDir!, e.id, o)) } : {}), ...(worktree ? { worktree } : {}) });
+    await this.flush();
     return { kind: 'accepted', published: published.map((o) => o.path) };
   }
 
@@ -148,6 +185,7 @@ export class Engine {
     const e = this.#must(execId);
     if (e.status !== 'live' || !e.sessionId) throw new Error(`${execId} is ${e.status}; only a live execution can be permitted`);
     this.#append({ t: 'permitted', execId });
+    await this.flush();
     await this.#opts.harness.send(e.sessionId, WRAP_UP);
   }
 
@@ -161,7 +199,8 @@ export class Engine {
     if (step.isCodingStep && this.#codingHeld()) throw new Error('another coding execution holds the worktree');
     const launch = this.#launchFor(e, step);
     const sessionId = e.sessionId ? await this.#opts.harness.resume(e.sessionId, launch) : await this.#opts.harness.start(launch);
-    this.#append({ t: 'resumed', execId, sessionId });
+    this.#append({ t: 'resumed', execId, sessionId, ...this.#consumedFor(e) });
+    await this.flush();
   }
 
   /** A human asserts that a session has stopped when the harness could not confirm it. */
@@ -219,7 +258,7 @@ export class Engine {
       mkdirSync(e.outDir, { recursive: true });
       try {
         const sessionId = await this.#opts.harness.start(this.#launchFor(e, step));
-        this.#append({ t: 'started', execId: e.id, sessionId });
+        this.#append({ t: 'started', execId: e.id, sessionId, ...this.#consumedFor(e) });
       } catch (err) {
         this.#append({ t: 'failed', execId: e.id, reason: `launch failed: ${message(err)}` });
       }
@@ -310,15 +349,42 @@ export class Engine {
     return e;
   }
 
-  /** The single write path: durable first, then in memory. */
+  /** What the execution read, copied the first time it starts. Later edits of the live files cannot change it. */
+  #consumedFor(e: Execution): { consumed?: FileRecord[] } {
+    const dir = this.#opts.historyDir;
+    if (!dir || e.manifest) return {};
+    const byId = new Map(occurrences(this.#state).map((o) => [o.id, o]));
+    return { consumed: Object.values(e.inputs).flatMap((ids) => ids.map((id) => snapshotOccurrence(dir, e.id, byId.get(id)!))) };
+  }
+
+  /** The single write path: apply in memory, then save the whole State. */
   #append(ev: Event): void {
-    appendLog(this.#opts.logPath, ev);
     apply(this.#state, ev);
-    try {
-      this.#opts.onEvent?.(ev, this.#state);
-    } catch (err) {
-      console.error(`engine onEvent (${ev.t}): ${message(err)}`);
-    }
+    this.#dirty = true;
+    if (!this.#saving) this.#drain();
+  }
+
+  #drain(): void {
+    this.#saving = (async () => {
+      while (this.#dirty) {
+        this.#dirty = false;
+        try {
+          await this.#opts.save(this.#state);
+        } catch (err) {
+          this.#dirty = true;
+          this.#saveError = err;
+          console.error(`engine save: ${message(err)}`);
+          return;
+        }
+        try {
+          this.#opts.onSaved?.(this.#state);
+        } catch (err) {
+          console.error(`engine onSaved: ${message(err)}`);
+        }
+      }
+    })().finally(() => {
+      this.#saving = null;
+    });
   }
 }
 
