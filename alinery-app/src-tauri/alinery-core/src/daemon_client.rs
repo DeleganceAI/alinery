@@ -1109,30 +1109,6 @@ pub fn connect_compatible(socket_path: PathBuf, app_config: &Path) -> Result<(Da
     classify_client(client, &app_config_identity(app_config))
 }
 
-pub fn connect_compatible_once(socket_path: PathBuf, app_config: &Path) -> Result<(DaemonClient, DaemonCompat), DaemonClientError> {
-    let client = DaemonClient::connect_path(socket_path).map_err(DaemonClientError::Malformed)?;
-    classify_client(client, &app_config_identity(app_config))
-}
-
-pub fn ensure_compatible_daemon(repo: &Path, app_config: &Path, namespace: Option<&str>) -> Result<(DaemonClient, DaemonCompat), DaemonClientError> {
-    let socket_path = alineryd_socket_path(repo, namespace);
-    match connect_compatible(socket_path.clone(), app_config) {
-        Ok(connected) => return Ok(connected),
-        Err(DaemonClientError::Unreachable { .. }) => {}
-        Err(error) => return Err(error),
-    }
-
-    spawn_daemon_detached(repo, app_config, namespace, None).map_err(DaemonClientError::Launch)?;
-    for _ in 0..40 {
-        match connect_compatible(socket_path.clone(), app_config) {
-            Ok(connected) => return Ok(connected),
-            Err(DaemonClientError::Unreachable { .. }) => std::thread::sleep(Duration::from_millis(50)),
-            Err(error) => return Err(error),
-        }
-    }
-    Err(DaemonClientError::Launch("daemon did not start".into()))
-}
-
 fn daemon_in(directory: &Path) -> Option<PathBuf> {
     if let Ok(entries) = fs::read_dir(directory) {
         for entry in entries.flatten() {
@@ -1244,14 +1220,6 @@ pub fn daemon_command(
     }
     configure_detached_process(&mut command);
     command
-}
-
-pub fn spawn_daemon_detached(repo: &Path, app_config: &Path, namespace: Option<&str>, host_executable: Option<&Path>) -> Result<(), String> {
-    let daemon = resolve_alineryd_path().ok_or("alinery-vinculum-daemon binary not found")?;
-    daemon_command(&daemon, repo, app_config, daemon_binary_build_id().as_ref(), namespace, host_executable, None)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("spawn alinery-vinculum-daemon: {error}"))
 }
 
 #[cfg(test)]

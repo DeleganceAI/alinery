@@ -8,17 +8,18 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Applied, MutationMeta } from "./common_pb";
 import { file_alinery_v1_common } from "./common_pb";
-import type { Session } from "./entities_pb";
+import type { PlaybookRef, Session } from "./entities_pb";
 import { file_alinery_v1_entities } from "./entities_pb";
 import type { SessionStarted } from "./sessions_pb";
 import { file_alinery_v1_sessions } from "./sessions_pb";
-import type { Message } from "@bufbuild/protobuf";
+import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
+import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file alinery/v1/subtasks.proto.
  */
 export const file_alinery_v1_subtasks: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL3N1YnRhc2tzLnByb3RvEgphbGluZXJ5LnYxIrQBChJTdWJ0YXNrVGFza1N1bW1hcnkSDAoEbmFtZRgBIAEoCRIMCgRzbHVnGAIgASgJEg4KBmJyYW5jaBgDIAEoCRIQCgh3b3JrdHJlZRgEIAEoCRIUCgxoYXNfd29ya3RyZWUYBSABKAgSEAoIcGxheWJvb2sYBiABKAkSEAoIYXJjaGl2ZWQYByABKAgSDQoFZHJhZnQYCCABKAgSFwoPc3VidGFza19vdXRjb21lGAkgASgJIiMKE1N1YnRhc2tTdGF0ZVJlcXVlc3QSDAoEc2x1ZxgBIAEoCSKEBAoUU3VidGFza1N0YXRlUmVzcG9uc2USLAoEdGFzaxgBIAEoCzIeLmFsaW5lcnkudjEuU3VidGFza1Rhc2tTdW1tYXJ5EjgKC3BhcmVudF90YXNrGAIgASgLMh4uYWxpbmVyeS52MS5TdWJ0YXNrVGFza1N1bW1hcnlIAIgBARI7Cg5hY3RpdmVfc3VidGFzaxgDIAEoCzIeLmFsaW5lcnkudjEuU3VidGFza1Rhc2tTdW1tYXJ5SAGIAQESMQoPbWFuYWdlcl9zZXNzaW9uGAQgASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAKIAQESHwoXbWFuYWdlcl9vd25lcl90YXNrX3NsdWcYBSABKAkSOAoWcGFyZW50X21hbmFnZXJfc2Vzc2lvbhgGIAEoCzITLmFsaW5lcnkudjEuU2Vzc2lvbkgDiAEBEiYKHnBhcmVudF9tYW5hZ2VyX293bmVyX3Rhc2tfc2x1ZxgHIAEoCRIRCgljYW5fc3RhcnQYCCABKAgSEwoLY2FuX3JlY292ZXIYCSABKAgSFwoPZGlzYWJsZWRfcmVhc29uGAogASgJQg4KDF9wYXJlbnRfdGFza0IRCg9fYWN0aXZlX3N1YnRhc2tCEgoQX21hbmFnZXJfc2Vzc2lvbkIZChdfcGFyZW50X21hbmFnZXJfc2Vzc2lvbiJcChNTdGFydE1hbmFnZXJSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJEg8KB3JlY292ZXIYAyABKAgiaQoUU3RhcnRNYW5hZ2VyUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIrCgdzdGFydGVkGAIgASgLMhouYWxpbmVyeS52MS5TZXNzaW9uU3RhcnRlZCJpChVEaXNjYXJkU3VidGFza1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSGgoSbWFuYWdlcl9zZXNzaW9uX2lkGAMgASgJIlsKFkRpc2NhcmRTdWJ0YXNrUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIbChNzdG9wcGVkX3Nlc3Npb25faWRzGAIgAygJMo8CCg5TdWJ0YXNrU2VydmljZRJRCgxTdWJ0YXNrU3RhdGUSHy5hbGluZXJ5LnYxLlN1YnRhc2tTdGF0ZVJlcXVlc3QaIC5hbGluZXJ5LnYxLlN1YnRhc2tTdGF0ZVJlc3BvbnNlElEKDFN0YXJ0TWFuYWdlchIfLmFsaW5lcnkudjEuU3RhcnRNYW5hZ2VyUmVxdWVzdBogLmFsaW5lcnkudjEuU3RhcnRNYW5hZ2VyUmVzcG9uc2USVwoORGlzY2FyZFN1YnRhc2sSIS5hbGluZXJ5LnYxLkRpc2NhcmRTdWJ0YXNrUmVxdWVzdBoiLmFsaW5lcnkudjEuRGlzY2FyZFN1YnRhc2tSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common, file_alinery_v1_entities, file_alinery_v1_sessions]);
+  fileDesc("ChlhbGluZXJ5L3YxL3N1YnRhc2tzLnByb3RvEgphbGluZXJ5LnYxIrQBChJTdWJ0YXNrVGFza1N1bW1hcnkSDAoEbmFtZRgBIAEoCRIMCgRzbHVnGAIgASgJEg4KBmJyYW5jaBgDIAEoCRIQCgh3b3JrdHJlZRgEIAEoCRIUCgxoYXNfd29ya3RyZWUYBSABKAgSEAoIcGxheWJvb2sYBiABKAkSEAoIYXJjaGl2ZWQYByABKAgSDQoFZHJhZnQYCCABKAgSFwoPc3VidGFza19vdXRjb21lGAkgASgJIiMKE1N1YnRhc2tTdGF0ZVJlcXVlc3QSDAoEc2x1ZxgBIAEoCSKEBAoUU3VidGFza1N0YXRlUmVzcG9uc2USLAoEdGFzaxgBIAEoCzIeLmFsaW5lcnkudjEuU3VidGFza1Rhc2tTdW1tYXJ5EjgKC3BhcmVudF90YXNrGAIgASgLMh4uYWxpbmVyeS52MS5TdWJ0YXNrVGFza1N1bW1hcnlIAIgBARI7Cg5hY3RpdmVfc3VidGFzaxgDIAEoCzIeLmFsaW5lcnkudjEuU3VidGFza1Rhc2tTdW1tYXJ5SAGIAQESMQoPbWFuYWdlcl9zZXNzaW9uGAQgASgLMhMuYWxpbmVyeS52MS5TZXNzaW9uSAKIAQESHwoXbWFuYWdlcl9vd25lcl90YXNrX3NsdWcYBSABKAkSOAoWcGFyZW50X21hbmFnZXJfc2Vzc2lvbhgGIAEoCzITLmFsaW5lcnkudjEuU2Vzc2lvbkgDiAEBEiYKHnBhcmVudF9tYW5hZ2VyX293bmVyX3Rhc2tfc2x1ZxgHIAEoCRIRCgljYW5fc3RhcnQYCCABKAgSEwoLY2FuX3JlY292ZXIYCSABKAgSFwoPZGlzYWJsZWRfcmVhc29uGAogASgJQg4KDF9wYXJlbnRfdGFza0IRCg9fYWN0aXZlX3N1YnRhc2tCEgoQX21hbmFnZXJfc2Vzc2lvbkIZChdfcGFyZW50X21hbmFnZXJfc2Vzc2lvbiJcChNTdGFydE1hbmFnZXJSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJEg8KB3JlY292ZXIYAyABKAgiaQoUU3RhcnRNYW5hZ2VyUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIrCgdzdGFydGVkGAIgASgLMhouYWxpbmVyeS52MS5TZXNzaW9uU3RhcnRlZCJpChVEaXNjYXJkU3VidGFza1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSGgoSbWFuYWdlcl9zZXNzaW9uX2lkGAMgASgJIlsKFkRpc2NhcmRTdWJ0YXNrUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIbChNzdG9wcGVkX3Nlc3Npb25faWRzGAIgAygJIvkBChRDcmVhdGVTdWJ0YXNrUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESGgoSbWFuYWdlcl9zZXNzaW9uX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSDAoEc2x1ZxgEIAEoCRIyCgxwbGF5Ym9va19yZWYYBSABKAsyFy5hbGluZXJ5LnYxLlBsYXlib29rUmVmSACIAQESFwoPcGxheWJvb2tfc291cmNlGAYgASgJEhQKDGluc3RydWN0aW9ucxgHIAEoCRINCgVzdGFydBgIIAEoCEIPCg1fcGxheWJvb2tfcmVmImYKFUNyZWF0ZVN1YnRhc2tSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEicKBnJlc3VsdBgCIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QiOQobSW5zcGVjdFN1YnRhc2tGaW5pc2hSZXF1ZXN0EhoKEm1hbmFnZXJfc2Vzc2lvbl9pZBgBIAEoCSJLChxJbnNwZWN0U3VidGFza0ZpbmlzaFJlc3BvbnNlEisKCmluc3BlY3Rpb24YASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0ImoKFkZpbmFsaXplU3VidGFza1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhoKEm1hbmFnZXJfc2Vzc2lvbl9pZBgCIAEoCRIMCgRtb2RlGAMgASgJImgKF0ZpbmFsaXplU3VidGFza1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSJwoGcmVzdWx0GAIgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdDKsBAoOU3VidGFza1NlcnZpY2USUQoMU3VidGFza1N0YXRlEh8uYWxpbmVyeS52MS5TdWJ0YXNrU3RhdGVSZXF1ZXN0GiAuYWxpbmVyeS52MS5TdWJ0YXNrU3RhdGVSZXNwb25zZRJRCgxTdGFydE1hbmFnZXISHy5hbGluZXJ5LnYxLlN0YXJ0TWFuYWdlclJlcXVlc3QaIC5hbGluZXJ5LnYxLlN0YXJ0TWFuYWdlclJlc3BvbnNlElcKDkRpc2NhcmRTdWJ0YXNrEiEuYWxpbmVyeS52MS5EaXNjYXJkU3VidGFza1JlcXVlc3QaIi5hbGluZXJ5LnYxLkRpc2NhcmRTdWJ0YXNrUmVzcG9uc2USVAoNQ3JlYXRlU3VidGFzaxIgLmFsaW5lcnkudjEuQ3JlYXRlU3VidGFza1JlcXVlc3QaIS5hbGluZXJ5LnYxLkNyZWF0ZVN1YnRhc2tSZXNwb25zZRJpChRJbnNwZWN0U3VidGFza0ZpbmlzaBInLmFsaW5lcnkudjEuSW5zcGVjdFN1YnRhc2tGaW5pc2hSZXF1ZXN0GiguYWxpbmVyeS52MS5JbnNwZWN0U3VidGFza0ZpbmlzaFJlc3BvbnNlEloKD0ZpbmFsaXplU3VidGFzaxIiLmFsaW5lcnkudjEuRmluYWxpemVTdWJ0YXNrUmVxdWVzdBojLmFsaW5lcnkudjEuRmluYWxpemVTdWJ0YXNrUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities, file_alinery_v1_sessions, file_google_protobuf_struct]);
 
 /**
  * The fields of a task that a sub-task view shows (`TaskSummary` in alinery-core).
@@ -264,9 +265,176 @@ export const DiscardSubtaskResponseSchema: GenMessage<DiscardSubtaskResponse> = 
   messageDesc(file_alinery_v1_subtasks, 6);
 
 /**
+ * The manager agent creates the child it designed. The playbook is chosen by the caller (it read it from PlaybookService), as
+ * CreateTask takes one; unset, the child inherits its parent's retained definition. `result` is the JSON the tool has always
+ * answered: the parent and child summaries, the manager session and how far provisioning got.
+ *
+ * @generated from message alinery.v1.CreateSubtaskRequest
+ */
+export type CreateSubtaskRequest = Message<"alinery.v1.CreateSubtaskRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string manager_session_id = 2;
+   */
+  managerSessionId: string;
+
+  /**
+   * @generated from field: string name = 3;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string slug = 4;
+   */
+  slug: string;
+
+  /**
+   * @generated from field: optional alinery.v1.PlaybookRef playbook_ref = 5;
+   */
+  playbookRef?: PlaybookRef | undefined;
+
+  /**
+   * @generated from field: string playbook_source = 6;
+   */
+  playbookSource: string;
+
+  /**
+   * @generated from field: string instructions = 7;
+   */
+  instructions: string;
+
+  /**
+   * @generated from field: bool start = 8;
+   */
+  start: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.CreateSubtaskRequest.
+ * Use `create(CreateSubtaskRequestSchema)` to create a new message.
+ */
+export const CreateSubtaskRequestSchema: GenMessage<CreateSubtaskRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 7);
+
+/**
+ * @generated from message alinery.v1.CreateSubtaskResponse
+ */
+export type CreateSubtaskResponse = Message<"alinery.v1.CreateSubtaskResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Struct result = 2;
+   */
+  result?: JsonObject | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.CreateSubtaskResponse.
+ * Use `create(CreateSubtaskResponseSchema)` to create a new message.
+ */
+export const CreateSubtaskResponseSchema: GenMessage<CreateSubtaskResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 8);
+
+/**
+ * What a finish would do now: the git and artifact state of the bound child and, per mode, what blocks it. The daemon fills the
+ * parent's live sessions from its own runner, so there is no other lane to ask.
+ *
+ * @generated from message alinery.v1.InspectSubtaskFinishRequest
+ */
+export type InspectSubtaskFinishRequest = Message<"alinery.v1.InspectSubtaskFinishRequest"> & {
+  /**
+   * @generated from field: string manager_session_id = 1;
+   */
+  managerSessionId: string;
+};
+
+/**
+ * Describes the message alinery.v1.InspectSubtaskFinishRequest.
+ * Use `create(InspectSubtaskFinishRequestSchema)` to create a new message.
+ */
+export const InspectSubtaskFinishRequestSchema: GenMessage<InspectSubtaskFinishRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 9);
+
+/**
+ * @generated from message alinery.v1.InspectSubtaskFinishResponse
+ */
+export type InspectSubtaskFinishResponse = Message<"alinery.v1.InspectSubtaskFinishResponse"> & {
+  /**
+   * @generated from field: google.protobuf.Struct inspection = 1;
+   */
+  inspection?: JsonObject | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.InspectSubtaskFinishResponse.
+ * Use `create(InspectSubtaskFinishResponseSchema)` to create a new message.
+ */
+export const InspectSubtaskFinishResponseSchema: GenMessage<InspectSubtaskFinishResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 10);
+
+/**
+ * Archives the bound child as finished (`mode`: artifacts_only, integrated_code or archive_without_code) and snapshots its
+ * artifacts under the parent. A pre-archive backup is queued first, as for any archive.
+ *
+ * @generated from message alinery.v1.FinalizeSubtaskRequest
+ */
+export type FinalizeSubtaskRequest = Message<"alinery.v1.FinalizeSubtaskRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string manager_session_id = 2;
+   */
+  managerSessionId: string;
+
+  /**
+   * @generated from field: string mode = 3;
+   */
+  mode: string;
+};
+
+/**
+ * Describes the message alinery.v1.FinalizeSubtaskRequest.
+ * Use `create(FinalizeSubtaskRequestSchema)` to create a new message.
+ */
+export const FinalizeSubtaskRequestSchema: GenMessage<FinalizeSubtaskRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 11);
+
+/**
+ * @generated from message alinery.v1.FinalizeSubtaskResponse
+ */
+export type FinalizeSubtaskResponse = Message<"alinery.v1.FinalizeSubtaskResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Struct result = 2;
+   */
+  result?: JsonObject | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.FinalizeSubtaskResponse.
+ * Use `create(FinalizeSubtaskResponseSchema)` to create a new message.
+ */
+export const FinalizeSubtaskResponseSchema: GenMessage<FinalizeSubtaskResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_subtasks, 12);
+
+/**
  * The life of a parent task's sub-task (S4.8): what the task page offers, the manager session that designs the child, and
- * killing a child or throwing away a setup that never made one. Creating the child is the manager agent's own call
- * (`alinery_create_subtask`, still the legacy wire op until S5.1), so it is not here. The daemon owns every file these touch
+ * killing a child or throwing away a setup that never made one. The last three calls are the manager agent's own (S5.1,
+ * `alinery_create_subtask`, `alinery_inspect_subtask_finish`, `alinery_finalize_subtask`). The daemon owns every file these touch
  * and stops the sessions itself, so a repository on another machine answers the same calls. A write that changes a file the
  * store holds answers with the cursor that covers it.
  *
@@ -302,6 +470,36 @@ export const SubtaskService: GenService<{
     methodKind: "unary";
     input: typeof DiscardSubtaskRequestSchema;
     output: typeof DiscardSubtaskResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SubtaskService.CreateSubtask
+   */
+  createSubtask: {
+    methodKind: "unary";
+    input: typeof CreateSubtaskRequestSchema;
+    output: typeof CreateSubtaskResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.SubtaskService.InspectSubtaskFinish
+   */
+  inspectSubtaskFinish: {
+    methodKind: "unary";
+    input: typeof InspectSubtaskFinishRequestSchema;
+    output: typeof InspectSubtaskFinishResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SubtaskService.FinalizeSubtask
+   */
+  finalizeSubtask: {
+    methodKind: "unary";
+    input: typeof FinalizeSubtaskRequestSchema;
+    output: typeof FinalizeSubtaskResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_subtasks, 0);

@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::daemon_rpc::{
-    hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse,
-    WriteHostedInferenceRequest, WriteHostedInferenceResponse,
+    hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, MintTokenRequest, MintTokenResponse, ShutdownOrigin,
+    ShutdownRequest, ShutdownResponse, WriteHostedInferenceRequest, WriteHostedInferenceResponse,
 };
 use bytes::Bytes;
 use http::HeaderMap;
@@ -530,6 +530,19 @@ fn golden_shutdown_response_decodes_field_by_field_and_encodes_back_to_the_same_
     let bytes = golden("ShutdownResponse");
     let response = ShutdownResponse::decode(bytes.as_slice()).unwrap();
     assert_eq!(response.sessions_stopped, 300, "ShutdownResponse.sessions_stopped");
+    assert_eq!(response.encode_to_vec(), bytes);
+}
+
+#[test]
+fn golden_mint_token_messages_decode_field_by_field_and_encode_back_to_the_same_bytes() {
+    let bytes = golden("MintTokenRequest");
+    let request = MintTokenRequest::decode(bytes.as_slice()).unwrap();
+    assert_eq!(request.capability, Capability::Agent as i32, "MintTokenRequest.capability");
+    assert_eq!(request.label, "managed-mcp", "MintTokenRequest.label");
+    assert_eq!(request.encode_to_vec(), bytes);
+    let bytes = golden("MintTokenResponse");
+    let response = MintTokenResponse::decode(bytes.as_slice()).unwrap();
+    assert_eq!(response.token, "ab12cd34", "MintTokenResponse.token");
     assert_eq!(response.encode_to_vec(), bytes);
 }
 

@@ -207,7 +207,7 @@ if [ ! -f "$DAEMON_SRC/platform/process.ts" ]; then
   echo "ERROR: $DAEMON_SRC/platform/process.ts is missing — the daemon scan has drifted from the code." >&2
   exit 1
 fi
-daemon_files="$(find "$DAEMON_SRC" -name '*.ts' ! -name '*.test.ts' ! -path "$DAEMON_SRC/platform/process.ts")"
+daemon_files="$(find "$DAEMON_SRC" -name '*.ts' ! -name '*.test.ts' ! -name '*.testutil.ts' ! -path "$DAEMON_SRC/platform/process.ts")"
 raw_kills="$(echo "$daemon_files" | xargs grep -nE '\.kill\(' | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' || true)"
 if [ -n "$raw_kills" ]; then
   echo "ERROR: send signals to children through signalChild in platform/process.ts, never .kill( directly:" >&2
@@ -232,6 +232,23 @@ while IFS= read -r call; do
       ;;
   esac
 done <<<"$signal_calls"
+
+# The MCP server (plan S5.1, O10 b) is a daemon client: it calls the daemon over its RPC socket with an AGENT token and never stops it, so it
+# names no Shutdown call and signals no process. The scan above already covers src/mcpServer for `.kill(` and `signalChild`; this one
+# keeps the Shutdown RPC out and fails if the directory goes missing.
+MCP_SRC="$DAEMON_SRC/mcpServer"
+if [ ! -f "$MCP_SRC/handlers.ts" ]; then
+  echo "ERROR: $MCP_SRC/handlers.ts is missing — the MCP scan has drifted from the code." >&2
+  exit 1
+fi
+mcp_shutdown="$(find "$MCP_SRC" -name '*.ts' ! -name '*.test.ts' ! -name '*.testutil.ts' | xargs grep -nE '\.shutdown\(|AdminService/Shutdown|Shutdown(Request|Origin)|process\.kill|child_process' | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' || true)"
+if [ -n "$mcp_shutdown" ]; then
+  echo "ERROR: the MCP server must never stop a daemon or a process:" >&2
+  echo "$mcp_shutdown" >&2
+  status=1
+else
+  echo "ok       mcpServer (calls no Shutdown, signals nothing)"
+fi
 
 case " $senders " in
   *" ensure_daemon "*)

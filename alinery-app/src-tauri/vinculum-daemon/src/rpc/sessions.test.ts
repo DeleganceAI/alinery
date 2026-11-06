@@ -94,7 +94,7 @@ test("WatchTranscript needs VIEW and an open session", async () => {
   const client = await start(feed);
   const call = (c: ReturnType<typeof client>, id: string) => c.watchTranscript({ session: { taskSlug: "t", id } })[Symbol.asyncIterator]().next();
   const anonymous = await call(client(""), "s1").catch((e) => e);
-  expect(ConnectError.from(anonymous).code).toBe(Code.PermissionDenied);
+  expect(ConnectError.from(anonymous).code).toBe(Code.Unauthenticated);
   const missing = await call(client(), "nope").catch((e) => e);
   expect(ConnectError.from(missing).code).toBe(Code.NotFound);
 });

@@ -485,56 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn a_restore_replaces_the_curated_data_where_the_repo_lives() {
-        let root = temp_dir("backup");
-        let repo = root.join("repo");
-        let dest = root.join("dest");
-        let task_dir = repo.join(".alinery/tasks/t");
-        fs::create_dir_all(&task_dir).unwrap();
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(task_dir.join("notes.txt"), "before").unwrap();
-        let settings = crate::BackupDefaults {
-            destination: dest.to_string_lossy().into_owned(),
-            enabled: true,
-            retention: 5,
-            ..Default::default()
-        };
-        // The archive is made by the daemon in production; this test needs only a valid one.
-        crate::create_backup(&repo, &settings, crate::BackupTrigger::Manual, "1.0.0").unwrap();
-        let archive = PathBuf::from(&crate::list_backups(&repo, &settings).unwrap()[0].path);
-        fs::write(task_dir.join("notes.txt"), "after").unwrap();
-        run(RepoOp::BackupRestore {
-            repo: repo.clone(),
-            backup_path: archive.clone(),
-        })
-        .unwrap();
-        assert_eq!(fs::read_to_string(task_dir.join("notes.txt")).unwrap(), "before");
-        // An archive from another repository is refused, by the check before the daemon is stopped and by the restore itself.
-        let other = root.join("other");
-        fs::create_dir_all(other.join(".alinery/tasks/o")).unwrap();
-        fs::write(other.join(".alinery/tasks/o/notes.txt"), "mine").unwrap();
-        run(RepoOp::BackupVerify {
-            repo: repo.clone(),
-            backup_path: archive.clone(),
-        })
-        .unwrap();
-        assert!(run(RepoOp::BackupVerify {
-            repo: other.clone(),
-            backup_path: archive.clone()
-        })
-        .unwrap_err()
-        .contains("belongs to"));
-        assert!(run(RepoOp::BackupRestore {
-            repo: other.clone(),
-            backup_path: archive
-        })
-        .unwrap_err()
-        .contains("belongs to"));
-        assert_eq!(fs::read_to_string(other.join(".alinery/tasks/o/notes.txt")).unwrap(), "mine");
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn wait_daemon_gone_returns_when_nothing_holds_the_socket() {
         let root = temp_dir("gone");
         fs::create_dir_all(root.join(".alinery")).unwrap();

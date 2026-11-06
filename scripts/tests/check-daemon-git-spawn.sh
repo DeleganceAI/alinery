@@ -13,7 +13,7 @@ SRC="${ALINERY_DAEMON_SRC:-$ROOT/alinery-app/src-tauri/vinculum-daemon/src}"
 
 # spawn/exec with "git" as the program, or Bun's shell tag starting with git.
 hits=$(grep -rn -E '(spawn|spawnSync|exec|execSync|execFile|execFileSync)(<[^>]*>)?\([[:space:]]*\[?[[:space:]]*["'\''`]git["'\''`]|\$`[[:space:]]*git[[:space:]]' \
-  --include='*.ts' --exclude='*.test.ts' --exclude='*.bench.ts' \
+  --include='*.ts' --exclude='*.test.ts' --exclude='*.testutil.ts' --exclude='*.bench.ts' \
   "$SRC" \
   | grep -v '/platform/git\.ts:' || true)
 

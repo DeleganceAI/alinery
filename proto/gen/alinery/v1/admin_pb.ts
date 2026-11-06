@@ -10,7 +10,50 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/admin.proto.
  */
 export const file_alinery_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIkgKDEhlbGxvUmVxdWVzdBIRCgljbGllbnRfaWQYASABKAkSEwoLY2xpZW50X2tpbmQYAiABKAkSEAoIcHJvdG9jb2wYAyABKA0ioAEKDUhlbGxvUmVzcG9uc2USEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSDQoFZXBvY2gYAyABKAkSLAoMY2FwYWJpbGl0aWVzGAQgAygOMhYuYWxpbmVyeS52MS5DYXBhYmlsaXR5EhEKCXJlcG9fcm9vdBgFIAEoCRIbChNhcHBfY29uZmlnX2lkZW50aXR5GAYgASgJIlYKD1NodXRkb3duUmVxdWVzdBIqCgZvcmlnaW4YASABKA4yGi5hbGluZXJ5LnYxLlNodXRkb3duT3JpZ2luEhcKD2NvbmZpcm1hdGlvbl9pZBgCIAEoCSIsChBTaHV0ZG93blJlc3BvbnNlEhgKEHNlc3Npb25zX3N0b3BwZWQYASABKA0qlQEKCkNhcGFiaWxpdHkSGgoWQ0FQQUJJTElUWV9VTlNQRUNJRklFRBAAEhMKD0NBUEFCSUxJVFlfVklFVxABEhIKDkNBUEFCSUxJVFlfQUNUEAISFgoSQ0FQQUJJTElUWV9BUFBST1ZFEAMSFAoQQ0FQQUJJTElUWV9BRE1JThAEEhQKEENBUEFCSUxJVFlfQUdFTlQQBSrfAQoOU2h1dGRvd25PcmlnaW4SHwobU0hVVERPV05fT1JJR0lOX1VOU1BFQ0lGSUVEEAASHwobU0hVVERPV05fT1JJR0lOX1NUT1BfREFFTU9OEAESHgoaU0hVVERPV05fT1JJR0lOX0NMT1NFX1JFUE8QAhIiCh5TSFVURE9XTl9PUklHSU5fUkVTVE9SRV9CQUNLVVAQAxImCiJTSFVURE9XTl9PUklHSU5fQ09ORklSTUVEX1RBS0VPVkVSEAQSHwobU0hVVERPV05fT1JJR0lOX1NUT1BfUkVNT1RFEAUykwEKDEFkbWluU2VydmljZRI8CgVIZWxsbxIYLmFsaW5lcnkudjEuSGVsbG9SZXF1ZXN0GhkuYWxpbmVyeS52MS5IZWxsb1Jlc3BvbnNlEkUKCFNodXRkb3duEhsuYWxpbmVyeS52MS5TaHV0ZG93blJlcXVlc3QaHC5hbGluZXJ5LnYxLlNodXRkb3duUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIk0KEE1pbnRUb2tlblJlcXVlc3QSKgoKY2FwYWJpbGl0eRgBIAEoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRINCgVsYWJlbBgCIAEoCSIiChFNaW50VG9rZW5SZXNwb25zZRINCgV0b2tlbhgBIAEoCSJICgxIZWxsb1JlcXVlc3QSEQoJY2xpZW50X2lkGAEgASgJEhMKC2NsaWVudF9raW5kGAIgASgJEhAKCHByb3RvY29sGAMgASgNIqABCg1IZWxsb1Jlc3BvbnNlEhAKCHByb3RvY29sGAEgASgNEhAKCGJ1aWxkX2lkGAIgASgJEg0KBWVwb2NoGAMgASgJEiwKDGNhcGFiaWxpdGllcxgEIAMoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRIRCglyZXBvX3Jvb3QYBSABKAkSGwoTYXBwX2NvbmZpZ19pZGVudGl0eRgGIAEoCSJWCg9TaHV0ZG93blJlcXVlc3QSKgoGb3JpZ2luGAEgASgOMhouYWxpbmVyeS52MS5TaHV0ZG93bk9yaWdpbhIXCg9jb25maXJtYXRpb25faWQYAiABKAkiLAoQU2h1dGRvd25SZXNwb25zZRIYChBzZXNzaW9uc19zdG9wcGVkGAEgASgNKpUBCgpDYXBhYmlsaXR5EhoKFkNBUEFCSUxJVFlfVU5TUEVDSUZJRUQQABITCg9DQVBBQklMSVRZX1ZJRVcQARISCg5DQVBBQklMSVRZX0FDVBACEhYKEkNBUEFCSUxJVFlfQVBQUk9WRRADEhQKEENBUEFCSUxJVFlfQURNSU4QBBIUChBDQVBBQklMSVRZX0FHRU5UEAUq3wEKDlNodXRkb3duT3JpZ2luEh8KG1NIVVRET1dOX09SSUdJTl9VTlNQRUNJRklFRBAAEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX0RBRU1PThABEh4KGlNIVVRET1dOX09SSUdJTl9DTE9TRV9SRVBPEAISIgoeU0hVVERPV05fT1JJR0lOX1JFU1RPUkVfQkFDS1VQEAMSJgoiU0hVVERPV05fT1JJR0lOX0NPTkZJUk1FRF9UQUtFT1ZFUhAEEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX1JFTU9URRAFMt0BCgxBZG1pblNlcnZpY2USPAoFSGVsbG8SGC5hbGluZXJ5LnYxLkhlbGxvUmVxdWVzdBoZLmFsaW5lcnkudjEuSGVsbG9SZXNwb25zZRJFCghTaHV0ZG93bhIbLmFsaW5lcnkudjEuU2h1dGRvd25SZXF1ZXN0GhwuYWxpbmVyeS52MS5TaHV0ZG93blJlc3BvbnNlEkgKCU1pbnRUb2tlbhIcLmFsaW5lcnkudjEuTWludFRva2VuUmVxdWVzdBodLmFsaW5lcnkudjEuTWludFRva2VuUmVzcG9uc2ViBnByb3RvMw");
+
+/**
+ * Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
+ * daemon's memory and dies with it. A second mint with the same `label` replaces the first, so a client that refreshes its
+ * token does not pile them up. `label` is for the log only.
+ *
+ * @generated from message alinery.v1.MintTokenRequest
+ */
+export type MintTokenRequest = Message<"alinery.v1.MintTokenRequest"> & {
+  /**
+   * @generated from field: alinery.v1.Capability capability = 1;
+   */
+  capability: Capability;
+
+  /**
+   * @generated from field: string label = 2;
+   */
+  label: string;
+};
+
+/**
+ * Describes the message alinery.v1.MintTokenRequest.
+ * Use `create(MintTokenRequestSchema)` to create a new message.
+ */
+export const MintTokenRequestSchema: GenMessage<MintTokenRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 0);
+
+/**
+ * @generated from message alinery.v1.MintTokenResponse
+ */
+export type MintTokenResponse = Message<"alinery.v1.MintTokenResponse"> & {
+  /**
+   * @generated from field: string token = 1;
+   */
+  token: string;
+};
+
+/**
+ * Describes the message alinery.v1.MintTokenResponse.
+ * Use `create(MintTokenResponseSchema)` to create a new message.
+ */
+export const MintTokenResponseSchema: GenMessage<MintTokenResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 1);
 
 /**
  * @generated from message alinery.v1.HelloRequest
@@ -39,7 +82,7 @@ export type HelloRequest = Message<"alinery.v1.HelloRequest"> & {
  * Use `create(HelloRequestSchema)` to create a new message.
  */
 export const HelloRequestSchema: GenMessage<HelloRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 0);
+  messageDesc(file_alinery_v1_admin, 2);
 
 /**
  * @generated from message alinery.v1.HelloResponse
@@ -83,7 +126,7 @@ export type HelloResponse = Message<"alinery.v1.HelloResponse"> & {
  * Use `create(HelloResponseSchema)` to create a new message.
  */
 export const HelloResponseSchema: GenMessage<HelloResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 1);
+  messageDesc(file_alinery_v1_admin, 3);
 
 /**
  * @generated from message alinery.v1.ShutdownRequest
@@ -105,7 +148,7 @@ export type ShutdownRequest = Message<"alinery.v1.ShutdownRequest"> & {
  * Use `create(ShutdownRequestSchema)` to create a new message.
  */
 export const ShutdownRequestSchema: GenMessage<ShutdownRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 2);
+  messageDesc(file_alinery_v1_admin, 4);
 
 /**
  * @generated from message alinery.v1.ShutdownResponse
@@ -122,7 +165,7 @@ export type ShutdownResponse = Message<"alinery.v1.ShutdownResponse"> & {
  * Use `create(ShutdownResponseSchema)` to create a new message.
  */
 export const ShutdownResponseSchema: GenMessage<ShutdownResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 3);
+  messageDesc(file_alinery_v1_admin, 5);
 
 /**
  * @generated from enum alinery.v1.Capability
@@ -237,6 +280,16 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof ShutdownRequestSchema;
     output: typeof ShutdownResponseSchema;
+  },
+  /**
+   * ADMIN (S5.1, O20 c)
+   *
+   * @generated from rpc alinery.v1.AdminService.MintToken
+   */
+  mintToken: {
+    methodKind: "unary";
+    input: typeof MintTokenRequestSchema;
+    output: typeof MintTokenResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_admin, 0);

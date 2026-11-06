@@ -137,9 +137,9 @@ test("VerifyBackup refuses a file outside the destination and a backup of anothe
 
 test("StartPurge needs ADMIN and the reads need VIEW; a caller with no token gets neither", async () => {
   const c = await start(ON);
-  expect(await code(c.jobsApi(null).startPurge({ meta: meta() }))).toBe(Code.PermissionDenied);
-  expect(await code(c.jobsApi(null).startBackup({ meta: meta() }))).toBe(Code.PermissionDenied);
-  expect(await code(c.backups(null).checkBackupDestination({ destination: c.dest }))).toBe(Code.PermissionDenied);
+  expect(await code(c.jobsApi(null).startPurge({ meta: meta() }))).toBe(Code.Unauthenticated);
+  expect(await code(c.jobsApi(null).startBackup({ meta: meta() }))).toBe(Code.Unauthenticated);
+  expect(await code(c.backups(null).checkBackupDestination({ destination: c.dest }))).toBe(Code.Unauthenticated);
   const { jobId } = await c.jobsApi().startPurge({ meta: meta() });
   const done = await c.jobs.finished(jobId);
   expect(done.kind).toBe(JobKind.PURGE);

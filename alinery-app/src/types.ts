@@ -1131,6 +1131,7 @@ export type McpStatus = {
   socket_reachable: boolean;
   binary_found: boolean;
   binary_path: string;
+  host_args: string[];
   repo: string;
   socket_path: string;
   error: string;

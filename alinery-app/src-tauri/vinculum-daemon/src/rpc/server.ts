@@ -22,7 +22,7 @@ import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import { TerminalService } from "alinery-proto/alinery/v1/terminal_pb";
 import { adminService, type DaemonInfo, type Lifecycle } from "./admin.ts";
-import { credentials, PEER_CLASSES, type PeerClass } from "./auth.ts";
+import { credentials, PEER_CLASSES, type PeerClass, TokenRegistry } from "./auth.ts";
 import { addService } from "./grpc.ts";
 import type { BackupHost } from "../jobs/backupHost.ts";
 import type { JobRunner } from "../jobs/runner.ts";
@@ -51,17 +51,17 @@ const MAX_MESSAGE_BYTES = 128 * 1024 * 1024;
 
 type Hosted = { store: Store; jobs: JobRunner; storageScan: StorageParams; dedupe: Dedupe; transcripts: Transcripts; terminal: ReturnType<typeof terminalService>; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps; playbooks?: PlaybookDeps; agent?: AgentDeps; providers?: ProviderDeps; backups?: BackupHost; backupReads?: BackupServiceDeps };
 
-function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions, artifacts, playbooks, agent, providers, backups, backupReads }: Hosted) {
+function makeServer(peer: PeerClass, secret: Buffer, tokens: TokenRegistry, info: DaemonInfo, lifecycle: Lifecycle, { store, jobs, storageScan, dedupe, transcripts, terminal, settings, tasks, sessions, artifacts, playbooks, agent, providers, backups, backupReads }: Hosted) {
   // A draft carries its pasted images in one message (up to the 100 MB attachment set); grpc-js defaults to 4 MiB.
   const server = new grpc.Server({ "grpc.max_receive_message_length": MAX_MESSAGE_BYTES });
-  const values = (header: Headers) => credentials(header, peer, secret);
-  addService(server, AdminService, adminService(info, lifecycle, store.epoch), values);
+  const values = (header: Headers, method: string) => credentials(header, peer, secret, tokens, method);
+  addService(server, AdminService, adminService(info, lifecycle, store.epoch, tokens), values);
   addService(server, SyncService, syncService(store), values);
   addService(server, JobService, jobService(jobs, dedupe, store, storageScan, backups), values);
   if (backupReads) addService(server, BackupService, backupService(backupReads), values);
   addService(server, SessionService, sessionService(transcripts, sessions, dedupe, store), values);
   if (sessions) addService(server, ChatService, chatService(sessions, dedupe, store), values);
-  if (sessions) addService(server, SubtaskService, subtaskService(sessions, dedupe, store), values);
+  if (sessions) addService(server, SubtaskService, subtaskService(sessions, dedupe, store, tasks), values);
   addService(server, TerminalService, terminal, values);
   addService(server, ExecutionService, executionService(dedupe, store), values);
   if (settings) {
@@ -88,12 +88,13 @@ function peerClass(socket: Parameters<typeof peerExecutable>[0], hostExecutable:
   return peer && samePath(peer, hostExecutable) ? "shell" : "other";
 }
 
-export type RpcOptions = { socketPath: string; secret: Buffer; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps; playbooks?: PlaybookDeps; agent?: AgentDeps; providers?: ProviderDeps; backups?: BackupHost; backupReads?: BackupServiceDeps };
+export type RpcOptions = { socketPath: string; secret: Buffer; tokens?: TokenRegistry; hostExecutable?: string; info: DaemonInfo; lifecycle: Lifecycle; store: Store; jobs: JobRunner; storageScan: StorageParams; transcripts: Transcripts; terminalGapMs?: number; settings?: SettingsDeps; tasks?: TaskDeps; sessions?: SessionControl; artifacts?: ArtifactDeps; playbooks?: PlaybookDeps; agent?: AgentDeps; providers?: ProviderDeps; backups?: BackupHost; backupReads?: BackupServiceDeps };
 
 export function serveRpc(options: RpcOptions): Promise<NetServer> {
   // One dedupe and one attach table for all three peer classes: a client's retry lands on a new connection, not a new class.
   const hosted = { store: options.store, jobs: options.jobs, storageScan: options.storageScan, transcripts: options.transcripts, dedupe: new Dedupe(), terminal: terminalService(options.terminalGapMs), settings: options.settings, tasks: options.tasks, sessions: options.sessions, artifacts: options.artifacts, playbooks: options.playbooks, agent: options.agent, providers: options.providers, backups: options.backups, backupReads: options.backupReads };
-  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, options.info, options.lifecycle, hosted)]));
+  const tokens = options.tokens ?? new TokenRegistry();
+  const servers = new Map(PEER_CLASSES.map((p) => [p, makeServer(p, options.secret, tokens, options.info, options.lifecycle, hosted)]));
   const net = createNetServer((sock) => {
     sock.on("error", () => {});
     servers.get(peerClass(sock, options.hostExecutable))!.injectConnection(sock);

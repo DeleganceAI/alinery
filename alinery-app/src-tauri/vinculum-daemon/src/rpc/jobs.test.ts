@@ -83,8 +83,8 @@ test("a repeated mutation id starts one job; a missing one is refused", async ()
 test("cancel of an unknown job is NOT_FOUND; start and cancel need ACT", async () => {
   const { jobs } = await start();
   expect(await code(jobs().cancelJob({ meta: meta("c1"), jobId: "no-such-job" }))).toBe(Code.NotFound);
-  // No token is AGENT only.
-  expect(await code(jobs(null).startStorageScan({ meta: meta("a1") }))).toBe(Code.PermissionDenied);
-  expect(await code(jobs(null).cancelJob({ meta: meta("a2"), jobId: "x" }))).toBe(Code.PermissionDenied);
+  // No token is refused.
+  expect(await code(jobs(null).startStorageScan({ meta: meta("a1") }))).toBe(Code.Unauthenticated);
+  expect(await code(jobs(null).cancelJob({ meta: meta("a2"), jobId: "x" }))).toBe(Code.Unauthenticated);
   expect(await code(jobs("Bearer " + "00".repeat(32)).startStorageScan({ meta: meta("a3") }))).toBe(Code.Unauthenticated);
 });

@@ -212,12 +212,13 @@ function withWritten(cfg: Config, prev: RepoOverrides, next: RepoOverrides): Con
 /** Full host mcpServers envelope for Claude Desktop / Cursor / other command+args hosts.
  *  No `args`: one process now serves every repo, and `repo` is a per-call tool argument
  *  (a path from `alinery_list_repos`), not a launch flag. */
-function stdioHostConfigJson(binaryPath: string): string {
+function stdioHostConfigJson(binaryPath: string, args: string[]): string {
   return JSON.stringify(
     {
       mcpServers: {
         alinery: {
           command: binaryPath,
+          args,
         },
       },
     },
@@ -2398,10 +2399,10 @@ export function Settings({
       }
       case "mcp": {
         const installReady = mcpInstallReady(mcp);
-        const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-mcp");
+        const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-vinculum-daemon", installReady ? mcp.host_args : ["--mcp"]);
         const copyHostConfig = () => {
           if (!installReady) return;
-          copyTextToClipboard(stdioHostConfigJson(mcp.binary_path))
+          copyTextToClipboard(stdioHostConfigJson(mcp.binary_path, mcp.host_args))
             .then(() => report("Config copied", "short"))
             .catch((e) => reportError(e, "Couldn't copy the config"));
         };
@@ -2443,7 +2444,7 @@ export function Settings({
         // A disabled toggle owes the user the reason next to it. The same sentences appear
         // on the Advanced rows, but Advanced is closed by default and the one user who
         // cannot start the server is the one who should not have to go looking.
-        const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-mcp binary not found next to the app — rebuild."].filter(
+        const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-vinculum-daemon binary not found next to the app — rebuild."].filter(
           (hint): hint is string => typeof hint === "string",
         );
         return (
@@ -2511,7 +2512,7 @@ export function Settings({
                   className="btn ghost mcp-copy-btn"
                   type="button"
                   disabled={!installReady}
-                  title={installReady ? "Copy full mcpServers config" : "Ensure alinery-mcp is found"}
+                  title={installReady ? "Copy full mcpServers config" : "Ensure alinery-vinculum-daemon is found"}
                   onClick={copyHostConfig}
                 >
                   Copy config
@@ -2526,13 +2527,14 @@ export function Settings({
               </summary>
               <div className="mcp-advanced-body">
                 <p className="mcp-caption">
-                  Stdio FS/task tools work without the Alinery window open. There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
+                  Stdio tools call the repository's daemon with a token the Alinery app hands out, so they work while the daemon runs (the window can be closed once the app has
+                  started it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
                 </p>
-                {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-mcp binary not found next to the app — rebuild.")}
+                {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
                 <h4 className="mcp-section-title">Managed socket</h4>
                 <p className="mcp-caption">
-                  App-local <span className="mono">alinery-mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or switch repos. Useful
-                  for same-machine debugging only.
+                  App-local <span className="mono">alinery-vinculum-daemon --mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or
+                  switch repos. Useful for same-machine debugging only.
                 </p>
                 {checkRow(!!mcp.socket_path, "Socket path", mcp.socket_path, "Select a repo to see the socket path.")}
               </div>

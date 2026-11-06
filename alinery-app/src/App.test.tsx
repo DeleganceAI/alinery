@@ -298,6 +298,7 @@ vi.mock("./useMcpStatus", () => ({
     socket_reachable: false,
     binary_found: true,
     binary_path: "",
+    host_args: [],
     repo: "/repo",
     socket_path: "",
     error: "",

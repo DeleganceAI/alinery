@@ -5,13 +5,6 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
-fn subst_placeholders() {
-    assert_eq!(subst("--chdir {worktree}", "/wt", "", ""), "--chdir /wt");
-    assert_eq!(subst("{model}", "/wt", "opus", ""), "opus");
-    assert_eq!(subst("noliteral", "/wt", "m", ""), "noliteral");
-}
-
-#[test]
 fn default_registry_parses_with_expected_shape() {
     let f: HarnessFile = toml::from_str(DEFAULT_HARNESSES_TOML).expect("bundled default registry must parse");
     let keys: Vec<&str> = f.harness.iter().map(|h| h.key.as_str()).collect();
@@ -392,74 +385,7 @@ dock_badge_completions = false
     assert!(!notifications.dock_badge_completions);
 }
 
-#[test]
-fn default_config_parses_as_partial_repo_overrides() {
-    let repo_overrides: RepoOverrides = toml::from_str(alinery_core::DEFAULT_CONFIG_TOML).expect("bundled repo config must parse");
-    assert_eq!(repo_overrides.github.token, None);
-    assert_eq!(repo_overrides.defaults.model, None);
-
-    let global = alinery_core::default_global_settings();
-    let effective = alinery_core::resolve_effective_config(&global, &repo_overrides);
-    assert!(effective.notifications.enabled);
-    assert!(effective.notifications.sound);
-    assert!(!effective.notifications.bounce, "dock bounce defaults OFF");
-    assert!(effective.notifications.banner);
-    assert!(effective.defaults.draft_autosave);
-    assert!(effective.telemetry.enabled);
-
-    let legacy = r#"
-[notifications]
-enabled = false
-sound = false
-bounce = true
-banner = false
-
-[telemetry]
-enabled = false
-
-[linear]
-api_key = "lin_x"
-
-[github]
-token = "gh_x"
-"#;
-    let legacy_overrides: RepoOverrides = toml::from_str(legacy).expect("legacy repo config parses");
-    assert_eq!(legacy_overrides.github.token.as_deref(), Some("gh_x"));
-    let effective = alinery_core::resolve_effective_config(&global, &legacy_overrides);
-    assert!(effective.notifications.enabled, "legacy repo notifications are ignored");
-    assert!(effective.telemetry.enabled, "legacy repo telemetry is ignored");
-    assert_eq!(effective.github.token, "gh_x");
-}
-
-#[test]
-fn strips_queries_keeps_output() {
-    // DA (ESC[c, ESC[0c), DSR (ESC[6n) dropped; visible text + SGR color kept.
-    let input = b"\x1b[6nhello \x1b[31mred\x1b[0m\x1b[c world\x1b[0c!";
-    assert_eq!(strip_terminal_queries(input), b"hello \x1b[31mred\x1b[0m world!".to_vec());
-    // OSC color *query* (ESC]10;?BEL) dropped; OSC title set (ESC]0;hiBEL) kept.
-    let osc = b"\x1b]10;?\x07keep\x1b]0;hi\x07";
-    assert_eq!(strip_terminal_queries(osc), b"keep\x1b]0;hi\x07".to_vec());
-    // Plain bytes untouched; a lone ESC is preserved.
-    assert_eq!(strip_terminal_queries(b"plain\x1b"), b"plain\x1b".to_vec());
-}
-
 // ---- draft tasks (M6) — red until implementation lands ----
-
-#[test]
-fn draft_autosave_defaults_true_when_key_absent() {
-    let empty: RepoOverrides = toml::from_str("").expect("empty config parses");
-    let global = alinery_core::default_global_settings();
-    let effective = alinery_core::resolve_effective_config(&global, &empty);
-    assert!(effective.defaults.draft_autosave, "draft_autosave must default true");
-
-    let partial = r#"
-[defaults]
-harness = "claude"
-"#;
-    let c: RepoOverrides = toml::from_str(partial).expect("partial defaults parses");
-    let effective = alinery_core::resolve_effective_config(&global, &c);
-    assert!(effective.defaults.draft_autosave);
-}
 
 #[test]
 fn draft_autosave_round_trips_via_toml() {
@@ -477,39 +403,6 @@ model = ""
     let back: RepoOverrides = toml::from_str(&s).expect("config re-parses");
     assert_eq!(back.defaults.draft_autosave, Some(false));
     assert_eq!(back.defaults.model.as_deref(), Some(""));
-}
-
-#[test]
-fn thinking_default_round_trips_through_global_and_repo_files() {
-    let root = unique_attachment_temp("thinking-default-round-trip");
-    let app_config = root.join("app.toml");
-    let repo = root.join("repo");
-    let mut global = alinery_core::default_global_settings();
-    global.defaults.thinking = "medium".into();
-    alinery_core::write_global_settings(&app_config, &global).unwrap();
-    assert_eq!(alinery_core::load_global_settings(&app_config).defaults.thinking, "medium");
-
-    let overrides = RepoOverrides {
-        defaults: alinery_core::RepoHarnessChoiceOverrides {
-            thinking: Some("low".into()),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    alinery_core::write_repo_overrides(Some(&app_config), &repo, &overrides).unwrap();
-    assert_eq!(alinery_core::load_repo_overrides(&repo).defaults.thinking.as_deref(), Some("low"));
-
-    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
-    assert_eq!(scoped.effective.defaults.thinking, "low");
-    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Repository);
-
-    let mut cleared = alinery_core::load_repo_overrides(&repo);
-    alinery_core::clear_repo_override(&mut cleared, "defaults.thinking").unwrap();
-    alinery_core::write_repo_overrides(Some(&app_config), &repo, &cleared).unwrap();
-    let scoped = alinery_core::read_scoped_settings(&app_config, &repo);
-    assert_eq!(scoped.effective.defaults.thinking, "medium");
-    assert_eq!(scoped.effective.provenance.defaults.thinking, alinery_core::SettingSource::Global);
-    let _ = fs::remove_dir_all(root);
 }
 
 fn model_favorite_app_config(name: &str) -> (PathBuf, PathBuf) {

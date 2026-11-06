@@ -53,6 +53,7 @@ const NOT_READY: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -62,7 +63,8 @@ const NOT_READY: McpStatusHandle = {
 const READY: McpStatusHandle = {
   ...NOT_READY,
   binary_found: true,
-  binary_path: "/Applications/Alinery.app/Contents/MacOS/alinery-mcp",
+  binary_path: "/Applications/Alinery.app/Contents/MacOS/alinery-vinculum-daemon",
+  host_args: ["--mcp", "--app-config", "/Users/dev/app.toml", "--endpoints-file", "/Users/dev/mcp-endpoints.json"],
   repo: "/Users/dev/code/my-repo",
   socket_path: "/Users/dev/code/my-repo/.alinery/mcp.sock",
 };
@@ -98,7 +100,7 @@ describe("MCP settings", () => {
     renderMcp(NOT_READY);
 
     const config = await screen.findByText(/mcpServers/);
-    expect(config.textContent).toContain("/path/to/alinery-mcp");
+    expect(config.textContent).toContain("/path/to/alinery-vinculum-daemon");
     expect((screen.getByRole("button", { name: "Copy config" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -109,7 +111,7 @@ describe("MCP settings", () => {
 
     await screen.findByText(/mcpServers/);
     expect(screen.queryByText("Binary ready")).toBe(null);
-    expect(screen.getAllByText("alinery-mcp binary not found next to the app — rebuild.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("alinery-vinculum-daemon binary not found next to the app — rebuild.").length).toBeGreaterThan(0);
   });
 
   // Advanced is closed by default, so a hint that only lives inside it does not reach
@@ -122,7 +124,7 @@ describe("MCP settings", () => {
     // What matters is that one instance sits outside the collapsed disclosure.
     const outsideAdvanced = (text: string) => screen.getAllByText(text).filter((el) => !el.closest("details"));
     expect(outsideAdvanced("Select a repo first.")).toHaveLength(1);
-    expect(outsideAdvanced("alinery-mcp binary not found next to the app — rebuild.")).toHaveLength(1);
+    expect(outsideAdvanced("alinery-vinculum-daemon binary not found next to the app — rebuild.")).toHaveLength(1);
     expect(document.querySelector("details")?.open).toBe(false);
   });
 
@@ -173,6 +175,7 @@ describe("MCP settings", () => {
 
     const config = await screen.findByText(/mcpServers/);
     expect(config.textContent).toContain(READY.binary_path);
+    expect(config.textContent).toContain("--endpoints-file");
     expect(config.textContent).not.toContain("/path/to/");
     expect(config.textContent).not.toContain(READY.repo);
     expect((screen.getByRole("button", { name: "Copy config" }) as HTMLButtonElement).disabled).toBe(false);

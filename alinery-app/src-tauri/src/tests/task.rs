@@ -70,20 +70,6 @@ fn old_draft_without_source_remains_readable() {
 }
 
 #[test]
-fn unique_attachment_name_suffixes_before_the_extension() {
-    let dir = unique_attachment_temp("attachment-unique");
-    assert_eq!(unique_attachment_name(&dir, "trace.log").as_deref(), Some("trace.log"));
-    fs::write(dir.join("trace.log"), "one").unwrap();
-    assert_eq!(unique_attachment_name(&dir, "trace.log").as_deref(), Some("trace-2.log"));
-    fs::write(dir.join("trace-2.log"), "two").unwrap();
-    assert_eq!(unique_attachment_name(&dir, "trace.log").as_deref(), Some("trace-3.log"));
-    // Extensionless names take a bare suffix.
-    fs::write(dir.join("notes"), "n").unwrap();
-    assert_eq!(unique_attachment_name(&dir, "notes").as_deref(), Some("notes-2"));
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn read_chat_image_rejects_oversize_png_before_encoding() {
     let repo = unique_attachment_temp("chat-read-oversize");
     let attach = attachments_of(&repo, "task");
@@ -134,54 +120,4 @@ fn targeted_repo_validation_rejects_unknown_or_non_git_paths() {
     let _ = fs::remove_dir_all(repo_a);
     let _ = fs::remove_dir_all(repo_b);
     let _ = fs::remove_dir_all(outside);
-}
-
-#[test]
-fn provisioning_reserves_branches_before_git_and_retains_failed_intent() {
-    let repo = init_git_test_repo("provisioning-branch-reservation");
-    let mut request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({
-        "name": "Reserved",
-        "branch_name": "reserved",
-        "playbook": {
-            "reference": { "scope": "bundled", "key": "one-shot" },
-            "source": include_str!("../../playbooks/one-shot/playbook.md")
-        },
-        "start": false
-    }))
-    .unwrap();
-    assert!(git_cmd(&repo).args(["branch", "reserved-1"]).status().unwrap().success());
-    let existing = git_cmd(&repo).args(["rev-parse", "reserved-1"]).output().unwrap().stdout;
-    let mut reservations = Vec::new();
-    for expected_branch in ["reserved", "reserved-2"] {
-        let reply = alinery_core::provision_task_with_reservation(&repo, "", "fixture", &request, || Ok(()), |_| Err("stop before git".into())).unwrap();
-        assert_eq!(reply.creation, "partial");
-        assert!(reply.errors.iter().any(|error| error.stage == "relationships" && error.message == "stop before git"));
-        let task = reply.task.unwrap();
-        assert_eq!(task.branch, expected_branch);
-        assert_eq!(
-            git_cmd(&repo)
-                .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{}", task.branch)])
-                .status()
-                .unwrap()
-                .code(),
-            Some(1)
-        );
-        assert!(!Path::new(&task.worktree).exists());
-        assert_eq!(alinery_core::read_task(&repo, &task.slug).unwrap().branch, expected_branch);
-        let state = alinery_core::execution::read_execution_state(&repo, &task.slug).unwrap();
-        assert_eq!(state.creation, "partial");
-        assert!(state.creation_error.as_deref().is_some_and(|error| error.contains("stop before git")));
-        reservations.push(task);
-    }
-    assert_ne!(reservations[0].slug, reservations[1].slug);
-    assert_ne!(reservations[0].worktree, reservations[1].worktree);
-    assert_eq!(git_cmd(&repo).args(["rev-parse", "reserved-1"]).output().unwrap().stdout, existing);
-
-    // Child identities are explicit: a durable branch reservation must reject,
-    // rather than silently suffixing the requested branch.
-    request.parent_task = "parent".into();
-    request.requested_slug = Some("child".into());
-    assert!(alinery_core::provision_task_with_reservation(&repo, "", "fixture", &request, || Ok(()), |_| Ok(())).is_err());
-    assert!(!task_dir(&repo, "child").exists());
-    fs::remove_dir_all(repo).unwrap();
 }

@@ -4,7 +4,17 @@ package alinery.v1;
 service AdminService {
   rpc Hello(HelloRequest) returns (HelloResponse);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN (S5.1, O20 c)
 }
+
+// Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
+// daemon's memory and dies with it. A second mint with the same `label` replaces the first, so a client that refreshes its
+// token does not pile them up. `label` is for the log only.
+message MintTokenRequest {
+  Capability capability = 1;
+  string label = 2;
+}
+message MintTokenResponse { string token = 1; }
 
 message HelloRequest {
   string client_id = 1;

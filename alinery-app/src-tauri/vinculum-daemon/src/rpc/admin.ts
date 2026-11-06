@@ -1,6 +1,6 @@
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { Capability, ShutdownOrigin, type AdminService } from "alinery-proto/alinery/v1/admin_pb";
-import { capabilitiesOf, requireCapability } from "./auth.ts";
+import { capabilitiesOf, requireCapability, type TokenRegistry } from "./auth.ts";
 
 export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string };
 
@@ -11,7 +11,7 @@ export type Lifecycle = { stop: () => number; exit: () => void };
 // Time for the reply to leave the socket before the process goes.
 const EXIT_DELAY_MS = 100;
 
-export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: string): ServiceImpl<typeof AdminService> {
+export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: string, tokens: TokenRegistry): ServiceImpl<typeof AdminService> {
   return {
     // Needs any one capability, which every credential that passes auth holds, so it is also the
     // liveness probe.
@@ -23,6 +23,14 @@ export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: stri
       repoRoot: info.repoRoot,
       appConfigIdentity: info.appConfigIdentity,
     }),
+    // O20 (c): the shell asks for the token its managed MCP runs with. Only AGENT can be minted, so no credential can be made that
+    // holds more than the RPCs behind MCP's tools.
+    mintToken: (req, ctx) => {
+      requireCapability(ctx, Capability.ADMIN);
+      if (req.capability !== Capability.AGENT) throw new ConnectError("only an AGENT token can be minted", Code.InvalidArgument);
+      console.error(`agent token minted: label=${JSON.stringify(req.label)}`);
+      return { token: tokens.mint(req.label) };
+    },
     // Invariant 1: the five origins are the only ways to stop a daemon, so an unnamed one is refused
     // before anything stops. A takeover also names the confirmation the app consumed for it; the
     // daemon cannot check that against the app's store, so it requires only that there is one.

@@ -127,8 +127,8 @@ test("ClearOverride clears one field; an unknown field and a refused file are re
 
 test("capabilities: no token is refused, a local non-shell peer may write but not EnsureReady", async () => {
   const anon = await start();
-  expect(await code(anon.settings(null).writeOverrides({ meta: meta("m1"), overrides: {} }))).toBe(Code.PermissionDenied);
-  expect(await code(anon.repoSvc(null).ensureReady({ meta: meta("m1") }))).toBe(Code.PermissionDenied);
+  expect(await code(anon.settings(null).writeOverrides({ meta: meta("m1"), overrides: {} }))).toBe(Code.Unauthenticated);
+  expect(await code(anon.repoSvc(null).ensureReady({ meta: meta("m1") }))).toBe(Code.Unauthenticated);
   const other = await start("/bin/not-the-shell");
   await other.settings().writeOverrides({ meta: meta("m1"), overrides: { defaults: { model: "x" } } });
   expect(await code(other.repoSvc().ensureReady({ meta: meta("m2") }))).toBe(Code.PermissionDenied);
@@ -184,7 +184,7 @@ test("WriteHostedInference refuses a body the provider could not use, and leaves
 
 test("WriteHostedInference is ADMIN: a token-less caller and a local non-shell peer (VIEW, ACT) are refused and nothing is written", async () => {
   const anon = await start();
-  expect(await code(anon.settings(null).writeHostedInference({ meta: meta("h1"), inferenceJson: inference("t") }))).toBe(Code.PermissionDenied);
+  expect(await code(anon.settings(null).writeHostedInference({ meta: meta("h1"), inferenceJson: inference("t") }))).toBe(Code.Unauthenticated);
   const other = await start("/bin/not-the-shell");
   expect(await code(other.settings().writeHostedInference({ meta: meta("h2"), inferenceJson: inference("t") }))).toBe(Code.PermissionDenied);
   expect(existsSync(join(other.dir, "inference.json"))).toBe(false);

@@ -455,6 +455,21 @@ pub(crate) struct ShutdownResponse {
     pub sessions_stopped: u32,
 }
 
+/// proto/alinery/v1/admin.proto `MintToken` (ADMIN, S5.1 / O20 c): an AGENT token for the managed MCP.
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct MintTokenRequest {
+    #[prost(enumeration = "Capability", tag = "1")]
+    pub capability: i32,
+    #[prost(string, tag = "2")]
+    pub label: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct MintTokenResponse {
+    #[prost(string, tag = "1")]
+    pub token: String,
+}
+
 /// proto/alinery/v1/common.proto `MutationMeta`: what makes a mutation safe to retry.
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct MutationMeta {
@@ -504,6 +519,18 @@ pub(crate) async fn hello(socket: &Path, token: &str) -> Result<HelloResponse, S
     tokio::time::timeout(Duration::from_secs(10), unary(socket, token, "/alinery.v1.AdminService/Hello", &request))
         .await
         .map_err(|_| "Hello timed out".to_string())?
+}
+
+/// An AGENT token for the daemon on `socket`, minted with the shell's ADMIN `token`. A second mint with the same `label` replaces the first.
+pub(crate) async fn mint_agent_token(socket: &Path, token: &str, label: &str) -> Result<String, String> {
+    let request = MintTokenRequest {
+        capability: Capability::Agent as i32,
+        label: label.into(),
+    };
+    let reply: MintTokenResponse = tokio::time::timeout(Duration::from_secs(10), unary(socket, token, "/alinery.v1.AdminService/MintToken", &request))
+        .await
+        .map_err(|_| "MintToken timed out".to_string())??;
+    Ok(reply.token)
 }
 
 /// `RepoService.EnsureReady` (plan S4.1): the daemon readies the repository (`.alinery/`, the ignore entry,

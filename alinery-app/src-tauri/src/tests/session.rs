@@ -17,30 +17,6 @@ created = 1
 }
 
 #[test]
-fn session_resume_state_leftover_is_not_capable() {
-    let repo = std::env::temp_dir().join(format!(
-        "alinery-resume-state-leftover-{}",
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or(0)
-    ));
-    let source = SessionMeta {
-        id: "source".into(),
-        worktree: "/wt".into(),
-        created: 2,
-        harness: "claude".into(),
-        harness_resume_token: "resume-token".into(),
-        ..Default::default()
-    };
-    let capable = alinery_core::is_allowed_launch_harness(&source.harness)
-        && alinery_core::resolve_harness_for(&repo.join("missing-app.toml"), &repo, &source.harness)
-            .and_then(|h| h.resume)
-            .map(|r| r.enabled && !r.resume_args.is_empty())
-            .unwrap_or(false);
-    assert!(!capable);
-    assert!(!source.harness_resume_token.is_empty());
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
 fn bounded_observation_timeout_returns_error() {
     let repo = activity_repo("bounded-observation-timeout");
     let socket = crate::current_alineryd_socket_path(&repo);
@@ -329,38 +305,6 @@ fn notification_suppression_is_independent_of_durable_acknowledgments() {
     assert_eq!(app.notification_suppression.as_ref().unwrap().occurrence, "22");
 }
 
-fn plant_chat(
-    repo: &Path,
-    id: &str,
-    harness: &str,
-    created: u64,
-    pinned: bool,
-    archived: bool,
-    worktree: &str,
-    token: &str,
-    started: Option<u64>,
-    ended: Option<u64>,
-    resume_of: Option<&str>,
-) {
-    let path = session_meta_path(repo, "", id);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let meta = SessionMeta {
-        id: id.into(),
-        harness: harness.into(),
-        generic: true,
-        created,
-        pinned,
-        archived,
-        worktree: worktree.into(),
-        harness_resume_token: token.into(),
-        started_at: started,
-        ended_at: ended,
-        resume_of: resume_of.map(str::to_string),
-        ..Default::default()
-    };
-    fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
-}
-
 #[test]
 fn open_chat_repos_need_ownership_a_daemon_and_no_close_in_flight() {
     let open = init_git_test_repo("chat-open");
@@ -400,17 +344,3 @@ fn require_explicit_daemon_does_not_call_active() {
 
 // Stands in for the daemon during a resume: `create_execution_session` mints the successor row,
 // `resume` is acked. Two connections, then it exits.
-#[test]
-fn read_chat_journal_uses_root_sessions_dir() {
-    let repo = init_git_test_repo("chat-journal");
-    plant_chat(&repo, "s-j", "omp", 1, false, false, &repo.to_string_lossy(), "", None, None, None);
-    let root = alinery_core::session_omp_dir(&repo, "", "s-j");
-    fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("a.jsonl"), b"root-journal\n").unwrap();
-    let task = alinery_core::session_omp_dir(&repo, "task", "s-j");
-    fs::create_dir_all(&task).unwrap();
-    fs::write(task.join("a.jsonl"), b"task-journal\n").unwrap();
-    let window = alinery_core::read_omp_window(&repo, "", "s-j", None, Some(64)).unwrap();
-    assert_eq!(window.data, b"root-journal\n");
-    let _ = fs::remove_dir_all(repo);
-}

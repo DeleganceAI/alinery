@@ -7,7 +7,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { create, toBinary, type DescMessage, type MessageInitShape } from "@bufbuild/protobuf";
 import { EnsureReadyRequestSchema, WriteHostedInferenceRequestSchema, WriteHostedInferenceResponseSchema } from "./gen/alinery/v1/settings_pb";
-import { Capability, HelloRequestSchema, HelloResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
+import { Capability, HelloRequestSchema, HelloResponseSchema, MintTokenRequestSchema, MintTokenResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
 
 const hex = <D extends DescMessage>(schema: D, init: MessageInitShape<D>) => Buffer.from(toBinary(schema, create(schema, init))).toString("hex");
 
@@ -23,6 +23,8 @@ const golden = {
     repoRoot: "/repo",
     appConfigIdentity: "identity-1",
   }),
+  MintTokenRequest: hex(MintTokenRequestSchema, { capability: Capability.AGENT, label: "managed-mcp" }),
+  MintTokenResponse: hex(MintTokenResponseSchema, { token: "ab12cd34" }),
   EnsureReadyRequest: hex(EnsureReadyRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-1" } }),
   WriteHostedInferenceRequest: hex(WriteHostedInferenceRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-2" }, inferenceJson: '{"token":"inf_x"}' }),
   WriteHostedInferenceResponse: hex(WriteHostedInferenceResponseSchema, {}),

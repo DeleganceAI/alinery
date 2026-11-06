@@ -14,7 +14,7 @@ import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChat
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
-import { takeSecretFile } from "./rpc/auth.ts";
+import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { peerExecutable, samePath } from "./rpc/peer.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -50,11 +50,12 @@ import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
+import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 37;
+const PROTOCOL = 38;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -101,6 +102,8 @@ if (args.includes("--protocol-version")) {
 
 // A job child (plan 2.3.5) is this binary run with --job <kind>; it does nothing a daemon does.
 if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
+// The MCP server (plan S5.1, O10 b) is this binary run with --mcp: a client of a daemon, never one itself.
+if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL));
 // The restore of a backup (S4.9) is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
 if (args.includes("--restore-backup")) process.exit(await runRestoreBackup(args[args.indexOf("--restore-backup") + 1] ?? "", args[args.indexOf("--restore-backup") + 2] ?? ""));
 
@@ -292,7 +295,9 @@ registry.install(
     sections: [section("skills", () => skillCatalog(agentDir))],
   }),
 );
-const mcpHub = new McpHub(registry, { repo, appConfig, agentDir });
+// The AGENT tokens this daemon mints (O20 c): one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
+const agentTokens = new TokenRegistry();
+const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
 void mcpHub.refresh();
 
 function sqlitePath(taskSlug: string, id: string): string {
@@ -1188,6 +1193,7 @@ setInterval(() => playbookProjector.refresh(), 30_000).unref();
 await serveRpc({
   socketPath: rpcSocket,
   secret: rpcSecret,
+  tokens: agentTokens,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
   lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded() },

@@ -1,6 +1,6 @@
 // A parent task's sub-task (plan S4.8), ported from alinery-core `subtask.rs` and the manager prompts of `shared.rs`: what the
 // task page offers, the manager session, creating the child, and killing a child or discarding a setup. Finishing a child
-// (`inspect_subtask_finish`, `finalize_subtask`) stays in core until S5.1, because `alinery-mcp` calls it. Every file written
+// (`inspect_subtask_finish`, `finalize_subtask`) is `subtaskFinish.ts` (S5.1). Every file written
 // here keeps the shape Rust's serde reads. A child is reserved by `provisionTask` with the parent's links written in the same
 // reservation (`ProvisionHooks`), so the parent never names a child that has no task.
 import { randomUUID } from "node:crypto";
@@ -162,10 +162,10 @@ function isDirectory(path: string): boolean {
   }
 }
 
-type ManagerContext = { ownerSlug: string; parent: TaskRecord; meta: Json; metaPath: string };
+export type ManagerContext = { ownerSlug: string; parent: TaskRecord; meta: Json; metaPath: string };
 
 /** `resolve_subtask_manager`: the one unarchived manager session with this id, and the task that owns it. */
-function resolveSubtaskManager(repo: string, managerSessionId: string, known = loadRelationships(repo)): ManagerContext {
+export function resolveSubtaskManager(repo: string, managerSessionId: string, known = loadRelationships(repo)): ManagerContext {
   if (managerSessionId === "" || safeComponent(managerSessionId) !== managerSessionId) throw new DomainError("invalid_argument", "invalid sub-task manager session id");
   const matches: ManagerContext[] = [];
   for (const task of known.values()) {
@@ -176,6 +176,14 @@ function resolveSubtaskManager(repo: string, managerSessionId: string, known = l
   if (matches.length === 0) throw new DomainError("failed_precondition", "sub-task manager session is missing, archived, or unauthorized");
   if (matches.length > 1) throw new DomainError("failed_precondition", "sub-task manager session id is ambiguous");
   return matches[0] as ManagerContext;
+}
+
+/** The ids of the sessions of the task that owns this manager which are not archived: the ones a finish inspection reports when they are live. */
+export function ownerSessionIds(repo: string, managerSessionId: string): string[] {
+  const manager = resolveSubtaskManager(repo, managerSessionId);
+  return sessionFiles(repo, manager.ownerSlug)
+    .filter((f) => f.meta.archived !== true)
+    .map((f) => f.session.id);
 }
 
 // ---- the manager session -----------------------------------------------------------------------------------
@@ -331,7 +339,7 @@ function exactChildSlug(slug: string): boolean {
 }
 
 /** `worktree_clean`: a missing directory is not clean, and a failing `git status` is an error, not a guess. */
-async function worktreeClean(path: string): Promise<boolean> {
+export async function worktreeClean(path: string): Promise<boolean> {
   if (!isDirectory(path)) return false;
   const r = await git(path, ["status", "--porcelain=v1", "--untracked-files=normal"]);
   if (r.code !== 0) throw new DomainError("failed_precondition", `git status failed: ${r.stderr.trim()}`);
@@ -466,7 +474,7 @@ export async function prepareSubtask(d: CreateDeps, input: CreateSubtaskInput): 
 }
 
 /** The wire form the MCP tool reads: `TaskSummary` with its Rust field names. */
-const snake = (s: TaskSummary): Json => ({
+export const snake = (s: TaskSummary): Json => ({
   name: s.name,
   slug: s.slug,
   branch: s.branch,

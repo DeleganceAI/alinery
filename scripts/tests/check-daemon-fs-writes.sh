@@ -12,7 +12,7 @@ SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
 OK="$ROOT/scripts/tests/daemon-fs-writes-ok.txt"
 
 hits=$(grep -rnE 'writeFileSync|appendFileSync|Bun\.write\(' "$SRC" --include='*.ts' \
-  | grep -v '\.test\.ts:' | grep -v "^$SRC/platform/fs\.ts:" | grep -vE ':[0-9]+:import ' \
+  | grep -v '\.test\.ts:' | grep -v '\.testutil\.ts:' | grep -v "^$SRC/platform/fs\.ts:" | grep -vE ':[0-9]+:import ' \
   | grep -vf <(grep -vE '^(#|$)' "$OK") || true)
 if [ -n "$hits" ]; then
   echo "ERROR: write daemon files through platform/fs.ts (or list the line in scripts/tests/daemon-fs-writes-ok.txt with a reason):" >&2

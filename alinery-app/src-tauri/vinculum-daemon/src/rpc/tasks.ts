@@ -127,15 +127,19 @@ export async function createFromWire(d: TaskDeps, request: WireRequest): Promise
  * JSON `CreateSubtaskResult`: the parent and child summaries, the manager session as the file now holds it, and the child's
  * `CreateTaskReply`. A refusal is `{ error }`, as every legacy op answers.
  */
+export async function createSubtask(d: TaskDeps, request: unknown): Promise<Record<string, unknown>> {
+  const plan = await prepareSubtask(d, parseCreateSubtaskInput(request));
+  const { reply, tail } = await runCreate(d, plan.params, [], undefined, plan.hooks);
+  const owner = String(plan.params.parentTask);
+  const managerFile = `sessions/${String((request as Record<string, unknown>).manager_session_id)}.meta.json`;
+  await settleFiles(d, owner, `tasks/${owner}/${managerFile}`);
+  const provisioning = { task: reply.task, sessions: tail.sessions, executions: tail.executions, creation: reply.creation, start: tail.start, errors: tail.errors };
+  return plan.result(reply, provisioning);
+}
+
 export async function createSubtaskFromWire(d: TaskDeps, request: unknown): Promise<Record<string, unknown>> {
   try {
-    const plan = await prepareSubtask(d, parseCreateSubtaskInput(request));
-    const { reply, tail } = await runCreate(d, plan.params, [], undefined, plan.hooks);
-    const owner = String(plan.params.parentTask);
-    const managerFile = `sessions/${String((request as Record<string, unknown>).manager_session_id)}.meta.json`;
-    await settleFiles(d, owner, `tasks/${owner}/${managerFile}`);
-    const provisioning = { task: reply.task, sessions: tail.sessions, executions: tail.executions, creation: reply.creation, start: tail.start, errors: tail.errors };
-    return plan.result(reply, provisioning);
+    return await createSubtask(d, request);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

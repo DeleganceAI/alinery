@@ -1,5 +1,5 @@
 // Bearer-token auth and capabilities for the RPC socket (plan 2.1.10, R8).
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { Code, ConnectError, createContextKey, createContextValues, type ContextValues, type HandlerContext } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
@@ -21,7 +21,7 @@ const FULL = [Capability.VIEW, Capability.ACT, Capability.APPROVE, Capability.AD
 const LOCAL_OTHER = [Capability.VIEW, Capability.ACT];
 
 /** Read the secret the app left in a file and delete the file, before anything listens or resumes.
- * A missing file gives an empty secret: no token then matches, and only the no-token class works. */
+ * A missing file gives an empty secret: no token then matches, and only a minted token works. */
 export function takeSecretFile(path: string): Buffer {
   let secret = Buffer.alloc(0);
   try {
@@ -49,14 +49,69 @@ function matches(given: string, secret: Buffer): boolean {
   return actual.length === secret.length && timingSafeEqual(actual, secret);
 }
 
-/** No header is the unauthenticated class (AGENT only). A header that is not the daemon's token,
- * including an empty or malformed one, is never treated as no header. */
-export function credentials(header: Headers, peer: PeerClass, secret: Buffer): ContextValues {
+/** The AGENT tokens this daemon has minted (plan 2.1.10, O20 c): the daemon's own for the MCP it runs for each harness, and the
+ * ones the shell asks for with `AdminService.MintToken`. They live in memory and die with the daemon. A label names one token: a
+ * second mint with the same label replaces the first, so a client that refreshes does not pile them up. */
+export class TokenRegistry {
+  private readonly byLabel = new Map<string, Buffer>();
+
+  mint(label: string): string {
+    const token = randomBytes(32).toString("hex");
+    this.byLabel.set(label, Buffer.from(token));
+    return token;
+  }
+
+  has(given: string): boolean {
+    const actual = Buffer.from(given);
+    let found = false;
+    // Every token is compared, so the time does not say which one matched.
+    for (const token of this.byLabel.values()) if (actual.length === token.length && timingSafeEqual(actual, token)) found = true;
+    return found;
+  }
+}
+
+const rpc = (service: string, method: string) => `alinery.v1.${service}/${method}`;
+
+/** What an AGENT credential may call: exactly the RPCs behind `alinery-mcp`'s 26 tools (plan S5.1, O18 b), each with the capability its
+ * handler checks, which the credential holds for that call only. Never `Shutdown`, the rest of ADMIN, or anything that needs APPROVE.
+ * `mcpServer/tools.ts` names the RPCs behind each tool, and `auth.test.ts` holds the two lists equal. */
+export const AGENT_RPCS: ReadonlyMap<string, Capability> = new Map([
+  [rpc("SyncService", "Subscribe"), Capability.VIEW],
+  [rpc("BlobService", "ReadBlob"), Capability.VIEW],
+  // `alinery_create_task` carries its attachments as bytes; the daemon stages them as an upload.
+  [rpc("BlobService", "BeginUpload"), Capability.ACT],
+  [rpc("BlobService", "UploadChunk"), Capability.ACT],
+  [rpc("BlobService", "CommitUpload"), Capability.ACT],
+  [rpc("SessionService", "ReadHistory"), Capability.VIEW],
+  [rpc("SessionService", "CreateSession"), Capability.ACT],
+  [rpc("SessionService", "StartSession"), Capability.ACT],
+  [rpc("TaskService", "CreateTask"), Capability.ACT],
+  [rpc("TaskService", "ArchiveTask"), Capability.ACT],
+  [rpc("SettingsService", "WriteOverrides"), Capability.ACT],
+  [rpc("PlaybookService", "ReadPlaybook"), Capability.VIEW],
+  [rpc("PlaybookService", "SavePlaybook"), Capability.ACT],
+  [rpc("SubtaskService", "CreateSubtask"), Capability.ACT],
+  [rpc("SubtaskService", "InspectSubtaskFinish"), Capability.VIEW],
+  [rpc("SubtaskService", "FinalizeSubtask"), Capability.ACT],
+  [rpc("ArtifactService", "InstallReviewHandoff"), Capability.ACT],
+  [rpc("ArtifactService", "RecordOutboundHandoff"), Capability.ACT],
+  [rpc("JobService", "StartStorageScan"), Capability.ACT],
+  [rpc("JobService", "StartBackup"), Capability.ACT],
+  [rpc("JobService", "StartPurge"), Capability.ADMIN],
+]);
+
+/** Every request carries a token. A header that is not the daemon's own or a minted one, including an empty or malformed one, is
+ * never treated as no header, and no header is UNAUTHENTICATED too (R8). `method` is `<service>/<method>`: a minted token holds AGENT, and
+ * for a method in `AGENT_RPCS` also the capability that method checks. */
+export function credentials(header: Headers, peer: PeerClass, secret: Buffer, minted: TokenRegistry, method: string): ContextValues {
   const given = bearer(header);
+  if (given === null) throw new ConnectError("a token is required", Code.Unauthenticated);
   let caps: Capability[];
-  if (given === null) caps = [Capability.AGENT];
-  else if (!matches(given, secret)) throw new ConnectError("wrong token", Code.Unauthenticated);
-  else caps = peer === "other" ? LOCAL_OTHER : FULL;
+  if (matches(given, secret)) caps = peer === "other" ? LOCAL_OTHER : FULL;
+  else if (minted.has(given)) {
+    const need = AGENT_RPCS.get(method);
+    caps = need === undefined ? [Capability.AGENT] : [Capability.AGENT, need];
+  } else throw new ConnectError("wrong token", Code.Unauthenticated);
   return createContextValues().set(CAPS, new Set(caps));
 }
 

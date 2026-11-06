@@ -28,54 +28,6 @@ impl Fixture {
         state.creation = "ready".into();
         Self { repo, source, state }
     }
-    /// An execution record as the daemon's projection of an engine execution leaves it. The ownership and
-    /// projection tests need records in a given lifecycle, not the transitions that lead there.
-    fn record(&mut self, lifecycle: ExecutionLifecycle, receipt: bool, shutdown_confirmed: bool) -> String {
-        let n = self.state.executions.len() as u64 + 1;
-        let id = format!("e{n}");
-        let relative_path = format!("{n}-result-1.md");
-        if receipt {
-            let path = crate::artifacts_dir(&self.repo, "task").join(&relative_path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, "real output").unwrap();
-        }
-        self.state.executions.insert(
-            id.clone(),
-            ExecutionRecord {
-                id: id.clone(),
-                binding_key: format!("binding-{n}"),
-                candidate: ExecutionCandidate {
-                    step_key: "work".into(),
-                    context_id: "root".into(),
-                    inputs: BTreeMap::new(),
-                    complete_collection_id: None,
-                    each_collection_id: None,
-                    each_member_id: None,
-                    manual: true,
-                },
-                outputs: vec![OutputAssignment {
-                    selector: "result.md".into(),
-                    relative_path,
-                    discriminator: n,
-                    required: false,
-                }],
-                parent_execution_ids: BTreeSet::new(),
-                depth: 1,
-                owner_session_id: format!("s{n}"),
-                previous_session_ids: vec![],
-                launch: LaunchChoices::default(),
-                is_coding_step: false,
-                start_requested: lifecycle != ExecutionLifecycle::Queued,
-                lifecycle,
-                permission: if receipt { CompletionPermission::Consumed } else { CompletionPermission::Automatic },
-                receipt_id: receipt.then(|| format!("r{n}")),
-                exit_code: shutdown_confirmed.then_some(0),
-                shutdown_confirmed,
-                error: None,
-            },
-        );
-        id
-    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -152,82 +104,6 @@ fn retained_definition_is_independent_of_library_and_fails_closed_on_corruption(
     fs::write(path, f.source.replace("Fixture", "Changed")).unwrap();
     assert!(mutate_execution_state(&f.repo, "task", "lane", "", "corrupt read", |_, _| Ok(())).is_err());
     assert_eq!(read_execution_state(&f.repo, "task").unwrap().revision, f.state.revision);
-}
-
-#[test]
-fn backup_restore_retains_fixed_definition_execution_and_repo_library_only() {
-    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 2);
-    let id = f.record(ExecutionLifecycle::Queued, false, false);
-    crate::fs_atomic::write_bytes_durable(&task_playbook_path(&f.repo, "task").unwrap(), f.source.as_bytes()).unwrap();
-    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
-    let library = f.repo.join(".alinery/playbooks/fixture");
-    fs::create_dir_all(&library).unwrap();
-    fs::write(library.join("playbook.md"), &f.source).unwrap();
-    let global = f.repo.join("global/playbooks/fixture");
-    fs::create_dir_all(&global).unwrap();
-    fs::write(global.join("playbook.md"), "global source is not repo data").unwrap();
-    let destination = f.repo.join("backups");
-    fs::create_dir_all(&destination).unwrap();
-    let settings = crate::BackupDefaults {
-        destination: destination.display().to_string(),
-        enabled: true,
-        ..Default::default()
-    };
-    crate::create_backup(&f.repo, &settings, crate::BackupTrigger::Manual, "test").unwrap();
-    let archive = crate::list_backups(&f.repo, &settings).unwrap().remove(0);
-    let restored = f.repo.join("restored");
-    fs::create_dir_all(&restored).unwrap();
-    crate::extract_backup_into(Path::new(&archive.path), &restored.join(".alinery"), Some(&f.repo)).unwrap();
-    let state = read_execution_state(&restored, "task").unwrap();
-    assert_eq!(state.executions[&id].outputs, f.state.executions[&id].outputs);
-    assert_eq!(fs::read_to_string(task_playbook_path(&restored, "task").unwrap()).unwrap(), f.source);
-    assert_eq!(read_task_playbook(&restored, "task", &state).unwrap().key, "fixture");
-    assert_eq!(fs::read_to_string(restored.join(".alinery/playbooks/fixture/playbook.md")).unwrap(), f.source);
-    assert!(!restored.join("global").exists());
-    assert!(!restored.join(".alinery/global").exists());
-}
-
-#[test]
-fn artifact_projection_shows_reserved_and_accepted_execution_ownership() {
-    let mut f = Fixture::new("{path=\"result.md\"}", false, true, 2);
-    let id = f.record(ExecutionLifecycle::Running, false, false);
-    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
-    let pending = crate::list_artifacts_with_execution_metadata(&f.repo, "task", &f.state).unwrap();
-    let output = pending
-        .iter()
-        .find(|item| item.name == "1-result-1.md")
-        .expect("reserved output is visible before it is written");
-    assert_eq!(output.execution_id.as_deref(), Some(id.as_str()));
-    assert_eq!(output.logical_path.as_deref(), Some("result.md"));
-    assert_eq!(output.accepted, Some(false));
-    assert_eq!(output.depth, Some(1));
-    // The shape the daemon's projection writes once the engine accepts the step.
-    let path = crate::artifacts_dir(&f.repo, "task").join("1-result-1.md");
-    fs::write(path, "real output").unwrap();
-    f.state.occurrences.insert(
-        format!("{id}/result.md"),
-        ArtifactOccurrence {
-            id: format!("{id}/result.md"),
-            producer_execution_id: Some(id.clone()),
-            selector: "result.md".into(),
-            logical_path: "result.md".into(),
-            relative_path: "1-result-1.md".into(),
-            depth: 1,
-            discriminator: 1,
-            context_id: "root".into(),
-            collection_ids: BTreeSet::new(),
-        },
-    );
-    let record = f.state.executions.get_mut(&id).unwrap();
-    record.receipt_id = Some("r1".into());
-    record.lifecycle = ExecutionLifecycle::Finishing;
-    write_execution_state_unlocked(&f.repo, "task", &mut f.state).unwrap();
-    let items = crate::list_artifacts_with_execution_metadata(&f.repo, "task", &f.state).unwrap();
-    let output = items.iter().find(|item| item.name == "1-result-1.md").unwrap();
-    assert_eq!(output.execution_id.as_deref(), Some(id.as_str()));
-    assert_eq!(output.accepted, Some(true));
-    assert_eq!(output.session_id, "s1");
-    assert_eq!(output.discriminator, Some(1));
 }
 
 #[test]

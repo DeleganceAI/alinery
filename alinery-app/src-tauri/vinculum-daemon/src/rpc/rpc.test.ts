@@ -7,7 +7,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { AdminService, Capability, ShutdownOrigin } from "alinery-proto/alinery/v1/admin_pb";
 import { ErrorDetailSchema } from "alinery-proto/alinery/v1/common_pb";
 import { type Job, JobKind, JobState } from "alinery-proto/alinery/v1/entities_pb";
-import { takeSecretFile } from "./auth.ts";
+import { takeSecretFile, TokenRegistry } from "./auth.ts";
 import { JobRunner } from "../jobs/runner.ts";
 import { Store } from "../sync/store.ts";
 import { serveRpc } from "./server.ts";
@@ -37,12 +37,13 @@ async function start(hostExecutable: string | undefined) {
   const dir = mkdtempSync("/tmp/rpc-t-");
   const socketPath = join(dir, "rpc.sock");
   const store = new Store();
-  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable, info, lifecycle, store, jobs: new JobRunner(store), storageScan, transcripts: async () => undefined });
+  const tokens = new TokenRegistry();
+  const net: Server = await serveRpc({ socketPath, secret: Buffer.from(SECRET), tokens, hostExecutable, info, lifecycle, store, jobs: new JobRunner(store), storageScan, transcripts: async () => undefined });
   cleanup.push(() => {
     net.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { socketPath, dir, store };
+  return { socketPath, dir, store, tokens };
 }
 
 function client(socketPath: string, header?: string) {
@@ -68,15 +69,31 @@ test("a wrong token is UNAUTHENTICATED, never treated as no token", async () => 
   }
 });
 
-test("no token is AGENT only: Hello works, any other capability is PERMISSION_DENIED", async () => {
-  const { socketPath } = await start(process.execPath);
-  const c = client(socketPath);
+test("no token is UNAUTHENTICATED, and a minted token is AGENT only: Hello works, Shutdown is PERMISSION_DENIED", async () => {
+  const { socketPath, tokens } = await start(process.execPath);
+  expect(await code(client(socketPath).hello({}))).toBe(Code.Unauthenticated);
+  const c = client(socketPath, `Bearer ${tokens.mint("test")}`);
   expect((await c.hello({})).capabilities).toEqual([Capability.AGENT]);
   const denied = await c.shutdown({ origin: ShutdownOrigin.STOP_DAEMON }).catch((e) => ConnectError.from(e));
   expect((denied as ConnectError).code).toBe(Code.PermissionDenied);
   // The detail travels in grpc-status-details-bin and reads back.
   expect((denied as ConnectError).findDetails(ErrorDetailSchema)[0]?.code).toBe("permission_denied");
   expect(events).toEqual([]);
+});
+
+test("MintToken (O20 c) gives the shell an AGENT token, refuses any other capability and needs ADMIN", async () => {
+  const { socketPath, tokens } = await start(process.execPath);
+  const shell = client(socketPath, `Bearer ${SECRET}`);
+  const { token } = await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" });
+  expect(tokens.has(token)).toBe(true);
+  expect((await client(socketPath, `Bearer ${token}`).hello({})).capabilities).toEqual([Capability.AGENT]);
+  // A second mint under the label replaces the first, so a refresh does not leave the old token usable.
+  const again = (await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" })).token;
+  expect(await code(client(socketPath, `Bearer ${token}`).hello({}))).toBe(Code.Unauthenticated);
+  expect((await client(socketPath, `Bearer ${again}`).hello({})).capabilities).toEqual([Capability.AGENT]);
+  expect(await code(shell.mintToken({ capability: Capability.ADMIN, label: "x" }))).toBe(Code.InvalidArgument);
+  // An AGENT token cannot mint another, nor can a peer that is not the shell.
+  expect(await code(client(socketPath, `Bearer ${again}`).mintToken({ capability: Capability.AGENT, label: "y" }))).toBe(Code.PermissionDenied);
 });
 
 test("the right token from the expected executable holds VIEW, ACT, APPROVE and ADMIN", async () => {
@@ -109,7 +126,7 @@ test("a daemon with no host executable (started over ssh) trusts the token alone
   ]);
 });
 
-test("a daemon started without a secret rejects every token", async () => {
+test("a daemon started without a secret rejects every token, and no token", async () => {
   const dir = mkdtempSync("/tmp/rpc-t-");
   const socketPath = join(dir, "rpc.sock");
   const net = await serveRpc({ socketPath, secret: Buffer.alloc(0), hostExecutable: process.execPath, info, lifecycle, store: new Store() });
@@ -119,7 +136,7 @@ test("a daemon started without a secret rejects every token", async () => {
   });
   expect(await code(client(socketPath, "Bearer ").hello({}))).toBe(Code.Unauthenticated);
   expect(await code(client(socketPath, `Bearer ${SECRET}`).hello({}))).toBe(Code.Unauthenticated);
-  expect((await client(socketPath).hello({})).capabilities).toEqual([Capability.AGENT]);
+  expect(await code(client(socketPath).hello({}))).toBe(Code.Unauthenticated);
 });
 
 test("the secret file is read and deleted before the socket exists", async () => {
@@ -220,9 +237,8 @@ test("Shutdown mid-job: the job ends CANCELLED and its child process is gone bef
 
 test("no token and a non-shell token cannot shut the daemon down", async () => {
   const { socketPath } = await start("/bin/sh");
-  for (const header of [undefined, `Bearer ${SECRET}`]) {
-    expect(await code(client(socketPath, header).shutdown({ origin: ShutdownOrigin.STOP_DAEMON }))).toBe(Code.PermissionDenied);
-  }
+  expect(await code(client(socketPath, undefined).shutdown({ origin: ShutdownOrigin.STOP_DAEMON }))).toBe(Code.Unauthenticated);
+  expect(await code(client(socketPath, `Bearer ${SECRET}`).shutdown({ origin: ShutdownOrigin.STOP_DAEMON }))).toBe(Code.PermissionDenied);
   await new Promise((resolve) => setTimeout(resolve, 250));
   expect(events).toEqual([]);
 });

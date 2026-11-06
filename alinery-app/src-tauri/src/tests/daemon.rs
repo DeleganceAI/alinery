@@ -1642,3 +1642,31 @@ fn rpc_secrets_are_random_hex_kept_per_repo_and_lane_and_handed_off_owner_only()
     fs::remove_file(handoff).unwrap();
     fs::remove_dir_all(dir).unwrap();
 }
+
+/// S5.1: the managed MCP reads its AGENT tokens from this file, so it is owner-only and has the shape `mcpServer/endpoints.ts` parses.
+#[test]
+fn mcp_endpoints_file_is_owner_only_and_holds_the_shape_the_daemon_binary_reads() {
+    use std::os::unix::fs::PermissionsExt;
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("alinery-s5-1-endpoints-{n}"));
+    let app_config = root.join("config").join("app.toml");
+    let path = crate::mcp::mcp_endpoints_path(&app_config, None).unwrap();
+    assert_eq!(path, root.join("config").join("mcp-endpoints.json"));
+    assert!(crate::mcp::mcp_endpoints_path(&app_config, Some("dabc")).unwrap().ends_with("mcp-endpoints-dabc.json"));
+
+    let mut repos = std::collections::BTreeMap::new();
+    repos.insert("/work/a".to_string(), (PathBuf::from("/work/a/.alinery/rpc.sock"), "token-a".to_string()));
+    crate::mcp::write_mcp_endpoints(&path, &repos).unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    let parsed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({"version": 1, "repos": {"/work/a": {"socket": "/work/a/.alinery/rpc.sock", "token": "token-a"}}})
+    );
+
+    let args = crate::mcp::mcp_host_args(&app_config, None);
+    assert_eq!(args[0], "--mcp");
+    assert_eq!(args[args.len() - 2], "--endpoints-file");
+    assert_eq!(args[args.len() - 1], path.to_string_lossy());
+    let _ = fs::remove_dir_all(&root);
+}

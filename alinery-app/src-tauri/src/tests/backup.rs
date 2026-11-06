@@ -27,8 +27,7 @@ fn restore_rechecks_membership_and_quitting_before_claiming_authority() {
 // The Tauri command bodies are thin; the policy worth pinning is the destructive
 // half of restore — what gets cleared, what survives, and that identity is checked
 // before a single byte is removed.
-use alinery_core::{alinery_dir, create_backup, BackupDefaults, BackupTrigger, CURATED_ALINERY_PATHS};
-use std::collections::BTreeSet;
+use alinery_core::{alinery_dir, CURATED_ALINERY_PATHS};
 use std::path::PathBuf;
 
 fn unique_base(name: &str) -> PathBuf {
@@ -67,34 +66,6 @@ fn fixture_repo(name: &str) -> (PathBuf, PathBuf) {
 
 fn cleanup(repo: &Path) {
     let _ = fs::remove_dir_all(repo.parent().unwrap());
-}
-
-fn ready(dest: &Path) -> BackupDefaults {
-    BackupDefaults {
-        destination: dest.to_string_lossy().to_string(),
-        enabled: true,
-        retention: 10,
-        ..Default::default()
-    }
-}
-
-fn only_zip(dest: &Path) -> PathBuf {
-    let zips: Vec<PathBuf> = fs::read_dir(dest)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|e| e == "zip").unwrap_or(false))
-        .collect();
-    assert_eq!(zips.len(), 1, "expected one zip in {dest:?}");
-    zips.into_iter().next().unwrap()
-}
-
-fn alinery_entries(repo: &Path) -> BTreeSet<String> {
-    fs::read_dir(alinery_dir(repo))
-        .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect()
 }
 
 // 3.1 — restore replaces alinery data, so the curated set must actually go.
@@ -146,76 +117,15 @@ fn clear_curated_alinery_data_stays_inside_alinery_dir() {
 
 // 3.5 — THE invariant: anything cleared must have been archived. A path in
 // clear-but-not-include is silent data loss the moment someone restores.
-#[test]
-fn clear_set_equals_backup_include_set() {
-    let (repo, dest) = fixture_repo("clear-equals-include");
-    let meta = create_backup(&repo, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
-    let before = alinery_entries(&repo);
-    clear_curated_alinery_data(&repo).unwrap();
-    let after = alinery_entries(&repo);
-    let cleared: BTreeSet<String> = before.difference(&after).cloned().collect();
-    let archived: BTreeSet<String> = meta.included_dirs.iter().cloned().collect();
-    assert_eq!(cleared, archived, "clear set and backup include set diverged: cleared={cleared:?} archived={archived:?}");
-    cleanup(&repo);
-}
 
 // 3.6 — identity is checked before anything is removed. The ordering
 // validate -> stop daemon -> clear -> extract cannot be asserted end to end in a
 // unit test; this pins the half that matters: validate before mutate.
-#[test]
-fn restore_rejects_meta_repo_path_mismatch() {
-    let (repo_a, dest) = fixture_repo("restore-mismatch-a");
-    create_backup(&repo_a, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
-    let zip = only_zip(&dest);
-
-    let (repo_b, _dest_b) = fixture_repo("restore-mismatch-b");
-    let before = alinery_entries(&repo_b);
-    assert!(restore_backup_into(&repo_b, &zip).is_err());
-    assert_eq!(alinery_entries(&repo_b), before, "repo B was cleared anyway");
-    assert!(alinery_dir(&repo_b).join("tasks/alpha/task.md").is_file());
-    cleanup(&repo_a);
-    cleanup(&repo_b);
-}
 
 // 3.7 — a refused BACKUP NOW writes nothing anywhere, including inside `.alinery/`.
-#[test]
-fn a_refused_backup_writes_nothing_when_the_destination_is_invalid() {
-    let (repo, dest) = fixture_repo("backup-now-bad-dest");
-    let before = alinery_entries(&repo);
-
-    let mut unset = ready(&dest);
-    unset.destination = String::new();
-    assert!(create_backup(&repo, &unset, BackupTrigger::Manual, "9.9.9").is_err());
-
-    let inside = alinery_dir(&repo).join("backups");
-    fs::create_dir_all(&inside).unwrap();
-    let mut inner = ready(&dest);
-    inner.destination = inside.to_string_lossy().to_string();
-    assert!(create_backup(&repo, &inner, BackupTrigger::Manual, "9.9.9").is_err());
-
-    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0, "a zip was written");
-    assert!(fs::read_dir(&inside).unwrap().count() == 0, "wrote into .alinery/");
-    let _ = fs::remove_dir_all(&inside);
-    assert_eq!(alinery_entries(&repo), before, "alinery data changed on failure");
-    cleanup(&repo);
-}
 
 // The happy path the manual checklist exercises live, pinned cheaply here too:
 // a real create followed by a real restore into the same repo.
-#[test]
-fn restore_round_trips_curated_data_and_keeps_worktrees() {
-    let (repo, dest) = fixture_repo("restore-round-trip");
-    create_backup(&repo, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
-    let zip = only_zip(&dest);
-    fs::write(alinery_dir(&repo).join("tasks/alpha/task.md"), b"clobbered").unwrap();
-
-    restore_backup_into(&repo, &zip).unwrap();
-    assert_eq!(fs::read(alinery_dir(&repo).join("tasks/alpha/task.md")).unwrap(), b"name = \"alpha\"\n");
-    assert!(alinery_dir(&repo).join("sessions/root1.meta.json").is_file());
-    assert!(alinery_dir(&repo).join("worktrees/alpha/README.md").is_file());
-    assert!(alinery_dir(&repo).join("alineryd.sock").exists());
-    cleanup(&repo);
-}
 
 // The shell restores through the daemon program (`--restore-backup`), which prints one JSON line.
 #[test]

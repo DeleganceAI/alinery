@@ -154,3 +154,36 @@ test("killing a child stops the lineage and archives it, and the daemon's parent
   const b = await c.subtasks.subtaskState({ slug: "b" });
   expect(b.task).toMatchObject({ archived: true, subtaskOutcome: "killed" });
 });
+
+async function withChild(c: Ctx) {
+  const id = (await c.subtasks.startManager({ meta: meta(), slug: "a", recover: false })).started?.session?.id ?? "";
+  const d = { repo: c.repo, lane: "", identity: "i" };
+  const plan = await prepareSubtask(d, parseCreateSubtaskInput({ manager_session_id: id, name: "B", slug: "b", instructions: "x" }));
+  expect((await provisionTask(d, plan.params, plan.hooks)).creation).toBe("ready");
+  return id;
+}
+
+test("inspecting a finish names the bound child, the modes it allows and what blocks the rest (S5.1)", async () => {
+  const c = await start();
+  const id = await withChild(c);
+  const { inspection } = await c.subtasks.inspectSubtaskFinish({ managerSessionId: id });
+  const found = inspection as { child_task: { slug: string }; allowed_modes: string[]; blockers: Record<string, string[]>; observed_live_parent_sessions: string[] };
+  expect(found.child_task.slug).toBe("b");
+  expect(Object.keys(found.blockers).sort()).toEqual(["archive_without_code", "artifacts_only", "integrated_code"]);
+  expect(found.allowed_modes).toContain("archive_without_code");
+  // The manager is the parent's own running session and is never counted as one the finish would disturb.
+  expect(found.observed_live_parent_sessions).not.toContain(id);
+  expect(await code(c.subtasks.inspectSubtaskFinish({ managerSessionId: "nope" }))).not.toBe(Code.Ok);
+});
+
+test("finalizing archives the child as finished, clears the parent's link and refuses a mode it did not allow", async () => {
+  const c = await start();
+  const id = await withChild(c);
+  expect(await code(c.subtasks.finalizeSubtask({ meta: meta(), managerSessionId: id, mode: "sideways" }))).toBe(Code.InvalidArgument);
+  const res = await c.subtasks.finalizeSubtask({ meta: meta(), managerSessionId: id, mode: "archive_without_code" });
+  expect((res.result as { archived_child: { slug: string } }).archived_child.slug).toBe("b");
+  expect((await c.subtasks.subtaskState({ slug: "a" })).activeSubtask).toBeUndefined();
+  expect((await c.subtasks.subtaskState({ slug: "b" })).task).toMatchObject({ archived: true, subtaskOutcome: "finished" });
+  // The child is gone from the manager's reach, so a second finish has nothing bound to finalize.
+  expect(await code(c.subtasks.finalizeSubtask({ meta: meta(), managerSessionId: id, mode: "archive_without_code" }))).not.toBe(Code.Ok);
+});

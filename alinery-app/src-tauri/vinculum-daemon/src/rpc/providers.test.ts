@@ -170,8 +170,8 @@ test("every credential call is ADMIN: a peer that is not the shell (VIEW and ACT
   await other.catalog({});
   await other.listModels({ harness: "omp" });
   const none = svc(null);
-  expect(await code(none.catalog({}))).toBe(Code.PermissionDenied);
-  expect(await code(none.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY }))).toBe(Code.PermissionDenied);
+  expect(await code(none.catalog({}))).toBe(Code.Unauthenticated);
+  expect(await code(none.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY }))).toBe(Code.Unauthenticated);
 });
 
 test("a host's own harness row models come first, then the signed-in providers' models", async () => {

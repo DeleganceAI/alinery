@@ -36,13 +36,13 @@ function toStatus(e: unknown): Partial<grpc.ServiceError> {
 type AnyCall = grpc.ServerUnaryCall<unknown, unknown> | grpc.ServerWritableStream<unknown, unknown>;
 
 /** `values` runs first for every call: it checks the credential and returns the call's context
- * values (capabilities), or throws a ConnectError such as Unauthenticated, so no handler runs
+ * values (capabilities; `method` is `<service>/<method>`, for the credential that holds a capability only for some methods), or throws a ConnectError such as Unauthenticated, so no handler runs
  * for a bad token. */
 export function addService<S extends DescService>(
   server: grpc.Server,
   service: S,
   impl: Partial<ServiceImpl<S>>,
-  values: (header: Headers) => ContextValues,
+  values: (header: Headers, method: string) => ContextValues,
 ) {
   const handlers: grpc.UntypedServiceImplementation = {};
   for (const m of service.methods) {
@@ -56,7 +56,7 @@ export function addService<S extends DescService>(
       for (const [k, v] of Object.entries(call.metadata.getMap())) if (typeof v === "string") header.set(k, v);
       return createHandlerContext({
         service, method: m, protocolName: "grpc", requestMethod: "POST", url: `/${service.typeName}/${m.name}`,
-        requestSignal: ac.signal, requestHeader: header, contextValues: values(header),
+        requestSignal: ac.signal, requestHeader: header, contextValues: values(header, `${service.typeName}/${m.name}`),
       });
     };
     if (m.methodKind === "unary") {

@@ -118,6 +118,6 @@ test("an unknown task or execution is NOT_FOUND, a bad slug INVALID_ARGUMENT, an
 test("a process that is not the app, and a caller with no token, cannot approve", async () => {
   const other = await start("/bin/not-the-app");
   expect(await code(other.client().allowCompletion({ meta: meta("a"), taskSlug: "t", executionId: "e1" }))).toBe(Code.PermissionDenied);
-  expect(await code(other.client("").allowCompletion({ meta: meta("b"), taskSlug: "t", executionId: "e1" }))).toBe(Code.PermissionDenied);
+  expect(await code(other.client("").allowCompletion({ meta: meta("b"), taskSlug: "t", executionId: "e1" }))).toBe(Code.Unauthenticated);
   expect(engineExecutions("t")[0].permitted).toBe(false);
 });

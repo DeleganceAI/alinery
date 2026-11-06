@@ -78,11 +78,11 @@ test("a resumed cursor over the wire gets the missed deltas then UpToDate", asyn
   ac.abort();
 });
 
-test("no token is PERMISSION_DENIED, a wrong token is UNAUTHENTICATED, and an unset scope is INVALID_ARGUMENT", async () => {
+test("no token and a wrong token are UNAUTHENTICATED, and an unset scope is INVALID_ARGUMENT", async () => {
   const connectTo = await start(new Store());
   const code = async (c: ReturnType<typeof connectTo>, req = { scope: repoScope }) =>
     ConnectError.from(await (async () => { for await (const _ of c.subscribe(req)) return null; return null; })().catch((e) => e)).code;
   expect(await code(connectTo("Bearer wrong"))).toBe(Code.Unauthenticated);
-  expect(await code(connectTo(""))).toBe(Code.PermissionDenied);
+  expect(await code(connectTo(""))).toBe(Code.Unauthenticated);
   expect(await code(connectTo(), {} as never)).toBe(Code.InvalidArgument);
 });
