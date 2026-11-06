@@ -741,6 +741,7 @@ pub fn finalize_subtask(repo: &Path, manager_session_id: &str, mode: FinalizeMod
             let _ = write_bytes_atomic(&parent_path, &parent_bytes);
             return Err(error);
         }
+        prune_archived_objects(repo, &child.slug);
         Ok(FinalizeSubtaskResult {
             parent_task: TaskSummary::from(&manager.parent),
             archived_child: TaskSummary::from(&child),
@@ -866,7 +867,18 @@ fn archive_killed_lineage(repo: &Path, manager: &ManagerContext, descendants: &[
         restore_task_bytes(&originals);
         return Err(error);
     }
+    for task in descendants {
+        prune_archived_objects(repo, &task.slug);
+    }
     Ok(())
+}
+
+/// The archive is already written when this runs, so a failure to drop the byte copies (O27) is logged
+/// and does not undo it. `archive_task_guarded` reports the same failure to its caller instead.
+fn prune_archived_objects(repo: &Path, slug: &str) {
+    if let Err(error) = crate::execution::prune_execution_objects(repo, slug) {
+        eprintln!("alinery: archived task {slug}: execution objects not pruned: {error}");
+    }
 }
 
 fn rollback_discard_moves(moved: &[(PathBuf, PathBuf)]) {
@@ -1162,7 +1174,9 @@ mod tests {
         let integrated = inspect_subtask_finish(&repo, "manager", Vec::new()).unwrap();
         assert!(integrated.code_state.child_head_contained);
         assert!(integrated.allowed_modes.contains(&FinalizeMode::IntegratedCode));
+        plant_execution_objects(&repo, "b");
         let result = finalize_subtask(&repo, "manager", FinalizeMode::IntegratedCode).unwrap();
+        assert_objects_pruned(&repo, "b");
         assert!(result.archived_child.archived);
         assert_eq!(result.archived_child.subtask_outcome, "merged");
         assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
@@ -1279,6 +1293,20 @@ mod tests {
         let _ = fs::remove_dir_all(repo);
     }
 
+    /// An execution's byte copy (O27) plus the manifest file that stays when the task is archived.
+    fn plant_execution_objects(repo: &Path, slug: &str) {
+        let execution = task_dir(repo, slug).join("executions").join("e1");
+        fs::create_dir_all(execution.join("objects")).unwrap();
+        fs::write(execution.join("objects").join("abc"), b"bytes").unwrap();
+        fs::write(execution.join("manifest.json"), b"{}").unwrap();
+    }
+
+    fn assert_objects_pruned(repo: &Path, slug: &str) {
+        let execution = task_dir(repo, slug).join("executions").join("e1");
+        assert!(!execution.join("objects").exists(), "{slug} kept its byte copies after archive");
+        assert!(execution.join("manifest.json").is_file(), "{slug} lost its manifest");
+    }
+
     #[test]
     fn killing_bound_subtask_archives_active_lineage_and_preserves_its_record() {
         let (repo, _, _) = lifecycle_repo("kill-lineage");
@@ -1329,11 +1357,15 @@ mod tests {
         fs::write(Path::new(&grandchild.worktree).join("dirty-child"), b"dirty").unwrap();
         fs::write(artifacts_dir(&repo, "b").join("01-result.md"), b"result").unwrap();
 
+        plant_execution_objects(&repo, "b");
+        plant_execution_objects(&repo, "c");
         let planned = subtask_discard_sessions(&repo, "a", "manager").unwrap();
         assert!(planned.contains(&("a".into(), "manager".into())));
         assert!(planned.contains(&("b".into(), "manager-b".into())));
         assert!(planned.contains(&("c".into(), "child-session".into())));
         discard_subtask(&repo, "a", "manager").unwrap();
+        assert_objects_pruned(&repo, "b");
+        assert_objects_pruned(&repo, "c");
 
         assert!(read_task(&repo, "a").unwrap().active_subtask.is_empty());
         for slug in ["b", "c"] {
