@@ -676,6 +676,27 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** after step 3 the host's `expires_at` is newer than in step 2 without a reconnect; the file stays mode 0600; the Mac's `alinery.log` has no `app.remote-hosted-inference-failed` line. With the share item turned off, the host's file is not rewritten.
 - **Status:** open.
 
+### L-S4.12-a: sign in and out of a provider in the real app, API key and browser
+- **Session:** S4.12 (R-S4.12-1, R-S4.12-2).
+- **Needs:** the app launched on this branch (the daemon is protocol 37, so stop live sessions first), a provider account for the browser sign-in (Anthropic or OpenAI), a throwaway API key for any other.
+- **Steps:** (1) Open a local repo, Settings, Accounts (or the first-run provider dialog). Pick an API-key provider (Groq), type a key, confirm. (2) Press **Sign out** on it. (3) Pick a browser provider (Anthropic) and choose the browser method: the system browser opens the sign-in URL by itself; finish it there. While it waits, switch to another repo in the repo switcher, then finish the sign-in. (4) Add a custom provider (name, `https://host/v1`, key, two model ids), save, edit it leaving the key box blank, then delete it. (5) Open a chat and check that the provider's models appear in its model picker only while signed in.
+- **Expected:** every step answers within a second; the browser opens once per sign-in; after (3) the provider shows signed in (the answer went to the daemon that started the sign-in, not the repo you switched to); a blank key box on edit keeps the key (`has key` stays); an error such as a bad base URL shows its text in the dialog. Nothing prints a key: `rg -n 'sk-|your-key' ~/Library/Application\ Support/*/logs/alinery.log` finds nothing.
+- **Status:** open
+
+### L-S4.12-b: the model picker lists the daemon's models
+- **Session:** S4.12 (R-S4.12-3).
+- **Needs:** the app launched, a local repo, at least one signed-in provider.
+- **Steps:** open New task, then the model picker (the refresh arrow in the Model field), and the same picker in Settings > Sessions and in a session's Change model. Compare with `omp models --json | jq -r '.[].selector'` if you have the packaged `omp` (`npm run omp:check` prints it).
+- **Expected:** the picker lists `provider/id` for every signed-in provider (and the hosted `alinery/...` models when signed in to an account), starts with any `models = [...]` of the harness row in `.alinery/harnesses.toml`, and has no duplicates. It no longer runs the harness's `models_cmd`. Differences from `omp models` (OMP's own list) are expected and not a failure; note them in the ledger entry R-S4.12-3 if the picker misses a model you used to see.
+- **Status:** open
+
+### L-S4.12-c: a remote host signs in and lists its own models
+- **Session:** S4.12 (Accept 3; R-S4.12-4).
+- **Needs:** the Linux runtime bundle and the Docker sshd (`scripts/build-remote-runtimes.sh`, needs zig; `scripts/tests/remote-sshd/run.sh start`, linux/arm64 only), the app launched.
+- **Steps:** rebuild the runtimes (`alinery-core` and `vinculum-daemon/` changed), start the sshd and connect it from the remote button; open a repo on it. In Settings, Accounts, sign in to Groq with a throwaway key. Open the model picker. Then `docker exec <container> sh -c 'ls -l ~/.local/share/alinery-remote/config/*/provider-credentials.json'` (mode `-rw-------`).
+- **Expected:** the credential lands in the host's `provider-credentials.json` (owner-only), not on the Mac; the picker lists `groq/...` for the host; a local repo that has no Groq key does not list it.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -685,5 +706,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.9-a to -f (S4.9):** built; see the entries above. L-S4.5-e is expected to pass now (L-S4.9-d).
 - **L-S4.10-a to -d (S4.10):** built; see the entries above.
 - **L-S4.11-a to -f (S4.11):** built; see the entries above.
+- **L-S4.12-a to -c (S4.12):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.

@@ -1022,3 +1022,36 @@ Edit the plan, or let S5.4 do it.
 - **Kind:** follow-up, known flaky test.
 - **What:** a protocol bump also needs `alinery-core/src/daemon_client.rs` `audited_shutdown_protocol` (and its doc comment) to list the new number; without it `tests::daemon::takeover_rejects_invalid_and_compatible_targets_before_shutdown` fails deterministically ("Shutdown compatibility is not established"). Fixed for 36. In the one run that exposed it, `tests::daemon::quitting_stops_every_daemon_bring_up` also failed alongside `a_repo_being_closed_is_not_respawned_by_attach` when the whole `tests::daemon::` group ran in parallel; both pass alone and in the full `check.sh` run (second run, passed). Treat `quitting_stops_every_daemon_bring_up` as load-sensitive like the other.
 - **Commit hygiene:** commit 1a51997 (the code commit) was written without the `Co-Authored-By` trailer; later commits carry it. Not amended (no amends allowed).
+
+## S4.12 Providers and models
+
+### R-S4.12-1: ProviderService shape, capabilities and what stayed out
+- **Kind:** decision, deviation.
+- **What:** `proto/alinery/v1/providers.proto`: `ProviderService` with `Catalog` and `ListModels` (VIEW) and `LoginStart`, `LoginPoll`, `LoginReply`, `Logout`, `SaveCustom`, `DeleteCustom` (ADMIN). The plan said "login and logout need ADMIN"; I made the poll and the reply ADMIN too, because a poll carries the sign-in URL and device code and a reply carries the key the user typed, and the Accept line needs `LoginStart` refused to a VIEW and ACT peer. The mutations (`LoginStart`, `LoginReply`, `Logout`, `SaveCustom`, `DeleteCustom`) carry `MutationMeta` and go through the dedupe, so a retried `LoginStart` does not start a second sign-in. They return no `Applied` cursor: the credential files are not entities in the store, so there is nothing for a cursor to cover. Each response is its own message (buf lint refuses a shared `ProviderCatalog`/`LoginStatus` response). A user-fixable refusal (unknown provider, bad base URL, method not api_key or oauth) is INVALID_ARGUMENT, not Internal.
+- **Options:** (a) the plan's literal ADMIN-only login and logout, with Poll and Reply VIEW or ACT (a non-shell local peer could then read device codes and answer prompts); (b) all credential calls ADMIN (chosen); (c) Catalog ADMIN too (rejected: it names no secret, `has_key` is a boolean).
+- **Reverse:** change the `requireCapability` argument in `rpc/providers.ts` and the comment in `providers.proto`; no wire change.
+- **Files:** `proto/alinery/v1/providers.proto`, `alinery-app/src-tauri/vinculum-daemon/src/rpc/providers.ts`, `rpc/providers.test.ts`.
+
+### R-S4.12-2: the browser stays in the page; a sign-in is pinned to the daemon that started it
+- **Kind:** decision.
+- **What:** the plan says the browser sign-in stays in the shell and the daemon holds the poll. The page polls `LoginPoll`, and on an `auth_url` event calls the shell's `open_url` (unchanged). `providerLoginStart` returns the host it asked, and `useProviderAccess` polls, answers and cancels that host, so switching the active repo mid-sign-in does not send the poll to another daemon. The catalog, logout and custom calls follow the active repo (else the first local one) like the agent directory (`sync/hostCall.ts` is the shared `agentHost` and `call`, moved out of `sync/agent.ts`, which re-exports `agentHost`).
+- **Reverse:** drop `loginHost` in `chat/providerAccess.ts`.
+- **Files:** `alinery-app/src/sync/providers.ts`, `sync/hostCall.ts`, `chat/providerAccess.ts`.
+
+### R-S4.12-3: ListModels is the daemon's catalog, not the harness `models_cmd`
+- **Kind:** decision, behaviour change the user should know about.
+- **What:** `list_harness_models(_for_repo)` ran the harness row's `models_cmd` (`omp models --json` through `$SHELL -ilc`) on the Mac, for a remote repo too. The daemon has no OMP binary (a Vinculum session runs pi-durable in the daemon; `omp` is only a harness name for it, recorded as `vinculum`), and a remote host has none either, so `ListModels` returns the harness row's own `models` (the effective settings: bundled and the repo's `harnesses.toml` overlay) followed by `provider/id` for every model of a signed-in provider (`models.getAvailable()`, the list a session can actually run). Only `omp` and `vinculum` have a list; `no-harness` and any other key return nothing, as before. The list is therefore what the daemon will accept in `resolveModel`, but may differ from `omp models` (OMP's own catalog).
+- **Left behind:** `models_cmd` is still a serde field with its repo-overlay guard (`adopt_global_models_cmd`) and TypeScript parity, but nothing executes it now. Follow-up for S5 or later: delete the field with the conformance fixtures, or keep it as a harness-row key for a future non-Vinculum harness. `settings::shell_quote` stays (remote install script uses it).
+- **Reverse:** reinstate `list_harness_models_in` from commit 46ef95e and the two commands; the page switch is one line in `shared.tsx`.
+- **Files:** `vinculum-daemon/src/rpc/providers.ts` (`listModels`), `src/settings.rs`, `src/tests/settings.rs`, `alinery-core/src/shared.rs` (comment).
+
+### R-S4.12-4: the remote-sshd Accept line is not run; protocol 37
+- **Kind:** unverified claim.
+- **What:** Accept 3 ("ListModels through the forward returns the host's list") needs the Linux runtime bundle, and `scripts/build-remote-runtimes.sh --check` reports `MISSING: zig`. What ran instead: `rpc/providers.test.ts` serves the real `ProviderService` on a real unix socket for each peer class (shell, other, and a daemon with no host executable, which is the ssh class) with the real provider runtime in a temp config directory; `ListModels` there reads that directory's credentials and `.alinery/harnesses.toml`. The forward itself is the code S3.4 and S4.10 already exercised. Live check L-S4.12-c covers the container. Removing seven ops from the JSON-lines wire is an op-set change, so `PROTOCOL_VERSION` is 37 (also `audited_shutdown_protocol`, per R-S4.11-13).
+- **Files:** `alinery-core/src/protocol.rs`, `alinery-core/src/daemon_client.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.12-5: leftovers noticed and not touched
+- **Kind:** follow-up.
+- **What:** the JSON-lines op `vinculum_customizations`, its shell command in `session.rs` and `ipc.vinculumCustomizations` still exist after S4.10 moved the inventory to `AgentService`; `vinculum_customizations` is the live MCP-hub state (`mcpHub.refresh()`), so I did not remove it, but S5.3 (which deletes the JSON-lines wire) must either move it to a service or drop it. The page-side test doubles for `../sync/agent` that list only `writeModelRoles` break any new import from that module, which is why the shared helpers live in `sync/hostCall.ts`.
+- **Suggested README text:** none needed; the model picker now shows what the host's daemon can run, which may differ from `omp models`.
+
