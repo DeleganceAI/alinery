@@ -3,7 +3,7 @@
 // client says which task and which file, and this module resolves and checks the path, so nothing outside `.alinery/`
 // is reachable. Staged chunks live in `.alinery/tmp/uploads/<upload_id>` and are cleared when the daemon starts.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { extname, join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
@@ -160,8 +160,17 @@ function regularFileBlob(path: string, name: string, what = "attachment", frame?
     contentType: contentType(name),
     ...(frame ? { frame } : {}),
     read: (offset, length) => {
-      const fd = openSync(path, "r");
+      // Every frame reopens the file, and agents write in this directory: O_NOFOLLOW refuses a link swapped in since the
+      // lstat above, and the fstat refuses anything that stopped being the regular file that was checked.
+      let fd: number;
       try {
+        fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      } catch {
+        throw new DomainError("permission_denied", `${what} is no longer a regular file: ${name}`);
+      }
+      try {
+        const now = fstatSync(fd);
+        if (!now.isFile() || now.ino !== st.ino || now.dev !== st.dev) throw new DomainError("permission_denied", `${what} is no longer the file that was checked: ${name}`);
         const buf = Buffer.alloc(Math.max(0, Math.min(length, st.size - offset)));
         readSync(fd, buf, 0, buf.length, offset);
         return buf;

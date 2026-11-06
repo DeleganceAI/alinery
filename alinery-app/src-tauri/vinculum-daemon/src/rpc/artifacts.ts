@@ -26,7 +26,7 @@ import {
 import type { ArtifactProjector } from "../domain/artifactProjector.ts";
 import { evidenceMarkdown, evidencePrompt, nextOutboundSidecarName, nextReviewHandoffArtifactName, recordJson, recordSidecarName, writeArtifactFile } from "../domain/handoff.ts";
 import type { Json } from "../domain/sessionOps.ts";
-import { readTaskChecked, safeComponent } from "../domain/taskFiles.ts";
+import { readTask, readTaskChecked, safeComponent } from "../domain/taskFiles.ts";
 import { DomainError, withTaskMutation } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
@@ -187,6 +187,9 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
         })();
         if (sourceSlug === slug && sameRepo) throw new DomainError("invalid_argument", "review handoff source and target must be different tasks");
         if (readTaskChecked(d.repo, slug).archived === true) throw new DomainError("failed_precondition", "archived tasks cannot participate in review handoff");
+        // Both repositories are on this machine, so the source's own task.md is readable here. An unreadable source is not
+        // refused (the source's daemon refuses its own half in recordOutboundHandoff); an archived one is, before anything is written.
+        if (readTask(req.sourceRepoPath, sourceSlug)?.archived === true) throw new DomainError("failed_precondition", "archived tasks cannot participate in review handoff");
         const retained = d.taskExecution(slug);
         const steps = ((retained.definition as Json | undefined)?.step ?? []) as { key: string }[];
         const phase = req.targetPhase.trim();
@@ -264,6 +267,7 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
       return once(req.meta, async () => {
         const slug = req.sourceSlug.trim();
         task(slug);
+        if (readTaskChecked(d.repo, slug).archived === true) throw new DomainError("failed_precondition", "archived tasks cannot participate in review handoff");
         const r = req.record;
         if (!r || r.direction !== "outbound" || r.sourceTask !== slug) throw new DomainError("invalid_argument", "an outbound record names this task as its source");
         const artifact = validateArtifactFilename(r.sourceArtifact);

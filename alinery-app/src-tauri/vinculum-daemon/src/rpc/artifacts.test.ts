@@ -315,6 +315,21 @@ test("a review handoff installs the evidence, a session and the inbound record o
   expect(await code(c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: c.repo, sourceSlug: target, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "omp", model: "", promptExtra: "", start: false }))).toBe(Code.InvalidArgument);
 });
 
+test("a review handoff from an archived source is refused before anything is written, and so is its outbound record", async () => {
+  const c = await start();
+  const target = await makeTask(c, "Target two");
+  const source = await makeTask(c, "Source two");
+  writeFileSync(artifactsOf(c, source, "03-findings.md"), "# findings\n");
+  await c.tasks.archiveTask({ meta: meta(), slug: source });
+  const handoff = { meta: meta(), sourceRepoPath: c.repo, sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "omp", model: "", promptExtra: "", start: false };
+  expect(await code(c.artifacts.installReviewHandoff(handoff))).toBe(Code.FailedPrecondition);
+  expect(existsSync(artifactsOf(c, target, "review-handoff-001.md"))).toBe(false);
+  expect(c.created).toEqual([]);
+  const record = { version: 2, direction: "outbound", sourceRepoPath: c.repo, targetRepoPath: c.repo, sourceTask: source, sourceSession: "s", sourceArtifact: "03-findings.md", targetTask: target, targetArtifact: "r.md", targetSession: "n", targetPhase: "build", createdAtMs: 1n };
+  expect(await code(c.artifacts.recordOutboundHandoff({ meta: meta(), sourceSlug: source, record }))).toBe(Code.FailedPrecondition);
+  expect(existsSync(artifactsOf(c, source, "03-findings.handoff-001.json"))).toBe(false);
+});
+
 test("a deleted task takes its artifact rows with it, and the 30 s pass finds a file written while no event came", async () => {
   const c = await start();
   const slug = await makeTask(c);
