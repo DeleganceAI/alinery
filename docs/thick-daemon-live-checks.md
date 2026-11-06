@@ -406,7 +406,7 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 
 - **Session:** S4.5. Plan: S4.5 Build ("review handoff and send become one daemon command each"); ledger R-S4.5-5, R-S4.5-6.
 - **Steps:** open two local repos in the app. In repo A, finish a review artifact in a task and use *Send to another repository* with a task in repo B, a target phase and a prompt note. Then repeat with a target in a repo on a remote host, and with the source task archived.
-- **Expected:** B's task gets `review-handoff-001.md` and a new session in the chosen phase that starts with the handoff text; both tasks list the handoff (inbound on B, outbound on A) in their artifact rows, with no reload. Local-to-remote is refused with a message that both repos must be on the same machine, before either daemon is asked. An archived source is refused. If A's daemon is stopped between the install and the outbound record, B keeps its session and the page lists an `outbound_handoff_record` error.
+- **Expected:** B's task gets `review-handoff-001.md` and a new session in the chosen phase that starts with the handoff text; both tasks list the handoff (inbound on B, outbound on A) in their artifact rows, with no reload. Local-to-remote is refused with a message that both repos must be on the same machine, before either daemon is asked. An archived source is refused by the target's daemon before any file or session exists (the page shows the daemon's message). If A's daemon is stopped between the install and the outbound record, B keeps its session and the page lists an `outbound_handoff_record` error.
 - **Status:** open
 
 ### L-S4.5-c: A comment or a draft from another window shows up live
