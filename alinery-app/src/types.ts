@@ -375,6 +375,8 @@ export type RemoteHost = {
   home?: string | null;
   platform?: string | null;
   glibc?: string | null;
+  /** Whether the onboarding steps have run on this host. */
+  onboarded?: boolean;
 };
 export type RemoteHostView = {
   host_id: string;
@@ -391,6 +393,14 @@ export type RemoteHostView = {
   sharing_reviewed: boolean;
   /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
   erased_sign_ins: string[];
+};
+/** One row of the host list: this computer first (`host_id` "local"), then each remote host. */
+export type HostEntry = {
+  host_id: string;
+  label: string;
+  local: boolean;
+  onboarded: boolean;
+  remote: RemoteHostView | null;
 };
 /** Where a destination resolves to, as `ssh -G` reports it. */
 export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
@@ -414,6 +424,8 @@ export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; trunca
 export type AppConfig = {
   active_repo: string;
   known_repos: string[];
+  /** Whether the onboarding steps have run on this computer. */
+  local_onboarded?: boolean;
   remote_hosts?: Record<string, RemoteHost>;
   mcp_enabled: boolean;
   appearance: AppearancePrefs;

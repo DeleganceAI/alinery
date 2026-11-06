@@ -2,14 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import * as ipc from "../ipc";
-import {
-  CURATED_PLAYBOOK_ARCHETYPES,
-  isOnboardingCompleted,
-  markOnboardingCompleted,
-  ONBOARDING_COMPLETED_KEY,
-  readSavedOnboardingStep,
-  writeSavedOnboardingStep,
-} from "../onboarding";
+import { CURATED_PLAYBOOK_ARCHETYPES, readSavedOnboardingStep, writeSavedOnboardingStep } from "../onboarding";
 import { fakeBoard } from "../test/boardHooks";
 import type { AppConfig, BoardTask, NormalizedPlaybook, NormalizedStep, PlaybookRef, RepoOverrides, ScopedPlaybook } from "../types";
 import { Grid } from "./Grid";
@@ -124,9 +117,8 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("onboarding persistence helpers", () => {
-  it("persists onboarding completion and step state and rejects prototype keys", () => {
-    expect(isOnboardingCompleted()).toBe(false);
+describe("onboarding step persistence", () => {
+  it("persists the step and rejects prototype keys", () => {
     expect(readSavedOnboardingStep(false)).toBe("workspace");
     expect(readSavedOnboardingStep(true)).toBe("playbooks");
 
@@ -135,11 +127,6 @@ describe("onboarding persistence helpers", () => {
 
     window.localStorage.setItem("alinery.onboardingStep.v1", "toString");
     expect(readSavedOnboardingStep(true)).toBe("playbooks");
-
-    markOnboardingCompleted();
-    expect(isOnboardingCompleted()).toBe(true);
-    expect(window.localStorage.getItem(ONBOARDING_COMPLETED_KEY)).toBe("1");
-    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
   });
 });
 

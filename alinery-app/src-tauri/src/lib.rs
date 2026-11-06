@@ -152,6 +152,8 @@ pub fn run() {
             set_active_repo,
             remove_repo,
             remote_hosts,
+            list_hosts,
+            set_host_onboarded,
             remote_add_host,
             remote_ssh_aliases,
             remote_describe_destination,

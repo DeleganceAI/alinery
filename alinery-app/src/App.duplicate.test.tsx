@@ -10,6 +10,7 @@ import type { AppConfig, BoardTask, Config, CreateTaskResult, Task } from "./typ
 const appConfig: AppConfig = {
   active_repo: "/repo-a",
   known_repos: ["/repo-a", "/repo-b"],
+  local_onboarded: true,
   mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
 };
@@ -167,7 +168,7 @@ vi.mock("./views/TaskDetail", () => ({
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: {
-    getItem: vi.fn((key: string) => (key === "alinery.onboardingCompleted.v1" ? "1" : null)),
+    getItem: vi.fn(() => null),
     setItem: vi.fn(),
   },
 });

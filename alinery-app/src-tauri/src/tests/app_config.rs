@@ -1,5 +1,6 @@
 //! Tests for app_config.rs — mcp_enabled logging via write_app_config_at.
 use super::*;
+use crate::{host_entries, read_existing_app_config, set_onboarded_in, RemoteHostView, LOCAL_HOST_ID};
 use std::path::PathBuf;
 
 fn temp_app(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -189,4 +190,98 @@ fn set_active_repo_rejects_a_destination_another_window_holds() {
     drop(app);
     let _ = fs::remove_dir_all(&previous);
     let _ = fs::remove_dir_all(&destination);
+}
+
+const BOTH_KINDS: &str = "known_repos=['/a','alinery+ssh://devbox-a1b2c3/home/me/repo']\n[remote_hosts.devbox-a1b2c3]\nlabel='devbox'\nssh_args=['me@box']\n[remote_hosts.idle-d4e5f6]\nlabel='idle'\nssh_args=['me@idle']\n";
+
+fn read_source(name: &str, source: &str) -> (PathBuf, AppConfig) {
+    let (dir, path) = temp_app(name);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(&path, source).unwrap();
+    let cfg = read_existing_app_config(&path).unwrap().unwrap();
+    (dir, cfg)
+}
+
+#[test]
+fn an_old_config_with_local_and_remote_repos_reads_with_both_marks_set() {
+    let (dir, cfg) = read_source("onboarded-both", BOTH_KINDS);
+    let _ = fs::remove_dir_all(dir);
+    assert!(cfg.local_onboarded);
+    assert!(cfg.remote_hosts["devbox-a1b2c3"].onboarded);
+    // A host with no repo on it has not onboarded.
+    assert!(!cfg.remote_hosts["idle-d4e5f6"].onboarded);
+}
+
+#[test]
+fn an_old_config_with_no_repos_reads_with_neither_mark() {
+    let (dir, cfg) = read_source("onboarded-none", "[remote_hosts.idle-d4e5f6]\nlabel='idle'\nssh_args=['me@idle']\n");
+    let _ = fs::remove_dir_all(dir);
+    assert!(!cfg.local_onboarded);
+    assert!(!cfg.remote_hosts["idle-d4e5f6"].onboarded);
+    let (dir, cfg) = read_source(
+        "onboarded-remote-only",
+        "known_repos=['alinery+ssh://idle-d4e5f6/r']\n[remote_hosts.idle-d4e5f6]\nssh_args=['me@idle']\n",
+    );
+    let _ = fs::remove_dir_all(dir);
+    assert!(!cfg.local_onboarded, "a remote repo does not onboard this computer");
+    assert!(cfg.remote_hosts["idle-d4e5f6"].onboarded);
+}
+
+#[test]
+fn a_mark_survives_a_write_and_a_read_and_is_not_migrated_again() {
+    let (dir, path) = temp_app("onboarded-roundtrip");
+    let mut cfg = AppConfig {
+        known_repos: vec!["/a".into()],
+        ..AppConfig::default()
+    };
+    // The user has a repo here but has not onboarded: once the key is written, the repo no
+    // longer decides it.
+    cfg.local_onboarded = false;
+    crate::write_app_config_at(&path, &cfg).unwrap();
+    assert!(!read_existing_app_config(&path).unwrap().unwrap().local_onboarded);
+    set_onboarded_in(&mut cfg, LOCAL_HOST_ID, true).unwrap();
+    crate::write_app_config_at(&path, &cfg).unwrap();
+    assert!(read_existing_app_config(&path).unwrap().unwrap().local_onboarded);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn set_onboarded_in_marks_remote_hosts_and_refuses_unknown_ones() {
+    let (dir, mut cfg) = read_source("onboarded-set", BOTH_KINDS);
+    let _ = fs::remove_dir_all(dir);
+    set_onboarded_in(&mut cfg, "idle-d4e5f6", true).unwrap();
+    assert!(cfg.remote_hosts["idle-d4e5f6"].onboarded);
+    assert!(set_onboarded_in(&mut cfg, "nope-000000", true).is_err());
+}
+
+#[test]
+fn the_host_list_puts_this_computer_first_and_carries_each_mark() {
+    let (dir, cfg) = read_source("onboarded-list", BOTH_KINDS);
+    let _ = fs::remove_dir_all(dir);
+    let view = |id: &str| RemoteHostView {
+        host_id: id.into(),
+        label: id.into(),
+        destination: String::new(),
+        state: "idle".into(),
+        phase: String::new(),
+        error: None,
+        home: None,
+        platform: None,
+        sharing_reviewed: true,
+        erased_sign_ins: vec![],
+    };
+    let hosts = host_entries(&cfg, vec![view("devbox-a1b2c3"), view("idle-d4e5f6")]);
+    let seen: Vec<(&str, bool, bool)> = hosts.iter().map(|h| (h.host_id.as_str(), h.local, h.onboarded)).collect();
+    assert_eq!(seen, [("local", true, true), ("devbox-a1b2c3", false, true), ("idle-d4e5f6", false, false)]);
+    assert_eq!(hosts[0].label, "This computer");
+}
+
+#[test]
+fn removing_a_host_removes_its_mark() {
+    let (dir, mut cfg) = read_source("onboarded-remove", BOTH_KINDS);
+    let _ = fs::remove_dir_all(dir);
+    cfg.known_repos.retain(|key| !key.starts_with("alinery+ssh://devbox"));
+    cfg.remote_hosts.remove("devbox-a1b2c3");
+    let source = toml::to_string(&cfg).unwrap();
+    assert!(!source.contains("devbox-a1b2c3"), "{source}");
 }

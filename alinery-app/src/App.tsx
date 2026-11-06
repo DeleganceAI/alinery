@@ -33,7 +33,15 @@ import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
 import { LaunchSourceBar } from "./LaunchSourceBar";
 import { BrandMark } from "./Logo";
-import { isOnboardingCompleted, markOnboardingCompleted, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset } from "./onboarding";
+import {
+  isHostOnboarded,
+  markHostOnboarded,
+  migrateLegacyOnboarding,
+  type OnboardingStepId,
+  readSavedOnboardingStep,
+  type StarterTaskPreset,
+  withHostOnboarded,
+} from "./onboarding";
 import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
 import { isRemoteRepo, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
 import { setRevealRepo } from "./revealPath";
@@ -476,11 +484,12 @@ export default function App() {
       .catch(() => {});
     ipc
       .readAppConfig()
+      .then(migrateLegacyOnboarding)
       .then((cfg) => {
         const normalized = applyAppearance(cfg.appearance);
         setAppConfig({ ...cfg, appearance: normalized });
         const firstRun = !cfg.active_repo;
-        const wizardOpens = firstRun || !isOnboardingCompleted();
+        const wizardOpens = firstRun || !isHostOnboarded(cfg, cfg.active_repo);
         if (wizardOpens) {
           setOnboardingStep(firstRun ? undefined : readSavedOnboardingStep(true));
           setOnboardingOpen(true);
@@ -1024,7 +1033,11 @@ export default function App() {
   };
 
   const completeOnboarding = () => {
-    markOnboardingCompleted();
+    // The mark is for the host the repo lives on; with no repo yet, this computer.
+    const repo = appConfigRef.current?.active_repo ?? "";
+    markHostOnboarded(repo)
+      .then(() => setAppConfig((latest) => (latest ? withHostOnboarded(latest, repo) : latest)))
+      .catch((e) => setRepoErr(`Could not record that onboarding finished: ${e}`));
     setOnboardingStep(undefined);
     setOnboardingOpen(false);
     if (telemetryUnpromptedRef.current) {

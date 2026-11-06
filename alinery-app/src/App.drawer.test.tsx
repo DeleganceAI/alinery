@@ -22,6 +22,7 @@ type RecordedDrawer = {
 const appConfig: AppConfig = {
   active_repo: "/repo",
   known_repos: ["/repo", "/other"],
+  local_onboarded: true,
   mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
 };
@@ -170,7 +171,6 @@ function requireFn(value: unknown, name: string): (...args: string[]) => void {
 
 beforeEach(() => {
   cleanup();
-  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   vi.stubGlobal(
     "ResizeObserver",
     class {

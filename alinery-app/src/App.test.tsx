@@ -138,6 +138,7 @@ const notificationPrefs: NotificationPrefs = {
 const appConfig: AppConfig = {
   active_repo: task.repo_path,
   known_repos: [task.repo_path],
+  local_onboarded: true,
   mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
   global: {
@@ -222,6 +223,7 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     getTaskExecution: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
+    setHostOnboarded: vi.fn(),
     setActiveRepo: vi.fn(),
     pickRepoDialog: vi.fn(),
     classifyPickedFolder: vi.fn(),
@@ -611,7 +613,6 @@ vi.mock("./views/ReviewHandoffPage", () => ({
 }));
 
 beforeEach(() => {
-  window.localStorage.setItem("alinery.onboardingCompleted.v1", "1");
   actualCreation.enabled = false;
   actualProviders.enabled = false;
   namingScenario.realSessions = false;
@@ -626,6 +627,7 @@ beforeEach(() => {
   playbookMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
   sessionWrites.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
+  ipcMocks.setHostOnboarded.mockResolvedValue(undefined);
   sessionWrites.clearSessionNotifications.mockResolvedValue(undefined);
   ipcMocks.setDockBadgeCount.mockResolvedValue(undefined);
 });
@@ -648,12 +650,15 @@ it("opens Playbooks from the top tab after selecting a repository, without an in
   await screen.findByRole("table", { name: "Playbook library" });
 });
 
+/** The state of an install whose first host has not run onboarding. */
+const notOnboarded = () => ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, local_onboarded: false });
+
 describe("onboarding gate", () => {
   it.each([
     { creation: "ready" as const, error: null },
     { creation: "partial" as const, error: "Worktree could not be created" },
   ])("opens a retained starter task and reports $creation provisioning accurately", async ({ creation, error }) => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
     vi.mocked(playbookMocks.readPlaybook).mockImplementation(async (reference) => ({
       source: { reference, path: null },
@@ -699,11 +704,11 @@ describe("onboarding gate", () => {
     const notifications = screen.getByRole("status", { name: "Notifications" });
     if (error) expect(notifications.textContent).toContain(error);
     else expect(notifications.textContent).toBe("");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
   it("offers a configured install the guide once at Playbooks, then lands on the grid after Skip", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
     // With a repository the guide is a modal over the board, not a replacement for it.
@@ -712,16 +717,18 @@ describe("onboarding gate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
     await screen.findByTestId("grid:view:default-kanban-plus");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
 
+    // The shell now answers with the mark set.
     cleanup();
+    ipcMocks.readAppConfig.mockResolvedValue(appConfig);
     render(<App />);
     await screen.findByTestId("grid:view:default-kanban-plus");
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
   it("keeps workspace shortcuts and focus inside the open guide", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
@@ -743,7 +750,7 @@ describe("onboarding gate", () => {
 
   it("lets a nested provider dialog dismiss without completing the guide", async () => {
     actualProviders.enabled = true;
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage accounts…" }));
@@ -753,25 +760,25 @@ describe("onboarding gate", () => {
     expect(fireEvent.keyDown(accounts, { key: "Escape" })).toBe(true);
     fireEvent(provider, new Event("cancel", { bubbles: true, cancelable: true }));
     const guide = screen.getByRole("dialog", { name: "Alinery onboarding" });
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
     fireEvent(guide, new Event("cancel", { bubbles: true, cancelable: true }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
   it("resumes an interrupted first run at the saved step once a repository exists", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     window.localStorage.setItem("alinery.onboardingStep.v1", "models");
     render(<App />);
     await screen.findByTestId("onboarding-step-models");
   });
 
   it("opens the wizard on first run and keeps it open through the first repository pick", async () => {
-    window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+    notOnboarded();
     ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
     render(<App />);
     await screen.findByTestId("onboarding-step-workspace");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTitle(task.repo_path));
     await screen.findByRole("button", { name: "Add another repository" });
@@ -784,13 +791,13 @@ describe("onboarding gate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
     await screen.findByTestId("grid:view:default-kanban-plus");
-    expect(window.localStorage.getItem("alinery.onboardingCompleted.v1")).toBe("1");
+    expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
   it("asks about usage sharing only after onboarding finishes, and offers provider setup only after the answer", async () => {
     telemetryScenario.ask = true;
     try {
-      window.localStorage.removeItem("alinery.onboardingCompleted.v1");
+      notOnboarded();
       render(<App />);
       await screen.findByTestId("onboarding-step-playbooks");
       expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();

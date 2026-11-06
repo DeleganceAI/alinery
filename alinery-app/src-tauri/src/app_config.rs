@@ -166,6 +166,10 @@ pub(crate) struct RemoteHost {
     /// connect keeps what it had, minus browser sign-ins, and records it here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sharing: Option<RemoteSharing>,
+    /// Whether the onboarding steps have run on this host (S6.1, D9). Always written, so a file
+    /// without the key is one from before the mark existed (`migrate_onboarded_marks`).
+    #[serde(default)]
+    pub(crate) onboarded: bool,
 }
 
 /// What the user chose to put on a host, and what this app has put there. Nothing that is a
@@ -193,6 +197,10 @@ pub(crate) struct AppConfig {
     pub(crate) active_repo: String,
     #[serde(default)]
     pub(crate) known_repos: Vec<String>,
+    /// Whether the onboarding steps have run on this computer, the host that is always there
+    /// (S6.1, D9). Always written, like `RemoteHost::onboarded`.
+    #[serde(default)]
+    pub(crate) local_onboarded: bool,
     /// Keyed by host id. Core's `AppConfig` has no such key and ignores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) remote_hosts: BTreeMap<String, RemoteHost>,
@@ -215,6 +223,7 @@ impl Default for AppConfig {
         Self {
             active_repo: String::new(),
             known_repos: vec![],
+            local_onboarded: false,
             remote_hosts: BTreeMap::new(),
             mcp_enabled: true,
             appearance: AppearancePrefs::default(),
@@ -318,18 +327,45 @@ pub(crate) fn sanitize_app_config(mut cfg: AppConfig) -> AppConfig {
     cfg
 }
 
+/// A file written before the onboarded mark has neither key. Such an install has already
+/// onboarded wherever it holds a repository: this computer if `known_repos` has a local one, a
+/// remote host if it has one on that host. A file that has the key is never touched, so a mark
+/// the user left unset stays unset. The old once-per-install `localStorage` flag is folded in by
+/// the page (`set_host_onboarded`).
+fn migrate_onboarded_marks(cfg: &mut AppConfig, source: &str) {
+    let raw: toml::Table = source.parse().unwrap_or_default();
+    if !raw.contains_key("local_onboarded") {
+        cfg.local_onboarded = cfg.known_repos.iter().any(|key| !is_remote_repo_key(key));
+    }
+    for (id, host) in &mut cfg.remote_hosts {
+        let has_key = raw.get("remote_hosts").and_then(|hosts| hosts.get(id)).and_then(|host| host.get("onboarded")).is_some();
+        if !has_key {
+            host.onboarded = cfg
+                .known_repos
+                .iter()
+                .any(|key| matches!(RepoRef::parse(key), Ok(RepoRef::Remote { host_id, .. }) if &host_id == id));
+        }
+    }
+}
+
 pub(crate) fn read_existing_app_config(path: &Path) -> Result<Option<AppConfig>, String> {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("read application configuration {}: {error}", path.display())),
     };
-    toml::from_str::<AppConfig>(&source).map(sanitize_app_config).map(Some).map_err(|error| {
-        format!(
-            "invalid application configuration {} (playbook defaults require a scope-qualified reference): {error}",
-            path.display()
-        )
-    })
+    toml::from_str::<AppConfig>(&source)
+        .map(sanitize_app_config)
+        .map(|mut cfg| {
+            migrate_onboarded_marks(&mut cfg, &source);
+            Some(cfg)
+        })
+        .map_err(|error| {
+            format!(
+                "invalid application configuration {} (playbook defaults require a scope-qualified reference): {error}",
+                path.display()
+            )
+        })
 }
 
 pub(crate) fn load_app_config<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfig {
@@ -360,6 +396,64 @@ pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), St
 
 pub(crate) fn write_app_config<R: tauri::Runtime>(app: &AppHandle<R>, cfg: &AppConfig) -> Result<(), String> {
     write_app_config_at(&app_config_path(app)?, cfg)
+}
+
+/// The id of the host that is always there.
+pub(crate) const LOCAL_HOST_ID: &str = "local";
+
+/// One row of the host list: this computer first, then each remote host.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HostEntry {
+    pub(crate) host_id: String,
+    pub(crate) label: String,
+    pub(crate) local: bool,
+    pub(crate) onboarded: bool,
+    /// The connection view of a remote host; `None` for this computer.
+    pub(crate) remote: Option<RemoteHostView>,
+}
+
+pub(crate) fn host_entries(cfg: &AppConfig, remote: Vec<RemoteHostView>) -> Vec<HostEntry> {
+    let mut hosts = vec![HostEntry {
+        host_id: LOCAL_HOST_ID.into(),
+        label: "This computer".into(),
+        local: true,
+        onboarded: cfg.local_onboarded,
+        remote: None,
+    }];
+    hosts.extend(remote.into_iter().map(|view| HostEntry {
+        host_id: view.host_id.clone(),
+        label: view.label.clone(),
+        local: false,
+        onboarded: cfg.remote_hosts.get(&view.host_id).is_some_and(|host| host.onboarded),
+        remote: Some(view),
+    }));
+    hosts
+}
+
+/// Set a host's onboarded mark in `cfg`. An unknown remote host is an error.
+pub(crate) fn set_onboarded_in(cfg: &mut AppConfig, host_id: &str, onboarded: bool) -> Result<(), String> {
+    if host_id == LOCAL_HOST_ID {
+        cfg.local_onboarded = onboarded;
+        return Ok(());
+    }
+    cfg.remote_hosts.get_mut(host_id).ok_or("unknown remote host")?.onboarded = onboarded;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<HostEntry> {
+    host_entries(&load_app_config(&app), host_views(&app, &state))
+}
+
+#[tauri::command]
+pub(crate) async fn set_host_onboarded(app: AppHandle, host_id: String, onboarded: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cfg = read_existing_app_config(&app_config_path(&app)?)?.unwrap_or_default();
+        set_onboarded_in(&mut cfg, &host_id, onboarded)?;
+        write_app_config(&app, &cfg)
+    })
+    .await
+    .map_err(|error| format!("set host onboarded task: {error}"))?
 }
 
 #[tauri::command]
