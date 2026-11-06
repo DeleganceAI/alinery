@@ -112,6 +112,7 @@ if [ "$rpc" = 1 ]; then
     method=`printf '%s' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p'`
     rid=`printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'`
     case "$rid" in
+      exit-setup) exit 23 ;;
       activity-rejected) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":false,\"error\":\"refused\"}" ;;
       activity-accepted|activity-observer) printf '%s\n' "{\"type\":\"response\",\"id\":\"$rid\",\"command\":\"$typ\",\"success\":true}" ;;
     esac
@@ -1772,8 +1773,8 @@ fn omp_setup_session_is_attachable_but_never_a_listed_session() {
     let argv = fixture.argv(&id);
     assert!(argv.contains("--mode"), "{argv}");
     assert!(
-        argv.lines().any(|arg| arg == "--model=openai-codex/gpt-5.5"),
-        "setup must start without saved credentials: {argv}"
+        argv.lines().any(|arg| arg == "--model=gpt-5.5"),
+        "setup needs a model without requiring a particular provider: {argv}"
     );
     let token_path = fixture.root.join(format!("token.{id}"));
     wait_until(Duration::from_secs(5), || token_path.exists());
@@ -1789,4 +1790,29 @@ fn omp_setup_session_is_attachable_but_never_a_listed_session() {
     assert!(!fixture.root.join(format!(".alinery/sessions/{id}.omp")).exists());
 
     let _ = fixture.rpc(json!({"op": "kill", "id": id}));
+}
+
+#[test]
+fn omp_setup_replaces_an_exited_child() {
+    let fixture = Fixture::new();
+    let opened = fixture.rpc(json!({"op": "omp_setup"}));
+    let id = opened["id"].as_str().expect("setup session id");
+    let mut first = fixture.rpc_attach(id);
+    first.get_ref().set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let written = fixture.rpc(json!({"op": "rpc_write", "id": id, "payload": {"type": "get_state", "id": "exit-setup"}}));
+    assert_eq!(written["ok"], true, "{written}");
+    let mut line = String::new();
+    while first.read_line(&mut line).unwrap() > 0 {
+        line.clear();
+    }
+    let exited = fixture.rpc(json!({"op": "status", "id": id}));
+    assert_eq!(exited["process"], json!({"state": "exited", "code": 23}), "{exited}");
+
+    let reopened = fixture.rpc(json!({"op": "omp_setup"}));
+    assert_eq!(reopened["id"], id, "{reopened}");
+    let mut replacement = fixture.rpc_attach(id);
+    let written = fixture.rpc(json!({"op": "rpc_write", "id": id, "payload": {"type": "get_login_providers", "id": "activity-observer"}}));
+    assert_eq!(written["ok"], true, "{written}");
+    let lines = Fixture::read_lines(&mut replacement, 2);
+    assert!(lines.iter().any(|line| line.contains(r#""id":"activity-observer""#)), "{lines:?}");
 }

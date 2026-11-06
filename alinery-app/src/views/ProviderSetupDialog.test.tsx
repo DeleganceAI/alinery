@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ompSetupSession: vi.fn(),
   rpcAttachSession: vi.fn(),
   rpcWriteSession: vi.fn(),
+  onStreamClosed: vi.fn((_id: string, _attachId: number, _onClosed: () => void) => () => {}),
   readOmpModelRoles: vi.fn(),
   hostedCatalog: vi.fn(),
   accountSignIn: vi.fn(),
@@ -38,10 +39,10 @@ const stateLine = (model: string) => {
   });
 };
 
-const modelsLine = (rows: { provider: string; id: string }[]) =>
+const modelsLine = (rows: { provider: string; id: string }[], id = "p1") =>
   JSON.stringify({
     type: "response",
-    id: "p1",
+    id,
     command: "get_available_models",
     success: true,
     data: { models: rows },
@@ -196,7 +197,13 @@ describe("ProviderSetupDialog", () => {
   });
 
   it("stays invisible and reports not-needed when the install is already set up", async () => {
-    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: true }])]);
+    const onClose = mountWith([
+      stateLine("openai/gpt-5.5"),
+      providersLine([
+        { id: "openai", authenticated: false },
+        { id: "anthropic", authenticated: true },
+      ]),
+    ]);
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
     // "not-needed" is what keeps a self-close from being remembered as a dismissal, so an install
     // that later loses its credentials is offered setup again.
@@ -337,6 +344,46 @@ describe("ProviderSetupDialog", () => {
     vi.useRealTimers();
     await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
     expect(mocks.rpcAttachSession).toHaveBeenCalledWith(expect.objectContaining({ id: "__omp-setup-2__" }));
+  });
+
+  it.each(["broken pipe", "stream closed"])("reconnects after %s and ignores replies from the old attachment", async (failure) => {
+    vi.useFakeTimers();
+    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
+    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.hostedCatalog.mockResolvedValue(unsettledHosted);
+    mocks.rpcAttachSession.mockResolvedValue(undefined);
+    mocks.detachSession.mockResolvedValue(undefined);
+    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
+    if (failure === "broken pipe") {
+      mocks.rpcWriteSession.mockResolvedValueOnce({ status: "unknown", reason: "rpc-write: Broken pipe (os error 32)" });
+    }
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+
+    if (failure === "stream closed") {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mocks.rpcWriteSession).toHaveBeenCalledTimes(3);
+      const [[, , closed]] = mocks.onStreamClosed.mock.calls;
+      await act(async () => closed());
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    vi.useRealTimers();
+    expect(mocks.ompSetupSession).toHaveBeenCalledTimes(2);
+    const [[first], [second]] = mocks.rpcAttachSession.mock.calls;
+    expect(second.attachId).not.toBe(first.attachId);
+    expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup__", first.attachId);
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await act(async () => first.onLine(modelsLine([{ provider: "anthropic", id: "stale-model" }])));
+    expect(screen.queryByRole("button", { name: "anthropic/stale-model" })).toBeNull();
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+
+    const catalogueRequest = mocks.rpcWriteSession.mock.lastCall?.[1];
+    await act(async () => second.onLine(modelsLine([{ provider: "anthropic", id: "fresh-model" }], catalogueRequest.id)));
+    expect(screen.getByRole("button", { name: "anthropic/fresh-model" })).toBeTruthy();
   });
 
   it("opens Accounts when unsignedOpensAccounts and providers need setup", async () => {
