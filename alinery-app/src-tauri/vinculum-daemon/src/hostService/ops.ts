@@ -250,7 +250,9 @@ export async function waitDaemonGone(repo: string, lane = "", budget = { attempt
     try {
       reachable = await socketReachable(socketPath);
     } catch (error) {
-      throw new Error(`cannot establish daemon exit: ${(error as Error).message}`);
+      // A connection reset is the daemon closing its listener under the probe: it is still going, so look again.
+      if (!String((error as Error).message).includes("ECONNRESET")) throw new Error(`cannot establish daemon exit: ${(error as Error).message}`);
+      reachable = true;
     }
     if (!reachable) {
       const lease = tryLockExclusive(lockPath);
