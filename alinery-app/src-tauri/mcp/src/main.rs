@@ -2553,13 +2553,25 @@ args = ["--token", "harness-secret"]
         let path = repo.join(".alinery/config.toml");
         std::fs::write(&path, "[backup]\nenabled = false\n").unwrap();
         alinery_core::with_task_mutation_lock(&repo, "test hold", || {
-            let resp = write_toml_file(path.clone(), &json!({"content": "[backup]\nenabled = true\n"}), None, &repo, alinery_core::SettingsChangeScope::Repo);
+            let resp = write_toml_file(
+                path.clone(),
+                &json!({"content": "[backup]\nenabled = true\n"}),
+                None,
+                &repo,
+                alinery_core::SettingsChangeScope::Repo,
+            );
             assert_eq!(text_content(&resp), "error: task mutation busy during write settings; not written");
             Ok(())
         })
         .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[backup]\nenabled = false\n");
-        let resp = write_toml_file(path.clone(), &json!({"content": "[backup]\nenabled = true\n"}), None, &repo, alinery_core::SettingsChangeScope::Repo);
+        let resp = write_toml_file(
+            path.clone(),
+            &json!({"content": "[backup]\nenabled = true\n"}),
+            None,
+            &repo,
+            alinery_core::SettingsChangeScope::Repo,
+        );
         assert!(text_content(&resp).starts_with("wrote "), "{resp}");
         let _ = std::fs::remove_dir_all(repo);
     }

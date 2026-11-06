@@ -505,16 +505,23 @@ pub(crate) fn ensure_repo_ready_at(socket: &Path, committed_token: &Path) -> Res
                 mutation_id: uuid::Uuid::new_v4().to_string(),
             }),
         };
-        tokio::time::timeout(DAEMON_CONTROL_TIMEOUT, unary::<_, EnsureReadyResponse>(socket, &token, "/alinery.v1.RepoService/EnsureReady", &request))
-            .await
-            .map_err(|_| "EnsureReady timed out".to_string())??;
+        tokio::time::timeout(
+            DAEMON_CONTROL_TIMEOUT,
+            unary::<_, EnsureReadyResponse>(socket, &token, "/alinery.v1.RepoService/EnsureReady", &request),
+        )
+        .await
+        .map_err(|_| "EnsureReady timed out".to_string())??;
         Ok(())
     })
 }
 
 /// The same for a local repo, at the socket and token `resolve` names.
 pub(crate) fn ensure_repo_ready(repo_key: &str, app_config: &Path) -> Result<(), String> {
-    let (socket, secret_path) = resolve(repo_key, app_config_dir_of(app_config).ok_or("app config root unavailable")?, alineryd_socket_namespace().as_deref())?;
+    let (socket, secret_path) = resolve(
+        repo_key,
+        app_config_dir_of(app_config).ok_or("app config root unavailable")?,
+        alineryd_socket_namespace().as_deref(),
+    )?;
     ensure_repo_ready_at(&socket, &secret_path)
 }
 

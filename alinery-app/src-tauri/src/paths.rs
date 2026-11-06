@@ -212,4 +212,3 @@ pub(crate) fn ensure_alinery_dir(repo: &Path) -> Result<(), String> {
 pub(crate) fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
-

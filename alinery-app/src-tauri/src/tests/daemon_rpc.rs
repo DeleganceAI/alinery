@@ -1,7 +1,9 @@
 //! The webview bridge against a stand-in daemon: a hyper HTTP/2 server on a temp unix socket.
 
 use super::*;
-use crate::daemon_rpc::{hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse};
+use crate::daemon_rpc::{
+    hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse,
+};
 use bytes::Bytes;
 use http::HeaderMap;
 use http_body_util::BodyExt;
@@ -609,7 +611,13 @@ fn ensure_repo_ready_calls_repo_service_with_the_kept_token_and_a_fresh_mutation
     let key = t.repo.display().to_string();
     crate::daemon_rpc::ensure_repo_ready(&key, &t.app_config).unwrap();
     crate::daemon_rpc::ensure_repo_ready(&key, &t.app_config).unwrap();
-    let calls: Vec<_> = ENSURE_READY.lock().unwrap().iter().filter(|(token, _)| token == "Bearer ensure-token").map(|(_, r)| r.clone()).collect();
+    let calls: Vec<_> = ENSURE_READY
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(token, _)| token == "Bearer ensure-token")
+        .map(|(_, r)| r.clone())
+        .collect();
     assert_eq!(calls.len(), 2);
     let ids: Vec<_> = calls.iter().map(|r| r.meta.clone().unwrap()).collect();
     assert!(ids.iter().all(|m| m.client_id == "alinery-shell" && !m.mutation_id.is_empty()), "{ids:?}");

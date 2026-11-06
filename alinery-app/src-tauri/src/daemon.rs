@@ -740,7 +740,11 @@ pub(crate) fn attach_repo_daemon_locked(state: &AppState, repo: &Path, app_confi
 pub(crate) fn log_ensure_ready_failed(app_config: &Path, repo: &str, error: &str) {
     alinery_core::append_exception(
         app_config,
-        &format!("app.ensure-ready-failed repo={} err={}", alinery_core::quote_log_value(repo), alinery_core::quote_log_value(error)),
+        &format!(
+            "app.ensure-ready-failed repo={} err={}",
+            alinery_core::quote_log_value(repo),
+            alinery_core::quote_log_value(error)
+        ),
     );
 }
 

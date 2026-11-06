@@ -2587,13 +2587,7 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
         !render_remote_app_toml(&local, &["/srv/r".to_string()], false).unwrap().contains("xai-shared-key"),
         "the Grok key goes only when the user chose to share it"
     );
-    for private in [
-        "ghp_mac_only_token",
-        "/Users/me",
-        "harness-secret",
-        "CUSTOM_API_KEY",
-        "alinery/favorite",
-    ] {
+    for private in ["ghp_mac_only_token", "/Users/me", "harness-secret", "CUSTOM_API_KEY", "alinery/favorite"] {
         assert!(!rendered.contains(private), "{private} reached the host's app.toml:\n{rendered}");
     }
 
