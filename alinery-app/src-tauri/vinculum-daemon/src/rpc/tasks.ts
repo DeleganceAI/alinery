@@ -73,7 +73,7 @@ type WireRequest = Record<string, unknown> & {
 };
 
 /**
- * The `create_task` op `alinery-mcp` still sends (plan: MCP stays on core's request shape until S5.1): the Rust
+ * The legacy `create_task` op (the Bun MCP no longer sends it; S5.3 deletes the op): the Rust
  * `CreateTaskRequest` as JSON, attachments inline as base64. The bytes are put in a scratch directory for the create
  * and removed after; the reply is the JSON `CreateTaskReply` the MCP tool returns.
  */
@@ -123,7 +123,7 @@ export async function createFromWire(d: TaskDeps, request: WireRequest): Promise
 }
 
 /**
- * The `create_subtask` op `alinery-mcp` calls for the manager agent (plan: MCP stays on this wire until S5.1). The reply is the
+ * The legacy `create_subtask` op (the Bun MCP no longer calls it; S5.3 deletes the op). The reply is the
  * JSON `CreateSubtaskResult`: the parent and child summaries, the manager session as the file now holds it, and the child's
  * `CreateTaskReply`. A refusal is `{ error }`, as every legacy op answers.
  */

@@ -87,8 +87,10 @@ test("MintToken (O20 c) gives the shell an AGENT token, refuses any other capabi
   const { token } = await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" });
   expect(tokens.has(token)).toBe(true);
   expect((await client(socketPath, `Bearer ${token}`).hello({})).capabilities).toEqual([Capability.AGENT]);
-  // A second mint under the label replaces the first, so a refresh does not leave the old token usable.
+  // A second mint under the label keeps the first for one more refresh (a call mid-flight), and a third retires it.
   const again = (await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" })).token;
+  expect((await client(socketPath, `Bearer ${token}`).hello({})).capabilities).toEqual([Capability.AGENT]);
+  await shell.mintToken({ capability: Capability.AGENT, label: "managed-mcp" });
   expect(await code(client(socketPath, `Bearer ${token}`).hello({}))).toBe(Code.Unauthenticated);
   expect((await client(socketPath, `Bearer ${again}`).hello({})).capabilities).toEqual([Capability.AGENT]);
   expect(await code(shell.mintToken({ capability: Capability.ADMIN, label: "x" }))).toBe(Code.InvalidArgument);

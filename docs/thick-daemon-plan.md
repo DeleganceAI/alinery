@@ -720,8 +720,7 @@ Numbers (4.1): through the Rust HTTP/2 shell sample against grpc-js, unary p50 0
 | Shell token, local, and the peer executable is the shell | VIEW, ACT, APPROVE, ADMIN |
 | Shell token over ssh (peer is sshd) | VIEW, ACT, APPROVE, ADMIN. The token is kept on the local machine only. The host sees it just in the 0600 file `SpawnDaemon` writes and the daemon deletes before it listens, and the daemon holds it in memory; an agent started later can't read it |
 | Shell token, local, peer is something else | VIEW, ACT. On the local machine agents run as the same user and can read `<app_config_dir>`, so APPROVE and ADMIN keep today's peer-executable check |
-| No token | AGENT, limited to the four MCP session tools (today's exposure) until S5.1, which deletes this row (O20 c) |
-| Minted AGENT token (S5.1, O20 c): in each harness's environment, and the shell's managed MCP | AGENT |
+| Minted AGENT token (S5.1, O20 c): in the environment of the MCP child the daemon's `McpHub` runs for a harness, and in the shell's managed MCP's endpoints file. No token at all is UNAUTHENTICATED | AGENT |
 
 **AGENT** is exactly the RPCs behind MCP's tools, storage scan and purge included. Never `Shutdown`, the rest of ADMIN, or APPROVE (O18 b). The v0.3 pairing-token row is withdrawn with O13 (D8).
 

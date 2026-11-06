@@ -41,12 +41,16 @@ test("the daemon's own secret keeps its full set, and no token or a wrong one is
   }
 });
 
-test("a second mint under one label replaces the first token", () => {
+test("a second mint under one label keeps the first valid until the third (a call mid-flight survives a refresh)", () => {
   const tokens = new TokenRegistry();
   const first = tokens.mint("shell");
   const second = tokens.mint("shell");
+  expect(tokens.has(first)).toBe(true);
+  expect(tokens.has(second)).toBe(true);
+  const third = tokens.mint("shell");
   expect(tokens.has(first)).toBe(false);
   expect(tokens.has(second)).toBe(true);
+  expect(tokens.has(third)).toBe(true);
   expect(tokens.has(tokens.mint("other"))).toBe(true);
-  expect(tokens.has(second)).toBe(true);
+  expect(tokens.has(third)).toBe(true);
 });

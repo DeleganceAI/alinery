@@ -165,9 +165,11 @@ const connections = new Map<string, DaemonConnection>();
 function connection(ctx: Context, repo: string): DaemonConnection {
   const endpoint: Endpoint | undefined = ctx.endpoints.forRepo(repo);
   if (!endpoint) throw new ToolError(`this MCP holds no token for the daemon of ${repo}; ${ctx.endpoints.spansRepos ? "open the repository in the Alinery app" : "it can reach the daemon that launched it only"}`);
-  const key = `${endpoint.socket}\0${endpoint.token}\0${ctx.protocol}`;
+  // Keyed without the token: a re-minted token reaches the same connection through `tokenSource`.
+  const key = `${endpoint.socket}\0${ctx.protocol}`;
   let held = connections.get(key);
   if (!held) connections.set(key, (held = new DaemonConnection(endpoint, ctx.protocol)));
+  held.tokenSource = () => ctx.endpoints.forRepo(repo)?.token ?? endpoint.token;
   return held;
 }
 

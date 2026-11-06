@@ -1120,7 +1120,7 @@ backupHost = new BackupHost(jobs, {
     await artifactProjector.pass();
   },
 });
-// Task writes: TaskService and DraftService serve them, and the legacy `create_task` op runs the same create.
+// Task writes: TaskService and DraftService serve them, and the legacy `create_task` op (no caller left but alinery-core's test client; S5.3 deletes it) runs the same create.
 const taskDeps: TaskDeps = {
   backups: backupHost,
   repo,

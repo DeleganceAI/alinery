@@ -50,14 +50,16 @@ function matches(given: string, secret: Buffer): boolean {
 }
 
 /** The AGENT tokens this daemon has minted (plan 2.1.10, O20 c): the daemon's own for the MCP it runs for each harness, and the
- * ones the shell asks for with `AdminService.MintToken`. They live in memory and die with the daemon. A label names one token: a
- * second mint with the same label replaces the first, so a client that refreshes does not pile them up. */
+ * ones the shell asks for with `AdminService.MintToken`. They live in memory and die with the daemon. A label names one token, and a
+ * second mint with the same label replaces it, so a client that refreshes does not pile them up. The token it replaced stays valid
+ * until the mint after that: the shell re-mints every 30 s, and a tool call that read the endpoints file just before a mint is
+ * still mid-call (R-S5.1-4). */
 export class TokenRegistry {
-  private readonly byLabel = new Map<string, Buffer>();
+  private readonly byLabel = new Map<string, { current: Buffer; previous?: Buffer }>();
 
   mint(label: string): string {
     const token = randomBytes(32).toString("hex");
-    this.byLabel.set(label, Buffer.from(token));
+    this.byLabel.set(label, { current: Buffer.from(token), previous: this.byLabel.get(label)?.current });
     return token;
   }
 
@@ -65,7 +67,8 @@ export class TokenRegistry {
     const actual = Buffer.from(given);
     let found = false;
     // Every token is compared, so the time does not say which one matched.
-    for (const token of this.byLabel.values()) if (actual.length === token.length && timingSafeEqual(actual, token)) found = true;
+    for (const { current, previous } of this.byLabel.values())
+      for (const token of previous ? [current, previous] : [current]) if (actual.length === token.length && timingSafeEqual(actual, token)) found = true;
     return found;
   }
 }

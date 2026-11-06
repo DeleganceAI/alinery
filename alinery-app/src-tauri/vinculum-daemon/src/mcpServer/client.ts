@@ -38,17 +38,21 @@ export class DaemonConnection {
   private readonly transport;
   private readonly clients = new Map<DescService, unknown>();
   private checked = false;
+  /** The token for the next request. The managed MCP's file is re-minted every 30 s, so each request asks again instead of holding
+   * the one a tool call started with (R-S5.1-4); `connection()` points this at the endpoints file. */
+  tokenSource: () => string;
 
   constructor(
     private readonly endpoint: Endpoint,
     private readonly protocol: number,
   ) {
+    this.tokenSource = () => endpoint.token;
     this.transport = createGrpcTransport({
       baseUrl: "http://daemon",
       nodeOptions: { createConnection: () => connect(endpoint.socket) } as never,
       interceptors: [
         (next) => (req) => {
-          req.header.set("authorization", `Bearer ${endpoint.token}`);
+          req.header.set("authorization", `Bearer ${this.tokenSource()}`);
           return next(req);
         },
       ],

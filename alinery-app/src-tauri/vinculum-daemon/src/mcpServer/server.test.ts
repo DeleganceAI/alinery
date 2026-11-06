@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { createRegistry } from "@earendil-works/pi-durable";
 import { McpHub, selfMcpCommand } from "../mcp.ts";
 import { daemonProtocol, type RunningDaemon, startDaemon } from "./daemonFixture.testutil.ts";
+import { DaemonConnection } from "./client.ts";
 import { Endpoints } from "./endpoints.ts";
 import { contextFrom, handleRequest, mcpPaths } from "./server.ts";
 import { TOOLS } from "./tools.ts";
@@ -140,4 +141,22 @@ test("only the managed MCP offers a handoff: the same endpoints file read by a h
   expect(contextFrom(file, 1, {}).endpoints.offersHandoff).toBe(false);
   expect(contextFrom(file, 1, {}).endpoints.spansRepos).toBe(true);
   expect(contextFrom(["--repo", "/r"], 1, { ALINERY_RPC_SOCKET: "/s", ALINERY_RPC_TOKEN: "t" }).endpoints.offersHandoff).toBe(false);
+});
+
+test("a connection whose token the shell re-minted twice keeps working once it reads the new one (the 30 s refresh, R-S5.1-4)", async () => {
+  const first = await daemon.mint("refresh");
+  const conn = new DaemonConnection({ socket: daemon.socket, token: first }, daemonProtocol());
+  const scope = { kind: { case: "repo", value: {} } } as const;
+  expect((await conn.read(scope)).length).toBeGreaterThan(0);
+  // One mint later the old token still works: a call that read the file just before the refresh is not cut off.
+  const second = await daemon.mint("refresh");
+  expect((await conn.read(scope)).length).toBeGreaterThan(0);
+  let current = await daemon.mint("refresh");
+  // Two mints later it is gone, and a connection that held it for good would fail; this one asks for the current token per request.
+  await expect(conn.read(scope)).rejects.toThrow(/wrong token/);
+  conn.tokenSource = () => current;
+  expect((await conn.read(scope)).length).toBeGreaterThan(0);
+  current = await daemon.mint("refresh");
+  expect(second).not.toBe(current);
+  expect((await conn.read(scope)).length).toBeGreaterThan(0);
 });

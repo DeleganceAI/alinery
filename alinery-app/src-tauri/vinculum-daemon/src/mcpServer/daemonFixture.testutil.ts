@@ -16,7 +16,7 @@ export const SECRET = "ab".repeat(32);
 /** The protocol the daemon source under test speaks, as `--protocol-version` prints it. */
 export const daemonProtocol = (): number => Number(Bun.spawnSync([process.execPath, MAIN, "--protocol-version"]).stdout.toString().trim());
 
-export type RunningDaemon = { fixture: Fixture; process: Bun.Subprocess; socket: string; token: string; stop: () => Promise<void>; context: (extra?: Partial<Context>) => Context };
+export type RunningDaemon = { fixture: Fixture; process: Bun.Subprocess; socket: string; token: string; mint: (label: string) => Promise<string>; stop: () => Promise<void>; context: (extra?: Partial<Context>) => Context };
 
 export async function startDaemon(fixture?: Fixture, protocol = daemonProtocol()): Promise<RunningDaemon> {
   const fx = fixture ?? (await buildFixture());
@@ -56,6 +56,7 @@ export async function startDaemon(fixture?: Fixture, protocol = daemonProtocol()
     process: proc,
     socket,
     token,
+    mint: async (label) => (await admin.mintToken({ capability: Capability.AGENT, label })).token,
     stop: async () => {
       proc.kill("SIGTERM");
       await proc.exited;

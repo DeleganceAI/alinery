@@ -119,3 +119,17 @@ test("every recorded call gets its recorded reply, except the changes the plan n
   expect(repo).toBeTruthy();
   expect(differences.join("\n")).toBe("");
 }, 120_000);
+
+test("an archived task is left out of alinery_list_tasks while it still exists (the recorded list runs after the purge)", async () => {
+  const { repo } = daemon.fixture;
+  const endpointsFile = join(daemon.fixture.root, "endpoints.json");
+  const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
+  const list = async () => JSON.parse((await callTool(ctx, "alinery_list_tasks", { repo })).content[0].text) as string[];
+  const made = await callTool(ctx, "alinery_create_task", { repo, name: "Third task", description: "to archive", playbook: { scope: "bundled", key: "one-shot" } });
+  expect(made.content[0].text.startsWith("{")).toBe(true);
+  expect(await list()).toContain("third-task");
+  expect((await callTool(ctx, "alinery_archive_task", { repo, slug: "third-task" })).content[0].text).toBe("archived");
+  const after = await list();
+  expect(after).not.toContain("third-task");
+  expect(after).toContain("first-task");
+});
