@@ -21,6 +21,7 @@ const host: RemoteHostView = {
   label: "box",
   destination: "-p 2222 me@box",
   state: "connected",
+  gave_up: false,
   phase: "",
   error: null,
   home: "/home/me",

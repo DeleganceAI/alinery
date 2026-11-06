@@ -733,6 +733,7 @@ describe("onboarding gate", () => {
       label: "box",
       destination: "me@box",
       state: "connected",
+      gave_up: false,
       phase: "",
       error: null,
       home: "/home/me",

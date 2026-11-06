@@ -1623,6 +1623,36 @@ fn a_key_or_login_problem_is_not_retried() {
 }
 
 #[test]
+fn a_failed_host_is_given_up_on_only_when_nothing_will_retry_it() {
+    use std::time::{Duration, Instant};
+    let remotes = RemoteManager::default();
+    let gave_up = |id: &str| remotes.gave_up(id, &remotes.status(id));
+
+    // Never connected, or disconnected on purpose: a failure stays failed.
+    remotes.set("box", "failed", "", Some("ssh timed out".into()));
+    assert!(gave_up("box"));
+
+    // A wanted host whose channel just died reads `failed` (DISCONNECTED) until the supervisor
+    // tick marks it `reconnecting`: that window is not giving up, and neither is the end of a
+    // failed attempt before `reconnect_finished`.
+    remotes.want("box");
+    remotes.set("box", "connected", "", None);
+    let status = remotes.status("box");
+    assert_eq!((status.state.as_str(), status.error.as_deref()), ("failed", Some(DISCONNECTED)));
+    assert!(!gave_up("box"));
+    remotes.set("box", "failed", "", Some("ssh timed out".into()));
+    assert!(!gave_up("box"));
+    remotes.set("box", "reconnecting", "Retrying automatically", None);
+    assert!(!gave_up("box"));
+
+    // An error retrying cannot fix is given up on: reconnect_finished unwants the host.
+    let t0 = Instant::now();
+    remotes.due_reconnects(t0);
+    remotes.reconnect_finished("box", &Err("host key changed".into()), t0 + Duration::from_secs(5));
+    assert!(gave_up("box"));
+}
+
+#[test]
 fn a_dropped_host_is_retried_with_backoff_and_a_user_disconnect_is_left_alone() {
     use std::time::{Duration, Instant};
     let remotes = RemoteManager::default();

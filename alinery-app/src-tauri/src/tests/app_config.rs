@@ -263,6 +263,7 @@ fn the_host_list_puts_this_computer_first_and_carries_each_mark() {
         label: id.into(),
         destination: String::new(),
         state: "idle".into(),
+        gave_up: false,
         phase: String::new(),
         error: None,
         home: None,

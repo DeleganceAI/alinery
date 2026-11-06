@@ -1491,6 +1491,9 @@ pub(crate) struct RemoteHostView {
     /// What the user typed, as stored (flags then host), for display.
     pub(crate) destination: String,
     pub(crate) state: String,
+    /// True only for a `failed` host nothing will retry: not wanted, or an error retrying cannot fix.
+    /// `failed` alone also shows for the moment before the supervisor marks a dropped link `reconnecting`.
+    pub(crate) gave_up: bool,
     pub(crate) phase: String,
     pub(crate) error: Option<String>,
     pub(crate) home: Option<String>,
@@ -1507,6 +1510,7 @@ fn host_view(state: &AppState, host_id: &str, host: &RemoteHost) -> RemoteHostVi
         host_id: host_id.to_string(),
         label: host.label.clone(),
         destination: host.ssh_args.join(" "),
+        gave_up: state.remotes.gave_up(host_id, &status),
         state: status.state,
         phase: status.phase,
         error: status.error,
@@ -2049,6 +2053,14 @@ impl RemoteManager {
             status.error = Some(DISCONNECTED.into());
         }
         status
+    }
+
+    /// A `failed` status the supervisor will not retry. A wanted host with a retryable error is only
+    /// between the drop and the next tick (or the end of an attempt and `reconnect_finished`).
+    pub(crate) fn gave_up(&self, host_id: &str, status: &RemoteStatus) -> bool {
+        status.state == "failed"
+            && (!self.wanted.lock().unwrap_or_else(|e| e.into_inner()).contains(host_id)
+                || !status.error.as_deref().is_none_or(worth_retrying))
     }
 
     pub(crate) fn session(&self, host_id: &str) -> Option<std::sync::Arc<RemoteSession>> {

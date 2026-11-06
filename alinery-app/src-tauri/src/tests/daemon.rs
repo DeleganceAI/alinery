@@ -930,7 +930,8 @@ impl TakeoverPeer {
             .spawn()
             .unwrap();
         let mut peer = Self { child, root, lane: lane.into() };
-        let until = Instant::now() + Duration::from_secs(5);
+        // Up to 30 s: a re-executed test binary starts slowly under full-workspace load (R-FLAKE-3).
+        let until = Instant::now() + Duration::from_secs(30);
         let socket = alinery_core::alineryd_socket_path(repo, Some(lane));
         while BoundDaemonConnection::connect(&socket, None, crate::DAEMON_CONTROL_TIMEOUT)
             .and_then(|connection| connection.version())
@@ -966,7 +967,17 @@ impl TakeoverPeer {
 impl Drop for TakeoverPeer {
     fn drop(&mut self) {
         drop(self.child.stdin.take());
-        let _ = self.child.wait();
+        // A peer that never reached its listen loop ignores the closed stdin; kill it rather
+        // than hang or leak it when the start-up wait panicked (R-FLAKE-3).
+        let until = Instant::now() + Duration::from_secs(10);
+        while matches!(self.child.try_wait(), Ok(None)) {
+            if Instant::now() >= until {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 

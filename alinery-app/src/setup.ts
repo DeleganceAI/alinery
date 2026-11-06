@@ -63,13 +63,13 @@ export function sshDestination({ host, port, key }: { host: string; port: string
 
 /**
  * Whether the setup screen replaces the board. With no repo open there is nothing to show. With one open, only when every
- * known repo lives on a remote host and the host it is open on has failed: a local known repo always counts, because the
- * shell can start its daemon, and a host that is merely connecting or retrying is not given up on.
+ * known repo lives on a remote host and the host it is open on has been given up on (`gave_up`): a local known repo always counts, because the
+ * shell can start its daemon, and a host that is connecting, retrying or between a dropped link and its retry is not given up on.
  */
-export function shouldShowSetup(cfg: Pick<AppConfig, "active_repo" | "known_repos">, hosts: Pick<RemoteHostView, "host_id" | "state">[]): boolean {
+export function shouldShowSetup(cfg: Pick<AppConfig, "active_repo" | "known_repos">, hosts: Pick<RemoteHostView, "host_id" | "gave_up">[]): boolean {
   if (!cfg.active_repo) return true;
   if (cfg.known_repos.length === 0) return true;
   if (!cfg.known_repos.every(isRemoteRepo)) return false;
   const active = parseRemoteRepo(cfg.active_repo);
-  return Boolean(active && hosts.some((host) => host.host_id === active.hostId && host.state === "failed"));
+  return Boolean(active && hosts.some((host) => host.host_id === active.hostId && host.gave_up));
 }

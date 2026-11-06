@@ -3,7 +3,8 @@ import { parseRefusal, refusalAdvice, shouldShowSetup, sshDestination } from "./
 import type { HostRefusal, RefusalKind } from "./types";
 
 const remote = "alinery+ssh://box-a1b2c3/srv/app";
-const state = (id: string, value: "idle" | "connecting" | "reconnecting" | "connected" | "failed") => ({ host_id: id, state: value });
+// A host is only given up on when the shell says so: `failed` alone also shows for the moment before a dropped link is retried.
+const host = (id: string, gaveUp: boolean) => ({ host_id: id, gave_up: gaveUp });
 
 describe("when the setup screen replaces the board", () => {
   it("shows with no repo open, and with no repo known", () => {
@@ -15,19 +16,18 @@ describe("when the setup screen replaces the board", () => {
   it("does not show for a local repo, which the shell can always start a daemon for", () => {
     expect(shouldShowSetup({ active_repo: "/a", known_repos: ["/a"] }, [])).toBe(false);
     // A local repo counts even when the open one is on a host that has failed.
-    expect(shouldShowSetup({ active_repo: remote, known_repos: ["/a", remote] }, [state("box-a1b2c3", "failed")])).toBe(false);
+    expect(shouldShowSetup({ active_repo: remote, known_repos: ["/a", remote] }, [host("box-a1b2c3", true)])).toBe(false);
   });
 
-  it("shows when every known repo is remote and the open one's host has failed", () => {
+  it("shows when every known repo is remote and the open one's host was given up on", () => {
     const cfg = { active_repo: remote, known_repos: [remote, "alinery+ssh://other-111111/x"] };
-    expect(shouldShowSetup(cfg, [state("box-a1b2c3", "failed")])).toBe(true);
+    expect(shouldShowSetup(cfg, [host("box-a1b2c3", true)])).toBe(true);
   });
 
-  it("gives a host that is connecting, retrying or connected the benefit of the doubt", () => {
+  it("does not show for a host that is not given up on, including a failed one about to be retried", () => {
     const cfg = { active_repo: remote, known_repos: [remote] };
-    for (const value of ["idle", "connecting", "reconnecting", "connected"] as const) {
-      expect(shouldShowSetup(cfg, [state("box-a1b2c3", value)])).toBe(false);
-    }
+    expect(shouldShowSetup(cfg, [host("box-a1b2c3", false)])).toBe(false);
+    expect(shouldShowSetup(cfg, [host("other-111111", true)])).toBe(false);
     expect(shouldShowSetup(cfg, [])).toBe(false);
   });
 });
