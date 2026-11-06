@@ -1166,3 +1166,66 @@ Edit the plan, or let S5.4 do it.
 - **What:** (1) token overlap, see R-S5.1-4. (2) `alinery_list_tasks` hiding archived tasks was uncovered: the recorded list after the archive runs after the purge, so `.filter((t) => !t.archived)` could go unnoticed; `replay.test.ts` now creates, archives and lists a third task. (3) The `alinery_save_playbook` description no longer says a repo save fails `repo-busy` while a desktop window owns the repo (it succeeds through `PlaybookService.SavePlaybook`); `fixtures/rust-tools.json` keeps the Rust text as the recording. (4) Plan 2.1.10 table: the no-token row is gone and the minted-token row names the MCP child's environment. (5) Comments in `rpc/tasks.ts` and `main.ts` no longer say alinery-mcp still sends the legacy ops; `DaemonClient::create_task` and `create_subtask` in alinery-core stay for S5.3 with the ops (R-S5.1-2).
 - **Flaky:** vitest `ChatEntryRow.test.tsx` "copies prompt and assistant message bodies" failed once in 1736 under `check.sh --quick`, passes alone and on the rerun; S5.1 did not touch ChatEntryRow. Not investigated.
 - **Files:** as above.
+
+## S5.2 Host bootstrap (O15)
+
+O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
+
+### R-S5.2-1: the wire, and 13 requests where 2.3.3 lists 11
+- **Kind:** decision, deviation.
+- **What:** `host.proto` is `HostRequest` and `HostReply` (a `oneof` each), framed `[u32 big-endian length][message]` on the stdin and stdout of `alinery-vinculum-daemon --host-service`. The service first prints the line `alinery-host-service/1`, so the client can skip what a login shell printed ahead of it, then sends `HostReply{id: 0, hello}`; requests use ids from 1 and replies may come in any order (each request is handled on its own). A frame over 64 MiB is a broken stream. The plan lists 11 host variants (2.3.3) and says the restore runs on this channel (S5.2). The service has 13: those 11 plus `BackupVerify` and `BackupRestore` (verify refuses an archive of another repo before anything is stopped, so a refusal does not cost the host's live sessions; restore runs while the daemon is down). `SyncCredentials` carries its `set` as a map of provider id to the credential JSON as text, and the service does not interpret it.
+- **Options:** (a) as built; (b) one request message with a string `op` and a JSON body (rejected: nothing would pin the bytes, and the golden-bytes gate is how the Rust and TypeScript sides stay equal); (c) gRPC over the pipe (rejected: no HTTP/2 on stdio, plan S5.2).
+- **Why:** smallest wire that both sides can pin with golden bytes (`proto/golden.ts` writes `golden/host.json`; `tests::host_wire` and `ops.test.ts` check it).
+- **Reverse:** none planned; the two backup requests are the restore the plan asks this channel to carry.
+- **Files:** `proto/alinery/v1/host.proto`, `proto/gen/alinery/v1/host_pb.ts`, `proto/golden.ts`, `proto/golden/host.json`, `vinculum-daemon/src/hostService/`, `src/host_wire.rs`.
+
+### R-S5.2-2: the Rust side keeps `HostOp` and the JSON reply shapes
+- **Kind:** decision.
+- **What:** `RepoOp` is renamed `HostOp` and encodes to `host.proto`; the reply is turned back into the JSON shapes the callers already read (`{"claimed"}`, `{"kind":"checkout","root"}`, the listing object, and so on), so the frontend commands (`remote_list_dir`, `remote_classify`, `remote_init`), `backup.rs` and the tests changed names and not logic. `rg -o 'RepoOp::[A-Za-z]+'` over the shell and core returns nothing.
+- **Why:** the smallest diff that solves the session (AGENTS.md). The prost messages are hand-written beside `daemon_rpc.rs`'s admin messages, as the plan did for them.
+- **Reverse:** make `HostChannel::call` return typed replies and change the callers.
+- **Files:** `src/host_wire.rs` (`reply_value`), `src/remote.rs`.
+
+### R-S5.2-3: what the Rust deletion removed
+- **Kind:** follow-up record, deviation (scope).
+- **What:** gone: the `alinery-mcp` crate (`mcp/`, its `--repo-service` loop and its test), `alinery-core/src/repo_service.rs`, and from `credential_sync.rs` the merge, its lock and `is_oauth` (the daemon's `credentials.ts` does this now; `kinds`, `api_keys` and `read_store` stay because the shell still reads the store). Beyond the plan: `restore_backup_into`, `extract_backup_into`, `safe_entry_path`, `clear_curated_alinery_data` and `CURATED_ALINERY_PATHS` in `alinery-core/src/backup.rs` had no caller left once `repo_service.rs` went (the daemon's `domain/backup.ts` restores; the local restore runs the daemon program), so they went with their tests (four `clear_curated_*` tests in `src/tests/backup.rs`, and the extract halves of `alinery-core/tests/backup_zip_interop.rs`, which now checks that the Rust reader reads the 70,000-file archive written by the host's `zip`). `read_backup_meta`, `require_backup_matches_repo` and `validate_backup_destination` stay (the shell still uses them). The gates that scanned `mcp/src` (`check-no-auto-session-kill.sh`, `check-ssh-spawn.sh`, `check-wire-parsing-boundary.sh`, `check-omp-no-path-fallback.sh`, `no_auto_session_kill_test.sh`) stop scanning it, and `check-ssh-spawn.sh` now scans the host service's two files for process kills by name or signal. `externalBin` is `alinery-vinculum-daemon` alone; `copy-sidecar.sh`, `check-experimental-daemon-names.sh` and `dev_fetch_omp_test.sh` follow. Left: `alinery-core/src/log.rs` still maps a file named `alinery-mcp` to a log label, and `src/mcp.rs` messages still say "alinery-mcp" for the managed MCP child (user-visible text; not touched).
+- **Reverse:** git history has all of it.
+- **Files:** as above; `.gitignore` and `.taurignore` still list `alinery-mcp-*` (harmless).
+
+### R-S5.2-4: the runtime build, and what was and was not run
+- **Kind:** unverified (x64), follow-up.
+- **What:** `scripts/build-remote-runtimes.sh --check` asks for Bun and nothing else; each archive holds `alinery-vinculum-daemon` and a `MANIFEST` (`tar tzvf`: one executable of 99.3 MB for arm64 and 99.8 MB for x64, archives of 43.3 and 43.5 MB). The glibc floor (2.28) is still checked against the Bun binary. Both archives were built here (the x64 one is the Bun baseline build); only the arm64 one was run, on the Debian arm64 container (Colima, linux/arm64). The x64 archive has not run anywhere (no native x64 machine; QEMU is forbidden). `resources/remote/` is gitignored, so these archives are not in the commit.
+- **Reverse:** none needed.
+- **Files:** `scripts/build-remote-runtimes.sh`. Live check: L-S5.2-b.
+
+### R-S5.2-5: `check-remote-routing.sh` and `check-remote-offload.sh` stay
+- **Kind:** decision.
+- **What:** the plan asked to decide from the count of listed commands. The routing list has 3 entries (`pick_backup_destination_dialog`, `start_mcp_server`, `stop_mcp_server`) and the offload list is empty; but the scripts still guard commands that route a remote repo through `repo_client`, `with_library` or `remote_call`, and `remote_call` is still how `backup.rs` reaches the host, so both stay. Neither script nor list changed in this session. Both pass under `check.sh`.
+- **Options:** delete both with their lists (rejected: a new command that resolves its repo with a local-only helper would then fail closed with no record, which is what the gate prevents).
+- **Reverse:** delete the two scripts, their `.txt` files and their lines in `check.sh`.
+- **Files:** `scripts/tests/check-remote-routing.sh`, `scripts/tests/check-remote-offload.sh`, `scripts/tests/remote-local-only.txt`, `scripts/tests/remote-offload-ok.txt`.
+
+### R-S5.2-6: `wait_daemon_gone` retries on a reset, and a stale claim after a silent network cut
+- **Kind:** deviation, unverified claim.
+- **What:** the TypeScript port of `wait_for_daemon_gone` probes the daemon's socket as `domain/ownership.ts` `socketReachable` does, which fails closed on any error other than "refused" or "missing". A daemon closing its listener while the probe connects answers `ECONNRESET`; the port failed on that (a flaky `bun test` in the first full `check.sh`, then reproduced by the test's own timing). The wait now counts a reset as "still going" and looks again. `ownership.ts` is unchanged. Separately, a host service whose ssh connection dies without a reset (the network cut with no packet) keeps its claim until sshd notices; a reconnect in that window would answer `repo-busy`. That is as it was with `alinery-mcp --repo-service`; nothing here changes it, and nothing here observed it (L-S5.2-c).
+- **Reverse:** remove the `ECONNRESET` line in `waitDaemonGone`.
+- **Files:** `vinculum-daemon/src/hostService/ops.ts`, `ops.test.ts`.
+
+### R-S5.2-7: three live tests were stale
+- **Kind:** follow-up record.
+- **What:** the live remote tests had not run since before S4.1 (no zig, so no runtime bundle; R-S4.12-4). First run, three failed for reasons older than S5.2 or only about names: (1) `live_commands_connect_activate_disconnect_reconnect_and_remove` asserted the host `app.toml` carried no install id, but S4.1 sends the telemetry preferences whole on purpose (`render_remote_app_toml`); the assertion now says it does. (2) `live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop` started its "old" daemon with no RPC token, so the confirmed stop (an RPC shutdown since S1.4) was refused with `grpc-status 16`; the test now gives the old daemon the token the app already kept for the repo, which is the case the banner covers (a daemon this app started earlier), and waits for the old daemon's socket before opening the repo. (3) `live_a_stalled_host_does_not_hold_up_the_command_that_asked` stopped a process by the old name (`alinery-mcp --repo-service`); it now stops `alinery-vinculum-daemon --host-service`. A fourth change adds the plan's second claimant: a rival `HostChannel` on the same host gets `claimed: false` while the first channel lives. After the changes all eight pass together (25.9 s).
+- **A daemon with an unknown token still cannot be restarted from the banner** (it answers `grpc-status 16`); that is the fail-closed behaviour of S1.4 and not changed here.
+- **Files:** `src/tests/remote.rs`.
+
+### R-S5.2-8: AGENTS.md
+- **Kind:** follow-up.
+- **What:** the Remote repositories and Daemon sections no longer describe a repo service or the `mcp` crate; the version-bump table drops `mcp/Cargo.toml` (six files, two workspace packages in `Cargo.lock`); the runtime build needs Bun only. The new text is the "Host service" bullet.
+- **Files:** `AGENTS.md`.
+
+### R-S5.2-9: suggested README text
+- **Kind:** suggested README text (README.md and `alinery-app/README.md` are not edited by agents).
+- **What:** (1) `alinery-app/README.md` lines 88 to 144 and `README.md` line 228 onward still name an `alinery-mcp` binary, sibling sidecars `alineryd` and `alinery-runner`, and `alinery-mcp --serve`. Replace them as R-S5.1-10 says: the MCP server is `alinery-vinculum-daemon --mcp`. (2) If any README says a remote host needs a Rust toolchain, zig or cargo-zigbuild to build the runtimes: `scripts/build-remote-runtimes.sh` now needs Bun only, and a remote host needs `git`, `tar` and `zip` installed (the setup says so by name when one is missing).
+
+### R-S5.2-10: the first full check.sh stopped at the daemon `bun test`
+- **Kind:** flaky (fixed), record.
+- **What:** the first `./scripts/check.sh` after bf67be3 failed once in `ops.test.ts` ("an answering socket keeps it waiting; a daemon that exits mid-wait lets it return", `ECONNRESET`), 595 of 596 passing, before reaching the Rust steps. It is R-S5.2-6; six reruns of `bun test src/hostService` passed 37 of 37 after the fix, and the third full `check.sh` is the one in the Status line (the second stopped at the `mcp/src` gates, R-S5.2-3).

@@ -310,6 +310,7 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
   ```
 - **Expected:** `alinery-app/src-tauri/resources/remote/<triple>.tar.gz` for both triples and `manifest.json` filled in; the build includes `src/platform/fsync-worker.ts` as a second entry point.
 - **Status:** open
+- **Update (2026-11-06, S5.2):** the build needs Bun only now; skip `brew install zig`, `rustup target add` and `cargo install cargo-zigbuild`. An agent ran `scripts/build-remote-runtimes.sh` (both archives, one executable each) and the eight `live_*` tests on the arm64 Debian sshd (see the S5.2 Status line in the plan). This entry stays open for the x64 archive, which was built and not run (L-S5.2-b).
 
 ### L-S1.3-b: Live remote tests (covers S1.3, S1.4, S3.1, S3.4 and S3.5 changes)
 
@@ -739,6 +740,34 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the tool answers on the host (the MCP child is the host's Bun binary; no Mac path appears in the answer).
 - **Status:** open
 
+### L-S5.2-a: the missing-tool refusal in the remote dialog
+- **Session:** S5.2 (D6).
+- **Needs:** the app launched; the Docker sshd (linux/arm64 only): `scripts/tests/remote-sshd/run.sh start`, then `docker exec alinery-test-sshd sh -c 'apt-get remove -y git tar'` (if `tar` cannot be removed, remove only `git`).
+- **Steps:** build the runtimes (`scripts/build-remote-runtimes.sh`), open the remote button beside Add repository, add the sshd (use the printed `ALINERY_TEST_SSH_ARGS` values: port 2222, user `dev`, the test key), trust the key. Then `docker exec alinery-test-sshd ls /home/dev/.local/share/alinery-remote/runtime` .
+- **Expected:** the dialog shows "the host is missing git; install it on that host with its package manager, then run setup again" (both tools named, comma separated, when both are gone), the new host is not left listed, and the `ls` finds no runtime directory (nothing was installed). After `apt-get install -y git tar` in the container and running setup again, the host connects. Stop the sshd with `run.sh stop`.
+- **Status:** open
+
+### L-S5.2-b: a native x64 Linux host
+- **Session:** S5.2 (R-S5.2-4).
+- **Needs:** the app launched; a real x86_64 Linux machine with glibc 2.28 or newer, reachable over ssh, with git, tar and zip. Never an emulated image (Bun crashes without AVX under QEMU).
+- **Steps:** `scripts/build-remote-runtimes.sh` (it builds both archives), connect the machine from the remote button, open a folder on it as a repository, start a terminal session, then in Settings > Backups on that repository make a backup, change a task, and restore the backup.
+- **Expected:** connect installs `~/.local/share/alinery-remote/runtime/<hash>/alinery-vinculum-daemon` (one executable and a MANIFEST), the daemon starts, `pgrep -af 'alinery-vinculum-daemon --host-service'` on the host shows one service process while the app is connected, and the restore brings the older task back and the daemon returns.
+- **Status:** open
+
+### L-S5.2-c: a real network cut under a claimed repository
+- **Session:** S5.2 (R-S5.2-6).
+- **Needs:** the app launched; a real remote host; the ability to cut this Mac's network for about a minute (Wi-Fi off).
+- **Steps:** connect the host and open a repository on it (the host service holds its claim). Turn Wi-Fi off for 60 seconds, turn it on, wait for the host to come back by itself (the supervisor retries at 5, 10, 30 and 60 s). On the host: `pgrep -af -- '--host-service'`.
+- **Expected:** the repository comes back without "repo-busy". If it shows "repo-busy: another Alinery window holds this repository on the host", the old service process (still on the host, waiting for sshd to notice the dead connection) holds the claim; that is the case to report, with the host's `ClientAliveInterval`. A cut that sshd notices (a TCP reset) releases the claim at once.
+- **Status:** open
+
+### L-S5.2-d: the restore button on a remote repository
+- **Session:** S5.2 (S4.9 carried over).
+- **Needs:** the app launched; a remote repository with a daemon and at least one backup on the host.
+- **Steps:** Settings > Backups on that repository: restore a backup, with a live terminal session open.
+- **Expected:** the confirmation names the live sessions, the daemon stops, the host service restores, the daemon starts again, and the tasks are those of the backup. Choosing an archive of another repository is refused before the daemon is touched (the sessions keep running).
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -750,5 +779,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.11-a to -f (S4.11):** built; see the entries above.
 - **L-S4.12-a to -c (S4.12):** built; see the entries above.
 - **L-S5.1-a to -e (S5.1):** built; see the entries above.
+- **L-S5.2-a to -d (S5.2):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
