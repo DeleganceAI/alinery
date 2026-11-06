@@ -2,7 +2,7 @@
 // child inside the reservation, and killing a child or discarding a setup. The Rust tests of `subtask.rs` are the
 // cases this keeps; each checks the files a Rust reader would find.
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadRelationships } from "./artifactTree.ts";
@@ -247,4 +247,39 @@ test("a discard of a manager that belongs to another task, or an empty id with n
   await expect(discardSubtask(repo, "other", id, () => {})).rejects.toThrow();
   await expect(discardSubtask(repo, "a", "", () => {})).rejects.toThrow("no active sub-task");
   await expect(discardSubtask(repo, "a", "../x", () => {})).rejects.toThrow("invalid sub-task manager session id");
+});
+
+const executionOf = (repo: string, slug: string) => JSON.parse(readFileSync(join(taskDir(repo, slug), "execution.json"), "utf8")) as Record<string, unknown>;
+
+test("a child that inherits the definition inherits the step models, and one with its own playbook does not", async () => {
+  const repo = await fixture();
+  const parent = executionOf(repo, "a");
+  writeFileSync(join(taskDir(repo, "a"), "execution.json"), JSON.stringify({ ...parent, step_models: { implementation: "parent-override" } }));
+  const id = await manager(repo);
+  await createChild(repo, id);
+  expect(executionOf(repo, "b").step_models).toEqual({ implementation: "parent-override" });
+
+  const other = await fixture();
+  writeFileSync(join(taskDir(other, "a"), "execution.json"), JSON.stringify({ ...executionOf(other, "a"), step_models: { implementation: "parent-override" } }));
+  const own = await createChild(other, await manager(other), "own", { playbook: { reference: { scope: "repo", key: "one-shot" }, source: PLAYBOOK } });
+  expect(own.reply.creation).toBe("ready");
+  expect(executionOf(other, "own").step_models ?? {}).toEqual({});
+});
+
+test("a worktree that fails to check out leaves a partial child that the parent still names", async () => {
+  const repo = await fixture();
+  const id = await manager(repo);
+  const hook = join(repo, ".git", "hooks", "post-checkout");
+  mkdirSync(join(repo, ".git", "hooks"), { recursive: true });
+  writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+  chmodSync(hook, 0o755);
+  const { reply } = await createChild(repo, id);
+  expect(reply.creation).toBe("partial");
+  expect(reply.errors.some((e) => e.stage === "git_worktree")).toBe(true);
+  expect(readTask(repo, "b")?.parent_task).toBe("a");
+  expect(readTask(repo, "a")?.active_subtask).toBe("b");
+  expect(JSON.parse(readFileSync(join(sessionsDir(repo, "a"), `${id}.meta.json`), "utf8")).subtask_slug).toBe("b");
+  expect(executionOf(repo, "b").creation).toBe("partial");
+  expect(loadRelationships(repo).size).toBe(2);
+  await expect(createChild(repo, id, "c")).rejects.toThrow("already has an active child");
 });
