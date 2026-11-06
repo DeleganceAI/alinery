@@ -669,6 +669,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** all pass; `check-proto-gen.sh` reports the checked-in `proto/gen` is current. (Passes under vitest and Bun on macOS today.)
 - **Status:** open
 
+### L-S4.11-f: the hosted token reaches a remote host's daemon between connects
+- **Session:** S4.11 (R-S4.11-5).
+- **Needs:** the app launched, a Linux host over SSH (or `scripts/tests/remote-sshd/run.sh start` on arm64), signed in to an Alinery account that has hosted models.
+- **Steps:** (1) Connect the host, open Credentials and share "Alinery hosted models", save. Open a remote repo. (2) On the host: `ls -l ~/.local/share/alinery-remote/config/*/inference.json` (mode `-rw-------`) and note `expires_at`: `jq .expires_at <file>`. (3) In the app, force a refresh without reconnecting: wait for the 30-minute refresh, or open a new hosted-model session on the remote repo near the token's renewal window. (4) Re-read `expires_at` on the host.
+- **Expected:** after step 3 the host's `expires_at` is newer than in step 2 without a reconnect; the file stays mode 0600; the Mac's `alinery.log` has no `app.remote-hosted-inference-failed` line. With the share item turned off, the host's file is not rewritten.
+- **Status:** open.
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -677,6 +684,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.8-a to -e (S4.8):** built; see the entries above.
 - **L-S4.9-a to -f (S4.9):** built; see the entries above. L-S4.5-e is expected to pass now (L-S4.9-d).
 - **L-S4.10-a to -d (S4.10):** built; see the entries above.
-- **L-S4.11-a to -e (S4.11):** built; see the entries above.
+- **L-S4.11-a to -f (S4.11):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
