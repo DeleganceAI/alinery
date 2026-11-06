@@ -1359,3 +1359,29 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **Kind:** readme (README.md is not edited).
 - **Suggested README text:** the four bullets added to plan 4.4 this session, plus the earlier ones there: the MCP Server section (`alinery-mcp` is gone; the host config and its prerequisites), the development prerequisites (Bun and `scripts/install-proto.sh --with-dev`; the Rust workspace is the app and `alinery-core`), and line 128 next to line 87 (a repo with no daemon shows its banner).
 - **Files:** `docs/thick-daemon-plan.md` (4.4).
+
+## S6.1 Hosts and the onboarded mark
+
+### R-S6.1-1: the migration keys on the absence of the key
+- **Kind:** decision (the plan says "at the first read of an older app config" and gives no way to tell an older file from a newer one whose mark is false).
+- **What:** `local_onboarded` and `RemoteHost.onboarded` are always written. `read_existing_app_config` parses the raw TOML a second time and derives a mark from `known_repos` only when its key is missing. After the first write the key exists and the repos no longer decide it. Fresh installs (no file) start unmarked. The derivation sits in the read path, so every `load_app_config` caller sees it, but the file changes only on the next write.
+- **Options:** `Option<bool>` fields (the plan says `bool`); a `settings_version` bump (it is forced to 1 by `sanitize_app_config`); keep the derivation permanent (a user who skipped nothing but never onboarded with a repo would be marked forever).
+- **Reverse:** make the fields `Option<bool>`, or add a separate `onboarding_migrated` flag, and drop the second TOML parse.
+- **Files:** `alinery-app/src-tauri/src/app_config.rs` (`migrate_onboarded_marks`), `src/tests/app_config.rs`.
+
+### R-S6.1-2: the legacy `localStorage` flag is moved by the page, before the wizard decision
+- **Kind:** decision.
+- **What:** `readAppConfig` is chained into `migrateLegacyOnboarding`, which calls `set_host_onboarded("local", true)` and removes the key, so the wizard decision already sees the mark. A refused call leaves the key (retried next launch) and still treats this computer as onboarded for this launch. The flag was once per install and not per host, so it can only mean this computer. A remote host whose only evidence is the old flag has no mark until it holds a repo (the `known_repos` rule) or the user finishes onboarding there.
+- **Reverse:** put the flag read in Rust (the shell cannot read the webview's `localStorage`), so this is not reversible without a new IPC.
+- **Files:** `alinery-app/src/onboarding.ts`, `alinery-app/src/App.tsx`, `alinery-app/src/onboarding.test.ts`.
+
+### R-S6.1-3: which host a finished wizard marks, and when the wizard is decided
+- **Kind:** decision.
+- **What:** `completeOnboarding` (finish, skip or close; the dialog's close handler is the same function, as before) marks the host of `appConfig.active_repo`, or this computer when there is none. The wizard is still decided once, at startup, from the active repo's host, as before; choosing a repo on another host later does not reopen it. Choosing the host first and running onboarding on a host's first daemon is S6.2. If the shell refuses the mark, `repoErr` shows "Could not record that onboarding finished" and the wizard is closed anyway.
+- **Reverse:** change `hostOf` in `onboarding.ts`.
+- **Files:** `alinery-app/src/App.tsx`, `alinery-app/src/onboarding.ts`.
+
+### R-S6.1-4: what the tests do not prove
+- **Kind:** unverified.
+- **What:** (a) "Removing a host clears its mark" holds because the mark is a field of the `RemoteHost` entry; the Rust test only shows the serialized config has no trace of a removed host, since `discard_unconnected_host` needs an `AppHandle`. (b) `list_hosts` and `listHosts` have no caller in the UI until S6.2, so nothing exercises the command through Tauri; the Rust test covers `host_entries`, and `check-ipc-commands.sh` the registration. (c) The real launch is L-S6.1-a. (d) The mark is Mac-private: `render_remote_app_toml` is an allowlist and does not copy it to a host.
+- **Files:** `alinery-app/src-tauri/src/tests/app_config.rs`.

@@ -838,6 +838,16 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the answer to "does the daemon spawn the packaged `omp` binary for an agent session, or run the agent in its own process?" The code says the second (`terminal.ts` spawns a shell, `mcp.ts` spawns MCP children, nothing spawns `omp`, and harness `omp` is rewritten to `vinculum` in `tasks.ts` and `main.ts`). If an `omp` child does appear, AGENTS.md's Harness Registry text is right and R-S5.4-3 closes as a false alarm; if none does, that section and the Core Model's "one PTY running OMP" need the rewrite R-S5.4-3 describes.
 - **Status:** open
 
+### L-S6.1-a: the onboarded mark in a real app config
+- **Session:** S6.1 (R-S6.1-1, R-S6.1-2).
+- **Needs:** the app launched (user-run), with a scratch app config dir so your real config is not touched. Do the three cases in order, quitting the app between them.
+- **Steps:**
+  1. Old install with a repo and the old flag: start with an `app.toml` that has `known_repos = ["<a git repo>"]` and no `local_onboarded` key, and in the webview's `localStorage` the key `alinery.onboardingCompleted.v1` = `1` (a build before S6.1 sets it when you skip onboarding). Launch.
+  2. Old install with a repo and no flag: same `app.toml`, key absent. Launch.
+  3. Fresh install: no `app.toml`. Launch, pick a repo, then Skip onboarding. Quit and read `app.toml`.
+- **Expected:** (1) the board opens with no onboarding, `app.toml` gains `local_onboarded = true` after the first write, and the `localStorage` key is gone (devtools: Application, Local Storage). (2) the board opens with no onboarding, because a local repo is known. (3) onboarding opens first; after Skip, `app.toml` holds `local_onboarded = true`, and a relaunch opens the board. For a remote host: a host with a repo in `known_repos` shows `onboarded = true` under `[remote_hosts.<id>]` after the first write, and a host with none shows `false`.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -853,4 +863,5 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S5.3-a to -i (S5.3):** built; see the entries above.
 - **L-S5.4-a (S5.4):** built; see the entry above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
+- **L-S6.1-a (S6.1):** built; see the entry above.
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
