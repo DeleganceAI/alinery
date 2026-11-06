@@ -38,6 +38,7 @@ import type {
   GlobalSettings,
   HostEntry,
   HostedCatalogView,
+  HostTestReport,
   LinearTicket,
   McpStatus,
   PreviewResult,
@@ -92,6 +93,7 @@ export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
 export const remoteAddHost = (destination: string, label?: string) => invoke<RemoteHostView>("remote_add_host", { destination, label: label ?? null });
 export const remoteSshAliases = () => invoke<string[]>("remote_ssh_aliases");
 export const remoteDescribeDestination = (destination: string) => invoke<SshTarget>("remote_describe_destination", { destination });
+export const remoteTestHost = (destination: string, trust: boolean) => invoke<HostTestReport>("remote_test_host", { destination, trust });
 export const remoteDiscardHost = (hostId: string) => invoke<void>("remote_discard_host", { hostId });
 export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
 export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });

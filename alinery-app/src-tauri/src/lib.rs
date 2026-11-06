@@ -157,6 +157,7 @@ pub fn run() {
             remote_add_host,
             remote_ssh_aliases,
             remote_describe_destination,
+            remote_test_host,
             remote_discard_host,
             remote_sharing,
             remote_set_sharing,

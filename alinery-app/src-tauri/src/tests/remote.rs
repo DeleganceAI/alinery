@@ -1028,14 +1028,14 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
         ),
     ];
     for (probe, expected) in cases {
-        let error = select_target(&probe, &manifest()).unwrap_err();
+        let error = select_target(&probe, &manifest()).unwrap_err().message;
         assert!(error.contains(expected), "{error}");
     }
     let empty = RuntimeManifest {
         glibc_floor: "2.28".into(),
         targets: BTreeMap::new(),
     };
-    assert!(select_target(&ok, &empty).unwrap_err().contains("does not bundle"));
+    assert!(select_target(&ok, &empty).unwrap_err().message.contains("does not bundle"));
     // 2.10 must compare as newer than 2.9, not as a string.
     assert!(select_target(
         &Probe { glibc: Some("2.10".into()), ..ok },
@@ -1054,15 +1054,124 @@ fn a_host_with_no_git_and_no_tar_is_refused_naming_both_before_anything_is_insta
     assert_eq!((probe.tools["git"], probe.tools["tar"]), (false, false));
     let error = select_target(&probe, &manifest()).unwrap_err();
     assert_eq!(
-        error,
+        (error.kind, error.missing_tools.as_slice()),
+        (RefusalKind::MissingTools, ["tar".to_string(), "git".to_string()].as_slice())
+    );
+    assert_eq!(
+        error.message,
         "the host is missing tar, git; install them on that host with its package manager, then run setup again"
     );
     // One tool reads in the singular.
     let one = parse_probe(&PROBE_OK.replace("has_git=1", "has_git=0")).unwrap();
     assert_eq!(
-        select_target(&one, &manifest()).unwrap_err(),
+        select_target(&one, &manifest()).unwrap_err().message,
         "the host is missing git; install it on that host with its package manager, then run setup again"
     );
+}
+
+/// Needs the throwaway sshd of `scripts/tests/remote-sshd/run.sh` and Docker: the container's git is moved aside for the
+/// probe, so the host is refused as missing exactly that tool, and put back afterwards. Skipped without either.
+#[test]
+fn live_test_destination_refuses_a_host_missing_git_and_accepts_it_again() {
+    let Some(args) = live_args() else { return };
+    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
+    let rename = |from: &str, to: &str| {
+        std::process::Command::new("docker")
+            .args(["exec", "alinery-test-sshd", "mv", from, to])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    if !rename("/usr/bin/git", "/usr/bin/git.off") {
+        eprintln!("skipped: no running container named alinery-test-sshd");
+        return;
+    }
+    struct PutBack;
+    impl Drop for PutBack {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("docker")
+                .args(["exec", "alinery-test-sshd", "mv", "/usr/bin/git.off", "/usr/bin/git"])
+                .status();
+        }
+    }
+    let _put_back = PutBack;
+    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/remote");
+    let manifest: RuntimeManifest = serde_json::from_str(&std::fs::read_to_string(bundle.join("manifest.json")).unwrap()).unwrap();
+    let destination = args.join(" ");
+
+    let error = test_destination(&destination, &manifest, true).unwrap_err();
+    let refusal: serde_json::Value = serde_json::from_str(error.strip_prefix("host-refused: ").unwrap_or_else(|| panic!("not a refusal: {error}"))).unwrap();
+    assert_eq!(refusal["kind"], "missing_tools");
+    assert_eq!(refusal["missing_tools"], serde_json::json!(["git"]));
+
+    assert!(rename("/usr/bin/git.off", "/usr/bin/git"));
+    let report = test_destination(&destination, &manifest, true).unwrap();
+    assert!(report.platform.starts_with("Linux"), "{}", report.platform);
+}
+
+#[test]
+fn every_refusal_carries_its_kind_and_reaches_the_page_as_json() {
+    let ok = parse_probe(PROBE_OK).unwrap();
+    let kind = |probe: Probe| select_target(&probe, &manifest()).unwrap_err().kind;
+    assert_eq!(
+        kind(Probe {
+            os: "Darwin".into(),
+            ..ok.clone()
+        }),
+        RefusalKind::NotLinux
+    );
+    assert_eq!(
+        kind(Probe {
+            arch: "riscv64".into(),
+            ..ok.clone()
+        }),
+        RefusalKind::UnsupportedCpu
+    );
+    assert_eq!(kind(Probe { glibc: None, ..ok.clone() }), RefusalKind::NoGlibc);
+    assert_eq!(
+        kind(Probe {
+            glibc: Some("2.17".into()),
+            ..ok.clone()
+        }),
+        RefusalKind::OldGlibc
+    );
+    assert_eq!(
+        kind(Probe {
+            arch: "aarch64".into(),
+            pagesize: Some(65536),
+            ..ok.clone()
+        }),
+        RefusalKind::LargePages
+    );
+    let empty = RuntimeManifest {
+        glibc_floor: "2.28".into(),
+        targets: BTreeMap::new(),
+    };
+    assert_eq!(select_target(&ok, &empty).unwrap_err().kind, RefusalKind::NoRuntime);
+
+    // The probe reads the login, so the fix names it.
+    let killing = parse_probe(
+        &format!("{PROBE_OK}user=ada\n")
+            .replace("linger=yes", "linger=no")
+            .replace("killuser=b false", "killuser=b true"),
+    )
+    .unwrap();
+    assert_eq!(killing.user.as_deref(), Some("ada"));
+    let refusal = choose_launcher(&killing).unwrap_err();
+    assert_eq!((refusal.kind, refusal.fix.as_deref()), (RefusalKind::StopsProcesses, Some("loginctl enable-linger ada")));
+    let anonymous = Probe { user: None, ..killing };
+    assert_eq!(choose_launcher(&anonymous).unwrap_err().fix.as_deref(), Some("loginctl enable-linger $(id -un)"));
+
+    // What a failed connect hands the page: the marker, then the refusal as JSON with the tool list.
+    let missing = select_target(
+        &parse_probe(&PROBE_OK.replace("has_git=1", "has_git=0").replace("has_zip=1", "has_zip=0")).unwrap(),
+        &manifest(),
+    )
+    .unwrap_err();
+    let text: String = missing.into();
+    let json: serde_json::Value = serde_json::from_str(text.strip_prefix("host-refused: ").unwrap()).unwrap();
+    assert_eq!(json["kind"], "missing_tools");
+    assert_eq!(json["missing_tools"], serde_json::json!(["git", "zip"]));
+    assert!(json["fix"].is_null());
 }
 
 #[test]
@@ -1079,7 +1188,7 @@ fn launcher_only_uses_systemd_run_when_lingering_and_refuses_session_killing_hos
         kill_user_processes: Some(true),
         ..ok.clone()
     };
-    assert!(choose_launcher(&killing).unwrap_err().contains("enable-linger"));
+    assert!(choose_launcher(&killing).unwrap_err().message.contains("enable-linger"));
     // Lingering rescues a host that would otherwise kill user processes.
     assert_eq!(
         choose_launcher(&Probe {

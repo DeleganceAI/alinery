@@ -321,6 +321,7 @@ pub(crate) const PROBE_SCRIPT: &str = r#"
 echo __ALINERY_PROBE__
 echo "uname=$(uname -sm)"
 echo "home=$HOME"
+echo "user=$(id -un 2>/dev/null)"
 echo "glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null)"
 echo "pagesize=$(getconf PAGESIZE 2>/dev/null)"
 for tool in tar gzip sha256sum git zip unzip setsid systemd-run; do
@@ -335,6 +336,7 @@ pub(crate) struct Probe {
     pub(crate) os: String,
     pub(crate) arch: String,
     pub(crate) home: String,
+    pub(crate) user: Option<String>,
     pub(crate) glibc: Option<String>,
     pub(crate) pagesize: Option<u64>,
     pub(crate) tools: BTreeMap<String, bool>,
@@ -358,6 +360,7 @@ pub(crate) fn parse_probe(output: &str) -> Result<Probe, String> {
                 probe.arch = arch.to_string();
             }
             "home" => probe.home = value.to_string(),
+            "user" => probe.user = Some(value.to_string()).filter(|user| !user.is_empty()),
             "glibc" => probe.glibc = value.strip_prefix("glibc ").map(str::to_string),
             "pagesize" => probe.pagesize = value.parse().ok(),
             "linger" => {
@@ -409,40 +412,100 @@ fn version_parts(version: &str) -> Vec<u64> {
     version.split('.').map(|part| part.parse().unwrap_or(0)).collect()
 }
 
+/// Prefix of a refused host's message: what follows is a `Refusal` as JSON, so the setup screen can show the fix for its kind.
+pub(crate) const HOST_REFUSED: &str = "host-refused";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RefusalKind {
+    NotLinux,
+    UnsupportedCpu,
+    NoGlibc,
+    OldGlibc,
+    LargePages,
+    MissingTools,
+    NoRuntime,
+    StopsProcesses,
+}
+
+/// Why a host cannot run a daemon, found by the probe before anything is installed on it (plan S6.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Refusal {
+    pub(crate) kind: RefusalKind,
+    pub(crate) message: String,
+    /// The programs the host lacks (`MissingTools` only).
+    pub(crate) missing_tools: Vec<String>,
+    /// A command that fixes it, to run on the host (`StopsProcesses` only).
+    pub(crate) fix: Option<String>,
+}
+
+impl Refusal {
+    fn new(kind: RefusalKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            missing_tools: Vec::new(),
+            fix: None,
+        }
+    }
+}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> String {
+        format!("{HOST_REFUSED}: {}", serde_json::to_string(&refusal).unwrap_or_else(|_| refusal.message.clone()))
+    }
+}
+
 /// Pick the bundled runtime for a probed host, or say plainly why none fits.
-pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) -> Result<(&'a str, &'a ManifestTarget), String> {
+pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) -> Result<(&'a str, &'a ManifestTarget), Refusal> {
     if probe.os != "Linux" {
-        return Err(format!("{} hosts are not supported yet; remote repositories need Linux", probe.os));
+        return Err(Refusal::new(
+            RefusalKind::NotLinux,
+            format!("{} hosts are not supported yet; remote repositories need Linux", probe.os),
+        ));
     }
     let triple = match probe.arch.as_str() {
         "x86_64" => "x86_64-unknown-linux-gnu",
         "aarch64" | "arm64" => "aarch64-unknown-linux-gnu",
-        other => return Err(format!("unsupported CPU architecture: {other}")),
+        other => return Err(Refusal::new(RefusalKind::UnsupportedCpu, format!("unsupported CPU architecture: {other}"))),
     };
-    let glibc = probe.glibc.as_deref().ok_or("the host has no glibc (musl and Alpine are not supported)")?;
+    let glibc = probe
+        .glibc
+        .as_deref()
+        .ok_or_else(|| Refusal::new(RefusalKind::NoGlibc, "the host has no glibc (musl and Alpine are not supported)"))?;
     if version_parts(glibc) < version_parts(&manifest.glibc_floor) {
-        return Err(format!("the host's glibc {glibc} is older than the required {}", manifest.glibc_floor));
+        return Err(Refusal::new(
+            RefusalKind::OldGlibc,
+            format!("the host's glibc {glibc} is older than the required {}", manifest.glibc_floor),
+        ));
     }
     if triple.starts_with("aarch64") && probe.pagesize == Some(65536) {
-        return Err("arm64 hosts with 64 KiB pages are not supported".into());
+        return Err(Refusal::new(RefusalKind::LargePages, "arm64 hosts with 64 KiB pages are not supported"));
     }
-    let missing: Vec<&str> = ["tar", "gzip", "sha256sum", "git", "zip", "unzip"]
+    let missing: Vec<String> = ["tar", "gzip", "sha256sum", "git", "zip", "unzip"]
         .into_iter()
         .filter(|tool| !probe.tools.get(*tool).copied().unwrap_or(false))
+        .map(str::to_string)
         .collect();
     if !missing.is_empty() {
         // Nothing is installed on the host yet when this is shown (D6): the user installs the tools there, then sets the host up again.
-        return Err(format!(
-            "the host is missing {}; install {} on that host with its package manager, then run setup again",
-            missing.join(", "),
-            if missing.len() == 1 { "it" } else { "them" }
-        ));
+        return Err(Refusal {
+            missing_tools: missing.clone(),
+            ..Refusal::new(
+                RefusalKind::MissingTools,
+                format!(
+                    "the host is missing {}; install {} on that host with its package manager, then run setup again",
+                    missing.join(", "),
+                    if missing.len() == 1 { "it" } else { "them" }
+                ),
+            )
+        });
     }
     manifest
         .targets
         .get_key_value(triple)
         .map(|(triple, target)| (triple.as_str(), target))
-        .ok_or_else(|| format!("this build of Alinery does not bundle a runtime for {triple}"))
+        .ok_or_else(|| Refusal::new(RefusalKind::NoRuntime, format!("this build of Alinery does not bundle a runtime for {triple}")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,13 +519,19 @@ pub(crate) enum Launcher {
 /// How to start the daemon so it outlives the ssh session. A user systemd manager stops at
 /// the last logout unless lingering is on, so `systemd-run --user` is only chosen then; a
 /// plain setsid process survives unless logind kills the session's processes.
-pub(crate) fn choose_launcher(probe: &Probe) -> Result<Launcher, String> {
+pub(crate) fn choose_launcher(probe: &Probe) -> Result<Launcher, Refusal> {
     let has = |tool: &str| probe.tools.get(tool).copied().unwrap_or(false);
     if has("systemd-run") && probe.linger == Some(true) {
         return Ok(Launcher::SystemdRun);
     }
     if probe.kill_user_processes == Some(true) {
-        return Err("this host stops your processes when you log out; run `loginctl enable-linger` on it so sessions can keep running".into());
+        return Err(Refusal {
+            fix: Some(format!("loginctl enable-linger {}", probe.user.as_deref().unwrap_or("$(id -un)"))),
+            ..Refusal::new(
+                RefusalKind::StopsProcesses,
+                "this host stops your processes when you log out; run `loginctl enable-linger` on it so sessions can keep running",
+            )
+        });
     }
     Ok(if has("setsid") { Launcher::Setsid } else { Launcher::Nohup })
 }
@@ -1600,6 +1669,46 @@ pub(crate) async fn remote_describe_destination(destination: String) -> Result<S
     tauri::async_runtime::spawn_blocking(move || describe_destination(&destination))
         .await
         .map_err(|error| format!("describe task: {error}"))?
+}
+
+/// What "Test connection" learned about a host that would be accepted.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HostTestReport {
+    pub(crate) platform: String,
+    pub(crate) glibc: Option<String>,
+}
+
+/// Reach a destination that is not saved, probe it and apply the same refusals as a real connect, installing nothing.
+/// A master this call started is closed again, so a host that is never saved leaves no ssh process; one already open
+/// (the host is saved and connected) is left alone.
+pub(crate) fn test_destination(destination: &str, manifest: &RuntimeManifest, trust: bool) -> Result<HostTestReport, String> {
+    let ssh_args = parse_destination(destination)?;
+    let conn = HostConn::new(&host_id(&ssh_args), &ssh_args)?;
+    let reused = conn.master_alive();
+    let outcome = (|| {
+        conn.ensure_master(trust).map_err(|failure| failure.to_string())?;
+        let probe = conn.probe()?;
+        select_target(&probe, manifest)?;
+        choose_launcher(&probe)?;
+        Ok(HostTestReport {
+            platform: format!("{} {}", probe.os, probe.arch),
+            glibc: probe.glibc,
+        })
+    })();
+    if !reused {
+        conn.exit_master();
+    }
+    outcome
+}
+
+#[tauri::command]
+pub(crate) async fn remote_test_host(app: AppHandle, destination: String, trust: bool) -> Result<HostTestReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manifest = load_manifest(&bundled_runtime_dir(&app)?)?;
+        test_destination(&destination, &manifest, trust)
+    })
+    .await
+    .map_err(|error| format!("remote test task: {error}"))?
 }
 
 /// Forget a host that never finished its first connect, so a failed setup leaves nothing behind.

@@ -119,14 +119,16 @@ afterEach(() => {
 
 describe("onboarding step persistence", () => {
   it("persists the step and rejects prototype keys", () => {
-    expect(readSavedOnboardingStep(false)).toBe("workspace");
-    expect(readSavedOnboardingStep(true)).toBe("playbooks");
+    expect(readSavedOnboardingStep()).toBe("playbooks");
 
     writeSavedOnboardingStep("models");
-    expect(readSavedOnboardingStep(true)).toBe("models");
+    expect(readSavedOnboardingStep()).toBe("models");
 
+    // The repository step is gone: a saved "workspace" from an older launch falls back to the first step.
+    window.localStorage.setItem("alinery.onboardingStep.v1", "workspace");
+    expect(readSavedOnboardingStep()).toBe("playbooks");
     window.localStorage.setItem("alinery.onboardingStep.v1", "toString");
-    expect(readSavedOnboardingStep(true)).toBe("playbooks");
+    expect(readSavedOnboardingStep()).toBe("playbooks");
   });
 });
 
@@ -150,11 +152,8 @@ describe("OnboardingFlow wizard", () => {
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="models"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={(_tab, onPick) => {
           pick = onPick;
         }}
@@ -179,11 +178,8 @@ describe("OnboardingFlow wizard", () => {
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="playbooks"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
@@ -197,31 +193,21 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
-  it("keeps repository selection on Step 01 until the user continues", async () => {
-    const onSelectRepo = vi.fn(async () => true);
-    const onAddRepo = vi.fn(async () => true);
-
+  it("starts at the playbooks step and offers no way back from it", async () => {
     render(
       <OnboardingFlow
-        appConfig={{ ...baseConfig, active_repo: "", known_repos: ["/Users/dev/project"] }}
-        repoError=""
-        onSelectRepo={onSelectRepo}
-        onAddRepo={onAddRepo}
-        onRemoveRepo={vi.fn()}
+        appConfig={baseConfig}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
         onLaunchStarterTask={vi.fn(async () => {})}
       />,
     );
-
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Continue/i })).toBeNull();
-
-    fireEvent.click(screen.getByTitle("/Users/dev/project"));
-    await waitFor(() => expect(onSelectRepo).toHaveBeenCalledWith("/Users/dev/project"));
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(readSavedOnboardingStep(true)).toBe("workspace");
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.getByText("Step 01 of 03")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(screen.queryByTestId("onboarding-step-workspace")).toBeNull();
   });
 
   it("explores playbooks and simulates auto-advance waves and human checkpoints in Step 02", async () => {
@@ -229,11 +215,8 @@ describe("OnboardingFlow wizard", () => {
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="playbooks"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
@@ -310,11 +293,8 @@ describe("OnboardingFlow wizard", () => {
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="playbooks"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
@@ -338,15 +318,13 @@ describe("OnboardingFlow wizard", () => {
   it("launches a 1-click starter task or opens the full Create Task form in Step 04", async () => {
     const onLaunchStarterTask = vi.fn(async () => {});
     const onOpenCreateWithPlaybook = vi.fn();
+    const onChangeRepo = vi.fn();
 
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="launch"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={onChangeRepo}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={onOpenCreateWithPlaybook}
@@ -355,6 +333,8 @@ describe("OnboardingFlow wizard", () => {
     );
 
     expect(screen.getByTestId("onboarding-step-launch")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    expect(onChangeRepo).toHaveBeenCalledOnce();
     const titleInput = screen.getByLabelText("Starter task title") as HTMLInputElement;
     expect(titleInput.value).toBe("Map architecture and improvement opportunities");
 

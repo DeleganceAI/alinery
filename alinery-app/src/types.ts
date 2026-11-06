@@ -402,6 +402,11 @@ export type HostEntry = {
   onboarded: boolean;
   remote: RemoteHostView | null;
 };
+/** Why a host cannot run a daemon, found by the probe before anything is installed (`Refusal` in remote.rs). */
+export type RefusalKind = "not_linux" | "unsupported_cpu" | "no_glibc" | "old_glibc" | "large_pages" | "missing_tools" | "no_runtime" | "stops_processes";
+export type HostRefusal = { kind: RefusalKind; message: string; missing_tools: string[]; fix: string | null };
+/** What "Test connection" learned about a host the probe accepts. */
+export type HostTestReport = { platform: string; glibc: string | null };
 /** Where a destination resolves to, as `ssh -G` reports it. */
 export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
 /** What this Mac could give a host, and what the host is set to receive. */

@@ -43,10 +43,11 @@ import {
   withHostOnboarded,
 } from "./onboarding";
 import { RemoteModal, type RemoteModalEntry } from "./RemoteModal";
-import { isRemoteRepo, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
+import { isRemoteRepo, machineOf, parseRemoteRepo, quitLossCount, quitRows } from "./remoteRepo";
 import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
+import { shouldShowSetup } from "./setup";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
@@ -100,6 +101,7 @@ import { ProviderSetupDialog } from "./views/ProviderSetupDialog";
 import { focusQuickChatComposer, QuickChat } from "./views/QuickChat";
 import { SessionsList } from "./views/SessionsList";
 import { SECTIONS as SETTINGS_SECTIONS, Settings } from "./views/Settings";
+import { SetupScreen, type SetupTab } from "./views/SetupScreen";
 import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
 
@@ -328,7 +330,9 @@ export default function App() {
   const [remoteDialog, setRemoteDialog] = useState<RemoteModalEntry | null>(null);
   const activeRepoKey = appConfig?.active_repo ?? "";
   useEffect(() => setRevealRepo(activeRepoKey), [activeRepoKey]);
-  const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
+  // The setup screen over the board (null when closed). With no repo open it is the whole window and has no state of its own.
+  const [setupTab, setSetupTab] = useState<SetupTab | null>(null);
+  const remoteHosts = useRemoteHosts(remoteDialog !== null || setupTab !== null || !appConfig?.active_repo || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
   const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();
   const noticeRepos = useMemo(() => [...new Set(appConfig?.known_repos ?? [])], [appConfig?.known_repos]);
@@ -488,15 +492,15 @@ export default function App() {
       .then((cfg) => {
         const normalized = applyAppearance(cfg.appearance);
         setAppConfig({ ...cfg, appearance: normalized });
-        const firstRun = !cfg.active_repo;
-        const wizardOpens = firstRun || !isHostOnboarded(cfg, cfg.active_repo);
+        // With no repo the setup screen is shown instead; onboarding follows it once a repo is open.
+        const wizardOpens = Boolean(cfg.active_repo) && !isHostOnboarded(cfg, cfg.active_repo);
         if (wizardOpens) {
-          setOnboardingStep(firstRun ? undefined : readSavedOnboardingStep(true));
+          setOnboardingStep(readSavedOnboardingStep());
           setOnboardingOpen(true);
         }
         if (shouldAskTelemetryConsent(cfg.global?.telemetry)) {
           // Never on top of the wizard: the prompt is deferred until onboarding finishes.
-          if (wizardOpens) telemetryUnpromptedRef.current = true;
+          if (wizardOpens || !cfg.active_repo) telemetryUnpromptedRef.current = true;
           else promptTelemetryConsent();
         }
       })
@@ -751,34 +755,22 @@ export default function App() {
     });
   };
 
-  const addRepo = async (): Promise<boolean> => {
+  const openSetup = (tab: SetupTab = "local") => {
     setRepoErr("");
-    try {
-      const path = await ipc.pickRepoDialog();
-      if (!path) return false;
-      const classified = await ipc.classifyPickedFolder(path);
-      if (classified.kind === "checkout") {
-        return await setRepo(classified.root);
-      }
-      if (classified.kind === "refused") {
-        setRepoErr(classified.message);
-        return false;
-      }
-      const choice = await askConfirm({
-        title: "Initialize Git?",
-        body: `${classified.path} is not a Git repository. Initialize Git in this folder before opening it? Cancel leaves the folder unchanged.`,
-        choices: [
-          { key: "init", label: "Initialize Git" },
-          { key: "cancel", label: "Cancel", tone: "ghost" },
-        ],
-      });
-      if (choice !== "init") return false;
-      const initialized = await ipc.initPickedFolder(classified.path);
-      return await setRepo(initialized.root);
-    } catch (e) {
-      setRepoErr(String(e));
-      return false;
+    setSetupTab(tab);
+  };
+
+  // The setup screen picked a repo: open it, and run onboarding there when its host has not run it (D9).
+  const openFromSetup = async (key: string, hostConnected: boolean): Promise<boolean> => {
+    if (!(await setRepo(key, hostConnected))) return false;
+    setSetupTab(null);
+    const hosts = await ipc.listHosts().catch(() => []);
+    const entry = hosts.find((candidate) => candidate.host_id === (machineOf(key) || "local"));
+    if (entry && !entry.onboarded) {
+      setOnboardingStep("playbooks");
+      setOnboardingOpen(true);
     }
+    return true;
   };
 
   // B4 / #132: closing a repo releases ownership — its daemon is stopped, its alineryd lock
@@ -1273,7 +1265,7 @@ export default function App() {
       setOnboardingOpen(true);
     }),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
-    action("add-repo", pi(FolderPlus), "Add repo", "", addRepo),
+    action("add-repo", pi(FolderPlus), "Add repo", "", () => openSetup()),
   ];
 
   const searchItems: SearchItem[] = [
@@ -1349,11 +1341,22 @@ export default function App() {
             }}
           />
         )}
+        {setupTab !== null && appConfig && !shouldShowSetup(appConfig, remoteHosts.hosts) && (
+          <SetupScreen
+            appConfig={appConfig}
+            hosts={remoteHosts.hosts}
+            initialTab={setupTab}
+            repoError={repoErr}
+            refreshHosts={remoteHosts.refresh}
+            onOpen={openFromSetup}
+            onRemoveRepo={removeRepo}
+            onClose={() => setSetupTab(null)}
+          />
+        )}
         {remoteDialog && (
           <RemoteModal
             entry={remoteDialog}
             hosts={remoteHosts.hosts}
-            knownRepos={appConfig?.known_repos ?? []}
             onClose={() => {
               setRemoteDialog(null);
               void remoteHosts.refresh();
@@ -1396,7 +1399,7 @@ export default function App() {
                 </div>
               )}
               {header}
-              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => void addRepo()} />}
+              {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => openSetup()} />}
               <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
               {/* Backend ownership gate is the source of truth; blank main so the busy
               strip is the only actionable surface (defense-in-depth). */}
@@ -1479,25 +1482,10 @@ export default function App() {
       </div>,
       minimalHeader,
     );
-  if (!appConfig.active_repo)
+  if (shouldShowSetup(appConfig, remoteHosts.hosts))
     return chrome(
       <div hidden={view.kind === "playbooks"} style={{ display: view.kind === "playbooks" ? "none" : "contents" }}>
-        <OnboardingFlow
-          appConfig={appConfig}
-          repoError={repoErr}
-          initialStep="workspace"
-          onSelectRepo={setRepo}
-          onAddRepo={addRepo}
-          onAddRemoteRepo={() => setRemoteDialog({ kind: "hosts" })}
-          onRemoveRepo={removeRepo}
-          onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
-          onCompleteToWorkspace={completeOnboarding}
-          onOpenCreateWithPlaybook={(playbook, preset) => {
-            completeOnboarding();
-            openCreate(playbook, preset);
-          }}
-          onLaunchStarterTask={handleLaunchStarterTask}
-        />
+        <SetupScreen appConfig={appConfig} hosts={remoteHosts.hosts} repoError={repoErr} refreshHosts={remoteHosts.refresh} onOpen={openFromSetup} onRemoveRepo={removeRepo} />
       </div>,
       minimalHeader,
     );
@@ -1518,8 +1506,8 @@ export default function App() {
       onSwitch={switchTop}
       onSwitchGrid={(gridViewId) => switchTop("grid", { gridViewId })}
       onSelectRepo={selectRepoValue}
-      onAddRepo={addRepo}
-      onAddRemote={() => setRemoteDialog({ kind: "hosts" })}
+      onAddRepo={() => openSetup()}
+      onAddRemote={() => openSetup("ssh")}
       remoteStates={remoteStates}
       onRemoveRepo={removeRepo}
       onBrand={() => switchTop("grid", { gridViewId: gridViews[0].id })}
@@ -1535,11 +1523,11 @@ export default function App() {
     <Dialog className="onboarding-overlay" ariaLabel="Alinery onboarding" onClose={completeOnboarding}>
       <OnboardingFlow
         appConfig={appConfig}
-        repoError={repoErr}
         initialStep={onboardingStep}
-        onSelectRepo={setRepo}
-        onAddRepo={addRepo}
-        onRemoveRepo={removeRepo}
+        onChangeRepo={() => {
+          completeOnboarding();
+          openSetup();
+        }}
         onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
         onCompleteToWorkspace={completeOnboarding}
         onOpenCreateWithPlaybook={(playbook, preset) => {

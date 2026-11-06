@@ -1,10 +1,9 @@
 import "../onboarding.css";
-import { ArrowRight, FolderOpen, FolderPlus, Layers, Play, RotateCcw, Server, X } from "lucide-react";
+import { ArrowRight, FolderOpen, Layers, Play, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { BrandMark } from "../Logo";
 import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, readSavedOnboardingStep, type StarterTaskPreset, writeSavedOnboardingStep } from "../onboarding";
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
-import { repoDisplayPath } from "../remoteRepo";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
 import { NoLibraryHost, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig, readRepoSettings, writeRepoOverrides } from "../sync/settings";
@@ -19,32 +18,23 @@ const EMPTY_STEPS: NormalizedPlaybook["step"] = [];
 
 export function OnboardingFlow({
   appConfig,
-  repoError,
   initialStep,
-  onSelectRepo,
-  onAddRepo,
-  onAddRemoteRepo,
-  onRemoveRepo,
+  onChangeRepo,
   onOpenProviderSetup,
   onCompleteToWorkspace,
   onOpenCreateWithPlaybook,
   onLaunchStarterTask,
 }: {
   appConfig: AppConfig;
-  repoError: string;
   initialStep?: OnboardingStepId;
-  onSelectRepo: (path: string) => Promise<boolean>;
-  onAddRepo: () => Promise<boolean>;
-  /** Opens the SSH dialog; the button is hidden without it. */
-  onAddRemoteRepo?: () => void;
-  onRemoveRepo: (path: string) => void;
+  /** Leave onboarding for the setup screen, to run it against another repository. */
+  onChangeRepo: () => void;
   onOpenProviderSetup: (tab: "models" | "accounts", onPick?: (model: string) => void) => void;
   onCompleteToWorkspace: () => void;
   onOpenCreateWithPlaybook: (playbook: PlaybookRef, preset?: StarterTaskPreset) => void;
   onLaunchStarterTask: (playbook: PlaybookRef, preset: StarterTaskPreset) => Promise<void>;
 }) {
-  const hasActiveRepo = Boolean(appConfig.active_repo);
-  const [step, setStep] = useState<OnboardingStepId>(() => initialStep ?? readSavedOnboardingStep(Boolean(appConfig.active_repo)));
+  const [step, setStep] = useState<OnboardingStepId>(() => initialStep ?? readSavedOnboardingStep());
   const [selectedArchetypeKey, setSelectedArchetypeKey] = useState<string>(CURATED_PLAYBOOK_ARCHETYPES[0].reference.key);
   const [liveDefinitions, setLiveDefinitions] = useState<Record<string, NormalizedPlaybook>>({});
   const [definitionErrors, setDefinitionErrors] = useState<Record<string, string>>({});
@@ -96,12 +86,6 @@ export function OnboardingFlow({
       setStep(initialStep);
     }
   }, [initialStep]);
-
-  useEffect(() => {
-    if (!hasActiveRepo && (step === "models" || step === "launch")) {
-      setStep("workspace");
-    }
-  }, [hasActiveRepo, step]);
 
   // Sync starter task preset fields when selected archetype changes
   useEffect(() => {
@@ -173,22 +157,11 @@ export function OnboardingFlow({
 
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const goToStep = (next: OnboardingStepId) => {
-    if ((next === "models" || next === "launch") && !hasActiveRepo) return;
     const from = ONBOARDING_STEPS.findIndex((item) => item.id === step);
     const to = ONBOARDING_STEPS.findIndex((item) => item.id === next);
     setDirection(to < from ? "back" : "forward");
     setStep(next);
     writeSavedOnboardingStep(next);
-  };
-
-  const handleSelectRepo = async (path: string) => {
-    writeSavedOnboardingStep("workspace");
-    await onSelectRepo(path);
-  };
-
-  const handleAddRepo = async () => {
-    writeSavedOnboardingStep("workspace");
-    await onAddRepo();
   };
 
   const handleSelectArchetype = (key: string) => {
@@ -358,8 +331,7 @@ export function OnboardingFlow({
           <div className="onboarding-steps" role="tablist" aria-label="Onboarding steps">
             {ONBOARDING_STEPS.map((item, idx) => {
               const active = item.id === step;
-              const completed = idx < stepIndex || (item.id === "workspace" && hasActiveRepo);
-              const disabled = (item.id === "models" || item.id === "launch") && !hasActiveRepo;
+              const completed = idx < stepIndex;
               return (
                 <button
                   key={item.id}
@@ -367,7 +339,6 @@ export function OnboardingFlow({
                   role="tab"
                   aria-selected={active}
                   data-autofocus={active ? "" : undefined}
-                  disabled={disabled}
                   className={`onboarding-step-pill${active ? " active" : ""}${completed ? " completed" : ""}`}
                   onClick={() => goToStep(item.id)}
                 >
@@ -379,87 +350,11 @@ export function OnboardingFlow({
           </div>
 
           <div className="onboarding-header-actions">
-            {hasActiveRepo ? (
-              <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
-                Skip Onboarding
-              </button>
-            ) : (
-              <span className="onboarding-header-caption">Pick a repository to continue</span>
-            )}
+            <button type="button" className="btn ghost small" onClick={onCompleteToWorkspace}>
+              Skip Onboarding
+            </button>
           </div>
         </header>
-
-        {step === "workspace" && (
-          <div className="onboarding-body onboarding-body-focus" data-dir={direction} data-testid="onboarding-step-workspace">
-            <div className="onboarding-focus">
-              <h2>{hasActiveRepo ? "Repository connected" : "Select a repository"}</h2>
-              <p className="onboarding-lede">
-                {hasActiveRepo
-                  ? "Add another repository now or continue to see how playbooks run your tasks."
-                  : "Alinery keeps tasks, artifacts, and playbook state in .alinery/ inside the repository you choose."}
-              </p>
-
-              {appConfig.known_repos.length > 0 && (
-                <ul className="onboarding-repo-list" aria-label="Your repositories">
-                  {appConfig.known_repos.map((repo) => {
-                    const isCurrent = repo === appConfig.active_repo;
-                    return (
-                      <li key={repo} className="onboarding-repo-row">
-                        <button type="button" className={`onboarding-repo${isCurrent ? " active" : ""}`} title={repoDisplayPath(repo)} onClick={() => void handleSelectRepo(repo)}>
-                          <strong>{repoName(repo)}</strong>
-                          {isCurrent && <span className="onboarding-repo-connected">Connected</span>}
-                          <span className="onboarding-repo-path">{repoDisplayPath(repo)}</span>
-                          {!isCurrent && <ArrowRight size={16} strokeWidth={1.6} aria-hidden="true" />}
-                        </button>
-                        <button
-                          type="button"
-                          className="onboarding-repo-remove"
-                          title={`Remove ${repoName(repo)} from Alinery (repo files are untouched)`}
-                          aria-label={`Remove ${repoName(repo)}`}
-                          onClick={() => onRemoveRepo(repo)}
-                        >
-                          <X size={16} strokeWidth={1.5} aria-hidden="true" />
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-
-              {repoError && (
-                <InlineStatus tone="error" detail={repoError}>
-                  Couldn't open the repository. Choose another folder or initialize Git when prompted.
-                </InlineStatus>
-              )}
-
-              <div className="onboarding-focus-actions">
-                {hasActiveRepo ? (
-                  <>
-                    <button type="button" className="btn ghost onboarding-add-repo" onClick={() => void handleAddRepo()}>
-                      <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
-                      Add another repository
-                    </button>
-                    <button type="button" className="btn onboarding-add-repo" data-autofocus onClick={() => goToStep("playbooks")}>
-                      Continue
-                      <ArrowRight size={15} aria-hidden="true" />
-                    </button>
-                  </>
-                ) : (
-                  <button type="button" className="btn onboarding-add-repo" data-autofocus onClick={() => void handleAddRepo()}>
-                    <FolderPlus size={16} strokeWidth={1.6} aria-hidden="true" />
-                    Add a repository
-                  </button>
-                )}
-                {onAddRemoteRepo && (
-                  <button type="button" className="btn ghost onboarding-add-repo" onClick={onAddRemoteRepo}>
-                    <Server size={16} strokeWidth={1.6} aria-hidden="true" />
-                    Add a repository over SSH
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
         {step === "playbooks" && (
           <div className="onboarding-body onboarding-body-playbooks" data-intro={intro} data-dir={direction} data-testid="onboarding-step-playbooks">
@@ -743,7 +638,7 @@ export function OnboardingFlow({
                     <strong>{repoName(appConfig.active_repo)}</strong>
                     <code>{appConfig.active_repo}</code>
                   </div>
-                  <button type="button" className="btn ghost small" onClick={() => goToStep("workspace")}>
+                  <button type="button" className="btn ghost small" onClick={onChangeRepo}>
                     Change
                   </button>
                 </div>
@@ -820,30 +715,30 @@ export function OnboardingFlow({
           </div>
         )}
 
-        {step !== "workspace" && (
-          <footer className="onboarding-footer">
-            <div className="onboarding-footer-left">
+        <footer className="onboarding-footer">
+          <div className="onboarding-footer-left">
+            {stepIndex > 0 && (
               <button type="button" className="btn ghost" onClick={() => goToStep(ONBOARDING_STEPS[stepIndex - 1].id)}>
                 Back
               </button>
-            </div>
-            <div className="onboarding-footer-right">
-              {step !== "launch" && (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    const next = ONBOARDING_STEPS[stepIndex + 1];
-                    if (next) goToStep(next.id);
-                  }}
-                >
-                  Continue
-                  <ArrowRight size={15} aria-hidden="true" />
-                </button>
-              )}
-            </div>
-          </footer>
-        )}
+            )}
+          </div>
+          <div className="onboarding-footer-right">
+            {step !== "launch" && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  const next = ONBOARDING_STEPS[stepIndex + 1];
+                  if (next) goToStep(next.id);
+                }}
+              >
+                Continue
+                <ArrowRight size={15} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </footer>
       </div>
     </div>
   );

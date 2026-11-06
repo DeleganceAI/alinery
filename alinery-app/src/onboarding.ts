@@ -4,13 +4,12 @@ import type { AppConfig, PlaybookRef } from "./types";
 
 export const ONBOARDING_STEP_KEY = "alinery.onboardingStep.v1";
 
-export type OnboardingStepId = "workspace" | "playbooks" | "models" | "launch";
+export type OnboardingStepId = "playbooks" | "models" | "launch";
 
 export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
-  { id: "workspace", number: "01", label: "Repository", title: "Connect a repository" },
-  { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
-  { id: "models", number: "03", label: "Models", title: "Verify your agent & model provider" },
-  { id: "launch", number: "04", label: "First task", title: "Launch your first playbook task" },
+  { id: "playbooks", number: "01", label: "Playbooks", title: "How playbooks coordinate agents" },
+  { id: "models", number: "02", label: "Models", title: "Verify your agent & model provider" },
+  { id: "launch", number: "03", label: "First task", title: "Launch your first playbook task" },
 ];
 
 /** Where the pre-S6.1 install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
@@ -70,8 +69,7 @@ function clearSavedOnboardingStep(): void {
   }
 }
 
-export function readSavedOnboardingStep(hasActiveRepo: boolean): OnboardingStepId {
-  if (!hasActiveRepo) return "workspace";
+export function readSavedOnboardingStep(): OnboardingStepId {
   try {
     const raw = localStorage.getItem(ONBOARDING_STEP_KEY);
     if (raw && ONBOARDING_STEPS.some((step) => step.id === raw)) {

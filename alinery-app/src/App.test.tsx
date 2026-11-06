@@ -12,9 +12,11 @@ import type {
   BoardTask,
   Config,
   CreateTaskResult,
+  HostEntry,
   NotificationPrefs,
   PlaybookCatalog,
   PlaybookRef,
+  RemoteHostView,
   ReviewHandoffResult,
   ScopedPlaybook,
   SessionListItem,
@@ -223,7 +225,9 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     getTaskExecution: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
+    remoteHosts: vi.fn<() => Promise<RemoteHostView[]>>(async () => []),
     setHostOnboarded: vi.fn(),
+    listHosts: vi.fn(),
     setActiveRepo: vi.fn(),
     pickRepoDialog: vi.fn(),
     classifyPickedFolder: vi.fn(),
@@ -612,6 +616,9 @@ vi.mock("./views/ReviewHandoffPage", () => ({
   ),
 }));
 
+/** The host list the setup screen reads to decide whether onboarding runs on the repo it just opened. */
+const localHost = (onboarded: boolean): HostEntry => ({ host_id: "local", label: "This computer", local: true, onboarded, remote: null });
+
 beforeEach(() => {
   actualCreation.enabled = false;
   actualProviders.enabled = false;
@@ -628,6 +635,8 @@ beforeEach(() => {
   sessionWrites.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
   ipcMocks.setHostOnboarded.mockResolvedValue(undefined);
+  ipcMocks.listHosts.mockResolvedValue([localHost(true)]);
+  ipcMocks.remoteHosts.mockResolvedValue([]);
   sessionWrites.clearSessionNotifications.mockResolvedValue(undefined);
   ipcMocks.setDockBadgeCount.mockResolvedValue(undefined);
 });
@@ -642,7 +651,7 @@ afterEach(() => {
 it("opens Playbooks from the top tab after selecting a repository, without an intro shortcut", async () => {
   ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
   render(<App />);
-  await screen.findByRole("button", { name: "Add a repository" });
+  await screen.findByTestId("setup-screen");
   expect(screen.queryByRole("button", { name: "Playbooks" })).toBeNull();
 
   fireEvent.click(screen.getByTitle(task.repo_path));
@@ -705,6 +714,60 @@ describe("onboarding gate", () => {
     if (error) expect(notifications.textContent).toContain(error);
     else expect(notifications.textContent).toBe("");
     expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
+  });
+
+  it("opens a repository on a host that has run onboarding straight onto its board", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByTitle(task.repo_path));
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
+  });
+
+  it("runs onboarding on the first repository of an ssh host, marks only that host, and skips it for the second", async () => {
+    const remoteKey = "alinery+ssh://box-a1b2c3/srv/app";
+    const remoteHost: RemoteHostView = {
+      host_id: "box-a1b2c3",
+      label: "box",
+      destination: "me@box",
+      state: "connected",
+      phase: "",
+      error: null,
+      home: "/home/me",
+      platform: "Linux x86_64",
+      sharing_reviewed: true,
+      erased_sign_ins: [],
+    };
+    ipcMocks.remoteHosts.mockResolvedValue([remoteHost]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: [remoteKey, "alinery+ssh://box-a1b2c3/srv/second"] });
+    ipcMocks.setActiveRepo.mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [remoteKey, "alinery+ssh://box-a1b2c3/srv/second"] }));
+    // This computer has run onboarding; the new host has not.
+    ipcMocks.listHosts.mockResolvedValue([localHost(true), { host_id: "box-a1b2c3", label: "box", local: false, onboarded: false, remote: remoteHost }]);
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
+    fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/app"));
+    await screen.findByTestId("onboarding-step-playbooks");
+    expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith(remoteKey);
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
+    await waitFor(() => expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("box-a1b2c3", true));
+    expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalledWith("local", true);
+
+    // The mark is now set on that host, so a second repository there skips onboarding.
+    ipcMocks.listHosts.mockResolvedValue([localHost(true), { host_id: "box-a1b2c3", label: "box", local: false, onboarded: true, remote: remoteHost }]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: ["alinery+ssh://box-a1b2c3/srv/second"] });
+    cleanup();
+    render(<App />);
+    await screen.findByTestId("setup-screen");
+    fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
+    fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
+    fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/second"));
+    await screen.findByTestId("grid:view:default-kanban-plus");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
   it("offers a configured install the guide once at Playbooks, then lands on the grid after Skip", async () => {
@@ -773,18 +836,17 @@ describe("onboarding gate", () => {
     await screen.findByTestId("onboarding-step-models");
   });
 
-  it("opens the wizard on first run and keeps it open through the first repository pick", async () => {
+  it("opens the setup screen on first run, then onboarding on the repository it opens", async () => {
     notOnboarded();
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+    ipcMocks.listHosts.mockResolvedValue([localHost(false)]);
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", local_onboarded: false });
     render(<App />);
-    await screen.findByTestId("onboarding-step-workspace");
+    // The setup screen comes first; onboarding does not open until a repository does.
+    await screen.findByTestId("setup-screen");
+    expect(screen.queryByTestId("onboarding-flow")).toBeNull();
     expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTitle(task.repo_path));
-    await screen.findByRole("button", { name: "Add another repository" });
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(screen.queryByTestId("onboarding-step-playbooks")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByTestId("onboarding-step-playbooks");
     expect(screen.getByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
 
@@ -1498,11 +1560,16 @@ describe("repository switch keeps the current page", () => {
   });
 });
 
-describe("addRepo", () => {
-  async function openPicker() {
-    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "" });
+describe("setup screen: this computer", () => {
+  /** The folder is chosen first; opening waits for it. Returns the button that opens it. */
+  async function chooseFolder(path: string | null) {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: [] });
     render(<App />);
-    return screen.findByRole("button", { name: "Add a repository" });
+    await screen.findByTestId("setup-screen");
+    ipcMocks.pickRepoDialog.mockResolvedValue(path);
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+    return screen.getByRole("button", { name: "Open repository" });
   }
 
   beforeEach(() => {
@@ -1512,34 +1579,30 @@ describe("addRepo", () => {
     ipcMocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [path] }));
   });
 
-  it("stops when the folder picker is cancelled", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue(null);
-    fireEvent.click(add);
-    await waitFor(() => expect(ipcMocks.pickRepoDialog).toHaveBeenCalled());
+  it("stays disabled when the folder picker is cancelled", async () => {
+    const open = await chooseFolder(null);
     await act(async () => {
       await Promise.resolve();
     });
+    expect((open as HTMLButtonElement).disabled).toBe(true);
     expect(ipcMocks.classifyPickedFolder).not.toHaveBeenCalled();
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
   });
 
   it("opens a checkout without asking or initializing", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "checkout", root: "/canonical" });
-    fireEvent.click(add);
+    fireEvent.click(open);
     await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/canonical"));
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
   });
 
   it("leaves an absent folder unchanged when initialize is cancelled", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
-    fireEvent.click(add);
+    fireEvent.click(open);
     const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
     const focused = dialog.querySelector("[data-autofocus]");
     expect(focused?.textContent).toBe("Cancel");
@@ -1550,11 +1613,10 @@ describe("addRepo", () => {
   });
 
   it("initializes an absent folder and opens the returned root", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     ipcMocks.initPickedFolder.mockResolvedValue({ kind: "initialized", root: "/inited" });
-    fireEvent.click(add);
+    fireEvent.click(open);
     const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
     await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
@@ -1563,13 +1625,12 @@ describe("addRepo", () => {
   });
 
   it("shows a named refusal without opening", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({
       kind: "refused",
       message: "This folder is a Git repository, but not a working tree. Alinery will not initialize a new repository here.\nfatal: this operation must be run in a work tree",
     });
-    fireEvent.click(add);
+    fireEvent.click(open);
     expect(await screen.findByText(/fatal: this operation must be run in a work tree/)).toBeTruthy();
     expect(screen.queryByRole("alertdialog", { name: "Initialize Git?" })).toBeNull();
     expect(ipcMocks.initPickedFolder).not.toHaveBeenCalled();
@@ -1577,11 +1638,10 @@ describe("addRepo", () => {
   });
 
   it("shows an init failure without opening", async () => {
-    const add = await openPicker();
-    ipcMocks.pickRepoDialog.mockResolvedValue("/raw");
+    const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     ipcMocks.initPickedFolder.mockRejectedValue("Couldn't initialize Git in /canon.\nPermission denied");
-    fireEvent.click(add);
+    fireEvent.click(open);
     fireEvent.click(await screen.findByRole("button", { name: "Initialize Git" }));
     expect(await screen.findByText(/Permission denied/)).toBeTruthy();
     expect(ipcMocks.setActiveRepo).not.toHaveBeenCalled();
