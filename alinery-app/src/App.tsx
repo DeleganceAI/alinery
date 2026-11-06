@@ -43,6 +43,7 @@ import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, To
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
+import { readEffectiveConfig } from "./sync/settings";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -1051,7 +1052,7 @@ export default function App() {
     flushSync(() => setBusy("create"));
     await afterPaint();
     try {
-      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), ipc.readConfigForRepo(repoPath)]);
+      const [scoped, repoCfg] = await Promise.all([ipc.readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
       const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
       const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
       const model = scoped.definition.default_model || repoCfg.defaults?.model || "";

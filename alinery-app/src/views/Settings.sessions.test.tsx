@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { fakeSettings } from "../test/settingsHooks";
 import type { AppearancePrefs, GlobalSettings, RepoOverrides, ScopedSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -59,8 +60,6 @@ function scopedFor(global: GlobalSettings, overrides: RepoOverrides): ScopedSett
 const mocks = vi.hoisted(() => ({
   writeGlobalSettings: vi.fn(),
   readGlobalSettings: vi.fn(),
-  readScopedSettingsForRepo: vi.fn(),
-  writeRepoOverridesForRepo: vi.fn(),
   writeAppearance: vi.fn(),
   confirmDanger: vi.fn(),
   askConfirm: vi.fn(),
@@ -70,8 +69,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: mocks.readGlobalSettings,
     writeGlobalSettings: mocks.writeGlobalSettings,
-    readScopedSettingsForRepo: mocks.readScopedSettingsForRepo,
-    writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
     storageInfo: () => new Promise(() => {}),
     listHarnessModels: async () => [],
     listHarnessModelsForRepo: async () => [],
@@ -80,6 +77,7 @@ vi.mock("../ipc", () =>
   }),
 );
 
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({}) }));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
@@ -134,8 +132,8 @@ function lastSavedAppearance(): AppearancePrefs {
 beforeEach(() => {
   mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next);
   mocks.readGlobalSettings.mockReset().mockResolvedValue(baseGlobal);
-  mocks.readScopedSettingsForRepo.mockReset().mockResolvedValue(scopedFor(baseGlobal, { github: {}, defaults: {}, backup: {} }));
-  mocks.writeRepoOverridesForRepo.mockReset().mockImplementation(async (_repo: string, overrides: RepoOverrides) => scopedFor(baseGlobal, overrides));
+  fakeSettings.reset();
+  fakeSettings.serve("/r", (overrides) => scopedFor(baseGlobal, overrides).effective);
   vi.stubGlobal("localStorage", {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -183,7 +181,7 @@ describe("Harness settings model default", () => {
     fireEvent.blur(trigger);
     fireEvent.click(await screen.findByRole("button", { name: "Close picker" }));
     expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
-    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(fakeSettings.writes).toEqual([]);
   });
 });
 
@@ -221,7 +219,7 @@ describe("Harness settings thinking default", () => {
     const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
     expect(saved.defaults.thinking).toBe("low");
     expect(saved.defaults.model).toBe("");
-    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(fakeSettings.writes).toEqual([]);
   });
 
   it("writes a repo change as a repository override and labels it", async () => {
@@ -229,10 +227,12 @@ describe("Harness settings thinking default", () => {
     fireEvent.click(await screen.findByRole("button", { name: "r" }));
     const field = async () => (await thinkingSelect()).closest(".field") as HTMLElement;
     expect(within(await field()).getByText("Global")).toBeTruthy();
+    const shown = fakeSettings.current("/r")?.revision;
     fireEvent.change(await thinkingSelect(), { target: { value: "low" } });
-    await waitFor(() => expect(mocks.writeRepoOverridesForRepo).toHaveBeenCalled());
-    const [repo, overrides] = mocks.writeRepoOverridesForRepo.mock.calls[0] as [string, RepoOverrides];
+    await waitFor(() => expect(fakeSettings.writes).toHaveLength(1));
+    const { repo, overrides, expected } = fakeSettings.writes[0];
     expect(repo).toBe("/r");
+    expect(expected).toBe(shown); // the revision the view was showing is sent back, so a write over a newer row is refused
     expect(overrides.defaults.thinking).toBe("low");
     expect(mocks.writeGlobalSettings).not.toHaveBeenCalled();
     await waitFor(async () => expect(within(await field()).getByText(/Repository override/)).toBeTruthy());

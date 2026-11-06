@@ -31,6 +31,8 @@ import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
 import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
 import { useLiveSessionsByRepo } from "../sync/hooks";
+import { useOverlay } from "../sync/overlay";
+import { clearRepoOverride, SettingsConflict, useRepoSettings, writeRepoOverrides } from "../sync/settings";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -180,6 +182,31 @@ const EMPTY_OVERRIDES: RepoOverrides = {
   backup: {},
 };
 
+/** The effective values a write sets, shown before the daemon's row arrives. A cleared override is left for the row to answer: its value is the global tier's, which the daemon owns. */
+function withWritten(cfg: Config, prev: RepoOverrides, next: RepoOverrides): Config {
+  const out: Config = {
+    ...cfg,
+    github: { ...cfg.github },
+    defaults: { ...cfg.defaults },
+    backup: { ...cfg.backup },
+    provenance: { ...cfg.provenance, defaults: { ...cfg.provenance.defaults } },
+  };
+  const changed = (a: unknown, b: unknown) => b != null && JSON.stringify(a ?? null) !== JSON.stringify(b);
+  if (changed(prev.github?.token, next.github?.token)) {
+    out.github.token = next.github.token as string;
+    out.provenance.github_token = REPO_SOURCE;
+  }
+  for (const [field, value] of Object.entries(next.defaults ?? {})) {
+    if (!changed((prev.defaults as Record<string, unknown>)?.[field], value)) continue;
+    (out.defaults as Record<string, unknown>)[field] = value;
+    (out.provenance.defaults as Record<string, string>)[field] = REPO_SOURCE;
+  }
+  for (const [field, value] of Object.entries(next.backup ?? {})) {
+    if (changed((prev.backup as Record<string, unknown>)?.[field], value)) (out.backup as Record<string, unknown>)[field] = value;
+  }
+  return out;
+}
+
 /** Full host mcpServers envelope for Claude Desktop / Cursor / other command+args hosts.
  *  No `args`: one process now serves every repo, and `repo` is a per-call tool argument
  *  (a path from `alinery_list_repos`), not a launch flag. */
@@ -269,6 +296,22 @@ export function Settings({
   const [focusGridViewId, setFocusGridViewId] = useState("");
   const globalSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const [overrides, setOverrides] = useState<RepoOverrides>(EMPTY_OVERRIDES);
+  // A repository's values come from the daemon's settings row. A write shows at once through the overlay and is
+  // dropped once the row has passed the write's cursor (plan 2.2.7).
+  const repoRead = useRepoSettings(scope.kind === "repo" ? scope.repoPath : "");
+  const written = useOverlay<{ cfg: Config; overrides: RepoOverrides }>();
+  const repoBase = useMemo(() => (repoRead.settings ? { cfg: repoRead.settings.effective, overrides: repoRead.settings.overrides } : undefined), [repoRead.settings]);
+  const repoShown = repoBase ? written.overlay.read(repoBase, repoRead.cursor) : undefined;
+  useEffect(() => {
+    if (scope.kind !== "repo") return;
+    // Until the repository's row arrives nothing of another repository is shown, or written over.
+    setCfg(repoShown?.cfg ?? null);
+    setOverrides(repoShown?.overrides ?? EMPTY_OVERRIDES);
+  }, [repoShown, scope.kind]);
+  const repoError = scope.kind === "repo" ? repoRead.error : undefined;
+  useEffect(() => {
+    if (repoError) toast.error(`Couldn't load settings: ${repoError}`);
+  }, [repoError]);
   const report = (text: string, length?: ToastLength) => toast.success(text, length);
   const reportError = (e: unknown, what = "The action failed") => toast.error(`${what}: ${String(e)}`);
   const [mcpBusy, setMcpBusy] = useState(false);
@@ -392,13 +435,10 @@ export function Settings({
       return;
     }
 
+    // The repository's own values arrive from its settings row; the global tier is the shell's.
     ipc
-      .readScopedSettingsForRepo(nextScope.repoPath)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setCfg(payload.effective);
-        setOverrides(payload.overrides);
-      })
+      .readGlobalSettings()
+      .then(setGlobal)
       .catch((e) => reportError(e, "Couldn't load settings"));
   };
 
@@ -526,30 +566,32 @@ export function Settings({
   };
 
   const saveRepoOverrides = (next: RepoOverrides, message = "Saved") => {
-    if (scope.kind !== "repo") return;
+    if (scope.kind !== "repo" || !cfg) return;
+    const repoPath = scope.repoPath;
+    // A second write while the first is still settling cannot name the revision it will land on, so only a write from a settled view is checked.
+    const expected = written.overlay.pending ? undefined : repoRead.settings?.revision;
     setOverrides(next);
-    ipc
-      .writeRepoOverridesForRepo(scope.repoPath, next)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setOverrides(payload.overrides);
-        setCfg(payload.effective);
+    const shown = { cfg: withWritten(cfg, overrides, next), overrides: next };
+    setCfg(shown.cfg);
+    written.show(shown);
+    writeRepoOverrides(repoPath, next, expected)
+      .then((cursor) => {
+        written.applied(cursor);
         report(message);
       })
-      .catch((e) => reportError(e, "Couldn't save repository overrides"));
+      .catch((e) => {
+        written.drop();
+        if (e instanceof SettingsConflict) reportError("these settings were changed elsewhere; showing the newer values", "Not saved");
+        else reportError(e, "Couldn't save repository overrides");
+      });
   };
 
   const clearRepoField = (field: string) => {
     if (scope.kind !== "repo") return;
-    ipc
-      .clearRepoOverrideForRepo(scope.repoPath, field)
-      .then((payload) => {
-        setGlobal(payload.global);
-        setOverrides(payload.overrides);
-        setCfg(payload.effective);
-        report("Using the global value");
-      })
-      .catch((e) => reportError(e, "Couldn't clear the override"));
+    // No layer: the value that applies again is the global tier's, which the daemon works out, so the row shows it when it arrives.
+    clearRepoOverride(scope.repoPath, field, written.overlay.pending ? undefined : repoRead.settings?.revision)
+      .then(() => report("Using the global value"))
+      .catch((e) => reportError(e instanceof SettingsConflict ? "these settings were changed elsewhere; showing the newer values" : e, "Couldn't clear the override"));
   };
 
   // ---- Backup (issue #79) ----

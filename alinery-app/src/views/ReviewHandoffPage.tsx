@@ -4,6 +4,7 @@ import * as ipc from "../ipc";
 import { repoDisplayPath, sameMachine } from "../remoteRepo";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
 import { useRepoBoard } from "../sync/board";
+import { readEffectiveConfig } from "../sync/settings";
 import type { NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
 import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
@@ -60,11 +61,11 @@ export function ReviewHandoffPage({
     setModel("");
     setErr("");
     if (!selectedTask) return;
-    Promise.all([readTaskExecution(selectedTask.repo_path, selectedTask.slug), ipc.readScopedSettingsForRepo(selectedTask.repo_path)])
-      .then(([execution, settings]) => {
+    Promise.all([readTaskExecution(selectedTask.repo_path, selectedTask.slug), readEffectiveConfig(selectedTask.repo_path)])
+      .then(([execution, config]) => {
         if (!alive) return;
         setSteps(execution.definition.step);
-        setModel(ompDefaultModel(settings.effective.defaults));
+        setModel(ompDefaultModel(config.defaults));
       })
       .catch((error) => {
         if (alive) setErr(String(error));

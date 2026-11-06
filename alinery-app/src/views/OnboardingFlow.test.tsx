@@ -11,10 +11,12 @@ import {
   writeSavedOnboardingStep,
 } from "../onboarding";
 import { fakeBoard } from "../test/boardHooks";
-import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides, ScopedSettings } from "../types";
+import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides } from "../types";
 import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
 
+const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
   ResizeHandles: () => null,
@@ -72,7 +74,7 @@ beforeEach(() => {
       modified_at_ms: null,
     };
   });
-  vi.spyOn(ipc, "readConfigForRepo").mockResolvedValue({
+  settingsMocks.readEffectiveConfig.mockResolvedValue({
     notifications: {
       enabled: true,
       sound: true,
@@ -140,22 +142,19 @@ describe("onboarding persistence helpers", () => {
 
 describe("OnboardingFlow wizard", () => {
   it.each(["openai/private-deployment", ""])("preserves unrelated repository overrides when choosing model %j", async (model) => {
-    const effective = await ipc.readConfigForRepo(baseConfig.active_repo);
+    const effective = await settingsMocks.readEffectiveConfig(baseConfig.active_repo);
     const original: RepoOverrides = {
       github: { token: "repository-credential-fixture" },
       defaults: { thinking: "high", playbook: { scope: "repo", key: "custom" }, draft_autosave: false },
       backup: { destination: "/backup", enabled: false, retention: 13 },
     };
     let persisted = structuredClone(original);
-    const scoped: ScopedSettings = {
-      global: { ...effective, harnesses: { harness: [] }, model_favorites: {}, updates: { check_enabled: true } },
-      effective,
-      overrides: original,
-    };
-    vi.spyOn(ipc, "readScopedSettingsForRepo").mockResolvedValue(scoped);
-    vi.spyOn(ipc, "writeRepoOverridesForRepo").mockImplementation(async (_repo, overrides) => {
+    settingsMocks.readRepoSettings.mockResolvedValue({ overrides: original, effective, revision: 3n });
+    let sentRevision: bigint | undefined;
+    settingsMocks.writeRepoOverrides.mockImplementation(async (_repo: string, overrides: RepoOverrides, revision?: bigint) => {
       persisted = structuredClone(overrides);
-      return { ...scoped, overrides: persisted };
+      sentRevision = revision;
+      return undefined;
     });
     let pick: ((value: string) => void) | undefined;
     render(
@@ -181,6 +180,7 @@ describe("OnboardingFlow wizard", () => {
     expect(persisted.github).toEqual(original.github);
     expect(persisted.backup).toEqual(original.backup);
     expect(persisted.defaults).toEqual({ ...original.defaults, model: model || null });
+    expect(sentRevision).toBe(3n);
   });
 
   it("shows a failed preview without fabricated steps and reloads it on retry", async () => {

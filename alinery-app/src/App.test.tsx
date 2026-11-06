@@ -162,7 +162,7 @@ const actualCreation = vi.hoisted(() => ({ enabled: false }));
 const actualProviders = vi.hoisted(() => ({ enabled: false }));
 const namingScenario = vi.hoisted(() => ({ realSessions: false, realTaskDetail: false }));
 
-const { ipcMocks, ipcModule } = vi.hoisted(() => {
+const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   const ipcMocks = {
     createSessionForRepo: vi.fn(),
     startSession: vi.fn(),
@@ -215,11 +215,13 @@ const { ipcMocks, ipcModule } = vi.hoisted(() => {
     },
     has: () => true,
   });
-  return { ipcMocks, ipcModule };
+  const readEffectiveConfig = vi.fn<(repo: string) => Promise<unknown>>(() => Promise.reject(new Error("Unstubbed readEffectiveConfig call")));
+  return { ipcMocks, ipcModule, readEffectiveConfig };
 });
 
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./ipc", () => ipcModule);
+vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig }));
 vi.mock("./tabMotion", () => {
   const isPrimaryTab = (kind: string) => ["kanban", "list", "grid", "sessions", "chat", "notifications", "playbooks", "settings"].includes(kind);
   return {
@@ -652,7 +654,7 @@ describe("onboarding gate", () => {
         ],
       },
     }));
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
+    vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { ...appConfig.global?.defaults, harness: "omp" } } as Config);
     vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
       task,
       sessions: [],
@@ -887,7 +889,7 @@ describe("Playbooks navigation", () => {
       if (!source) throw new Error("Unknown preview scope");
       return source;
     });
-    vi.mocked(ipc.readConfigForRepo).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
+    vi.mocked(readEffectiveConfig).mockResolvedValue({ defaults: { playbook: sources[0].source.reference, draft_autosave: false } } as Config);
     vi.mocked(ipc.taskSourceBranchesForRepo).mockResolvedValue({
       branches: [{ full_ref: "refs/heads/main", name: "main" }],
       head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },

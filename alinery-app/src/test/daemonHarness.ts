@@ -6,14 +6,16 @@ import { createRouterTransport, type ServiceImpl } from "@connectrpc/connect";
 import { type Cursor, CursorSchema } from "alinery-proto/alinery/v1/common_pb";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
+import { SettingsService } from "alinery-proto/alinery/v1/settings_pb";
 import { type SubscribeRequest, type SubscribeResponse, SubscribeResponseSchema, SyncService } from "alinery-proto/alinery/v1/sync_pb";
 
-export type Services = { sync: ServiceImpl<typeof SyncService>; sessions: ServiceImpl<typeof SessionService> };
+export type Services = { sync: ServiceImpl<typeof SyncService>; sessions: ServiceImpl<typeof SessionService>; settings: ServiceImpl<typeof SettingsService> };
 
 export function daemonHarness(services: Partial<Services>) {
   const transport = createRouterTransport((router) => {
     if (services.sync) router.service(SyncService, services.sync);
     if (services.sessions) router.service(SessionService, services.sessions);
+    if (services.settings) router.service(SettingsService, services.settings);
   });
   return { transport };
 }

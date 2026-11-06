@@ -121,7 +121,7 @@ const draftTask: BoardTask = {
   current_column_title: "",
 };
 
-const readConfigForRepo = vi.hoisted(() =>
+const readEffectiveConfig = vi.hoisted(() =>
   vi.fn(
     async () =>
       ({
@@ -135,7 +135,6 @@ const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, sele
 vi.mock("../ipc", () =>
   mockIpc({
     taskSourceBranchesForRepo,
-    readConfigForRepo,
     listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
     readPlaybook: vi.fn(),
     prepareTaskAttachments: vi.fn(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
@@ -144,6 +143,8 @@ vi.mock("../ipc", () =>
     getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
+
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 
 import * as ipc from "../ipc";
 
@@ -171,7 +172,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  readConfigForRepo.mockResolvedValue({
+  readEffectiveConfig.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
   taskSourceBranchesForRepo.mockReset().mockImplementation(async (_repoPath: string, selectedBaseRef?: string | null) => ({
@@ -541,7 +542,7 @@ describe("scoped playbook selection", () => {
   });
 
   it("does not replace an unavailable configured default with the first catalog item", async () => {
-    readConfigForRepo.mockResolvedValue({ defaults: { harness: "omp", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
+    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "omp", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
@@ -556,7 +557,7 @@ describe("scoped playbook selection", () => {
 
 describe("OMP model default", () => {
   it("does not prefill a leftover claude-owned model", async () => {
-    readConfigForRepo.mockResolvedValue({
+    readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "claude", model: "sonnet", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -576,7 +577,7 @@ describe("OMP model default", () => {
 
   it("preserves a configured OMP default for signed-in accounts", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
-    readConfigForRepo.mockResolvedValue({
+    readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -801,7 +802,7 @@ describe("per-step default model", () => {
   });
 
   it("shows the configured omp model as product default only after the task model is cleared", async () => {
-    readConfigForRepo.mockResolvedValue({
+    readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "omp", model: "configured-omp", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -817,7 +818,7 @@ describe("per-step default model", () => {
   });
 
   it("leaves a step box blank only when the whole chain is empty", async () => {
-    readConfigForRepo.mockResolvedValue({
+    readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -1427,7 +1428,7 @@ describe("v2 task creation", () => {
 describe("task creation feedback", () => {
   it("signals opened before repository settings settle", async () => {
     let finishConfig!: (config: Config) => void;
-    readConfigForRepo.mockReturnValue(
+    readEffectiveConfig.mockReturnValue(
       new Promise<Config>((resolve) => {
         finishConfig = resolve;
       }),

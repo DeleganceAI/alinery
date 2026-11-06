@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { fakeSettings } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -47,21 +48,20 @@ const scoped = (destination: string) => ({
 const mocks = vi.hoisted(() => ({
   checkBackupDestination: vi.fn(),
   pickBackupDestinationDialog: vi.fn(),
-  writeRepoOverridesForRepo: vi.fn(),
 }));
 
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    readScopedSettingsForRepo: async () => scoped(""),
     listBackups: async () => [],
     backupBusy: async () => false,
     getVersion: async () => "0.0.0",
     checkBackupDestination: mocks.checkBackupDestination,
     pickBackupDestinationDialog: mocks.pickBackupDestinationDialog,
-    writeRepoOverridesForRepo: mocks.writeRepoOverridesForRepo,
   }),
 );
+
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 
 import { Settings } from "./Settings";
 
@@ -95,9 +95,8 @@ function renderBackup() {
 beforeEach(() => {
   mocks.checkBackupDestination.mockReset().mockImplementation(async (_repo: string, destination: string) => destination);
   mocks.pickBackupDestinationDialog.mockReset();
-  mocks.writeRepoOverridesForRepo
-    .mockReset()
-    .mockImplementation(async (_repo: string, overrides: { backup: { destination?: string } }) => scoped(overrides.backup.destination ?? ""));
+  fakeSettings.reset();
+  for (const repo of ["/repo-a", REMOTE]) fakeSettings.serve(repo, (overrides) => scoped(overrides.backup.destination ?? "").effective);
 });
 
 afterEach(cleanup);
@@ -123,9 +122,9 @@ describe("Settings backup destination", () => {
     fireEvent.click(set);
 
     await waitFor(() => expect(mocks.checkBackupDestination).toHaveBeenCalledWith(REMOTE, "/srv/backups"));
-    await waitFor(() => expect(mocks.writeRepoOverridesForRepo).toHaveBeenCalled());
-    expect(mocks.writeRepoOverridesForRepo.mock.calls[0][0]).toBe(REMOTE);
-    expect(mocks.writeRepoOverridesForRepo.mock.calls[0][1].backup.destination).toBe("/srv/backups");
+    await waitFor(() => expect(fakeSettings.writes).toHaveLength(1));
+    expect(fakeSettings.writes[0].repo).toBe(REMOTE);
+    expect(fakeSettings.writes[0].overrides.backup.destination).toBe("/srv/backups");
     expect(mocks.pickBackupDestinationDialog).not.toHaveBeenCalled();
   });
 
@@ -137,6 +136,6 @@ describe("Settings backup destination", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set folder" }));
 
     await waitFor(() => expect(mocks.checkBackupDestination).toHaveBeenCalled());
-    expect(mocks.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(fakeSettings.writes).toEqual([]);
   });
 });

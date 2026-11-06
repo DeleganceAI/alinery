@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { taskKey } from "../shared";
 import { fakeBoard } from "../test/boardHooks";
 import type * as IpcFixtures from "../test/mockIpc";
-import type { BoardTask, NormalizedPlaybook, ReviewHandoffResult, ScopedSettings, TaskExecutionReply } from "../types";
+import type { BoardTask, Config, NormalizedPlaybook, ReviewHandoffResult, TaskExecutionReply } from "../types";
 import { ReviewHandoffPage } from "./ReviewHandoffPage";
 
 const sourceTask = {
@@ -94,10 +94,11 @@ const handoffResult: ReviewHandoffResult = {
   target_record: { ...handoffRecord, direction: "inbound" },
 };
 const mocks = vi.hoisted(() => ({
-  readScopedSettingsForRepo: vi.fn(),
   getTaskExecution: vi.fn(),
   sendReviewHandoff: vi.fn(),
 }));
+const readEffectiveConfig = vi.hoisted(() => vi.fn());
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", async () => {
   // The hoisted IPC factory runs before shared.tsx finishes importing its dependencies.
@@ -108,7 +109,7 @@ vi.mock("../ipc", async () => {
 beforeEach(() => {
   vi.resetAllMocks();
   fakeBoard.set({ tasks: [sourceTask, foreignTask, otherTask] });
-  mocks.readScopedSettingsForRepo.mockResolvedValue({ effective: { defaults: { harness: "omp", model: "gpt-5" } } } as ScopedSettings);
+  readEffectiveConfig.mockResolvedValue({ defaults: { harness: "omp", model: "gpt-5" } } as Config);
   mocks.getTaskExecution.mockResolvedValue({ definition } as TaskExecutionReply);
 });
 afterEach(cleanup);
@@ -192,7 +193,7 @@ describe("ReviewHandoffPage", () => {
   });
 
   it("clears a leftover claude-owned default model from the selected target repository", async () => {
-    mocks.readScopedSettingsForRepo.mockResolvedValue({ effective: { defaults: { harness: "claude", model: "sonnet" } } } as ScopedSettings);
+    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "claude", model: "sonnet" } } as Config);
     renderPage();
     await selectTarget();
     expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe("");

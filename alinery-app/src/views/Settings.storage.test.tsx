@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { effectiveOf, fakeSettings } from "../test/settingsHooks";
 import type { GlobalSettings, SettingsSectionKey, StorageInfo } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -64,21 +65,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    readScopedSettingsForRepo: async () => ({
-      global: globalSettings,
-      overrides: { github: {}, defaults: {}, backup: {} },
-      effective: {
-        notifications: globalSettings.notifications,
-        github: globalSettings.github,
-        defaults: globalSettings.defaults,
-        provenance: {
-          github_token: "global",
-          defaults: { harness: "global", model: "global", thinking: "global", playbook: "global", draft_autosave: "global" },
-        },
-        backup: globalSettings.backup,
-        telemetry: globalSettings.telemetry,
-      },
-    }),
     storageInfo: mocks.storageInfo,
     deleteAllArchivedStorage: mocks.deleteAllArchivedStorage,
     listBackups: async () => [],
@@ -87,6 +73,7 @@ vi.mock("../ipc", () =>
   }),
 );
 
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 import { Settings } from "./Settings";
@@ -119,6 +106,8 @@ function renderSettings(section: SettingsSectionKey) {
 }
 
 beforeEach(() => {
+  fakeSettings.reset();
+  for (const repo of ["/repo-a", "/repo-b"]) fakeSettings.serve(repo, (overrides) => effectiveOf(globalSettings, overrides));
   mocks.storageInfo.mockReset().mockImplementation(async (repoPath: string) => storageFor(repoPath));
   mocks.deleteAllArchivedStorage.mockReset().mockResolvedValue({
     deleted_tasks: 3,

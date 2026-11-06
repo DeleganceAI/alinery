@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { effectiveOf, fakeSettings } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -36,7 +37,14 @@ const globalSettings: GlobalSettings = {
 
 vi.mock("../ipc", () => mockIpc({ readGlobalSettings: async () => globalSettings }));
 
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
+
 import { Settings } from "./Settings";
+
+beforeEach(() => {
+  fakeSettings.reset();
+  for (const repo of ["/r", "/Users/dev/code/my-repo", "/Users/dev/code/other-repo"]) fakeSettings.serve(repo, (overrides) => effectiveOf(globalSettings, overrides));
+});
 
 const NOT_READY: McpStatusHandle = {
   enabled: false,

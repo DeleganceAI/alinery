@@ -7,6 +7,7 @@ import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, type OnboardingStepId, r
 import { PlaybookGraph, type SimulatedStepStatus } from "../PlaybookGraph";
 import { repoDisplayPath } from "../remoteRepo";
 import { InlineStatus, ModelInput, repoName, samePlaybookRef } from "../shared";
+import { readEffectiveConfig, readRepoSettings, writeRepoOverrides } from "../sync/settings";
 import type { AppConfig, Config, NormalizedPlaybook, PlaybookRef } from "../types";
 
 const INPUT_MODE_LABELS: Record<"single" | "each" | "complete", string> = {
@@ -154,8 +155,7 @@ export function OnboardingFlow({
     setModelError("");
     setRepoConfig(null);
 
-    void ipc
-      .readConfigForRepo(appConfig.active_repo)
+    void readEffectiveConfig(appConfig.active_repo)
       .then((cfg) => {
         if (cancelled) return;
         setRepoConfig(cfg);
@@ -273,13 +273,16 @@ export function OnboardingFlow({
       },
     };
     setRepoConfig(updated);
-    void ipc
-      .readScopedSettingsForRepo(appConfig.active_repo)
-      .then(({ overrides }) =>
-        ipc.writeRepoOverridesForRepo(appConfig.active_repo, {
-          ...overrides,
-          defaults: { ...overrides.defaults, model: trimmed || null },
-        }),
+    void readRepoSettings(appConfig.active_repo)
+      .then(({ overrides, revision }) =>
+        writeRepoOverrides(
+          appConfig.active_repo,
+          {
+            ...overrides,
+            defaults: { ...overrides.defaults, model: trimmed || null },
+          },
+          revision,
+        ),
       )
       .catch((error) => setModelError(String(error)));
   };
