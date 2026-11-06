@@ -129,7 +129,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 - Storage: `storage_info`, `delete_all_archived_storage`
 - Remote: `remote_hosts`, `remote_add_host`, `remote_ssh_aliases`, `remote_describe_destination`, `remote_discard_host`, `remote_sharing`, `remote_set_sharing`, `remote_connect`, `remote_disconnect`, `remote_list_dir`, `remote_classify`, `remote_init`, `remote_add_repo`, `remove_remote_repo_keep_running`
 
-MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery_session_status` / `alinery_read_session_history`. MCP never exposes attach/write/resize/detach/kill/resume/takeover/bulk operations, and a mismatch never triggers teardown.
+MCP is the daemon binary's `--mcp` mode (`alinery-app/src-tauri/vinculum-daemon/src/mcpServer/`): every tool is a call on the repository's daemon over its RPC socket with a minted AGENT token (`AdminService.MintToken`; `AGENT_RPCS` in `rpc/auth.ts` is exactly the RPCs behind the tools), and it writes nothing in `.alinery/` itself. A harness's MCP gets `ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN` from its daemon; the shell's managed MCP (`--mcp --serve --managed`, `src/mcp.rs`) and a host's stdio config read the app's owner-only `mcp-endpoints.json`, and only the managed one offers `alinery_send_review_handoff`. The Rust `alinery-mcp` keeps `--repo-service` only (until S5.2). MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery_session_status` / `alinery_read_session_history`. MCP never exposes attach/write/resize/detach/kill/resume/takeover/bulk operations, and a mismatch never triggers teardown.
 
 ## Frontend Views (no router)
 

@@ -704,6 +704,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** both lists are empty within 2 s of the confirmation; the purge ended between two tasks (no half-deleted task directory); the app's "stop" returns without the "has not released its socket" error; after reopening the repo the job entity is absent or CANCELLED.
 - **Status:** open
 
+### L-S5.1-a: the managed MCP runs from the daemon binary in the real app
+- **Session:** S5.1 (Accept 5; R-S5.1-3, R-S5.1-4).
+- **Needs:** the app launched from this branch (`npm run tauri dev`), `alinery-vinculum-daemon` compiled beside it (`scripts/dev-fetch-bun.sh`), a scratch repository with one task.
+- **Steps:** open the repository; Settings > MCP, turn the managed server on. In a terminal: `ls -l "$(dirname <app_config>)/mcp-endpoints*.json"` (the app config directory is in Settings > General), `pgrep -fl -- '--mcp --serve --managed'`, and `printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | nc -U <repo>/.alinery/mcp.sock`. Then `printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"alinery_list_tasks","arguments":{"repo":"<repo>"}}}\n' | nc -U <repo>/.alinery/mcp.sock`. Force-quit the app (`kill -9` of the Alinery process), relaunch it, and run the `pgrep` again. Quit the app normally and run it once more.
+- **Expected:** the endpoints file is mode 0600 and names the repository; exactly one `--mcp --serve --managed` process; `tools/list` answers 26 tools; `alinery_list_tasks` answers the task; after the force-quit and relaunch there is still exactly one listener (the old one was asked to exit, not killed by pid); after a normal quit there is none. The Settings status line says running with the client count.
+- **Status:** open
+
+### L-S5.1-b: a host's stdio MCP from the copied config, and a daemon restart under it
+- **Session:** S5.1 (R-S5.1-4).
+- **Needs:** Claude Desktop (or any MCP host that runs a stdio command), the app launched with the managed MCP on and a repository open.
+- **Steps:** Settings > MCP > Copy config; paste it into the host's MCP configuration and restart the host. Ask it to call `alinery_list_tasks` for the repository, then `alinery_send_review_handoff` with any arguments. In the app, Settings > Harness > Stop daemon for the repository, reopen the repository, wait 35 s, and ask the host for `alinery_list_tasks` again.
+- **Expected:** the tasks come back; the handoff call answers `alinery_send_review_handoff copies between two repositories, so it needs the Alinery app's MCP...` (O22 a); right after the restart a call may answer an authentication error, and a call after the 30 s refresh succeeds (the tokens died with the old daemon).
+- **Status:** open
+
+### L-S5.1-c: the review handoff from the managed MCP between two local repositories
+- **Session:** S5.1 (O22 a).
+- **Needs:** the app launched, two scratch repositories open (so both daemons run), a task with a review artifact in the first and a task in the second.
+- **Steps:** over the managed socket of the first repository (`nc -U <repo-1>/.alinery/mcp.sock`), call `alinery_send_review_handoff` with `repo` and `target_repo` set, the source slug and artifact, the target slug and step key, `start` false. Then `alinery_list_artifacts` and `alinery_list_sessions` for the second repository.
+- **Expected:** the answer names the installed handoff and a created session in the second repository; the second repository's task has the artifact under its attachments or inbound handoffs, and the first has an outbound handoff record. Nothing is written in either `.alinery/` by the MCP itself.
+- **Status:** open
+
+### L-S5.1-d: a harness-launched MCP in a session
+- **Session:** S5.1 (O20 c).
+- **Needs:** the app launched, a task with an OMP session (a model signed in), the MCP enabled for the harness.
+- **Steps:** in a session, ask the agent to call `alinery_list_tasks` and `alinery_storage_info`. In a terminal, `ps eww -o command= -p $(pgrep -f -- '--mcp' | head -1) | tr ' ' '\n' | grep ALINERY_RPC` (the child's environment names the socket and a token).
+- **Expected:** both tools answer from the session; the child's environment holds `ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN`; calling `AdminService.Shutdown` with that token (grpcurl over the socket, if installed) is PERMISSION_DENIED and the daemon keeps running.
+- **Status:** open
+
+### L-S5.1-e: a harness-launched MCP on a remote host
+- **Session:** S5.1 (R-S5.1-9).
+- **Needs:** the Linux runtime bundle and the Docker sshd (`scripts/build-remote-runtimes.sh`, needs zig; `scripts/tests/remote-sshd/run.sh start`, linux/arm64 only), the app launched.
+- **Steps:** rebuild the runtimes (`vinculum-daemon/` changed), connect the sshd from the remote button, open a repository on it, start an OMP session there and ask the agent to call `alinery_list_tasks`.
+- **Expected:** the tool answers on the host (the MCP child is the host's Bun binary; no Mac path appears in the answer).
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -714,5 +749,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.10-a to -d (S4.10):** built; see the entries above.
 - **L-S4.11-a to -f (S4.11):** built; see the entries above.
 - **L-S4.12-a to -c (S4.12):** built; see the entries above.
+- **L-S5.1-a to -e (S5.1):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.

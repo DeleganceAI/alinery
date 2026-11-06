@@ -119,7 +119,9 @@ first_live_daemon_socket() {
 ALINERYD_PROCESS_PATTERN='(^|[[:space:]/])(alinery-vinculum-daemon|alineryd)([[:space:]]|$)'
 
 is_product_daemon_ps_line() {
-  printf '%s' "${1-}" | grep -qE "$ALINERYD_PROCESS_PATTERN"
+  # The daemon binary also runs the MCP server (`--mcp`, S5.1): a harness's or the app's MCP child carries the same
+  # `--repo` and is not a daemon, so it is neither counted nor shut down.
+  printf '%s' "${1-}" | grep -qE "$ALINERYD_PROCESS_PATTERN" && ! printf '%s' "${1-}" | grep -qE '[[:space:]]--mcp([[:space:]]|$)'
 }
 
 # Strip trailing slashes so `/x` and `/x/` are one repo. `repo_daemon_socket` already
