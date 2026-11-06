@@ -743,6 +743,54 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 
 ---
 
+### R-S4.8-1: the manager session's prompt and start were missing from the TypeScript create
+- **Kind:** deviation from the plan (it says to port `subtask.rs`; it does not say the daemon's manager branch was a stub) and a fix.
+- **What:** since S4.4 the daemon's `subtask_manager` target of the session create wrote a bare session meta: no prompt, no `subtask_slug` binding for a recovery, no start. The Rust shell used to ask the Rust request builder and the core launcher built the prompt, so the page worked through Rust and the TypeScript path was never exercised. `createManagerSession` now writes `{id, worktree, created, harness, model, generic, subtask_manager, subtask_slug?, prompt}` with the two prompt templates (`prompts/subtask-manager*.md`, embedded with Bun text imports), the parent context and the related-tasks pointer, refuses a second live or unstarted manager, validates a recovery's binding (the child exists, its `parent_task` and the parent's `active_subtask` agree), and opens the session when asked. A failed open is reported as `start: "failed"` with a `spawn_failed` error, as the Rust reply did. The `{{NAME}}` fill is single-pass (the Rust used chained `replace`, so a task named `{{PARENT_SLUG}}` was expanded twice).
+- **Options:** (a) restore it in `domain/subtasks.ts` (chosen); (b) leave the stub and keep the Rust launcher for managers until S5.1 (two implementations of one prompt).
+- **Reverse:** none planned; the Rust `manager_prompt`/`recovery_manager_prompt` in core `shared.rs` still exist and have no caller (see R-S4.8-8).
+- **Files:** `vinculum-daemon/src/domain/subtasks.ts`, `domain/taskFiles.ts` (`RELATED_MARKDOWN` exported), `src/tasks.ts`.
+
+### R-S4.8-2: starting a manager is its own RPC
+- **Kind:** provisional decision (the plan names state, request and discard, not who builds the session).
+- **What:** `SubtaskService.StartManager` creates and starts the manager. A recovery resolves the task's active child on the daemon (`loadRelationships`), so the page and a remote host need no round trip to read it first. The alternative, the page calling `SessionService.CreateSession` with a `subtaskManager` target, would have put the recovery lookup in the frontend.
+- **Options:** (a) one daemon RPC (chosen); (b) extend `CreateSession`'s target with a manager arm and keep the lookup in the page.
+- **Reverse:** add the arm to `sessions.proto`, have `sync/subtasks.ts` call it, and delete `StartManager`. About 40 lines.
+- **Files:** `proto/alinery/v1/subtasks.proto`, `rpc/subtasks.ts`, `alinery-app/src/sync/subtasks.ts`.
+
+### R-S4.8-3: what stays in core `subtask.rs` (Exit met in part)
+- **Kind:** deviation from Build (the file is trimmed, not removed) with a close date.
+- **What:** `alinery-mcp` calls `inspect_subtask_finish`, `finalize_subtask`, `subtask_manager_owner_slug`, `ensure_task_can_archive` and `archive_task_guarded` directly, and `shared.rs`/`artifact_tree.rs` call `read_task_relationships`. They stay, with the relationship validation, the git state, the snapshot copy and their tests, until S5.1 gives MCP its own path. Removed: `subtask_manager_state`, `subtask_manager_request`, `create_subtask`, `subtask_discard_sessions`, `discard_subtask` (and their helpers and 7 tests), `task_worktree_is_clean`, `Rust SubtaskManagerState`. The four `RepoOp` variants, the four shell commands and `provision_ffi.rs` (the Exit's list) are gone. The legacy `{"op":"create_subtask"}` wire op, which `alinery-mcp` and `DaemonClient::create_subtask` use, is still served, now through `createSubtaskFromWire` and `prepareSubtask` + `provisionTask` instead of the FFI. `alinery_create_subtask` therefore behaves as before for an agent.
+- **Close:** S5.1 moves the MCP tools to the RPCs; then `inspect_subtask_finish`, `finalize_subtask`, the guard and the snapshot code go (a `FinalizeSubtask` RPC will need them in TypeScript first, which the plan does not list under any session; S5.1 should add it).
+- **Files:** `alinery-core/src/subtask.rs`, `mcp/src/main.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.8-4: the discard's backup is a shell command until S4.9
+- **Kind:** provisional decision, temporary (the plan: "its pre-archive backup S4.9").
+- **What:** the Rust `discard_subtask` queued a `PreArchive` backup before it started. The daemon cannot reach the in-process queue, so `discardSubtask` in `sync/subtasks.ts` first calls the new shell command `publish_pre_archive_backup(repoPath)` and ignores its failure. It queues (does not wait for) the backup, as the old discard did, and a local repo is gated by this machine's trigger settings while a remote repo's key goes into the queue for the host to gate. `pre_archive_backup` (S4.3, which waits and can refuse) is not reused: it calls `ensure_task_can_archive`, which refuses a parent with an active child, the very state a kill starts from.
+- **Close:** S4.9 moves the queue into the daemon; the command, its `ipc.ts` wrapper and the call go with it.
+- **Files:** `src/backup.rs`, `alinery-app/src/ipc.ts`, `alinery-app/src/sync/subtasks.ts`.
+
+### R-S4.8-5: tests moved to TypeScript, no cross-language case
+- **Kind:** deviation from Tests ("conformance from the core `subtask.rs` tests").
+- **What:** Rust no longer creates or discards a child, so no case could be written by Rust and read by the daemon. Each Rust test that created or discarded is a bun test on real temp repositories: dirty parent, bound manager and slug collisions, partial git creation, unbound discard, kill of a nested lineage, inherited and own step models. The kill case asserts the Accept line: the parent's `execution.json` is byte-identical afterwards and `loadEngineState` accepts it, the killed tasks keep their worktrees, branches, sessions and artifacts, and `loadRelationships` still passes. The readers Rust uses on these files are covered by the existing `task` and `session_meta` conformance domains. The Rust inspect/finalize tests stay, with a `link_child` helper that makes the state creation used to leave.
+- **Files:** `vinculum-daemon/src/domain/subtasks.test.ts`, `src/rpc/subtasks.test.ts`, `alinery-core/src/subtask.rs` (tests).
+
+### R-S4.8-6: smaller things
+- **Hardening in the port.** A discarded setup's files include `.pi.sqlite[-wal/-shm]` (Rust moved only meta, scrollback and name, so a pi-durable setup left its database behind). Manager choice orders by `created` then id, as Rust does, so two managers made in one second can swap; the test backdates one.
+- **Dead code removed with the commands:** `task_daemon_for` (its only product caller was the sub-task commands; its assertion in the takeover test went), `publish_remote_backup`, `paths::worktrees_dir`, the test helper `create_task_for_test`.
+- **Stalled-host live test.** It polled `subtask_state` to prove an async command waits on the host off the main thread. It now polls `storage_info`, made generic over the runtime for the same reason; the comparison is `repo_path` and `tasks_dir`, since sizes can move.
+- **Session routes.** The Rust discard cleared the shell's per-session route cache for the stopped sessions. The daemon does the stopping now, and a route to a session that no longer exists has no reader I found in the page after a kill; nothing replaces the call.
+- **`bun install`.** After the proto regeneration, `bun install` in `vinculum-daemon` was needed to refresh its `node_modules/alinery-proto` copy (R-S4.7-5 again).
+
+### R-S4.8-7: `PROTOCOL_VERSION` 33
+- **Kind:** note.
+- **What:** a new service on the grpc socket bumps the protocol: `protocol.rs`, `main.ts` `PROTOCOL`, `daemon_client.rs`'s shutdown dialect list (the first `check.sh` failed `takeover_rejects_invalid_and_compatible_targets_before_shutdown` until 33 was added there; fixed in 9a2c8a1) and `tests/daemon_takeover.rs`. The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.8-e).
+
+### R-S4.8-8: noticed, not changed
+- **Kind:** note.
+- **What:** core `shared.rs::resolve_launch_prompt` and the `manager_prompt`, `recovery_manager_prompt` and `append_launch_context` it reaches have no caller left in the workspace (only the daemon FFI used them). They are public, so the compiler does not flag them. They are the Rust reference for the prompts in `domain/subtasks.ts`; delete them with the rest of the launch-prompt code when S5.1 settles what MCP needs.
+- **Flaky:** `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` passed in this session's full `check.sh` (R-FLAKE-1).
+
+
 ## E. Known flaky tests
 
 ### R-FLAKE-1: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
@@ -799,3 +847,4 @@ Edit the plan, or let S5.4 do it.
 - After S4.1, the daemon creates `.alinery/config.toml`, `.alinery/harnesses.toml` and the task-data ignore entry when a repository is first opened (local or remote), and it sends the repository-settings telemetry event itself. A remote host's daemon sends it under this Mac's install id and consent (R-S4.1-2).
 - After S4.6, playbooks are read and written through the repository's daemon: a remote repository lists the host's own global playbooks, not this Mac's, and the bundled and global playbooks need at least one local repository to be known before they can be listed. `README.md:242` (`alinery_read_playbook`) is unchanged: MCP still reads the core library.
 - After S4.7, git work on a task (worktree removal, commit, push and the compare URL, the stored pull-request link) runs in the repository's daemon, so for a remote repository it runs on the host with the host's git and credentials; only the GitHub pull-request lookup (with this Mac's token) runs here. If the README says the app runs git, say that the daemon does.
+- After S4.8, starting, recovering, killing and discarding a sub-task run in the repository's daemon (on the host, for a remote repository). `alinery-mcp`'s `alinery_create_subtask` creates the child through the daemon as before; `alinery_inspect_subtask_finish` and `alinery_finalize_subtask` still run in the MCP process until S5.1.

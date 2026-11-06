@@ -514,6 +514,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the live tests pass against protocol 32 (a host on 31 shows the daemon-conflict banner and Restart daemon); `GitService` answers through the ssh forward.
 - **Status:** open
 
+### L-S4.8-a: start a sub-task manager in the app
+
+- **Session:** S4.8. Plan: S4.8 (needs the app); ledger R-S4.8-1, R-S4.8-2.
+- **Steps:** open Alinery from this branch on a local repository, open a task that has a worktree, press **Start sub-task**. Read the first screen of the session it opens. Then ask the agent to create a child with `alinery_create_subtask` (name, a slug of lowercase letters and dashes, a line of instructions).
+- **Expected:** the button opens a terminal session that attaches at once (it is started by the daemon, not by the page); the agent's first message shows the manager prompt with this task's name, branch, worktree status and ticket path filled in (no `{{...}}` left); after the call the task page shows the child under it, the parent's button reads "Finish the active sub-task before starting another", and the child's worktree is on a branch of the same name at the parent's head.
+- **Status:** open
+
+### L-S4.8-b: kill a child with live sessions, discard a setup, replace a manager
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-3, R-S4.8-4.
+- **Steps:** with a child that has a running session (and, once, a nested child under it), press **Kill sub-task** and confirm. Then start a new manager and, before creating any child, press **Discard setup**. Then create a child, quit its manager session (or kill it from the terminal list) and press **Replace manager session**.
+- **Expected:** every session of the child and its active descendants stops; the child (and the nested one) stays on the board as archived history marked killed, with its worktree, branch and artifacts; the parent can start a sub-task again. A discarded setup disappears with its scrollback. Replacing a manager opens a recovery prompt that names the child. With auto-backup on for archives, a backup appears after a kill or discard and a failing backup never blocks it.
+- **Status:** open
+
+### L-S4.8-c: a sub-task on a remote repo
+
+- **Session:** S4.8. Plan: S4.8 (remote hosts); ledger R-S4.8-2.
+- **Steps:** after L-S4.8-e, connect the host from L-S1.3-b, open a repo on it, and repeat L-S4.8-a and L-S4.8-b there.
+- **Expected:** the same results with no Rust shell command in between: the manager and the child are created on the host (its worktrees, its agent), a kill stops the host's sessions, and the page needs no "restart it from the banner" prompt on a compatible daemon.
+- **Status:** open
+
+### L-S4.8-d: `alinery_create_subtask` from a real agent against the TypeScript domain
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-3.
+- **Steps:** in a task with a manager session, have the agent call `alinery_create_subtask` with a playbook of its own, and then call `alinery_inspect_subtask_finish` and `alinery_finalize_subtask` (the MCP tools, which still run the Rust inspect and finalize) on the child after committing in it.
+- **Expected:** the child is created by the daemon with the parent's links; the finish tools read the same records and archive the child as merged or finished with a snapshot in the parent's `artifacts/subtasks/`.
+- **Status:** open
+
+### L-S4.8-e: the Linux runtime with protocol 33
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-7.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`; the stalled-host case now asks `storage_info`).
+- **Expected:** the live tests pass against protocol 33 (a host on 32 shows the daemon-conflict banner and Restart daemon); `SubtaskService` answers through the ssh forward.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
@@ -534,5 +569,6 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 These have no steps yet; the session that builds them adds the entries.
 
 - **L-S4.7-a to -e (S4.7):** built; see the entries above.
+- **L-S4.8-a to -e (S4.8):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
