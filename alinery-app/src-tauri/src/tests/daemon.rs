@@ -240,30 +240,6 @@ fn app_lifecycle_targets_the_namespaced_lane_not_production() {
     );
 }
 
-// Finding 3 follow-up: `begin` refuses a second claim, so any `?` between claim and
-// release wedges the repo's backup/restore slot for the life of the process. The
-// guard must release on the error paths too, not just the happy one.
-#[test]
-fn backup_slot_is_released_on_every_exit_path() {
-    let key = format!("alinery-slot-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
-    assert!(!backup_queue_lock().busy(&key));
-
-    // Scope that returns early, exactly like restore_backup's ownership refusal.
-    let bail = |k: &str| -> Result<(), String> {
-        let _slot = BackupSlot::claim(k.to_string()).ok_or("already running")?;
-        Err("repo-busy: another Alinery window holds it".into())
-    };
-    assert!(bail(&key).is_err());
-    assert!(!backup_queue_lock().busy(&key), "an early return must not wedge the slot");
-
-    // And the slot is genuinely exclusive while held.
-    let held = BackupSlot::claim(key.clone()).expect("free slot claims");
-    assert!(backup_queue_lock().busy(&key));
-    assert!(BackupSlot::claim(key.clone()).is_none(), "a second claim must be refused while one is held");
-    drop(held);
-    assert!(!backup_queue_lock().busy(&key));
-}
-
 // Finding 1 follow-up: remove_repo/close_all_repos shut a daemon down, which is the
 // owning window's call. A guest must be refused before it reaches close_repo_daemon.
 #[test]

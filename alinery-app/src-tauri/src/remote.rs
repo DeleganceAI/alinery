@@ -323,7 +323,7 @@ echo "uname=$(uname -sm)"
 echo "home=$HOME"
 echo "glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null)"
 echo "pagesize=$(getconf PAGESIZE 2>/dev/null)"
-for tool in tar gzip sha256sum git setsid systemd-run; do
+for tool in tar gzip sha256sum git zip unzip setsid systemd-run; do
   if command -v "$tool" >/dev/null 2>&1; then echo "has_$tool=1"; else echo "has_$tool=0"; fi
 done
 echo "linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
@@ -426,7 +426,7 @@ pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) ->
     if triple.starts_with("aarch64") && probe.pagesize == Some(65536) {
         return Err("arm64 hosts with 64 KiB pages are not supported".into());
     }
-    let missing: Vec<&str> = ["tar", "gzip", "sha256sum", "git"]
+    let missing: Vec<&str> = ["tar", "gzip", "sha256sum", "git", "zip", "unzip"]
         .into_iter()
         .filter(|tool| !probe.tools.get(*tool).copied().unwrap_or(false))
         .collect();
@@ -1266,11 +1266,6 @@ pub(crate) fn connected_session(state: &AppState, host_id: &str) -> Result<std::
         .ok_or_else(|| format!("not connected to {host_id}; connect first"))
 }
 
-/// The `app.toml` the host's daemon and repo service run with.
-pub(crate) fn host_app_config(state: &AppState, host_id: &str) -> Result<PathBuf, String> {
-    Ok(PathBuf::from(format!("{}/app.toml", connected_session(state, host_id)?.config_dir)))
-}
-
 /// Run a typed repo operation on a connected host and decode its answer. The remote half of
 /// an in-process core call: both run the same function in alinery-core.
 pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp) -> Result<T, String> {
@@ -1753,13 +1748,14 @@ pub(crate) async fn remote_disconnect(app: AppHandle, host_id: String) -> Result
         .map_err(|error| format!("remote disconnect task: {error}"))
 }
 
-fn session_call(app: &AppHandle, host_id: &str, op: RepoOp) -> Result<Value, String> {
+fn session_call<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, op: RepoOp) -> Result<Value, String> {
     let state = app.state::<AppState>();
     connected_session(&state, host_id)?.channel.call(op, SERVICE_TIMEOUT)
 }
 
 #[tauri::command]
-pub(crate) async fn remote_list_dir(app: AppHandle, host_id: String, path: String, show_hidden: bool) -> Result<Value, String> {
+// Generic over the runtime only so a test can poll the command on a mock app.
+pub(crate) async fn remote_list_dir<R: tauri::Runtime>(app: AppHandle<R>, host_id: String, path: String, show_hidden: bool) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::ListDir { path: path.into(), show_hidden }))
         .await
         .map_err(|error| format!("remote list task: {error}"))?

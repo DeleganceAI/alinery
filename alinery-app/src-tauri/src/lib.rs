@@ -40,7 +40,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-mod backup_queue;
 use alinery_core::daemon_client;
 #[cfg(test)]
 use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
@@ -177,10 +176,7 @@ pub fn run() {
             init_picked_folder,
             pick_attachment_files_dialog,
             read_local_file,
-            pre_archive_backup,
             lookup_task_pull_request,
-            publish_git_backup,
-            publish_pre_archive_backup,
             ensure_drawer_terminal,
             list_chat_repos,
             chat_prompt,
@@ -220,8 +216,6 @@ pub fn run() {
             write_global_settings,
             read_model_favorites,
             set_model_favorite,
-            storage_info,
-            delete_all_archived_storage,
             notify_test,
             set_dock_badge_count,
             notify_session_attention,
@@ -233,10 +227,6 @@ pub fn run() {
             start_mcp_server,
             stop_mcp_server,
             pick_backup_destination_dialog,
-            check_backup_destination,
-            backup_now,
-            backup_busy,
-            list_backups,
             restore_backup,
             connection_statuses,
             connect_github,

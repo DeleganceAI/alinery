@@ -1,7 +1,7 @@
 // What the runner (daemon side) and the child (its own process) both need to agree on: a kind's name
 // on the command line, and how a result line becomes the Job entity's result.
 import { fromJson, type JsonObject } from "@bufbuild/protobuf";
-import { type Job, JobKind, StorageInfoSchema } from "alinery-proto/alinery/v1/entities_pb";
+import { BackupResultSchema, type Job, JobKind, PurgeResultSchema, StorageInfoSchema } from "alinery-proto/alinery/v1/entities_pb";
 
 const NAMES: ReadonlyMap<JobKind, string> = new Map([
   [JobKind.STORAGE_SCAN, "storage-scan"],
@@ -16,10 +16,11 @@ export function kindName(kind: JobKind): string {
   return name;
 }
 
-/** The entity's `result` for a result line. A kind without a result message yet (S4.9 adds backup,
- * purge and import) leaves it unset. */
+/** The entity's `result` for a result line. A kind without a result message yet (S4.10 adds import) leaves it unset. */
 export function resultOf(kind: JobKind, json: unknown): Job["result"] {
   if (kind === JobKind.STORAGE_SCAN) return { case: "storage", value: fromJson(StorageInfoSchema, json as JsonObject) };
+  if (kind === JobKind.BACKUP) return { case: "backup", value: fromJson(BackupResultSchema, json as JsonObject) };
+  if (kind === JobKind.PURGE) return { case: "purge", value: fromJson(PurgeResultSchema, json as JsonObject) };
   return { case: undefined };
 }
 

@@ -2,7 +2,7 @@
 // consent rule, the record shape, the allowlists, the ingest URL and the basic auth. Events are a closed
 // union, so a caller can never put a path, a name or free text on the wire. This is the only file in the
 // daemon that builds an ingest request (`check-telemetry-privacy.sh`). Events move here from the Rust
-// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3), the git events (S4.7).
+// `TelemetryEvent` as the session that owns their command lands: `SettingsChange` (S4.1), the draft and archive events (S4.3), the git events (S4.7), the backup and purge events (S4.9).
 import { type Global, parseGlobal } from "../domain/settings.ts";
 import { readFileSync } from "node:fs";
 
@@ -48,6 +48,8 @@ export type TelemetryEvent =
   | { event: "git.commit"; source: TelemetrySource }
   | { event: "git.push"; source: TelemetrySource }
   | { event: "git.worktree_remove"; source: TelemetrySource }
+  | { event: "backup.create"; source: TelemetrySource; trigger: "manual" | "pre_archive" | "post_artifact_change" | "post_push_commit" | "mcp" }
+  | { event: "storage.purge"; source: TelemetrySource }
   | { event: "artifact.comment_add"; source: TelemetrySource }
   | { event: "artifact.review_send"; source: TelemetrySource }
   | { event: "artifact.review_handoff"; source: TelemetrySource; targetPhase: string; harness: string };
@@ -73,7 +75,10 @@ function eventProps(e: TelemetryEvent): Record<string, unknown> {
     case "git.commit":
     case "git.push":
     case "git.worktree_remove":
+    case "storage.purge":
       return { source: e.source };
+    case "backup.create":
+      return { source: e.source, trigger: e.trigger };
     case "artifact.review_handoff":
       return { source: e.source, target_phase: sanitizePhase(e.targetPhase), harness: sanitizeHarness(e.harness) };
   }

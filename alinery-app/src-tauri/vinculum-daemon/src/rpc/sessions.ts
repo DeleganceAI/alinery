@@ -68,6 +68,8 @@ export type SessionControl = {
   /** Re-reads one file into the store, so a cursor read after the write covers it. */
   refresh: (rel: string) => Promise<void>;
   telemetry: Sender;
+  /** Discarding a sub-task queues the automatic backup (S4.9). */
+  backups?: { publish(trigger: "pre_archive"): void };
   chat: ChatPublisher;
   runner: ChatSessions;
   /** Where the session's `telemetry_id` and its task's are. */

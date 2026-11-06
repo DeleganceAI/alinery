@@ -34,7 +34,8 @@ import { parsers } from "./sync/parsers/index.ts";
 import { settingsParser } from "./sync/parsers/settings.ts";
 import { telemetrySender } from "./platform/telemetry.ts";
 import { SessionPublisher } from "./domain/sessions.ts";
-import { runJobChild } from "./jobs/child.ts";
+import { runJobChild, runRestoreBackup } from "./jobs/child.ts";
+import { BackupHost } from "./jobs/backupHost.ts";
 import { JobRunner } from "./jobs/runner.ts";
 import { Store } from "./sync/store.ts";
 import { Watcher } from "./sync/watcher.ts";
@@ -52,7 +53,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 33;
+const PROTOCOL = 34;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -99,6 +100,8 @@ if (args.includes("--protocol-version")) {
 
 // A job child (plan 2.3.5) is this binary run with --job <kind>; it does nothing a daemon does.
 if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
+// The restore of a backup (S4.9) is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
+if (args.includes("--restore-backup")) process.exit(await runRestoreBackup(args[args.indexOf("--restore-backup") + 1] ?? "", args[args.indexOf("--restore-backup") + 2] ?? ""));
 
 function flag(name: string): string {
   const index = args.indexOf(name);
@@ -1167,8 +1170,23 @@ const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(r
 watcher.start();
 publisher.commitStatus();
 new Reconciler(feed, { log: (line) => console.error(line) }).start();
+// Backups and purges (S4.9): jobs the daemon starts itself, and the automatic triggers that publish into them.
+let backupHost: BackupHost;
+const jobs = new JobRunner(store, { onEnd: (job, params) => backupHost.ended(job, params) });
+backupHost = new BackupHost(jobs, {
+  repo,
+  appConfig,
+  version: flag("--app-version") || "unknown",
+  telemetry,
+  sessions: { isRunning: (id) => runner.isRunning(id), stop: (id) => runner.stop(id) },
+  afterPurge: async () => {
+    await feed.reconcile();
+    await artifactProjector.pass();
+  },
+});
 // Task writes: TaskService and DraftService serve them, and the legacy `create_task` op runs the same create.
 const taskDeps: TaskDeps = {
+  backups: backupHost,
   repo,
   lane,
   identity,
@@ -1205,6 +1223,7 @@ const runner: ChatSessions = {
 };
 const sessionControl: SessionControl = {
   repo,
+  backups: backupHost,
   refresh: (rel) => feed.refresh(rel),
   telemetry,
   chat,
@@ -1242,13 +1261,15 @@ await serveRpc({
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
   lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
   store,
-  jobs: new JobRunner(store),
+  jobs,
+  backups: backupHost,
+  backupReads: { repo, appConfig },
   storageScan: { repo, appConfig, namespace: lane },
   settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector },
-  artifacts: { repo, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
+  artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
     const row = live.get(id);
     if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;

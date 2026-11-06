@@ -1,7 +1,7 @@
 // The storage scan (S2.6), ported from alinery-core `storage.rs` `storage_info_in`. One walk of
 // `<repo>/.alinery` splits every byte into archived (what a purge frees) and active, and nothing
 // outside `.alinery` is measured: a symlink is neither file nor directory here, so the walk never
-// follows one out. It only reads. S4.9 deletes the Rust and moves the command.
+// follows one out. It only reads; the purge (jobs/purge.ts) deletes exactly what its classification calls archived.
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "smol-toml";
@@ -14,7 +14,7 @@ function stem(base: string, namespace: string): string {
   return clean ? `${base}-${clean}` : base;
 }
 
-function names(dir: string): string[] {
+export function names(dir: string): string[] {
   try {
     return readdirSync(dir);
   } catch {
@@ -22,7 +22,7 @@ function names(dir: string): string[] {
   }
 }
 
-function fileLen(path: string): number {
+export function fileLen(path: string): number {
   try {
     const st = lstatSync(path);
     return st.isFile() ? st.size : 0;
@@ -48,7 +48,7 @@ const isCount = (v: unknown) => (typeof v === "number" && Number.isInteger(v) &&
 
 /** `Some(task).archived` of `read_task`: undefined when task.md is missing or Rust's `Task` would not
  * parse it. Only the fields Rust requires, and the type of `archived`, are checked. */
-function taskArchived(taskDir: string): boolean | undefined {
+export function taskArchived(taskDir: string): boolean | undefined {
   try {
     const t = parse(readFileSync(join(taskDir, "task.md"), "utf8"));
     if (!(["name", "slug", "branch", "worktree"].every((k) => isString(t[k])) && isCount(t.created))) return undefined;
@@ -60,7 +60,7 @@ function taskArchived(taskDir: string): boolean | undefined {
 }
 
 /** `read_session_meta_full(..).archived`: false for a meta Rust would not parse, so it stays active. */
-function sessionArchived(path: string): boolean {
+export function sessionArchived(path: string): boolean {
   try {
     const m = JSON.parse(readFileSync(path, "utf8"));
     if (!(isString(m.id) && isString(m.worktree) && isCount(m.created))) return false;
@@ -70,12 +70,12 @@ function sessionArchived(path: string): boolean {
   }
 }
 
-function sessionIds(dir: string): string[] {
+export function sessionIds(dir: string): string[] {
   return names(dir).flatMap((n) => (n.endsWith(".meta.json") ? [n.slice(0, -".meta.json".length)] : []));
 }
 
 // Every file of one session; the `<id>.` prefix keeps session `a1` from claiming session `a`'s files.
-function sessionFiles(dir: string, id: string): string[] {
+export function sessionFiles(dir: string, id: string): string[] {
   const prefix = `${id}.`;
   return names(dir)
     .filter((n) => n === `${id}.meta.json` || n === `${id}.name.json` || n === `${id}.scrollback` || (n.startsWith(prefix) && n.includes(".tmp.")))

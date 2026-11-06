@@ -10,9 +10,8 @@ import path from "node:path";
 
 const root = process.argv[2];
 const commands = {
-  "backup.rs": ["pre_archive_backup"],
+  "backup.rs": ["restore_backup"],
   "git_ops.rs": ["lookup_task_pull_request"],
-  "settings.rs": ["delete_all_archived_storage"],
   "daemon.rs": ["prepare_repo_takeover", "confirm_repo_takeover"],
 };
 let failures = 0;

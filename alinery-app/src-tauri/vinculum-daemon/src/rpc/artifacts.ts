@@ -40,6 +40,8 @@ export type ArtifactDeps = {
   projector: ArtifactProjector;
   refresh: (rel: string) => Promise<void>;
   telemetry: Sender;
+  /** A comment, a review send or a prepared comments prompt queues the automatic backup (S4.9). */
+  backups?: { publish(trigger: "post_artifact_change"): void };
   /** `getTaskExecution`: the retained state and playbook definition of a task, or `{ error }`. */
   taskExecution: (slug: string) => Json;
   /** `create_execution_session`. */
@@ -104,6 +106,7 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
         const comments = addComment(d.repo, req.taskSlug, req.artifact, wireInput(req.comment));
         await settle(req.taskSlug, req.artifact);
         d.telemetry.record(() => ({ event: "artifact.comment_add", source: "alineryd" }));
+        d.backups?.publish("post_artifact_change");
         return { applied: applied(), commentId: comments.find((c) => !before.has(c.id))?.id ?? "" };
       });
     },
@@ -135,6 +138,7 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
         const review = archiveComments(d.repo, req.taskSlug, req.artifact);
         await settle(req.taskSlug, req.artifact, review);
         d.telemetry.record(() => ({ event: "artifact.review_send", source: "alineryd" }));
+        d.backups?.publish("post_artifact_change");
         return { applied: applied(), review };
       });
     },
@@ -144,6 +148,7 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
         task(req.taskSlug);
         clearPending(d.repo, req.taskSlug, req.artifact);
         await settle(req.taskSlug);
+        d.backups?.publish("post_artifact_change");
         return { applied: applied() };
       });
     },
@@ -153,6 +158,7 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
         task(req.taskSlug);
         const action = prepareCommentsPrompt(d.repo, req.taskSlug, req.artifacts);
         await settle(req.taskSlug, ...req.artifacts);
+        d.backups?.publish("post_artifact_change");
         return { applied: applied(), action: toWire(action) };
       });
     },

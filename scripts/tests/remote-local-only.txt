@@ -3,6 +3,6 @@
 # makes that a recorded decision. See scripts/tests/check-remote-routing.sh.
 #
 # command                         why it stays local for now
-pick_backup_destination_dialog    a Finder folder picker cannot browse a host; a remote repo's destination is typed and checked on the host (check_backup_destination)
+pick_backup_destination_dialog    a Finder folder picker cannot browse a host; a remote repo's destination is typed and checked by the host's daemon (BackupService.CheckBackupDestination)
 start_mcp_server                  the MCP server is bound to the active repo on this machine
 stop_mcp_server                   the MCP server is bound to the active repo on this machine

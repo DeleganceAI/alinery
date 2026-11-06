@@ -10,17 +10,7 @@ pub(crate) use alinery_core::git_actions::github_pull_request_ref;
 
 // The git work itself (commit, push, remove a worktree, the PR link, the source branches) is the daemon's GitService
 // (S4.7); the frontend calls it through `src/sync/git.ts`. What stays here is what needs this machine: the GitHub API call
-// with this machine's token, and the backup queue.
-
-/// The backup an automatic trigger queues once a commit or push succeeded (`PostPushCommit`). The daemon cannot queue it:
-/// the queue is this process's until S4.9 moves it to the daemon, and the host's trigger flags gate a remote one. A local
-/// repo is gated by this machine's settings; a remote repo's key goes into the queue and the host applies its own.
-#[tauri::command]
-pub(crate) async fn publish_git_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    publish_auto_backup(&app, Path::new(&target.uri()), alinery_core::BackupTrigger::PostPushCommit);
-    Ok(())
-}
+// with this machine's token.
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

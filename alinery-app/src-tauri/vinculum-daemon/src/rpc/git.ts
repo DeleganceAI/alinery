@@ -13,6 +13,8 @@ import { domain, metaOf } from "./errors.ts";
 
 export type GitDeps = {
   repo: string;
+  /** A commit or a push queues the automatic backup (S4.9). */
+  backups?: { publish(trigger: "post_push_commit"): void };
   refresh: (rel: string) => Promise<void>;
   telemetry: Sender;
 };
@@ -52,6 +54,7 @@ export function gitService(d: GitDeps, dedupe: Dedupe, store: Store): ServiceImp
         domain(async () => {
           const compareUrl = await pushAndCompareUrl(d.repo, req.slug);
           d.telemetry.record(() => ({ event: "git.push", source: "alineryd" }));
+          d.backups?.publish("post_push_commit");
           return { compareUrl, applied: await applied(req.slug) };
         }),
       );
@@ -71,6 +74,7 @@ export function gitService(d: GitDeps, dedupe: Dedupe, store: Store): ServiceImp
         domain(async () => {
           await commitWorktree(d.repo, req.slug, req.message);
           d.telemetry.record(() => ({ event: "git.commit", source: "alineryd" }));
+          d.backups?.publish("post_push_commit");
           return { applied: await applied(req.slug) };
         }),
       );

@@ -1,160 +1,7 @@
-//! backup: extracted from lib.rs. See AGENTS.md for the module map.
+//! backup: the shell's half. The daemon creates, lists, verifies and prunes backups and runs the automatic triggers
+//! (`BackupService`, `JobService.StartBackup`); what stays here is the folder picker and the one step that must happen
+//! while no daemon runs: restore (plan 2.3.5, S4.9).
 use crate::*;
-
-// ---- Backup (issue #79) ------------------------------------------------------
-// The zip/list/prune/extract mechanics live in alinery-core. The app owns repo resolution,
-// settings resolution, and the one genuinely destructive step: restore, which stops the
-// daemon and clears the curated set before extracting.
-
-/// Stamped into every archive filename and meta so a restored zip names the build that
-/// wrote it. alinery-core takes this from the caller so app and MCP report their own version.
-pub(crate) const BACKUP_ALINERY_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// The backup settings of a local repo. A remote repo's live on its host, which applies them itself
-/// (`RepoOp::BackupCreate`, `BackupList`): the Mac's destination folder means nothing there.
-pub(crate) fn backup_settings_for(app: &AppHandle, repo: &Path) -> Result<alinery_core::BackupDefaults, String> {
-    Ok(load_config_with_app_path(&app_config_path(app)?, repo).backup)
-}
-
-/// A backup or listing on a remote repo, run by its host with the settings in force there.
-pub(crate) fn host_backup<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, path: &str, op: impl FnOnce(PathBuf, PathBuf) -> RepoOp) -> Result<T, String> {
-    let op = op(path.into(), host_app_config(state, host_id)?);
-    remote_call_within(state, host_id, op, BACKUP_TIMEOUT)
-}
-
-/// The repo a backup command is about: the explicit key if given, otherwise the active repo.
-fn backup_target(app: &AppHandle, repo_path: Option<String>) -> Result<RepoRef, String> {
-    target_or_active_ref(app, repo_path)
-}
-
-/// The queue slot of a repo: the canonical path of a local one, the stored URI of a remote one.
-fn backup_slot_key(target: &RepoRef) -> Result<String, String> {
-    match target {
-        RepoRef::Local(repo) => backup_key(repo),
-        remote => Ok(remote.uri()),
-    }
-}
-
-// ---- Auto-backup trigger path ------------------------------------------------
-// Archive/commit/push/artifact-save publish here and return immediately. One worker thread
-// drains the coalescing queue, so a burst costs at most two zips and a failing backup can
-// never fail the action that triggered it.
-
-pub(crate) static BACKUP_QUEUE: LazyLock<Mutex<backup_queue::BackupQueue>> = LazyLock::new(|| Mutex::new(backup_queue::BackupQueue::new()));
-/// Captured on the first publish so the worker can resolve settings and raise notifications
-/// without an `AppHandle` threaded through every pure write helper.
-pub(crate) static BACKUP_APP: OnceLock<AppHandle> = OnceLock::new();
-/// The drain thread. `LazyLock` so the initializer lives with the static and the thread is
-/// spawned exactly once, on the first publish that survives the gate.
-pub(crate) static BACKUP_WORKER: LazyLock<()> = LazyLock::new(|| {
-    std::thread::spawn(|| loop {
-        std::thread::sleep(BACKUP_POLL);
-        let Some((key, trigger)) = backup_queue_lock().take_ready(Instant::now()) else {
-            continue;
-        };
-        run_queued_backup(&key, trigger);
-        backup_queue_lock().finish(&key);
-    });
-});
-
-/// How often the worker checks for a request past its debounce deadline.
-pub(crate) const BACKUP_POLL: Duration = Duration::from_millis(250);
-
-pub(crate) fn backup_queue_lock() -> std::sync::MutexGuard<'static, backup_queue::BackupQueue> {
-    BACKUP_QUEUE.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Queue key for a repo: the canonical path, so the same repo reached by two different paths
-/// (a symlink, a trailing slash) shares one slot rather than looking like two idle repos. A remote
-/// repo's key is its stored `alinery+ssh://` entry: there is no local path to resolve.
-pub(crate) fn backup_key(repo: &Path) -> Result<String, String> {
-    if is_remote_repo_key(&repo.to_string_lossy()) {
-        return Ok(repo.to_string_lossy().into_owned());
-    }
-    Ok(fs::canonicalize(repo)
-        .map_err(|e| format!("resolve {}: {e}", repo.display()))?
-        .to_string_lossy()
-        .to_string())
-}
-
-/// Enqueue an automatic backup. Never fails the caller: an unconfigured feature, a disabled
-/// trigger, or an unusable destination is simply a no-op. A remote repo's settings are on its
-/// host, so the host applies the gate when the queued backup runs, not here.
-pub(crate) fn publish_auto_backup(app: &AppHandle, repo: &Path, trigger: alinery_core::BackupTrigger) {
-    if !is_remote_repo_key(&repo.to_string_lossy()) {
-        let Ok(settings) = backup_settings_for(app, repo) else {
-            return;
-        };
-        if !backup_queue::should_publish(&settings, repo, trigger) {
-            return;
-        }
-    }
-    let Ok(key) = backup_key(repo) else {
-        return;
-    };
-    let _ = BACKUP_APP.set(app.clone());
-    backup_queue_lock().publish(&key, trigger, Instant::now());
-    LazyLock::force(&BACKUP_WORKER);
-}
-
-/// A queued automatic backup of a remote repo: the host checks its own settings and either skips
-/// (`None`) or writes the archive on its disk.
-pub(crate) fn create_queued_remote_backup<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-    key: &str,
-    trigger: alinery_core::BackupTrigger,
-) -> Result<Option<alinery_core::BackupMeta>, String> {
-    let RepoRef::Remote { host_id, path } = RepoRef::parse(key)? else {
-        return Err(format!("not a remote repository: {key}"));
-    };
-    host_backup(&app.state::<AppState>(), &host_id, &path, |repo, app_config| RepoOp::BackupCreate {
-        repo,
-        app_config,
-        trigger,
-    })
-}
-
-/// A queued automatic backup of a local repo, or `None` when its feature is not usable now.
-fn create_queued_local_backup(app: &AppHandle, key: &str, trigger: alinery_core::BackupTrigger) -> Result<Option<alinery_core::BackupMeta>, String> {
-    let repo = PathBuf::from(key);
-    // Settings are re-read per run: the user may have changed the destination or turned the
-    // feature off during the debounce window.
-    let settings = backup_settings_for(app, &repo).unwrap_or_default();
-    if !alinery_core::backup_feature_ready(&settings, &repo) {
-        return Ok(None);
-    }
-    alinery_core::create_backup(&repo, &settings, trigger, BACKUP_ALINERY_VERSION).map(Some)
-}
-
-pub(crate) fn run_queued_backup(key: &str, trigger: alinery_core::BackupTrigger) {
-    let Some(app) = BACKUP_APP.get() else {
-        return;
-    };
-    let created = if is_remote_repo_key(key) {
-        create_queued_remote_backup(app, key, trigger)
-    } else {
-        create_queued_local_backup(app, key, trigger)
-    };
-    match created {
-        Ok(Some(_)) => {
-            emit(
-                app,
-                alinery_core::TelemetryEvent::BackupCreate {
-                    source: alinery_core::TelemetrySource::App,
-                    trigger,
-                },
-            );
-        }
-        Ok(None) => {}
-        Err(e) => fire_app_notification(app, &format!("Backup failed — {e}")),
-    }
-}
-
-// The destructive half of restore (clear the curated set, extract) is in alinery-core so a remote
-// host runs the same code; stopping the daemon first is the command's job (it owns AppState).
-#[cfg(test)]
-pub(crate) use alinery_core::clear_curated_alinery_data;
-pub(crate) use alinery_core::{require_backup_matches_repo, restore_backup_into};
 
 /// Finder folder picker for the backup destination. Validated here so an unusable folder
 /// is rejected at pick time rather than at the first backup.
@@ -169,159 +16,6 @@ pub(crate) async fn pick_backup_destination_dialog(app: AppHandle, repo_path: St
     Ok(Some(validated.to_string_lossy().to_string()))
 }
 
-/// The app's create policy in one testable place: manual trigger, app crate version.
-pub(crate) fn backup_now_with(repo: &Path, settings: &alinery_core::BackupDefaults) -> Result<alinery_core::BackupMeta, String> {
-    alinery_core::create_backup(repo, settings, alinery_core::BackupTrigger::Manual, BACKUP_ALINERY_VERSION)
-}
-
-/// Holds a per-repo backup/restore slot for a scope, releasing it on **every** exit path.
-///
-/// `begin` refuses a second claim, so a `?` that returns between `begin` and `finish`
-/// wedges that repo's slot for the life of the process: no restore, no manual backup, no
-/// auto backup, and `backup_busy` stuck at true. `restore_backup` grew two such early
-/// returns (ownership refusal and a failed `shutdown` call); a guard makes the leak
-/// unrepresentable instead of asking every future branch to remember.
-pub(crate) struct BackupSlot(pub(crate) String);
-
-impl BackupSlot {
-    /// `None` when another backup/restore already holds this repo's slot.
-    pub(crate) fn claim(key: String) -> Option<Self> {
-        backup_queue_lock().begin(&key).then(|| BackupSlot(key))
-    }
-}
-
-impl Drop for BackupSlot {
-    fn drop(&mut self) {
-        backup_queue_lock().finish(&self.0);
-    }
-}
-
-/// Manual BACKUP NOW: zipping a real `.alinery` takes seconds, and a non-async command body runs
-/// on the main thread — which is a frozen window and a spinning cursor, not a busy button. The
-/// zip goes to the blocking pool and the command awaits it, so the button still reports the
-/// real meta or the real error. Auto triggers go through the coalescing queue instead — but the
-/// run is registered in the same per-repo slot, so `backup_busy` answers for both and the auto
-/// worker can't start a second zip on top of this one.
-#[tauri::command]
-pub(crate) async fn backup_now(app: AppHandle, repo_path: Option<String>) -> Result<alinery_core::BackupMeta, String> {
-    let target = backup_target(&app, repo_path)?;
-    let _slot = BackupSlot::claim(backup_slot_key(&target)?).ok_or("a backup for this repository is already running")?;
-    let worker_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || match target {
-        RepoRef::Local(repo) => backup_now_with(&repo, &backup_settings_for(&worker_app, &repo)?),
-        // The archive is written on the host, to the destination its own config names.
-        RepoRef::Remote { host_id, path } => host_backup(&worker_app.state::<AppState>(), &host_id, &path, |repo, app_config| RepoOp::BackupCreate {
-            repo,
-            app_config,
-            trigger: alinery_core::BackupTrigger::Manual,
-        }),
-    })
-    .await;
-    let meta = result.map_err(|e| format!("backup task: {e}"))??;
-    emit(
-        &app,
-        alinery_core::TelemetryEvent::BackupCreate {
-            source: alinery_core::TelemetrySource::App,
-            trigger: alinery_core::BackupTrigger::Manual,
-        },
-    );
-    Ok(meta)
-}
-
-/// The backup an archive waits for (plan S4.3 WA, until S4.9 moves it into `TaskService.ArchiveTask` as a job). The
-/// frontend runs this first and archives only when it returns: a backup that is switched on for archive and fails
-/// leaves the task as it was and the error reaches the person. Nothing is configured or the trigger is off: `Ok`.
-#[tauri::command]
-pub(crate) async fn pre_archive_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String, slug: String) -> Result<(), String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    let key = backup_slot_key(&target)?;
-    let worker_app = app.clone();
-    let made = tauri::async_runtime::spawn_blocking(move || -> Result<Option<alinery_core::BackupMeta>, String> {
-        match target {
-            RepoRef::Local(repo) => {
-                // An archive the daemon would refuse must not leave a backup behind.
-                alinery_core::ensure_task_can_archive(&repo, &slug)?;
-                let settings = backup_settings_for(&worker_app, &repo)?;
-                if !settings.enabled || !settings.trigger_pre_archive || settings.destination.is_empty() {
-                    return Ok(None);
-                }
-                let _slot = BackupSlot::claim(key).ok_or("a backup for this repository is already running")?;
-                alinery_core::create_backup(&repo, &settings, alinery_core::BackupTrigger::PreArchive, BACKUP_ALINERY_VERSION).map(Some)
-            }
-            // The host applies its own gate and answers `None` when the trigger is off there.
-            RepoRef::Remote { host_id, path } => {
-                let _slot = BackupSlot::claim(key).ok_or("a backup for this repository is already running")?;
-                host_backup::<Option<alinery_core::BackupMeta>>(&worker_app.state::<AppState>(), &host_id, &path, |repo, app_config| RepoOp::BackupCreate {
-                    repo,
-                    app_config,
-                    trigger: alinery_core::BackupTrigger::PreArchive,
-                })
-            }
-        }
-    })
-    .await
-    .map_err(|e| format!("backup task: {e}"))??;
-    if made.is_some() {
-        emit(
-            &app,
-            alinery_core::TelemetryEvent::BackupCreate {
-                source: alinery_core::TelemetrySource::App,
-                trigger: alinery_core::BackupTrigger::PreArchive,
-            },
-        );
-    }
-    Ok(())
-}
-
-/// The backup a discard or kill of a sub-task queues (`PreArchive`): the daemon archives the lineage, and the queue is this
-/// process's until S4.9 (the same split as `publish_git_backup`). The frontend calls it first, and a failure never stops the discard.
-#[tauri::command]
-pub(crate) async fn publish_pre_archive_backup(app: AppHandle, state: State<'_, AppState>, repo_path: String) -> Result<(), String> {
-    let target = owned_target(&app, &state, &repo_path)?;
-    publish_auto_backup(&app, Path::new(&target.uri()), alinery_core::BackupTrigger::PreArchive);
-    Ok(())
-}
-
-/// Is a backup or restore running for this repo? The Backup view polls this because it cannot
-/// know from component state: the work lives in the backend and outlives the view, so leaving
-/// the page and coming back must still show a run — including one started by a trigger.
-#[tauri::command]
-pub(crate) fn backup_busy(app: AppHandle, repo_path: Option<String>) -> Result<bool, String> {
-    let target = backup_target(&app, repo_path)?;
-    Ok(backup_queue_lock().busy(&backup_slot_key(&target)?))
-}
-
-#[tauri::command]
-pub(crate) async fn list_backups(app: AppHandle, repo_path: Option<String>) -> Result<Vec<alinery_core::BackupListItem>, String> {
-    let target = backup_target(&app, repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || match target {
-        RepoRef::Local(repo) => alinery_core::list_backups(&repo, &backup_settings_for(&app, &repo)?),
-        RepoRef::Remote { host_id, path } => host_backup(&app.state::<AppState>(), &host_id, &path, |repo, app_config| RepoOp::BackupList { repo, app_config }),
-    })
-    .await
-    .map_err(|error| format!("list backups task: {error}"))?
-}
-
-/// Is `destination` somewhere this repo may write backups? Run where the repo lives: a remote
-/// repo's destination is a folder on its host, which the Mac's file picker cannot browse.
-#[tauri::command]
-pub(crate) async fn check_backup_destination(app: AppHandle, repo_path: Option<String>, destination: String) -> Result<String, String> {
-    let target = backup_target(&app, repo_path)?;
-    tauri::async_runtime::spawn_blocking(move || match target {
-        RepoRef::Local(repo) => Ok(alinery_core::validate_backup_destination(&repo, Path::new(&destination))?.to_string_lossy().into_owned()),
-        RepoRef::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::BackupCheckDestination {
-                repo: path.into(),
-                destination: destination.into(),
-            },
-        ),
-    })
-    .await
-    .map_err(|error| format!("check destination task: {error}"))?
-}
-
 pub(crate) fn require_restore_authority(state: &AppState, repo: &Path, known: &[String]) -> Result<(), String> {
     if state.is_quitting() {
         return Err("application is quitting; restore cancelled".into());
@@ -330,8 +24,9 @@ pub(crate) fn require_restore_authority(state: &AppState, repo: &Path, known: &[
     require_repo_owned(state, repo)
 }
 
-/// Restore a remote repo from an archive on its host: the host extracts it while its daemon is
-/// stopped, then the daemon is started again.
+/// Restore a remote repo from an archive on its host: the host extracts it while its daemon is stopped, then the daemon
+/// is started again. The page has already asked the daemon to verify the archive (`BackupService.VerifyBackup`); the host
+/// checks it once more here so that a refused archive costs no live session. Both stay repo-service ops until S5.2.
 pub(crate) fn restore_remote_backup<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str, backup_path: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     if state.is_quitting() {
@@ -355,15 +50,35 @@ pub(crate) fn restore_remote_backup<R: tauri::Runtime>(app: &AppHandle<R>, host_
     })
 }
 
-/// Destructive, and confirmed in the UI before it gets here: stop the daemon (its ptys and
-/// MCP child hold the data we are about to replace), clear the curated set, extract.
-/// Worktrees, locks, and sockets are deliberately left alone.
+/// What the daemon program printed for `--restore-backup`: one JSON line, `{"result": ...}` or `{"error": "..."}`.
+pub(crate) fn restore_outcome(success: bool, stdout: &str, stderr: &str) -> Result<(), String> {
+    let line = stdout.lines().rev().find_map(|l| serde_json::from_str::<Value>(l.trim()).ok().filter(Value::is_object));
+    match line {
+        Some(v) if v.get("error").is_some() => Err(v["error"].as_str().unwrap_or("restore failed").to_string()),
+        Some(v) if v.get("result").is_some() && success => Ok(()),
+        _ => Err(format!("restore did not finish: {}", stderr.trim().lines().last().unwrap_or("the daemon program printed no result"))),
+    }
+}
+
+/// The restore itself, run by the daemon program (`--restore-backup <repo> <archive>`) while no daemon runs: it unpacks into
+/// a new directory under `.alinery/tmp` and renames it into place (plan 2.3.5, O11).
+fn restore_with_daemon_program(repo: &Path, zip: &Path) -> Result<(), String> {
+    let program = resolve_alineryd_path().ok_or("the daemon program was not found; restore cancelled")?;
+    let out = Command::new(program)
+        .arg("--restore-backup")
+        .arg(repo)
+        .arg(zip)
+        .output()
+        .map_err(|error| format!("could not run the restore: {error}"))?;
+    restore_outcome(out.status.success(), &String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr))
+}
+
+/// Destructive, and confirmed in the UI before it gets here (the page has verified the archive through the daemon): stop the
+/// daemon (its ptys and MCP child hold the data we are about to replace), then restore. Worktrees, locks, and sockets are
+/// deliberately left alone.
 #[tauri::command]
 pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, backup_path: String) -> Result<(), String> {
-    let target = backup_target(&app, repo_path)?;
-    // Same slot as a backup: an auto zip firing mid-restore would archive half-cleared data.
-    // Guard, not a manual finish: every `?` below must release the slot (see BackupSlot).
-    let _slot = BackupSlot::claim(backup_slot_key(&target)?).ok_or("a backup or restore for this repository is already running")?;
+    let target = target_or_active_ref(&app, repo_path)?;
     let worker_app = app.clone();
     let repo = match target {
         RepoRef::Local(repo) => repo,
@@ -382,7 +97,7 @@ pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, ba
     };
     let zip = PathBuf::from(&backup_path);
     // Reject a foreign archive while the repo is still intact and the daemon still up.
-    require_backup_matches_repo(&repo, &zip)?;
+    alinery_core::require_backup_matches_repo(&repo, &zip)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
         let _closing = state.mark_closing(&repo);
@@ -409,7 +124,7 @@ pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, ba
                 .map_err(|error| format!("{error}; restore aborted so live sessions cannot write over the archive"))?;
         }
         state.clear_daemon(&repo);
-        restore_backup_into(&repo, &zip)
+        restore_with_daemon_program(&repo, &zip)
     })
     .await
     .map_err(|error| format!("restore task: {error}"))??;

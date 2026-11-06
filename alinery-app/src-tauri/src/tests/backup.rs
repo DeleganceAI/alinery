@@ -179,19 +179,19 @@ fn restore_rejects_meta_repo_path_mismatch() {
 
 // 3.7 — a refused BACKUP NOW writes nothing anywhere, including inside `.alinery/`.
 #[test]
-fn backup_now_errors_before_writing_when_dest_invalid() {
+fn a_refused_backup_writes_nothing_when_the_destination_is_invalid() {
     let (repo, dest) = fixture_repo("backup-now-bad-dest");
     let before = alinery_entries(&repo);
 
     let mut unset = ready(&dest);
     unset.destination = String::new();
-    assert!(backup_now_with(&repo, &unset).is_err());
+    assert!(create_backup(&repo, &unset, BackupTrigger::Manual, "9.9.9").is_err());
 
     let inside = alinery_dir(&repo).join("backups");
     fs::create_dir_all(&inside).unwrap();
     let mut inner = ready(&dest);
     inner.destination = inside.to_string_lossy().to_string();
-    assert!(backup_now_with(&repo, &inner).is_err());
+    assert!(create_backup(&repo, &inner, BackupTrigger::Manual, "9.9.9").is_err());
 
     assert_eq!(fs::read_dir(&dest).unwrap().count(), 0, "a zip was written");
     assert!(fs::read_dir(&inside).unwrap().count() == 0, "wrote into .alinery/");
@@ -205,7 +205,7 @@ fn backup_now_errors_before_writing_when_dest_invalid() {
 #[test]
 fn restore_round_trips_curated_data_and_keeps_worktrees() {
     let (repo, dest) = fixture_repo("restore-round-trip");
-    backup_now_with(&repo, &ready(&dest)).unwrap();
+    create_backup(&repo, &ready(&dest), BackupTrigger::Manual, "9.9.9").unwrap();
     let zip = only_zip(&dest);
     fs::write(alinery_dir(&repo).join("tasks/alpha/task.md"), b"clobbered").unwrap();
 
@@ -215,4 +215,19 @@ fn restore_round_trips_curated_data_and_keeps_worktrees() {
     assert!(alinery_dir(&repo).join("worktrees/alpha/README.md").is_file());
     assert!(alinery_dir(&repo).join("alineryd.sock").exists());
     cleanup(&repo);
+}
+
+// The shell restores through the daemon program (`--restore-backup`), which prints one JSON line.
+#[test]
+fn the_restore_outcome_is_the_daemon_programs_one_json_line() {
+    use crate::restore_outcome;
+    assert!(restore_outcome(true, "{\"result\":{\"trigger\":\"manual\"}}\n", "").is_ok());
+    assert_eq!(restore_outcome(false, "{\"error\":\"backup belongs to /a, not /b\"}\n", ""), Err("backup belongs to /a, not /b".into()));
+    // Noise before the line is ignored; the last object wins.
+    assert!(restore_outcome(true, "starting\n{\"result\":{}}\n", "warn").is_ok());
+    // A program that died without printing is an error, with the end of its stderr.
+    let died = restore_outcome(false, "", "boom\nSegmentation fault").unwrap_err();
+    assert!(died.contains("Segmentation fault"), "{died}");
+    // A result with a failing exit code is not a success.
+    assert!(restore_outcome(false, "{\"result\":{}}\n", "").is_err());
 }

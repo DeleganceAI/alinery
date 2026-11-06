@@ -11,11 +11,12 @@ import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { Task } from "alinery-proto/alinery/v1/entities_pb";
 import type { DraftService, TaskService } from "alinery-proto/alinery/v1/tasks_pb";
 import type { BlobStore } from "../domain/blobs.ts";
+import type { BackupHost } from "../jobs/backupHost.ts";
 import { deleteDraft, writeDraft } from "../domain/drafts.ts";
 import { parseCreateSubtaskInput, prepareSubtask } from "../domain/subtasks.ts";
 import { deleteExecutionRefs } from "../domain/gitActions.ts";
 import { alineryDir, readTaskChecked } from "../domain/taskFiles.ts";
-import { type AttachmentSource, archiveTask, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, type ProvisionHooks, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
+import { type AttachmentSource, archiveTask, ensureTaskCanArchive, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, type ProvisionHooks, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
 import { writeAtomic } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
@@ -36,6 +37,8 @@ export type TaskDeps = {
   telemetry: Sender;
   blobs: BlobStore;
   afterCreate?: AfterCreate;
+  /** The backups: an archive waits for the one it asks for, a push or a commit queues the automatic one (S4.9). */
+  backups?: BackupHost;
 };
 
 const passthrough: AfterCreate = async (reply) => ({ sessions: reply.sessions as JsonObject[], executions: reply.executions as JsonObject[], start: reply.start, errors: reply.errors });
@@ -228,6 +231,11 @@ export function taskService(d: TaskDeps, dedupe: Dedupe, store: Store): ServiceI
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>
         domain(async () => {
+          // An archive the daemon would refuse leaves no backup behind; one it accepts waits for the backup the person asked for.
+          if (d.backups) {
+            ensureTaskCanArchive(d.repo, req.slug);
+            await d.backups.beforeArchive();
+          }
           const task = await archiveTask(d.repo, req.slug, guardFor(req.slug, req.expectedRevision));
           await settle(req.slug);
           // The archive is written; a ref that cannot be deleted is left for the next `git gc` to find, not a reason to fail it.

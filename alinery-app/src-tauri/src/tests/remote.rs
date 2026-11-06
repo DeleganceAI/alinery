@@ -797,8 +797,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     }
 }
 
-/// Backups on the host: the host applies its own settings and writes the archive to its own disk, and a
-/// confirmed restore replaces its data while its daemon is down, then starts the daemon again. A bad
+/// A restore on the host: a confirmed restore replaces its data while its daemon is down, then starts the daemon again. A bad
 /// archive is refused before the daemon is touched.
 #[test]
 fn live_backups_are_written_and_restored_on_the_host() {
@@ -867,47 +866,16 @@ fn live_backups_are_written_and_restored_on_the_host() {
     // This repo's daemons only: the host runs the other live tests' daemons too.
     let daemons = || sh(&format!("pgrep -f '[a]linery-vinculum-daemon --repo {repo}' | sort"));
 
-    // The host checks the folder: one inside the repo's own `.alinery` can never hold backups.
-    let checked: String = crate::remote_call(
-        &state,
-        &id,
-        RepoOp::BackupCheckDestination {
-            repo: repo.clone().into(),
-            destination: dest.clone().into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(checked, dest);
-    let inside: Result<String, String> = crate::remote_call(
-        &state,
-        &id,
-        RepoOp::BackupCheckDestination {
-            repo: repo.clone().into(),
-            destination: format!("{repo}/.alinery").into(),
-        },
+    // The daemon makes the archive in production (`BackupService`, over the forwarded socket); this test needs a valid
+    // one on the host's disk, written with the host's own `zip` the way the daemon writes it.
+    let meta = format!(
+        r#"{{"repo_name":"backup","repo_path":"{repo}","created_at":1700000000,"schema_version":1,"alinery_version":"live","trigger":"manual","included_dirs":["tasks"]}}"#
     );
-    assert!(inside.is_err());
-
-    // A manual backup runs the host's settings; the automatic ones follow its trigger flags.
-    let manual: alinery_core::BackupMeta = crate::host_backup(&state, &id, &repo, |repo, app_config| RepoOp::BackupCreate {
-        repo,
-        app_config,
-        trigger: alinery_core::BackupTrigger::Manual,
-    })
-    .unwrap();
-    assert_eq!(manual.repo_path, repo, "the meta names the host's path");
+    let archive = format!("{dest}/backup-live-v1.zip");
+    sh(&format!(
+        "mkdir -p '{dest}/meta' && printf '%s' '{meta}' > '{dest}/meta/backup-meta.json' && zip -q -j -X '{archive}' '{dest}/meta/backup-meta.json' && cd '{repo}/.alinery' && zip -q -X -D '{archive}' tasks/keep/task.md tasks/keep/notes.txt"
+    ));
     assert!(sh(&format!("ls '{dest}'")).contains(".zip"), "the archive is on the host's disk");
-    assert!(crate::create_queued_remote_backup(&handle, &key, alinery_core::BackupTrigger::PreArchive)
-        .unwrap()
-        .is_some());
-    assert!(
-        crate::create_queued_remote_backup(&handle, &key, alinery_core::BackupTrigger::PostPushCommit)
-            .unwrap()
-            .is_none(),
-        "that trigger's flag is off on the host"
-    );
-    let listed: Vec<alinery_core::BackupListItem> = crate::host_backup(&state, &id, &repo, |repo, app_config| RepoOp::BackupList { repo, app_config }).unwrap();
-    assert_eq!(listed.len(), 2);
 
     // Work after the backup, which a restore must take away.
     write(".alinery/tasks/keep/notes.txt", "after");
@@ -920,7 +888,7 @@ fn live_backups_are_written_and_restored_on_the_host() {
     assert_eq!(daemons(), running, "the daemon was not stopped for an archive that cannot be restored");
     assert_eq!(sh(&format!("cat '{repo}/.alinery/tasks/keep/notes.txt'")), "after");
 
-    crate::restore_remote_backup(&handle, &id, &repo, &listed[0].path).unwrap();
+    crate::restore_remote_backup(&handle, &id, &repo, &archive).unwrap();
     assert_eq!(sh(&format!("cat '{repo}/.alinery/tasks/keep/notes.txt'")), "before");
     assert_eq!(sh(&format!("ls '{repo}/.alinery/tasks'")).trim(), "keep", "what came after the backup is gone");
     assert!(state.daemon_for(Path::new(&key)).is_some(), "the daemon is attached again");
@@ -929,69 +897,6 @@ fn live_backups_are_written_and_restored_on_the_host() {
         !restarted.trim().is_empty() && restarted != running,
         "a new daemon replaced the old one: {running} -> {restarted}"
     );
-    session.conn.exit_master();
-    let _ = std::fs::remove_dir_all(&session.secrets_dir);
-}
-
-/// Storage on the host: the numbers and the paths are the host's, and the purge removes only what is
-/// archived, on the host's disk.
-#[test]
-fn live_storage_is_measured_and_purged_on_the_host() {
-    let Some(args) = live_args() else {
-        eprintln!("skipped: ALINERY_TEST_SSH_ARGS is not set");
-        return;
-    };
-    let _turn = LIVE_HOST.lock().unwrap_or_else(|e| e.into_inner());
-    let id = format!("storage-{}", std::process::id());
-    let session = live_session(&args, &id);
-    let home = session.root.trim_end_matches("/.local/share/alinery-remote").to_string();
-    let repo = format!("{home}/work/storage-{}", std::process::id());
-    let sh = |script: &str| session.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(60)).unwrap();
-    sh(&format!("rm -rf '{repo}' && mkdir -p '{repo}' && git init -q '{repo}'"));
-    let call = |op: RepoOp| session.channel.call(op, std::time::Duration::from_secs(60)).unwrap();
-    for (slug, archived) in [("keep", false), ("old", true)] {
-        let task = alinery_core::Task {
-            name: slug.into(),
-            slug: slug.into(),
-            branch: slug.into(),
-            archived,
-            created: 1_700_000_000,
-            ..Default::default()
-        };
-        call(RepoOp::WriteFile {
-            path: format!("{repo}/.alinery/tasks/{slug}/task.md").into(),
-            contents: toml::to_string(&task).unwrap(),
-        });
-        call(RepoOp::WriteFile {
-            path: format!("{repo}/.alinery/tasks/{slug}/notes.txt").into(),
-            contents: "x".repeat(4096),
-        });
-    }
-    let app_config = format!("{}/app.toml", session.config_dir);
-    let ops = || {
-        (
-            RepoOp::StorageInfo {
-                repo: repo.clone().into(),
-                app_config: app_config.clone().into(),
-            },
-            RepoOp::PurgeArchived {
-                repo: repo.clone().into(),
-                app_config: app_config.clone().into(),
-            },
-        )
-    };
-    let info: alinery_core::StorageInfo = serde_json::from_value(call(ops().0)).unwrap();
-    assert_eq!(info.repo_path, repo, "paths are the host's");
-    assert_eq!(info.app_config_path, app_config);
-    assert_eq!(info.tasks_dir, format!("{repo}/.alinery/tasks"));
-    assert_eq!((info.archived_task_count, info.archived_session_count), (1, 0));
-    assert!(info.archived_bytes >= 4096 && info.active_bytes >= 4096, "{info:?}");
-
-    let purged: alinery_core::PurgeArchivedResult = serde_json::from_value(call(ops().1)).unwrap();
-    assert_eq!((purged.deleted_tasks, purged.errors.len()), (1, 0), "{purged:?}");
-    assert_eq!(sh(&format!("ls '{repo}/.alinery/tasks'")).trim(), "keep", "only the live task is left on the host");
-    let after: alinery_core::StorageInfo = serde_json::from_value(call(ops().0)).unwrap();
-    assert_eq!(after.archived_task_count, 0);
     session.conn.exit_master();
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
 }
@@ -1057,12 +962,12 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
         let (id, repo) = (id.clone(), repo.clone());
         std::thread::spawn(move || {
             let state = handle.state::<crate::AppState>();
-            remote_call::<alinery_core::StorageInfo>(
+            remote_call::<serde_json::Value>(
                 &state,
                 &id,
-                RepoOp::StorageInfo {
-                    repo: repo.into(),
-                    app_config: crate::host_app_config(&state, &id)?,
+                RepoOp::ListDir {
+                    path: repo.into(),
+                    show_hidden: true,
                 },
             )
         })
@@ -1071,22 +976,18 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
 
     // The command is an async fn: its first poll runs up to the hand-off and returns.
-    let mut storage = Box::pin(crate::storage_info(handle.clone(), key.clone()));
+    let mut listing = Box::pin(crate::remote_list_dir(handle.clone(), id.clone(), repo.clone(), true));
     let started = std::time::Instant::now();
-    let first = storage.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    let first = listing.as_mut().poll(&mut Context::from_waker(Waker::noop()));
     let took = started.elapsed();
     assert!(matches!(first, Poll::Pending), "the command must wait for the host off this thread");
     assert!(took < std::time::Duration::from_millis(250), "the command held its caller for {took:?}");
 
     // Resumed, the host answers both, and the command finishes with the host's result.
     resume.now();
-    let listed = tauri::async_runtime::block_on(storage).unwrap();
+    let listed = tauri::async_runtime::block_on(listing).unwrap();
     let direct = direct.join().unwrap().unwrap();
-    assert_eq!(
-        (listed.repo_path, listed.tasks_dir),
-        (direct.repo_path, direct.tasks_dir),
-        "the command finishes with the host's answer"
-    );
+    assert_eq!(listed, direct, "the command finishes with the host's answer");
     drop(resume);
     disconnect_host(&handle, &id);
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
@@ -1180,7 +1081,7 @@ fn ssh_failures_become_actionable_messages() {
     assert!(SshFailure::UnknownHostKey.to_string().starts_with("host-key-unknown:"));
 }
 
-const PROBE_OK: &str = "Last login: Mon\nmotd noise\n__ALINERY_PROBE__\nuname=Linux x86_64\nhome=/home/me\nglibc=glibc 2.35\npagesize=4096\nhas_tar=1\nhas_gzip=1\nhas_sha256sum=1\nhas_git=1\nhas_setsid=1\nhas_systemd-run=1\nlinger=yes\nkilluser=b false\n";
+const PROBE_OK: &str = "Last login: Mon\nmotd noise\n__ALINERY_PROBE__\nuname=Linux x86_64\nhome=/home/me\nglibc=glibc 2.35\npagesize=4096\nhas_tar=1\nhas_gzip=1\nhas_sha256sum=1\nhas_git=1\nhas_zip=1\nhas_unzip=1\nhas_setsid=1\nhas_systemd-run=1\nlinger=yes\nkilluser=b false\n";
 
 fn manifest() -> RuntimeManifest {
     let target = |hash: &str| ManifestTarget {
@@ -1267,6 +1168,14 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
                 ..ok.clone()
             },
             "missing gzip",
+        ),
+        // The daemon's backups run the host's `zip` and `unzip` (O11 b); a Debian image has neither by default.
+        (
+            Probe {
+                tools: BTreeMap::from([("tar".into(), true), ("gzip".into(), true), ("sha256sum".into(), true), ("git".into(), true)]),
+                ..ok.clone()
+            },
+            "missing zip, unzip",
         ),
     ];
     for (probe, expected) in cases {

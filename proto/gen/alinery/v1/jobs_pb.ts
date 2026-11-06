@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/jobs.proto.
  */
 export const file_alinery_v1_jobs: GenFile = /*@__PURE__*/
-  fileDesc("ChVhbGluZXJ5L3YxL2pvYnMucHJvdG8SCmFsaW5lcnkudjEiQQoXU3RhcnRTdG9yYWdlU2NhblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIlAKGFN0YXJ0U3RvcmFnZVNjYW5SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEg4KBmpvYl9pZBgCIAEoCSJKChBDYW5jZWxKb2JSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIOCgZqb2JfaWQYAiABKAkiOQoRQ2FuY2VsSm9iUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDK1AQoKSm9iU2VydmljZRJdChBTdGFydFN0b3JhZ2VTY2FuEiMuYWxpbmVyeS52MS5TdGFydFN0b3JhZ2VTY2FuUmVxdWVzdBokLmFsaW5lcnkudjEuU3RhcnRTdG9yYWdlU2NhblJlc3BvbnNlEkgKCUNhbmNlbEpvYhIcLmFsaW5lcnkudjEuQ2FuY2VsSm9iUmVxdWVzdBodLmFsaW5lcnkudjEuQ2FuY2VsSm9iUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
+  fileDesc("ChVhbGluZXJ5L3YxL2pvYnMucHJvdG8SCmFsaW5lcnkudjEiQQoXU3RhcnRTdG9yYWdlU2NhblJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIlAKGFN0YXJ0U3RvcmFnZVNjYW5SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEg4KBmpvYl9pZBgCIAEoCSJKChBDYW5jZWxKb2JSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIOCgZqb2JfaWQYAiABKAkiOQoRQ2FuY2VsSm9iUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCI8ChJTdGFydEJhY2t1cFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIksKE1N0YXJ0QmFja3VwUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIOCgZqb2JfaWQYAiABKAkiOwoRU3RhcnRQdXJnZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIkoKElN0YXJ0UHVyZ2VSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEg4KBmpvYl9pZBgCIAEoCTLSAgoKSm9iU2VydmljZRJdChBTdGFydFN0b3JhZ2VTY2FuEiMuYWxpbmVyeS52MS5TdGFydFN0b3JhZ2VTY2FuUmVxdWVzdBokLmFsaW5lcnkudjEuU3RhcnRTdG9yYWdlU2NhblJlc3BvbnNlEk4KC1N0YXJ0QmFja3VwEh4uYWxpbmVyeS52MS5TdGFydEJhY2t1cFJlcXVlc3QaHy5hbGluZXJ5LnYxLlN0YXJ0QmFja3VwUmVzcG9uc2USSwoKU3RhcnRQdXJnZRIdLmFsaW5lcnkudjEuU3RhcnRQdXJnZVJlcXVlc3QaHi5hbGluZXJ5LnYxLlN0YXJ0UHVyZ2VSZXNwb25zZRJICglDYW5jZWxKb2ISHC5hbGluZXJ5LnYxLkNhbmNlbEpvYlJlcXVlc3QaHS5hbGluZXJ5LnYxLkNhbmNlbEpvYlJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.StartStorageScanRequest
@@ -95,8 +95,91 @@ export const CancelJobResponseSchema: GenMessage<CancelJobResponse> = /*@__PURE_
   messageDesc(file_alinery_v1_jobs, 3);
 
 /**
- * One Start RPC per kind (O24 b), so a capability is per RPC. S4.9 adds StartBackup and StartPurge,
- * S4.10 StartImport. The Job entity (entities.proto) carries progress and the result.
+ * A manual backup of the repository, to the destination its effective settings name (the same gate as BACKUP NOW:
+ * the feature must be on and the destination usable). The automatic triggers start their own jobs in the daemon.
+ *
+ * @generated from message alinery.v1.StartBackupRequest
+ */
+export type StartBackupRequest = Message<"alinery.v1.StartBackupRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.StartBackupRequest.
+ * Use `create(StartBackupRequestSchema)` to create a new message.
+ */
+export const StartBackupRequestSchema: GenMessage<StartBackupRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_jobs, 4);
+
+/**
+ * @generated from message alinery.v1.StartBackupResponse
+ */
+export type StartBackupResponse = Message<"alinery.v1.StartBackupResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+
+  /**
+   * @generated from field: string job_id = 2;
+   */
+  jobId: string;
+};
+
+/**
+ * Describes the message alinery.v1.StartBackupResponse.
+ * Use `create(StartBackupResponseSchema)` to create a new message.
+ */
+export const StartBackupResponseSchema: GenMessage<StartBackupResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_jobs, 5);
+
+/**
+ * Deletes every archived task, every archived session's files and the worktrees of archived tasks. Irreversible.
+ *
+ * @generated from message alinery.v1.StartPurgeRequest
+ */
+export type StartPurgeRequest = Message<"alinery.v1.StartPurgeRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.StartPurgeRequest.
+ * Use `create(StartPurgeRequestSchema)` to create a new message.
+ */
+export const StartPurgeRequestSchema: GenMessage<StartPurgeRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_jobs, 6);
+
+/**
+ * @generated from message alinery.v1.StartPurgeResponse
+ */
+export type StartPurgeResponse = Message<"alinery.v1.StartPurgeResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+
+  /**
+   * @generated from field: string job_id = 2;
+   */
+  jobId: string;
+};
+
+/**
+ * Describes the message alinery.v1.StartPurgeResponse.
+ * Use `create(StartPurgeResponseSchema)` to create a new message.
+ */
+export const StartPurgeResponseSchema: GenMessage<StartPurgeResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_jobs, 7);
+
+/**
+ * One Start RPC per kind (O24 b), so a capability is per RPC. StartBackup is ACT, StartPurge is ADMIN (S4.9);
+ * S4.10 adds StartImport. The Job entity (entities.proto) carries progress and the result.
  *
  * @generated from service alinery.v1.JobService
  */
@@ -110,6 +193,26 @@ export const JobService: GenService<{
     methodKind: "unary";
     input: typeof StartStorageScanRequestSchema;
     output: typeof StartStorageScanResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.JobService.StartBackup
+   */
+  startBackup: {
+    methodKind: "unary";
+    input: typeof StartBackupRequestSchema;
+    output: typeof StartBackupResponseSchema;
+  },
+  /**
+   * ADMIN
+   *
+   * @generated from rpc alinery.v1.JobService.StartPurge
+   */
+  startPurge: {
+    methodKind: "unary";
+    input: typeof StartPurgeRequestSchema;
+    output: typeof StartPurgeResponseSchema;
   },
   /**
    * ACT

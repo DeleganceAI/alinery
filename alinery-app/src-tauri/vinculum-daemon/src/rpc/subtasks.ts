@@ -50,6 +50,8 @@ export function subtaskService(c: SessionControl, dedupe: Dedupe, store: Store):
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>
         domain(async () => {
+          // Queued before the kills, as the page did: it never stops the discard, and its archive is made after the debounce.
+          c.backups?.publish("pre_archive");
           const result = await discardSubtask(c.repo, req.slug, req.managerSessionId, (_slug, id) => {
             if (c.runner.isRunning(id)) c.runner.stop(id);
           });

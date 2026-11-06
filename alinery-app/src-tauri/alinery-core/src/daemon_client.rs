@@ -175,14 +175,14 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
     Ok(PeerProcessIdentity { uid, pid, start })
 }
 
-/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 33 current).
+/// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 34 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
 /// Protocol 18 dropped the OMP process ops. Shutdown is still
-/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 33 daemons' handler
+/// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 34 daemons' handler
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
-/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service and 33 the sub-task service, and each left this op alone.
+/// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service and 34 the backup service and the backup and purge jobs, and each left this op alone.
 pub fn audited_shutdown_protocol(protocol: Option<u32>) -> bool {
-    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33))
+    matches!(protocol, Some(9 | 10 | 12 | 15 | 16 | 18 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34))
 }
 
 /// One request on one authenticated stream. No operation reconnects or retries.

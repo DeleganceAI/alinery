@@ -154,6 +154,11 @@ fn telemetry(case: &Path) -> Value {
         "git.commit" => TelemetryEvent::GitCommit { source },
         "git.push" => TelemetryEvent::GitPush { source },
         "git.worktree_remove" => TelemetryEvent::GitWorktreeRemove { source },
+        "storage.purge" => TelemetryEvent::StoragePurge { source },
+        "backup.create" => TelemetryEvent::BackupCreate {
+            source,
+            trigger: serde_json::from_value(event["trigger"].clone()).unwrap(),
+        },
         "session.archive" => TelemetryEvent::SessionArchive {
             source,
             killed_live: event["killedLive"].as_bool().unwrap(),

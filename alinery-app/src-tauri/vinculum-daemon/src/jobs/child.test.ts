@@ -64,3 +64,36 @@ test("the runner starts the real child and the Job reaches DONE with the scan as
     alinerydSocketPath: `${repo}/.alinery/alineryd-d1.sock`,
   });
 });
+
+test("`--restore-backup <repo> <archive>` puts a backup back and prints one result line; a foreign archive is one error line and changes nothing", async () => {
+  const { createBackup } = await import("../domain/backup.ts");
+  const { readFileSync, realpathSync } = await import("node:fs");
+  const base = realpathSync(mkdtempSync("/tmp/restore-cli-"));
+  dirs.push(base);
+  const make = (name: string) => {
+    const repo = join(base, name);
+    mkdirSyncFile(join(repo, ".alinery", "tasks", "t", "task.md"), "before");
+    return repo;
+  };
+  const repo = make("repo");
+  const other = make("other");
+  const dest = join(base, "dest");
+  mkdirSync(dest);
+  const settings = { destination: dest, enabled: true, retention: 5, triggerPreArchive: false, triggerPostArtifactChange: false, triggerPostPushCommit: false };
+  const made = await createBackup(repo, settings, "manual", "1.2.3");
+  writeFileSync(join(repo, ".alinery", "tasks", "t", "task.md"), "after");
+
+  const run = async (target: string) => {
+    const p = Bun.spawn([process.execPath, MAIN, "--restore-backup", target, made.path], { stdout: "pipe", stderr: "pipe" });
+    return { out: (await new Response(p.stdout).text()).trim(), code: await p.exited };
+  };
+  const refused = await run(other);
+  expect(refused.code).toBe(1);
+  expect(JSON.parse(refused.out).error).toMatch(/belongs to/);
+  expect(readFileSync(join(other, ".alinery", "tasks", "t", "task.md"), "utf8")).toBe("before");
+
+  const ok = await run(repo);
+  expect(ok.code).toBe(0);
+  expect(JSON.parse(ok.out).result).toMatchObject({ alinery_version: "1.2.3", trigger: "manual" });
+  expect(readFileSync(join(repo, ".alinery", "tasks", "t", "task.md"), "utf8")).toBe("before");
+});

@@ -18,6 +18,8 @@ export type RunnerOptions = {
   retainMs?: number;
   timers?: Timers;
   now?: () => number;
+  /** Told when a job reaches DONE, FAILED or CANCELLED, after its entity is committed. */
+  onEnd?: (job: Job, params: unknown) => void;
 };
 
 const unref = <T>(t: T): T => {
@@ -38,6 +40,7 @@ type Entry = {
   cancelled: boolean;
   lastProgressAt: number;
   flush?: unknown;
+  waiters: ((job: Job) => void)[];
 };
 
 export class JobRunner {
@@ -51,14 +54,14 @@ export class JobRunner {
     private readonly store: Store,
     o: RunnerOptions = {},
   ) {
-    this.o = { command: jobCommand, progressMs: 250, retainMs: 24 * 3600 * 1000, timers: realTimers, now: Date.now, ...o };
+    this.o = { command: jobCommand, progressMs: 250, retainMs: 24 * 3600 * 1000, timers: realTimers, now: Date.now, onEnd: () => {}, ...o };
   }
 
   /** Starts a job and returns its id. One job of a kind runs at a time and the rest wait in order; the
    * daemon serves one repo, so that is also "one backup per repo". */
   start(kind: JobKind, params: unknown): string {
     const id = crypto.randomUUID();
-    const entry: Entry = { job: create(JobSchema, { id, kind, state: JobState.QUEUED }), params, cancelled: false, lastProgressAt: 0 };
+    const entry: Entry = { job: create(JobSchema, { id, kind, state: JobState.QUEUED }), params, cancelled: false, lastProgressAt: 0, waiters: [] };
     this.entries.set(id, entry);
     if (this.running.has(kind)) {
       this.waiting.set(kind, [...(this.waiting.get(kind) ?? []), entry]);
@@ -67,6 +70,19 @@ export class JobRunner {
       this.launch(entry);
     }
     return id;
+  }
+
+  /** Whether a job of this kind is running or waiting: what keeps an automatic trigger from piling jobs up behind one. */
+  busy(kind: JobKind): boolean {
+    return this.running.has(kind) || (this.waiting.get(kind)?.length ?? 0) > 0;
+  }
+
+  /** Resolves with the job once it has ended (at once if it already has). An id this daemon doesn't know rejects. */
+  finished(id: string): Promise<Job> {
+    const entry = this.entries.get(id);
+    if (!entry) return Promise.reject(new Error(`no job ${id}`));
+    if (TERMINAL.has(entry.job.state)) return Promise.resolve(entry.job);
+    return new Promise((resolve) => entry.waiters.push(resolve));
   }
 
   /** Cancels a job that has not ended: a waiting one at once, a running one by SIGTERM to its child
@@ -97,6 +113,9 @@ export class JobRunner {
     entry.job.error = error;
     entry.job.endedAtMs = BigInt(this.o.now());
     this.commit(entry);
+    for (const waiter of entry.waiters) waiter(entry.job);
+    entry.waiters = [];
+    this.o.onEnd(entry.job, entry.params);
     const id = entry.job.id;
     this.o.timers.set(() => {
       this.entries.delete(id);
