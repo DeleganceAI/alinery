@@ -5,7 +5,7 @@ import type { HostedCatalogView } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 const mocks = vi.hoisted(() => ({
-  readOmpModelRoles: vi.fn(),
+  readModelRoles: vi.fn(),
   readModelFavorites: vi.fn(),
   hostedCatalog: vi.fn(),
   providerCatalog: vi.fn(),
@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   accountRefresh: vi.fn(),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
+// The model roles are the host daemon's (sync/agent).
+vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
 
 const emptyHosted: HostedCatalogView = {
   provider: "alinery",
@@ -35,7 +37,7 @@ const readyHosted: HostedCatalogView = {
 };
 
 function settleIpc(hosted: HostedCatalogView = emptyHosted, grok = false) {
-  mocks.readOmpModelRoles.mockResolvedValue({});
+  mocks.readModelRoles.mockResolvedValue({});
   mocks.readModelFavorites.mockResolvedValue([]);
   mocks.hostedCatalog.mockResolvedValue(hosted);
   mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
@@ -63,7 +65,7 @@ describe("ProviderSetupDialog", () => {
 
   it("shows Connecting… until the hosted catalog returns", async () => {
     let resolveHosted: (view: HostedCatalogView) => void = () => undefined;
-    mocks.readOmpModelRoles.mockResolvedValue({});
+    mocks.readModelRoles.mockResolvedValue({});
     mocks.readModelFavorites.mockResolvedValue([]);
     mocks.grokKeyReady.mockResolvedValue(false);
     mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });

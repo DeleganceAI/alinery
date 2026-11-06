@@ -81,3 +81,10 @@ export async function unzipInto(archive: string, into: string, skip: string): Pr
     throw fail(archive, r);
   }
 }
+
+/** The uncompressed size of each entry, in the order `unzipNames` lists them (the fourth column of `unzip -Z`). */
+export async function unzipSizes(archive: string): Promise<number[]> {
+  const r = await run("unzip", ["-Z", archive]);
+  if (r.code !== 0) throw fail(archive, r);
+  return r.stdout.split("\n").flatMap((l) => (/^[-dlbcps?][-rwxsStTa]{6,9}\s/.test(l) ? [Number(l.trim().split(/\s+/)[3])] : []));
+}

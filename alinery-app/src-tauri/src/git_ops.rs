@@ -4,7 +4,6 @@ use crate::*;
 // This crate's git spawns all come from here (module-ownership rule), but the implementation
 // lives in alinery-core so alineryd/mcp share the one env-scrub list rather than copying it. See
 // alinery-core/src/git.rs for why `-C <dir>` alone targets the wrong repository.
-pub(crate) use alinery_core::git_cmd;
 
 pub(crate) use alinery_core::git_actions::github_pull_request_ref;
 

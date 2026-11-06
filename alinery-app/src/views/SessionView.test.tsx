@@ -46,8 +46,7 @@ const providerCatalog = vi.hoisted(() =>
     throw new Error("no catalog");
   }),
 );
-const readOmpModelRoles = vi.hoisted(() => vi.fn(async () => ({}) as Record<string, string>));
-const writeOmpModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
+const writeModelRoles = vi.hoisted(() => vi.fn(async (roles: Record<string, string>) => roles));
 const openUrl = vi.hoisted(() => vi.fn(async (_url: string | URL, _openWith?: string): Promise<void> => undefined));
 const confirmDanger = vi.hoisted(() => vi.fn(async () => true));
 const archiveSession = vi.hoisted(() => vi.fn());
@@ -116,6 +115,7 @@ const initialTree: ArtifactTreeNode[] = [
 
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../sync/agent", () => ({ writeModelRoles }));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
@@ -129,8 +129,6 @@ vi.mock("../ipc", () =>
     sessionSetModel,
     sessionSetThinkingLevel,
     providerCatalog,
-    readOmpModelRoles,
-    writeOmpModelRoles,
     openUrl,
     pickAttachmentFilesDialog,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }),

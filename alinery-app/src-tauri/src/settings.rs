@@ -97,28 +97,6 @@ pub(crate) async fn list_harness_models_for_repo(app: AppHandle, repo_path: Stri
 // ---- Scoped settings ----------------------------------------------------------
 // Global settings live in app.toml. Repository config.toml is now a partial override
 // layer: absent fields inherit, present blank strings are intentional values.
-pub(crate) type Config = alinery_core::EffectiveConfig;
-
-pub(crate) fn load_config_with_app_path(app_config: &Path, repo: &Path) -> Config {
-    let global = alinery_core::load_global_settings(app_config);
-    let overrides = alinery_core::load_repo_overrides(repo);
-    alinery_core::resolve_effective_config(&global, &overrides)
-}
-
-/// The GitHub token in force for a remote repo: its host's `config.toml` override over this machine's global one.
-/// The import itself runs here with this machine's credentials, so this is the one repo-settings read the shell keeps (S4.10).
-pub(crate) fn remote_github_token(app_config: &Path, state: &AppState, host_id: &str, path: &Path) -> Result<String, String> {
-    let overrides: alinery_core::RepoOverrides = remote_call(state, host_id, RepoOp::ReadRepoOverrides { repo: path.into() })?;
-    Ok(alinery_core::scoped_settings_with(app_config, overrides)?.effective.github.token)
-}
-
-pub(crate) fn owned_active_target(state: &AppState) -> Result<RepoRef, String> {
-    Ok(match require_active_target(state)? {
-        ActiveRepo::Local(repo) => RepoRef::Local(repo),
-        ActiveRepo::Remote { host_id, path } => RepoRef::Remote { host_id, path },
-    })
-}
-
 #[tauri::command]
 pub(crate) fn read_global_settings(app: AppHandle) -> Result<alinery_core::GlobalSettings, String> {
     alinery_core::load_global_settings_strict(&app_config_path(&app)?)

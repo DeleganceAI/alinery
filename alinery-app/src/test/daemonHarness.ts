@@ -3,6 +3,7 @@
 // on the client side.
 import { create } from "@bufbuild/protobuf";
 import { createRouterTransport, type ServiceImpl } from "@connectrpc/connect";
+import { AgentService } from "alinery-proto/alinery/v1/agent_pb";
 import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
 import { BackupService } from "alinery-proto/alinery/v1/backups_pb";
 import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
@@ -27,6 +28,7 @@ export type Services = {
   playbooks: Partial<ServiceImpl<typeof PlaybookService>>;
   jobs: Partial<ServiceImpl<typeof JobService>>;
   backups: Partial<ServiceImpl<typeof BackupService>>;
+  agent: Partial<ServiceImpl<typeof AgentService>>;
 };
 
 export function daemonHarness(services: Partial<Services>) {
@@ -41,6 +43,7 @@ export function daemonHarness(services: Partial<Services>) {
     if (services.playbooks) router.service(PlaybookService, services.playbooks);
     if (services.jobs) router.service(JobService, services.jobs);
     if (services.backups) router.service(BackupService, services.backups);
+    if (services.agent) router.service(AgentService, services.agent);
   });
   return { transport };
 }

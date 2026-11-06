@@ -37,6 +37,8 @@ vi.mock("../ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
   return mockIpc({ ...community });
 });
+// The registry and the import rules are the repository's daemon (sync/community); the network half stays on `ipc`.
+vi.mock("../sync/community", () => community);
 // The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
 vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...mocks }));
 const definition: NormalizedPlaybook = {

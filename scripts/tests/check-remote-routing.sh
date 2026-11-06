@@ -20,7 +20,6 @@ const LOCAL_ONLY = ["target_repo_for_app(", "active_repo()", "require_owned_acti
 const ROUTES = [
   "RepoRef",
   "owned_target(",
-  "owned_active_target(",
   "target_or_active_ref(",
   "target_repo_ref_for_app(",
   "active_repo_ref(",

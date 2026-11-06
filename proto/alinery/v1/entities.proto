@@ -507,6 +507,24 @@ message PlaybookPicker {
 message PlaybookLibrary {
   repeated PlaybookDiagnostic diagnostics = 1;
 }
+// One playbook the person downloaded from the community library (a record of `.alinery/playbooks/community-imports.toml`), with
+// what the daemon can say about the local file: whether it is gone, and whether it no longer matches what was imported.
+message CommunityImport {
+  string id = 1;
+  string label = 2;
+  string playbook_key = 3;
+  string local_key = 4;
+  uint64 imported_version = 5;
+  string local_sha256 = 6;
+  string imported_at = 7;
+  bool local_missing = 8;
+  bool locally_edited = 9;
+}
+// `playbook/_/community` (S4.10): the repository's community import registry. `error` is why it could not be read (the list is then empty).
+message PlaybookCommunity {
+  repeated CommunityImport imports = 1;
+  string error = 2;
+}
 // A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
 message Attachment {
   string slug = 1;
@@ -554,5 +572,6 @@ message Entity {
     ArtifactTree artifact_tree = 24;
     PlaybookPicker playbook_picker = 25;
     PlaybookLibrary playbook_library = 26;
+    PlaybookCommunity playbook_community = 27;
   }
 }

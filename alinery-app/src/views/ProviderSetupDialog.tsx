@@ -5,6 +5,7 @@ import { needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers"
 import type { ProvidersDialogTab } from "../chat/slash";
 import * as ipc from "../ipc";
 import { SignInTarget } from "../SignInTarget";
+import * as agent from "../sync/agent";
 import type { HostedCatalogView } from "../types";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
@@ -74,8 +75,8 @@ export function ProviderSetupDialog({
         if (!cancelled) setFavorites(rows);
       })
       .catch(() => undefined);
-    void ipc
-      .readOmpModelRoles()
+    void agent
+      .readModelRoles()
       .then((roles) => {
         if (!cancelled) setModelRoles(roles);
       })
@@ -126,7 +127,7 @@ export function ProviderSetupDialog({
       if (model) next[role] = model;
       else delete next[role];
       try {
-        setModelRoles(await ipc.writeOmpModelRoles(next));
+        setModelRoles(await agent.writeModelRoles(next));
       } catch (error) {
         setModelError(String(error));
       }

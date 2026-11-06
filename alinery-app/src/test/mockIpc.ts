@@ -25,7 +25,6 @@ type ExecutionStub = (taskSlug: string, repoPath?: string) => Promise<TaskExecut
 
 export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: ExecutionStub } = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
-    ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
     ["onRemoteHostConnected", vi.fn(() => () => {})],
     [
       "getTaskExecution",

@@ -12,6 +12,7 @@ import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
 import { ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
 import { parsePlaybookDocument, renderPlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import { BUNDLED_PLAYBOOKS } from "../domain/bundledPlaybooks.ts";
+import { BlobStore } from "../domain/blobs.ts";
 import { GLOBAL_PICKER_KEY, LIBRARY_KEY, PICKER_KEY, PlaybookProjector, playbookKey } from "../domain/playbookProjector.ts";
 import { JobRunner } from "../jobs/runner.ts";
 import { Store } from "../sync/store.ts";
@@ -51,7 +52,7 @@ async function start() {
     jobs: new JobRunner(store),
     storageScan: { mode: "error" } as never,
     transcripts: async () => undefined,
-    playbooks: { repo, appConfig, projector },
+    playbooks: { repo, appConfig, projector, blobs: new BlobStore(repo) },
   });
   cleanup.push(() => {
     net.close();

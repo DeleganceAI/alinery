@@ -301,3 +301,65 @@ test("a chat thread's attachment uploads into its attachments directory, reads b
   expect(await refused("c1", "../a.png")).toBe(Code.InvalidArgument);
   expect(existsSync(join(sessions, "plain.attachments"))).toBe(false);
 });
+
+// The issue import (plan S4.10): the shell fetches a ticket with this machine's token and the page hands its fields to CreateTask, so the
+// tree a ticket becomes is the daemon's. Fixed GitHub issues and Linear tickets in, task trees out (the timestamps differ, so they are
+// not compared; the slug is derived from the title and is).
+const GITHUB_ISSUES = [
+  { reference: "acme/widgets#7", title: "Crash on empty cart", description: "Steps:\n1. Open cart\n2. Press checkout\n\nExpected: a message." },
+  { reference: "acme/widgets#12", title: "Add dark mode", description: "" },
+];
+const LINEAR_TICKETS = [
+  { identifier: "ENG-41", title: "Retry failed uploads", description: "Uploads fail on a flaky network.", images: [{ name: "screenshot.png", bytes: Uint8Array.from([137, 80, 78, 71, 1, 2, 3]) }], image_errors: [] as string[] },
+  { identifier: "ENG-42", title: "Fix the sidebar", description: "See the attached.", images: [], image_errors: ["diagram.png: 404"] },
+];
+
+async function treeOf(c: Ctx, slug: string) {
+  const dir = join(c.alinery, "tasks", slug);
+  const task = Bun.TOML.parse(readFileSync(join(dir, "task.md"), "utf8").replace(/^\+\+\+\n/, "").split("\n+++")[0] ?? "") as Record<string, unknown>;
+  const attachments = existsSync(join(dir, "artifacts", "attachments")) ? readdirSync(join(dir, "artifacts", "attachments")).sort() : [];
+  return {
+    fields: { name: task.name, slug: task.slug, linear_id: task.linear_id ?? "", github_issue: task.github_issue ?? "" },
+    ticket: readFileSync(join(dir, "artifacts", "00-ticket.md"), "utf8"),
+    attachments,
+  };
+}
+
+test("conformance: fixed GitHub issues become task trees carrying the issue reference and its text", async () => {
+  const c = await start();
+  const trees = [];
+  for (const issue of GITHUB_ISSUES) {
+    const res = await c.tasks.createTask(createRequest(issue.title, { description: issue.description, githubIssue: issue.reference }));
+    expect(res.created?.creation).toBe("ready");
+    trees.push(await treeOf(c, res.created?.task?.slug ?? ""));
+  }
+  expect(trees.map((t) => t.fields)).toEqual([
+    { name: "Crash on empty cart", slug: "crash-on-empty-cart", linear_id: "", github_issue: "acme/widgets#7" },
+    { name: "Add dark mode", slug: "add-dark-mode", linear_id: "", github_issue: "acme/widgets#12" },
+  ]);
+  expect(trees[0]?.ticket).toContain("Steps:\n1. Open cart\n2. Press checkout\n\nExpected: a message.");
+  expect(trees.every((t) => t.attachments.length === 0)).toBe(true);
+});
+
+test("conformance: fixed Linear tickets become task trees with their identifier, their images as attachments and their failed images listed", async () => {
+  const c = await start();
+  const trees = [];
+  for (const ticket of LINEAR_TICKETS) {
+    const attachments = [];
+    for (const image of ticket.images) {
+      const staged = await upload(c, { case: "staged", value: { name: image.name } }, image.bytes);
+      attachments.push({ name: image.name, uploadId: staged.ref?.target.case === "staged" ? staged.ref.target.value.uploadId : "" });
+    }
+    const res = await c.tasks.createTask(createRequest(ticket.title, { description: ticket.description, linearId: ticket.identifier, attachments, attachmentErrors: ticket.image_errors }));
+    expect(res.created?.creation).toBe("ready");
+    trees.push(await treeOf(c, res.created?.task?.slug ?? ""));
+  }
+  expect(trees.map((t) => t.fields)).toEqual([
+    { name: "Retry failed uploads", slug: "retry-failed-uploads", linear_id: "ENG-41", github_issue: "" },
+    { name: "Fix the sidebar", slug: "fix-the-sidebar", linear_id: "ENG-42", github_issue: "" },
+  ]);
+  expect(trees[0]?.attachments).toEqual(["screenshot.png"]);
+  expect(trees[0]?.ticket).toContain("- attachments/screenshot.png");
+  expect(trees[1]?.attachments).toEqual([]);
+  expect(trees[1]?.ticket).toContain("diagram.png: 404");
+});

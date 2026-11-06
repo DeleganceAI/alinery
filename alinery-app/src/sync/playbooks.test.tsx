@@ -10,12 +10,11 @@ import { cursor, daemonHarness, entity, scriptedSync, snapshot, untilAborted } f
 import { deletePlaybookSource, listPlaybookCatalog, NoLibraryHost, PlaybookRefusal, readPlaybook, savePlaybookPickerPreferences, savePlaybookSource } from "./playbooks";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
-const ipcMocks = vi.hoisted(() => ({ readAppConfig: vi.fn(), forgetCommunityImport: vi.fn() }));
+const ipcMocks = vi.hoisted(() => ({ readAppConfig: vi.fn() }));
 vi.mock("../ipc", () => ipcMocks);
 
 beforeEach(() => {
   ipcMocks.readAppConfig.mockResolvedValue({ active_repo: "/a", known_repos: ["/a", "/b"] });
-  ipcMocks.forgetCommunityImport.mockResolvedValue(undefined);
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -115,23 +114,24 @@ it("a stale save is a PlaybookRefusal telling the person to reopen; a library re
   expect(invalid).toMatchObject({ kind: "invalid", diagnostics: [{ field: "step.mode" }] });
 });
 
-it("deleting a repository playbook forgets its community import first, and a failure there stops the delete", async () => {
-  const order: string[] = [];
+it("a delete is the daemon's call, with the revision this window last saw", async () => {
+  const sent: string[] = [];
   serve({
-    deletePlaybook: () => {
-      order.push("delete");
+    deletePlaybook: (request) => {
+      sent.push(`${request.reference?.scope}/${request.reference?.key}`);
       return { applied: { cursor: cursor(1) } } as never;
     },
   });
-  ipcMocks.forgetCommunityImport.mockImplementation(async () => void order.push("forget"));
   await deletePlaybookSource(ref("repo", "zeta") as never, "/a");
   await deletePlaybookSource(ref("global", "alpha") as never, "/a");
-  expect(order).toEqual(["forget", "delete", "delete"]);
-  expect(ipcMocks.forgetCommunityImport).toHaveBeenCalledWith("/a", "zeta");
-
-  ipcMocks.forgetCommunityImport.mockRejectedValue("community import registry unreadable");
-  await expect(deletePlaybookSource(ref("repo", "zeta") as never, "/a")).rejects.toBe("community import registry unreadable");
-  expect(order).toEqual(["forget", "delete", "delete"]);
+  expect(sent).toEqual(["repo/zeta", "global/alpha"]);
+  // The community import registry is the daemon's, so a registry it cannot read refuses the delete there (daemon community.test.ts).
+  serve({
+    deletePlaybook: () => {
+      throw new ConnectError("community import registry unreadable", Code.Internal);
+    },
+  });
+  await expect(deletePlaybookSource(ref("repo", "zeta") as never, "/a")).rejects.toThrow("community import registry unreadable");
 });
 
 it("picker preferences from a window with no repository go to the global file", async () => {

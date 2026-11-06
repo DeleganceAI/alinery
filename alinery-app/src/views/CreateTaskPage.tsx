@@ -7,6 +7,7 @@ import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
 import { readArtifactText } from "../sync/artifacts";
 import { taskSourceBranchesForRepo } from "../sync/git";
+import { importGithubIssue } from "../sync/imports";
 import { listPlaybookCatalog, readPlaybook } from "../sync/playbooks";
 import { readEffectiveConfig } from "../sync/settings";
 import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
@@ -764,8 +765,7 @@ export function CreateTaskPage({
     dirtyRef.current = false;
     setImporting(true);
     setErr(null);
-    ipc
-      .importGithubForRepo(target, r)
+    importGithubIssue(target, r)
       .then((i) => {
         if (generation !== importGeneration.current) return;
         setLinearId("");

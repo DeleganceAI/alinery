@@ -733,6 +733,13 @@ export type DownloadStatusRow = {
   locallyEdited: boolean;
   error: string | null;
 };
+/** What the library says about one publication (the shell asks it, without the account). */
+export type RemoteStatusRow = { id: string; title: string | null; description: string | null; remoteVersion: number | null; remoteMissing: boolean; error: string | null };
+/** A package downloaded with this machine's account, for the repository's daemon to import. */
+export type CommunitySourceResult =
+  | { kind: "downloaded"; document: string; version: number; label: string; playbookKey: string }
+  | { kind: "needs_account" }
+  | { kind: "failed"; message: string };
 export type ImportResult =
   | { kind: "saved"; reference: PlaybookRef; importedVersion: number; localSha256: string }
   | { kind: "needs_account" }

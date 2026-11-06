@@ -2,12 +2,15 @@
 // writes. The catalog is the `playbook/*` rows (`PlaybookProjector`). A write is serialized with every other writer of the repository,
 // checks `expected_revision` against the row as the files are now, and answers after the rows it changed are in the store. A refusal
 // carries the library's tagged error as JSON in `ErrorDetail.fields["error"]`, which the frontend turns back into the shape its views read.
+import { readFileSync } from "node:fs";
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { MessageInitShape } from "@bufbuild/protobuf";
-import type { PlaybookDefinition, PlaybookDefinitionSchema, PlaybookService, ReadPlaybookResponseSchema } from "alinery-proto/alinery/v1/playbooks_pb";
+import { CommunityImportOutcome, type PlaybookDefinition, type PlaybookDefinitionSchema, type PlaybookService, type ReadPlaybookResponseSchema } from "alinery-proto/alinery/v1/playbooks_pb";
 import { type PlaybookDocument, parsePlaybookDocument, renderPlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import { GLOBAL_PICKER_KEY, PICKER_KEY, diagnosticOf, playbookKey, type PlaybookProjector } from "../domain/playbookProjector.ts";
+import { forgetImportBeforeDelete, importCommunityPlaybook, type Outcome, type Package, updateCommunityImport } from "../domain/communityImports.ts";
+import type { BlobStore } from "../domain/blobs.ts";
+import { COMMUNITY_KEY, GLOBAL_PICKER_KEY, PICKER_KEY, diagnosticOf, playbookKey, type PlaybookProjector } from "../domain/playbookProjector.ts";
 import {
   appConfigDirOf,
   deletePlaybook,
@@ -30,7 +33,7 @@ import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, fail, metaOf } from "./errors.ts";
 
-export type PlaybookDeps = { repo: string; appConfig: string; projector: PlaybookProjector };
+export type PlaybookDeps = { repo: string; appConfig: string; projector: PlaybookProjector; blobs: BlobStore };
 
 const SCOPES = new Set<string>(["bundled", "global", "repo"]);
 
@@ -131,6 +134,24 @@ function translated(e: unknown): unknown {
   return e;
 }
 
+function outcomeToWire(o: Outcome) {
+  const O = CommunityImportOutcome;
+  switch (o.kind) {
+    case "saved":
+      return { outcome: O.SAVED, reference: o.reference, importedVersion: BigInt(o.importedVersion), localSha256: o.localSha256 };
+    case "conflict":
+      return { outcome: O.CONFLICT, localKey: o.localKey };
+    case "already_downloaded":
+      return { outcome: O.ALREADY_DOWNLOADED };
+    case "edited":
+      return { outcome: O.EDITED };
+    case "invalid":
+      return { outcome: O.INVALID, diagnostics: o.diagnostics.map(diagnosticOf) };
+    case "failed":
+      return { outcome: O.FAILED, message: o.message };
+  }
+}
+
 export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): ServiceImpl<typeof PlaybookService> {
   const roots = (): Roots => ({ globalConfigDir: appConfigDirOf(d.appConfig), repoDir: d.repo });
   const applied = () => ({ cursor: store.cursor() });
@@ -150,6 +171,22 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
         }
       }),
     );
+  // The staged upload is the playbook document; it is read and released whatever the outcome.
+  const community = async (pkg: { uploadId: string; version: bigint; label: string; playbookKey: string } | undefined, run: (p: Package) => Promise<Outcome>) => {
+    const staged = pkg ? d.blobs.staged(pkg.uploadId) : undefined;
+    if (!pkg || !staged) throw fail(Code.InvalidArgument, "invalid_argument", "the playbook package was not uploaded");
+    try {
+      const document = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(staged.path));
+      const outcome = await run({ document, version: Number(pkg.version), label: pkg.label, playbookKey: pkg.playbookKey });
+      d.projector.refresh();
+      return { applied: applied(), result: outcomeToWire(outcome) };
+    } catch (e) {
+      if (e instanceof TypeError) throw fail(Code.InvalidArgument, "invalid_argument", "the playbook package is not UTF-8 text");
+      throw e;
+    } finally {
+      d.blobs.release(pkg.uploadId);
+    }
+  };
   return {
     readPlaybook: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
@@ -186,10 +223,24 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
       const reference = refOf(req.reference);
       return dedupe.once(metaOf(req.meta), () =>
         mutate("delete_playbook", playbookKey(reference.scope, reference.key), req.expectedRevision, async () => {
+          // A repo playbook leaves the community import registry first; a registry that cannot be read stops the delete.
+          if (reference.scope === "repo") await forgetImportBeforeDelete(roots(), reference.key);
           await deletePlaybook(roots(), reference);
           d.projector.refresh();
           return { applied: applied() };
         }),
+      );
+    },
+    importCommunityPlaybook: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        community(req.package, (pkg) => mutate("import_community_playbook", COMMUNITY_KEY, 0n, () => importCommunityPlaybook(roots(), req.id, pkg, req.overwrite))),
+      );
+    },
+    updateCommunityImport: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        community(req.package, (pkg) => mutate("update_community_import", COMMUNITY_KEY, 0n, () => updateCommunityImport(roots(), req.id, pkg, req.overwriteEdited))),
       );
     },
     savePicker: (req, ctx) => {

@@ -416,13 +416,19 @@ async function withLibraryLock<T>(roots: Roots, scope: Scope, mutate: (root: str
   return run;
 }
 
+/** core `with_repo_library_lock`: `mutate` runs under the repository library's lock, so a read-modify-write of a file beside the playbooks is whole. */
+export const withRepoLibraryLock = <T>(roots: Roots, mutate: () => T): Promise<T> => withLibraryLock(roots, "repo", () => mutate());
+
 const ioSave = (e: unknown): never => {
   if (e instanceof SaveFailure) throw e;
   throw new SaveFailure({ kind: "io", message: e instanceof Msg ? e.message : String(e) });
 };
 
-/** core `save_playbook`. `overwrite: false` refuses an existing file (conflict). Throws `SaveFailure`. */
-export async function savePlaybook(roots: Roots, target: Ref, sourceText: string, overwrite: boolean): Promise<Scoped> {
+/**
+ * core `save_playbook`. `overwrite: false` refuses an existing file (conflict). `expected` is the file's bytes as the caller last saw
+ * them (`null`: none), re-checked under the lock; omitted, nothing is checked. Throws `SaveFailure`.
+ */
+export async function savePlaybook(roots: Roots, target: Ref, sourceText: string, overwrite: boolean, expected?: Uint8Array | null): Promise<Scoped> {
   if (target.scope === "bundled") throw new SaveFailure({ kind: "read_only", reference: target });
   const checked = validateForStorage(target.key, sourceText);
   if ("errors" in checked) throw new SaveFailure({ kind: "invalid", diagnostics: checked.errors });
@@ -441,6 +447,11 @@ export async function savePlaybook(roots: Roots, target: Ref, sourceText: string
       }
       checkedDirectory(directory, true);
       if (exists && !overwrite) throw new SaveFailure({ kind: "conflict", source });
+      // What the caller saw before its network work (`save_playbook_if_unchanged`): a file that appeared, vanished or changed is a conflict.
+      if (expected !== undefined) {
+        const now = exists ? readFileSync(path) : null;
+        if (expected === null ? now !== null : now === null || Buffer.compare(now, expected) !== 0) throw new SaveFailure({ kind: "conflict", source });
+      }
       writeAtomic(path, canonical);
       return { source, definition: checked.ok, source_text: canonical, modified_at_ms: modifiedAt(path) };
     } catch (e) {

@@ -51,10 +51,16 @@ async function libraryHost(repoPath?: string): Promise<{ host: string; global: b
   return { host: local, global: true };
 }
 
-const diagnostic = (d: PlaybookDiagnostic): PlaybookValidationError => ({ code: d.code, message: d.message, line: d.line ?? null, field: d.field ?? null, severity: d.severity });
+export const diagnostic = (d: PlaybookDiagnostic): PlaybookValidationError => ({
+  code: d.code,
+  message: d.message,
+  line: d.line ?? null,
+  field: d.field ?? null,
+  severity: d.severity,
+});
 
 const SCOPE_ORDER = { bundled: 0, global: 1, repo: 2 } as const;
-const refOf = (r: { scope: string; key: string } | undefined): PlaybookRef => ({ scope: (r?.scope || "bundled") as PlaybookRef["scope"], key: r?.key ?? "" });
+export const refOf = (r: { scope: string; key: string } | undefined): PlaybookRef => ({ scope: (r?.scope || "bundled") as PlaybookRef["scope"], key: r?.key ?? "" });
 
 function pickerOf(e: Entity | undefined): { preferences: PickerPreferences; error: string } {
   if (e?.value.case !== "playbookPicker") return { preferences: { order: [], entries: [] }, error: "" };
@@ -172,7 +178,7 @@ export class PlaybookRefusal extends Error {
   /** `kind` and the rest of the library's tagged error, when the daemon sent one. */
   [field: string]: unknown;
 }
-function refused(e: unknown): never {
+export function refused(e: unknown): never {
   const err = ConnectError.from(e);
   const text = err.findDetails(ErrorDetailSchema)[0]?.fields.error;
   let tagged: Record<string, unknown> = {};
@@ -183,7 +189,7 @@ function refused(e: unknown): never {
   throw Object.assign(new PlaybookRefusal(message), tagged);
 }
 
-const client = (host: string) => createClient(PlaybookService, daemonTransport(host));
+export const client = (host: string) => createClient(PlaybookService, daemonTransport(host));
 
 function ready(replica: Replica, host: string, timeoutMs = 3000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -200,7 +206,7 @@ function ready(replica: Replica, host: string, timeoutMs = 3000): Promise<void> 
 }
 
 /** `f` with the host's replica, ready, held until it is done. */
-async function withReplica<T>(host: string, f: (replica: Replica) => Promise<T> | T): Promise<T> {
+export async function withReplica<T>(host: string, f: (replica: Replica) => Promise<T> | T): Promise<T> {
   const { replica, release } = acquireScope(host, REPO_SCOPE);
   try {
     await ready(replica, host);
@@ -239,7 +245,7 @@ export async function renderPlaybookSource(definition: NormalizedPlaybook, repoP
 }
 
 /** A write, then a wait (briefly) for this window's replica to pass the cursor it answered with, so a read right after shows the change. */
-async function written<T extends { applied?: { cursor?: Cursor } }>(host: string, send: () => Promise<T>): Promise<T> {
+export async function written<T extends { applied?: { cursor?: Cursor } }>(host: string, send: () => Promise<T>): Promise<T> {
   const { replica, release } = acquireScope(host, REPO_SCOPE);
   try {
     await ready(replica, host);
@@ -270,8 +276,7 @@ export async function savePlaybookSource(request: SavePlaybookRequest, repoPath?
 
 export async function deletePlaybookSource(reference: PlaybookRef, repoPath?: string): Promise<void> {
   const { host } = await libraryHost(repoPath);
-  // The community import registry is the shell's; a repo playbook leaves it first (a failure to read it stops the delete).
-  if (reference.scope === "repo" && repoPath) await ipc.forgetCommunityImport(repoPath, reference.key);
+  // A repo playbook leaves the daemon's community import registry before its definition does (a registry it cannot read stops the delete).
   await written(host, () => client(host).deletePlaybook({ meta: newMutationMeta(), reference, expectedRevision: seen.get(seenKey(host, reference)) ?? 0n }));
   seen.delete(seenKey(host, reference));
 }

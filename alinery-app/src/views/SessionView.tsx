@@ -53,6 +53,7 @@ import {
   LoadingState,
   StatusDot,
 } from "../shared";
+import { writeModelRoles } from "../sync/agent";
 import {
   addComment,
   attachmentFilePath,
@@ -1054,7 +1055,7 @@ export function SessionView({
     if (model) next[role] = model;
     else delete next[role];
     try {
-      const saved = await ipc.writeOmpModelRoles(next);
+      const saved = await writeModelRoles(next, repoPath);
       setModelRoles(saved);
     } catch (error) {
       setModelError(String(error));

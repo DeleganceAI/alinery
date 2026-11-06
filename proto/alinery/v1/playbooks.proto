@@ -18,6 +18,10 @@ service PlaybookService {
   rpc SavePlaybook(SavePlaybookRequest) returns (SavePlaybookResponse);              // ACT
   rpc DeletePlaybook(DeletePlaybookRequest) returns (DeletePlaybookResponse);        // ACT
   rpc SavePicker(SavePickerRequest) returns (SavePickerResponse);            // ACT
+  // The community import registry (S4.10; the rows are `playbook/_/community`). The shell downloads a package with this machine's
+  // account and stages it through BlobService (a `staged` upload); these two write it into the repository, on the host that owns it.
+  rpc ImportCommunityPlaybook(ImportCommunityPlaybookRequest) returns (ImportCommunityPlaybookResponse);  // ACT
+  rpc UpdateCommunityImport(UpdateCommunityImportRequest) returns (UpdateCommunityImportResponse);      // ACT
 }
 
 message PlaybookInput {
@@ -115,4 +119,51 @@ message SavePickerRequest {
 }
 message SavePickerResponse {
   Applied applied = 1;
+}
+
+// What the shell downloaded: the staged upload that holds the playbook document, and what the library said about it.
+message CommunityPackage {
+  string upload_id = 1;
+  uint64 version = 2;
+  string label = 3;
+  string playbook_key = 4;
+}
+message ImportCommunityPlaybookRequest {
+  MutationMeta meta = 1;
+  string id = 2;  // the publication id (a lowercase uuid)
+  CommunityPackage package = 3;
+  bool overwrite = 4;  // replace a repo playbook of the same key
+}
+message UpdateCommunityImportRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+  CommunityPackage package = 3;
+  bool overwrite_edited = 4;  // replace the local copy even when it no longer matches what was imported
+}
+enum CommunityImportOutcome {
+  COMMUNITY_IMPORT_OUTCOME_UNSPECIFIED = 0;
+  COMMUNITY_IMPORT_OUTCOME_SAVED = 1;
+  COMMUNITY_IMPORT_OUTCOME_CONFLICT = 2;            // a repo playbook of that key exists and `overwrite` was false (`local_key`)
+  COMMUNITY_IMPORT_OUTCOME_ALREADY_DOWNLOADED = 3;
+  COMMUNITY_IMPORT_OUTCOME_EDITED = 4;              // update only: the local copy was edited and `overwrite_edited` was false
+  COMMUNITY_IMPORT_OUTCOME_INVALID = 5;             // `diagnostics`
+  COMMUNITY_IMPORT_OUTCOME_FAILED = 6;              // `message`
+}
+// A refusal the person can act on is an outcome, not a gRPC error: the page shows a different question for each.
+message CommunityImportResult {
+  CommunityImportOutcome outcome = 1;
+  PlaybookRef reference = 2;  // SAVED
+  uint64 imported_version = 3;
+  string local_sha256 = 4;
+  string local_key = 5;       // CONFLICT
+  repeated PlaybookDiagnostic diagnostics = 6;
+  string message = 7;
+}
+message ImportCommunityPlaybookResponse {
+  Applied applied = 1;
+  CommunityImportResult result = 2;
+}
+message UpdateCommunityImportResponse {
+  Applied applied = 1;
+  CommunityImportResult result = 2;
 }

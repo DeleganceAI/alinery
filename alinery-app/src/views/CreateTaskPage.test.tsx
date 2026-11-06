@@ -144,6 +144,10 @@ vi.mock("../ipc", () =>
 
 // The source branches are the daemon's GitService (sync/git), not ipc.
 vi.mock("../sync/git", () => ({ taskSourceBranchesForRepo }));
+// The import's repository facts (origin URL, token override) come from the daemon (sync/imports.test.ts); here the request is what the page sends.
+vi.mock("../sync/imports", async () => ({
+  importGithubIssue: async (repo: string, reference: string) => (await import("../ipc")).importGithubForRepo(repo, reference, null, null),
+}));
 
 // The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
 type PlaybookReads = typeof import("../sync/playbooks");
@@ -298,7 +302,7 @@ describe("GitHub imports", () => {
 
     await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported title"));
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Imported description");
-    expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo", "owner/repo#2");
+    expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo", "owner/repo#2", null, null);
     await new Promise<void>((resolve) => setTimeout(resolve, 450));
     expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
 
@@ -331,7 +335,7 @@ describe("GitHub imports", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/repo-b" } });
     resolveImport({ reference: "owner/repo#9", title: "Stale title", description: "Stale description" });
 
-    await waitFor(() => expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo-a", "owner/repo#9"));
+    await waitFor(() => expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo-a", "owner/repo#9", null, null));
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Repository B state");
     expect(screen.getByPlaceholderText(/Describe the feature/)).not.toHaveProperty("value", "Stale description");
   });

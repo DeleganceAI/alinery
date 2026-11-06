@@ -44,24 +44,6 @@ pub enum RepoOp {
         #[serde(default)]
         show_hidden: bool,
     },
-    /// The repository's `config.toml` override layer (empty when the file is absent). Only the app's remote GitHub
-    /// import reads it; the daemon owns the file and the app's settings view reads the `settings/_/repo` entity.
-    ReadRepoOverrides {
-        repo: PathBuf,
-    },
-    /// The URL of the repository's `origin` remote, if it has one. Stays until S4.10 moves the remote GitHub import to the daemon's GitOriginUrl RPC.
-    GitOriginUrl {
-        repo: PathBuf,
-    },
-    /// The repo's playbook files (library, committed playbooks, picker and import registry).
-    ReadPlaybookTree {
-        repo: PathBuf,
-    },
-    /// Changes to those files, applied only if each still holds what the sender started from.
-    ApplyPlaybookTree {
-        repo: PathBuf,
-        changes: Vec<crate::playbook_tree::TreeChange>,
-    },
     /// Atomic, owner-only write (parent directories are created).
     WriteFile {
         path: PathBuf,
@@ -239,10 +221,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Classify { path } => to_value(classify_folder(&path)?),
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
-        RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
-        RepoOp::GitOriginUrl { repo } => to_value(git_origin_url(&repo)),
-        RepoOp::ReadPlaybookTree { repo } => to_value(crate::playbook_tree::read_tree(&repo)?),
-        RepoOp::ApplyPlaybookTree { repo, changes } => crate::playbook_tree::apply_changes(&repo, &changes).map(|()| Value::Null),
         RepoOp::WriteFile { path, contents } => write_file(&path, &contents).map(|()| Value::Null),
         RepoOp::SyncCredentials { path, set, remove, erase_oauth } => to_value(crate::credential_sync::apply(&path, &set, &remove, erase_oauth)?),
         RepoOp::RemoveFile { path } => match std::fs::remove_file(&path) {
@@ -279,11 +257,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         )
         .map(|()| Value::Null),
     }
-}
-
-fn git_origin_url(repo: &Path) -> Option<String> {
-    let out = crate::git_cmd(repo).args(["remote", "get-url", "origin"]).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), String> {
@@ -381,24 +354,6 @@ mod tests {
             RepoOp::ListDir {
                 path: "/srv".into(),
                 show_hidden: true,
-            },
-            RepoOp::ReadRepoOverrides { repo: "/srv/a".into() },
-            RepoOp::GitOriginUrl { repo: "/srv/a".into() },
-            RepoOp::ReadPlaybookTree { repo: "/srv/a".into() },
-            RepoOp::ApplyPlaybookTree {
-                repo: "/srv/a".into(),
-                changes: vec![
-                    crate::playbook_tree::TreeChange {
-                        path: ".alinery/playbooks/a/playbook.md".into(),
-                        expected: Some(vec![0, 255]),
-                        new: None,
-                    },
-                    crate::playbook_tree::TreeChange {
-                        path: ".alinery/playbooks/b/playbook.md".into(),
-                        expected: None,
-                        new: Some(vec![1]),
-                    },
-                ],
             },
             RepoOp::WriteFile {
                 path: "/srv/a/app.toml".into(),

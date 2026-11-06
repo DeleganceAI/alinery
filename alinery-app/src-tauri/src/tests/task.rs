@@ -137,24 +137,6 @@ fn targeted_repo_validation_rejects_unknown_or_non_git_paths() {
 }
 
 #[test]
-fn targeted_helpers_do_not_depend_on_active_repo() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo_a = init_git_test_repo("targeted-helper-a");
-    let repo_b = init_git_test_repo("targeted-helper-b");
-
-    git_cmd(&repo_a).args(["remote", "add", "origin", "https://github.com/example/a.git"]).output().unwrap();
-    git_cmd(&repo_b).args(["remote", "add", "origin", "https://github.com/example/b.git"]).output().unwrap();
-    set_active_repo_global(Some(repo_a.clone())).unwrap();
-
-    assert_eq!(parse_github_ref("#42", active_github_repo(&repo_b)).unwrap().label(), "example/b#42");
-    assert_eq!(crate::active_repo().unwrap(), repo_a);
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(repo_a);
-    let _ = fs::remove_dir_all(repo_b);
-}
-
-#[test]
 fn provisioning_reserves_branches_before_git_and_retains_failed_intent() {
     let repo = init_git_test_repo("provisioning-branch-reservation");
     let mut request: alinery_core::CreateTaskRequest = serde_json::from_value(serde_json::json!({

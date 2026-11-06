@@ -38,6 +38,12 @@ export async function taskSourceBranchesForRepo(repo: string, selectedBaseRef?: 
   };
 }
 
+/** The URL of the repository's `origin` remote, or null when it has none. A bare `#123` in an issue import resolves against it. */
+export async function originUrlForRepo(repo: string): Promise<string | null> {
+  const reply = await call(() => git(repo).gitOriginUrl({}));
+  return reply.originUrl ?? null;
+}
+
 export async function removeWorktreeForRepo(repo: string, slug: string): Promise<void> {
   await call(() => git(repo).removeWorktree({ meta: newMutationMeta(), slug }));
 }

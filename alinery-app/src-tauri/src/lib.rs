@@ -47,6 +47,7 @@ use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
 use alinery_core::daemon_client::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT};
 use alinery_core::daemon_client::{read_socket_line, DaemonClient};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
+pub(crate) use alinery_core::write_owner_only_bytes;
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
 use alinery_core::{alinery_app_lock_path, alinery_dir, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
@@ -70,7 +71,6 @@ pub use alinery_core::{
 };
 #[cfg(test)]
 use alinery_core::{configure_detached_process, file_content_id};
-pub(crate) use alinery_core::{write_bytes_atomic, write_owner_only_bytes};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
@@ -93,7 +93,6 @@ mod notify;
 mod omp_update;
 mod paths;
 mod pi_durable;
-mod playbook;
 mod remote;
 mod session;
 mod settings;
@@ -119,7 +118,6 @@ use notify::*;
 use omp_update::*;
 use paths::*;
 use pi_durable::*;
-use playbook::*;
 use remote::*;
 use session::*;
 use settings::*;
@@ -184,11 +182,8 @@ pub fn run() {
             chat_set_model,
             chat_set_thinking_level,
             list_community_playbooks,
-            list_community_imports,
-            forget_community_import,
-            community_download_status,
-            import_community_playbook,
-            update_community_import,
+            community_remote_status,
+            download_community_source,
             preview_community_playbook,
             list_my_community_playbooks,
             publish_community_playbook,
@@ -241,22 +236,13 @@ pub fn run() {
             hosted_catalog,
             account_credits,
             account_open_plans,
-            import_linear,
             import_linear_for_repo,
-            import_github,
             import_github_for_repo,
             check_update,
             download_update,
             apply_update,
-            omp_agent_sessions_dir,
-            read_omp_model_roles,
-            write_omp_model_roles,
             open_vinculum_agent_dir,
-            vinculum_customization_prompt,
-            read_vinculum_customizations,
             pick_vinculum_skill_dialog,
-            install_vinculum_skill,
-            delete_vinculum_skill,
             vinculum_customizations,
         ])
         .build(context)

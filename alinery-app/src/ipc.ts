@@ -30,35 +30,30 @@ import type {
   AccountStatus,
   AppConfig,
   AppearancePrefs,
-  CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
+  CommunitySourceResult,
   ConnectionStatus,
   DaemonStatus,
   DesktopCreditsView,
-  DownloadStatusRow,
   GitHubIssue,
   GlobalSettings,
   HostedCatalogView,
-  ImportResult,
   LinearTicket,
   McpStatus,
-  PlaybookRef,
   PreviewResult,
   PublishResult,
   PullRequest,
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
+  RemoteStatusRow,
   SessionMeta,
-  SkillInstall,
   SshTarget,
   StagedUpdate,
   TakeoverOutcome,
   TakeoverPreview,
-  UpdateResult,
   UpdateStatus,
-  VinculumCustomizations,
   VinculumDaemonCustomizations,
 } from "./types";
 
@@ -158,7 +153,9 @@ export const accountCredits = () => invoke<DesktopCreditsView>("account_credits"
 export const accountOpenPlans = () => invoke<void>("account_open_plans");
 
 // ── imports.rs ────────────────────────────────────────────────────────
-export const importGithubForRepo = (repoPath: string, reference: string) => invoke<GitHubIssue>("import_github_for_repo", { repoPath, reference });
+/** The request goes out from this machine with this machine's credentials. `originUrl` (the repo's `origin`, for a bare `#123`) and `tokenOverride` (its settings row's GitHub token, null: none) come from the repository's daemon (sync/imports.ts). */
+export const importGithubForRepo = (repoPath: string, reference: string, originUrl: string | null, tokenOverride: string | null) =>
+  invoke<GitHubIssue>("import_github_for_repo", { repoPath, reference, originUrl, tokenOverride });
 export const importLinearForRepo = (repoPath: string, reference: string) => invoke<LinearTicket>("import_linear_for_repo", { repoPath, reference });
 
 // ── mcp.rs ────────────────────────────────────────────────────────────
@@ -228,31 +225,26 @@ export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_f
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 
-// ── playbook.rs ───────────────────────────────────────────────────────
-/** A repo playbook leaves the community import registry with its file; the library itself is the daemon's PlaybookService (sync/playbooks.ts). */
-export const forgetCommunityImport = (repoPath: string, key: string) => invoke<void>("forget_community_import", { repoPath, key });
+// ── community_playbooks.rs ────────────────────────────────────────────
+// The network half of the community library, with this machine's account. The registry and the import rules are the repository's daemon
+// (sync/community.ts); a downloaded package reaches it as a staged upload.
 export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
 export const listMyCommunityPlaybooks = () => invoke<CommunityMineResult>("list_my_community_playbooks");
-export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);
-export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
-export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);
-export const updateCommunityImport = (args: { id: string; repoPath: string; overwriteEdited: boolean }) => invoke<UpdateResult>("update_community_import", args);
+export const communityRemoteStatus = (ids: string[]) => invoke<RemoteStatusRow[]>("community_remote_status", { ids });
+export const downloadCommunitySource = (id: string) => invoke<CommunitySourceResult>("download_community_source", { id });
 export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
-export const publishCommunityPlaybook = (args: { reference: PlaybookRef; repoPath: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
+/** `source` is the playbook as the repository's daemon holds it and `key` its declared key. */
+export const publishCommunityPlaybook = (args: { source: string; key: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
+
+// ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");
 export const downloadUpdate = (version: string) => invoke<StagedUpdate>("download_update", { version });
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });
 
-// ── omp_update.rs ─────────────────────────────────────────────────────
-export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
-export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
-export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
+// ── vinculum_customizations.rs ────────────────────────────────────────
+// The Finder window and the file picker; the agent directory itself is the daemon's (sync/agent.ts).
 export const openVinculumAgentDir = () => invoke<void>("open_vinculum_agent_dir");
-export const vinculumCustomizationPrompt = () => invoke<string>("vinculum_customization_prompt");
-export const readVinculumCustomizations = () => invoke<VinculumCustomizations>("read_vinculum_customizations");
 export const pickVinculumSkillDialog = () => invoke<string | null>("pick_vinculum_skill_dialog");
-export const installVinculumSkill = (sourcePath: string, replace: boolean) => invoke<SkillInstall>("install_vinculum_skill", { sourcePath, replace });
-export const deleteVinculumSkill = (name: string) => invoke<void>("delete_vinculum_skill", { name });
 export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
 
 /**

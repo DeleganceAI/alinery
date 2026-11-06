@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { copyTextToClipboard } from "../chat/CopyMessage";
 import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
+import * as agent from "../sync/agent";
 import { toast } from "../toast";
 import type { VinculumCustomizations as Inventory, VinculumCustomization, VinculumDaemonCustomizations, VinculumMcpServer } from "../types";
 
@@ -15,6 +16,8 @@ export function VinculumCustomizations() {
   const [error, setError] = useState(false);
   const [copying, setCopying] = useState(false);
   const [opening, setOpening] = useState(false);
+  // The directory is the daemon host's: the Finder shows it only when that host is this machine.
+  const [local, setLocal] = useState(true);
   const [uploading, setUploading] = useState(false);
   const request = useRef(0);
 
@@ -23,14 +26,16 @@ export function VinculumCustomizations() {
     setPending(true);
     setError(false);
     try {
+      const host = await agent.agentHost();
       const [files, status] = await Promise.all([
-        ipc.readVinculumCustomizations(),
+        agent.readCustomizations(),
         ipc.vinculumCustomizations().then(
           (value) => ({ ok: true as const, value }),
           () => ({ ok: false as const, value: null }),
         ),
       ]);
       if (current !== request.current) return;
+      setLocal(agent.agentDirIsLocal(host));
       setInventory(files);
       setLive(status.ok ? status.value : null);
       setDaemonDown(!status.ok);
@@ -53,7 +58,7 @@ export function VinculumCustomizations() {
     try {
       const path = await ipc.pickVinculumSkillDialog();
       if (!path) return;
-      let result = await ipc.installVinculumSkill(path, false);
+      let result = await agent.installSkill(path, false);
       if (result.exists) {
         const replace = await askConfirm({
           title: `Replace ${result.name}?`,
@@ -65,7 +70,7 @@ export function VinculumCustomizations() {
           defaultKey: "cancel",
         });
         if (replace !== "replace") return;
-        result = await ipc.installVinculumSkill(path, true);
+        result = await agent.installSkill(path, true);
       }
       toast.success(`Installed ${result.name}`, "short");
       await refresh();
@@ -81,23 +86,25 @@ export function VinculumCustomizations() {
       <h4 id="vinculum-customizations-title">Customizations</h4>
       <p className="hint">Customize this Vinculum installation, whose agent runtime is Pi, or ask an outside coding AI to help.</p>
       <div className="omp-customization-actions">
-        <button
-          type="button"
-          className="btn ghost small"
-          disabled={opening}
-          onClick={async () => {
-            setOpening(true);
-            try {
-              await ipc.openVinculumAgentDir();
-            } catch {
-              toast.error("Couldn't open the Vinculum agent folder.");
-            } finally {
-              setOpening(false);
-            }
-          }}
-        >
-          {opening ? "Opening…" : "Open configuration folder"}
-        </button>
+        {local && (
+          <button
+            type="button"
+            className="btn ghost small"
+            disabled={opening}
+            onClick={async () => {
+              setOpening(true);
+              try {
+                await ipc.openVinculumAgentDir();
+              } catch {
+                toast.error("Couldn't open the Vinculum agent folder.");
+              } finally {
+                setOpening(false);
+              }
+            }}
+          >
+            {opening ? "Opening…" : "Open configuration folder"}
+          </button>
+        )}
         <button
           type="button"
           className="btn ghost small"
@@ -105,7 +112,7 @@ export function VinculumCustomizations() {
           onClick={async () => {
             setCopying(true);
             try {
-              await copyTextToClipboard(await ipc.vinculumCustomizationPrompt());
+              await copyTextToClipboard(await agent.customizationPrompt());
               toast.success("Instructions copied", "short");
             } catch {
               toast.error("Couldn't copy the customization instructions. Try again.");
@@ -147,9 +154,9 @@ export function VinculumCustomizations() {
         {inventory && (
           <div className="vinculum-customization-groups">
             <Group title="Built-in tools" empty={daemonDown ? "The session daemon is not running." : "No built-in tools were reported."} rows={daemonDown ? [] : toolRows(live)} />
-            <Group title="MCP servers" rows={mcpRows(inventory.items, live, daemonDown)} />
-            <Group title="Skills" rows={skillRows(inventory.items)} onDelete={refresh} />
-            <Group title="Extensions" empty="No extensions. They are listed and not loaded." rows={extensionRows(inventory.items)} />
+            <Group title="MCP servers" rows={mcpRows(inventory.items, live, daemonDown)} local={local} />
+            <Group title="Skills" rows={skillRows(inventory.items)} onDelete={refresh} local={local} />
+            <Group title="Extensions" empty="No extensions. They are listed and not loaded." rows={extensionRows(inventory.items)} local={local} />
           </div>
         )}
       </div>
@@ -157,7 +164,7 @@ export function VinculumCustomizations() {
   );
 }
 
-function Group({ title, rows, empty, onDelete }: { title: string; rows: Row[]; empty?: string; onDelete?: () => Promise<void> }) {
+function Group({ title, rows, empty, onDelete, local = true }: { title: string; rows: Row[]; empty?: string; onDelete?: () => Promise<void>; local?: boolean }) {
   return (
     <section aria-label={title}>
       <h5>{title}</h5>
@@ -171,7 +178,7 @@ function Group({ title, rows, empty, onDelete }: { title: string; rows: Row[]; e
                 <strong>{row.name}</strong>
                 <div className="omp-customization-source dim">{row.detail}</div>
               </div>
-              {row.path && (
+              {row.path && local && (
                 <button
                   type="button"
                   className="btn ghost small"
@@ -195,7 +202,7 @@ function Group({ title, rows, empty, onDelete }: { title: string; rows: Row[]; e
                     void confirmDanger(`Delete ${row.name}?`, "This removes that skill directory. A linked skill removes only the link.").then(async (accepted) => {
                       if (!accepted) return;
                       try {
-                        await ipc.deleteVinculumSkill(dir);
+                        await agent.deleteSkill(dir);
                         await onDelete();
                       } catch {
                         toast.error("Couldn't delete that skill.");

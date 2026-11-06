@@ -6,6 +6,7 @@ import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
 import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import * as community from "../sync/community";
 import {
   deletePlaybookSource,
   listPlaybookCatalog,
@@ -265,7 +266,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         if (live) setCatalogError(errorText(e));
       });
     if (repoPath) {
-      ipc
+      community
         .listCommunityImports({ repoPath })
         .then((value) => {
           if (live) setImports(value.imports);
@@ -331,7 +332,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (libraryTab !== "community" || communityFilter !== "downloaded" || !repoPath) return;
     let live = true;
     setDownloadsReady(false);
-    ipc
+    community
       .communityDownloadStatus({ repoPath })
       .then((value) => {
         if (!live) return;
@@ -596,7 +597,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const reloadImports = async (owner: string | undefined) => {
     if (!owner) return;
     try {
-      const imports = (await ipc.listCommunityImports({ repoPath: owner })).imports;
+      const imports = (await community.listCommunityImports({ repoPath: owner })).imports;
       if (currentRepo.current === owner) setImports(imports);
     } catch {
       if (currentRepo.current === owner) setImports([]);
@@ -669,7 +670,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   };
   const refreshDownloads = async (owner: string | undefined) => {
     if (!owner) return;
-    const rows = (await ipc.communityDownloadStatus({ repoPath: owner })).rows;
+    const rows = (await community.communityDownloadStatus({ repoPath: owner })).rows;
     if (currentRepo.current === owner) setDownloadRows(rows);
   };
   const previewPublication = async (id: string, name: string) => {
@@ -684,7 +685,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   };
   const importPublication = async (owner: string | undefined, id: string, overwrite: boolean) => {
     if (!owner) return;
-    const result = await ipc.importCommunityPlaybook({ id, repoPath: owner, overwrite });
+    const result = await community.importCommunityPlaybook({ id, repoPath: owner, overwrite });
     if (result.kind === "needs_account") {
       openSignup(() => importPublication(owner, id, overwrite));
       return;
@@ -735,7 +736,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       await updatePublication(owner, id, true);
       return;
     }
-    const result = await ipc.updateCommunityImport({ id, repoPath: owner, overwriteEdited });
+    const result = await community.updateCommunityImport({ id, repoPath: owner, overwriteEdited });
     if (!result) return;
     if (result.kind === "needs_account") {
       openSignup(() => updatePublication(owner, id, overwriteEdited));
@@ -785,8 +786,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (showPublishLabel && !labelPattern.test(publishLabel)) return;
     const { reference } = publishConfirm;
     const result = showPublishLabel
-      ? await ipc.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
-      : await ipc.publishCommunityPlaybook({ reference, repoPath });
+      ? await community.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
+      : await community.publishCommunityPlaybook({ reference, repoPath });
     if (!result) return;
     if (result.kind === "needs_account") {
       openSignup(() => confirmPublish());

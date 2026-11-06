@@ -1282,24 +1282,12 @@ pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppStat
 
 /// The active repo of a command that talks to a daemon: a local repo this window owns, or a
 /// remote one whose host is connected and whose daemon answers.
-pub(crate) enum ActiveRepo {
-    Local(PathBuf),
-    Remote { host_id: String, path: String },
-}
-
-pub(crate) fn require_active_target(state: &AppState) -> Result<ActiveRepo, String> {
+pub(crate) fn require_active_target(state: &AppState) -> Result<(), String> {
     match active_repo_ref()? {
-        RepoRef::Local(_) => require_owned_active_repo(state).map(ActiveRepo::Local),
+        RepoRef::Local(_) => require_owned_active_repo(state).map(|_| ()),
         RepoRef::Remote { host_id, path } => {
             connected_session(state, &host_id)?;
-            remote_daemon(
-                state,
-                &RepoRef::Remote {
-                    host_id: host_id.clone(),
-                    path: path.clone(),
-                },
-            )?;
-            Ok(ActiveRepo::Remote { host_id, path })
+            remote_daemon(state, &RepoRef::Remote { host_id, path }).map(|_| ())
         }
     }
 }
@@ -1321,7 +1309,7 @@ pub(crate) fn repo_client(state: &AppState, repo: &RepoRef) -> Result<DaemonClie
 /// For the commands that only need a live daemon for the active repo (write, resize,
 /// prompt, ...): the local ownership check, or the remote connection check.
 pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> {
-    require_active_target(state).map(|_| ())
+    require_active_target(state)
 }
 
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the

@@ -24,7 +24,6 @@ pub mod ownership_ffi;
 pub mod paths;
 pub mod playbook;
 pub mod playbook_library;
-pub mod playbook_tree;
 pub mod prompts;
 pub mod protocol;
 pub mod repo_ownership;
