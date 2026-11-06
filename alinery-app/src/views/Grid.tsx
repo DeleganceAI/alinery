@@ -1,5 +1,5 @@
 import "../onboarding.css";
-import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import * as ipc from "../ipc";
 import { CURATED_PLAYBOOK_ARCHETYPES, type StarterTaskPreset } from "../onboarding";
@@ -10,13 +10,14 @@ import {
   EMPTY_TASK_ACTIVITY,
   executionAvailabilityLabel,
   InlineStatus,
+  RepoLinkNotices,
   repoName,
-  sameBoardTasks,
   sameKanbanColumns,
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
 } from "../shared";
+import { useRepoBoard } from "../sync/board";
 import type { BoardNav, BoardTask, KanbanColumn, PlaybookRef, TaskActivityStatus, TaskExecutionReply } from "../types";
 import { readTaskExecutions } from "../useExecutionObservation";
 import { usePointerDrag } from "../usePointerDrag";
@@ -781,16 +782,6 @@ function VisibilityIcon({ hidden }: { hidden: boolean }) {
   );
 }
 
-type BoardSnapshot = { tasks: BoardTask[]; columns: KanbanColumn[] };
-const boardSnapshots = new Map<string, BoardSnapshot>();
-
-const boardRequests = new Map<string, symbol>();
-
-export function resetGridBoardSnapshots(): void {
-  boardSnapshots.clear();
-  boardRequests.clear();
-}
-
 type GridProps = {
   active?: boolean;
   allRepos: boolean;
@@ -809,13 +800,13 @@ type GridProps = {
 
 export function Grid(props: GridProps) {
   const scopeKey = JSON.stringify([props.allRepos, [...new Set(props.repoPaths)].sort()]);
-  return <ScopedGrid key={scopeKey} {...props} scopeKey={scopeKey} />;
+  return <ScopedGrid key={scopeKey} {...props} />;
 }
 
 function ScopedGrid({
   active = true,
   allRepos,
-  scopeKey,
+  repoPaths,
   onOpen,
   onDuplicate = () => {},
   registerNav,
@@ -825,16 +816,17 @@ function ScopedGrid({
   onOpenPlaybooks,
   onReplayOnboarding,
   liveStatusExplainedFor,
-}: GridProps & { scopeKey: string }) {
+}: GridProps) {
   const settingsId = useId();
   const initialWorkspace = useMemo(() => loadGridWorkspace(storageKey, initialPreset), [storageKey, initialPreset]);
-  const cachedBoard = boardSnapshots.get(scopeKey);
-  const [tasks, setTasks] = useState<BoardTask[]>(() => cachedBoard?.tasks ?? []);
-  const [columns, setColumns] = useState<KanbanColumn[]>(() => cachedBoard?.columns ?? []);
+  const board = useRepoBoard(repoPaths);
+  const tasks = board.tasks;
+  const [columns, setColumns] = useState<KanbanColumn[]>([]);
+  const [columnsLoaded, setColumnsLoaded] = useState(false);
   const [executions, setExecutions] = useState<Record<string, TaskExecutionReply>>({});
   const [librarySteps, setLibrarySteps] = useState<Record<string, BoardTask["playbook_steps"]>>({});
   const [definitionErr, setDefinitionErr] = useState("");
-  const [loaded, setLoaded] = useState(cachedBoard !== undefined);
+  const loaded = board.loaded && columnsLoaded;
   const [err, setErr] = useState("");
   const [executionErrors, setExecutionErrors] = useState<{ ref: ExecutionRef; error: string }[]>([]);
   const [dismissedAvailability, setDismissedAvailability] = useState<string | null>(null);
@@ -858,8 +850,6 @@ function ScopedGrid({
   const draggedTaskId = useRef<string | null>(null);
   const movementHistory = useRef<MovementHistory>({});
   const pointerDrag = usePointerDrag();
-  const boardRequest = useRef<symbol | null>(null);
-  const boardActive = useRef(false);
   const activity = useBoardTaskActivity(tasks, active);
 
   useEffect(() => {
@@ -894,35 +884,14 @@ function ScopedGrid({
     }
   }, [storageKey, settingsOpen, preset, config, showArchived, selectedTaskKey, manualOrder, columnOrder, hiddenTaskIds, hiddenGroupKeys]);
 
-  const load = useCallback(async () => {
-    if (!boardActive.current) return;
-    const request = Symbol();
-    boardRequest.current = request;
-    boardRequests.set(scopeKey, request);
-    try {
-      const [nextColumns, nextTasks] = await Promise.all([ipc.listKanbanColumns(allRepos), ipc.listBoardTasks(allRepos)]);
-      if (boardRequest.current !== request) return;
-      if (boardRequests.get(scopeKey) === request) boardSnapshots.set(scopeKey, { tasks: nextTasks, columns: nextColumns });
-      setColumns((current) => (sameKanbanColumns(current, nextColumns) ? current : nextColumns));
-      setTasks((current) => (sameBoardTasks(current, nextTasks) ? current : nextTasks));
-      setErr("");
-      setLoaded(true);
-    } catch (error) {
-      if (boardRequest.current === request) setErr(String(error));
-    }
-  }, [allRepos, scopeKey]);
-
+  // The columns are playbook configuration, read once; the tasks arrive on the repo streams.
   useEffect(() => {
-    if (!active) return;
-    boardActive.current = true;
-    void load();
-    const timer = window.setInterval(load, 3000);
-    return () => {
-      boardActive.current = false;
-      boardRequest.current = null;
-      window.clearInterval(timer);
-    };
-  }, [active, load]);
+    ipc
+      .listKanbanColumns(allRepos)
+      .then((next) => setColumns((current) => (sameKanbanColumns(current, next) ? current : next)))
+      .catch((error) => setErr(String(error)))
+      .finally(() => setColumnsLoaded(true));
+  }, [allRepos]);
 
   const libraryRefs = useMemo(() => {
     const refs = new Map<string, BoardTask>();
@@ -1558,7 +1527,6 @@ function ScopedGrid({
       setErr(`${failure.msg} ${failure.detail}`);
       return;
     }
-    void load();
   };
 
   return (
@@ -1824,6 +1792,7 @@ function ScopedGrid({
           </details>
         </InlineStatus>
       )}
+      <RepoLinkNotices repos={board.repos} />
       {definitionErr && (
         <div className="errbar" role="alert">
           {definitionErr}

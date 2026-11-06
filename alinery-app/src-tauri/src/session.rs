@@ -1,8 +1,6 @@
 //! session: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-pub(crate) use alinery_core::board::session_display_context as session_display_context_for_repo;
-pub(crate) use alinery_core::board::{project_session_display, SessionDisplayContext, SessionDisplayMeta};
 pub(crate) use alinery_core::session_actions::{
     mark_exit_notification_read as mark_session_exit_notification_read_in, mark_notification_read as mark_session_notification_read_in,
 };
@@ -37,25 +35,6 @@ pub(crate) async fn rename_session<R: tauri::Runtime>(
     .await
 }
 
-#[tauri::command]
-pub(crate) async fn get_session_display<R: tauri::Runtime>(app: AppHandle<R>, repo_path: String, task_slug: String, session_id: String) -> Result<SessionDisplayContext, String> {
-    let target = target_repo_ref_for_app(&app, &repo_path)?;
-    off_main_thread("session display", move || match target {
-        RepoRef::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::GetSessionDisplay {
-                repo: path.into(),
-                slug: task_slug,
-                session_id,
-            },
-        ),
-        RepoRef::Local(repo) => session_display_context_for_repo(&repo, &task_slug, &session_id),
-    })
-    .await
-}
-
-pub(crate) use alinery_core::board::{session_list_items_for_repo, SessionListItem};
 pub(crate) use alinery_core::session_actions::{clear_session_notifications_in, SessionNotificationClearRef};
 
 // Only the tests build the meta path now (the daemon resolves its own); keep it as the
@@ -169,90 +148,6 @@ pub(crate) fn acknowledge_exited_session_refs(repo: &Path, refs: &[(String, Stri
     } else {
         Err(errors.join("; "))
     }
-}
-
-#[tauri::command]
-pub(crate) async fn list_sessions(app: AppHandle, task_slug: String, repo_path: Option<String>) -> Result<Vec<SessionDisplayMeta>, String> {
-    let target = target_or_active_ref(&app, repo_path)?;
-    off_main_thread("list sessions", move || match target {
-        RepoRef::Remote { host_id, path } => remote_call(
-            &app.state::<AppState>(),
-            &host_id,
-            RepoOp::ListSessions {
-                repo: path.into(),
-                slug: task_slug,
-            },
-        ),
-        RepoRef::Local(repo) => Ok(list_sessions_for_repo(&repo, &task_slug)?
-            .into_iter()
-            .map(|meta| project_session_display(&repo, &task_slug, meta))
-            .collect()),
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn list_session_items(app: AppHandle, all_repos: bool, include_archived: bool, repo_path: Option<String>) -> Result<Vec<SessionListItem>, String> {
-    let known_repos = load_app_config(&app).known_repos;
-    off_main_thread("list session items", move || {
-        list_session_items_with_repo_resolver(&app.state::<AppState>(), all_repos, include_archived, known_repos, repo_path.as_deref(), |path| {
-            target_repo_ref_for_app(&app, path)
-        })
-    })
-    .await
-}
-
-/// Session rows of every known repo, or of one: the requested repo (resolved and validated by
-/// `resolve_repo`) or else the active one. A remote repo's rows come from its host.
-pub(crate) fn list_session_items_with_repo_resolver(
-    state: &AppState,
-    all_repos: bool,
-    include_archived: bool,
-    known_repos: Vec<String>,
-    repo_path: Option<&str>,
-    resolve_repo: impl FnOnce(&str) -> Result<RepoRef, String>,
-) -> Result<Vec<SessionListItem>, String> {
-    let repos = if all_repos {
-        known_repos
-    } else {
-        let target = match repo_path {
-            Some(path) => resolve_repo(path)?,
-            None => active_repo_ref()?,
-        };
-        vec![target.uri()]
-    };
-    let mut out = vec![];
-    for key in dedupe_known_repos(repos) {
-        match RepoRef::parse(&key)? {
-            RepoRef::Local(repo) => out.extend(session_list_items_for_repo(&repo, &key, include_archived)?),
-            RepoRef::Remote { host_id, path } => {
-                let op = RepoOp::ListSessionItems {
-                    repo: path.into(),
-                    repo_path: key.clone(),
-                    include_archived,
-                };
-                match remote_call::<Vec<SessionListItem>>(state, &host_id, op) {
-                    Ok(rows) => out.extend(rows),
-                    // One unreachable host must not blank the other repos' lists.
-                    Err(_) if all_repos => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-    }
-    sort_session_items(&mut out);
-    Ok(out)
-}
-
-fn sort_session_items(items: &mut [SessionListItem]) {
-    items.sort_by(|a, b| {
-        b.session
-            .created
-            .cmp(&a.session.created)
-            .then_with(|| a.repo_path.cmp(&b.repo_path))
-            .then_with(|| a.task_slug.cmp(&b.task_slug))
-            .then_with(|| a.session.id.cmp(&b.session.id))
-    });
 }
 
 #[allow(dead_code)]
@@ -479,25 +374,11 @@ pub(crate) async fn open_session(
                         alinery_core::read_meta_launch_fields(repo, &slug, &id)
                     }
                     ActiveRepo::Remote { host_id, path } => {
-                        let task: Task = remote_call::<Option<Task>>(
-                            &state,
-                            host_id,
-                            RepoOp::GetTask {
-                                repo: path.clone().into(),
-                                slug: slug.clone(),
-                            },
-                        )?
-                        .ok_or_else(|| format!("no such task: {slug}"))?;
-                        if task.engine_version < 2 {
-                            return Err("pre-v2 task data is read-only; create a new v2 task to launch sessions".into());
-                        }
-                        if task.draft || task.archived {
-                            return Err("draft or archived tasks cannot launch sessions".into());
-                        }
+                        // The host's daemon answers for the task; its draft, archived and pre-v2 gate moves into the daemon's preflight (S4.3).
                         state
                             .daemon()
                             .ok_or("daemon not connected")?
-                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: task.slug.clone() })?;
+                            .get_task_execution(&alinery_core::task_creation::GetTaskExecutionRequest { task_slug: slug.clone() })?;
                         remote_call::<Option<alinery_core::LaunchFields>>(
                             &state,
                             host_id,

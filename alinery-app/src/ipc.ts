@@ -37,7 +37,6 @@ import type {
   ArtifactTreeNode,
   BackupListItem,
   BackupMeta,
-  BoardTask,
   ChatBranch,
   ChatThread,
   CommunityImportRow,
@@ -79,9 +78,6 @@ import type {
   SavePlaybookRequest,
   ScopedPlaybook,
   ScopedSettings,
-  SessionDisplayContext,
-  SessionDisplayMeta,
-  SessionListItem,
   SessionMessageActionProvenance,
   SessionMeta,
   SessionName,
@@ -95,7 +91,6 @@ import type {
   TakeoverPreview,
   Task,
   TaskActivityRef,
-  TaskActivitySummary,
   TaskExecutionReply,
   TaskSourceBranches,
   UpdateResult,
@@ -333,7 +328,6 @@ export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_ab
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
 export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
-export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
 export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
@@ -346,9 +340,6 @@ export const startSession = (taskSlug: string, sessionId: string, repoPath?: str
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
 export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>
-  invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived, repoPath });
-export const listSessions = (taskSlug: string, repoPath?: string) => invoke<SessionDisplayMeta[]>("list_sessions", { taskSlug, repoPath });
 export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
 export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });
 export const openSession = (a: {
@@ -409,11 +400,7 @@ export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: st
 export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
 export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
 export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
-export const getTask = (slug: string, repoPath?: string) => invoke<Task | null>("get_task", { slug, repoPath });
-export const listBoardTasks = (allRepos: boolean) => invoke<BoardTask[]>("list_board_tasks", { allRepos });
-export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<string, TaskActivitySummary>>("list_task_activity", { refs });
 export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
-export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
 export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
 export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
 export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };

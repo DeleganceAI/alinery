@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { ArtifactListItem, SessionMeta, Task } from "../types";
 import { executionRecord, executionReply } from "./executionTestFixture";
@@ -58,9 +59,7 @@ const artifactItem = (over: Partial<ArtifactListItem> = {}): ArtifactListItem =>
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
   getTaskExecution: vi.fn(),
-  listSessions: vi.fn(),
   confirmDanger: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   renameSession: vi.fn(),
@@ -68,11 +67,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    getTask: mocks.getTask,
     getTaskExecution: mocks.getTaskExecution,
-    listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     renameSession: mocks.renameSession,
   }),
@@ -80,9 +78,9 @@ vi.mock("../ipc", () =>
 
 beforeEach(() => {
   localStorage.removeItem("alinery.taskSessionView");
-  mocks.getTask.mockReset().mockResolvedValue(null);
+  fakeBoard.reset();
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
-  mocks.listSessions.mockReset().mockResolvedValue([]);
+
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.renameSession.mockReset();
@@ -118,9 +116,9 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
 describe("an unreadable saved execution state", () => {
   it("keeps the header, sessions and artifacts visible instead of blanking the page", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockRejectedValue(new Error("Invalid execution.json"));
-    mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
+    fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
     mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
 
     renderDetail({ initialTask: fixture });
@@ -148,9 +146,9 @@ describe("saved execution state without live access", () => {
     const fixture = task();
     const retained = executionReply([executionRecord({ owner_session_id: "s1" })]);
     retained.live = { status: "foreign_owner", detail: "Owner configuration differs from this app" };
-    mocks.getTask.mockResolvedValue(fixture);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockResolvedValue(retained);
-    mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
+    fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
     mocks.listArtifactsWithMetadata.mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
     renderDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -170,9 +168,9 @@ describe("saved execution state without live access", () => {
 describe("a removed library definition", () => {
   it("keeps retained labels and historical sessions without foreign library lookup", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "current" })]));
-    mocks.listSessions.mockResolvedValue([session({ id: "current", phase: "worker" }), session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" })]);
+    fakeBoard.set({ taskSessions: [session({ id: "current", phase: "worker" }), session({ id: "historical", playbook: "removed-playbook", phase: "old-phase" })] as never });
     renderDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
@@ -184,8 +182,8 @@ describe("a removed library definition", () => {
 describe("a failing artifact scan on an unseeded related-task route", () => {
   it("still renders name/branch/worktree and sessions when getTask succeeds without a seed", async () => {
     const fixture = task({ slug: "related-task", name: "Related Task", branch: "related-branch", worktree: "/w/related-task" });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([session({ id: "s1" })]);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
+    fakeBoard.set({ taskSessions: [session({ id: "s1" })] as never });
     mocks.listArtifactsWithMetadata.mockRejectedValue(new Error("artifact scan failed"));
 
     // No initialTask — this is App.tsx's related-task navigation case (App.tsx:797).
@@ -203,25 +201,11 @@ describe("a failing artifact scan on an unseeded related-task route", () => {
   });
 });
 
-describe("a failing listSessions", () => {
-  it("never shows the empty-sessions state", async () => {
-    const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockRejectedValue(new Error("sessions read failed"));
-    mocks.listArtifactsWithMetadata.mockResolvedValue([]);
-
-    renderDetail({ initialTask: fixture });
-
-    await waitFor(() => expect(screen.getByText("Couldn't load sessions.")).toBeDefined());
-    expect(screen.queryByText("No sessions yet.")).toBeNull();
-  });
-});
-
 describe("a successful listSessions returning an empty array", () => {
   it("shows the empty-sessions state", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([]);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
+    fakeBoard.set({ taskSessions: [] as never });
     mocks.listArtifactsWithMetadata.mockResolvedValue([]);
 
     renderDetail({ initialTask: fixture });
@@ -230,99 +214,47 @@ describe("a successful listSessions returning an empty array", () => {
   });
 });
 
-// PR #169 second review, item 2: load()'s failures were latched in one shared warning that
-// only load() could clear, and refreshLiveTaskState() never set sessionsLoaded. A transient
-// first read therefore left the warning up — and "No sessions yet." hidden — forever.
-describe("a session read that fails first and succeeds on the next poll", () => {
-  it("clears the warning and lets the empty state through", async () => {
+describe("an artifact read that fails first and recovers on the next poll", () => {
+  it("clears the artifacts warning", async () => {
     vi.useFakeTimers();
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockRejectedValueOnce(new Error("sessions read failed")).mockResolvedValue([]);
-
-    renderDetail({ initialTask: fixture });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    expect(screen.getByText("Couldn't load sessions.")).toBeDefined();
-    expect(screen.queryByText("No sessions yet.")).toBeNull();
-
-    // One 3s poll later the same read succeeds, empty.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-
-    expect(screen.queryByText("Couldn't load sessions.")).toBeNull();
-    expect(screen.getByText("No sessions yet.")).toBeDefined();
-  });
-});
-
-describe("an artifact read that recovers while sessions stay broken", () => {
-  it("clears only the artifact half of the warning", async () => {
-    vi.useFakeTimers();
-    const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockRejectedValue(new Error("sessions read failed"));
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
     mocks.listArtifactsWithMetadata.mockRejectedValueOnce(new Error("artifact scan failed")).mockResolvedValue([artifactItem({ name: "00-ticket.md" })]);
 
     renderDetail({ initialTask: fixture });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-
-    expect(screen.getByText("Couldn't load sessions and artifacts.")).toBeDefined();
+    expect(screen.getByText("Couldn't load artifacts.")).toBeDefined();
+    expect(screen.queryByText("No sessions yet.")).toBeDefined();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
-
-    // Artifacts recovered independently; the still-failing sessions read keeps its own half.
-    expect(screen.getByText("Couldn't load sessions.")).toBeDefined();
-    expect(screen.queryByText("No sessions yet.")).toBeNull();
+    expect(screen.queryByText("Couldn't load artifacts.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
     expect(screen.getByText("00-ticket.md")).toBeDefined();
   });
 });
 
-it("older_poll_cannot_undo_name_commit_but_newer_poll_can_update_it", async () => {
-  vi.useFakeTimers();
+it("a rename shows at once and the stream's later name replaces it", async () => {
   const fixture = task();
   let current = { ...session(), name: "Original purpose", name_source: "auto" as const };
-  mocks.getTask.mockResolvedValue(fixture);
-  mocks.listSessions.mockImplementation(async () => [current]);
+  fakeBoard.set({ anyRepoTasks: [fixture] as never, taskSessions: [current] as never });
   mocks.renameSession.mockImplementation(async () => {
     current = { ...current, name: "Committed purpose" };
+    fakeBoard.set({ taskSessions: [current] as never });
     return { name: current.name, source: "user" };
   });
   renderDetail({ initialTask: fixture });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-  let release!: (value: (typeof current)[]) => void;
-  mocks.listSessions.mockImplementationOnce(
-    () =>
-      new Promise<(typeof current)[]>((resolve) => {
-        release = resolve;
-      }),
-  );
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(3000);
-  });
+  fireEvent.click(await screen.findByRole("button", { name: "Show list view" }));
   fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed purpose" } });
   await act(async () => {
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
   });
   expect(screen.getByText("Committed purpose")).toBeDefined();
-  await act(async () => {
-    release([{ ...current, name: "Original purpose" }]);
-  });
   expect(screen.queryByText("Original purpose")).toBeNull();
-  current = { ...current, name: "External purpose" };
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(3000);
-  });
+  act(() => fakeBoard.set({ taskSessions: [{ ...current, name: "External purpose" }] as never }));
   expect(screen.getByText("External purpose")).toBeDefined();
 });

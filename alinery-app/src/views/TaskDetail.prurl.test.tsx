@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { PullRequestSnapshot, Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
@@ -27,17 +28,14 @@ const task = (over: Partial<Task> = {}): Task =>
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   listTaskPullRequests: vi.fn(),
   openUrl: vi.fn(),
 }));
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    getTask: mocks.getTask,
-    listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskPullRequests: mocks.listTaskPullRequests,
     openUrl: mocks.openUrl,
@@ -45,8 +43,8 @@ vi.mock("../ipc", () =>
 );
 
 beforeEach(() => {
-  mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listSessions.mockReset().mockResolvedValue([]);
+  fakeBoard.reset();
+
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskPullRequests.mockReset().mockResolvedValue({});
   mocks.openUrl.mockReset().mockResolvedValue(undefined);
@@ -82,7 +80,7 @@ describe("Task pull requests", () => {
   it("does not treat a compare URL as a PR and opens the discovered merged PR", async () => {
     const compareUrl = "https://github.com/example/project/compare/main...a-task";
     const url = "https://github.com/example/project/pull/17";
-    mocks.getTask.mockResolvedValue(task({ pr_url: compareUrl }));
+    fakeBoard.set({ anyRepoTasks: [task({ pr_url: compareUrl })] as never });
     let resolve!: (value: Record<string, PullRequestSnapshot>) => void;
     const pending = new Promise<Record<string, PullRequestSnapshot>>((done) => {
       resolve = done;
@@ -100,7 +98,7 @@ describe("Task pull requests", () => {
   });
 
   it("a resolved getTask with a different pr_url updates the displayed value", async () => {
-    mocks.getTask.mockResolvedValue(task({ pr_url: "https://example.com/pr/updated-elsewhere" }));
+    fakeBoard.set({ anyRepoTasks: [task({ pr_url: "https://example.com/pr/updated-elsewhere" })] as never });
     renderDetail({ initialTask: task({ pr_url: "https://example.com/pr/old" }) });
     await waitFor(() => expect(screen.getByText("https://example.com/pr/updated-elsewhere")).toBeDefined());
   });

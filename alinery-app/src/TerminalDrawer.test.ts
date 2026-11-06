@@ -352,13 +352,16 @@ describe("TerminalDrawer tab bar", () => {
     expect(other.props.onSelect).not.toHaveBeenCalled();
   });
 
-  it("keeps cd-here disabled until a target exists, and when there is no active id", async () => {
-    // ES2020 lib: Promise.withResolvers is not in this tsconfig.
-    vi.mocked(ipc.listTasks).mockReturnValue(new Promise(() => {}));
+  it("cds to the task's worktree from the repo stream, and to the repo until the task row arrives", async () => {
     renderDrawer({ view: { kind: "task", slug: "task", from: { kind: "list" } } });
-    const resolving = await screen.findByRole("button", { name: "cd here (resolving path)" });
-    expect(resolving.hasAttribute("disabled")).toBe(true);
+    await screen.findByRole("button", { name: "cd here: /repo" });
+    act(() => daemon.showTask("/repo", "task", { worktree: "/repo/.alinery/worktrees/task" }));
+    const button = await screen.findByRole("button", { name: "cd here: /repo/.alinery/worktrees/task" });
+    fireEvent.click(button);
+    expect(writeTerminal).toHaveBeenCalledWith("drawer-1", shellCdCommand("/repo/.alinery/worktrees/task"));
+  });
 
+  it("keeps cd-here disabled when there is no active id", async () => {
     renderDrawer({ activeId: null });
     const missing = await screen.findByRole("button", { name: "cd here: /repo" });
     expect(missing.hasAttribute("disabled")).toBe(true);

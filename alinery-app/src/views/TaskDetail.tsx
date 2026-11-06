@@ -55,6 +55,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
+import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
@@ -63,7 +64,6 @@ import type {
   ArtifactListItem,
   ArtifactTreeNode,
   BoardNav,
-  BoardTask,
   NameCommit,
   RelatedTaskRef,
   SessionDisplayMeta,
@@ -121,23 +121,6 @@ function readStoredTaskSessionView(): "graph" | "list" {
   } catch {
     return "graph";
   }
-}
-
-// Sessions and artifacts fail (and recover) independently, so each keeps its own detail
-// string and the warning bar is derived. A shared warning could not be cleared by whichever
-// resource recovered first, leaving a stale "Couldn't load sessions." above healthy rows.
-function combineLoadWarnings(sessions: string, artifacts: string): ErrState {
-  const parts: string[] = [];
-  const details: string[] = [];
-  if (sessions) {
-    parts.push("sessions");
-    details.push(sessions);
-  }
-  if (artifacts) {
-    parts.push("artifacts");
-    details.push(artifacts);
-  }
-  return parts.length ? { msg: `Couldn't load ${parts.join(" and ")}.`, detail: details.join(" | ") } : null;
 }
 
 // ---- task detail --------------------------------------------------------------
@@ -231,19 +214,30 @@ export function TaskDetail({
     [sessions, observed, repoPath, slug],
   );
   const [subtaskState, setSubtaskState] = useState<SubtaskManagerState | null>(null);
-  const [childActivity, setChildActivity] = useState<TaskActivitySummary>(EMPTY_TASK_ACTIVITY);
-  const [childPlaybookStep, setChildPlaybookStep] = useState("");
   const [err, setErr] = useState<ErrState>(null);
-  const [sessionsError, setSessionsError] = useState("");
   const [artifactsError, setArtifactsError] = useState("");
-  const loadWarning = combineLoadWarnings(sessionsError, artifactsError);
+  const loadWarning: ErrState = artifactsError ? { msg: "Couldn't load artifacts.", detail: artifactsError } : null;
   const [busy, setBusy] = useState("");
   const sessionArchivePending = useRef(false);
   const sessionStopPending = useRef(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
   const editorVersion = useRef(0);
-  const [boardTasks, setBoardTasks] = useState<BoardTask[]>([]);
+  // The task, its siblings and its sessions arrive on streams; the state above mirrors them so a local edit can show before the stream catches up.
+  const boardRepos = useMemo(() => [...new Set([repoPath, ...(knownRepos ?? []).filter((repo) => sameMachine(repo, repoPath))])], [repoPath, knownRepos]);
+  const boardTasks = useRepoBoard(boardRepos).tasks;
+  const liveTask = useBoardTask(repoPath, slug);
+  const liveRepoTasks = useRepoTasks(repoPath);
+  const liveSessions = useTaskSessions(repoPath, slug);
+  const childSlug = subtaskState?.active_subtask?.slug ?? "";
+  const childRefs = useMemo(() => (childSlug ? [{ repoPath, taskSlug: childSlug }] : []), [repoPath, childSlug]);
+  const childActivity = useTaskActivityMap(childRefs)[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY;
+  const childTask = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
+  const childPlaybookStep = childSlug
+    ? childTask
+      ? [childTask.playbook_title, childTask.current_step_title].filter(Boolean).join(" · ")
+      : (subtaskState?.active_subtask?.playbook ?? "")
+    : "";
   const [showArchived, setShowArchived] = useState(false);
   const [sessionView, setSessionView] = useState(readStoredTaskSessionView);
   const [sessionSort, setSessionSort] = useSessionSort(
@@ -347,28 +341,9 @@ export function TaskDetail({
     artifactTab,
   );
 
-  const refreshChildActivity = async (managerState: SubtaskManagerState, isCurrent: () => boolean) => {
-    const childSlug = managerState.active_subtask?.slug;
-    if (!childSlug) {
-      if (!isCurrent()) return;
-      setChildActivity(EMPTY_TASK_ACTIVITY);
-      setChildPlaybookStep("");
-      return;
-    }
-    const [activity, boardTasks] = await Promise.all([
-      ipc.listTaskActivity([{ repoPath, taskSlug: childSlug }]).catch(() => ({}) as Record<string, TaskActivitySummary>),
-      ipc.listBoardTasks(true).catch(() => []),
-    ]);
-    if (!isCurrent()) return;
-    const child = boardTasks.find((candidate) => candidate.repo_path === repoPath && candidate.slug === childSlug);
-    setChildActivity(activity[`${repoPath}:${childSlug}`] ?? EMPTY_TASK_ACTIVITY);
-    setChildPlaybookStep(child ? [child.playbook_title, child.current_step_title].filter(Boolean).join(" · ") : (managerState.active_subtask?.playbook ?? ""));
-  };
-
   const commitFetchedSubtaskState = async (fetched: SubtaskManagerState, isCurrent: () => boolean) => {
     if (!isCurrent()) return;
     setSubtaskState(fetched);
-    await refreshChildActivity(fetched, isCurrent);
   };
 
   const commitFetchedTask = (fetched: Task | null) => {
@@ -406,24 +381,12 @@ export function TaskDetail({
     // Every optional read is pre-wrapped so one rejection can never fail the shared
     // Promise.all — a removed custom playbook or a transient artifact-scan error must not
     // discard whatever else in this wave succeeded.
-    const [taskResult, managerResult, tasksResult, , sessionsResult, artifactsResult, artifactTreeResult] = await Promise.all([
-      ipc.getTask(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
+    const [managerResult, , artifactsResult, artifactTreeResult] = await Promise.all([
       ipc.subtaskState(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      ipc.listTasks(repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
       refreshExecution(),
-      ipc.listSessions(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
       ipc.listArtifactsWithMetadata(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -443,64 +406,15 @@ export function TaskDetail({
     }
     if (!isCurrent()) return;
 
-    // getTask's success is independent of every other request here: its failure is the only
-    // one that belongs in the "Couldn't load the task." error bar, and it must never discard
-    // an already-seeded header.
-    const t = taskResult.ok ? taskResult.value : null;
-    if (taskResult.ok) {
-      commitFetchedTask(t);
-      ipc
-        .listBoardTasks(true)
-        .then((value) => {
-          if (isCurrent()) setBoardTasks(value);
-        })
-        .catch(() => {});
-      if (tasksResult.ok) setRepoTasks(tasksResult.value);
-      if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
-      if (!isCurrent()) return;
-      if (t?.worktree) {
-        ipc
-          .worktreeExists(slug)
-          .then((ok) => {
-            if (isCurrent()) setWorktreeMissing(!ok);
-          })
-          .catch(() => {
-            if (isCurrent()) setWorktreeMissing(false);
-          });
-      } else {
-        setWorktreeMissing(false);
-      }
-    } else {
-      setErr({ msg: "Couldn't load the task.", detail: String(taskResult.error) });
-    }
-
-    // Sessions and artifacts commit independently — an artifact scan failure must still show
-    // sessions, and vice versa. "No sessions yet." is gated on sessionsLoaded so it can never
-    // appear when listSessions itself never completed.
-    const ss = sessionsResult.ok ? sessionsResult.value : [];
-    if (sessionsResult.ok) {
-      setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
-      setSessionsLoaded(true);
-      setSessionsError("");
-    } else {
-      setSessionsError(String(sessionsResult.error));
-    }
+    if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
   };
 
   const refreshLiveTaskState = async () => {
     const isCurrent = beginNameRead();
     // Same independence as load(): a failing artifact scan on a 3s poll must not discard a
     // good listSessions result, and vice versa.
-    const [tasksResult, managerResult, sessionsResult, artifactsResult, artifactTreeResult, boardResult] = await Promise.all([
-      ipc.listTasks(repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
+    const [managerResult, artifactsResult, artifactTreeResult] = await Promise.all([
       ipc.subtaskState(slug, repoPath).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listSessions(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
@@ -509,10 +423,6 @@ export function TaskDetail({
         () => ({ ok: false }) as const,
       ),
       ipc.listTaskArtifactTree(slug).then(
-        (value) => ({ ok: true, value }) as const,
-        () => ({ ok: false }) as const,
-      ),
-      ipc.listBoardTasks(true).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
@@ -525,19 +435,7 @@ export function TaskDetail({
       setArtifactsError("");
     }
     if (!isCurrent()) return;
-    if (boardResult.ok) setBoardTasks(boardResult.value);
-    if (tasksResult.ok) {
-      const refreshedTask = tasksResult.value.find((candidate) => candidate.slug === slug) ?? null;
-      commitFetchedTask(refreshedTask);
-      setRepoTasks(tasksResult.value);
-    }
     if (managerResult.ok) await commitFetchedSubtaskState(managerResult.value, isCurrent);
-    if (!isCurrent()) return;
-    if (!sessionsResult.ok) return;
-    const ss = sessionsResult.value;
-    setSessions((current) => (sameSessionMetas(current, ss) ? current : ss));
-    setSessionsLoaded(true);
-    setSessionsError("");
   };
 
   useEffect(() => {
@@ -549,12 +447,10 @@ export function TaskDetail({
     nameTrigger.current = null;
     setTask(initialTask ?? null);
     setRepoTasks([]);
-    setBoardTasks([]);
     setSessions([]);
     setSessionsLoaded(false);
     setSubtaskState(null);
     setErr(null);
-    setSessionsError("");
     setArtifactsError("");
     setExecutionView(null);
     setExecutionError("");
@@ -583,6 +479,32 @@ export function TaskDetail({
       window.clearTimeout(timer);
     };
   }, [repoPath, slug]);
+
+  // Declared after the scope reset below so that on a scope change the streams' rows land last.
+  useEffect(() => {
+    if (liveTask !== undefined) commitFetchedTask(liveTask);
+  }, [liveTask, repoPath, slug]);
+  useEffect(() => {
+    if (liveRepoTasks) setRepoTasks(liveRepoTasks);
+  }, [liveRepoTasks, repoPath, slug]);
+  useEffect(() => {
+    if (!liveSessions) return;
+    setSessions((current) => (sameSessionMetas(current, liveSessions) ? current : liveSessions));
+    setSessionsLoaded(true);
+  }, [liveSessions, repoPath, slug]);
+  // Whether the recorded worktree still exists is a file question, asked when the task is first seen.
+  const worktreePath = task?.worktree ?? "";
+  useEffect(() => {
+    if (!worktreePath) return setWorktreeMissing(false);
+    let alive = true;
+    ipc
+      .worktreeExists(slug)
+      .then((ok) => alive && setWorktreeMissing(!ok))
+      .catch(() => alive && setWorktreeMissing(false));
+    return () => {
+      alive = false;
+    };
+  }, [slug, worktreePath]);
 
   useEffect(() => {
     registerNav({
@@ -905,7 +827,6 @@ export function TaskDetail({
                 taskMutationEpoch.current += 1;
                 setTask((current) => (current?.slug === owner ? updated : current));
                 setRepoTasks((current) => current.map((item) => (item.slug === owner ? updated : item)));
-                setBoardTasks((current) => current.map((item) => (item.repo_path === repoPath && item.slug === owner ? { ...item, ...updated } : item)));
                 setSubtaskState((current) =>
                   current
                     ? {
@@ -1279,7 +1200,7 @@ export function TaskDetail({
           )}
           {sessionView === "graph" ? (
             <>
-              {!sessionsLoaded && !sessionsError && <p className="dim">Loading sessions…</p>}
+              {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
               {sessionsLoaded && (
                 <TaskRunGraph
                   sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}

@@ -4,7 +4,7 @@
 //! JSON of what the Rust reader makes of it, keyed by the store key. The daemon's `bun test` runs its
 //! parser over the same inputs and compares against the same file, after both sides drop null and
 //! default-valued fields (proto3 JSON omits defaults). `UPDATE_FIXTURES=1` rewrites `expected.json`.
-//! The directory outlives the Rust reader (migration rule 5).
+//! The directory outlives the Rust reader (migration rule 5): the `board` domain has no Rust reader any more.
 
 use alinery_core::shared::read_session_meta_full;
 use serde_json::{Map, Value};
@@ -59,33 +59,10 @@ fn task(input: &Path) -> Value {
     Value::Object(out)
 }
 
-/// The derived board fields of each task (current step and friends), from `board_task`. `updated`
-/// follows file mtimes and is left out; the daemon's `total_sessions` has no Rust counterpart.
-fn board(input: &Path) -> Value {
-    let mut out = Map::new();
-    for (slug, _) in task_dirs(input) {
-        let Ok(task) = alinery_core::board::read_task_checked(input, &slug) else { continue };
-        let row = alinery_core::board::board_task(input, "", task).unwrap();
-        out.insert(
-            format!("task/{slug}/{slug}"),
-            serde_json::json!({
-                "session_count": row.session_count,
-                "playbook_title": row.playbook_title,
-                "playbook_steps": row.playbook_steps,
-                "current_phase": row.current_phase,
-                "current_step_title": row.current_step_title,
-                "latest_session_title": row.latest_session_title,
-            }),
-        );
-    }
-    Value::Object(out)
-}
-
 fn run(domain: &str, input: &Path) -> Value {
     match domain {
         "session_meta" => session_meta(input),
         "task" => task(input),
-        "board" => board(input),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
 }
@@ -96,6 +73,11 @@ fn rust_readers_match_expected_json() {
     let mut cases = 0;
     for domain in fs::read_dir(root()).unwrap().flatten().filter(|e| e.path().is_dir()) {
         let domain_name = domain.file_name().to_string_lossy().into_owned();
+        // `board`: the derived fields have one implementation now (the daemon's, rule R3). Its cases were written by the
+        // Rust `board_task` before that was deleted, and the daemon's `bun test` still checks them.
+        if domain_name == "board" {
+            continue;
+        }
         for case in fs::read_dir(domain.path()).unwrap().flatten().filter(|e| e.path().is_dir()) {
             let actual = run(&domain_name, &case.path().join("input"));
             let expected_path = case.path().join("expected.json");
@@ -110,5 +92,5 @@ fn rust_readers_match_expected_json() {
             cases += 1;
         }
     }
-    assert!(cases >= 12, "found only {cases} conformance cases");
+    assert!(cases >= 11, "found only {cases} conformance cases");
 }

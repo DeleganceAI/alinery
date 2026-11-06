@@ -54,6 +54,7 @@ import {
   StatusDot,
   sameArtifactListItems,
 } from "../shared";
+import { useBoardTask, useSessionDisplay } from "../sync/board";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -67,7 +68,6 @@ import type {
   ReviewHandoffSource,
   SessionDisplayContext,
   SessionMessageActionProvenance,
-  Task,
   TaskExecutionReply,
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
@@ -184,87 +184,33 @@ export function SessionView({
   const selectedArtifactDrafts = selectedArtifactIsDirect ? artifactCommentDrafts.filter((draft) => draft.artifact === selectedArtifact) : [];
   const recoverableArtifactDrafts = selectedArtifactDrafts.filter((draft) => draft.anchor_id !== commentAnchor?.anchor_id);
   const recoverableArtifactDraftAnchorIds = recoverableArtifactDrafts.map((draft) => draft.anchor_id);
-  const [task, setTask] = useState<Task | null>(null);
-  const [parentTask, setParentTask] = useState<Task | null>(null);
-  const [display, setDisplay] = useState<SessionDisplayContext | null>(null);
+  // The task, its parent and this session's display row all arrive on the daemon's streams.
+  const task = useBoardTask(taskSlug ? repoPath : undefined, taskSlug) ?? null;
+  const parentTask = useBoardTask(taskSlug ? repoPath : undefined, task?.parent_task ?? "") ?? null;
+  const live = useSessionDisplay(taskSlug ? repoPath : undefined, taskSlug, id);
+  const display = useMemo<SessionDisplayContext | null>(
+    () => (live.session ? { session: live.session, task_name: live.taskName, subtask_name: live.subtaskName } : null),
+    [live.session, live.taskName, live.subtaskName],
+  );
   const [editingName, setEditingName] = useState(false);
   const nameTrigger = useRef<HTMLButtonElement | null>(null);
-  const displayRequest = useRef(0);
-  const displayEpoch = useRef(0);
   const displayScope = `${repoPath}\u0000${taskSlug}\u0000${id}`;
-  const currentDisplayScope = useRef(displayScope);
-  if (currentDisplayScope.current !== displayScope) {
-    currentDisplayScope.current = displayScope;
-    displayEpoch.current += 1;
-    displayRequest.current += 1;
-  }
-  const refreshDisplay = async () => {
-    const epoch = displayEpoch.current;
-    const request = ++displayRequest.current;
-    try {
-      const next = await ipc.getSessionDisplay(repoPath, taskSlug, id);
-      if (epoch === displayEpoch.current && request === displayRequest.current) setDisplay(next);
-    } catch {
-      // Naming is optional; history and Terminal stay usable when the read fails.
-    }
-  };
   const closeNameEditor = () => {
     flushSync(() => setEditingName(false));
     restoreNameFocus(nameTrigger.current);
   };
+  const nameScope = `${repoPath}\u0000${taskSlug}\u0000${id}`;
+  const currentNameScope = useRef(nameScope);
+  currentNameScope.current = nameScope;
   const saveName = async (name: string) => {
-    const epoch = displayEpoch.current;
     const value = await ipc.renameSession({ repoPath, taskSlug, sessionId: id, name });
-    if (epoch === displayEpoch.current) {
-      displayEpoch.current += 1;
-      displayRequest.current += 1;
-      setDisplay((current) =>
-        current
-          ? { ...current, session: { ...current.session, name: value.name, name_source: value.source, name_error: null } }
-          : {
-              session: {
-                id,
-                worktree: cwd,
-                created: 0,
-                archived: false,
-                phase,
-                harness,
-                model,
-                playbook: playbook || "",
-                generic: false,
-                harness_resume_token: "",
-                name: value.name,
-                name_source: value.source,
-              },
-              task_name: task?.name || taskSlug,
-              subtask_name: null,
-            },
-      );
-      closeNameEditor();
-      void refreshDisplay();
-    }
+    // A save that finishes after the view moved to another session must not close that session's editor.
+    if (currentNameScope.current === nameScope) closeNameEditor();
     onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: taskSlug, session_id: id, value });
   };
 
   useEffect(() => {
-    let alive = true;
-    let timer = 0;
-    setDisplay(null);
     setEditingName(false);
-    if (taskSlug) {
-      const poll = () => {
-        void refreshDisplay().finally(() => {
-          if (alive) timer = window.setTimeout(poll, 3000);
-        });
-      };
-      poll();
-    }
-    return () => {
-      alive = false;
-      displayEpoch.current += 1;
-      displayRequest.current += 1;
-      window.clearTimeout(timer);
-    };
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
@@ -538,35 +484,6 @@ export function SessionView({
   };
   // Manual resume-token entry. launch harnesses (claude/grok) already carry a minted token, so in
   // practice this modal only surfaces for omp (id_source = "manual"). ponytail: omp auto-resume
-  useEffect(() => {
-    let alive = true;
-    let timer = 0;
-    let request = 0;
-    setTask(null);
-    setParentTask(null);
-    if (!hasTask) return;
-    const poll = async () => {
-      const epoch = displayEpoch.current;
-      const sequence = ++request;
-      try {
-        const tasks = await ipc.listTasks(repoPath);
-        if (!alive || epoch !== displayEpoch.current || sequence !== request) return;
-        const currentTask = tasks.find((candidate) => candidate.slug === taskSlug) ?? null;
-        setTask(currentTask);
-        setParentTask(currentTask?.parent_task ? (tasks.find((candidate) => candidate.slug === currentTask.parent_task) ?? null) : null);
-      } catch {
-        // Retain the last known context through a transient read failure.
-      } finally {
-        if (alive && sequence === request) timer = window.setTimeout(poll, 3000);
-      }
-    };
-    void poll();
-    return () => {
-      alive = false;
-      request += 1;
-      window.clearTimeout(timer);
-    };
-  }, [hasTask, taskSlug, repoPath, id]);
 
   useEffect(() => {
     setArtifactTab("playbook");

@@ -1,6 +1,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
@@ -25,22 +26,19 @@ const task = (over: Partial<Task> = {}): Task =>
   }) as Task;
 
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listSessions: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
 }));
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    getTask: mocks.getTask,
-    listSessions: mocks.listSessions,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
   }),
 );
 
 beforeEach(() => {
-  mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listSessions.mockReset().mockResolvedValue([]);
+  fakeBoard.reset();
+
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
 });
 

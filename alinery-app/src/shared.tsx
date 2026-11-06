@@ -1,6 +1,6 @@
 import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, Server, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
@@ -12,6 +12,7 @@ import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
 import { parseRemoteRepo, repoDisplayPath } from "./remoteRepo";
 import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
+import { useTaskActivityMap } from "./sync/board";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -1284,37 +1285,32 @@ export function KillButton({
   );
 }
 
-export function useBoardTaskActivity(tasks: BoardTask[], active = true) {
-  const [activity, setActivity] = useState<TaskActivityMap>({});
-  const taskSignature = tasks.map(taskKey).sort().join("\u0000");
+/** Activity of these tasks, kept current by their repos' streams (the daemon derives it onto the task row). */
+export function useBoardTaskActivity(tasks: BoardTask[], active = true): TaskActivityMap {
+  const refs: TaskActivityRef[] = useMemo(
+    () => tasks.map((task) => ({ repoPath: task.repo_path, taskSlug: task.slug })),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: the signature stands for the tasks
+    [tasks.map(taskKey).sort().join("\u0000")],
+  );
+  const next = useTaskActivityMap(refs, active);
+  const last = useRef(next);
+  if (!sameTaskActivityMaps(last.current, next)) last.current = next;
+  return last.current;
+}
 
-  useEffect(() => {
-    if (!active) return;
-    let alive = true;
-    let timer: number | undefined;
-    const refs: TaskActivityRef[] = tasks.map((task) => ({
-      repoPath: task.repo_path,
-      taskSlug: task.slug,
-    }));
-    const load = async () => {
-      try {
-        const next = refs.length ? await ipc.listTaskActivity(refs) : {};
-        if (alive) setActivity((current) => (sameTaskActivityMaps(current, next) ? current : next));
-      } catch {
-        if (alive) setActivity((current) => (sameTaskActivityMaps(current, {}) ? current : {}));
-      } finally {
-        if (alive) timer = window.setTimeout(load, 3000);
-      }
-    };
-
-    void load();
-    return () => {
-      alive = false;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [active, taskSignature]);
-
-  return activity;
+/** One warning per repo whose daemon is not answering: stale rows are the last known state, and a repo that never answered has none. */
+export function RepoLinkNotices({ repos }: { repos: Record<string, { loaded: boolean; reachable: boolean; stale: boolean }> }) {
+  const down = Object.entries(repos).filter(([, state]) => !state.reachable);
+  if (!down.length) return null;
+  return (
+    <>
+      {down.map(([repo, state]) => (
+        <InlineStatus key={repo} tone="warning">
+          {repoName(repo)}: {state.stale ? "daemon not connected, showing the last known tasks" : "no daemon connection"}
+        </InlineStatus>
+      ))}
+    </>
+  );
 }
 
 export const EMPTY_TASK_ACTIVITY: TaskActivitySummary = {

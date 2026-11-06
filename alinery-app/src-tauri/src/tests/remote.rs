@@ -339,36 +339,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
             std::time::Duration::from_secs(30),
         )
         .unwrap();
-    let rows: Vec<crate::BoardTask> = remote_call(&state, &id, RepoOp::ListBoardTasks { repo: repo.clone().into() }).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        (rows[0].task.slug.as_str(), rows[0].current_phase.as_str(), rows[0].latest_session_title.as_str()),
-        ("remote-task", "", "No sessions")
-    );
-    let tasks: Vec<alinery_core::Task> = remote_call(&state, &id, RepoOp::ListTasks { repo: repo.clone().into() }).unwrap();
-    assert_eq!(tasks, std::slice::from_ref(&task));
-    let found: Option<alinery_core::Task> = remote_call(
-        &state,
-        &id,
-        RepoOp::GetTask {
-            repo: repo.clone().into(),
-            slug: "remote-task".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(found, Some(task));
-    let missing: Option<alinery_core::Task> = remote_call(
-        &state,
-        &id,
-        RepoOp::GetTask {
-            repo: repo.clone().into(),
-            slug: "nope".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(missing, None);
-    assert!(remote_call::<Vec<crate::BoardTask>>(&state, "not-a-host", RepoOp::ListTasks { repo: repo.clone().into() }).is_err());
-
     // The task page's reads, answered by the host: a session meta written there is listed,
     // and the sub-task, artifact, worktree and launch-field reads agree with the task.
     let meta = alinery_core::SessionMeta {
@@ -389,27 +359,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         )
         .unwrap();
     let slug = || "remote-task".to_string();
-    let sessions: Vec<crate::SessionDisplayMeta> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListSessions {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert_eq!(sessions.iter().map(|session| session.meta.id.as_str()).collect::<Vec<_>>(), ["s1"]);
-    let display: crate::SessionDisplayContext = remote_call(
-        &state,
-        &id,
-        RepoOp::GetSessionDisplay {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!((display.task_name.as_str(), display.session.meta.phase.as_str()), ("Remote task", "build"));
     let subtask: alinery_core::SubtaskManagerState = remote_call(
         &state,
         &id,
@@ -945,17 +894,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     )
     .unwrap();
     assert_eq!(named.name, "Fix the build");
-    let shown: crate::SessionDisplayContext = remote_call(
-        &state,
-        &id,
-        RepoOp::GetSessionDisplay {
-            repo: repo.clone().into(),
-            slug: slug(),
-            session_id: "s1".into(),
-        },
-    )
-    .unwrap();
-    assert_eq!(shown.session.name.as_deref(), Some("Fix the build"));
     remote_call::<()>(
         &state,
         &id,
@@ -990,16 +928,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     assert_eq!(renamed.name, "Renamed remote");
 
     crate::archive_remote_session(&state, &id, repo.clone(), slug(), "s1".into()).unwrap();
-    let after: Vec<crate::SessionDisplayMeta> = remote_call(
-        &state,
-        &id,
-        RepoOp::ListSessions {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(after[0].meta.archived);
     assert!(
         crate::archive_remote_session(&state, &id, repo.clone(), "  ".into(), "s1".into()).is_err(),
         "a taskless session cannot be archived"
@@ -1014,17 +942,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         },
     )
     .unwrap();
-    let archived: Option<alinery_core::Task> = remote_call(
-        &state,
-        &id,
-        RepoOp::GetTask {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(archived.unwrap().archived);
-
     // Restore flips the flag back on the host; an unknown task is refused.
     remote_call::<()>(
         &state,
@@ -1035,16 +952,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         },
     )
     .unwrap();
-    let restored: Option<alinery_core::Task> = remote_call(
-        &state,
-        &id,
-        RepoOp::GetTask {
-            repo: repo.clone().into(),
-            slug: slug(),
-        },
-    )
-    .unwrap();
-    assert!(!restored.unwrap().archived);
     assert!(remote_call::<()>(
         &state,
         &id,
@@ -1275,16 +1182,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
 
     // The sessions list, artifact readiness, notification clearing and task activity
     // all read the host's files; live states come through the forward.
-    let rows = crate::list_session_items_with_repo_resolver(&state, false, true, Vec::new(), Some(&key), crate::RepoRef::parse).unwrap();
-    let s1 = rows.iter().find(|row| row.session.meta.id == "s1").unwrap_or_else(|| panic!("{}", rows.len()));
-    assert_eq!((s1.repo_path.as_str(), s1.task_slug.as_str()), (key.as_str(), "remote-task"));
-    assert!(
-        crate::list_session_items_with_repo_resolver(&state, false, false, Vec::new(), Some(&key), crate::RepoRef::parse)
-            .unwrap()
-            .iter()
-            .all(|row| row.session.meta.id != "s1"),
-        "archived sessions are left out unless asked for"
-    );
     let ready = |sid: &str| {
         remote_call::<bool>(
             &state,
@@ -1343,19 +1240,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     };
     clear("s-art").unwrap();
     assert!(clear("../s-art").is_err());
-
-    let activity = crate::remote_task_activity(
-        &state,
-        &[crate::TaskActivityRef {
-            repo_path: key.clone(),
-            task_slug: slug(),
-        }],
-    );
-    assert!(
-        activity.contains_key(&crate::task_activity_key(&key, "remote-task")),
-        "{:?}",
-        activity.keys().collect::<Vec<_>>()
-    );
 
     // Task drafts: saved, re-saved under the same slug, given attachments, and deleted on the host.
     let draft_op = |draft_slug: &str, name: &str, attachments: Option<crate::DraftAttachments>| RepoOp::WriteDraft {
@@ -1429,17 +1313,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         },
     )
     .unwrap();
-    let gone: Option<alinery_core::Task> = remote_call(
-        &state,
-        &id,
-        RepoOp::GetTask {
-            repo: repo.clone().into(),
-            slug: draft.slug.clone(),
-        },
-    )
-    .unwrap();
-    assert!(gone.is_none());
-
     // Repo-scope playbooks: the library code runs on a scratch copy of the host's files and only
     // what changed goes back, with host paths in what the UI sees.
     {
@@ -1605,16 +1478,6 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
         };
         assert!(auto("remote-task", true).unwrap_err().contains("pre-v2"));
         assert!(auto("original", true).unwrap().auto_approve_all);
-        let stored: Option<alinery_core::Task> = remote_call(
-            &state,
-            &id,
-            RepoOp::GetTask {
-                repo: repo.clone().into(),
-                slug: "original".into(),
-            },
-        )
-        .unwrap();
-        assert!(stored.unwrap().auto_approve_all);
         assert!(!auto("original", false).unwrap().auto_approve_all);
 
         // Related tasks are other tasks on the host: named from their own files, never a path from
@@ -2265,7 +2128,16 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     let direct = {
         let handle = handle.clone();
         let (id, repo) = (id.clone(), repo.clone());
-        std::thread::spawn(move || remote_call::<Vec<alinery_core::Task>>(&handle.state::<crate::AppState>(), &id, RepoOp::ListTasks { repo: repo.into() }))
+        std::thread::spawn(move || {
+            remote_call::<bool>(
+                &handle.state::<crate::AppState>(),
+                &id,
+                RepoOp::WorktreeExists {
+                    repo: repo.into(),
+                    slug: "remote-task".into(),
+                },
+            )
+        })
     };
     std::thread::sleep(std::time::Duration::from_millis(500));
     assert!(!direct.is_finished(), "the stopped repo service must leave a call waiting");
@@ -2288,7 +2160,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     resume.now();
     let renamed = tauri::async_runtime::block_on(rename).unwrap();
     assert_eq!(renamed.name, "Renamed remotely");
-    assert_eq!(direct.join().unwrap().unwrap().len(), 1);
+    assert!(!direct.join().unwrap().unwrap());
     drop(resume);
     disconnect_host(&handle, &id);
     let _ = std::fs::remove_dir_all(&session.secrets_dir);
@@ -2336,7 +2208,7 @@ fn live_git_actions_run_on_the_host() {
     .unwrap();
     let repo_path = || std::path::PathBuf::from(&repo);
     let slug = || "feat".to_string();
-    let get_task = || -> alinery_core::Task { serde_json::from_value(call(RepoOp::GetTask { repo: repo_path(), slug: slug() }).unwrap()).unwrap() };
+    let get_task = || -> alinery_core::Task { toml::from_str(&sh(&format!("cat '{repo}/.alinery/tasks/feat/task.md'"))).unwrap() };
 
     let branches: crate::TaskSourceBranches = serde_json::from_value(
         call(RepoOp::TaskSourceBranches {

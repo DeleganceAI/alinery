@@ -1,6 +1,7 @@
 import { File as NodeFile } from "node:buffer";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, TaskExecutionReply } from "../types";
 import { CreateSessionPage } from "./CreateSessionPage";
@@ -33,12 +34,12 @@ const task: BoardTask = {
   current_column_key: "",
   current_column_title: "",
 };
-const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    listBoardTasks: mocks.listBoardTasks,
     writeChatAttachmentBytes: mocks.writeChatAttachmentBytes,
     listHarnessModelsForRepo: async () => [],
   }),
@@ -46,7 +47,7 @@ vi.mock("../ipc", () =>
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null), setItem: vi.fn() });
-  mocks.listBoardTasks.mockReset().mockResolvedValue([task]);
+  fakeBoard.set({ tasks: [task] });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ lifecycle: "queued" })]));
   mocks.askConfirm.mockReset().mockResolvedValue("cancel");
 });
@@ -57,7 +58,7 @@ afterEach(() => {
 });
 
 function renderPage(onCreated = vi.fn(async () => {})) {
-  render(<CreateSessionPage allRepos={false} activeRepo="/r" onCancel={() => {}} onCreated={onCreated} />);
+  render(<CreateSessionPage allRepos={false} repos={fakeBoard.repos()} activeRepo="/r" onCancel={() => {}} onCreated={onCreated} />);
   return onCreated;
 }
 
@@ -190,7 +191,7 @@ describe("retained execution session selection", () => {
     const promise = new Promise<TaskExecutionReply>((accept) => {
       resolve = accept;
     });
-    mocks.listBoardTasks.mockResolvedValue([task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }]);
+    fakeBoard.set({ tasks: [task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }] });
     mocks.getTaskExecution.mockImplementation((slug: string) =>
       slug === "a-task" ? promise : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])),
     );
@@ -243,7 +244,7 @@ describe("session clipboard attachments", () => {
   }
 
   it("saves pasted bytes to the selected task before launching with readable attachment paths", async () => {
-    mocks.listBoardTasks.mockResolvedValue([{ ...task, repo_path: "/other repo" }]);
+    fakeBoard.set({ tasks: [{ ...task, repo_path: "/other repo" }] });
     const created = renderPage();
     await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Inspect this screenshot." } });

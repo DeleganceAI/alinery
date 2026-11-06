@@ -5,20 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import type { SessionMessageDraft } from "../sessionMessage";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { sessionDaemon } from "../test/sessionDaemon";
 import { Toast, toast } from "../toast";
-import type { AgentState, ArtifactListItem, ArtifactTreeNode, SessionObservation, Task } from "../types";
+import type { AgentState, ArtifactListItem, ArtifactTreeNode, BoardTask, SessionObservation } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { SessionView } from "./SessionView";
 
 const scenario = vi.hoisted(() => ({
   itemCalls: 0,
   treeCalls: 0,
-  taskCalls: 0,
-  tasks: [] as Task[],
-  tasksPromise: null as Promise<Task[]> | null,
-  tasksError: null as Error | null,
   items: null as ArtifactListItem[] | null,
 }));
 
@@ -65,10 +62,9 @@ const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fi
 const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
 const allowExecutionCompletion = vi.hoisted(() => vi.fn());
-const getSessionDisplay = vi.hoisted(() => vi.fn(async () => null));
 const renameSession = vi.hoisted(() => vi.fn());
 
-const task: Task = {
+const task: BoardTask = {
   name: "Task",
   slug: "task",
   requested_slug: "",
@@ -86,6 +82,17 @@ const task: Task = {
   playbook: "review",
   auto_advance: [],
   draft: false,
+  repo_path: "/repo",
+  session_count: 0,
+  playbook_title: "Review",
+  playbook_steps: [],
+  updated: 1,
+  current_phase: "",
+  current_step_title: "",
+  latest_session_title: "",
+  latest_session_column_key: "",
+  current_column_key: "",
+  current_column_title: "",
 };
 
 const initialItems: ArtifactListItem[] = [
@@ -114,17 +121,12 @@ const initialTree: ArtifactTreeNode[] = [
 
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("../confirm", () => ({ confirmDanger }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    getSessionDisplay,
     renameSession,
     getTaskExecution,
     allowExecutionCompletion,
-    listTasks: () => {
-      scenario.taskCalls += 1;
-      if (scenario.tasksError) return Promise.reject(scenario.tasksError);
-      return scenario.tasksPromise ?? Promise.resolve(scenario.tasks);
-    },
     listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
     listTaskArtifactTree: () => {
       scenario.treeCalls += 1;
@@ -159,6 +161,13 @@ vi.mock("../ipc", () =>
   } as never),
 );
 
+/** The display row the session's repo stream holds: its name, its task's and its sub-task's. */
+function showDisplay(context: { session: object; task_name: string; subtask_name: string | null }, repo = "/repo") {
+  fakeBoard.set({
+    sessions: [{ ...context.session, id: "session", repo_path: repo, task_slug: "task", task_name: context.task_name, subtask_name: context.subtask_name } as never],
+  });
+}
+
 async function flushPromises() {
   await act(async () => {
     await Promise.resolve();
@@ -172,7 +181,7 @@ describe("SessionView artifact pane", () => {
     scenario.treeCalls = 0;
     resetDaemon();
     vi.useFakeTimers();
-    scenario.tasks = [{ ...task }];
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
   });
 
   afterEach(() => {
@@ -223,10 +232,12 @@ describe("SessionView artifact pane", () => {
   });
 
   it.each(["merged", "finished", "killed"] as const)("warns that a live %s child session may be stale", async (outcome) => {
-    scenario.tasks = [
-      { ...task, name: "Parent", slug: "parent", requested_slug: "parent", playbook: "superdevelop" },
-      { ...task, archived: true, parent_task: "parent", subtask_outcome: outcome },
-    ];
+    fakeBoard.set({
+      anyRepoTasks: [
+        { ...task, name: "Parent", slug: "parent", requested_slug: "parent", playbook: "superdevelop" },
+        { ...task, archived: true, parent_task: "parent", subtask_outcome: outcome },
+      ],
+    });
     render(
       <SessionView
         id="session"
@@ -302,40 +313,38 @@ describe("session work names", () => {
   beforeEach(() => {
     resetDaemon();
     vi.useFakeTimers();
-    scenario.tasks = [{ ...task }];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
     startSession.mockClear();
-    getSessionDisplay.mockReset();
     renameSession.mockReset();
   });
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-    getSessionDisplay.mockReset().mockResolvedValue(null);
+    fakeBoard.reset();
   });
 
   it.each(["omp", "no-harness"])("history_and_terminal_names_refresh_without_starting_sessions (%s)", async (harness) => {
     const context = { session: { id: "session", name: "Historical work", subtask_manager: true, subtask_slug: "child" }, task_name: "Current task", subtask_name: "Current child" };
-    scenario.tasks = [
-      { ...task, parent_task: "parent" },
-      { ...task, slug: "parent", name: "Current parent" },
-    ];
-    getSessionDisplay.mockResolvedValue(context as never);
+    fakeBoard.set({
+      anyRepoTasks: [
+        { ...task, parent_task: "parent" },
+        { ...task, slug: "parent", name: "Current parent" },
+      ],
+    });
+    showDisplay(context);
     renderSession({ intent: "history", harness });
     await flushPromises();
     expect(screen.getByText("Historical work")).toBeDefined();
     expect(screen.getByText("Current child")).toBeDefined();
     expect(screen.getByRole("button", { name: "Current parent" })).toBeDefined();
-    expect(getSessionDisplay).toHaveBeenCalledWith("/repo", "task", "session");
-    getSessionDisplay.mockResolvedValue({ ...context, session: { ...context.session, name: "External name" }, task_name: "Renamed task", subtask_name: "Renamed child" } as never);
-    scenario.tasks = [
-      { ...task, parent_task: "parent" },
-      { ...task, slug: "parent", name: "Renamed parent" },
-    ];
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+    showDisplay({ ...context, session: { ...context.session, name: "External name" }, task_name: "Renamed task", subtask_name: "Renamed child" });
+    fakeBoard.set({
+      anyRepoTasks: [
+        { ...task, parent_task: "parent" },
+        { ...task, slug: "parent", name: "Renamed parent" },
+      ],
     });
+    await flushPromises();
     expect(screen.getByText("External name")).toBeDefined();
     expect(screen.getByText("Renamed task")).toBeDefined();
     expect(screen.getByText("Renamed child")).toBeDefined();
@@ -344,7 +353,7 @@ describe("session work names", () => {
   });
 
   it("rename_keys_do_not_submit_chat_or_change_session", async () => {
-    getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Old name" }, task_name: "Task", subtask_name: null } as never);
+    showDisplay({ session: { id: "session", name: "Old name" }, task_name: "Task", subtask_name: null });
     renameSession.mockResolvedValue({ name: "Saved name", source: "user" });
     const onBack = vi.fn();
     renderSession({ intent: "history", onBack });
@@ -358,7 +367,7 @@ describe("session work names", () => {
     expect(onBack).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Saved name" } });
-    getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Saved name" }, task_name: "Task", subtask_name: null } as never);
+    showDisplay({ session: { id: "session", name: "Saved name" }, task_name: "Task", subtask_name: null });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
     await flushPromises();
     expect(screen.getByText("Saved name")).toBeDefined();
@@ -368,37 +377,26 @@ describe("session work names", () => {
     expect(startSession).not.toHaveBeenCalled();
   });
 
-  it("keeps a committed header across stale polls and ignores a previous repo save", async () => {
+  it("shows the stream's latest name after a committed rename, and ignores a previous repo save", async () => {
     const original = { session: { id: "session", name: "Original" }, task_name: "Task", subtask_name: null };
-    getSessionDisplay.mockResolvedValue(original as never);
+    showDisplay(original);
     const { rerender } = renderSession({ intent: "history" });
     await flushPromises();
-    const oldPoll = deferred<never>();
-    getSessionDisplay.mockReturnValueOnce(oldPoll.promise);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
     renameSession.mockResolvedValue({ name: "Committed", source: "user" });
-    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "Committed" } } as never);
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
     await flushPromises();
-    await act(async () => {
-      oldPoll.resolve(original as never);
-    });
+    act(() => showDisplay({ ...original, session: { ...original.session, name: "Committed" } }));
     expect(screen.getByText("Committed")).toBeDefined();
-    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "External" } } as never);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
+    act(() => showDisplay({ ...original, session: { ...original.session, name: "External" } }));
     expect(screen.getByText("External")).toBeDefined();
     const lateSave = deferred<{ name: string; source: string }>();
     renameSession.mockReturnValueOnce(lateSave.promise);
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Late old repo" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
-    getSessionDisplay.mockResolvedValue({ ...original, session: { ...original.session, name: "Other repo" } } as never);
+    showDisplay({ ...original, session: { ...original.session, name: "Other repo" } }, "/other");
     rerender(sessionView({ intent: "history", repoPath: "/other" }));
     await flushPromises();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -412,7 +410,7 @@ describe("session work names", () => {
   });
 
   it("shows a waiting ellipsis for a busy unnamed OMP session and hides it while renaming", async () => {
-    getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null } as never);
+    showDisplay({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null });
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     renderSession();
     await flushPromises();
@@ -423,7 +421,7 @@ describe("session work names", () => {
   });
 
   it("does not animate a terminal session that will not name itself", async () => {
-    getSessionDisplay.mockResolvedValue({ session: { id: "session", harness: "no-harness" }, task_name: "Task", subtask_name: null } as never);
+    showDisplay({ session: { id: "session", harness: "no-harness" }, task_name: "Task", subtask_name: null });
     sessionStatus.mockResolvedValue(liveObservation("pty"));
     renderSession({ harness: "no-harness" });
     await flushPromises();
@@ -434,9 +432,7 @@ describe("session work names", () => {
 
 describe("session archive pending feedback", () => {
   beforeEach(() => {
-    scenario.tasks = [{ ...task }];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
     confirmDanger.mockReset().mockResolvedValue(true);
     archiveSession.mockReset();
@@ -493,34 +489,31 @@ describe("session archive pending feedback", () => {
 
 describe("the session toolbar names the parent task", () => {
   beforeEach(() => {
-    scenario.taskCalls = 0;
-    scenario.tasks = [];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [] });
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("falls back to the task slug before listTasks resolves", () => {
-    scenario.tasksPromise = deferred<Task[]>().promise;
+  afterEach(() => fakeBoard.reset());
+
+  it("falls back to the task slug before the repo stream's first snapshot", () => {
+    fakeBoard.set({ ready: false });
     renderSession();
     expect(screen.getByText("task")).toBeDefined();
   });
 
-  it("replaces the slug with the task name once listTasks resolves", async () => {
-    scenario.tasks = [{ ...task, name: "Human Readable Task" }];
+  it("replaces the slug with the task name once the task row arrives", async () => {
     renderSession();
+    expect(screen.getByText("task")).toBeDefined();
+    act(() => fakeBoard.set({ anyRepoTasks: [{ ...task, name: "Human Readable Task" }] }));
     expect(await screen.findByText("Human Readable Task")).toBeDefined();
   });
 
-  it("keeps the slug when the task cannot be loaded", async () => {
-    scenario.tasksError = new Error("no tasks");
+  it("keeps the slug when the repo has no such task", async () => {
     renderSession();
-    await waitFor(() => {
-      expect(scenario.taskCalls).toBeGreaterThan(0);
-    });
+    await flushPromises();
     expect(screen.getByText("task")).toBeDefined();
   });
 });
@@ -543,9 +536,7 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
 describe("session lifecycle polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    scenario.tasks = [task];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue(liveObservation("pty"));
     sessionArtifactReady.mockReset().mockResolvedValue(false);
   });
@@ -606,10 +597,7 @@ describe("session lifecycle polling", () => {
 
 describe("session message composer feature gate", () => {
   beforeEach(() => {
-    scenario.taskCalls = 0;
-    scenario.tasks = [{ ...task }];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
     scenario.items = null;
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
   });
@@ -671,7 +659,7 @@ describe("leftover harness refuse", () => {
 
 describe("session chat send routing", () => {
   beforeEach(() => {
-    scenario.tasks = [{ ...task }];
+    fakeBoard.set({ anyRepoTasks: [{ ...task }] });
     sessionPrompt.mockClear();
     copyChatAttachments.mockReset();
     copyChatAttachments.mockResolvedValue({ copied: [], failures: [] });
@@ -769,9 +757,7 @@ describe("session chat send routing", () => {
 
 describe("session-scoped completion permission", () => {
   beforeEach(() => {
-    scenario.tasks = [task];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [task] });
     scenario.items = [];
     sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
@@ -815,9 +801,7 @@ describe("held task sessions", () => {
 
   it("recovers a failed Vinculum session from its file and leaves a completed one alone", async () => {
     startSession.mockClear();
-    scenario.tasks = [task];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
     getTaskExecution.mockResolvedValue(
       executionReply([executionRecord({ owner_session_id: "session", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true, error: "exited without completing" })]),
@@ -848,9 +832,7 @@ describe("held task sessions", () => {
 
   it("opens queued work without starting it and starts only on explicit request", async () => {
     startSession.mockClear();
-    scenario.tasks = [task];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]));
     renderSession({ intent: undefined });
@@ -868,9 +850,7 @@ describe("held task sessions", () => {
 
   it.each(["offline", "foreign_owner", undefined] as const)("does not start a queued session from saved state when live status is %s", async (status) => {
     startSession.mockClear();
-    scenario.tasks = [task];
-    scenario.tasksPromise = null;
-    scenario.tasksError = null;
+    fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
     const saved = executionReply([executionRecord({ owner_session_id: "session", lifecycle: "queued", start_requested: false })]);
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
@@ -887,7 +867,7 @@ describe("held task sessions", () => {
 
 describe("Vinculum session chat", () => {
   beforeEach(() => {
-    scenario.tasks = [task];
+    fakeBoard.set({ anyRepoTasks: [task] });
     sessionStatus.mockResolvedValue(liveObservation("rpc"));
     sessionPrompt.mockClear();
     sessionAbort.mockClear();

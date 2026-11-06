@@ -40,6 +40,7 @@ import { setRevealRepo } from "./revealPath";
 import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
@@ -132,9 +133,6 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
 const liveSessions = (repo: string) => liveSessionsNow(repo);
 
-type SearchData = { tasks: BoardTask[]; sessions: SessionListItem[] };
-const EMPTY_SEARCH_DATA: SearchData = { tasks: [], sessions: [] };
-
 function initialView(): View {
   try {
     const gridViewId = window.localStorage.getItem(ACTIVE_GRID_VIEW_STORAGE_KEY)?.trim();
@@ -215,17 +213,20 @@ export default function App() {
   }, [appConfig?.active_repo, onboardingOpen, consentPending]);
   const [repoErr, setRepoErr] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchData, setSearchData] = useState<SearchData>(EMPTY_SEARCH_DATA);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchError, setSearchError] = useState("");
-  const searchRequest = useRef(0);
-  const [searchRefresh, setSearchRefresh] = useState(0);
-  const searchScope = `${appConfig?.active_repo || ""}\u0000${appConfig?.known_repos.join("\u0000") || ""}`;
-  const currentSearchScope = useRef(searchScope);
-  if (currentSearchScope.current !== searchScope) {
-    currentSearchScope.current = searchScope;
-    searchRequest.current += 1;
-  }
+  // The repos a board shows: every known repo in "all" scope, else the active one; each has its own stream.
+  const boardRepos = useMemo(
+    () => (scope === "all" ? [...new Set(appConfig?.known_repos ?? [])] : appConfig?.active_repo ? [appConfig.active_repo] : []),
+    [scope, appConfig?.known_repos, appConfig?.active_repo],
+  );
+  // Global search reads the same streams the boards do, opened only while the palette is.
+  const searchRepos = useMemo(
+    () => (searchOpen && appConfig?.active_repo ? [...new Set(appConfig.known_repos)] : []),
+    [searchOpen, appConfig?.active_repo, appConfig?.known_repos],
+  );
+  const searchBoard = useRepoBoard(searchRepos, searchRepos.length > 0);
+  const searchSessions = useSessionItems(searchRepos, false, searchRepos.length > 0);
+  const searchLoading = searchRepos.length > 0 && !(searchBoard.loaded && searchSessions.loaded);
+  const searchError = "";
   const [diagramZoomOpen, setDiagramZoomOpen] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [sessionMessageDrafts, setSessionMessageDrafts] = useState<Map<string, SessionMessageDraft>>(() => new Map());
@@ -305,7 +306,6 @@ export default function App() {
       // The in-memory route still works when browser storage is unavailable.
     }
   }, [appConfig, gridViews, selectedGridViewId]);
-  const knownReposRef = useRef<string | null>(null);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
@@ -319,7 +319,8 @@ export default function App() {
   const remoteHosts = useRemoteHosts(remoteDialog !== null || Boolean(appConfig?.known_repos.some(isRemoteRepo)));
   const remoteStates = useMemo(() => Object.fromEntries(remoteHosts.hosts.map((host) => [host.host_id, host.state])), [remoteHosts.hosts]);
   const mcp = useMcpStatus();
-  const noticeSnapshot = useSessionNoticeSnapshot(Boolean(appConfig?.active_repo));
+  const noticeRepos = useMemo(() => [...new Set(appConfig?.known_repos ?? [])], [appConfig?.known_repos]);
+  const noticeSnapshot = useSessionNoticeSnapshot(noticeRepos, Boolean(appConfig?.active_repo));
   useDockBadgeCount(noticeSnapshot.rows, appConfig?.global?.notifications, noticeSnapshot.loaded);
   const isFullscreen = useWindowFullscreen();
 
@@ -493,69 +494,8 @@ export default function App() {
       });
   }, []);
 
-  useEffect(() => {
-    if (!appConfig?.active_repo) {
-      knownReposRef.current = null;
-      return;
-    }
-    const key = appConfig.known_repos.join("\u0000");
-    if (knownReposRef.current === null) {
-      knownReposRef.current = key;
-      return;
-    }
-    if (knownReposRef.current !== key) {
-      knownReposRef.current = key;
-      noticeSnapshot.requestRefresh();
-    }
-  }, [appConfig?.active_repo, appConfig?.known_repos, noticeSnapshot.requestRefresh]);
-
-  useEffect(() => {
-    setSearchData(EMPTY_SEARCH_DATA);
-  }, [searchScope]);
-
-  useEffect(() => {
-    const request = ++searchRequest.current;
-    if (!searchOpen || !appConfig?.active_repo) return;
-    setSearchLoading(true);
-    setSearchError("");
-    Promise.all([ipc.listBoardTasks(true), ipc.listSessionItems(true, false)])
-      .then(([tasks, sessions]) => {
-        if (request === searchRequest.current) setSearchData({ tasks, sessions });
-      })
-      .catch((error) => {
-        if (request === searchRequest.current) setSearchError(String(error));
-      })
-      .finally(() => {
-        if (request === searchRequest.current) setSearchLoading(false);
-      });
-    return () => {
-      searchRequest.current += 1;
-    };
-  }, [searchOpen, searchScope, searchRefresh]);
-
+  // Names reach every list through the streams; a task rename only needs the keyed views to remount.
   const onNameCommitted = useCallback((change: NameCommit) => {
-    // Invalidate synchronously, before React runs the refetch effect.
-    searchRequest.current += 1;
-    setSearchData((current) => ({
-      tasks:
-        change.kind === "task"
-          ? current.tasks.map((task) => (task.repo_path === change.repo_path && task.slug === change.task_slug ? { ...task, ...change.task } : task))
-          : current.tasks,
-      sessions: current.sessions.map((session) => {
-        if (session.repo_path !== change.repo_path) return session;
-        if (change.kind === "session") {
-          return session.task_slug === change.task_slug && session.id === change.session_id
-            ? { ...session, name: change.value.name, name_source: change.value.source, name_error: null }
-            : session;
-        }
-        return {
-          ...session,
-          task_name: session.task_slug === change.task_slug ? change.task.name : session.task_name,
-          subtask_name: session.subtask_manager && session.subtask_slug === change.task_slug ? change.task.name : session.subtask_name,
-        };
-      }),
-    }));
-    setSearchRefresh((value) => value + 1);
     if (change.kind === "task") setReloadNonce((value) => value + 1);
   }, []);
 
@@ -569,13 +509,9 @@ export default function App() {
     const normalized = applyAppearance(next);
     setAppConfig((cfg) => (cfg ? { ...cfg, appearance: normalized } : { active_repo: "", known_repos: [], mcp_enabled: true, appearance: normalized }));
   };
-  const onNotificationsChange = useCallback(
-    (notifications: NotificationPrefs) => {
-      setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
-      noticeSnapshot.requestRefresh();
-    },
-    [noticeSnapshot.requestRefresh],
-  );
+  const onNotificationsChange = useCallback((notifications: NotificationPrefs) => {
+    setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
+  }, []);
 
   // The backend reserves the candidate before it kills the old repo's drawer sessions.
   // Clear the drawer UI only after that transactional switch succeeds. Do not claim the
@@ -736,8 +672,6 @@ export default function App() {
         await ipc.markSessionNotificationRead(repoPath, taskSlug, session.id);
       } catch (error) {
         setRepoErr(String(error));
-      } finally {
-        noticeSnapshot.requestRefresh();
       }
       setView({
         kind: "session",
@@ -1327,7 +1261,7 @@ export default function App() {
 
   const searchItems: SearchItem[] = [
     ...actions,
-    ...searchData.tasks.map((task) => ({
+    ...searchBoard.tasks.map((task) => ({
       id: `task:${task.repo_path}:${task.slug}`,
       kind: "task" as const,
       title: task.name,
@@ -1335,7 +1269,7 @@ export default function App() {
       searchText: [task.slug, task.playbook, task.playbook_title, task.current_phase, task.current_column_title, task.linear_id, task.github_issue].join(" "),
       run: () => void openBoardTask(task),
     })),
-    ...searchData.sessions
+    ...searchSessions.items
       .filter((session) => Boolean(session.task_worktree))
       .map((session) => ({
         id: `session:${session.repo_path}:${session.task_slug}:${session.id}`,
@@ -1597,6 +1531,7 @@ export default function App() {
               <TaskList
                 key={`list:${repoKey}`}
                 allRepos={scope === "all"}
+                repos={boardRepos}
                 onOpen={openBoardTask}
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
@@ -1643,6 +1578,7 @@ export default function App() {
               <Kanban
                 key={`kanban:${repoKey}`}
                 allRepos={scope === "all"}
+                repos={boardRepos}
                 onOpen={openBoardTask}
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
@@ -1657,6 +1593,7 @@ export default function App() {
                 key={`sessions:${repoKey}`}
                 allRepos={scope === "all"}
                 activeRepo={appConfig.active_repo}
+                knownRepos={appConfig.known_repos}
                 onOpen={openSessionItem}
                 registerNav={registerNav}
                 onCreateSession={() => setView({ kind: "createSession", from: view })}
@@ -1686,7 +1623,14 @@ export default function App() {
           )}
           {view.kind === "createSession" && (
             <div className="view scroll">
-              <CreateSessionPage allRepos={scope === "all"} activeRepo={appConfig.active_repo} initialTask={view.initialTask} onCancel={goBack} onCreated={createSessionFromTask} />
+              <CreateSessionPage
+                allRepos={scope === "all"}
+                repos={boardRepos}
+                activeRepo={appConfig.active_repo}
+                initialTask={view.initialTask}
+                onCancel={goBack}
+                onCreated={createSessionFromTask}
+              />
             </div>
           )}
           {view.kind === "settings" && (
@@ -1767,7 +1711,7 @@ export default function App() {
               >
                 <ReviewHandoffPage
                   source={view.source}
-                  allRepos={true}
+                  repos={noticeRepos}
                   activeRepo={appConfig.active_repo}
                   onCancel={goBack}
                   onConfirmed={async (result) => {
@@ -1837,7 +1781,7 @@ export default function App() {
             <Grid
               active={active}
               allRepos={scope === "all"}
-              repoPaths={scope === "all" ? appConfig.known_repos : [appConfig.active_repo]}
+              repoPaths={boardRepos}
               onOpen={openBoardTask}
               onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
               registerNav={registerNav}

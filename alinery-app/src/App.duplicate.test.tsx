@@ -93,12 +93,12 @@ const mocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(async () => () => {}),
 }));
 
+vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./ipc", () =>
   mockIpc({
     getVersion: async () => "0.9.10",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
-    listBoardTasks: async () => [],
     listKanbanColumns: async () => [],
     duplicateTaskForRepo: mocks.duplicateTaskForRepo,
     startSession: mocks.startSession,

@@ -1365,8 +1365,8 @@ pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> 
 
 /// Claim a remote repo on its host, bring its daemon up through the forward, and record the
 /// client where the rest of the app looks for it. `key` is the `alinery+ssh://` entry. A daemon this
-/// app cannot use is recorded as a conflict and is not an error: the board still reads through the
-/// repo service, and the banner offers to restart the daemon.
+/// app cannot use is recorded as a conflict and is not an error: the repo opens, shows only its
+/// banner (no board is read through the repo service), and the banner offers to restart the daemon.
 fn attach_remote_repo(state: &AppState, session: &RemoteSession, key: &str, path: &str) -> Result<(), String> {
     let claim = session.channel.call(RepoOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
     if claim["claimed"] != true {

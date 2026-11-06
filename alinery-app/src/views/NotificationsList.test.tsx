@@ -6,11 +6,7 @@ import { navReady, requireNav } from "../test/nav";
 import type { BoardNav, SessionListItem } from "../types";
 import { NotificationsList } from "./NotificationsList";
 
-const mocks = vi.hoisted(() => ({
-  listSessionItems: vi.fn(),
-  sessionListStatuses: vi.fn(),
-}));
-vi.mock("../ipc", () => mockIpc(mocks));
+vi.mock("../ipc", () => mockIpc());
 
 const item = (id: string, over: Partial<SessionListItem> = {}): SessionListItem => ({
   id,
@@ -91,8 +87,6 @@ describe("NotificationsList", () => {
     expect(screen.getByText("Completed")).toBeDefined();
     expect(screen.getByText("Failed")).toBeDefined();
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
-    expect(mocks.listSessionItems).not.toHaveBeenCalled();
-    expect(mocks.sessionListStatuses).not.toHaveBeenCalled();
   });
 
   it("filters only presentation scope and keeps repository-qualified rows", () => {

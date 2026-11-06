@@ -44,28 +44,6 @@ pub enum RepoOp {
         #[serde(default)]
         show_hidden: bool,
     },
-    /// The board rows of one repo (`alinery_core::board::board_tasks`).
-    ListBoardTasks {
-        repo: PathBuf,
-    },
-    ListTasks {
-        repo: PathBuf,
-    },
-    /// `null` when the task does not exist.
-    GetTask {
-        repo: PathBuf,
-        slug: String,
-    },
-    /// A task's sessions with their display names, oldest first.
-    ListSessions {
-        repo: PathBuf,
-        slug: String,
-    },
-    GetSessionDisplay {
-        repo: PathBuf,
-        slug: String,
-        session_id: String,
-    },
     SubtaskState {
         repo: PathBuf,
         slug: String,
@@ -371,17 +349,6 @@ pub enum RepoOp {
         app_config: PathBuf,
         overrides: crate::RepoOverrides,
     },
-    /// Every session row of the repo's unarchived tasks. `repo_path` is stamped on each row.
-    ListSessionItems {
-        repo: PathBuf,
-        repo_path: String,
-        include_archived: bool,
-    },
-    /// Metas for (task slug, session id) pairs, in order; `null` for one that is missing.
-    ReadSessionMetas {
-        repo: PathBuf,
-        refs: Vec<(String, String)>,
-    },
     SessionArtifactReady {
         repo: PathBuf,
         slug: String,
@@ -390,14 +357,6 @@ pub enum RepoOp {
     ClearSessionNotifications {
         repo: PathBuf,
         refs: Vec<crate::session_actions::SessionNotificationClearRef>,
-    },
-    /// Task activity from the host's files and the live session states the app observed.
-    /// Result keys are built from `repo_path`.
-    TaskActivity {
-        repo: PathBuf,
-        repo_path: String,
-        slugs: Vec<String>,
-        statuses: Vec<crate::daemon_client::DaemonSessionStatus>,
     },
     /// Autosave (or first save) of a task draft; the reply is the stored task.
     WriteDraft {
@@ -705,11 +664,6 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::Classify { path } => to_value(classify_folder(&path)?),
         RepoOp::Init { path } => to_value(init_absent_folder(&path)?),
         RepoOp::ListDir { path, show_hidden } => to_value(list_dir(&path, show_hidden)?),
-        RepoOp::ListBoardTasks { repo } => to_value(crate::board::board_tasks(&repo, &repo.to_string_lossy())?),
-        RepoOp::ListTasks { repo } => to_value(crate::board::list_tasks_checked(&repo)?),
-        RepoOp::GetTask { repo, slug } => to_value(crate::board::read_task_opt(&repo, &slug)?),
-        RepoOp::ListSessions { repo, slug } => to_value(crate::board::list_session_displays(&repo, &slug)?),
-        RepoOp::GetSessionDisplay { repo, slug, session_id } => to_value(crate::board::session_display_context(&repo, &slug, &session_id)?),
         RepoOp::SubtaskState { repo, slug } => to_value(crate::subtask::subtask_manager_state(&repo, &slug)?),
         RepoOp::SavedExecution { repo, slug } => to_value(crate::board::saved_task_execution(&repo, &slug)?),
         RepoOp::ListArtifactsWithMetadata { repo, slug } => to_value(crate::board::artifacts_with_metadata(&repo, &slug)?),
@@ -850,15 +804,8 @@ pub fn run(op: RepoOp) -> Result<Value, String> {
         RepoOp::DuplicateTaskPackage { repo, source_slug } => to_value(crate::task_creation::duplicate_task_package(&repo, &source_slug)?),
         RepoOp::ReadRepoOverrides { repo } => to_value(crate::load_repo_overrides_strict(&repo)?),
         RepoOp::WriteRepoOverrides { repo, app_config, overrides } => crate::write_repo_overrides(Some(&app_config), &repo, &overrides).map(|()| Value::Null),
-        RepoOp::ListSessionItems {
-            repo,
-            repo_path,
-            include_archived,
-        } => to_value(crate::board::session_list_items_for_repo(&repo, &repo_path, include_archived)?),
-        RepoOp::ReadSessionMetas { repo, refs } => to_value(crate::board::read_session_metas(&repo, &refs)),
         RepoOp::SessionArtifactReady { repo, slug, session_id } => to_value(crate::board::session_artifact_ready(&repo, &slug, &session_id)),
         RepoOp::ClearSessionNotifications { repo, refs } => crate::session_actions::clear_session_notifications_in(&repo, &refs).map(|()| Value::Null),
-        RepoOp::TaskActivity { repo, repo_path, slugs, statuses } => to_value(crate::task_activity::resolve_task_activity_for_repo(&repo, &repo_path, &slugs, &statuses)),
         RepoOp::WriteDraft {
             repo,
             draft_slug,
@@ -1090,21 +1037,6 @@ mod tests {
             RepoOp::ListDir {
                 path: "/srv".into(),
                 show_hidden: true,
-            },
-            RepoOp::ListBoardTasks { repo: "/srv/a".into() },
-            RepoOp::ListTasks { repo: "/srv/a".into() },
-            RepoOp::GetTask {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::ListSessions {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-            },
-            RepoOp::GetSessionDisplay {
-                repo: "/srv/a".into(),
-                slug: "t".into(),
-                session_id: "s".into(),
             },
             RepoOp::SubtaskState {
                 repo: "/srv/a".into(),
@@ -1358,15 +1290,6 @@ mod tests {
                 app_config: "/c/app.toml".into(),
                 overrides: crate::RepoOverrides::default(),
             },
-            RepoOp::ListSessionItems {
-                repo: "/srv/a".into(),
-                repo_path: "alinery+ssh://h/srv/a".into(),
-                include_archived: true,
-            },
-            RepoOp::ReadSessionMetas {
-                repo: "/srv/a".into(),
-                refs: vec![("t".into(), "s".into())],
-            },
             RepoOp::SessionArtifactReady {
                 repo: "/srv/a".into(),
                 slug: "t".into(),
@@ -1379,16 +1302,6 @@ mod tests {
                     task_slug: "t".into(),
                     id: "s".into(),
                     notification_suppression: None,
-                }],
-            },
-            RepoOp::TaskActivity {
-                repo: "/srv/a".into(),
-                repo_path: "k".into(),
-                slugs: vec!["t".into()],
-                statuses: vec![crate::daemon_client::DaemonSessionStatus {
-                    id: "s".into(),
-                    state: Default::default(),
-                    transport: Default::default(),
                 }],
             },
             RepoOp::WriteDraft {
@@ -1641,52 +1554,6 @@ mod tests {
         assert!(!listing.truncated);
         assert_eq!(list_dir(&root, true).unwrap().entries.len(), 3);
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn board_reads_over_the_wire_equal_the_in_process_projection() {
-        let repo = temp_dir("board");
-        let task = Task {
-            name: "Wire task".into(),
-            slug: "wire-task".into(),
-            branch: "wire-task".into(),
-            created: 1_700_000_000,
-            ..Default::default()
-        };
-        let dir = repo.join(".alinery/tasks/wire-task");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("task.md"), toml::to_string(&task).unwrap()).unwrap();
-
-        let direct = serde_json::to_value(crate::board::board_tasks(&repo, &repo.to_string_lossy()).unwrap()).unwrap();
-        let over_wire = run(RepoOp::ListBoardTasks { repo: repo.clone() }).unwrap();
-        assert_eq!(over_wire, direct);
-        assert_eq!(over_wire[0]["slug"], "wire-task", "the task fields are flattened into the row");
-        assert_eq!(run(RepoOp::ListTasks { repo: repo.clone() }).unwrap()[0]["name"], "Wire task");
-        assert_eq!(
-            run(RepoOp::GetTask {
-                repo: repo.clone(),
-                slug: "wire-task".into()
-            })
-            .unwrap()["slug"],
-            "wire-task"
-        );
-        assert_eq!(
-            run(RepoOp::GetTask {
-                repo: repo.clone(),
-                slug: "absent".into()
-            })
-            .unwrap(),
-            Value::Null
-        );
-        // A malformed task.md is a reported fault, not a missing task.
-        fs::write(dir.join("task.md"), "not = [valid").unwrap();
-        assert!(run(RepoOp::GetTask {
-            repo: repo.clone(),
-            slug: "wire-task".into()
-        })
-        .is_err());
-        assert!(run(RepoOp::ListBoardTasks { repo: repo.clone() }).is_err());
-        fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]

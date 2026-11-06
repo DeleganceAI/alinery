@@ -131,6 +131,30 @@ describe("task activity (resolve_task_activity_for_repo)", () => {
     row.adapter = "unsupported";
     expect((await run({ s1: { created: 1 } }, [row]))?.status).toBe("");
   });
+  test("a failed playbook is not an active session, even when the agent is busy", async () => {
+    const a = await run({ s1: { created: 1 } }, [live("t", "s1", "busy", "alive", "failed")]);
+    expect(a?.status).toBe("failed");
+    expect(a?.activeSession).toBeUndefined();
+  });
+  test("running needs a live process", async () => {
+    expect((await run({ s1: { created: 1 } }, [live("t", "s1", "busy")]))?.status).toBe("running");
+    const a = await run({ s1: { created: 1 } }, [live("t", "s1", "busy", "exited")]);
+    expect(a?.status).toBe("");
+    expect(a?.activeSession).toBeUndefined();
+  });
+  test("equal active sessions break ties on created, then descending id", async () => {
+    const sessions = { "s-a": { created: 10 }, "s-b": { created: 10 }, "s-newer": { created: 20 } };
+    const all = ["s-b", "s-newer", "s-a"].map((id) => live("t", id, "busy"));
+    expect((await run(sessions, all))?.activeSession?.id).toBe("s-newer");
+    expect((await run(sessions, all.filter((r) => r.id !== "s-newer")))?.activeSession?.id).toBe("s-b");
+  });
+  test("archived sessions contribute nothing", async () => {
+    const sessions = { a1: { created: 10, archived: true }, a2: { created: 10, archived: true, semantic: { phase_completed_at: 100 } }, a3: { created: 10, archived: true, exit_code: 2, ended_at: 5 } };
+    const rows = [live("t", "a1", "waiting_for_input"), live("t", "a2", "idle", "alive", "failed")];
+    const a = await run(sessions, rows);
+    expect(a?.status).toBe("");
+    expect(a?.activeSession).toBeUndefined();
+  });
   test("a parent shows its active subtask's activity when it has none of its own", async () => {
     const s = scratch('name = "T"\nslug = "t"\nbranch = "t"\nworktree = "/w"\ncreated = 5\nplaybook = "p"\nactive_subtask = "kid"\n');
     mkdirSync(join(s.alinery, "tasks", "kid"), { recursive: true });

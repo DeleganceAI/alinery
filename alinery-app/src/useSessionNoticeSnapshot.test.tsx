@@ -1,21 +1,21 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "./daemon/transport";
+import { fakeBoard } from "./test/boardHooks";
 import { mockIpc } from "./test/mockIpc";
 import { sessionDaemon } from "./test/sessionDaemon";
 import type { SessionListItem, SessionObservation } from "./types";
 import { useSessionNoticeSnapshot } from "./useSessionNoticeSnapshot";
 
 const mocks = vi.hoisted(() => ({
-  listSessionItems: vi.fn(),
   clearSessionNotifications: vi.fn(),
 }));
 
+vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
 let daemon = sessionDaemon();
 vi.mock("./ipc", () =>
   mockIpc({
-    listSessionItems: mocks.listSessionItems,
     clearSessionNotifications: mocks.clearSessionNotifications,
   }),
 );
@@ -54,17 +54,9 @@ const waiting = (correlation = "corr-1"): SessionObservation => ({
   checkpoint: {},
 });
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => {
-    resolve = accept;
-  });
-  return { promise, resolve };
-}
-
 beforeEach(() => {
   vi.useFakeTimers();
-  mocks.listSessionItems.mockReset().mockResolvedValue([]);
+  fakeBoard.reset();
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.clearSessionNotifications.mockReset().mockResolvedValue(undefined);
@@ -75,14 +67,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const REPOS = ["/repo-a", "/repo-b"];
+
 describe("useSessionNoticeSnapshot", () => {
   it("publishes the all-repository item list and follows each session's daemon stream", async () => {
     const row = item("wait", { repo_path: "/repo-b" });
-    mocks.listSessionItems.mockResolvedValue([row]);
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
+    fakeBoard.set({ sessions: [row] });
+    const { result } = renderHook(() => useSessionNoticeSnapshot(REPOS));
 
     await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(mocks.listSessionItems).toHaveBeenCalledWith(true, false);
     expect(result.current.loaded).toBe(true);
     expect(result.current.items).toEqual([row]);
     expect(result.current.rows).toEqual([]);
@@ -90,58 +83,37 @@ describe("useSessionNoticeSnapshot", () => {
     daemon.show("/repo-b", "task", "wait", waiting());
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait"]);
-    expect(mocks.listSessionItems).toHaveBeenCalledTimes(1); // no refetch: the stream delivered it
   });
 
-  it("schedules five seconds after completion and coalesces in-flight refreshes", async () => {
-    const first = deferred<SessionListItem[]>();
-    mocks.listSessionItems.mockReturnValueOnce(first.promise).mockResolvedValue([]);
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
-    await act(async () => vi.advanceTimersByTimeAsync(10_000));
-    expect(mocks.listSessionItems).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      result.current.requestRefresh();
-      result.current.requestRefresh();
-    });
-    first.resolve([]);
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(mocks.listSessionItems).toHaveBeenCalledTimes(2);
-    await act(async () => vi.advanceTimersByTimeAsync(4_999));
-    expect(mocks.listSessionItems).toHaveBeenCalledTimes(2);
-    await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(mocks.listSessionItems).toHaveBeenCalledTimes(3);
-  });
-
-  it("replaces stale state on item failure and keeps current metadata rows with no daemon status", async () => {
-    const old = item("old");
-    mocks.listSessionItems.mockResolvedValueOnce([old]);
-    daemon.show(old.repo_path, "task", "old", waiting());
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(result.current.rows).toHaveLength(1);
-
-    mocks.listSessionItems.mockRejectedValueOnce(new Error("items failed"));
-    await act(async () => result.current.requestRefresh());
+  it("follows the streams' rows as they change, with no refresh to ask for", async () => {
+    const { result } = renderHook(() => useSessionNoticeSnapshot(REPOS));
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.items).toEqual([]);
-    expect(result.current.observations).toEqual({});
-    expect(result.current.error).toEqual({ source: "load", detail: "items failed" });
 
     const completion = item("completion", { semantic: { phase_completed_at: 20 } });
-    mocks.listSessionItems.mockResolvedValueOnce([completion]);
-    await act(async () => result.current.requestRefresh());
-    await act(async () => vi.advanceTimersByTimeAsync(0));
+    act(() => fakeBoard.set({ sessions: [completion] }));
     expect(result.current.observations).toEqual({});
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["completion"]);
-    expect(result.current.error).toBeNull();
+
+    act(() => fakeBoard.set({ sessions: [] }));
+    expect(result.current.rows).toEqual([]);
+  });
+
+  it("shows only the repositories it is given, and none while disabled", async () => {
+    fakeBoard.set({ sessions: [item("a", { repo_path: "/repo-a" }), item("b", { repo_path: "/repo-b" })] });
+    const { result, rerender } = renderHook(({ repos, enabled }) => useSessionNoticeSnapshot(repos, enabled), { initialProps: { repos: ["/repo-a"], enabled: true } });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.items.map((row) => row.id)).toEqual(["a"]);
+    rerender({ repos: REPOS, enabled: false });
+    expect(result.current.items).toEqual([]);
+    expect(result.current.loaded).toBe(true);
   });
 
   it("applies persisted exact suppression and reveals a changed occurrence", async () => {
     const row = item("wait", { notification_suppression: { notice: "waiting_for_input", occurrence: "corr-1" } });
-    mocks.listSessionItems.mockResolvedValue([row]);
+    fakeBoard.set({ sessions: [row] });
     daemon.show(row.repo_path, row.task_slug, row.id, waiting("corr-1"));
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
+    const { result } = renderHook(() => useSessionNoticeSnapshot(REPOS));
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(result.current.rows).toEqual([]);
     daemon.show(row.repo_path, row.task_slug, row.id, waiting("corr-2"));
@@ -149,21 +121,22 @@ describe("useSessionNoticeSnapshot", () => {
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait"]);
   });
 
-  it("clears every global row and sends fingerprints only for Clear all", async () => {
+  it("clears every global row and sends fingerprints only for Clear all; the stream carries the result back", async () => {
     const wait = item("wait", { repo_path: "/repo-a" });
     const completion = item("completion", { repo_path: "/repo-b", semantic: { phase_completed_at: 20 } });
-    mocks.listSessionItems.mockResolvedValue([wait, completion]);
+    fakeBoard.set({ sessions: [wait, completion] });
     daemon.show(wait.repo_path, wait.task_slug, wait.id, waiting());
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
+    const { result } = renderHook(() => useSessionNoticeSnapshot(REPOS));
     await act(async () => vi.advanceTimersByTimeAsync(0));
-    const pendingRefresh = deferred<SessionListItem[]>();
-    mocks.listSessionItems.mockReturnValue(pendingRefresh.promise);
 
     await act(async () => result.current.clear());
     expect(mocks.clearSessionNotifications).toHaveBeenLastCalledWith([
       { repo_path: "/repo-a", task_slug: "task", id: "wait" },
       { repo_path: "/repo-b", task_slug: "task", id: "completion" },
     ]);
+    // The daemon rewrites the sessions; until its stream says so the rows stand.
+    expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait", "completion"]);
+    act(() => fakeBoard.set({ sessions: [wait, { ...completion, notification_read_at: 30 }] }));
     expect(result.current.rows.map((notice) => notice.item.id)).toEqual(["wait"]);
 
     await act(async () => result.current.clearAll());
@@ -175,13 +148,21 @@ describe("useSessionNoticeSnapshot", () => {
         notification_suppression: { notice: "waiting_for_input", occurrence: "corr-1" },
       },
     ]);
+    act(() =>
+      fakeBoard.set({
+        sessions: [
+          { ...wait, notification_suppression: { notice: "waiting_for_input", occurrence: "corr-1" } },
+          { ...completion, notification_read_at: 30 },
+        ],
+      }),
+    );
     expect(result.current.rows).toEqual([]);
   });
 
   it("retains current rows when persistence fails", async () => {
     const row = item("completion", { semantic: { phase_completed_at: 20 } });
-    mocks.listSessionItems.mockResolvedValue([row]);
-    const { result } = renderHook(() => useSessionNoticeSnapshot());
+    fakeBoard.set({ sessions: [row] });
+    const { result } = renderHook(() => useSessionNoticeSnapshot(REPOS));
     await act(async () => vi.advanceTimersByTimeAsync(0));
     mocks.clearSessionNotifications.mockRejectedValueOnce(new Error("clear failed"));
     await act(async () => result.current.clearAll());

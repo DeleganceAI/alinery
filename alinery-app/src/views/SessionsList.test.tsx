@@ -2,14 +2,19 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { EMPTY_STATE_ART } from "../emptyStateArt";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import { sessionDaemon } from "../test/sessionDaemon";
 import type { BoardNav, BoardTask, SessionListItem, SessionObservation } from "../types";
 import { SessionsList } from "./SessionsList";
 
-let boardTasks: BoardTask[] = [];
 let sessionItems: SessionListItem[] = [];
+const setSessions = (rows: SessionListItem[]) => {
+  sessionItems = rows;
+  fakeBoard.set({ sessions: rows });
+};
+const KNOWN = ["/r", "/other", "/a", "/b", "/foreign"];
 let currentNav: BoardNav | null = null;
 let daemon = sessionDaemon();
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -21,28 +26,24 @@ function showObservations(map: Record<string, SessionObservation>) {
   }
 }
 const mocks = vi.hoisted(() => ({
-  listSessionItems: vi.fn(),
   renameSession: vi.fn(),
   notifySessionAttention: vi.fn(),
 }));
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
-    listSessionItems: mocks.listSessionItems,
     renameSession: mocks.renameSession,
     notifySessionAttention: mocks.notifySessionAttention,
-    listBoardTasks: async () => boardTasks,
   }),
 );
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null), setItem: vi.fn() });
   Element.prototype.scrollIntoView = vi.fn();
-  sessionItems = [];
+  setSessions([]);
   currentNav = null;
-  mocks.listSessionItems
-    .mockReset()
-    .mockImplementation(async (allRepos, _archived, repoPath) => (allRepos ? sessionItems : sessionItems.filter((item) => item.repo_path === repoPath)));
+  fakeBoard.reset();
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.renameSession.mockReset().mockResolvedValue({ name: "Committed name", source: "user" });
@@ -52,8 +53,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
-  boardTasks = [];
-  sessionItems = [];
+  fakeBoard.set({ tasks: [] });
+  setSessions([]);
   vi.clearAllMocks();
   currentNav = null;
   vi.unstubAllGlobals();
@@ -134,7 +135,9 @@ const busyObservation = {
 
 describe("SessionsList empty", () => {
   it("renders a catalog plate on the major empty surface", async () => {
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await screen.findByText("No sessions yet.");
     const img = container.querySelector("img.empty-state-art");
     expect(img).not.toBeNull();
@@ -143,16 +146,16 @@ describe("SessionsList empty", () => {
   });
 
   it("offers New task when the only tasks are archived", async () => {
-    boardTasks = [task({ name: "Old spike", slug: "old-spike", archived: true })];
-    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    fakeBoard.set({ tasks: [task({ name: "Old spike", slug: "old-spike", archived: true })] });
+    render(<SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
 
     expect(await screen.findByRole("button", { name: "New task" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "New session" })).toBeNull();
   });
 
   it("offers New session when a live task exists", async () => {
-    boardTasks = [task({ name: "Live", slug: "live" })];
-    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    fakeBoard.set({ tasks: [task({ name: "Live", slug: "live" })] });
+    render(<SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
 
     expect(await screen.findByRole("button", { name: "New session" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "New task" })).toBeNull();
@@ -162,21 +165,14 @@ describe("SessionsList empty", () => {
 const renderedNames = (container: HTMLElement) => [...container.querySelectorAll(".list > .row .rtt")].map((node) => node.textContent);
 
 describe("SessionsList repository scope", () => {
-  it("keeps B visible when a delayed A response arrives after switching repositories", async () => {
-    let resolveA!: (rows: SessionListItem[]) => void;
-    const pendingA = new Promise<SessionListItem[]>((resolve) => {
-      resolveA = resolve;
-    });
-    mocks.listSessionItems.mockImplementation((_allRepos, _archived, repoPath) =>
-      repoPath === "/b" ? Promise.resolve([session({ repo_path: "/b", task_name: "Repository B" })]) : pendingA,
-    );
+  it("shows only the active repository's sessions after switching repositories", async () => {
+    setSessions([session({ id: "a1", repo_path: "/a", task_name: "Repository A" }), session({ id: "b1", repo_path: "/b", task_name: "Repository B" })]);
     const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
-    const { rerender } = render(<SessionsList {...props} activeRepo="/a" />);
-    rerender(<SessionsList {...props} activeRepo="/b" />);
+    const { rerender } = render(<SessionsList knownRepos={KNOWN} {...props} activeRepo="/a" />);
+    await screen.findByText("Repository A");
+    rerender(<SessionsList knownRepos={KNOWN} {...props} activeRepo="/b" />);
     await screen.findByText("Repository B");
-    await act(async () => resolveA([session({ repo_path: "/a", task_name: "Repository A" })]));
     expect(screen.queryByText("Repository A")).toBeNull();
-    expect(screen.getByText("Repository B")).toBeDefined();
   });
 });
 
@@ -184,9 +180,11 @@ describe("SessionsList without identifiers", () => {
   it("opens the correct same-label session without exposing IDs or losing resumed state", async () => {
     const original = session({ id: "opaque-original", created: 10 });
     const resumed = session({ id: "opaque-resumed", created: 20, resume_of: original.id });
-    sessionItems = [original, resumed];
+    setSessions([original, resumed]);
     const onOpen = vi.fn();
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await screen.findByText("Resumed");
     const list = container.querySelector(".list") as HTMLElement;
     for (const item of sessionItems) {
@@ -207,7 +205,7 @@ describe("SessionsList without identifiers", () => {
 
 describe("SessionsList attention order", () => {
   it("renders an older running session above a newer settled row without changing backend order", async () => {
-    sessionItems = [
+    setSessions([
       session({
         id: "newer-tdd",
         task_name: "Newer task",
@@ -218,7 +216,7 @@ describe("SessionsList attention order", () => {
         notification_read_at: 20,
       }),
       session({ id: "older-design", task_name: "Older task", created: 10 }),
-    ];
+    ]);
     showObservations({
       "/r:a-task:older-design": busyObservation,
       "/r:a-task:newer-tdd": {
@@ -228,7 +226,9 @@ describe("SessionsList attention order", () => {
       },
     });
     const originalIds = sessionItems.map((row) => row.id);
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
 
     await waitFor(() => {
       expect(renderedNames(container)).toEqual(["...", "Newer task"]);
@@ -237,11 +237,11 @@ describe("SessionsList attention order", () => {
   });
 
   it("keeps only an unacknowledged exit in the failure attention tier", async () => {
-    sessionItems = [
+    setSessions([
       session({ id: "acknowledged", task_name: "Acknowledged task", created: 10, ended_at: 90, exit_code: 143, exit_notification_read_at: 90 }),
       session({ id: "inactive", task_name: "Inactive task", created: 20 }),
       session({ id: "unacknowledged", task_name: "Unacknowledged task", created: 5, ended_at: 100, exit_code: 143 }),
-    ];
+    ]);
     const exited = (code: number): SessionObservation => ({
       lifecycle: { state: "exited", code },
       state: null,
@@ -252,7 +252,9 @@ describe("SessionsList attention order", () => {
       "/r:a-task:unacknowledged": exited(143),
     });
 
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
 
     await waitFor(() => {
       expect(renderedNames(container)).toEqual(["Unacknowledged task", "Inactive task", "Acknowledged task"]);
@@ -266,9 +268,10 @@ describe("SessionsList attention order", () => {
 
   it("keeps selection on the same session through a live reorder and navigates rendered order", async () => {
     vi.useFakeTimers();
-    sessionItems = [session({ id: "selected-newer", task_name: "Selected task", created: 20 }), session({ id: "active-older", task_name: "Active task", created: 10 })];
+    setSessions([session({ id: "selected-newer", task_name: "Selected task", created: 20 }), session({ id: "active-older", task_name: "Active task", created: 10 })]);
     const { container } = render(
       <SessionsList
+        knownRepos={KNOWN}
         allRepos={false}
         activeRepo="/r"
         onOpen={() => {}}
@@ -301,14 +304,17 @@ describe("SessionsList attention order", () => {
 
 describe("SessionsList time sorting and presentation", () => {
   it("sorts both time fields in both directions, includes archived rows, and restores Priority", async () => {
-    sessionItems = [
+    setSessions([
       session({ id: "missing", task_name: "Untimed task", created: 0, started_at: null, status_changed_at: null }),
       session({ id: "newer", task_name: "Newer task", created: 20, started_at: 200, status_changed_at: 400 }),
       session({ id: "older-busy", task_name: "Busy task", created: 10, started_at: 100, status_changed_at: 300 }),
       session({ id: "archived", task_name: "Archived task", created: 40, archived: true, started_at: 300, status_changed_at: 500 }),
-    ];
+    ]);
     showObservations({ "/r:a-task:older-busy": busyObservation });
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Include archived", pressed: false }));
     await waitFor(() => expect(renderedNames(container)).toEqual(["...", "Newer task", "Untimed task", "Archived task"]));
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("true");
 
@@ -332,10 +338,10 @@ describe("SessionsList time sorting and presentation", () => {
 
   it("accepts StaleSource failure-class transitions without leaving Updated sort", async () => {
     vi.useFakeTimers();
-    sessionItems = [
+    setSessions([
       session({ id: "target", name: "Target session", task_name: "Target task", created: 10, status_changed_at: 100 }),
       session({ id: "other", task_name: "Other task", created: 20, status_changed_at: 200 }),
-    ];
+    ]);
     const targetKey = "/r:a-task:target";
     const failedObservation = (reason: string): SessionObservation => ({
       lifecycle: { state: "live" },
@@ -351,9 +357,11 @@ describe("SessionsList time sorting and presentation", () => {
     let targetObservation = failedObservation("StaleSource");
     showObservations({ [targetKey]: targetObservation });
 
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Other task", "Target session"]));
-    expect(screen.getByText("Stale")).toBeDefined();
+    await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
 
     targetObservation = failedObservation("boom");
     showObservations({ [targetKey]: targetObservation });
@@ -381,12 +389,13 @@ describe("SessionsList time sorting and presentation", () => {
 
   it("keeps repository-qualified selection through an Updated metadata reorder and follows rendered keyboard order", async () => {
     vi.useFakeTimers();
-    sessionItems = [
+    setSessions([
       session({ id: "selected", task_name: "Selected task", created: 20, status_changed_at: 100 }),
       session({ id: "other", task_name: "Other task", created: 10, status_changed_at: 200 }),
-    ];
+    ]);
     const { container } = render(
       <SessionsList
+        knownRepos={KNOWN}
         allRepos={false}
         activeRepo="/r"
         onOpen={() => {}}
@@ -402,7 +411,7 @@ describe("SessionsList time sorting and presentation", () => {
     expect(renderedNames(container)).toEqual(["Other task", "Selected task"]);
     expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Selected task");
 
-    sessionItems = [{ ...sessionItems[0], status_changed_at: 300 }, sessionItems[1]];
+    setSessions([{ ...sessionItems[0], status_changed_at: 300 }, sessionItems[1]]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -419,11 +428,13 @@ describe("SessionsList time sorting and presentation", () => {
     vi.useFakeTimers();
     const now = 1_700_000_120;
     vi.setSystemTime(now * 1000);
-    sessionItems = [
+    setSessions([
       session({ id: "timed", task_name: "Timed task", created: 2, started_at: now - 60, status_changed_at: now - 3600 }),
       session({ id: "also-timed", task_name: "Other task", created: 1, started_at: now - 120, status_changed_at: now - 7200 }),
-    ];
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    ]);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await vi.waitFor(() => expect(renderedNames(container)).toEqual(["Timed task", "Other task"]));
     const row = screen.getByText("Timed task").closest(".row") as HTMLElement;
     const times = [...row.querySelectorAll(".session-row-times time")];
@@ -440,12 +451,14 @@ describe("SessionsList time sorting and presentation", () => {
 
 describe("session work names", () => {
   it("shows a waiting ellipsis for a live unnamed OMP session and keeps the task name", async () => {
-    sessionItems = [session({ id: "waiting", task_name: "Waiting task" }), session({ id: "terminal", harness: "no-harness", task_name: "Terminal task" })];
+    setSessions([session({ id: "waiting", task_name: "Waiting task" }), session({ id: "terminal", harness: "no-harness", task_name: "Terminal task" })]);
     showObservations({
       "/r:a-task:waiting": busyObservation,
       "/r:a-task:terminal": busyObservation,
     });
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
     const waiting = screen.getByText("Waiting task").closest(".row") as HTMLElement;
     expect(waiting.querySelector(".rtt")?.textContent).toBe("...");
@@ -455,38 +468,30 @@ describe("session work names", () => {
     expect(screen.getByRole("textbox", { name: "Session name" })).toBeDefined();
   });
 
-  it("rename_keeps_repo_qualified_selection_and_ignores_stale_item_reads", async () => {
+  it("rename_keeps_repo_qualified_selection_through_stream_updates", async () => {
     vi.useFakeTimers();
-    const original = session({ name: "Original name", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" });
+    const original = session({ created: 20, name: "Original name", subtask_manager: true, subtask_slug: "child", subtask_name: "Current child" });
     const foreign = session({ repo_path: "/other", name: "Foreign name" });
-    sessionItems = [original, foreign];
+    setSessions([original, foreign]);
     const onOpen = vi.fn();
-    const { container } = render(<SessionsList allRepos activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await act(async () => {});
     expect(screen.getByText("Original name")).toBeDefined();
     expect(screen.getByText("Current child")).toBeDefined();
-    const oldRead = deferred<SessionListItem[]>();
-    mocks.listSessionItems.mockReturnValueOnce(oldRead.promise);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
+    expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Original name");
     const row = screen.getByText("Original name").closest(".row") as HTMLElement;
     fireEvent.click(within(row).getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed name" } });
-    sessionItems = [{ ...original, name: "Committed name", name_source: "user" }, foreign];
+    setSessions([{ ...original, name: "Committed name", name_source: "user" }, foreign]);
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
     await act(async () => {});
     expect(mocks.renameSession).toHaveBeenCalledWith({ repoPath: "/r", taskSlug: "a-task", sessionId: "s1", name: "Committed name" });
     expect(onOpen).not.toHaveBeenCalled();
-    await act(async () => {
-      oldRead.resolve([original, foreign]);
-    });
     expect(container.querySelector(".row.sel .rtt")?.textContent).toBe("Committed name");
     expect(screen.getByText("Foreign name")).toBeDefined();
-    sessionItems = [{ ...original, name: "External name" }, foreign];
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
+    act(() => setSessions([{ ...original, name: "External name" }, foreign]));
     expect(screen.getByText("External name")).toBeDefined();
     fireEvent.click(screen.getByText("Foreign name"));
     expect(onOpen).toHaveBeenLastCalledWith(foreign);
@@ -494,17 +499,18 @@ describe("session work names", () => {
 
   it("keeps an archived session editable and retains its draft after a failed save", async () => {
     const archived = session({ name: "Retained work", archived: true });
-    sessionItems = [archived];
+    setSessions([archived]);
     mocks.renameSession.mockRejectedValueOnce(new Error("Naming file is busy"));
     const onOpen = vi.fn();
-    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    render(<SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={onOpen} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Include archived", pressed: false }));
     fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed name" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Naming file is busy");
     expect(screen.getByText("Retained work")).toBeDefined();
     expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Committed name");
-    sessionItems = [{ ...archived, name: "Committed name" }];
+    setSessions([{ ...archived, name: "Committed name" }]);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("Committed name");
     expect(onOpen).not.toHaveBeenCalled();
@@ -513,15 +519,15 @@ describe("session work names", () => {
   it("ignores previous repo save failures without closing the current editor", async () => {
     const original = session({ name: "Repo A work" });
     const other = session({ repo_path: "/other", name: "Repo B work" });
-    sessionItems = [original, other];
+    setSessions([original, other]);
     const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
-    const { rerender } = render(<SessionsList {...props} activeRepo="/r" />);
+    const { rerender } = render(<SessionsList knownRepos={KNOWN} {...props} activeRepo="/r" />);
     fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
     const pendingSave = deferred<never>();
     mocks.renameSession.mockReturnValueOnce(pendingSave.promise);
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Late A work" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Session name" }), { key: "Enter" });
-    rerender(<SessionsList {...props} activeRepo="/other" />);
+    rerender(<SessionsList knownRepos={KNOWN} {...props} activeRepo="/other" />);
     await screen.findByText("Repo B work");
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "B draft" } });
@@ -533,31 +539,13 @@ describe("session work names", () => {
     expect(screen.queryByText("Repo A work")).toBeNull();
   });
 
-  it("does not apply an old repo read error or finalizer to a pending new repo read", async () => {
-    const oldRead = deferred<SessionListItem[]>();
-    const newRead = deferred<SessionListItem[]>();
-    mocks.listSessionItems.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
-    const props = { allRepos: false, onOpen: vi.fn(), registerNav: vi.fn(), onCreateSession: vi.fn(), onCreateTask: vi.fn() };
-    const { rerender } = render(<SessionsList {...props} activeRepo="/r" />);
-    rerender(<SessionsList {...props} activeRepo="/other" />);
-    await act(async () => {
-      oldRead.reject(new Error("Old repo offline"));
-    });
-    expect(screen.queryByText("Could not load sessions.")).toBeNull();
-    expect(screen.queryByText("No sessions yet.")).toBeNull();
-    await act(async () => {
-      newRead.resolve([session({ repo_path: "/other", name: "Current repo work" })]);
-    });
-    expect(screen.getByText("Current repo work")).toBeDefined();
-  });
-
   it("keeps another row draft and focus when a previous row save commits", async () => {
     const first = session({ id: "first", name: "First work" });
     const second = session({ id: "second", name: "Second work" });
-    sessionItems = [first, second];
+    setSessions([first, second]);
     const pending = deferred<{ name: string; source: "user" }>();
     mocks.renameSession.mockReturnValueOnce(pending.promise);
-    render(<SessionsList allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />);
+    render(<SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />);
     const firstRow = (await screen.findByText("First work")).closest(".row") as HTMLElement;
     const secondRow = screen.getByText("Second work").closest(".row") as HTMLElement;
     fireEvent.click(within(firstRow).getByRole("button", { name: "Rename session" }));
@@ -565,7 +553,7 @@ describe("session work names", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     fireEvent.click(within(secondRow).getByRole("button", { name: "Rename session" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Unsubmitted second draft" } });
-    sessionItems = [{ ...first, name: "Committed first" }, second];
+    setSessions([{ ...first, name: "Committed first" }, second]);
     await act(async () => {
       pending.resolve({ name: "Committed first", source: "user" });
     });
@@ -583,9 +571,11 @@ describe("SessionsList filtering", () => {
     { filter: "search", reason: "waiting_for_approval" },
   ] as const)("delivers attention exactly once when $filter hides one side of a transition", async ({ filter, reason }) => {
     vi.useFakeTimers();
-    sessionItems = [session({ name: "Agent work" })];
+    setSessions([session({ name: "Agent work" })]);
     showObservations({ "/r:a-task:s1": busyObservation });
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={vi.fn()} registerNav={vi.fn()} onCreateSession={vi.fn()} onCreateTask={vi.fn()} />,
+    );
     await act(async () => {});
     expect(renderedNames(container)).toEqual(["Agent work"]);
     expect(mocks.notifySessionAttention).not.toHaveBeenCalled();
@@ -614,12 +604,14 @@ describe("SessionsList filtering", () => {
   });
 
   it("searches names, task context, step, and model, and keeps no matches distinct from no sessions", async () => {
-    sessionItems = [
+    setSessions([
       session({ id: "named", name: "Refactor parser", task_name: "Parser task", created: 30 }),
       session({ id: "review", task_name: "Review task", created: 20, phase: "prepare-review", step_title: "Prepare review" }),
       session({ id: "model", task_name: "Model task", created: 10, phase: "build", step_title: "Build", model: "anthropic/claude-sonnet" }),
-    ];
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    ]);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await waitFor(() => expect(renderedNames(container)).toEqual(["Refactor parser", "Review task", "Model task"]));
     const search = screen.getByLabelText("Search sessions");
 
@@ -642,16 +634,18 @@ describe("SessionsList filtering", () => {
   });
 
   it("groups status from observations and never files an unobserved session as Not started", async () => {
-    sessionItems = [
+    setSessions([
       session({ id: "unobserved", task_name: "Unobserved task", created: 30, phase: "a" }),
       session({ id: "never", task_name: "Never task", created: 20, phase: "b" }),
       session({ id: "busy", name: "Busy work", created: 10, phase: "c" }),
-    ];
+    ]);
     showObservations({
       "/r:a-task:never": { lifecycle: { state: "never_started" }, state: null, checkpoint: {} },
       "/r:a-task:busy": busyObservation,
     });
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     const status = screen.getByLabelText("Status");
 
     fireEvent.change(status, { target: { value: "not_started" } });
@@ -664,9 +658,10 @@ describe("SessionsList filtering", () => {
   });
 
   it("includes archived sessions alongside active work and clears an archived-only filter when inclusion is disabled", async () => {
-    sessionItems = [session({ id: "active", name: "Current work" }), session({ id: "archived", name: "Archived work", archived: true })];
-    mocks.listSessionItems.mockImplementation(async (_allRepos, includeArchived) => sessionItems.filter((item) => includeArchived || !item.archived));
-    const { container } = render(<SessionsList allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />);
+    setSessions([session({ id: "active", name: "Current work" }), session({ id: "archived", name: "Archived work", archived: true })]);
+    const { container } = render(
+      <SessionsList knownRepos={KNOWN} allRepos={false} activeRepo="/r" onOpen={() => {}} registerNav={() => {}} onCreateSession={() => {}} onCreateTask={() => {}} />,
+    );
     await waitFor(() => expect(renderedNames(container)).toEqual(["Current work"]));
 
     fireEvent.click(screen.getByRole("button", { name: "Include archived", pressed: false }));
@@ -686,10 +681,11 @@ describe("SessionsList filtering", () => {
     const alpha = session({ id: "alpha", name: "Alpha work", created: 30 });
     const beta = session({ id: "beta", name: "Beta work", created: 20 });
     const gamma = session({ id: "gamma", name: "Gamma notes", created: 10 });
-    sessionItems = [alpha, beta, gamma];
+    setSessions([alpha, beta, gamma]);
     const onOpen = vi.fn();
     const { container } = render(
       <SessionsList
+        knownRepos={KNOWN}
         allRepos={false}
         activeRepo="/r"
         onOpen={onOpen}
@@ -711,7 +707,7 @@ describe("SessionsList filtering", () => {
     expect(renderedNames(container)).toEqual(["Alpha work", "Beta work"]);
     expect(selectedName()).toBe("Beta work");
 
-    sessionItems = [alpha, { ...beta, created: 40 }, gamma];
+    setSessions([alpha, { ...beta, created: 40 }, gamma]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });

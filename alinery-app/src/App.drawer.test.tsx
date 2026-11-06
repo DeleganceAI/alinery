@@ -44,14 +44,12 @@ const mocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(async () => () => {}),
 }));
 
+vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./ipc", () =>
   mockIpc({
     getVersion: async () => "0.19.1",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
-    listBoardTasks: async () => [],
-    listTasks: async () => [],
-    listSessionItems: async () => [],
     ensureDrawerTerminal: mocks.ensureDrawerTerminal,
     killSession: mocks.killSession,
     killSessionForRepo: mocks.killSessionForRepo,

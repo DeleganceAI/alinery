@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
-import type { BoardNav, BoardTask, KanbanColumn, PullRequestSnapshot, TaskActivityMap, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, KanbanColumn, PullRequestSnapshot, TaskActivitySummary } from "../types";
 import { Kanban } from "./Kanban";
 
 // Template for a component test in this codebase. Three things make it work:
@@ -64,24 +65,25 @@ const tasks = [
 // Reassignable so a test can put the board in a different world (no tasks at all,
 // only archived ones) without a second vi.mock. Reset in afterEach.
 let boardTasks = tasks;
-let taskActivity: TaskActivityMap = {};
+const setBoard = (rows: BoardTask[]) => {
+  boardTasks = rows;
+  fakeBoard.set({ tasks: rows });
+};
 
 const ipcMocks = vi.hoisted(() => ({
   archiveTaskForRepo: vi.fn(),
-  listBoardTasks: vi.fn(),
   listKanbanColumns: vi.fn(),
-  listTaskActivity: vi.fn(),
   listTaskPullRequests: vi.fn(),
   openUrl: vi.fn(),
   removeWorktreeForRepo: vi.fn(),
 }));
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () => mockIpc(ipcMocks));
 
 beforeEach(() => {
   ipcMocks.listKanbanColumns.mockImplementation(async () => columns);
-  ipcMocks.listBoardTasks.mockImplementation(async () => boardTasks);
-  ipcMocks.listTaskActivity.mockImplementation(async () => taskActivity);
+  setBoard(tasks);
   ipcMocks.listTaskPullRequests.mockResolvedValue({});
   ipcMocks.openUrl.mockResolvedValue(undefined);
 });
@@ -89,8 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
-  taskActivity = {};
-  boardTasks = tasks;
+  fakeBoard.reset();
   // mockIpc caches one spy per command for the whole module, so call history would
   // otherwise accumulate across tests and `not.toHaveBeenCalled()` would start depending
   // on the order they run in.
@@ -106,7 +107,7 @@ function cardsUnder(title: string): string[] {
 describe("Kanban board placement", () => {
   it("files each task under the column its backend column key names", async () => {
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Designing")).toBeDefined());
     expect(cardsUnder("Research & Design")).toEqual(["Designing"]);
@@ -115,7 +116,7 @@ describe("Kanban board placement", () => {
 
   it("hides archived tasks until asked", async () => {
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Reviewing")).toBeDefined());
     expect(cardsUnder("In Review")).not.toContain("Archived one");
@@ -128,9 +129,9 @@ describe("Kanban board placement", () => {
   });
 
   it("gates the board when no task exists", async () => {
-    boardTasks = [];
+    setBoard([]);
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("The board starts with a task")).toBeDefined());
   });
@@ -139,9 +140,9 @@ describe("Kanban board placement", () => {
   // one. Deriving it from the rendered cards would lock a repo out of its own board
   // the moment its only tasks were archived.
   it("does not gate a board whose only tasks are archived", async () => {
-    boardTasks = [task({ name: "Archived only", slug: "archived-only", archived: true, current_column_key: "in-review" })];
+    setBoard([task({ name: "Archived only", slug: "archived-only", archived: true, current_column_key: "in-review" })]);
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("In Review")).toBeDefined());
     expect(screen.queryByText("The board starts with a task")).toBeNull();
@@ -152,7 +153,7 @@ describe("Kanban board placement", () => {
   // board with no error anywhere.
   it("invents a column for a task whose column the playbook no longer defines", async () => {
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Custom Phase")).toBeDefined());
     expect(cardsUnder("Custom Phase")).toEqual(["Bespoke"]);
@@ -160,24 +161,25 @@ describe("Kanban board placement", () => {
 
   it("renders an empty column rather than omitting it", async () => {
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     await waitFor(() => expect(screen.getByText("Implementation")).toBeDefined());
     expect(cardsUnder("Implementation")).toEqual([]);
   });
 
   it("hides columns emptied by child and archive visibility without breaking column navigation", async () => {
-    boardTasks = [
+    setBoard([
       task({ name: "Parent", slug: "parent", current_column_key: "todo-draft" }),
       task({ name: "Child", slug: "child", parent_task: "parent", current_column_key: "research-design" }),
       task({ name: "Archived", slug: "archived", archived: true, current_column_key: "in-review" }),
       task({ name: "Implementing", slug: "implementing", current_column_key: "implementation" }),
-    ];
+    ]);
     const onOpen = vi.fn();
     let nav: BoardNav | null = null;
     render(
       <Kanban
         allRepos={false}
+        repos={["/r", "/other"]}
         onOpen={onOpen}
         onDuplicate={() => {}}
         onOpenActiveSession={() => {}}
@@ -219,7 +221,7 @@ describe("Kanban board placement", () => {
 describe("sub-task cards", () => {
   it("hides children by default, keeps the parent indicator, and reveals children in their backend column", async () => {
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
     await waitFor(() => expect(screen.getByText("Parent")).toBeDefined());
 
     expect(screen.queryByText("Child")).toBeNull();
@@ -235,18 +237,13 @@ describe("sub-task cards", () => {
   });
 
   it("shows the parent activity while its child card is hidden", async () => {
-    taskActivity = {
-      "/r:parent": {
-        status: "running",
-        active_session: null,
-      },
-    };
+    fakeBoard.set({ activity: { "/r:parent": { status: "running", active_session: null } } });
     vi.stubGlobal("localStorage", {
       getItem: vi.fn(() => null),
       setItem: vi.fn(),
     });
     const { Kanban } = await import("./Kanban");
-    render(<Kanban allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/r", "/other"]} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     const parentCard = (await screen.findByText("Parent")).closest(".card");
     await waitFor(() => expect(parentCard?.querySelector('[title="Highest-priority session is running"]')).not.toBeNull());
@@ -260,6 +257,7 @@ describe("sub-task cards", () => {
     render(
       <Kanban
         allRepos={false}
+        repos={["/r", "/other"]}
         onOpen={onOpen}
         onDuplicate={() => {}}
         onOpenActiveSession={() => {}}
@@ -301,11 +299,21 @@ describe("Kanban task attention", () => {
       status: "waiting_for_input",
       active_session: activeSession,
     };
-    boardTasks = [row];
-    taskActivity = { "/r:mixed": summary };
+    setBoard([row]);
+    fakeBoard.set({ activity: { "/r:mixed": summary } });
     const onOpen = vi.fn();
     const onOpenActiveSession = vi.fn();
-    render(<Kanban allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={onOpenActiveSession} registerNav={() => {}} onCreate={() => {}} />);
+    render(
+      <Kanban
+        allRepos={false}
+        repos={["/r", "/other"]}
+        onOpen={onOpen}
+        onDuplicate={() => {}}
+        onOpenActiveSession={onOpenActiveSession}
+        registerNav={() => {}}
+        onCreate={() => {}}
+      />,
+    );
 
     const activeButton = await screen.findByRole("button", { name: "Design" });
     expect(screen.queryByLabelText("Running")).toBeNull();
@@ -328,7 +336,7 @@ describe("Kanban task attention", () => {
 describe("Kanban pull requests", () => {
   it("keeps cards usable while fetching and opens the discovered PR without opening its card", async () => {
     const row = task({ name: "Awaiting review", slug: "pr-review", repo_path: "/pr-board" });
-    boardTasks = [row];
+    setBoard([row]);
     let resolve!: (value: Record<string, PullRequestSnapshot>) => void;
     ipcMocks.listTaskPullRequests.mockImplementation(
       () =>
@@ -337,7 +345,7 @@ describe("Kanban pull requests", () => {
         }),
     );
     const onOpen = vi.fn();
-    render(<Kanban allRepos={false} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
+    render(<Kanban allRepos={false} repos={["/pr-board"]} onOpen={onOpen} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />);
 
     fireEvent.click(await screen.findByText("Awaiting review"));
     expect(onOpen).toHaveBeenCalledWith(row);
@@ -364,6 +372,7 @@ describe("archiving is gated by a confirmation", () => {
     render(
       <Kanban
         allRepos={false}
+        repos={["/r", "/other"]}
         onOpen={() => {}}
         onDuplicate={() => {}}
         onOpenActiveSession={onOpenActiveSession}
@@ -448,6 +457,7 @@ describe("duplicate selection", () => {
     render(
       <Kanban
         allRepos
+        repos={["/r", "/other"]}
         onOpen={() => {}}
         onDuplicate={onDuplicate}
         onOpenActiveSession={() => {}}

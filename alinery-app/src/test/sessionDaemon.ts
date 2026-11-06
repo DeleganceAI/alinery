@@ -4,10 +4,11 @@
 import { create, fromJson, type JsonValue, type MessageInitShape } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import type { ServiceImpl, Transport } from "@connectrpc/connect";
-import { type Entity, EntitySchema, SessionSchema } from "alinery-proto/alinery/v1/entities_pb";
+import { type Entity, EntitySchema, SessionSchema, TaskSchema } from "alinery-proto/alinery/v1/entities_pb";
 import { type SessionService, type TranscriptPartSchema, WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
 import type { VinculumMessage, VinculumTranscript } from "../chatTranscript";
+import { taskEntityKey } from "../sync/board";
 import { sessionEntityKey } from "../sync/sessionObservation";
 import type { SessionObservation } from "../types";
 import { daemonHarness, put, scriptedSync, snapshot, untilAborted } from "./daemonHarness";
@@ -44,6 +45,12 @@ export function sessionEntity(taskSlug: string, id: string, o: SessionObservatio
     wait,
   });
   return create(EntitySchema, { key: sessionEntityKey(taskSlug, id), value: { case: "session", value: session } });
+}
+
+/** The Task entity a repo daemon holds for `slug`, with the board fields it derives. */
+export function taskEntity(slug: string, over: MessageInitShape<typeof TaskSchema> = {}): Entity {
+  const task = create(TaskSchema, { slug, name: slug, branch: slug, playbook: "superdevelop", created: 1n, ...over });
+  return create(EntitySchema, { key: taskEntityKey(slug), value: { case: "task", value: task } });
 }
 
 /** The WatchTranscript frame for a transcript the test states in the pane's own shape: every item, replacing the client's list. */
@@ -95,6 +102,7 @@ export function sessionDaemon() {
       return k === "session" && slug === (ref?.taskSlug || "_") && rest.join("/") === ref?.id;
     }
     if (scope.kind.case === "task") return slug === (scope.kind.value as { slug: string }).slug;
+    if (scope.kind.case === "repo") return ["task", "draft", "execution", "daemon", "job", "settings", "playbook"].includes(k);
     if (scope.kind.case === "chat") return k === "chat" || (k === "session" && slug === "_");
     return false;
   };
@@ -137,12 +145,14 @@ export function sessionDaemon() {
     },
   };
   const subscribed: { requests: number } = { requests: 0 };
+  const down = new Set<string>(); // repos whose daemon does not answer
   const transports = new Map<string, Transport>();
   const transport = (repo: string): Transport => {
     let t = transports.get(repo);
     if (!t) {
       const { sync } = scriptedSync(async function* (req, _call, signal): AsyncGenerator<SubscribeResponse> {
         subscribed.requests += 1;
+        if (down.has(repo)) throw new Error(`daemon for ${repo} is down`);
         const mine = () => {
           const own = [...rows].filter(([k, e]) => k.startsWith(`${repo}\u0000`) && matches(req.scope as never, e.key)).map(([, e]) => e);
           const have = new Set(own.map((e) => e.key));
@@ -154,6 +164,7 @@ export function sessionDaemon() {
         for (;;) {
           if (version.n === seen) await Promise.race([untilAborted(signal), new Promise<void>((r) => live.add(r))]);
           if (signal.aborted) return;
+          if (down.has(repo)) throw new Error(`daemon for ${repo} went down`);
           seen = version.n;
           for (const e of mine()) {
             if (known.get(e.key) !== e) yield put(e, ++seq.n);
@@ -165,6 +176,12 @@ export function sessionDaemon() {
       transports.set(repo, t);
     }
     return t;
+  };
+  const wake = () => {
+    version.n += 1;
+    const w = [...live];
+    live.clear();
+    for (const r of w) r();
   };
   return {
     transport,
@@ -186,6 +203,20 @@ export function sessionDaemon() {
       const wake = [...live];
       live.clear();
       for (const r of wake) r();
+    },
+    /** Set (or change, when subscribers already hold it) one task row of a repo. */
+    showTask(repo: string, slug: string, over: MessageInitShape<typeof TaskSchema> = {}) {
+      rows.set(`${repo}\u0000${taskEntityKey(slug)}`, taskEntity(slug, over));
+      wake();
+    },
+    /** The repo's daemon stops answering: open streams error and new ones are refused until `up`. */
+    drop(repo: string) {
+      down.add(repo);
+      wake();
+    },
+    up(repo: string) {
+      down.delete(repo);
+      wake();
     },
     /** Set (or change, when subscribers already hold it) one session. */
     show(repo: string, taskSlug: string, id: string, o: SessionObservation, wait?: { kind: string; correlationId: string }) {

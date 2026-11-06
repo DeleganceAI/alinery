@@ -2,6 +2,7 @@ import { CornerDownRight, LoaderCircle, Plus, SquareX, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as ipc from "./ipc";
 import { SessionTerminal } from "./SessionTerminal";
+import { useRepoTasks } from "./sync/board";
 import { sessionObservationKey, useSessionObservations } from "./sync/sessionObservation";
 import { writeTerminal } from "./sync/terminal";
 import type { RepoScope, View } from "./types";
@@ -36,40 +37,29 @@ export function shellCdCommand(path: string): string {
   return `cd ${shellSingleQuote(p)}\n`;
 }
 
-async function worktreeForSlug(slug: string): Promise<string | null> {
-  if (!slug.trim()) return null;
-  try {
-    const tasks = await ipc.listTasks();
-    const task = tasks.find((t) => t.slug === slug);
-    const wt = task?.worktree?.trim();
-    return wt || null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Resolve the "cd here" target from app navigation context.
  * Priority: session/task/create-draft worktree → active repo root → home
  * (home when all-repos scope or no active repo / unresolved).
  */
-export async function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope; activeRepo: string | undefined; home: string }): Promise<string> {
-  const { view, scope, activeRepo, home } = opts;
+export function resolveDrawerCdTarget(opts: { view: View; scope: RepoScope; activeRepo: string | undefined; home: string; tasks: { slug: string; worktree: string }[] }): string {
+  const { view, scope, activeRepo, home, tasks } = opts;
+  const worktreeForSlug = (slug: string) => (slug.trim() ? tasks.find((t) => t.slug === slug)?.worktree?.trim() || null : null);
   const homeFallback = home.trim() || "~";
 
   if (view.kind === "session") {
     if (view.cwd.trim()) return view.cwd.trim();
-    const fromTask = await worktreeForSlug(view.taskSlug);
+    const fromTask = worktreeForSlug(view.taskSlug);
     if (fromTask) return fromTask;
   }
 
   if (view.kind === "task") {
-    const fromTask = await worktreeForSlug(view.slug);
+    const fromTask = worktreeForSlug(view.slug);
     if (fromTask) return fromTask;
   }
 
   if (view.kind === "reviewHandoff") {
-    const fromTask = await worktreeForSlug(view.source.source_slug);
+    const fromTask = worktreeForSlug(view.source.source_slug);
     if (fromTask) return fromTask;
   }
 
@@ -138,7 +128,9 @@ export function TerminalDrawer({
   activeRepo: string | undefined;
 }) {
   const [home, setHome] = useState("");
-  const [cdTarget, setCdTarget] = useState("");
+  // The task rows come from the active repo's stream, so the target is known as soon as the view is.
+  const tasks = useRepoTasks(activeRepo) ?? [];
+  const cdTarget = resolveDrawerCdTarget({ view, scope, activeRepo, home, tasks });
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
   const active = tabs.find((tab) => tab.id === activeId) ?? null;
@@ -163,16 +155,6 @@ export function TerminalDrawer({
       alive = false;
     };
   }, []);
-
-  useEffect(() => {
-    let alive = true;
-    resolveDrawerCdTarget({ view, scope, activeRepo, home }).then((t) => {
-      if (alive) setCdTarget(t);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [view, scope, activeRepo, home]);
 
   useEffect(() => {
     activeTabRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });

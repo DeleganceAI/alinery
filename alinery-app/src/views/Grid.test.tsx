@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeBoard } from "../test/boardHooks";
 import { navReady, requireNav } from "../test/nav";
 import type {
   BoardNav,
@@ -11,11 +12,10 @@ import type {
   PlaybookRef,
   PullRequestSnapshot,
   ScopedPlaybook,
-  TaskActivityMap,
   TaskActivityRef,
   TaskExecutionReply,
 } from "../types";
-import { Grid, resetGridBoardSnapshots } from "./Grid";
+import { Grid } from "./Grid";
 
 const now = Math.floor(Date.now() / 1000);
 const makeTask = (over: Partial<BoardTask>): BoardTask => ({
@@ -181,7 +181,6 @@ const taskExecutions: Record<string, TaskExecutionReply> = {
 };
 
 const ipcMock = vi.hoisted(() => ({
-  listBoardTasks: vi.fn(async (_allRepos: boolean): Promise<BoardTask[]> => []),
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
   observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
@@ -196,12 +195,12 @@ const ipcMock = vi.hoisted(() => ({
     ),
   ),
   readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
-  listTaskActivity: vi.fn(async (_refs: TaskActivityRef[]): Promise<TaskActivityMap> => ({})),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
   archiveTaskForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
   removeWorktreeForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
 }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../ipc", () => ipcMock);
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 
@@ -220,8 +219,8 @@ Object.defineProperty(window, "localStorage", { configurable: true, value: local
 
 beforeEach(() => {
   window.localStorage.clear();
-  resetGridBoardSnapshots();
-  ipcMock.listBoardTasks.mockResolvedValue(tasks);
+  fakeBoard.reset();
+  fakeBoard.set({ tasks: tasks });
   ipcMock.listKanbanColumns.mockResolvedValue(columns);
   ipcMock.listTaskPullRequests.mockImplementation(async (refs) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, { pr: null, error: null }])));
   ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => taskExecutions[`${repoPath}:${slug}`] ?? retainedExecution([step("implementation", "Implementation")]));
@@ -231,10 +230,12 @@ beforeEach(() => {
     source_text: "",
     modified_at_ms: null,
   }));
-  ipcMock.listTaskActivity.mockResolvedValue({
-    "/repo-a:build-api": { status: "running", active_session: null },
-    "/repo-b:review-queue": { status: "waiting_for_approval", active_session: null },
-    "/repo-a:release-app": { status: null, active_session: null },
+  fakeBoard.set({
+    activity: {
+      "/repo-a:build-api": { status: "running", active_session: null },
+      "/repo-b:review-queue": { status: "waiting_for_approval", active_session: null },
+      "/repo-a:release-app": { status: null, active_session: null },
+    },
   });
 });
 
@@ -254,7 +255,7 @@ describe("configurable task grid", () => {
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "progress-filter", initialPreset: "progress" as const };
 
     beforeEach(() => {
-      ipcMock.listBoardTasks.mockResolvedValue([makeTask({ name: "Unfinished task", slug: "unfinished", current_phase: "research", current_step_title: "Research" })]);
+      fakeBoard.set({ tasks: [makeTask({ name: "Unfinished task", slug: "unfinished", current_phase: "research", current_step_title: "Research" })] });
       ipcMock.getTaskExecution.mockResolvedValue(
         retainedExecution(
           [step("research", "Research"), step("implementation", "Implementation")],
@@ -264,7 +265,7 @@ describe("configurable task grid", () => {
           ],
         ),
       );
-      ipcMock.listTaskActivity.mockResolvedValue({ "/repo-a:unfinished": { status: "completed", active_session: null } });
+      fakeBoard.set({ activity: { "/repo-a:unfinished": { status: "completed", active_session: null } } });
     });
 
     it("keeps an unread completed-step task visible by default across remount", async () => {
@@ -390,7 +391,7 @@ describe("configurable task grid", () => {
   });
 
   it("keeps declared empty columns in playbook order when the execution daemon is unavailable", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    fakeBoard.set({ tasks: [tasks[0]] });
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution daemon unavailable"));
     ipcMock.readPlaybook.mockResolvedValue({
       source: { reference: { scope: "bundled", key: "superdevelop" }, path: null },
@@ -427,7 +428,7 @@ describe("configurable task grid", () => {
       current_phase: "implementation",
       current_step_title: "implementation",
     });
-    ipcMock.listBoardTasks.mockResolvedValue([task]);
+    fakeBoard.set({ tasks: [task] });
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
     ipcMock.readPlaybook.mockImplementation(async (requested, repoPath) => ({
       source: { reference: requested, path: null },
@@ -450,7 +451,7 @@ describe("configurable task grid", () => {
   });
 
   it("merges compatible playbooks without reversing either declared step sequence", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[2], tasks[0]]);
+    fakeBoard.set({ tasks: [tasks[2], tasks[0]] });
     render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="steps" />);
     await screen.findByRole("button", { name: /Build API, repo-a/ });
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
@@ -462,7 +463,7 @@ describe("configurable task grid", () => {
   });
 
   it("persists keyboard column orders per grouping and in presets, with reset restoring declaration order", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    fakeBoard.set({ tasks: [tasks[0]] });
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "keyboard-column-order", initialPreset: "steps" as const };
     const first = render(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} />);
     await screen.findByRole("button", { name: /Build API, repo-a/ });
@@ -500,7 +501,7 @@ describe("configurable task grid", () => {
   });
 
   it("reorders columns by pointer, ignores cancelled drags, and restores the saved order", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
+    fakeBoard.set({ tasks: [tasks[0]] });
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "pointer-column-order", initialPreset: "steps" as const };
     const first = render(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} />);
     await screen.findByRole("button", { name: /Build API, repo-a/ });
@@ -559,7 +560,7 @@ describe("configurable task grid", () => {
     const onOpen = vi.fn();
     render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} />);
     await act(async () => {});
-    ipcMock.listBoardTasks.mockResolvedValue([...tasks, draft]);
+    fakeBoard.set({ tasks: [...tasks, draft] });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -587,16 +588,16 @@ describe("configurable task grid", () => {
     }
   });
   it("assigns distinct palette slots to the first six repositories", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue(
-      ["a", "b", "c", "d", "e", "f"].map((suffix) =>
+    fakeBoard.set({
+      tasks: ["a", "b", "c", "d", "e", "f"].map((suffix) =>
         makeTask({
           name: `Repo ${suffix.toUpperCase()} task`,
           slug: `task-${suffix}`,
           repo_path: `/repo-${suffix}`,
         }),
       ),
-    );
-    render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos onOpen={() => {}} registerNav={() => {}} />);
+    });
+    render(<Grid repoPaths={["a", "b", "c", "d", "e", "f"].map((suffix) => `/repo-${suffix}`)} allRepos onOpen={() => {}} registerNav={() => {}} />);
 
     await screen.findByRole("button", { name: /Repo A task, repo-a/ });
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
@@ -607,11 +608,13 @@ describe("configurable task grid", () => {
   });
 
   it("sorts by exact task creation time in both directions", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([
-      { ...tasks[0], created: now - 300 },
-      { ...tasks[1], created: now - 200 },
-      { ...tasks[2], created: now - 100 },
-    ]);
+    fakeBoard.set({
+      tasks: [
+        { ...tasks[0], created: now - 300 },
+        { ...tasks[1], created: now - 200 },
+        { ...tasks[2], created: now - 100 },
+      ],
+    });
     const { container } = render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} />);
 
     await screen.findByRole("button", { name: /Build API, repo-a, SuperDevelop, Implementation/ });
@@ -669,10 +672,10 @@ describe("configurable task grid", () => {
   it("persists the optional PR property and opens its link independently in every card mode", async () => {
     const task = makeTask({ name: "PR task", slug: "grid-pr", repo_path: "/grid-pr" });
     const url = "https://github.com/example/project/pull/42";
-    ipcMock.listBoardTasks.mockResolvedValue([task]);
+    fakeBoard.set({ tasks: [task] });
     ipcMock.listTaskPullRequests.mockResolvedValue({ "/grid-pr:grid-pr": { pr: { number: 42, url, state: "open" }, error: null } });
     const onOpen = vi.fn();
-    const first = render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
+    const first = render(<Grid repoPaths={["/grid-pr"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
     const card = await screen.findByRole("button", { name: /PR task, grid-pr/ });
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
     expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
@@ -696,7 +699,7 @@ describe("configurable task grid", () => {
     expect(screen.getByRole("link", { name: /PR #42.*Open/ })).toBeDefined();
     first.unmount();
 
-    render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
+    render(<Grid repoPaths={["/grid-pr"]} allRepos={false} onOpen={onOpen} registerNav={() => {}} storageKey="pr-property" />);
     expect((screen.getByLabelText("pull request") as HTMLInputElement).checked).toBe(true);
     await screen.findByRole("link", { name: /PR #42.*Open/ });
     expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
@@ -705,24 +708,24 @@ describe("configurable task grid", () => {
   });
 
   it("pauses PR refreshes for inactive grids and when the property is disabled", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([makeTask({ slug: "pr-poll", repo_path: "/grid-pr-poll" })]);
+    fakeBoard.set({ tasks: [makeTask({ slug: "pr-poll", repo_path: "/grid-pr-poll" })] });
     const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
-    const view = render(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} />);
+    const view = render(<Grid repoPaths={["/grid-pr-poll"]} {...props} />);
     await screen.findByRole("button", { name: /A task, grid-pr-poll/ });
     fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
-    view.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} active={false} />);
+    view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active={false} />);
     fireEvent.click(screen.getByLabelText("pull request"));
     await act(async () => {});
     expect(ipcMock.listTaskPullRequests).not.toHaveBeenCalled();
-    view.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} active />);
+    view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active />);
     await waitFor(() => expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1));
     vi.useFakeTimers();
-    view.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} active={false} />);
+    view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active={false} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
     expect(ipcMock.listTaskPullRequests).toHaveBeenCalledTimes(1);
-    view.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} {...props} active />);
+    view.rerender(<Grid repoPaths={["/grid-pr-poll"]} {...props} active />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -757,28 +760,18 @@ describe("configurable task grid", () => {
     expect(await screen.findByRole("button", { name: /Build API, repo-a, SuperDevelop, Implementation/ })).toBeDefined();
   });
 
-  it("pauses updates while inactive and refreshes the board on reactivation", async () => {
-    vi.useFakeTimers();
+  it("registers no navigation while inactive, and shows the streams' latest rows on reactivation", async () => {
     const registerNav = vi.fn();
     const onOpen = vi.fn();
     const grid = render(<Grid repoPaths={["/repo-a", "/repo-b"]} active={false} allRepos={false} onOpen={onOpen} registerNav={registerNav} />);
-    await act(async () => {});
-    expect(screen.queryByRole("button", { name: /Build API, repo-a/ })).toBeNull();
+    await screen.findByRole("button", { name: /Build API, repo-a/ });
+    expect(registerNav.mock.lastCall?.[0] ?? null).toBeNull();
+    act(() => fakeBoard.set({ tasks: [{ ...tasks[0], name: "Updated API" }] }));
+    await screen.findByRole("button", { name: /Updated API, repo-a/ });
+    expect(registerNav.mock.lastCall?.[0] ?? null).toBeNull();
     await act(async () => {
       grid.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} active allRepos={false} onOpen={onOpen} registerNav={registerNav} />);
     });
-    expect(screen.getByRole("button", { name: /Build API, repo-a/ })).toBeDefined();
-    grid.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} active={false} allRepos={false} onOpen={onOpen} registerNav={registerNav} />);
-    ipcMock.listBoardTasks.mockResolvedValue([{ ...tasks[0], name: "Updated API" }]);
-    await act(async () => {
-      vi.advanceTimersByTime(9000);
-    });
-    expect(screen.queryByRole("button", { name: /Updated API, repo-a/ })).toBeNull();
-    expect(registerNav.mock.lastCall?.[0]).toBeNull();
-    await act(async () => {
-      grid.rerender(<Grid repoPaths={["/repo-a", "/repo-b"]} active allRepos={false} onOpen={onOpen} registerNav={registerNav} />);
-    });
-    expect(screen.getByRole("button", { name: /Updated API, repo-a/ })).toBeDefined();
     act(() => requireNav(registerNav.mock.lastCall?.[0]).openSelected());
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ name: "Updated API" }));
   });
@@ -787,7 +780,7 @@ describe("configurable task grid", () => {
     const legacy = makeTask({ name: "Legacy", slug: "legacy", engine_version: undefined, playbook_steps: [] });
     const archived = makeTask({ name: "Archived legacy", slug: "archived", engine_version: 1, archived: true, playbook_steps: [] });
     const draft = makeTask({ name: "Draft", slug: "draft", draft: true, playbook_steps: [] });
-    ipcMock.listBoardTasks.mockResolvedValue([legacy, archived, draft, tasks[0]]);
+    fakeBoard.set({ tasks: [legacy, archived, draft, tasks[0]] });
     ipcMock.getTaskExecution.mockImplementation(async (slug) => {
       if (slug !== "build-api") throw new Error("No execution state for this task");
       return taskExecutions["/repo-a:build-api"];
@@ -953,9 +946,7 @@ describe("configurable task grid", () => {
   });
 
   it("shows legacy library steps in declaration order in row view without execution state", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([
-      makeTask({ name: "Legacy row", engine_version: 1, playbook_steps: [], current_phase: "implementation", current_step_title: "implementation" }),
-    ]);
+    fakeBoard.set({ tasks: [makeTask({ name: "Legacy row", engine_version: 1, playbook_steps: [], current_phase: "implementation", current_step_title: "implementation" })] });
     ipcMock.getTaskExecution.mockRejectedValue(new Error("execution.json not found"));
     render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} initialPreset="progress" />);
     const lane = await screen.findByLabelText("Legacy row retained steps");
@@ -967,11 +958,13 @@ describe("configurable task grid", () => {
   });
 
   it("uses each task's retained definition and concurrent states without projecting auxiliary activity or a linear execution history", async () => {
-    ipcMock.listBoardTasks.mockResolvedValue([
-      makeTask({ name: "Original", slug: "shared", current_phase: "work", current_step_title: "Original work", latest_session_title: "Auxiliary notes" }),
-      makeTask({ name: "Revised", slug: "revised", current_phase: "work", current_step_title: "Revised work" }),
-      makeTask({ name: "Other repo", slug: "shared", repo_path: "/repo-b", current_phase: "work", current_step_title: "Other work" }),
-    ]);
+    fakeBoard.set({
+      tasks: [
+        makeTask({ name: "Original", slug: "shared", current_phase: "work", current_step_title: "Original work", latest_session_title: "Auxiliary notes" }),
+        makeTask({ name: "Revised", slug: "revised", current_phase: "work", current_step_title: "Revised work" }),
+        makeTask({ name: "Other repo", slug: "shared", repo_path: "/repo-b", current_phase: "work", current_step_title: "Other work" }),
+      ],
+    });
     ipcMock.getTaskExecution.mockImplementation(async (slug, repoPath) => {
       if (repoPath === "/repo-b") return retainedExecution([step("work", "Other work")], [["work", "queued"]]);
       if (slug === "revised")
@@ -1011,7 +1004,7 @@ describe("configurable task grid", () => {
       makeTask({ name: "Repo A task", slug: "shared-slug", repo_path: "/repo-a" }),
       makeTask({ name: "Repo B task", slug: "shared-slug", repo_path: "/repo-b" }),
     ];
-    ipcMock.listBoardTasks.mockResolvedValue(sameSlugTasks);
+    fakeBoard.set({ tasks: sameSlugTasks });
     let boardNav: BoardNav | null = null;
     render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos onOpen={() => {}} registerNav={(nav) => (boardNav = nav)} />);
 
@@ -1092,7 +1085,7 @@ describe("configurable task grid", () => {
   });
   it("shows archived tasks on demand and persists the choice per saved Grid", async () => {
     const archivedTask = makeTask({ name: "Archived task", slug: "archived-task", archived: true });
-    ipcMock.listBoardTasks.mockResolvedValue([...tasks, archivedTask]);
+    fakeBoard.set({ tasks: [...tasks, archivedTask] });
     const first = render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="archived-visibility" />);
 
     await screen.findByRole("button", { name: /Build API, repo-a/ });
@@ -1244,171 +1237,21 @@ describe("configurable task grid", () => {
     expect(window.localStorage.getItem("alinery:grid:repo-a:view:second")).not.toBeNull();
   });
 
-  it("does not expose another repository's cached tasks or erase saved order and selection after an initial load failure", async () => {
-    const onOpen = vi.fn();
-    const onDuplicate = vi.fn();
-    const registerNav = vi.fn();
-    const props = { allRepos: false, onOpen, onDuplicate, registerNav };
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[0]]);
-    const first = render(<Grid {...props} repoPaths={["/repo-a"]} />);
-    await screen.findByRole("button", { name: /^Build API, repo-a/ });
-    first.unmount();
-
-    const bTasks = [makeTask({ name: "B first", slug: "b-first", repo_path: "/repo-b" }), makeTask({ name: "B second", slug: "b-second", repo_path: "/repo-b" })];
+  it("shows no tasks and keeps saved order and selection until the streams deliver their first snapshot", async () => {
     const manualOrder = ["/repo-b:b-second", "/repo-b:b-first"];
     const selectedTaskKey = "/repo-b:b-first";
-    window.localStorage.setItem(
-      "alinery:grid:repo-b",
-      JSON.stringify({
-        config: { sort: "manual", position: "lanes" },
-        manualOrder,
-        selectedTaskKey,
-      }),
-    );
-    let rejectLoad!: (error: Error) => void;
-    ipcMock.listBoardTasks.mockReturnValue(
-      new Promise<BoardTask[]>((_, reject) => {
-        rejectLoad = reject;
-      }),
-    );
-    const second = render(<Grid {...props} repoPaths={["/repo-b"]} storageKey="repo-b" />);
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
-    act(() => {
-      const nav = requireNav(registerNav.mock.lastCall?.[0]);
-      nav.openSelected();
-      nav.duplicateSelected();
-      nav.archiveSelected();
-    });
-    expect(onOpen).not.toHaveBeenCalled();
-    expect(onDuplicate).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    await act(async () => rejectLoad(new Error("repository B unavailable")));
-    expect(screen.getByRole("alert").textContent).toContain("repository B unavailable");
+    window.localStorage.setItem("alinery:grid:repo-b", JSON.stringify({ config: { sort: "manual", position: "lanes" }, manualOrder, selectedTaskKey }));
+    fakeBoard.set({ ready: false });
+    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "repo-b" };
+    const view = render(<Grid {...props} repoPaths={["/repo-b"]} />);
+    expect(screen.getByText("Loading grid…")).toBeDefined();
     expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
     expect(JSON.parse(window.localStorage.getItem("alinery:grid:repo-b") ?? "{}")).toMatchObject({ manualOrder, selectedTaskKey });
-    second.unmount();
 
-    ipcMock.listBoardTasks.mockResolvedValue(bTasks);
-    const recovered = render(<Grid {...props} repoPaths={["/repo-b"]} storageKey="repo-b" />);
+    const bTasks = [makeTask({ name: "B first", slug: "b-first", repo_path: "/repo-b" }), makeTask({ name: "B second", slug: "b-second", repo_path: "/repo-b" })];
+    act(() => fakeBoard.set({ ready: true, tasks: bTasks }));
     await screen.findByRole("button", { name: /^B first, repo-b/ });
-    expect([...recovered.container.querySelectorAll(".task-grid-lane-name")].map((node) => node.textContent)).toEqual(["B second", "B first"]);
+    expect([...view.container.querySelectorAll(".task-grid-lane-name")].map((node) => node.textContent)).toEqual(["B second", "B first"]);
     expect(screen.getByRole("button", { name: /^B first, repo-b/ }).getAttribute("aria-current")).toBe("true");
-  });
-
-  it("shares aggregate snapshots across repository ordering but not after a repository is removed", async () => {
-    const props = { allRepos: true, onOpen: () => {}, registerNav: () => {} };
-    const first = render(<Grid {...props} repoPaths={["/repo-a", "/repo-b"]} storageKey="aggregate-first" />);
-    await screen.findByRole("button", { name: /^Build API, repo-a/ });
-    first.unmount();
-    ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
-    const shared = render(<Grid {...props} repoPaths={["/repo-b", "/repo-a"]} storageKey="aggregate-second" />);
-    expect(screen.getByRole("button", { name: /^Build API, repo-a/ })).toBeDefined();
-    expect(screen.getByRole("button", { name: /^Review queue, repo-b/ })).toBeDefined();
-    shared.rerender(<Grid {...props} repoPaths={["/repo-b"]} storageKey="aggregate-second" />);
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Review queue, repo-b/ })).toBeNull();
-    expect(screen.getByText("Loading grid…")).toBeDefined();
-  });
-
-  it("discards pending responses after a scope change and does not cache them for later mounts", async () => {
-    const props = { allRepos: false, onOpen: () => {}, registerNav: () => {} };
-    let resolveOld!: (tasks: BoardTask[]) => void;
-    ipcMock.listBoardTasks.mockReturnValueOnce(
-      new Promise<BoardTask[]>((resolve) => {
-        resolveOld = resolve;
-      }),
-    );
-    const view = render(<Grid {...props} repoPaths={["/repo-a"]} />);
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[1]]);
-    view.rerender(<Grid {...props} repoPaths={["/repo-b"]} />);
-    await screen.findByRole("button", { name: /^Review queue, repo-b/ });
-    await act(async () => resolveOld([tasks[0]]));
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
-    view.unmount();
-
-    ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
-    const revisit = render(<Grid {...props} repoPaths={["/repo-a"]} />);
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
-    revisit.rerender(<Grid {...props} repoPaths={["/repo-b"]} />);
-    expect(screen.getByRole("button", { name: /^Review queue, repo-b/ })).toBeDefined();
-  });
-
-  it("keeps the latest overlapping board response in the view and shared cache", async () => {
-    vi.useFakeTimers();
-    const props = { allRepos: false, repoPaths: ["/repo-a"], onOpen: () => {}, registerNav: () => {} };
-    let resolveOld!: (tasks: BoardTask[]) => void;
-    ipcMock.listBoardTasks.mockReturnValueOnce(
-      new Promise<BoardTask[]>((resolve) => {
-        resolveOld = resolve;
-      }),
-    );
-    const view = render(<Grid {...props} />);
-    const newerTask = { ...tasks[0], name: "Newer API" };
-    ipcMock.listBoardTasks.mockResolvedValue([newerTask]);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-    expect(screen.getByRole("button", { name: /^Newer API, repo-a/ })).toBeDefined();
-    await act(async () => resolveOld([tasks[0]]));
-    expect(screen.queryByRole("button", { name: /^Build API, repo-a/ })).toBeNull();
-    view.unmount();
-    ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
-    render(<Grid {...props} storageKey="new-preset" />);
-    expect(screen.getByRole("button", { name: /^Newer API, repo-a/ })).toBeDefined();
-  });
-
-  it.each(["all", "attention"])("keeps cached waiting tasks usable with unknown activity in the %s filter", async (filter) => {
-    const waiting = { "/repo-b:review-queue": { status: "waiting_for_input" as const, active_session: null } };
-    ipcMock.listBoardTasks.mockResolvedValue([tasks[1]]);
-    ipcMock.listTaskActivity.mockResolvedValue(waiting);
-    const onOpen = vi.fn();
-    const props = { allRepos: false, repoPaths: ["/repo-b"], onOpen, registerNav: () => {}, storageKey: "waiting-cache" };
-    const first = render(<Grid {...props} />);
-    await screen.findByRole("button", { name: /Review queue, repo-b, .*Waiting for input/ });
-    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
-    fireEvent.change(screen.getByLabelText("Filter"), { target: { value: filter } });
-    fireEvent.click(screen.getByLabelText("attention"));
-    first.unmount();
-
-    let resolveActivity!: (activity: TaskActivityMap) => void;
-    ipcMock.listTaskActivity.mockReturnValue(
-      new Promise<TaskActivityMap>((resolve) => {
-        resolveActivity = resolve;
-      }),
-    );
-    ipcMock.listBoardTasks.mockReturnValue(new Promise<BoardTask[]>(() => {}));
-    const cached = render(<Grid {...props} />);
-    const card = screen.getByRole("button", { name: /Review queue, repo-b, .*Unknown/ });
-    expect(within(card).getByText("attention unknown")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /No session/ })).toBeNull();
-    expect(cached.container.querySelector(".task-grid-selected")?.textContent).toContain("Unknown");
-    expect(cached.container.querySelector(".task-grid-selected")?.textContent).not.toContain("No session");
-    fireEvent.click(card);
-    expect(onOpen).toHaveBeenCalledWith(tasks[1]);
-    await act(async () => resolveActivity(waiting));
-    expect(screen.getByRole("button", { name: /Review queue, repo-b, .*Waiting for input/ })).toBeDefined();
-    expect(cached.container.querySelector(".task-grid-selected")?.textContent).toContain("Waiting for input");
-  });
-
-  it("paints a shared board snapshot immediately and does not queue missed execution ticks", async () => {
-    const first = render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="snapshot-a" />);
-    await screen.findByRole("button", { name: /Build API, repo-a/ });
-    first.unmount();
-
-    vi.useFakeTimers();
-    const held = new Promise<never>(() => {});
-    ipcMock.observeTaskExecutions.mockClear();
-    ipcMock.observeTaskExecutions.mockReturnValue(held);
-    render(<Grid repoPaths={["/repo-a", "/repo-b"]} allRepos={false} onOpen={() => {}} registerNav={() => {}} storageKey="snapshot-b" />);
-    expect(screen.queryByText("Loading grid…")).toBeNull();
-    expect(screen.getByRole("button", { name: /Build API, repo-a/ })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Open grid settings" }));
-    expect(screen.getByLabelText("Filter")).toBeDefined();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(9000);
-    });
-    expect(ipcMock.observeTaskExecutions).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
   });
 });

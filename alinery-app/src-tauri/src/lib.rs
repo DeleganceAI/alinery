@@ -27,7 +27,7 @@
 //     PRD track, SQLite, session resurrection, stream-json/rich adapters, auto-advance,
 //     per-repo windows.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -46,7 +46,7 @@ use alinery_core::daemon_client;
 use alinery_core::daemon_client::DAEMON_OBSERVATION_TIMEOUT;
 #[cfg(test)]
 use alinery_core::daemon_client::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT};
-use alinery_core::daemon_client::{read_socket_line, DaemonClient, DaemonSessionStatus};
+use alinery_core::daemon_client::{read_socket_line, DaemonClient};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
@@ -184,15 +184,11 @@ pub fn run() {
             create_task_for_repo,
             prepare_task_attachments,
             duplicate_task_for_repo,
-            get_task,
             write_draft,
             write_draft_for_repo,
             read_draft_attachments_for_repo,
             delete_draft,
             delete_draft_for_repo,
-            list_tasks,
-            list_board_tasks,
-            list_task_activity,
             list_task_pull_requests,
             archive_task,
             archive_task_for_repo,
@@ -216,11 +212,8 @@ pub fn run() {
             chat_abort,
             chat_set_model,
             chat_set_thinking_level,
-            list_sessions,
             rename_session,
             rename_task,
-            get_session_display,
-            list_session_items,
             observe_task_executions,
             start_session,
             allow_execution_completion,

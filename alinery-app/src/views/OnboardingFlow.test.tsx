@@ -10,10 +10,12 @@ import {
   readSavedOnboardingStep,
   writeSavedOnboardingStep,
 } from "../onboarding";
+import { fakeBoard } from "../test/boardHooks";
 import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides, ScopedSettings } from "../types";
-import { Grid, resetGridBoardSnapshots } from "./Grid";
+import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
 
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
   ResizeHandles: () => null,
   WindowControls: () => null,
@@ -53,7 +55,7 @@ function previewDefinition(key: string, title: string): NormalizedPlaybook {
 
 beforeEach(() => {
   window.localStorage.clear();
-  resetGridBoardSnapshots();
+  fakeBoard.reset();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -390,13 +392,12 @@ describe("Empty Grid Playbook Starter Gate", () => {
 
   beforeEach(() => {
     vi.spyOn(ipc, "listKanbanColumns").mockResolvedValue(columns);
-    vi.spyOn(ipc, "listTaskActivity").mockResolvedValue({});
     vi.spyOn(ipc, "observeTaskExecutions").mockResolvedValue([]);
     vi.spyOn(ipc, "listTaskPullRequests").mockResolvedValue({});
   });
 
   it("renders GridPlaybookStarterGate when repository has 0 tasks, and filter empty message when tasks are filtered out", async () => {
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([]);
+    fakeBoard.set({ tasks: [] });
     const onCreate = vi.fn();
     const onReplayOnboarding = vi.fn();
 
@@ -415,7 +416,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
     expect(onReplayOnboarding).toHaveBeenCalled();
 
     unmount();
-    resetGridBoardSnapshots();
+    fakeBoard.reset();
 
     // Now test with 1 completed task that gets filtered out by the "active" filter
     const completedTask: BoardTask = {
@@ -447,10 +448,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
       current_column_key: "done",
       current_column_title: "Done",
     };
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([completedTask]);
-    vi.spyOn(ipc, "listTaskActivity").mockResolvedValue({
-      "/Users/dev/project:existing-task": { status: "completed", active_session: null },
-    });
+    fakeBoard.set({ tasks: [completedTask], activity: { "/Users/dev/project:existing-task": { status: "completed", active_session: null } } });
 
     render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} />);
 

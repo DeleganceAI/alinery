@@ -7,7 +7,6 @@ use std::io::Read;
 
 // The board projection lives in alinery-core so a remote host computes the same rows.
 pub(crate) use alinery_core::board::list_tasks_checked as list_tasks_for_repo;
-pub(crate) use alinery_core::board::{board_tasks_from_loaded, BoardTask};
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -16,9 +15,7 @@ pub(crate) struct TaskActivityRef {
     pub(crate) task_slug: String,
 }
 
-#[cfg(test)]
-pub(crate) use alinery_core::task_activity::TaskActivityStatus;
-pub(crate) use alinery_core::task_activity::{task_activity_key, TaskActivitySummary};
+pub(crate) use alinery_core::task_activity::task_activity_key;
 
 pub(crate) use alinery_core::board::read_task_checked as read_task;
 #[cfg(test)]
@@ -31,19 +28,8 @@ pub(crate) use alinery_core::attachments::{
     attachment_dir_bytes, read_attachment_image as read_attachment_image_in, read_chat_image as read_chat_image_in, write_chat_attachment_bytes as write_chat_attachment_bytes_in,
     ChatImage,
 };
-pub(crate) use alinery_core::board::read_task_opt;
 pub(crate) use alinery_core::task::{set_auto_approve_all_in, set_related_tasks_in};
 pub(crate) use alinery_core::task_creation::duplicate_task_package;
-
-#[tauri::command]
-pub(crate) async fn get_task(app: AppHandle, slug: String, repo_path: Option<String>) -> Result<Option<Task>, String> {
-    let target = target_or_active_ref(&app, repo_path)?;
-    off_main_thread("get task", move || match target {
-        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::GetTask { repo: path.into(), slug }),
-        RepoRef::Local(repo) => read_task_opt(&repo, &slug),
-    })
-    .await
-}
 
 // M0: prove one JS -> Rust -> JS command round-trip.
 #[tauri::command]
@@ -598,59 +584,6 @@ pub(crate) async fn delete_draft_for_repo(app: AppHandle, state: State<'_, AppSt
     let target = owned_target(&app, &state, &repo_path)?;
     delete_draft_at(app, target, slug).await
 }
-// Scan `.alinery/tasks/*/task.md`. Returns archived too; the UI hides them.
-#[tauri::command]
-pub(crate) async fn list_tasks(app: AppHandle, repo_path: Option<String>) -> Result<Vec<Task>, String> {
-    let target = target_or_active_ref(&app, repo_path)?;
-    off_main_thread("list tasks", move || match target {
-        RepoRef::Remote { host_id, path } => remote_call(&app.state::<AppState>(), &host_id, RepoOp::ListTasks { repo: path.into() }),
-        RepoRef::Local(repo) => list_tasks_for_repo(&repo),
-    })
-    .await
-}
-
-#[cfg(test)]
-pub(crate) fn board_tasks_for_repo(repo: &Path, repo_path: &str) -> Result<Vec<BoardTask>, String> {
-    board_tasks_from_loaded(repo, repo_path, list_tasks_for_repo(repo)?)
-}
-
-#[tauri::command]
-pub(crate) async fn list_board_tasks(app: AppHandle, all_repos: bool) -> Result<Vec<BoardTask>, String> {
-    let repos = if all_repos { load_app_config(&app).known_repos } else { vec![active_repo_ref()?.uri()] };
-    off_main_thread("list board tasks", move || {
-        let state = app.state::<AppState>();
-        let mut out = vec![];
-        for repo_path in dedupe_known_repos(repos) {
-            match RepoRef::parse(&repo_path)? {
-                RepoRef::Local(repo) => out.extend(board_tasks_from_loaded(&repo, &repo_path, list_tasks_for_repo(&repo)?)?),
-                RepoRef::Remote { host_id, path } => match remote_call::<Vec<BoardTask>>(&state, &host_id, RepoOp::ListBoardTasks { repo: path.into() }) {
-                    // The host answered with its own paths; the board addresses the repo by its key.
-                    Ok(rows) => out.extend(rows.into_iter().map(|row| BoardTask {
-                        repo_path: repo_path.clone(),
-                        ..row
-                    })),
-                    // One unreachable host must not blank the other repos' boards.
-                    Err(_) if all_repos => {}
-                    Err(error) => return Err(error),
-                },
-            }
-        }
-        out.sort_by_key(|task| task.task.created);
-        Ok(out)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn list_task_activity(app: AppHandle, refs: Vec<TaskActivityRef>) -> HashMap<String, TaskActivitySummary> {
-    let app_config = app_config_path(&app).ok();
-    let app_config_identity = app_config.as_ref().map(|path| alinery_core::app_config_identity(path));
-    // File reads plus a daemon query per repo (and ssh round trips for remote ones).
-    tauri::async_runtime::spawn_blocking(move || list_task_activity_for_all(&app.state::<AppState>(), refs, app_config_identity.as_deref()))
-        .await
-        .unwrap_or_default()
-}
-
 pub(crate) fn archive_task_in(repo: &Path, slug: &str) -> Result<(), String> {
     alinery_core::archive_task_guarded(repo, slug)
 }
