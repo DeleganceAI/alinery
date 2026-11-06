@@ -272,9 +272,19 @@ describe("a coding step records its worktree", () => {
     writeFileSync(join(repo, "a.txt"), "uncommitted edit");
     const accepted = await accept(repo, "coding", true);
     const recorded = accepted.manifest?.worktree;
-    expect(recorded?.ref).toBe(`refs/alinery/executions/${accepted.id}`);
+    expect(recorded?.ref).toBe(`refs/alinery/executions/coding/${accepted.id}`);
     expect(git(repo, "show", `${recorded?.tree}:a.txt`)).toBe("uncommitted edit");
     expect(git(repo, "rev-parse", `${recorded?.ref}^{tree}`)).toBe(recorded?.tree ?? "");
+    // A second task in the same repository gets the same execution id (ids are per task) and
+    // must not move the first task's ref: both trees survive a gc.
+    writeFileSync(join(repo, "a.txt"), "second task edit");
+    const second = await accept(repo, "coding-two", true);
+    expect(second.id).toBe(accepted.id);
+    expect(second.manifest?.worktree?.ref).toBe(`refs/alinery/executions/coding-two/${second.id}`);
+    git(repo, "checkout", "--", "a.txt");
+    git(repo, "gc", "-q", "--prune=now");
+    expect(git(repo, "show", `${recorded?.tree}:a.txt`)).toBe("uncommitted edit");
+    expect(git(repo, "show", `${second.manifest?.worktree?.tree}:a.txt`)).toBe("second task edit");
     // Not a coding step: nothing is recorded.
     const other = mkdtempSync(join(tmpdir(), "vinculum-worktree-plain-"));
     git(other, "init", "-q", "-b", "main");

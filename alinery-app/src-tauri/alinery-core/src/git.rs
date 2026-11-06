@@ -376,10 +376,14 @@ pub fn abbrev_ref(dir: &Path) -> Result<String, String> {
 /// A tree and ref that keep the working tree's current files (uncommitted ones included)
 /// alive for the history of one execution (O27). `Ok(None)` when `dir` is not in a git
 /// working tree. Built on a temporary index so the user's index, HEAD and branch are
-/// untouched; the ref is `refs/alinery/executions/<exec_id>`, which survives `git gc`.
-pub fn record_worktree_tree(dir: &Path, exec_id: &str) -> Result<Option<(String, String)>, String> {
-    if exec_id.is_empty() || !exec_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(format!("execution id {exec_id:?} cannot name a ref"));
+/// untouched; the ref is `refs/alinery/executions/<slug>/<exec_id>`, which survives `git gc`.
+/// Execution ids are per task (`e1`, `e2`, ...) while refs are shared by every task and
+/// worktree of the repository, so the task slug is part of the name.
+pub fn record_worktree_tree(dir: &Path, slug: &str, exec_id: &str) -> Result<Option<(String, String)>, String> {
+    for (what, name) in [("task slug", slug), ("execution id", exec_id)] {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(format!("{what} {name:?} cannot name a ref"));
+        }
     }
     let run = |cmd: &mut Command| -> Result<String, String> {
         let out = cmd.output().map_err(|error| error.to_string())?;
@@ -392,7 +396,7 @@ pub fn record_worktree_tree(dir: &Path, exec_id: &str) -> Result<Option<(String,
         return Ok(None);
     }
     let git_dir = PathBuf::from(run(git_cmd(dir).args(["rev-parse", "--absolute-git-dir"]))?);
-    let index = git_dir.join(format!("alinery-exec-index-{exec_id}"));
+    let index = git_dir.join(format!("alinery-exec-index-{slug}-{exec_id}"));
     let result = (|| {
         let on_index = |cmd: &mut Command| cmd.env("GIT_INDEX_FILE", &index).output();
         let head = run(git_cmd(dir).args(["rev-parse", "--verify", "-q", "HEAD^{commit}"])).ok();
@@ -412,7 +416,7 @@ pub fn record_worktree_tree(dir: &Path, exec_id: &str) -> Result<Option<(String,
         let tree = step(&["write-tree"])?;
         let mut commit = git_cmd(dir);
         commit
-            .args(["commit-tree", &tree, "-m", &format!("alinery execution {exec_id}")])
+            .args(["commit-tree", &tree, "-m", &format!("alinery execution {slug}/{exec_id}")])
             .env("GIT_AUTHOR_NAME", "alinery")
             .env("GIT_AUTHOR_EMAIL", "alinery@localhost")
             .env("GIT_COMMITTER_NAME", "alinery")
@@ -421,7 +425,7 @@ pub fn record_worktree_tree(dir: &Path, exec_id: &str) -> Result<Option<(String,
             commit.args(["-p", parent]);
         }
         let commit = run(&mut commit)?;
-        let reference = format!("refs/alinery/executions/{exec_id}");
+        let reference = format!("refs/alinery/executions/{slug}/{exec_id}");
         run(git_cmd(dir).args(["update-ref", &reference, &commit]))?;
         Ok(Some((reference, tree)))
     })();
@@ -1137,8 +1141,8 @@ mod tests {
         // Uncommitted: a modified tracked file and a new untracked one, as a coding step leaves them.
         std::fs::write(repo.join("a.txt"), "second").unwrap();
         std::fs::write(repo.join("b.txt"), "new").unwrap();
-        let (reference, tree) = record_worktree_tree(&repo, "e1").unwrap().expect("a git working tree");
-        assert_eq!(reference, "refs/alinery/executions/e1");
+        let (reference, tree) = record_worktree_tree(&repo, "task-a", "e1").unwrap().expect("a git working tree");
+        assert_eq!(reference, "refs/alinery/executions/task-a/e1");
         assert_eq!(git_out(&repo, &["rev-parse", &format!("{reference}^{{tree}}")]), tree);
         assert_eq!(git_out(&repo, &["show", &format!("{tree}:a.txt")]), "second");
         assert_eq!(git_out(&repo, &["show", &format!("{tree}:b.txt")]), "new");
@@ -1161,10 +1165,31 @@ mod tests {
     }
 
     #[test]
+    fn two_tasks_recording_the_same_execution_id_keep_their_own_trees_through_gc() {
+        let repo = unique_repo("record-two");
+        std::fs::write(repo.join("a.txt"), "first").unwrap();
+        git_out(&repo, &["add", "-A"]);
+        git_out(&repo, &["commit", "-q", "-m", "one"]);
+        std::fs::write(repo.join("a.txt"), "task one work").unwrap();
+        let (ref_one, tree_one) = record_worktree_tree(&repo, "task-one", "e1").unwrap().unwrap();
+        std::fs::write(repo.join("a.txt"), "task two work").unwrap();
+        let (ref_two, tree_two) = record_worktree_tree(&repo, "task-two", "e1").unwrap().unwrap();
+        assert_ne!(ref_one, ref_two);
+        assert_ne!(tree_one, tree_two);
+        git_out(&repo, &["checkout", "--", "a.txt"]);
+        git_out(&repo, &["gc", "-q", "--prune=now"]);
+        assert_eq!(git_out(&repo, &["show", &format!("{tree_one}:a.txt")]), "task one work");
+        assert_eq!(git_out(&repo, &["show", &format!("{tree_two}:a.txt")]), "task two work");
+        assert_eq!(git_out(&repo, &["rev-parse", &format!("{ref_one}^{{tree}}")]), tree_one);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
     fn recording_a_worktree_outside_git_is_none_and_a_bad_id_is_refused() {
         let dir = unique_repo_dir_only("record-none");
-        assert_eq!(record_worktree_tree(&dir, "e1").unwrap(), None);
-        assert!(record_worktree_tree(&dir, "../x").is_err());
+        assert_eq!(record_worktree_tree(&dir, "task-a", "e1").unwrap(), None);
+        assert!(record_worktree_tree(&dir, "task-a", "../x").is_err());
+        assert!(record_worktree_tree(&dir, "../x", "e1").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

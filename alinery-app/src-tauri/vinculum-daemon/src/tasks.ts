@@ -19,7 +19,7 @@ type CoreLib = {
     alinery_provision_task: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_create_subtask: (repo: ReturnType<typeof ptr>, lane: ReturnType<typeof ptr>, identity: ReturnType<typeof ptr>, request: ReturnType<typeof ptr>) => number | null;
     alinery_set_session_name: (repo: ReturnType<typeof ptr>, taskSlug: ReturnType<typeof ptr>, sessionId: ReturnType<typeof ptr>, name: ReturnType<typeof ptr>) => number | null;
-    alinery_record_worktree: (dir: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
+    alinery_record_worktree: (dir: ReturnType<typeof ptr>, slug: ReturnType<typeof ptr>, execId: ReturnType<typeof ptr>) => number | null;
     alinery_string_free: (reply: number | null) => void;
   };
 };
@@ -45,7 +45,7 @@ function core(): CoreLib {
     alinery_provision_task: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_create_subtask: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_set_session_name: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
-    alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
+    alinery_record_worktree: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.ptr },
     alinery_string_free: { args: [FFIType.ptr], returns: FFIType.void },
   }) as CoreLib;
   return coreLib;
@@ -67,10 +67,10 @@ export function suggestSessionName(repo: string, slug: string, id: string, name:
   return JSON.parse(text) as SessionNameReply;
 }
 
-/** Keeps the working tree's files (uncommitted ones too) alive under a ref for one execution. Undefined outside git. */
-export function recordWorktree(dir: string, execId: string): { ref: string; tree: string } | undefined {
+/** Keeps the working tree's files (uncommitted ones too) alive under `refs/alinery/executions/<slug>/<execId>` for one execution. Undefined outside git. */
+export function recordWorktree(dir: string, slug: string, execId: string): { ref: string; tree: string } | undefined {
   const lib = core();
-  const reply = lib.symbols.alinery_record_worktree(cstr(dir), cstr(execId));
+  const reply = lib.symbols.alinery_record_worktree(cstr(dir), cstr(slug), cstr(execId));
   const text = reply ? new CString(reply).toString() : "";
   if (reply) lib.symbols.alinery_string_free(reply);
   const body = (text ? JSON.parse(text) : { error: "empty worktree reply" }) as { ref?: string; tree?: string; error?: string };

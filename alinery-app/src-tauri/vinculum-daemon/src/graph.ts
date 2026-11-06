@@ -280,7 +280,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     // A failed record (git missing, a damaged repository) must not fail the acceptance it documents.
     recordWorktree: (execution) => {
       try {
-        return recordWorktree(cwd, execution.id);
+        return recordWorktree(cwd, slug, execution.id);
       } catch (error) {
         console.error(`vinculum: ${slug} ${execution.id} worktree not recorded: ${error}`);
         return undefined;

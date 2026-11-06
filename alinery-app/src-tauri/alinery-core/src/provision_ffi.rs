@@ -106,9 +106,9 @@ pub unsafe extern "C" fn alinery_set_session_name(repo: *const c_char, task_slug
 /// Each pointer must be null or a valid NUL-terminated string for the duration of the call.
 /// The returned pointer is owned by the caller and freed with `alinery_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn alinery_record_worktree(dir: *const c_char, exec_id: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn alinery_record_worktree(dir: *const c_char, slug: *const c_char, exec_id: *const c_char) -> *mut c_char {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::git::record_worktree_tree(Path::new(&c_string(dir)?), &c_string(exec_id)?)
+        crate::git::record_worktree_tree(Path::new(&c_string(dir)?), &c_string(slug)?, &c_string(exec_id)?)
     }));
     let body = match outcome {
         Ok(Ok(Some((reference, tree)))) => json!({ "ref": reference, "tree": tree }).to_string(),
