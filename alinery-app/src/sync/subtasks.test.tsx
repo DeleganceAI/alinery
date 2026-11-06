@@ -4,8 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { discardSubtask, startSubtaskManager, subtaskState } from "./subtasks";
 
-const ipc = vi.hoisted(() => ({ publishPreArchiveBackup: vi.fn() }));
-vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc(ipc));
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
 type Handlers = Record<string, (req: never) => unknown>;
@@ -31,7 +29,6 @@ function serve() {
 beforeEach(() => {
   seen = [];
   handlers = {};
-  ipc.publishPreArchiveBackup.mockResolvedValue(undefined);
   serve();
 });
 afterEach(() => vi.resetAllMocks());
@@ -102,11 +99,9 @@ describe("manager", () => {
 });
 
 describe("discard", () => {
-  it("queues the archive backup first and kills with a mutation id, whatever the backup does", async () => {
+  it("kills with a mutation id; the automatic backup is the daemon's own", async () => {
     handlers.discardSubtask = () => ({ applied: {}, stoppedSessionIds: ["m1"] });
-    ipc.publishPreArchiveBackup.mockRejectedValue(new Error("no queue"));
     await discardSubtask("/repo", "parent", "m1");
-    expect(ipc.publishPreArchiveBackup).toHaveBeenCalledWith("/repo");
     expect(seen).toMatchObject([{ method: "discardSubtask", repo: "/repo", req: { slug: "parent", managerSessionId: "m1", meta: { mutationId: expect.any(String) } } }]);
   });
 

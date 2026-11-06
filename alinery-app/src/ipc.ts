@@ -30,8 +30,6 @@ import type {
   AccountStatus,
   AppConfig,
   AppearancePrefs,
-  BackupListItem,
-  BackupMeta,
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
@@ -49,7 +47,6 @@ import type {
   PreviewResult,
   PublishResult,
   PullRequest,
-  PurgeArchivedResult,
   RemoteDirListing,
   RemoteHostView,
   RemoteSharingView,
@@ -57,7 +54,6 @@ import type {
   SkillInstall,
   SshTarget,
   StagedUpdate,
-  StorageInfo,
   TakeoverOutcome,
   TakeoverPreview,
   UpdateResult,
@@ -113,11 +109,7 @@ export const remoteAddRepo = (hostId: string, path: string) => invoke<string>("r
 export const removeRemoteRepoKeepRunning = (path: string) => invoke<AppConfig>("remove_remote_repo_keep_running", { path });
 
 // ── backup.rs ─────────────────────────────────────────────────────────
-export const backupBusy = (repoPath: string | null) => invoke<boolean>("backup_busy", { repoPath });
-export const backupNow = (repoPath: string | null) => invoke<BackupMeta>("backup_now", { repoPath });
-export const listBackups = (repoPath: string | null) => invoke<BackupListItem[]>("list_backups", { repoPath });
 export const pickBackupDestinationDialog = (repoPath: string) => invoke<string | null>("pick_backup_destination_dialog", { repoPath });
-export const checkBackupDestination = (repoPath: string | null, destination: string) => invoke<string>("check_backup_destination", { repoPath, destination });
 export const restoreBackup = (repoPath: string | null, backupPath: string) => invoke<void>("restore_backup", { repoPath, backupPath });
 
 // ── daemon.rs ─────────────────────────────────────────────────────────
@@ -145,7 +137,6 @@ export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOu
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────
-export const publishGitBackup = (repoPath: string) => invoke<void>("publish_git_backup", { repoPath });
 export const lookupTaskPullRequest = (prUrl: string, branch: string, originUrl: string | null) =>
   invoke<PullRequest | null>("lookup_task_pull_request", { prUrl, branch, originUrl });
 
@@ -220,13 +211,11 @@ export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("cus
 export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
 
 // ── settings.rs ───────────────────────────────────────────────────────
-export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
 export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
 export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
 export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
 export const readGlobalSettings = () => invoke<GlobalSettings>("read_global_settings");
 export const readModelFavorites = (harness: string) => invoke<string[]>("read_model_favorites", { harness });
-export const storageInfo = (repoPath: string) => invoke<StorageInfo>("storage_info", { repoPath });
 export const setModelFavorite = (harness: string, model: string, favorite: boolean) => invoke<string[]>("set_model_favorite", { harness, model, favorite });
 export const writeGlobalSettings = (global: GlobalSettings) => invoke<GlobalSettings>("write_global_settings", { global });
 
@@ -237,8 +226,6 @@ export type ChatImage = { mime_type: string; data: string };
 /** A local file's bytes (25 MB at most), for the webview to upload through BlobService. */
 export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_file", { path });
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
-export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>("pre_archive_backup", { repoPath, slug });
-export const publishPreArchiveBackup = (repoPath: string) => invoke<void>("publish_pre_archive_backup", { repoPath });
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 
 // ── playbook.rs ───────────────────────────────────────────────────────

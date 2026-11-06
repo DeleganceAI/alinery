@@ -69,7 +69,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: mocks.readGlobalSettings,
     writeGlobalSettings: mocks.writeGlobalSettings,
-    storageInfo: () => new Promise(() => {}),
     listHarnessModels: async () => [],
     listHarnessModelsForRepo: async () => [],
     getVersion: async () => "0.0.0",
@@ -79,6 +78,7 @@ vi.mock("../ipc", () =>
 
 vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({}) }));
+vi.mock("../sync/storage", () => ({ useBackupBusy: () => false }));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
 vi.mock("./ProviderSetupDialog", () => ({

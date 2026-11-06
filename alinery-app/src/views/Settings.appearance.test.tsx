@@ -44,7 +44,6 @@ vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
     // Storage loads eagerly with the view; keep it pending — no test visits it.
-    storageInfo: () => new Promise(() => {}),
     writeAppearance: vi.fn(async (appearance: AppearancePrefs) => appConfigFor(appearance)),
   }),
 );

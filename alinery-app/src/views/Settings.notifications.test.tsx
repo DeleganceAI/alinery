@@ -42,7 +42,6 @@ const mocks = vi.hoisted(() => ({ writeGlobalSettings: vi.fn() }));
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    storageInfo: () => new Promise<never>(() => {}),
     writeGlobalSettings: mocks.writeGlobalSettings,
   }),
 );

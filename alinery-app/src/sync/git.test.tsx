@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { listTaskPullRequests, pushAndCompareUrlForRepo, removeWorktreeForRepo, taskSourceBranchesForRepo } from "./git";
 
-const ipc = vi.hoisted(() => ({ publishGitBackup: vi.fn(), lookupTaskPullRequest: vi.fn() }));
+const ipc = vi.hoisted(() => ({ lookupTaskPullRequest: vi.fn() }));
 vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc(ipc));
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 
@@ -33,7 +33,6 @@ function serve() {
 beforeEach(() => {
   seen = [];
   handlers = {};
-  ipc.publishGitBackup.mockResolvedValue(undefined);
   serve();
 });
 afterEach(() => vi.resetAllMocks());
@@ -84,24 +83,16 @@ describe("worktree and push", () => {
     expect((seen[0].req.meta as { mutationId: string }).mutationId).not.toBe("");
   });
 
-  it("returns the compare URL and queues a backup of the repository", async () => {
+  it("returns the compare URL", async () => {
     handlers.pushAndCompareUrl = () => ({ compareUrl: "https://github.com/acme/app/compare/task?expand=1" });
     expect(await pushAndCompareUrlForRepo("/repo", "task")).toBe("https://github.com/acme/app/compare/task?expand=1");
-    expect(ipc.publishGitBackup).toHaveBeenCalledExactlyOnceWith("/repo");
   });
 
-  it("queues no backup when the push failed", async () => {
+  it("fails with the daemon's message when the push was rejected", async () => {
     handlers.pushAndCompareUrl = () => {
       throw new ConnectError("git push failed: rejected", Code.FailedPrecondition);
     };
     await expect(pushAndCompareUrlForRepo("/repo", "task")).rejects.toThrow("git push failed: rejected");
-    expect(ipc.publishGitBackup).not.toHaveBeenCalled();
-  });
-
-  it("does not fail a push whose backup could not be queued", async () => {
-    handlers.pushAndCompareUrl = () => ({ compareUrl: "u" });
-    ipc.publishGitBackup.mockRejectedValue(new Error("queue closed"));
-    expect(await pushAndCompareUrlForRepo("/repo", "task")).toBe("u");
   });
 });
 

@@ -37,9 +37,6 @@ const globalSettings: GlobalSettings = {
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    storageInfo: async () => {
-      throw new Error("Storage is not used by this test");
-    },
     connectionStatuses: vi.fn(async () => []),
   }),
 );

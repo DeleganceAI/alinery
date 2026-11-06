@@ -39,7 +39,6 @@ vi.mock("../ipc", () =>
     readGlobalSettings: async () => globalSettings,
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
     getVersion: async () => "0.10.0",
-    storageInfo: () => new Promise(() => {}),
   }),
 );
 

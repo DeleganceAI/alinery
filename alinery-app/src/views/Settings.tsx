@@ -34,6 +34,7 @@ import { useLiveSessionsByRepo } from "../sync/hooks";
 import { useOverlay } from "../sync/overlay";
 import { listPlaybookCatalog } from "../sync/playbooks";
 import { clearRepoOverride, SettingsConflict, useRepoSettings, writeRepoOverrides } from "../sync/settings";
+import * as storageApi from "../sync/storage";
 import { effectiveThinking, THINKING_LEVELS } from "../thinking";
 import { type ToastLength, toast } from "../toast";
 import type {
@@ -323,7 +324,10 @@ export function Settings({
   const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
-  const [backupBusy, setBackupBusy] = useState(false);
+  // A manual backup or a restore this window is running; a run anyone started shows through the daemon's job rows.
+  const [backupWorking, setBackupWorking] = useState(false);
+  const backupJobRunning = storageApi.useBackupBusy(activeSection === "backup" && scope.kind === "repo" ? scope.repoPath : "");
+  const backupBusy = backupWorking || backupJobRunning;
   const [connections, setConnections] = useState<ConnectionStatus[] | null>(null);
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
   // Local while dragging so the slider does not write config.toml on every step.
@@ -443,7 +447,7 @@ export function Settings({
   };
 
   const loadStorage = (repoPath: string) =>
-    ipc
+    storageApi
       .storageInfo(repoPath)
       .then((info) => {
         setStorage(info);
@@ -456,7 +460,7 @@ export function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
 
-  // storageInfo walks disk — load it lazily when Storage is opened on a repository
+  // The scan walks the disk (a job of the daemon) — load it lazily when Storage is opened on a repository
   // chip. All repositories skips the walk; the panel shows the shared empty placeholder.
   useEffect(() => {
     if (activeSection !== "storage") return;
@@ -469,7 +473,7 @@ export function Settings({
     let alive = true;
     setStorage(null);
     setStorageErr("");
-    ipc
+    storageApi
       .storageInfo(repoPath)
       .then((info) => {
         if (alive) {
@@ -512,41 +516,14 @@ export function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global", cfg?.backup.destination]);
 
-  // A backup outlives this view: the zip runs in the backend, so `backupBusy` alone would forget
-  // an in-flight run the moment you navigate away. Poll the queue instead — it is the one place
-  // that knows about a manual BACKUP NOW, a restore, and a trigger-driven run alike.
+  // A backup outlives this view: it is a job of the daemon, so `useBackupBusy` shows a run started elsewhere (another window,
+  // an automatic trigger) the moment this view opens. When a run ends the list is read again.
+  const wasRunning = useRef(false);
   useEffect(() => {
-    if (activeSection !== "backup" || scope.kind !== "repo") return;
-    const repoPath = scope.repoPath;
-    let alive = true;
-    // Only a run we actually observed may be declared finished: the poll can otherwise land in
-    // the gap between clicking BACKUP NOW and the backend claiming the slot, and re-enable the
-    // button mid-zip.
-    let observed = false;
-    const poll = () => {
-      ipc
-        .backupBusy(repoPath)
-        .then((busy) => {
-          if (!alive) return;
-          if (busy) {
-            observed = true;
-            setBackupBusy(true);
-          } else if (observed) {
-            observed = false;
-            setBackupBusy(false);
-            refreshBackups();
-          }
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = setInterval(poll, 1000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
+    if (wasRunning.current && !backupJobRunning && activeSection === "backup") refreshBackups();
+    wasRunning.current = backupJobRunning;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
+  }, [backupJobRunning]);
 
   const saveGlobal = (next: GlobalSettings, message = "Saved") => {
     const notificationsChanged = next.notifications !== global?.notifications;
@@ -600,7 +577,7 @@ export function Settings({
 
   const refreshBackups = () => {
     if (scope.kind !== "repo") return;
-    ipc
+    storageApi
       .listBackups(scope.repoPath)
       .then((items) => {
         setBackups(items);
@@ -630,7 +607,7 @@ export function Settings({
   // The host checks the folder (outside `.alinery`, writable) and answers with the path it will use.
   const setHostBackupFolder = () => {
     if (scope.kind !== "repo" || !destinationDraft?.trim()) return;
-    ipc
+    storageApi
       .checkBackupDestination(scope.repoPath, destinationDraft.trim())
       .then((checked) => {
         setBackupOverride({ destination: checked }, "Backup destination set");
@@ -648,19 +625,26 @@ export function Settings({
 
   const runBackupNow = () => {
     if (scope.kind !== "repo" || backupBusy) return;
-    setBackupBusy(true);
-    ipc
+    setBackupWorking(true);
+    storageApi
       .backupNow(scope.repoPath)
       .then((meta) => {
         report(`Backup created — ${meta.repo_name} @ ${new Date(meta.created_at * 1000).toLocaleString()}`);
         refreshBackups();
       })
       .catch((e) => reportError(e, "Backup failed"))
-      .finally(() => setBackupBusy(false));
+      .finally(() => setBackupWorking(false));
   };
 
   const restoreBackup = async (item: BackupListItem) => {
     if (scope.kind !== "repo" || backupBusy) return;
+    // The daemon checks the archive is this repository's before anything is stopped: a wrong file costs no session.
+    try {
+      await storageApi.verifyBackup(scope.repoPath, item.path);
+    } catch (e) {
+      reportError(e, "Can't restore that backup");
+      return;
+    }
     const ok = await confirmDanger(
       "Restore this backup?",
       <ul className="confirm-list">
@@ -676,7 +660,7 @@ export function Settings({
       "Restore",
     );
     if (!ok) return;
-    setBackupBusy(true);
+    setBackupWorking(true);
     ipc
       .restoreBackup(scope.repoPath, item.path)
       .then(() => {
@@ -685,7 +669,7 @@ export function Settings({
         refreshBackups();
       })
       .catch((e) => reportError(e, "Restore failed"))
-      .finally(() => setBackupBusy(false));
+      .finally(() => setBackupWorking(false));
   };
 
   const setGlobalNotif = (key: keyof GlobalSettings["notifications"], value: boolean) => {
@@ -818,7 +802,7 @@ export function Settings({
     setPurgeBusy(true);
     setPurgeErrors([]);
     try {
-      const res = await ipc.deleteAllArchivedStorage(scope.repoPath);
+      const res = await storageApi.deleteAllArchivedStorage(scope.repoPath);
       setPurgeErrors(res.errors);
       if (res.errors.length) {
         toast.error(`Deleted ${res.deleted_tasks} task(s), ${res.deleted_sessions} session(s) — ${res.errors.length} failed (listed below)`);

@@ -13,7 +13,7 @@ import { taskEntity } from "../test/sessionDaemon";
 import { useRepoTasks } from "./board";
 import { addTaskAttachment, archiveTaskForRepo, createTaskForRepo, prepareTaskAttachments } from "./tasks";
 
-const ipc = vi.hoisted(() => ({ preArchiveBackup: vi.fn(), readLocalFile: vi.fn() }));
+const ipc = vi.hoisted(() => ({ readLocalFile: vi.fn() }));
 vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc(ipc));
 vi.mock("../toast", () => ({ toast: vi.fn() }));
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -21,6 +21,7 @@ vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 type Calls = { archive: number; begun: { target: unknown; size: bigint; sha256: string }[]; chunks: { offset: bigint; length: number }[]; committed: number };
 let calls: Calls;
 let onCreate: () => ReturnType<typeof created>;
+let archive: () => unknown;
 let syncScript: Parameters<typeof scriptedSync>[0];
 
 const created = (slug: string, seq: number) => ({
@@ -33,7 +34,7 @@ function serve() {
   const transport = createRouterTransport((router) => {
     router.service(SyncService, h.sync);
     router.service(TaskService, {
-      archiveTask: () => (calls.archive++, {}),
+      archiveTask: () => archive(),
       createTask: () => onCreate() as never,
     } as never);
     router.service(BlobService, {
@@ -63,38 +64,33 @@ beforeEach(() => {
     await untilAborted(signal);
   };
   onCreate = () => created("new-task", 5);
+  archive = () => (calls.archive++, {});
   serve();
 });
 afterEach(() => vi.resetAllMocks());
 
 describe("archive", () => {
-  it("a failing pre-archive backup leaves the task unarchived and the error reaches the caller", async () => {
-    ipc.preArchiveBackup.mockRejectedValue(new Error("backup destination is full"));
-    await expect(archiveTaskForRepo("/r", "t")).rejects.toThrow("backup destination is full");
-    expect(calls.archive).toBe(0);
+  const REFUSED = "the backup before the archive failed: backup destination is full; the task was not archived";
+
+  it("a pre-archive backup that failed in the daemon leaves the task unarchived and the reason reaches the caller", async () => {
+    archive = () => {
+      throw new ConnectError(REFUSED, Code.FailedPrecondition);
+    };
+    await expect(archiveTaskForRepo("/r", "t")).rejects.toThrow(REFUSED);
     const failure = await archiveBoardTask({ repo_path: "/r", slug: "t" }, false, () => {});
     expect(failure?.detail).toContain("backup destination is full");
     expect(calls.archive).toBe(0);
   });
 
-  it("archives after the backup succeeded", async () => {
-    ipc.preArchiveBackup.mockResolvedValue(undefined);
+  it("asks the daemon once, with a mutation id: the backup is the daemon's step, not a call made first from here", async () => {
     await archiveTaskForRepo("/r", "t");
-    expect(ipc.preArchiveBackup).toHaveBeenCalledWith("/r", "t");
     expect(calls.archive).toBe(1);
   });
 
-  it("a daemon refusal after the backup is an Error with the daemon's words", async () => {
-    ipc.preArchiveBackup.mockResolvedValue(undefined);
-    vi.mocked(daemonTransport).mockReturnValue(
-      createRouterTransport((router) => {
-        router.service(TaskService, {
-          archiveTask: () => {
-            throw new ConnectError("task is busy", Code.FailedPrecondition);
-          },
-        } as never);
-      }) as Transport,
-    );
+  it("a daemon refusal is an Error with the daemon's words", async () => {
+    archive = () => {
+      throw new ConnectError("task is busy", Code.FailedPrecondition);
+    };
     await expect(archiveTaskForRepo("/r", "t")).rejects.toThrow("task is busy");
   });
 });

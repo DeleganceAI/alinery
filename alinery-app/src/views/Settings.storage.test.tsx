@@ -65,13 +65,16 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    storageInfo: mocks.storageInfo,
-    deleteAllArchivedStorage: mocks.deleteAllArchivedStorage,
-    listBackups: async () => [],
-    backupBusy: async () => false,
     getVersion: async () => "0.0.0",
   }),
 );
+// The scan and the purge are jobs of the daemon (sync/storage).
+vi.mock("../sync/storage", () => ({
+  storageInfo: mocks.storageInfo,
+  deleteAllArchivedStorage: mocks.deleteAllArchivedStorage,
+  listBackups: async () => [],
+  useBackupBusy: () => false,
+}));
 
 vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));

@@ -4,11 +4,13 @@
 import { create } from "@bufbuild/protobuf";
 import { createRouterTransport, type ServiceImpl } from "@connectrpc/connect";
 import { ArtifactService } from "alinery-proto/alinery/v1/artifacts_pb";
+import { BackupService } from "alinery-proto/alinery/v1/backups_pb";
 import { BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import { type Cursor, CursorSchema } from "alinery-proto/alinery/v1/common_pb";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
+import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { PlaybookService } from "alinery-proto/alinery/v1/playbooks_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { SettingsService } from "alinery-proto/alinery/v1/settings_pb";
@@ -23,6 +25,8 @@ export type Services = {
   execution: ServiceImpl<typeof ExecutionService>;
   artifacts: Partial<ServiceImpl<typeof ArtifactService>>;
   playbooks: Partial<ServiceImpl<typeof PlaybookService>>;
+  jobs: Partial<ServiceImpl<typeof JobService>>;
+  backups: Partial<ServiceImpl<typeof BackupService>>;
 };
 
 export function daemonHarness(services: Partial<Services>) {
@@ -35,6 +39,8 @@ export function daemonHarness(services: Partial<Services>) {
     if (services.execution) router.service(ExecutionService, services.execution);
     if (services.artifacts) router.service(ArtifactService, services.artifacts);
     if (services.playbooks) router.service(PlaybookService, services.playbooks);
+    if (services.jobs) router.service(JobService, services.jobs);
+    if (services.backups) router.service(BackupService, services.backups);
   });
   return { transport };
 }

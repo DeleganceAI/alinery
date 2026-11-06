@@ -1,12 +1,9 @@
 // The sub-task controls of a task page (plan S4.8): what it offers, the manager session, and killing a child or discarding
 // a setup. The daemon owns the files and stops the sessions, so a repository on another machine answers the same calls.
-// What stays on this machine is the backup queue (S4.9 moves it), reached through `ipc`.
-
 import { createClient } from "@connectrpc/connect";
 import type { Session } from "alinery-proto/alinery/v1/entities_pb";
 import { SubtaskService, type SubtaskTaskSummary } from "alinery-proto/alinery/v1/subtasks_pb";
 import { daemonTransport } from "../daemon/transport";
-import * as ipc from "../ipc";
 import type { CreateExecutionSessionReply, SubtaskManagerState, TaskSummary } from "../types";
 import { sessionDisplayFromProto } from "./board";
 import { newMutationMeta } from "./mutation";
@@ -50,8 +47,7 @@ export async function startSubtaskManager(repo: string, taskSlug: string, recove
   return startedOf(r.started);
 }
 
-/** An empty `managerSessionId` kills the task's active child. A backup queued for it never stops the discard. */
+/** An empty `managerSessionId` kills the task's active child. The daemon queues the automatic backup itself, and a failure of it never stops the discard. */
 export async function discardSubtask(repo: string, taskSlug: string, managerSessionId: string): Promise<void> {
-  await ipc.publishPreArchiveBackup(repo).catch(() => undefined);
   await call(() => subtasks(repo).discardSubtask({ meta: newMutationMeta(), slug: taskSlug, managerSessionId }));
 }

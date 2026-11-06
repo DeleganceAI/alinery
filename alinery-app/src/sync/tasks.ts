@@ -239,9 +239,8 @@ export async function renameTask(repo: string, slug: string, name: string): Prom
   return taskOf(reply.task, repo);
 }
 
-/** Archive a task. The pre-archive backup runs first (S4.9 moves it into the daemon's archive job): when it fails the task stays as it was and the error is the caller's. */
+/** Archive a task. The daemon runs the pre-archive backup first when it is switched on: if that fails the task stays as it was and the error is the caller's. */
 export async function archiveTaskForRepo(repo: string, slug: string): Promise<void> {
-  await ipc.preArchiveBackup(repo, slug);
   await call(() => taskApi.tasks(repo).archiveTask({ meta: newMutationMeta(), slug, expectedRevision: 0n }));
 }
 
