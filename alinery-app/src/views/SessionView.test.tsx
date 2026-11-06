@@ -494,9 +494,8 @@ describe("the session toolbar names the parent task", () => {
 
   afterEach(() => {
     cleanup();
+    fakeBoard.reset();
   });
-
-  afterEach(() => fakeBoard.reset());
 
   it("falls back to the task slug before the repo stream's first snapshot", () => {
     fakeBoard.set({ ready: false });
