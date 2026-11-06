@@ -278,7 +278,7 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 - **Kind:** decision (provisional).
 - **What:** `TaskExecutionState` gains `engine: Option<serde_json::Value>`, so every remaining Rust writer (S4.3, S4.8 and S4.11 own them) reads the file whole and writes the block back unchanged. Rust never interprets it.
 - **Options:** a typed Rust mirror of the engine `State` (a second schema to keep in step, against rule 2); a separate file for the engine state (O14 b says `execution.json` is the one truth).
-- **Why:** smallest diff that keeps one file and loses nothing across a Rust write. Covered by the interop test in `executionStore.test.ts` (100 interleaved rounds of TypeScript saves, manual records, Rust reads and Rust provisioning) and by the Rust test `a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_block`.
+- **Why:** smallest diff that keeps one file and loses nothing across a Rust write. Covered by the interop test in `executionStore.test.ts` (100 rounds of TypeScript saves, manual records, Rust reads and Rust provisioning of other tasks; see R-S4.2-12 for what it does not reach) and by the Rust test `a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_block`.
 - **Reverse:** drop the field and the block is lost on the next Rust write; do not.
 - **Files:** `alinery-core/src/execution.rs`, `alinery-core/tests/fixtures/ts-engine-state.json`.
 
@@ -300,7 +300,7 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 
 ### R-S4.2-5: O27 history objects and archive
 - **Kind:** decision (O27 is user-decided; this is how it was built).
-- **What:** each execution keeps `executions/<execId>/objects/<sha256>` as a clone where the filesystem has one, else a plain copy, never a hard link, with no size cap (a 200 MB file is tested). The object is named by the hash of the copy, so it is always the bytes its name says. A coding step records its worktree tree (`manifest.worktree`). Archive prunes `objects/` Rust-side (`prune_execution_objects`, called from `archive_task_guarded` in `subtask.rs`, under the task lock) and keeps the manifests, so a pruned object reads as `pruned`, not `missing`.
+- **What:** each execution keeps `executions/<execId>/objects/<sha256>` as a clone where the filesystem has one, else a plain copy, never a hard link, with no size cap (a 200 MB file is tested). The object is named by the hash of the copy, so it is always the bytes its name says. A coding step records its working files as a tree under `refs/alinery/executions/<execId>` (`manifest.worktree`); the first build only had the engine hook, and R-S4.2-10 wires it. Archive prunes `objects/` Rust-side (`prune_execution_objects`, called from `archive_task_guarded` in `subtask.rs`, under the task lock) and keeps the manifests, so a pruned object reads as `pruned`, not `missing`.
 - **Not done:** the archive prune is tested in Rust only, not through a running daemon (L-S4.2-c).
 - **Files:** `playbook-engine/src/history.ts`, `alinery-core/src/execution.rs`, `alinery-core/src/subtask.rs`.
 
@@ -324,6 +324,33 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 - **Kind:** flaky (fixed).
 - **What:** the first full `check.sh` of S4.2 failed vitest on a different test in each run, none of them passing alone: `SessionView.test.tsx` "opens queued work without starting it" (the Start button exists but is disabled until the daemon's execution row is pushed, and the test clicked it at once; now it waits for it to be enabled) and two tests in `sync/sessionObservation.test.tsx` (the attention notification fires in a passive effect after the badge text appears; now `waitFor`). The sessionObservation tests were not touched by the engine work; their race is older and shows under load. Five full vitest runs in a row passed after the fix. `check.sh` then stopped at `cargo fmt` (three files), fixed in `9deae66`; the next full run passed (exit 0). `a_repo_being_closed_is_not_respawned_by_attach` (R-FLAKE-1) did not fail in it.
 - **Files:** `alinery-app/src/views/SessionView.test.tsx`, `alinery-app/src/sync/sessionObservation.test.tsx`.
+
+### R-S4.2-10: the worktree record is wired through an alinery-core FFI function (review fix)
+- **Kind:** decision (provisional) and correction.
+- **What:** the first S4.2 build had the engine's `recordWorktree` hook but no caller, so no real coding step recorded anything; R-S4.2-5 overstated it. Now `graph.ts` passes `recordWorktree`, which calls `alinery_record_worktree` in `libalinery_core` (`provision_ffi.rs`) over `alinery_core::git::record_worktree_tree`. It uses `git_cmd` and a temporary index (`GIT_INDEX_FILE` under the git dir), so uncommitted and untracked files are captured and the user's index, HEAD and branch are untouched; the commit is parented on HEAD when there is one; the ref is `refs/alinery/executions/<execId>`, which `git gc` respects. A directory outside git records nothing; a failure is logged and does not fail the acceptance. `graph.test.ts` accepts a coding step in a real repository and reads the uncommitted edit back from the recorded tree; a mutation that drops the hook fails it.
+- **Why FFI and not `Bun.spawn(["git"])`:** `check-git-env-scrub.sh` forbids a git spawn in the daemon until S4.7 adds `platform/git.ts`. **S4.7 should move this onto `platform/git.ts`** and drop the FFI function (plan: S4.7 Build).
+- **Open:** (a) the call is synchronous (`git add -A` on a very large tree blocks the daemon loop); (b) the refs are not removed when a task is archived, so the trees stay alive in the repository's object store until someone deletes `refs/alinery/executions/*` (the objects under `executions/<id>/objects/` are pruned, the git trees are not) — a follow-up for S4.8 or S4.7; (c) the live check L-S4.2-e.
+- **Reverse:** remove the `recordWorktree` option in `graph.ts`; the engine then records nothing, as before.
+- **Files:** `alinery-core/src/git.rs`, `alinery-core/src/provision_ffi.rs`, `vinculum-daemon/src/tasks.ts`, `vinculum-daemon/src/graph.ts`.
+
+### R-S4.2-11: a task archived while its engine runs can recreate `objects/`
+- **Kind:** known gap (follow-up).
+- **What:** the archive prune is Rust-side and tested in Rust only. A daemon engine still running for a task archived mid-run can make `objects/` again through `mkdirSync` in `history.ts` at its next snapshot. Nothing guards it. Left open; the cheap guard is for the daemon to skip snapshots once the task is archived, which needs the archive state in the engine's options. Keep L-S4.2-c.
+
+### R-S4.2-12: the interop test does not interleave a Rust writer on the same task
+- **Kind:** unverified claim (corrected).
+- **What:** in the 100-round test the Rust provisioning calls create other tasks and `suggestSessionName` only reads, so no Rust write hits the same task's `execution.json` between TypeScript saves. That a Rust write keeps the `engine` block is covered by the Rust test with a TypeScript-written fixture, not by interleaving. The plan note was reworded to say so. A real interleave needs an FFI entry that rewrites an existing task's file (for example the `auto_approve_all` toggle); S4.3 adds that toggle to the daemon and can add the test then.
+
+### R-S4.2-13: what `revision` means across writers (review fix)
+- **Kind:** correction.
+- **What:** the plan said the daemon's `revision` is bumped by every writer. `saveEngineState` and Rust's `mutate_execution_state` did; `addExecution` did not, and now does (`executionStore.test.ts`). `AllowCompletion`'s `expected_revision` is compared with the sync store entity's revision, not the file's, so it sees a write only after the store has noticed the change, and `expected_revision` 0 skips the check. The note says so.
+
+### R-S4.2-14: input snapshots (review fix)
+- **Kind:** decision and known limit.
+- **What:** the consumed inputs are now copied and hashed before `harness.start` (and before `resume`), not after, so the agent cannot touch an input first (`persistence.test.ts`: a launch that edits the ticket leaves the recorded hash unchanged). The copy and hash are still synchronous (`copyFileSync`, `readSync`), so a very large input (the 200 MB case) holds the daemon loop for its duration; async streams are the follow-up. A launch that then fails leaves an unused object behind, which archive prunes.
+- **Also:** `saveEngineState` now writes the `engine` block and the Rust-shaped maps from one deep copy of the state taken before it waits for the lock (`executionStore.test.ts`).
+- **Files:** `playbook-engine/src/engine.ts`, `playbook-engine/src/history.ts`, `vinculum-daemon/src/domain/executionStore.ts`.
+- **Also:** `playbook-engine/test/persistence.test.ts` used `require` in an ES module, which fails under Node 26's `node --test` but works under Bun (the gate); now an import.
 
 ---
 

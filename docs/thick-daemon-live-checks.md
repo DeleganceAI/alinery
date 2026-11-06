@@ -210,6 +210,12 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the object's hash equals its file name and the original bytes, whatever the live file now holds; after the archive `objects/` is gone and the manifests remain.
 - **Status:** open
 
+### L-S4.2-e: A real coding step records its working files under a ref
+- **Session:** S4.2 (review fix). Plan: S4.2 Accept (O27, "a git-worktree step still resolves its recorded tree"); ledger R-S4.2-10.
+- **Steps:** with the app running, run a playbook with a coding step (the bundled `superdevelop` build step) in a git repository to acceptance, leaving a file uncommitted in the task worktree. Then `git -C <worktree> for-each-ref refs/alinery/executions` and `git -C <worktree> ls-tree -r <ref>`. Run `git -C <worktree> gc --prune=now` and repeat the `ls-tree`.
+- **Expected:** one ref per accepted coding execution; the tree lists the uncommitted file with its content at acceptance; `git status` of the worktree is unchanged by the recording; the tree survives the gc. The daemon log has no `worktree not recorded` line.
+- **Status:** open
+
 ## Needs a signing identity
 
 ### L-S0.5-a: bun:ffi under the hardened runtime
