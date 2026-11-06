@@ -216,6 +216,41 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** one ref per accepted coding execution; the tree lists the uncommitted file with its content at acceptance; `git status` of the worktree is unchanged by the recording; the tree survives the gc. The daemon log has no `worktree not recorded` line.
 - **Status:** open
 
+### L-S4.3-a: Create a task with a pasted image and an attachment; the card shows at once and once
+
+- **Session:** S4.3. Plan: S4.3 Accept (vitest "created task shows its card before the delta, and exactly once after"); ledger R-S4.3-1, R-S4.3-8.
+- **Steps:** launch the app on a scratch git repo. New task: a name, a description, paste an image into the description, add one file with the file picker and drop another from Finder. Create. Watch the board (Grid and Kanban) while it creates.
+- **Expected:** the card appears the moment the create returns, before any reload, and stays a single card; the task opens with the ticket listing `attachments/<file>` for each file; `<repo>/.alinery/tasks/<slug>/artifacts/attachments/` holds the files and `shasum -a 256` of each equals the original; `<repo>/.alinery/worktrees/<slug>` is a worktree on branch `<slug>`; no file is left in `<repo>/.alinery/tmp/uploads`. Creating a second task of the same name gets `<slug>-1`.
+- **Status:** open
+
+### L-S4.3-b: Duplicate, rename, archive and restore
+
+- **Session:** S4.3. Plan: S4.3 Build; ledger R-S4.3-1, R-S4.3-5.
+- **Steps:** on a task from L-S4.3-a: Duplicate it; rename the copy; archive it (with and without "remove worktree"); restore it from the archived list; toggle Auto approval all; add and remove a related task.
+- **Expected:** the duplicate keeps the ticket, the attachments and the playbook; each change shows on the board without a reload; archive removes the card and restore brings it back; restore does not bring `executions/*/objects` back; the related-task symlinks under `<task>/related/` match the list.
+- **Status:** open
+
+### L-S4.3-c: The pre-archive backup failing keeps the task
+
+- **Session:** S4.3 (the WA until S4.9). Plan: S4.3 Accept; ledger R-S4.3-2.
+- **Steps:** in Settings, Backups: set a destination that is a plain file (`touch /tmp/not-a-dir`), enable the archive trigger. Archive a task. Then set a good destination and archive again.
+- **Expected:** with the bad destination the archive does not happen, the task stays on the board, and a message names the backup failure; with the good one a backup zip appears and the task archives. With the trigger off or no destination, archive proceeds with no backup. Say whether the wait feels long on a large repo.
+- **Status:** open
+
+### L-S4.3-d: A draft with large pasted images through the bridge
+
+- **Session:** S4.3. Plan: 2.1.5 (128 MiB receive limit); ledger R-S4.3-4.
+- **Steps:** start a task, paste three 8 MB images into the description, wait for the autosave, close the form, reopen the draft. Then paste images totalling over 100 MB.
+- **Expected:** the draft reopens with its images (read through BlobService); the over-limit paste is refused with a readable message, not a hang or a blank form.
+- **Status:** open
+
+### L-S4.3-e: Opening a session on a draft or archived task is refused by the daemon
+
+- **Session:** S4.3. Plan: S4.3 Build (open_session preflight); ledger R-S4.3-6.
+- **Steps:** with a saved draft, try to open a session on it (via a stale tab or the Sessions list). Archive a task that has a session and try to attach to that session. Open a plain Terminal session. Sign out of a hosted account and open a hosted-model session.
+- **Expected:** the draft and archived cases show the daemon's refusal text and start nothing; Terminal opens; the hosted refresh still runs before the session opens.
+- **Status:** open
+
 ## Needs a signing identity
 
 ### L-S0.5-a: bun:ffi under the hardened runtime
@@ -309,6 +344,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Session:** S4.2. Plan: S4.2 (remote hosts); ledger R-S4.2-8.
 - **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` all changed) and run the live remote tests as in L-S1.3-b. Then in the app, with the container host connected and a repository on it open, run L-S4.2-a there; on the host `cat <repo>/.alinery/tasks/<slug>/execution.json | head -c 400`.
 - **Expected:** the live tests pass against protocol 27 (a host still on 26 shows the daemon-conflict banner and Restart daemon, not a failure); the approval goes through the forwarded RPC socket; the host file has the `engine` block.
+- **Status:** open
+
+### L-S4.3-f: The Linux runtime with protocol 28, and a remote repo's create, attachments and drafts
+
+- **Session:** S4.3. Plan: S4.3 (remote hosts); ledger R-S4.3-7, R-S4.3-10.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live` was edited to compile: its attachment seed is now a UTF-8 file written through `WriteFile`). Then in the app, on a remote repo: create a task with an attachment, duplicate it, archive it, and try to reveal an attachment.
+- **Expected:** the live tests pass against protocol 28 (a host still on 27 shows the daemon-conflict banner and Restart daemon); create, duplicate and archive work through the forwarded RPC socket; the attachment's reveal action is absent for the remote repo; the pre-archive backup runs on the host and obeys the host's own trigger flags.
 - **Status:** open
 
 ## Needs a Linux machine (any arch)

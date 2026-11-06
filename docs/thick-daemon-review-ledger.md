@@ -364,6 +364,86 @@ These are already in the plan (1.7, 4.1). Listed so the morning review has one p
 - **Completion race (minor, fixed).** `requestCompletion` awaits `recordWorktree` for coding steps; after it the engine re-checks `receipt` and `status`. A duplicate request now returns the existing receipt without a second `accepted` event, and an execution that failed or was marked exited meanwhile is rejected instead of being accepted over its failure. The fold already ignored a second `accepted`, so the duplicate was harmless to state; the status case was a real hole. Test in `persistence.test.ts` fails without the re-check.
 - **Files:** `alinery-core/src/git.rs`, `provision_ffi.rs`, `subtask.rs`, `vinculum-daemon/src/{tasks,graph}.ts`, `executionStore.test.ts`, `playbook-engine/src/{engine,history}.ts`, `playbook-engine/test/persistence.test.ts`.
 
+### R-S4.3-1: what the daemon owns, and the shape of the task API
+- **Kind:** decision (the plan named the commands; the shape is mine).
+- **Decision:** `TaskService`, `DraftService` and `BlobService` (`PROTOCOL_VERSION` 28). Every write carries `MutationMeta`; renames, archives, restores, approve-all and related-task writes take `expected_revision` (0 skips the check). The reply to a create carries the stored task and the cursor it applied at, and the frontend's `pendingTasks.ts` shows the card through the same `Overlay` until the replica passes that cursor.
+- **Options:** (a) the one above; (b) the frontend waits for the delta (the card appears late); (c) invent a second "created" entity.
+- **Why (a):** it is the pattern S4.1 and S4.2 set and the vitest line asks for it.
+- **Reverse:** drop `pendingTasks.ts` and wait for the stream; no wire change.
+- **Files:** `proto/alinery/v1/{tasks,blobs,entities}.proto`, `vinculum-daemon/src/{domain,rpc}/*`, `alinery-app/src/sync/{tasks,pendingTasks,board}.ts`.
+
+### R-S4.3-2: the pre-archive backup is blocking (the WA)
+- **Kind:** decision (provisional, until S4.9) and a behaviour change.
+- **Decision:** the frontend calls the shell command `pre_archive_backup`, then `TaskService.ArchiveTask` only when it returned `Ok`. The old best-effort queued backup became a blocking one: a backup that is switched on for archive and fails now stops the archive and shows the error (the plan's Test and Accept asked for that). Nothing configured or the trigger off: `Ok`. For a remote repo the host runs it and applies its own gate. The command first calls `ensure_task_can_archive`, so an archive the daemon would refuse leaves no backup behind.
+- **Options:** (a) the above; (b) keep the queued best-effort backup and archive regardless (breaks the Accept line); (c) build the backup job now (S4.9 owns it).
+- **Reverse:** S4.9 moves the backup into `ArchiveTask` and deletes `pre_archive_backup` and the `ipc.preArchiveBackup` call.
+- **Files:** `src/backup.rs`, `src/ipc.ts` (`preArchiveBackup`), `src/sync/tasks.ts` (`archiveTaskForRepo`), `src/archiveTask.ts`, `src/sync/tasks.test.tsx`.
+
+### R-S4.3-3: the `ReadAttachmentImage` variant stays until S4.5
+- **Kind:** deviation from the Exit ("the 14 variants are gone").
+- **What:** an attachment read by name goes through `BlobService.ReadBlob`. The same wire variant also resolves an artifact-tree `node_id`, which S4.5 moves. Removing it now would break the tree's image preview.
+- **Reverse / close:** S4.5 deletes the variant and `ipc.readAttachmentImage`.
+- **Files:** `alinery-core/src/repo_service.rs`, `src/sync/tasks.ts` (`readAttachmentBytes`), `AttachmentPreview.tsx`.
+
+### R-S4.3-4: staged-upload lifetime and the 128 MiB message limit
+- **Kind:** decision.
+- **Decision:** an upload to the staging area lives in `.alinery/tmp/uploads/<id>`; the daemon clears that directory at start (a restart drops unfinished uploads), a rejected commit deletes its file, and a create releases the ids it claimed (also on failure). A draft's pasted images travel as bytes inside `WriteDraft` and are read back through `BlobService.ReadBlob`, so the daemon's grpc receive size is raised to 128 MiB; a draft over that is refused by the transport.
+- **Options:** (a) the above; (b) upload draft images as blobs too (more calls, a second staged kind); (c) keep the grpc default (4 MiB) and break large pastes.
+- **Reverse:** raise or lower the limit in `rpc/server.ts`; (b) is additive.
+- **Files:** `vinculum-daemon/src/{domain/blobs.ts,rpc/server.ts}`.
+
+### R-S4.3-5: stale `draft-attachments.json` after promotion, and the other file-level choices
+- **Kind:** decision.
+- **Decision:** when a draft is promoted to a task the daemon deletes the draft's `draft-attachments.json` (the old code could leave it behind, so the task kept a `draft/` row). Names are checked with `safeComponent` (no `..`, no separator, not absolute) and a colliding attachment name gets `-2`..`-99` before the extension, as `unique_attachment_name` did. A related task must be on this machine (absolute repo path), as before.
+- **Reverse:** remove the delete in `domain/tasks.ts`.
+- **Files:** `vinculum-daemon/src/domain/{tasks,taskFiles,blobs}.ts`.
+
+### R-S4.3-6: `open_session` preflight and the hosted refresh
+- **Kind:** decision.
+- **Decision:** the shell no longer reads the session meta. The frontend passes a `harness` hint to `open_session` (for the hosted-model refresh that has to happen before the daemon opens a session), and the real gate is the daemon's `openPreflight` in the attach/spawn/resume path: a task session needs a v2 task that is neither a draft nor archived and a product harness; a session outside a task opens only as the no-harness drawer. This closes the gap S3.5 recorded (the remote `open_session` lost its Rust `GetTask` gate).
+- **Options:** (a) the above; (b) keep a shell meta read (breaks "the shell reads no meta file").
+- **Reverse:** read the meta in `session.rs` again.
+- **Files:** `vinculum-daemon/src/{domain/openPreflight.ts,main.ts}`, `src/session.rs`, `alinery-app/src/SessionTerminal.tsx`.
+
+### R-S4.3-7: `attachment_path` is local-only; the remote reveal action is hidden
+- **Kind:** decision (the plan says exactly this).
+- **What:** `attachment_path` stays a shell command for a local repo. For a remote repo (`filesAreRemote()`), the attachment click and the preview's reveal button do nothing and the button is hidden; the daemon never hands out a path. `AttachmentPreview` takes an optional `repoPath` and reads the image through `BlobService`.
+- **Files:** `src/artifacts.rs`, `AttachmentPreview.tsx`, `views/{TaskDetail,SessionView}.tsx`. The `remote-local-only.txt` entry for `attachment_path` stays.
+
+### R-S4.3-8: `TaskCreate` telemetry is never sent from Rust
+- **Kind:** decision.
+- **What:** the daemon sends `task.archive`, `task.draft_create` and `task.draft_delete` (source `alineryd`) from `rpc/tasks.ts`. Rust defined a `TaskCreate` event but never emitted it, and the daemon does not either. The Rust emissions for the three and `src/tests/telemetry.rs` are gone; the shell keeps `BackupCreate` for the pre-archive backup. Conformance fixtures `telemetry/{task_draft_create,task_draft_delete,task_archive_no_id}` check the daemon's events against what Rust emitted.
+- **Files:** `vinculum-daemon/src/rpc/tasks.ts`, `conformance/telemetry/*`.
+
+### R-S4.3-9: `WorktreeExists` is a TaskService RPC
+- **Kind:** deviation (an RPC the plan did not list).
+- **What:** whether a task's recorded worktree is still on disk can change outside the app and no stream sees it, so `TaskDetail` asks. `WorktreeExists` (VIEW) answers from `task.md`'s `worktree` and the filesystem; an unknown task is NOT_FOUND. The Tauri `worktree_exists` command is gone.
+- **Reverse:** put the bit in the Task entity's board block (the daemon would have to watch the directory).
+- **Files:** `proto/alinery/v1/tasks.proto`, `rpc/tasks.ts`, `src/sync/tasks.ts`.
+
+### R-S4.3-10: Rust app tests removed, and where the coverage went; the live remote tests
+- **Kind:** deviation (reduced Rust coverage).
+- **What:** about 34 Rust app tests of draft, attachment, rename, archive, restore and duplicate wrappers were deleted with their wrappers (`src/tests/{task,session,git_ops,remote}.rs`, `telemetry.rs`). The core functions they ended in still exist for the MCP and `provision_task`, and keep their core tests. The new path is covered by `rpc/tasks.test.ts`, `domain/taskCreate.test.ts`, `platform/git.test.ts`, `domain/openPreflight.test.ts`, the `task_create` and `telemetry` conformance fixtures (read by both the Rust runner and bun) and `sync/tasks.test.tsx`. The `live_*` remote tests were edited so they compile (their attachment seed is a UTF-8 file written through `WriteFile`); they were not run (no sshd): L-S4.3-f.
+- **Files:** see above.
+
+### R-S4.3-11: draft conformance fixtures were not added
+- **Kind:** deviation from the Tests line ("conformance from the `task_drafts.rs` tests").
+- **What:** `task_create` has three cases (`plain`, `attachments_and_evidence`, `duplicate_names`) with `after/` trees; the draft cases are covered by the daemon test `a draft is written, shows its images through the entity and ReadBlob, and is deleted whole` and by the two draft telemetry fixtures. A draft's `after/` tree holds a base64 image whose bytes the Rust runner compares as UTF-8 text, so I left it out rather than loosen the runner.
+- **Reverse:** add `conformance/task_draft/*` and let the runner compare `draft-attachments.json` as JSON.
+
+### R-S4.3-12: `alinery-mcp` still creates tasks over the legacy `create_task` op
+- **Kind:** decision (the plan: "stays on core under the flock until S5.1").
+- **What:** the first cut dropped the daemon's `create_task` op and the Rust artifact test and MCP tests found it (`unknown-op`). The op is back in `main.ts`; it parses the Rust `CreateTaskRequest` JSON, writes inline base64 attachments to a scratch directory under `.alinery/tmp/wire-<id>`, runs the same `provisionTask` plus session reservation as `CreateTask`, removes the scratch, and answers the JSON `CreateTaskReply`. A non-empty `parent_task` is refused (`create_subtask` owns that). `alinery_provision_task` the FFI is gone regardless. S5.1 deletes the op with the MCP's core calls.
+- **Files:** `vinculum-daemon/src/{main.ts,rpc/tasks.ts}`, `alinery-core/src/daemon_client.rs` (comment), `rpc/tasks.test.ts`.
+
+### R-S4.3-13: `PROTOCOL_VERSION` 28 and the shutdown dialect
+- **Kind:** note. The wire gained three services on the RPC socket; `audited_shutdown_protocol` accepts 28 (the `shutdown` op is unchanged). Hosts on protocol 27 show the daemon-conflict banner until restarted from it.
+- **Files:** `alinery-core/src/{protocol,daemon_client}.rs`, `vinculum-daemon/src/main.ts`.
+
+### R-S4.3-14: environment and gate notes
+- **Kind:** note. `check.sh` run from a shell without node on PATH fails at the first step (`npm: command not found`); use the PATH line at the top of the live-checks file. The daemon fs-writes gate rejected a plain `writeFileSync` for the MCP scratch file; it uses `writeAtomic`.
+- **Suggested README text (not edited):** after S4.3 the README's task-creation paragraph could say that tasks, drafts and attachments are created by the repo's daemon, so a repository on another machine creates them on that machine; and that archiving waits for a configured pre-archive backup and is refused when the backup fails.
+
 ---
 
 ## D. Dustin's PR #154 comments (dtdannen, 2026-11-05): dispositions
