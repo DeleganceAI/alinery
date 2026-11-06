@@ -55,7 +55,7 @@ hyper = { version = "1.10", default-features = false, features = ["server"] }
 workspace = true
 
 [workspace]
-members = ["alinery-core", "mcp"]
+members = ["alinery-core"]
 default-members = ["."]
 
 [workspace.lints.clippy]

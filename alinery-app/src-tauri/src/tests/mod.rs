@@ -19,7 +19,6 @@ pub(crate) use super::{
     write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, AuthAttempt, AuthRetryError, Command, DesktopCreditsView,
     LinearTokenError, OAuthCallback, SessionMeta, SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
 };
-pub(crate) use alinery_core::clear_curated_alinery_data;
 pub(crate) use alinery_core::{
     alinery_app_lock_path, hosted_models_yml_unavailable, models_yml_path, parse_inference_session_body, render_models_yml, wipe_hosted_files, write_hosted_models_yml,
     HarnessFile, RepoOverrides, DEFAULT_HARNESSES_TOML,
@@ -37,6 +36,7 @@ mod connections;
 mod daemon;
 mod daemon_rpc;
 mod git_ops;
+mod host_wire;
 mod hosted;
 mod imports;
 mod notify;

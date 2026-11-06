@@ -2,18 +2,15 @@
 # Cross-build the runtime that remote (SSH) repos install on a Linux host, and bundle it as
 # app resources: alinery-app/src-tauri/resources/remote/<triple>.tar.gz plus manifest.json.
 #
-# Each archive holds the two files the remote needs side by side:
-#   alinery-vinculum-daemon   bun build --compile for the target
-#   alinery-mcp               cargo zigbuild, pinned to a glibc floor (also hosts the remote repo service)
-# plus a MANIFEST in `sha256sum -c` format that the remote verifies after unpacking.
+# Each archive holds one executable, `alinery-vinculum-daemon` (bun build --compile for the target), plus a MANIFEST in
+# `sha256sum -c` format that the remote verifies after unpacking. The daemon, the MCP server and the host service
+# (`--host-service`, plan S5.2) are modes of that one binary, so the build needs Bun and nothing else.
 #
 # Explicit and skippable: the Bun cross targets download from the network, which
 # `dev-fetch-bun.sh --no-download` forbids, so tauri dev/build never run this. Release sets
 # ALINERY_REQUIRE_REMOTE_RUNTIMES=1 so a missing manifest fails the build.
 #
-# Prerequisites (--check prints what is missing):
-#   brew install zig && cargo install cargo-zigbuild
-#   rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+# Prerequisite (--check prints it when missing): bun, https://bun.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI="$ROOT/alinery-app/src-tauri"
@@ -43,12 +40,6 @@ need() {
 }
 check_prerequisites() {
   need bun "command -v bun" "https://bun.sh"
-  need zig "command -v zig" "brew install zig"
-  need cargo-zigbuild "command -v cargo-zigbuild" "cargo install cargo-zigbuild"
-  for entry in "${TARGETS[@]}"; do
-    triple="${entry%%|*}"
-    need "rust target $triple" "rustup target list --installed | grep -qx $triple" "rustup target add $triple"
-  done
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -67,7 +58,6 @@ rm -f "$OUT"/*.tar.gz "$OUT/manifest.json"
 
 "$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && bun install --frozen-lockfile || bun install)
-TARGET_DIR="$(cargo metadata --format-version 1 --no-deps --manifest-path "$TAURI/Cargo.toml" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory')"
 
 for entry in "${TARGETS[@]}"; do
   triple="${entry%%|*}"
@@ -77,22 +67,18 @@ for entry in "${TARGETS[@]}"; do
   echo "== $triple"
 
   bun build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --target="$bun_target" --outfile "$dir/alinery-vinculum-daemon"
-  cargo zigbuild --release -p alinery-mcp --manifest-path "$TAURI/Cargo.toml" --target "$triple.$GLIBC_FLOOR"
-  cp "$TARGET_DIR/$triple/release/alinery-mcp" "$dir/alinery-mcp"
-  chmod +x "$dir/alinery-vinculum-daemon" "$dir/alinery-mcp"
+  chmod +x "$dir/alinery-vinculum-daemon"
 
   # The floor is a promise to the remote probe: refuse to ship anything that asks for more.
-  for file in alinery-vinculum-daemon alinery-mcp; do
-    need_glibc="$(max_glibc "$dir/$file")"
-    if [ -n "$need_glibc" ] && [ "$(printf '%s\n%s\n' "$need_glibc" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
-      echo "ERROR: $triple/$file needs glibc $need_glibc, above the $GLIBC_FLOOR floor" >&2
-      exit 1
-    fi
-  done
+  need_glibc="$(max_glibc "$dir/alinery-vinculum-daemon")"
+  if [ -n "$need_glibc" ] && [ "$(printf '%s\n%s\n' "$need_glibc" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+    echo "ERROR: $triple/alinery-vinculum-daemon needs glibc $need_glibc, above the $GLIBC_FLOOR floor" >&2
+    exit 1
+  fi
 
-  (cd "$dir" && for file in alinery-vinculum-daemon alinery-mcp; do echo "$(sha256 "$file")  $file"; done > MANIFEST)
+  (cd "$dir" && echo "$(sha256 alinery-vinculum-daemon)  alinery-vinculum-daemon" > MANIFEST)
   # --no-xattrs: keep macOS provenance attributes out of the archive (they trigger warnings on extract).
-  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon alinery-mcp MANIFEST
+  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon MANIFEST
   echo "archive ready: $OUT/$triple.tar.gz"
 done
 

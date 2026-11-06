@@ -1,5 +1,5 @@
+use crate::host_wire::HostOp;
 use crate::remote::*;
-use alinery_core::repo_service::RepoOp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -107,7 +107,7 @@ fn live_session(args: &[String], id: &str) -> RemoteSession {
         conn.install_runtime(&runtime, std::fs::File::open(bundle.join(&target.archive)).unwrap()).unwrap();
     }
     let config_dir = remote_config_dir(&root, "livetest");
-    let channel = RepoChannel::open(&conn, &format!("{runtime}/alinery-mcp"), &format!("{config_dir}/app.toml")).unwrap();
+    let channel = HostChannel::open(&conn, &format!("{runtime}/alinery-vinculum-daemon")).unwrap();
     let launcher = choose_launcher(&probe).unwrap();
     RemoteSession {
         conn,
@@ -136,7 +136,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
 
     // Browse, classify and initialize a plain directory.
     let home = session.root.trim_end_matches("/.local/share/alinery-remote").to_string();
-    let listing = call(alinery_core::repo_service::RepoOp::ListDir {
+    let listing = call(HostOp::ListDir {
         path: home.clone().into(),
         show_hidden: false,
     });
@@ -147,17 +147,24 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
         .conn
         .exec_ok(&format!("rm -rf '{repo}/.git' '{repo}/.alinery'"), RemoteStdin::None, std::time::Duration::from_secs(20))
         .unwrap();
-    assert_eq!(call(alinery_core::repo_service::RepoOp::Classify { path: repo.clone().into() })["kind"], "absent");
-    assert_eq!(call(alinery_core::repo_service::RepoOp::Init { path: repo.clone().into() })["kind"], "initialized");
-    assert_eq!(call(alinery_core::repo_service::RepoOp::Classify { path: repo.clone().into() })["kind"], "checkout");
+    assert_eq!(call(HostOp::Classify { path: repo.clone().into() })["kind"], "absent");
+    assert_eq!(call(HostOp::Init { path: repo.clone().into() })["kind"], "initialized");
+    assert_eq!(call(HostOp::Classify { path: repo.clone().into() })["kind"], "checkout");
 
     // Claim it, write the settings, start the daemon through the forward.
-    assert_eq!(call(alinery_core::repo_service::RepoOp::ClaimRepo { repo: repo.clone().into() })["claimed"], true);
+    assert_eq!(call(HostOp::ClaimRepo { repo: repo.clone().into() })["claimed"], true);
+    // A second claimant, on its own channel, is told the repo is busy while the first channel lives.
+    let rival = HostChannel::open(&session.conn, &format!("{}/alinery-vinculum-daemon", runtime_dir(&session.root, &session.runtime_hash))).unwrap();
+    assert_eq!(
+        rival.call(HostOp::ClaimRepo { repo: repo.clone().into() }, std::time::Duration::from_secs(30)).unwrap()["claimed"],
+        false
+    );
+    drop(rival);
     let local = crate::AppConfig {
         known_repos: vec![format!("alinery+ssh://{id}{repo}")],
         ..Default::default()
     };
-    call(alinery_core::repo_service::RepoOp::WriteFile {
+    call(HostOp::WriteFile {
         path: format!("{}/app.toml", session.config_dir).into(),
         contents: render_remote_app_toml(&local, std::slice::from_ref(&repo), false).unwrap(),
     });
@@ -227,10 +234,7 @@ fn live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect() {
     );
     // The claim died with the old channel, so a new channel can take it.
     assert_eq!(
-        again
-            .channel
-            .call(alinery_core::repo_service::RepoOp::ClaimRepo { repo: repo.into() }, std::time::Duration::from_secs(30))
-            .unwrap()["claimed"],
+        again.channel.call(HostOp::ClaimRepo { repo: repo.into() }, std::time::Duration::from_secs(30)).unwrap()["claimed"],
         true
     );
     again.conn.exit_master();
@@ -283,7 +287,11 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
                 std::time::Duration::from_secs(20),
             )
             .unwrap();
-        assert!(!host_toml.contains("ghp_live_mac_only") && !host_toml.contains("live-install-id"), "{host_toml}");
+        assert!(!host_toml.contains("ghp_live_mac_only"), "{host_toml}");
+        assert!(
+            host_toml.contains("live-install-id"),
+            "the telemetry preferences travel whole, so the host's events carry this install (S4.1)"
+        );
         assert!(host_toml.contains("xai-live-shared"), "the shared provider key reaches the daemon");
         assert_eq!(host_toml.trim().lines().last(), Some("600"), "owner-only");
     }
@@ -324,7 +332,7 @@ fn live_commands_connect_activate_disconnect_reconnect_and_remove() {
     session
         .channel
         .call(
-            RepoOp::WriteFile {
+            HostOp::WriteFile {
                 path: format!("{repo}/.alinery/tasks/remote-task/task.md").into(),
                 contents: toml::to_string(&task).unwrap(),
             },
@@ -607,15 +615,28 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     // Replace the good daemon with one started under another settings file, which gives it another identity.
     let good = state.daemon_for(Path::new(&key)).expect("the app's own daemon is attached");
     good.call(&alinery_core::daemon_client::shutdown_request()).unwrap();
-    session.channel.call(RepoOp::WaitDaemonGone { repo: repo.clone().into() }, Duration::from_secs(30)).unwrap();
+    session.channel.call(HostOp::WaitDaemonGone { repo: repo.clone().into() }, Duration::from_secs(30)).unwrap();
     state.clear_daemon(Path::new(&key));
     assert!(daemons().trim().is_empty(), "no daemon is left to confuse the count");
     let (config_dir, runtime) = (session.config_dir.clone(), runtime_dir(&session.root, &session.runtime_hash));
     sh(&format!("cp '{config_dir}/app.toml' '{config_dir}/other.toml'"));
+    // An earlier daemon of this app has the token this app kept for the repo; the replacement is given the same one.
+    let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "")).unwrap();
+    let old_rpc_file = format!("{config_dir}/ui-secrets/old.rpc");
     session
         .channel
         .call(
-            RepoOp::SpawnDaemon {
+            HostOp::WriteFile {
+                path: old_rpc_file.clone().into(),
+                contents: token,
+            },
+            Duration::from_secs(30),
+        )
+        .unwrap();
+    session
+        .channel
+        .call(
+            HostOp::SpawnDaemon {
                 repo: repo.clone().into(),
                 app_config: format!("{config_dir}/other.toml").into(),
                 binary: format!("{runtime}/alinery-vinculum-daemon").into(),
@@ -623,10 +644,10 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
                 namespace: None,
                 log: format!("{config_dir}/logs/old-daemon.log").into(),
                 // The test host has no systemd user manager; the daemon still detaches.
-                launch: alinery_core::repo_service::Launch::Direct,
+                launch: crate::host_wire::Launch::Direct,
                 unit: None,
                 ui_secret_file: None,
-                rpc_secret_file: None,
+                rpc_secret_file: Some(old_rpc_file.into()),
             },
             Duration::from_secs(30),
         )
@@ -640,6 +661,13 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
         std::thread::sleep(Duration::from_millis(200));
     }
     assert!(!old.trim().is_empty(), "the old daemon started");
+    // A started process is not a listening daemon: wait for its socket, or the app would find nothing there and start its own.
+    for _ in 0..100 {
+        if sh(&format!("test -S '{repo}/.alinery/alineryd.sock' && echo yes; true")).trim() == "yes" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     // Opening the repo reports the conflict instead of failing, and replaces nothing.
     crate::activate_remote_repo(&handle, &state, &key).unwrap();
@@ -713,7 +741,7 @@ fn live_backups_are_written_and_restored_on_the_host() {
         session
             .channel
             .call(
-                RepoOp::WriteFile {
+                HostOp::WriteFile {
                     path: format!("{repo}/{relative}").into(),
                     contents: contents.into(),
                 },
@@ -788,7 +816,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     struct Resume(std::sync::Arc<RemoteSession>);
     impl Resume {
         fn now(&self) {
-            let script = "pkill -CONT -f '[a]linery-mcp --repo-service'; true";
+            let script = "pkill -CONT -f '[a]linery-vinculum-daemon --host-service'; true";
             let _ = self.0.conn.exec_ok(script, RemoteStdin::None, std::time::Duration::from_secs(20));
         }
     }
@@ -830,7 +858,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
     crate::set_active_repo_sync(handle.clone(), handle.state(), key.clone(), Vec::new()).unwrap();
 
     let resume = Resume(session.clone());
-    sh("pkill -STOP -f '[a]linery-mcp --repo-service'");
+    sh("pkill -STOP -f '[a]linery-vinculum-daemon --host-service'");
     // The stall is real: a call made straight from a thread is still waiting.
     let direct = {
         let handle = handle.clone();
@@ -840,7 +868,7 @@ fn live_a_stalled_host_does_not_hold_up_the_command_that_asked() {
             remote_call::<serde_json::Value>(
                 &state,
                 &id,
-                RepoOp::ListDir {
+                HostOp::ListDir {
                     path: repo.into(),
                     show_hidden: true,
                 },
@@ -1021,6 +1049,24 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
         }
     )
     .is_ok());
+}
+
+#[test]
+fn a_host_with_no_git_and_no_tar_is_refused_naming_both_before_anything_is_installed() {
+    let canned = PROBE_OK.replace("has_tar=1", "has_tar=0").replace("has_git=1", "has_git=0");
+    let probe = parse_probe(&canned).unwrap();
+    assert_eq!((probe.tools["git"], probe.tools["tar"]), (false, false));
+    let error = select_target(&probe, &manifest()).unwrap_err();
+    assert_eq!(
+        error,
+        "the host is missing tar, git; install them on that host with its package manager, then run setup again"
+    );
+    // One tool reads in the singular.
+    let one = parse_probe(&PROBE_OK.replace("has_git=1", "has_git=0")).unwrap();
+    assert_eq!(
+        select_target(&one, &manifest()).unwrap_err(),
+        "the host is missing git; install it on that host with its package manager, then run setup again"
+    );
 }
 
 #[test]
@@ -1262,7 +1308,7 @@ fn live_credentials_follow_the_choice_and_a_host_sign_in_survives() {
         session
             .channel
             .call(
-                RepoOp::WriteFile {
+                HostOp::WriteFile {
                     path: store.clone().into(),
                     contents: value.to_string(),
                 },

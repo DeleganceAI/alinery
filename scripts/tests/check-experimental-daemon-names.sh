@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The release resolver launches alinery-vinculum-daemon, the only daemon sidecar.
+# The release resolver launches alinery-vinculum-daemon, the only sidecar.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TAURI="$ROOT/alinery-app/src-tauri/tauri.conf.json"
@@ -9,10 +9,11 @@ fails=0
 fail() { echo "FAIL - $1" >&2; fails=$((fails + 1)); }
 
 EXT="$(python3 -c 'import json,sys; print(",".join(json.load(open(sys.argv[1]))["bundle"]["externalBin"]))' "$TAURI")"
-if [ "$EXT" != "alinery-vinculum-daemon,alinery-mcp" ]; then
-  fail "externalBin must be vinculum plus mcp, got: $EXT"
+# The MCP server and the host service are modes of this one binary (S5.1, S5.2); there is no second sidecar.
+if [ "$EXT" != "alinery-vinculum-daemon" ]; then
+  fail "externalBin must be alinery-vinculum-daemon alone, got: $EXT"
 else
-  echo "ok   - externalBin is alinery-vinculum-daemon and alinery-mcp"
+  echo "ok   - externalBin is alinery-vinculum-daemon alone"
 fi
 
 if grep -q 'alineryd' "$TAURI" || grep -q 'alinery-runner' "$TAURI"; then

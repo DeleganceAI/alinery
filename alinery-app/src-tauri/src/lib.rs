@@ -86,6 +86,7 @@ mod connections;
 mod daemon;
 mod daemon_rpc;
 mod git_ops;
+mod host_wire;
 mod hosted;
 mod imports;
 mod mcp;

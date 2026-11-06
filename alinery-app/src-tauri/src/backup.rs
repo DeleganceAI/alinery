@@ -38,7 +38,7 @@ pub(crate) fn restore_remote_backup<R: tauri::Runtime>(app: &AppHandle<R>, host_
     remote_call::<Value>(
         &state,
         host_id,
-        RepoOp::BackupVerify {
+        HostOp::BackupVerify {
             repo: repo.clone(),
             backup_path: backup_path.clone(),
         },
@@ -46,7 +46,7 @@ pub(crate) fn restore_remote_backup<R: tauri::Runtime>(app: &AppHandle<R>, host_
     // DELIBERATE TEARDOWN ORIGIN: the confirmed restore ends the host's daemon (its sessions hold
     // the data being replaced), restores, and starts the daemon again.
     stop_remote_daemon(app, host_id, path, |state, _| {
-        remote_call_within::<Value>(state, host_id, RepoOp::BackupRestore { repo, backup_path }, BACKUP_TIMEOUT).map(|_| ())
+        remote_call_within::<Value>(state, host_id, HostOp::BackupRestore { repo, backup_path }, BACKUP_TIMEOUT).map(|_| ())
     })
 }
 

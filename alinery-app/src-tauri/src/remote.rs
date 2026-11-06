@@ -431,7 +431,12 @@ pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) ->
         .filter(|tool| !probe.tools.get(*tool).copied().unwrap_or(false))
         .collect();
     if !missing.is_empty() {
-        return Err(format!("the host is missing {}", missing.join(", ")));
+        // Nothing is installed on the host yet when this is shown (D6): the user installs the tools there, then sets the host up again.
+        return Err(format!(
+            "the host is missing {}; install {} on that host with its package manager, then run setup again",
+            missing.join(", "),
+            if missing.len() == 1 { "it" } else { "them" }
+        ));
     }
     manifest
         .targets
@@ -507,9 +512,10 @@ pub(crate) fn render_remote_app_toml(local: &AppConfig, remote_repo_paths: &[Str
 
 // ── ssh driving ────────────────────────────────────────────────────────────────────────
 
-pub(crate) use alinery_core::repo_service::RepoOp;
-use alinery_core::repo_service::{Hello, Launch, RepoReply, RepoRequest, HELLO_ID};
-use std::io::{BufRead, BufReader, Read, Write};
+use crate::host_wire::{self, host_reply, HostReply, HELLO_ID};
+pub(crate) use crate::host_wire::{HostOp, Launch};
+use prost::Message as _;
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -766,11 +772,11 @@ impl HostConn {
 
 pub(crate) const DISCONNECTED: &str = "remote host disconnected";
 
-type Pending = std::sync::Arc<Mutex<HashMap<u64, mpsc::Sender<RepoReply>>>>;
+type Pending = std::sync::Arc<Mutex<HashMap<u64, mpsc::Sender<HostReply>>>>;
 
-/// The long-lived `alinery-mcp --repo-service` process on the host, spoken to over one ssh
-/// channel. Closing it releases the repo locks it holds and stops nothing else.
-pub(crate) struct RepoChannel {
+/// The long-lived `alinery-vinculum-daemon --host-service` process on the host (plan S5.2), spoken to over one ssh channel in
+/// the frames of `host_wire`. Closing it releases the repo locks it holds and stops nothing else.
+pub(crate) struct HostChannel {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
     pending: Pending,
@@ -778,17 +784,22 @@ pub(crate) struct RepoChannel {
     alive: std::sync::Arc<AtomicBool>,
 }
 
-impl RepoChannel {
-    pub(crate) fn open(conn: &HostConn, service_binary: &str, app_config: &str) -> Result<Self, String> {
+impl HostChannel {
+    pub(crate) fn open(conn: &HostConn, service_binary: &str) -> Result<Self, String> {
         let mut command = conn.base();
         command
             .arg("-T")
             .arg(&conn.host)
-            .arg(format!("{} --repo-service --app-config {}", shell_quote(service_binary), shell_quote(app_config)))
+            .arg(format!("{} --host-service --app-version {}", shell_quote(service_binary), env!("CARGO_PKG_VERSION")))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = command.spawn().map_err(|error| format!("start the repo service: {error}"))?;
+        Self::attach(command.spawn().map_err(|error| format!("start the repo service: {error}"))?)
+    }
+
+    /// Speak to a host service that is already running as `child` (piped stdin and stdout). `open` is this over ssh; a test
+    /// runs the service directly.
+    pub(crate) fn attach(mut child: Child) -> Result<Self, String> {
         let stdin = child.stdin.take().ok_or("repo service stdin")?;
         let stdout = child.stdout.take().ok_or("repo service stdout")?;
 
@@ -799,12 +810,16 @@ impl RepoChannel {
         {
             let (pending, alive) = (std::sync::Arc::clone(&pending), std::sync::Arc::clone(&alive));
             std::thread::spawn(move || {
-                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                    // Anything that is not a reply (shell rc noise) is skipped.
-                    let Ok(reply) = serde_json::from_str::<RepoReply>(&line) else { continue };
-                    let sender = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&reply.id);
-                    if let Some(sender) = sender {
-                        let _ = sender.send(reply);
+                let mut stdout = BufReader::new(stdout);
+                // Whatever a login shell printed ahead of the service's marker line is skipped.
+                if host_wire::skip_to_marker(&mut stdout) {
+                    while let Some(bytes) = host_wire::read_frame(&mut stdout) {
+                        // A frame that is not a reply is skipped.
+                        let Ok(reply) = HostReply::decode(bytes.as_slice()) else { continue };
+                        let sender = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&reply.id);
+                        if let Some(sender) = sender {
+                            let _ = sender.send(reply);
+                        }
                     }
                 }
                 alive.store(false, Ordering::SeqCst);
@@ -813,11 +828,17 @@ impl RepoChannel {
             });
         }
         // The hello proves this stdout is the repo service and not a shell printing something else.
-        hello_rx
-            .recv_timeout(Duration::from_secs(20))
-            .map_err(|_| "the repo service did not start on the host".to_string())?
-            .into_result()
-            .and_then(|value| serde_json::from_value::<Hello>(value).map_err(|error| error.to_string()))?;
+        match hello_rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(HostReply {
+                body: Some(host_reply::Body::Hello(_)),
+                ..
+            }) => {}
+            Ok(HostReply {
+                body: Some(host_reply::Body::Error(message)),
+                ..
+            }) => return Err(message),
+            _ => return Err("the repo service did not start on the host".to_string()),
+        }
         Ok(Self {
             child: Mutex::new(child),
             stdin: Mutex::new(stdin),
@@ -827,28 +848,35 @@ impl RepoChannel {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn kill_for_test(&self) {
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     pub(crate) fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn call(&self, op: RepoOp, timeout: Duration) -> Result<Value, String> {
+    pub(crate) fn call(&self, op: HostOp, timeout: Duration) -> Result<Value, String> {
         if !self.is_alive() {
             return Err(DISCONNECTED.to_string());
         }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel();
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender);
-        let line = serde_json::to_string(&RepoRequest { id, op }).map_err(|error| error.to_string())?;
+        let bytes = host_wire::encode_request(id, op);
         let written = {
             let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
-            writeln!(stdin, "{line}").and_then(|()| stdin.flush())
+            stdin.write_all(&bytes).and_then(|()| stdin.flush())
         };
         if written.is_err() {
             self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
             return Err(DISCONNECTED.to_string());
         }
         match receiver.recv_timeout(timeout) {
-            Ok(reply) => reply.into_result(),
+            Ok(reply) => host_wire::reply_value(reply),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
                 Err("the remote host did not answer in time".to_string())
@@ -858,7 +886,7 @@ impl RepoChannel {
     }
 }
 
-impl Drop for RepoChannel {
+impl Drop for HostChannel {
     fn drop(&mut self) {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         let _ = child.kill();
@@ -895,8 +923,8 @@ fn load_manifest(dir: &Path) -> Result<RuntimeManifest, String> {
 
 const SERVICE_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn write_remote_file(channel: &RepoChannel, path: String, contents: String) -> Result<(), String> {
-    channel.call(RepoOp::WriteFile { path: path.into(), contents }, SERVICE_TIMEOUT).map(|_| ())
+fn write_remote_file(channel: &HostChannel, path: String, contents: String) -> Result<(), String> {
+    channel.call(HostOp::WriteFile { path: path.into(), contents }, SERVICE_TIMEOUT).map(|_| ())
 }
 
 const SHARE_HOSTED: &str = "hosted-models";
@@ -927,7 +955,7 @@ pub(crate) fn inherited_sharing(credentials: &Path) -> Result<RemoteSharing, Str
 
 /// Push this Mac's settings to the host's private config directory, and the credentials the user
 /// chose for it. Browser sign-ins are never copied. Returns the host's sharing record to keep.
-pub(crate) fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &str, config_dir: &str, app_config: &Path) -> Result<RemoteSharing, String> {
+pub(crate) fn sync_config(channel: &HostChannel, local: &AppConfig, host_id: &str, config_dir: &str, app_config: &Path) -> Result<RemoteSharing, String> {
     let host = local.remote_hosts.get(host_id).ok_or("unknown remote host")?;
     let repos: Vec<String> = local
         .known_repos
@@ -954,7 +982,7 @@ pub(crate) fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &st
     let remove: Vec<String> = key_providers(&sharing.placed).into_iter().filter(|provider| !set.contains_key(provider)).collect();
     let mut placed: Vec<String> = set.keys().map(|provider| format!("{SHARE_KEY}{provider}")).collect();
     let erased = channel.call(
-        RepoOp::SyncCredentials {
+        HostOp::SyncCredentials {
             path: format!("{config_dir}/provider-credentials.json").into(),
             set,
             remove,
@@ -977,7 +1005,7 @@ pub(crate) fn sync_config(channel: &RepoChannel, local: &AppConfig, host_id: &st
                 placed.push(item.to_string());
             }
             _ if sharing.placed.iter().any(|placed| placed == item) => {
-                channel.call(RepoOp::RemoveFile { path: path.into() }, SERVICE_TIMEOUT)?;
+                channel.call(HostOp::RemoveFile { path: path.into() }, SERVICE_TIMEOUT)?;
             }
             _ => {}
         }
@@ -1037,7 +1065,7 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
     phase("Starting the repo service");
     let app_config = app_config_path(app)?;
     let config_dir = remote_config_dir(&root, &alinery_core::app_config_identity(&app_config));
-    let channel = RepoChannel::open(&conn, &format!("{runtime}/alinery-mcp"), &format!("{config_dir}/app.toml"))?;
+    let channel = HostChannel::open(&conn, &format!("{runtime}/alinery-vinculum-daemon"))?;
     phase("Syncing settings");
     record_sharing(app, host_id, sync_config(&channel, &config, host_id, &config_dir, &app_config)?)?;
 
@@ -1149,7 +1177,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         let secret_file = format!("{}/ui-secrets/{}.secret", session.config_dir, &repo_hash[..12]);
         store_ui_secret(&session.secrets_dir, repo_path, &secret)?;
         session.channel.call(
-            RepoOp::WriteFile {
+            HostOp::WriteFile {
                 path: secret_file.clone().into(),
                 contents: secret,
             },
@@ -1160,7 +1188,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
         let rpc_secret_file = format!("{}/ui-secrets/{}.rpc", session.config_dir, &repo_hash[..12]);
         crate::daemon::store_pending_rpc_secret(&session.secrets_dir, repo_path, "", &rpc_secret)?;
         session.channel.call(
-            RepoOp::WriteFile {
+            HostOp::WriteFile {
                 path: rpc_secret_file.clone().into(),
                 contents: rpc_secret,
             },
@@ -1171,7 +1199,7 @@ pub(crate) fn ensure_remote_daemon(session: &RemoteSession, repo_path: &str, app
             Launcher::Setsid | Launcher::Nohup => (Launch::Direct, None),
         };
         session.channel.call(
-            RepoOp::SpawnDaemon {
+            HostOp::SpawnDaemon {
                 repo: repo_path.into(),
                 app_config: format!("{}/app.toml", session.config_dir).into(),
                 binary: format!("{runtime}/alinery-vinculum-daemon").into(),
@@ -1267,14 +1295,14 @@ pub(crate) fn connected_session(state: &AppState, host_id: &str) -> Result<std::
 
 /// Run a typed repo operation on a connected host and decode its answer. The remote half of
 /// an in-process core call: both run the same function in alinery-core.
-pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp) -> Result<T, String> {
+pub(crate) fn remote_call<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: HostOp) -> Result<T, String> {
     remote_call_within(state, host_id, op, SERVICE_TIMEOUT)
 }
 
 /// Zipping or unzipping a large `.alinery` outlasts an ordinary call.
 pub(crate) const BACKUP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: RepoOp, timeout: Duration) -> Result<T, String> {
+pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppState, host_id: &str, op: HostOp, timeout: Duration) -> Result<T, String> {
     let value = connected_session(state, host_id)?.channel.call(op, timeout)?;
     serde_json::from_value(value).map_err(|error| format!("unexpected reply from the host: {error}"))
 }
@@ -1316,7 +1344,7 @@ pub(crate) fn require_active_repo_ready(state: &AppState) -> Result<(), String> 
 /// app cannot use is recorded as a conflict and is not an error: the repo opens, shows only its
 /// banner (no board is read through the repo service), and the banner offers to restart the daemon.
 fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Path, key: &str, path: &str) -> Result<(), String> {
-    let claim = session.channel.call(RepoOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
+    let claim = session.channel.call(HostOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
     if claim["claimed"] != true {
         return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
     }
@@ -1378,7 +1406,7 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
         crate::daemon_rpc::shutdown_daemon(&key, &app_config_path(app)?, None, crate::daemon_rpc::ShutdownOrigin::StopRemote, "", None, || {
             client.call(&daemon_client::shutdown_request()).map(|_| ())
         })?;
-        session.channel.call(RepoOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
+        session.channel.call(HostOp::WaitDaemonGone { repo: path.into() }, STOP_TIMEOUT)?;
         state.clear_daemon(Path::new(&key));
     }
     let done = while_down(&state, &session);
@@ -1792,7 +1820,7 @@ pub(crate) async fn remote_disconnect(app: AppHandle, host_id: String) -> Result
         .map_err(|error| format!("remote disconnect task: {error}"))
 }
 
-fn session_call<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, op: RepoOp) -> Result<Value, String> {
+fn session_call<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, op: HostOp) -> Result<Value, String> {
     let state = app.state::<AppState>();
     connected_session(&state, host_id)?.channel.call(op, SERVICE_TIMEOUT)
 }
@@ -1800,21 +1828,21 @@ fn session_call<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, op: RepoOp
 #[tauri::command]
 // Generic over the runtime only so a test can poll the command on a mock app.
 pub(crate) async fn remote_list_dir<R: tauri::Runtime>(app: AppHandle<R>, host_id: String, path: String, show_hidden: bool) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::ListDir { path: path.into(), show_hidden }))
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, HostOp::ListDir { path: path.into(), show_hidden }))
         .await
         .map_err(|error| format!("remote list task: {error}"))?
 }
 
 #[tauri::command]
 pub(crate) async fn remote_classify(app: AppHandle, host_id: String, path: String) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::Classify { path: path.into() }))
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, HostOp::Classify { path: path.into() }))
         .await
         .map_err(|error| format!("remote classify task: {error}"))?
 }
 
 #[tauri::command]
 pub(crate) async fn remote_init(app: AppHandle, host_id: String, path: String) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, RepoOp::Init { path: path.into() }))
+    tauri::async_runtime::spawn_blocking(move || session_call(&app, &host_id, HostOp::Init { path: path.into() }))
         .await
         .map_err(|error| format!("remote init task: {error}"))?
 }
@@ -1824,7 +1852,7 @@ pub(crate) async fn remote_init(app: AppHandle, host_id: String, path: String) -
 pub(crate) fn add_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &str, path: &str) -> Result<String, String> {
     let state = app.state::<AppState>();
     let session = connected_session(&state, host_id)?;
-    let class = session.channel.call(RepoOp::Classify { path: path.into() }, SERVICE_TIMEOUT)?;
+    let class = session.channel.call(HostOp::Classify { path: path.into() }, SERVICE_TIMEOUT)?;
     if class["kind"] != "checkout" || class["root"] != path {
         return Err(format!("{path} is not the root of a git checkout"));
     }
@@ -1838,7 +1866,7 @@ pub(crate) fn add_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, host_id: &s
         config.known_repos.push(key.clone());
     }
     write_app_config(app, &config)?;
-    // The host's copy of app.toml allowlists its repos for the remote alinery-mcp.
+    // The host's copy of app.toml lists the repos that are on that host, for the daemon and the MCP server that read it there.
     record_sharing(app, host_id, sync_config(&session.channel, &config, host_id, &session.config_dir, &app_config_path(app)?)?)?;
     Ok(key)
 }
@@ -1864,7 +1892,7 @@ pub(crate) fn remove_remote_repo<R: tauri::Runtime>(app: &AppHandle<R>, path: &s
     }
     state.clear_daemon(Path::new(path.trim()));
     if let Some(session) = state.remotes.session(&host_id) {
-        let _ = session.channel.call(RepoOp::ReleaseRepo { repo: remote_path.into() }, SERVICE_TIMEOUT);
+        let _ = session.channel.call(HostOp::ReleaseRepo { repo: remote_path.into() }, SERVICE_TIMEOUT);
     }
     Ok(config)
 }
@@ -1891,7 +1919,7 @@ pub(crate) struct RemoteStatus {
 /// A connected host: its ssh master, its repo-service channel and what was learned installing.
 pub(crate) struct RemoteSession {
     pub(crate) conn: HostConn,
-    pub(crate) channel: RepoChannel,
+    pub(crate) channel: HostChannel,
     pub(crate) launcher: Launcher,
     pub(crate) root: String,
     pub(crate) runtime_hash: String,

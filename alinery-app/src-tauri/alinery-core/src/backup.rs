@@ -1,17 +1,13 @@
-// Backup engine (issue #79): curated zip archives of a repo's `.alinery/` data.
+// Backup types and the checks the shell still makes locally: destination validation and reading an archive's metadata.
+// Creating, listing, pruning and restoring archives is the daemon's (`vinculum-daemon/src/domain/backup.ts`), and a remote
+// repo's restore runs in the host service.
 //
-// Pure path-based create/list/prune/extract. No Tauri, no UI, no daemon — the app owns the
-// queue and the destructive restore orchestration, MCP owns its tools, and both call in here.
-//
-// Two rules the rest of the feature leans on:
-//   * `CURATED_ALINERY_PATHS` is the single source of truth for what is backed up. Restore clears
-//     exactly this set before extracting, so anything cleared is guaranteed to have been saved.
-//   * `meta.repo_path` — not the filename — decides which backups belong to a repo. Two repos
-//     with the same basename may share one destination directory.
+// `meta.repo_path` — not the filename — decides which backups belong to a repo. Two repos with the same basename may share
+// one destination directory.
 
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -19,16 +15,8 @@ use zip::ZipArchive;
 
 use crate::paths::alinery_dir;
 
-/// Archive-root name of the metadata sidecar. Never extracted back into `.alinery/`.
+/// Archive-root name of the metadata sidecar.
 pub const BACKUP_META_NAME: &str = "backup-meta.json";
-
-/// Everything under `.alinery/` that is durable alinery data, relative to `.alinery/`.
-///
-/// Deliberately excluded: `worktrees/` (git-backed, holds uncommitted user work), sockets,
-/// lock files, and MCP status sidecars — all runtime-only and meaningless after a restore.
-/// `sessions/` is the root (taskless) session store and IS durable data, so it is included;
-/// backing it up but not clearing it would leave stale sessions pointing at replaced tasks.
-pub const CURATED_ALINERY_PATHS: &[&str] = &["tasks", "sessions", "config.toml", "harnesses.toml", "playbooks.toml", "playbooks"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -115,22 +103,6 @@ pub fn read_backup_meta(zip_path: &Path) -> Result<BackupMeta, String> {
     serde_json::from_str(&body).map_err(|e| format!("{}: {e}", zip_path.display()))
 }
 
-/// Remove exactly what `create_backup` archives — no more. Anything cleared here but not
-/// archived there is data the user loses on restore, so both read `CURATED_ALINERY_PATHS`.
-/// Missing paths are not an error: a repo may never have had a `playbooks.toml`.
-pub fn clear_curated_alinery_data(repo: &Path) -> Result<(), String> {
-    let alinery = alinery_dir(repo);
-    for name in CURATED_ALINERY_PATHS {
-        let path = alinery.join(name);
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        let removed = if meta.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
-        removed.map_err(|e| format!("clear {}: {e}", path.display()))?;
-    }
-    Ok(())
-}
-
 /// A backup may only be restored into the repo it was taken from.
 pub fn require_backup_matches_repo(repo: &Path, backup_path: &Path) -> Result<(), String> {
     let meta = read_backup_meta(backup_path)?;
@@ -139,79 +111,6 @@ pub fn require_backup_matches_repo(repo: &Path, backup_path: &Path) -> Result<()
         return Err(format!("this backup belongs to {}, not {expected}", meta.repo_path));
     }
     Ok(())
-}
-
-/// Validate → clear → extract. Stopping the daemon is the caller's job (it owns the sessions that
-/// hold this data); keeping that out of here is what makes the destructive half testable.
-pub fn restore_backup_into(repo: &Path, backup_path: &Path) -> Result<(), String> {
-    // Identity first. A mismatched archive must cost the user nothing.
-    require_backup_matches_repo(repo, backup_path)?;
-    clear_curated_alinery_data(repo)?;
-    extract_backup_into(backup_path, &alinery_dir(repo), Some(repo)).map(|_| ())
-}
-
-/// Reject archive entry names that would escape the extraction root: absolute paths, `..`,
-/// and anything the zip crate cannot resolve to a contained relative path. An archive is
-/// untrusted input — a user can be handed a `.zip` and restore it.
-fn safe_entry_path(name: &str) -> Option<PathBuf> {
-    if name.starts_with('/') || name.starts_with('\\') {
-        return None;
-    }
-    let candidate = Path::new(name);
-    let mut out = PathBuf::new();
-    for component in candidate.components() {
-        match component {
-            Component::Normal(part) => out.push(part),
-            Component::CurDir => {}
-            _ => return None,
-        }
-    }
-    if out.as_os_str().is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
-/// Extract a backup's curated files into `target_alinery_dir`.
-///
-/// Additive by design: nothing existing is deleted. Clearing the curated set first is the
-/// caller's job (the app's restore command), which keeps this API usable for inspection and
-/// for non-app callers. When `expected_repo` is given, a `repo_path` mismatch fails *before*
-/// anything is written.
-pub fn extract_backup_into(zip_path: &Path, target_alinery_dir: &Path, expected_repo: Option<&Path>) -> Result<BackupMeta, String> {
-    let meta = read_backup_meta(zip_path)?;
-    if let Some(repo) = expected_repo {
-        let expected = canonical_string(repo)?;
-        if meta.repo_path != expected {
-            return Err(format!("backup belongs to {}, not {expected}", meta.repo_path));
-        }
-    }
-
-    let file = File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    fs::create_dir_all(target_alinery_dir).map_err(|e| format!("{}: {e}", target_alinery_dir.display()))?;
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let raw = entry.name().to_string();
-        if raw == BACKUP_META_NAME {
-            continue;
-        }
-        let rel = safe_entry_path(&raw).ok_or_else(|| format!("unsafe archive entry rejected: {raw}"))?;
-        let out_path = target_alinery_dir.join(&rel);
-        if entry.is_dir() {
-            fs::create_dir_all(&out_path).map_err(|e| format!("{}: {e}", out_path.display()))?;
-            continue;
-        }
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        }
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut bytes).map_err(|e| format!("{raw}: {e}"))?;
-        fs::write(&out_path, &bytes).map_err(|e| format!("{}: {e}", out_path.display()))?;
-    }
-    Ok(meta)
 }
 
 #[cfg(test)]
@@ -391,21 +290,4 @@ mod tests {
     // 2.27 — deleting a user's unrelated files from their own folder is the worst outcome here.
 
     // 2.28 — 0 must not mean "delete everything"; 200 must not mean "unbounded".
-
-    // ---- 2F. read_backup_meta / extract_backup_into ----
-
-    // 2.29 — list reads meta for every archive in the folder; it must not extract them.
-
-    // 2.30 — three flavours of broken input, three clean errors, no panic.
-
-    // 2.31 — the restore payload: every curated file back, bytes intact, dirs recreated.
-
-    // 2.32 — an archive is untrusted input: a user can be handed a zip and restore it.
-
-    // 2.33 — restoring repo A's data over repo B, caught before a single byte is written.
-
-    // 2.34 — non-app callers (inspection, migration) still get a usable API.
-
-    // 2.35 — extract is additive; clearing is the caller's job. Pins the contract boundary
-    // that keeps worktrees and live sockets alive through a restore.
 }

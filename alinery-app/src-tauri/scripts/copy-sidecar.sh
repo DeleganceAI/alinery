@@ -1,5 +1,4 @@
-# Compile alinery-vinculum-daemon and alinery-mcp, and place them as Tauri sidecars
-# `alinery-vinculum-daemon-<triple>` and `alinery-mcp-<triple>`.
+# Compile alinery-vinculum-daemon and place it as the Tauri sidecar `alinery-vinculum-daemon-<triple>`.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # src-tauri
 ROOT="$(cd "$DIR/../.." && pwd)"
@@ -9,18 +8,15 @@ TARGET="$(cargo metadata --format-version 1 --no-deps --manifest-path "$DIR/Carg
   node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory')"
 [ -n "$TARGET" ] || { echo "ERROR: could not resolve cargo target directory" >&2; exit 1; }
 if [ "$PROFILE" = "release" ]; then
-  cargo build --release -p alinery-mcp --manifest-path "$DIR/Cargo.toml"
   bash "$ROOT/scripts/dev-fetch-bun.sh" --release --no-download
   BUILT="$TARGET/release"
 else
-  cargo build -p alinery-mcp --manifest-path "$DIR/Cargo.toml"
   bash "$ROOT/scripts/dev-fetch-bun.sh" --no-download
   BUILT="$TARGET/debug"
 fi
 DAEMON="$BUILT/alinery-vinculum-daemon"
 [ -f "$DAEMON" ] || { echo "ERROR: $DAEMON was not compiled" >&2; exit 1; }
 SIDE="$DIR/alinery-vinculum-daemon-$TRIPLE"
-MCP_SIDE="$DIR/alinery-mcp-$TRIPLE"
 # Identical bytes still bump mtime, and these paths sit in the Tauri dev watch.
 copy_if_changed() {
   if [ -f "$2" ] && cmp -s "$1" "$2"; then
@@ -29,11 +25,9 @@ copy_if_changed() {
   cp "$1" "$2"
 }
 copy_if_changed "$DAEMON" "$SIDE"
-copy_if_changed "$BUILT/alinery-mcp" "$MCP_SIDE"
 # tauri-build fails on a missing bundle resource, so dev builds get an empty remote-runtime
 # set; scripts/build-remote-runtimes.sh fills it for release.
 mkdir -p "$DIR/resources/remote"
 [ -f "$DIR/resources/remote/manifest.json" ] || printf '{"version":1,"glibc_floor":"","targets":{}}\n' > "$DIR/resources/remote/manifest.json"
-chmod +x "$SIDE" "$MCP_SIDE"
+chmod +x "$SIDE"
 echo "sidecar ready: $SIDE"
-echo "mcp sidecar ready: $MCP_SIDE"
