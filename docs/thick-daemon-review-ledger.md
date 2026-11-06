@@ -838,6 +838,64 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **What:** a new service and new job RPCs bumped the protocol to 34 (`protocol.rs`, `main.ts` `PROTOCOL`, the dialect list in `daemon_client.rs`). The bundled Linux runtimes must be rebuilt before the live remote tests (L-S4.9-c); that was not done here (no runtime bundle on this machine, Docker is arm64 only), so the remote live restore test was written and compiled but not run. The 70,000-file daemon test takes about 15 s of the daemon suite; `ALINERY_KEEP_BACKUP=<file>` keeps its archive for the Rust read. `vinculum-daemon/node_modules/alinery-proto` links per file, so after the proto regeneration `bun install` was needed (or the two new `backups` links by hand), as in R-S4.7-5. Tests removed with the code: `backup_queue.rs`' own, the `backup_now`, `list_backups` and storage cases in `tests/backup.rs`, the remote live storage test, and the daemon slot test. Core Rust zip cases stay with R-S4.9-3. The first `check.sh` failed only `cargo fmt` (532d152) and the second only clippy's unused import (c802aa5).
 - **Flaky:** see R-FLAKE-1 for this session's run.
 
+### R-S4.10-1: the issue import stays a prefill; there is no bulk `TaskService.Import`
+- **Kind:** deviation from the plan's Build bullet 1 (decided overnight, conservatively).
+- **What:** the plan has the shell fetch issues and pass them to a `TaskService.Import` that creates the tasks. The app's import is a prefill: the page fetches one ticket into the New task form and the person creates it through `CreateTask`, which already takes `github_issue`, `linear_id`, attachments and `attachment_errors`. A bulk RPC would be a second way to create a task with no caller. What changed is where the repository's two facts come from. `GitOriginUrl` (S4.7's `GitService.GitOriginUrl`) is a unary call the page makes, and the repository's own GitHub token override is read from its `settings/_/repo` row, so a remote repo no longer needs `ReadRepoOverrides` or a repo-service `GitOriginUrl`. The shell's `import_github_for_repo(repo, reference, origin_url, token_override)` then fetches with this machine's credentials. `None` for the override means the global token applies; `Some("")` is a blank override, as in `resolve_effective_config`. `import_linear` (the unused active-repo twin) is gone. The conformance the plan asks for runs through `CreateTask` (`rpc/tasks.test.ts`, two tests).
+- **Options:** (a) prefill, page passes the facts (chosen); (b) build `TaskService.Import` and have the page call it with fetched tickets.
+- **Reverse:** add the RPC and have the page call it after a fetch; about 150 lines and a proto change. The telemetry event `import.fetch` is unchanged (the shell still does the fetch).
+- **Files:** `alinery-app/src/sync/imports.ts`, `src/imports.rs`, `vinculum-daemon/src/rpc/tasks.test.ts`.
+
+### R-S4.10-2: the package is a `staged` upload, not a `PlaybookPackageBlob`
+- **Kind:** provisional decision.
+- **What:** the plan (2.1.5) names a `PlaybookPackageBlob` target. `BlobService` already has `staged` uploads that a task create and a skill install name by `upload_id`, and the daemon releases one when the call ends. A new target would repeat that with one more case in `blobs.proto`. The page uploads the document as `<id>.md` (staged) and sends `CommunityPackage{upload_id, version, label, playbook_key}`; the daemon decodes the bytes as strict UTF-8 and releases the upload in a `finally`. The plan's line 521 sketch is therefore not built.
+- **Options:** (a) reuse `staged` (chosen); (b) add the blob target.
+- **Reverse:** add the target and have `rpc/playbooks.ts`'s `community()` read it. Small.
+- **Files:** `proto/alinery/v1/playbooks.proto`, `vinculum-daemon/src/rpc/playbooks.ts`, `alinery-app/src/sync/community.ts`.
+
+### R-S4.10-3: the registry is an entity, and writes check the bytes they replace
+- **Kind:** provisional decision.
+- **What:** the downloaded list is shown in the library and the editor and was a shell command each time. It is now the `playbook/_/community` row (the registry file's rows plus `local_missing` and `locally_edited` computed from the files), refreshed by the projector, so every window sees a change. The file, `.alinery/playbooks/community-imports.toml`, keeps its format (eight fields, anything else is an error naming the file). Its read-modify-write and the playbook write run under the library's `.mutation.lock` (`withRepoLibraryLock`). Rust checked "edited while the package was fetched" with a compare around the network call; the daemon has no such window, so `savePlaybook` gets the bytes it expects to replace and refuses a mismatch inside the lock (a `conflict` for an import, `edited` for an update). A failed registry write restores or deletes the playbook it had just saved. Breaking: none (same file).
+- **Options:** (a) entity plus lock-checked writes (chosen); (b) keep a unary `ListCommunityImports`.
+- **Reverse:** drop the projector row and add a unary read. Small.
+- **Files:** `vinculum-daemon/src/domain/communityImports.ts`, `playbookLibrary.ts`, `playbookProjector.ts`.
+
+### R-S4.10-4: the library's side of a download row stays in the shell
+- **Kind:** deviation from the rule-6 table row (`community_download_status` to the daemon).
+- **What:** `community_download_status` joined the registry with a GET of each publication. The daemon now answers the registry half (`playbook/_/community`), and the shell answers `community_remote_status(ids)`, which is the same GET (no bearer) through the shell's one HTTP stack and `accounts_url()`. The page joins them (`sync/community.ts`, `communityDownloadStatus`, same row shape as before). Moving the GET to the daemon needs an HTTP client and the accounts base URL on every host (a host's `app.toml` allowlist, `render_remote_app_toml`) for no secret saved: the request carries no credential. A remote repo's list therefore needs this Mac online to show update badges, the same as the catalog.
+- **Options:** (a) shell GET, page join (chosen); (b) a daemon GET with the base URL in the host's `app.toml`.
+- **Reverse:** add the field to `render_remote_app_toml`, an `UpdateStatus` RPC and a TypeScript fetch; delete `community_remote_status`.
+- **Files:** `src/community_playbooks.rs`, `alinery-app/src/sync/community.ts`.
+
+### R-S4.10-5: O12 (a): where the agent dir is, and what the shell still writes
+- **Kind:** the user's decision O12 (a), with the implementer's path choice recorded as provisional.
+- **What:** the agent dir is `vinculumAgentDir(appConfig)`, i.e. `<dir of app.toml>/vinculum/config/agent`, owned by the daemon on every host. For this Mac that is the directory the app and the local daemon already share (`vinculum_home_dirs`), so there is nothing to mirror; for a remote host it is `~/.local/share/alinery-remote/config/<identity>/vinculum/config/agent`, inside the layout `render_remote_app_toml` already owns. The user suggested a host-home path such as `~/.alinery/agent`; I did not add a second root on the host because the Pi runtime already reads this directory through `PI_CODING_AGENT_DIR`/`PI_CONFIG_DIR`, and a different path would need a second place those are set. Model roles, the inventory, skill install and delete, and the prompt are daemon RPCs. `ensure_default_model_role` (called by `hosted.rs` after a sync) is still Rust and still writes this Mac's `config.yml`, so there are two copies of the model-role line format (Rust, and `agentDir.ts`). A remote host gets no hosted default role from a sync until S4.11 moves that write. The Finder window and the file picker stay shell commands; the page shows them only when the host is this machine (R-S4.10-6).
+- **Options:** (a) as built; (b) `~/.alinery/agent` per host (the user's suggestion).
+- **Reverse:** change `vinculumAgentDir` in one place on each side (daemon and `alinery_core::vinculum_home_dirs`) and move the directory; the PI env vars follow it.
+- **Files:** `vinculum-daemon/src/domain/agentDir.ts`, `src/omp_update.rs`, `src/vinculum_customizations.rs`.
+
+### R-S4.10-6: which host's directory the Settings page shows
+- **Kind:** provisional decision.
+- **What:** Settings > Customizations and Providers have no repository of their own, so they ask the active repository's daemon, else the first local repository's (`agentHost`). With a remote repo active they show and edit that host's agent directory and hide Open configuration folder and Show in file manager. A skill picked there is read here (25 MB cap, `read_local_file`) and uploaded to the host. The session view's model dialog names its own repository. If the person expects the Settings page to always mean this Mac, they have to activate a local repo first. `vinculum_customizations` (the live tool and MCP status) is still the shell command for the active repo.
+- **Options:** (a) the active repo's host (chosen); (b) always this Mac's directory, with a host selector later.
+- **Reverse:** pass a local repo to `agentHost`.
+- **Files:** `alinery-app/src/sync/agent.ts`, `views/VinculumCustomizations.tsx`.
+
+### R-S4.10-7: publish reads from the daemon, and the page refuses an invalid playbook
+- **Kind:** provisional decision.
+- **What:** `publish_community_playbook` takes `{source, key, label}`. The page reads the playbook with `PlaybookService.ReadPlaybook` (for a remote repo, the host's copy) and sends its stored text, so the shell no longer reads a repo. Rust returned `Invalid{diagnostics}` when the stored file did not parse; the page does the same when `ReadPlaybook` refuses with an `invalid` error, before any request. The server still validates. Bytes sent are the stored text (CRLF kept), as before; `publish_sends_stored_text` still checks it. The shell's `publish_desktop_invalid_does_not_call` test has no counterpart in Rust now; the page-side case is `sync/community.test.ts` ("a playbook the daemon calls invalid never leaves this machine").
+- **Reverse:** have the shell parse the source (the Rust parser is still in core for MCP).
+- **Files:** `src/sync/community.ts`, `src/community_playbooks.rs`.
+
+### R-S4.10-8: removed code, gates, and noticed
+- **Kind:** noticed.
+- **What:** removed with the code: the Rust import, update, registry and delete tests (their cases are in `rpc/community.test.ts`), `tests/vinculum_customizations.rs` (cases in `domain/agentDir.test.ts` and `rpc/agent.test.ts`), the remote live tests for the scratch-copy library, the origin URL and the GitHub token, `targeted_helpers_do_not_depend_on_active_repo`, and `ActiveRepo` (`require_active_target` now returns `()`; nothing read its fields). `check-remote-routing.sh` lost the dead `owned_active_target(` token. `git_ops.rs` no longer re-exports `git_cmd` (tests import it from core). Noticed and left: `alinery_core::load_repo_overrides_strict` and the Rust playbook parser stay for MCP (S5.1); `alinery-core` model-role code is not duplicated beyond `ensure_default_model_role`.
+- **Files:** as listed.
+
+### R-S4.10-9: not run: the remote-sshd Accept line, and `PROTOCOL_VERSION` 35
+- **Kind:** unverified claim.
+- **What:** the Accept line "a community import into a remote repo writes the playbook on the host" needs the Linux runtime bundle (`resources/remote/manifest.json` has no targets on this machine; no zig) and so a daemon at protocol 35 in the Debian container. I did not build it. What was run: the import against a repo directory by the daemon (`rpc/community.test.ts`, 12 tests), which is the same code that runs on the host, and the page's call (`sync/community.test.ts`). The daemon only writes its own repo, so a remote write cannot reach the local copy; that is the claim L-S4.10-c checks. The bump to 35 is in `protocol.rs`, `main.ts` and the audited-shutdown list in `daemon_client.rs`; the runtimes must be rebuilt (`alinery-core`, `mcp/` and `vinculum-daemon/` changed) before the live remote tests. After the proto regeneration `bun install` was needed in `vinculum-daemon` (as in R-S4.7-5).
+- **Files:** `alinery-core/src/protocol.rs`, `vinculum-daemon/src/main.ts`, `alinery-core/src/daemon_client.rs`.
+
 ## E. Known flaky tests
 
 ### R-FLAKE-1: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`

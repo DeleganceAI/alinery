@@ -94,7 +94,6 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `state.rs` | `AppState`, `RepoDaemon`, `RepoReservation`, `ClosingGuard` |
 | `app_config.rs` | `AppConfig`/appearance prefs, known-repo list, repo switching/removal |
 | `settings.rs` | `config.toml`, scoped/global settings, harness + model registry, storage info |
-| `playbook.rs` | playbooks, steps, kanban columns |
 | `task.rs` | `Task`/`BoardTask`, create/draft/attachment/board paths |
 | `session.rs` | `SessionMeta`, session CRUD, message actions, open/write/resize/kill, history |
 | `subtask.rs` | parent/child sub-task lifecycle |
@@ -103,17 +102,17 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `remote.rs` | SSH hosts: destination parsing, probe, runtime install, ControlMaster, repo-service channel, credential sharing, `~/.ssh/config` aliases |
 | `chat.rs` | taskless chat threads (rail, create/pin/archive, attachments); file and git half in `alinery_core::chat` |
 | `hosted.rs` | hosted Alinery models: catalog, credits, mint/revoke against the accounts service |
-| `vinculum_customizations.rs` | read-only inventory of the Vinculum agent directory |
-| `community_playbooks.rs` | community playbook catalog, import registry, publish |
+| `vinculum_customizations.rs` | the Finder window and skill picker of the agent directory (the directory itself is the daemon's `AgentService`) |
+| `community_playbooks.rs` | community catalog, preview, mine, remote status, package download, publish (the import registry is the daemon's) |
 | `mcp.rs` | managed MCP child lifecycle and status |
 | `notify.rs` | notification sound + attention notifications |
 | `backup.rs` / `backup_queue.rs` | auto-backup queue, backup/restore |
 | `git_ops.rs` | worktree removal, compare URL; re-exports `alinery_core::git_cmd` (the only git spawn) |
 | `connections.rs` | GitHub browser login plus Linear OAuth PKCE |
-| `imports.rs` | Linear and GitHub issue import |
+| `imports.rs` | Linear and GitHub issue fetch (the page passes the repo's origin URL and token override) |
 | `account.rs` | pairing / account chip |
 | `update.rs` | CDN manifest poll, download+sha256 verify, detached swap helper |
-| `omp_update.rs` | OMP binary update status |
+| `omp_update.rs` | OMP binary update status; the hosted default model role write |
 | `telemetry.rs` | opt-in usage events |
 
 A new command goes in the module that owns its data; `lib.rs` only gains a name in `generate_handler!`.
@@ -124,7 +123,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 - Session: `open_session`, `session_prompt`, `session_abort`, `session_set_model`, `session_set_thinking_level`, `finalize_session_message_actions`, `notify_session_attention`, `prepare_hosted_inference`, `list_chat_repos`, `chat_prompt`, `chat_abort`, `chat_set_model`, `chat_set_thinking_level`. Create, start, rename, archive, kill, notification marks, history and chat threads are daemon RPCs (`SessionService`, `ChatService`, `BlobService`) called from the frontend (`src/sync/sessions.ts`, `src/sync/chat.ts`)
 - Playbook/Harness: `list_phases`, `list_playbooks`, `list_harness_models`
 - Daemon/repo: `prepare_repo_takeover`, `confirm_repo_takeover`, `cancel_repo_takeover`, `stop_daemon`, `close_all_repos`, `repo_live_sessions`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `read_app_config`
-- Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear`, `import_github`
+- Connections/import: `connection_statuses`, `connect_github`, `connect_linear`, `import_linear_for_repo`, `import_github_for_repo`
 - Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only
 - Storage: `storage_info`, `delete_all_archived_storage`
 - Remote: `remote_hosts`, `remote_add_host`, `remote_ssh_aliases`, `remote_describe_destination`, `remote_discard_host`, `remote_sharing`, `remote_set_sharing`, `remote_connect`, `remote_disconnect`, `remote_list_dir`, `remote_classify`, `remote_init`, `remote_add_repo`, `remove_remote_repo_keep_running`

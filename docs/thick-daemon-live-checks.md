@@ -591,6 +591,34 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** (1) the probe refuses the host and names `zip` and `unzip` with the install hint; a local backup without them fails with the tool's name in the message. (2) both pass; Rust reads the daemon's archive whole (over 70,000 files).
 - **Status:** open
 
+### L-S4.10-a: a community import, an update and a publish in the real app
+
+- **Session:** S4.10. Plan: S4.10 (Build: community); ledger R-S4.10-2, R-S4.10-3, R-S4.10-4.
+- **Steps:** on a local repo, signed in, open Playbooks > Community and download a playbook; then (1) download it again (it should say it is already downloaded); (2) edit the downloaded copy in the editor, then press Update when the library has a newer version (or republish a changed copy under your own label first) and answer the overwrite question both ways; (3) download a playbook whose key matches one you already have and answer the overwrite question both ways; (4) delete a downloaded repo playbook and check the Downloaded list; (5) publish a repo playbook with a valid body, then with an invalid one; (6) sign out and press Download.
+- **Expected:** a downloaded copy appears in the library and in the Downloaded list with its version; the second download is refused as already downloaded; Update on an edited copy asks first and writes only after Overwrite; the key conflict asks first; a deleted playbook leaves the Downloaded list; the invalid playbook is refused with its diagnostics before any network call (devtools network shows none to accounts); signed out sends you to sign in and the action continues after it. `.alinery/playbooks/community-imports.toml` holds the record.
+- **Status:** open
+
+### L-S4.10-b: Settings > Customizations and the model roles on a local repo
+
+- **Session:** S4.10. Plan: S4.10 (Build: O12); ledger R-S4.10-5, R-S4.10-6.
+- **Steps:** open Settings > Providers and Customizations. Upload a `.md` skill, then a `.zip` skill, then the same one again and answer Replace both ways; delete one; press Copy instructions for an AI; open the configuration folder and Show in file manager on a skill. In a session's model dialog and in Providers & accounts, assign a model role and clear it. Sign in to a hosted account and sync its models.
+- **Expected:** installs, replace question and delete work and the inventory refreshes; the copied prompt names this installation's agent directory; the Finder opens `<app config dir>/vinculum/config/agent`; a role set in either dialog shows in the other and in `config.yml` there; the hosted default role is still written after a sync (the shell still writes it, R-S4.10-5).
+- **Status:** open
+
+### L-S4.10-c: a remote repo: a community import on the host, and the host's own agent directory
+
+- **Session:** S4.10. Plan: S4.10 (Accept: remote-sshd); ledger R-S4.10-6, R-S4.10-9.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd (linux/arm64 only; `scripts/tests/remote-sshd/run.sh start`) and connect it. With a repo on it open: (1) download a community playbook; run `ssh ... test -f <repo>/.alinery/playbooks/<key>/playbook.md` and look for the same file under the local copy of the repo key; (2) open Settings > Customizations and upload a skill; (3) in the host's shell run `ls ~/.local/share/alinery-remote/config/*/vinculum/config/agent/skills`; (4) import a GitHub issue by bare number (`#1`) into a repo whose host `origin` is a GitHub URL, then again with a repo token override set in its settings; `run.sh stop`.
+- **Expected:** the playbook file is on the host and nothing under the local repo path changes; the Customizations list is the host's, with no Open configuration folder or Show in file manager button; the skill is on the host's disk; the bare number resolves against the host's origin and the override token is the one sent (a wrong override gives a GitHub 401, a blank one is sent blank). A host still on protocol 34 shows the daemon-conflict banner and Restart daemon.
+- **Status:** open
+
+### L-S4.10-d: the issue imports on a local repo
+
+- **Session:** S4.10. Plan: S4.10 (Build: Linear and GitHub); ledger R-S4.10-1.
+- **Steps:** on a local repo with a GitHub `origin`: in New task, import `#N`, `owner/repo#N` and a pull request URL; then set a GitHub token in the repo's settings and import again; connect Linear and import `ENG-NN` with and without images; create the tasks.
+- **Expected:** the title and description prefill the form; a bare `#N` uses the repo's origin; with the repo override set the request uses that token (an invalid override fails and the global token is not tried); Linear images become attachments and failed ones are listed in the ticket; the created task has `github_issue` or `linear_id` in `task.md`. The anonymized `import.fetch` telemetry event still appears once per import when consent is on.
+- **Status:** open
+
 ## Needs a Linux machine (any arch)
 
 ### L-S0.1-a: proto install and the three alinery-proto tests on Linux
@@ -613,5 +641,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S4.7-a to -e (S4.7):** built; see the entries above.
 - **L-S4.8-a to -e (S4.8):** built; see the entries above.
 - **L-S4.9-a to -f (S4.9):** built; see the entries above. L-S4.5-e is expected to pass now (L-S4.9-d).
+- **L-S4.10-a to -d (S4.10):** built; see the entries above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.
