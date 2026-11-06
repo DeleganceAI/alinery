@@ -3,7 +3,7 @@
 // the file it changed is re-read into the store before the reply, so the reply's cursor already covers it, and a
 // write that names `expected_revision` is checked against the row as the file is now (a mismatch is ABORTED).
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import type { JsonObject } from "@bufbuild/protobuf";
@@ -14,6 +14,7 @@ import type { BlobStore } from "../domain/blobs.ts";
 import { deleteDraft, writeDraft } from "../domain/drafts.ts";
 import { alineryDir, readTaskChecked } from "../domain/taskFiles.ts";
 import { type AttachmentSource, archiveTask, type CreateReply, type CreateTaskParams, duplicatePackage, type Guard, provisionTask, renameTask, restoreTask, setAutoApproveAll, setRelatedTasks } from "../domain/tasks.ts";
+import { writeAtomic } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
@@ -80,7 +81,7 @@ export async function createFromWire(d: TaskDeps, request: WireRequest): Promise
       const bytes = Buffer.from(a.bytes, "base64");
       mkdirSync(scratch, { recursive: true });
       const path = join(scratch, `${attachments.length}`);
-      writeFileSync(path, bytes);
+      writeAtomic(path, bytes);
       attachments.push({ name: a.name, path, size: bytes.length });
     }
     const str = (v: unknown) => (typeof v === "string" ? v : undefined);
