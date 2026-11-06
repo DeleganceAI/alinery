@@ -1319,3 +1319,37 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **What:** the page ends the old repository's drawer shells after a successful switch (R-S5.3-6). If the window closes between the switch and the kill, or the daemon refuses the kill, those idle shells keep running in the old repository's daemon until the user ends them or the next switch back. Not changed: an idle drawer shell holds no work, the daemon is the repository's own, and the alternative (the daemon ending idle drawer sessions) needs a rule for what idle means. L-S5.3-e covers the happy path only.
 - **Reverse / close:** if it matters, have `CreateSession` for a drawer shell carry a marker the daemon ends on `Hello` from a different active repository, or end drawer shells at `close_all_repos`.
 - **Files:** none.
+
+## S5.4 AGENTS.md
+
+### R-S5.4-1: the `src/daemon/` services gate is not built
+- **Kind:** deviation (plan 2.5 and the S5.4 Build list a gate "that checks that `src/daemon/` calls only services that exist in `proto/`").
+- **What:** no such gate exists, and AGENTS.md does not name one. The failure it would catch cannot reach a build: every service client is imported from the generated `alinery-proto/alinery/v1/*_pb` modules, so a call to a service that is not in `proto/` fails `tsc` (the "typecheck (sources + tests)" step of `check.sh`) and `check-proto-gen.sh` fails when `proto/gen` and the `.proto` files disagree.
+- **Options:** (a) record and skip, as done; (b) a grep gate over `src/sync` and `src/daemon` for `createClient(` with a service name that is not exported by `proto/gen`: it repeats what `tsc` already proves.
+- **Reverse:** write (b) if a call ever goes through an untyped path (a string service name); today none does.
+- **Files:** none.
+
+### R-S5.4-2: how AGENTS.md was checked, and what was not
+- **Kind:** unverified claims (listed so nobody trusts them more than they were tested).
+- **Checked by script or by reading the code, this session:** every `check-*.sh` named exists and every one is named; every module in the table exists and every top-level `.rs` is in it; the command list equals `generate_handler!` (76); `externalBin` is the Vinculum daemon alone; `ShutdownOrigin` has five values; the capability names and the `PeerClass` values; `Cursor` is `epoch` plus `seq`; `daemon_rpc` is generic over the service path; `proto/golden` comes from `bun golden.ts`; `jobs/autoBackup.ts` runs the automatic triggers; the version-bump table (six files, two workspace packages) matches `Cargo.lock`, `Cargo.toml`, `package.json`, `package-lock.json` and `tauri.conf.json` at 0.25.0.
+- **Not checked by running anything:** the sentences about quit (`onCloseRequested`), the conflict banner, the supervisor's back-off and the host-key handling are carried over from earlier text and were only grepped for the symbols they name. The `check-remote-offload.sh` line still names `off_main_thread`, which no longer exists in the shell; the gate's regex accepts either word. Whether the gate has anything left to police after S5.2 was not examined.
+- **Reverse / close:** none needed; this is a statement of coverage.
+- **Files:** `AGENTS.md`.
+
+### R-S5.4-3: Harness Registry and Core Model not audited against the pi-durable runtime
+- **Kind:** unverified, follow-up (the todo file has carried "AGENTS.md: the Harness Registry and launch-list lines were not audited against Vinculum" since before this plan).
+- **What:** AGENTS.md still says a session is "one PTY running OMP", that the daemon resolves `binary = "omp"` to a packaged binary, and that an OMP child gets `env_clear()` plus `OMP_ENV_ALLOWLIST`. Reading the daemon: `terminal.ts` spawns only a shell, `mcp.ts` only MCP children, nothing spawns `omp`, `tasks.ts` and `main.ts` rewrite harness `omp` to `vinculum` (the in-process pi-durable runtime), and `sessionState` reports `adapter: "omp"` as a constant. The spawn-time sentences may therefore describe a path that no longer runs (the Rust half, `OMP_ENV_ALLOWLIST` and the "bundled OMP not found" error in `alinery-core/src/paths.rs`, is still there). I did not rewrite them: that section belongs to the harness decision of the base branch (`experimental-pi-durable-as-a-harness`), not to the thick-daemon plan, and a wrong rewrite is worse than a stale line.
+- **Reverse / close:** run L-S5.4-a. If no `omp` child appears, rewrite Core Model (Session), Harness Registry and the OMP lines in the Build section; delete `OMP_ENV_ALLOWLIST`, `resolve omp` and the `omp:*` scripts if nothing else uses them.
+- **Files:** `AGENTS.md` (unchanged on this point), `docs/remote-repos-todo.md`.
+
+### R-S5.4-4: the remote-repos docs are annotated, not rewritten
+- **Kind:** decision.
+- **What:** `docs/remote-repos-performance.md` gets a status banner and a note on each of M1 and P1 to P7; `docs/remote-repos-todo.md` gets a banner and notes on A4, A5, M1, P2 to P7, B4 and two backlog lines. The reasoning text is kept as the record. P6 is marked built (the sync engine) although the plan made it conditional on M1; M1 stays open because nobody measured. B2, B3 and B5 stay open and overlap S6.1 and S6.2.
+- **Options:** delete the superseded sections (loses the reasoning the thick-daemon plan cites); annotate (chosen).
+- **Reverse:** `git revert` the docs commit; no code depends on it.
+- **Files:** `docs/remote-repos-performance.md`, `docs/remote-repos-todo.md`.
+
+### R-S5.4-5: README suggestions
+- **Kind:** readme (README.md is not edited).
+- **Suggested README text:** the four bullets added to plan 4.4 this session, plus the earlier ones there: the MCP Server section (`alinery-mcp` is gone; the host config and its prerequisites), the development prerequisites (Bun and `scripts/install-proto.sh --with-dev`; the Rust workspace is the app and `alinery-core`), and line 128 next to line 87 (a repo with no daemon shows its banner).
+- **Files:** `docs/thick-daemon-plan.md` (4.4).

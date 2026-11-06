@@ -831,6 +831,13 @@ export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders
 - **Expected:** the repository is listed with its live sessions (read from the old `list` reply), and the daemon stops over its JSON-lines socket.
 - **Status:** open
 
+### L-S5.4-a: what a session starts on the daemon's machine
+- **Session:** S5.4 (R-S5.4-3).
+- **Needs:** the app launched (a signed-in provider is enough; no remote needed) with a repository open.
+- **Steps:** start one Terminal session and one agent session (the default harness) in a task. Then run `ps -A -o pid,ppid,command | grep -E 'alinery-vinculum-daemon|/omp' | grep -v grep`.
+- **Expected:** the answer to "does the daemon spawn the packaged `omp` binary for an agent session, or run the agent in its own process?" The code says the second (`terminal.ts` spawns a shell, `mcp.ts` spawns MCP children, nothing spawns `omp`, and harness `omp` is rewritten to `vinculum` in `tasks.ts` and `main.ts`). If an `omp` child does appear, AGENTS.md's Harness Registry text is right and R-S5.4-3 closes as a false alarm; if none does, that section and the Core Model's "one PTY running OMP" need the rewrite R-S5.4-3 describes.
+- **Status:** open
+
 ## Pointers to checks that belong to sessions not built yet
 
 These have no steps yet; the session that builds them adds the entries.
@@ -844,5 +851,6 @@ These have no steps yet; the session that builds them adds the entries.
 - **L-S5.1-a to -e (S5.1):** built; see the entries above.
 - **L-S5.2-a to -d (S5.2):** built; see the entries above.
 - **L-S5.3-a to -i (S5.3):** built; see the entries above.
+- **L-S5.4-a (S5.4):** built; see the entry above.
 - **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). (4.2 row.)
 - **L-S5.x / L-S6.x:** every session after S3.5 appends its own `userRunItems` here.

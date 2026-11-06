@@ -171,7 +171,7 @@ cd alinery-app/src-tauri
 cargo check -p alinery-app
 ```
 
-Do **not** consider the change done until this passes. For sidecar/bundler work (`copy-sidecar.sh`, `tauri.conf.json`, `externalBin`), also run the copy script. A change in `vinculum-daemon/src` is TypeScript: run `bun test` in `alinery-app/src-tauri/vinculum-daemon/` (the tests sit beside the source as `*.test.ts`). A change under `proto/alinery/` needs `npm --prefix proto ci` once, then `npm --prefix proto run gen` (`buf generate` plus `buf lint`, rewriting `proto/gen`), `(cd proto && bun golden.ts)` (rewriting `proto/golden`), `bun test` in `proto/`, `./scripts/tests/check-proto-gen.sh`, and a `PROTOCOL_VERSION` bump. A change in `playbook-engine/` needs `bun test` there.
+Do **not** consider the change done until this passes. For sidecar/bundler work (`copy-sidecar.sh`, `tauri.conf.json`, `externalBin`), also run the copy script. A change in `vinculum-daemon/src` is TypeScript: run `bun test` in `alinery-app/src-tauri/vinculum-daemon/` (the tests sit beside the source as `*.test.ts`). A change under `proto/alinery/` needs `scripts/install-proto.sh --with-dev` once (`check.sh` runs it; it also links `alinery-proto` for the daemon and the app), then `npm --prefix proto run gen` (`buf generate` plus `buf lint`, rewriting `proto/gen`), `(cd proto && bun golden.ts)` (rewriting `proto/golden`), `bun test` in `proto/`, `./scripts/tests/check-proto-gen.sh`, and a `PROTOCOL_VERSION` bump. A change in `playbook-engine/` needs `bun test` there.
 
 Live GUI verify is opt-in only, when the user asks to see the app. For a local `tauri dev` OMP session, run `scripts/dev-fetch-omp.sh` once so `/Applications/Alinery.omp/omp` exists. The resolver never falls back to PATH.
 
