@@ -1090,21 +1090,21 @@ fn live_test_destination_refuses_a_host_missing_git_and_accepts_it_again() {
         fn drop(&mut self) {
             let _ = std::process::Command::new("docker")
                 .args(["exec", "alinery-test-sshd", "mv", "/usr/bin/git.off", "/usr/bin/git"])
+                .stderr(std::process::Stdio::null())
                 .status();
         }
     }
     let _put_back = PutBack;
     let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/remote");
     let manifest: RuntimeManifest = serde_json::from_str(&std::fs::read_to_string(bundle.join("manifest.json")).unwrap()).unwrap();
-    let destination = args.join(" ");
 
-    let error = test_destination(&destination, &manifest, true).unwrap_err();
+    let error = test_ssh_args(&args, &manifest, true).unwrap_err();
     let refusal: serde_json::Value = serde_json::from_str(error.strip_prefix("host-refused: ").unwrap_or_else(|| panic!("not a refusal: {error}"))).unwrap();
     assert_eq!(refusal["kind"], "missing_tools");
     assert_eq!(refusal["missing_tools"], serde_json::json!(["git"]));
 
     assert!(rename("/usr/bin/git.off", "/usr/bin/git"));
-    let report = test_destination(&destination, &manifest, true).unwrap();
+    let report = test_ssh_args(&args, &manifest, true).unwrap();
     assert!(report.platform.starts_with("Linux"), "{}", report.platform);
 }
 

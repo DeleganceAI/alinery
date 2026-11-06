@@ -1682,8 +1682,12 @@ pub(crate) struct HostTestReport {
 /// A master this call started is closed again, so a host that is never saved leaves no ssh process; one already open
 /// (the host is saved and connected) is left alone.
 pub(crate) fn test_destination(destination: &str, manifest: &RuntimeManifest, trust: bool) -> Result<HostTestReport, String> {
-    let ssh_args = parse_destination(destination)?;
-    let conn = HostConn::new(&host_id(&ssh_args), &ssh_args)?;
+    test_ssh_args(&parse_destination(destination)?, manifest, trust)
+}
+
+/// `test_destination` for arguments already parsed (the live tests pass options the destination parser refuses).
+pub(crate) fn test_ssh_args(ssh_args: &[String], manifest: &RuntimeManifest, trust: bool) -> Result<HostTestReport, String> {
+    let conn = HostConn::new(&host_id(ssh_args), ssh_args)?;
     let reused = conn.master_alive();
     let outcome = (|| {
         conn.ensure_master(trust).map_err(|failure| failure.to_string())?;
