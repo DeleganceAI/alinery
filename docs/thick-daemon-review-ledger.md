@@ -16,9 +16,327 @@ This file holds: provisional decisions, deviations from the plan, unverified cla
 - **Reverse.** How to undo it.
 - **Files.** Where it lives.
 
-Sections: A. Decided by the user. B. Provisional decisions and deviations made by sessions (P0 to P3). D. Dustin's PR #154 comment dispositions. E. Flaky tests. F. Unverified claims. G. Plan text that is stale. H. Suggested README text. (There is no section C; ids keep the letters stable.) Later sessions append to the section that fits, with the next free id.
+Sections of the full entries (below the review index): A. Decided by the user. B. Provisional decisions and deviations made by sessions (P0 to P3). D. Dustin's PR #154 comment dispositions. E. Flaky tests. F. Unverified claims. G. Plan text that is stale. H. Suggested README text. Then one section per later session (S4.12 to S6.2) and the S4.x entries that sit inside B and D. There is no section C. The full entries are append-only and unchanged; the **review index** below was added at the P4 to P6 wrap-up and groups them by kind, so read the index first and follow the id to the full entry. Later sessions append a full entry and add one line to the index group that fits.
 
 ---
+
+## Morning summary
+
+Written at the P4 to P6 wrap-up, 2026-11-06. Branch `remote-daemon`, nothing pushed. Code head before this wrap-up: `e7372ca`.
+
+**Full check.** `./scripts/check.sh` (full, not `--quick`) was run on `e7372ca` at the wrap-up and ended `OK: check passed`: vitest 1781 passed, 1 skipped; the daemon's `bun test` 600 pass in 76 files; alinery-proto 3 pass; the omp-extension suite 36 pass; the Rust workspace tests all green (app lib 402 passed, 1 ignored; core 210 passed); 256 shell-gate `ok` lines. Earlier runs of the same script passed on each session's code head. Not observed by any agent: the app launched, a signing identity, native x64, a GitHub login, a real network cut. Every such check is in `docs/thick-daemon-live-checks.md` (Part 0 is the 20-minute smoke test to run first).
+
+**Status per session.** `done` = built, committed, `check.sh` passed on the code. `unverified` = built and `check.sh` passed, but the last review round's fixes were not re-reviewed or a named Accept line did not run. `blocked` and `skipped`: none. P7 (S7.1 to S7.4) is `not started`, by design.
+
+| Session | Status | Commits (git log) | Note |
+|---|---|---|---|
+| P0 S0.1 to S0.7 | done | 29c397b (S0.1), 87b2135 (S0.6); S0.2 to S0.5 spikes by the plan review | hardened-runtime check L-S0.5-a needs a signing identity |
+| P1 S1.1 to S1.4 | done | 93bd464, e8663c9, 3e1e054, 09ecc96, 28f79e0 | app-started and webview checks open |
+| P2 S2.1 to S2.6 | done | cf7ecd7, ffc6c95, c215546, 9723877, e3d09b6, 9a60b01, e77ae76, baa3aa3, 066ce1a | x64 watcher L-S2.3-a open |
+| P3 S3.1 to S3.5 | done | d597112, d574dd1, a5c58d8, e29ad26, 7c4b3fa, 7a1651e, ed8f7e4, 0876982, b57811e, e92f982 | O5 decision (R-O5) provisional |
+| S4.1 Settings | done | cff03b1, d5ac423, c592046, 1fd2f53, 98c4865; docs 3f4ee36 | R-S4.1-7: some Rust readers stay on purpose |
+| S4.2 Executions | unverified | 9a0adfc to 23dd73e (16 commits) | second review round fixed, not re-reviewed (R-S4.2-15) |
+| S4.3 Tasks, drafts, attachments | done | 9ce5679, 32ac7ee, 2b5993a | 14th proto variant kept (R-S4.3-3) |
+| S4.4 Session meta and chat | done | ed92a4a, cce48d1, 73ead78, 515b2bc, e34da59 | close-all acks stay in the shell (R-S4.4-15) |
+| S4.5 Artifacts and comments | done | 2b6f151, cd3625c, f2318a4, 27e1fbc, d80e4e9, 57803e9, 31fc16a, 146d759 | archived-source rule is in the daemon (R-S4.5-14) |
+| S4.6 Playbook library | done | 173ab23, 80e6abc, ce6d399, c925f46 | Rust parser stays until S5.1/S4.10 callers go (R-S4.6-1) |
+| S4.7 Git | done | e71a4d0, bdb7388 | `GitOriginUrl` repo-service op kept until S4.10 (R-S4.7-4) |
+| S4.8 Subtasks | done | 85446d9, 9a2c8a1, a5206f6 | core subtask.rs trimmed, not deleted (R-S4.8-3) |
+| S4.9 Storage and backup | done | c69ed46, e0df8c9, 532d152, c802aa5, e4b08c7 | exit met in part: remote restore ops stay until S5.2 (R-S4.9-2); Linux runtime bundle test not run at the time |
+| S4.10 Imports, community, agent dir | done | db12a95, 7611394 | no bulk `TaskService.Import` (R-S4.10-1) |
+| S4.11 Ownership, takeover, keep-awake | done | 68a5c6a, 290145a, 9e0fd5f, a8eb27c, 60686cd, 1a51997, 55f4688, a415ea7, 46ef95e | push to a real remote host not run (L-S4.11-f) |
+| S4.12 Providers and models | unverified | 5847585, 4fbfa96, 6d1a14b, a2a9df4 | the remote-sshd Accept line did not run (no zig then); bun test covers the service on a real socket; L-S4.12-c |
+| S5.1 MCP as a daemon client | done | 2ddde98, c96796b, c8ad6b7, 383fb14, 056d036, 9b5a6b9, a1059e1 | token overlap (R-S5.1-4, -11) |
+| S5.2 Host bootstrap (O15) | done | 23be437, bf67be3, 0962ba2, 6e3a37f, 07c03a9 | host service has 13 requests, not 11 (R-S5.2-1); x64 archive built, not run (L-S5.2-b) |
+| S5.3 Retire the JSON-lines wire | done | 8e57aac, 7b02900, 6563f36, 700cfca, 46bda92 | SIGTERM handler for the installer (R-S5.3-13) |
+| S5.4 AGENTS.md | done | 3b6994d, 7dc0fe0 | docs only; Harness Registry/Core Model text may describe a dead path (R-S5.4-3, L-S5.4-a) |
+| P5 review | done | bb6f4fc | takeover test flake widened (R-FLAKE-2) |
+| S6.1 Hosts and the onboarded mark | done | 9ea4271, 3f0e821 | marks always written (R-S6.1-1) |
+| S6.2 Setup screen | done | 8c16a93, c9649c3, 960d80f, 4f4fcd0 | refusal typed in `remote.rs`, not `host.proto` (R-S6.2-1); look of the screen not seen by an agent |
+| P6 review | done | feb4e14, e7372ca | setup screen waits for `gave_up` (R-S6.2-8) |
+| S7.1 to S7.4 (P7) | not started | none | keeper and brain (O5), memory, stats, upgrade while sessions run |
+
+**What is left for you, in order.** (1) Run the live checks: Part 0 of `docs/thick-daemon-live-checks.md`, then Parts 1 to 4. (2) Read "Decisions to confirm" below; each has its reverse path. (3) Read "Unverified sessions and open findings". (4) Pass the suggested README text to whoever edits `README.md`. (5) Decide P7 (O5: the provisional answer is one process until P7).
+
+## Review index
+
+Every full entry appears once, grouped by its Kind line. Entry ids are unchanged. Counts: decision 76, deviation 64, flaky 11, followup 10, note 33, readme 3, unverified 14, user 11 (222 entries).
+
+### 1. Decided by the user (11)
+
+Already in the plan; listed so the review has one place. Nothing here needs your confirmation unless you changed your mind.
+
+- `R-USER-1` O25, ship the telemetry ingest credentials as they are Reverse: option (a), per-install or revocable ingest tokens, would change both the shell and the daemon copy.
+- `R-USER-2` O12, the agent dir is per host and daemon-owned Reverse: move the dir and change one path constant plus the `WriteConfigFiles`/sync step; the choice is not in any wire message.
+- `R-USER-3` O10, MCP becomes a `--mcp` stdio mode of the Bun binary
+- `R-USER-4` O22, only the shell's managed MCP offers `alinery_send_review_handoff`
+- `R-USER-5` O15, `--host-service` stdio mode of the Bun binary; no Rust on the host
+- `R-USER-6` O11 amended, no compatibility with today's `-v1.zip` Reverse: restore the compatibility test from the plan history (v0.9, before 2026-11-05).
+- `R-USER-7` O27, history and per-step file states
+- `R-USER-8` base-branch fixes made in S0.1 are kept
+- `R-P1-1` a start no longer overwrites the kept RPC token Reverse: write the token directly (reintroduces the lock-out).
+- `R-S0.1-1` StatusDot shows the unread-completion marker ahead of a bare Exited label
+- `R-S0.1-2` protocol 24 is an audited shutdown dialect
+
+### 2. Decisions to confirm (provisional, with the reverse path) (76)
+
+These were made by a session without you. Each says how to undo it (first 200 characters; the full entry has options, why and files).
+
+- `R-O5` keep one process until P7 (O5 (a)) Reverse: S7.1 builds (b) (`--keeper`, `keeper.proto`). If you decide (b) earlier, S4.2's heavy work (reconcile, backup) should be moved to job children first, which S2.6 already supports.
+- `R-S1.1-2` the absence of ALINERY_HOST_EXECUTABLE means "every peer is sshd" Reverse: add the explicit flag and fail closed when the variable is absent.
+- `R-S3.5-1` remote open_session lost its GetTask gate (WA) Reverse: S4.3 adds the preflight; add a test there that a draft, archived and pre-v2 task cannot open a session on a remote repo.
+- `R-S4-pre-1` S4.x working assumptions for the unattended run
+- `R-S4.1-1` the shell creates only `.alinery/`; the daemon's `EnsureReady` does the rest Reverse: restore the old `ensure_repo_ready` body in `paths.rs` and drop the `daemon_rpc::ensure_repo_ready` call in `daemon.rs`.
+- `R-S4.1-2` remote repos read their effective settings from the host's rendered `app.toml`; telemetry is copied whole Reverse: blank the section again in `render_remote_app_toml`; the host's daemon then finds no consent and sends nothing.
+- `R-S4.1-3` the telemetry sender, its source name and the `--app-version` flag
+- `R-S4.1-4` PROTOCOL_VERSION 26
+- `R-S4.1-6` the optimistic overlay (`src/sync/overlay.ts`) Reverse: none needed; the old commands are gone (R-S4.1-7).
+- `R-S4.2-1` the engine block is opaque JSON to Rust Reverse: drop the field and the block is lost on the next Rust write; do not.
+- `R-S4.2-2` how the engine's records and the Rust-shaped records share `execution.json`
+- `R-S4.2-3` O21 tasks are `history_only` and the views disable approve and start
+- `R-S4.2-4` `engine.jsonl` conversion
+- `R-S4.2-5` O27 history objects and archive
+- `R-S4.2-8` protocol 27, and `uiAuthorized` Reverse: none.
+- `R-S4.2-10` the worktree record is wired through an alinery-core FFI function (review fix) Reverse: remove the `recordWorktree` option in `graph.ts`; the engine then records nothing, as before.
+- `R-S4.2-14` input snapshots (review fix)
+- `R-S4.3-1` what the daemon owns, and the shape of the task API Reverse: drop `pendingTasks.ts` and wait for the stream; no wire change.
+- `R-S4.3-2` the pre-archive backup is blocking (the WA) Reverse: S4.9 moves the backup into `ArchiveTask` and deletes `pre_archive_backup` and the `ipc.preArchiveBackup` call.
+- `R-S4.3-4` staged-upload lifetime and the 128 MiB message limit Reverse: raise or lower the limit in `rpc/server.ts`; (b) is additive.
+- `R-S4.3-5` stale `draft-attachments.json` after promotion, and the other file-level choices Reverse: remove the delete in `domain/tasks.ts`.
+- `R-S4.3-6` `open_session` preflight and the hosted refresh Reverse: read the meta in `session.rs` again.
+- `R-S4.3-7` `attachment_path` is local-only; the remote reveal action is hidden
+- `R-S4.3-8` `TaskCreate` telemetry is never sent from Rust
+- `R-S4.3-12` `alinery-mcp` still creates tasks over the legacy `create_task` op
+- `R-S4.4-4` `ArchiveSession` stamps, refreshes the store, then stops the process
+- `R-S4.4-5` a chat thread is a root session plus a `ChatThread` entity; the chat scope is `chat/*` and `session/_/*`
+- `R-S4.4-6` `Session.attention_label` carries the notification text
+- `R-S4.4-7` the `chat: true` header on the turn controls
+- `R-S4.4-9` hosted-model refresh stays in the shell
+- `R-S4.4-10` the legacy JSON-lines ops and the core functions stay
+- `R-S4.5-1` artifacts, attachments, comments, drafts and pending marks are per-task entity rows Reverse: merge the rows into one entity in the projector and the mappers in `sync/artifacts.ts`; the conformance cases (`artifact_list`, `artifact_tree`, `artifact_comments`) pin the content.
+- `R-S4.5-2` `ArtifactService` writes are ACT calls that settle before they reply
+- `R-S4.5-3` `ReadBlob` for artifacts, tree nodes and step objects
+- `R-S4.5-5` the review handoff is orchestrated by the frontend across two daemons Reverse: (a) needs a peer socket path in the target daemon; the install request already carries `source_text`, so the wire would shrink.
+- `R-S4.7-1` the pull-request lookup is mediated by the page Reverse: make `lookup_task_pull_request` take `(repoPath, slug)`, call `GitService` through the bridge, and have `listTaskPullRequests` call it alone. The page code is 30 lines.
+- `R-S4.7-2` the backup trigger after a push is a shell command the page calls
+- `R-S4.8-2` starting a manager is its own RPC Reverse: add the arm to `sessions.proto`, have `sync/subtasks.ts` call it, and delete `StartManager`. About 40 lines.
+- `R-S4.8-4` the discard's backup is a shell command until S4.9
+- `R-S4.9-1` verify, list and the destination check are unary RPCs, not jobs Reverse: add a job kind and a result arm, and have `sync/storage.ts` use `runJob`. About 60 lines.
+- `R-S4.9-4` how a local restore runs without a Rust gRPC client Reverse: (c) is the old `backup::restore_backup` in core, still present for the remote path.
+- `R-S4.9-5` where the daemon publishes the triggers; the artifact trigger fires again
+- `R-S4.9-6` the purge is atomic per task, and a backup may outlive its restore Reverse: have `restore_backup` refuse while `.alinery/tmp` holds a live backup child's pid file (about 30 lines); a test that makes the rename fail.
+- `R-S4.10-2` the package is a `staged` upload, not a `PlaybookPackageBlob` Reverse: add the target and have `rpc/playbooks.ts`'s `community()` read it. Small.
+- `R-S4.10-3` the registry is an entity, and writes check the bytes they replace Reverse: drop the projector row and add a unary read. Small.
+- `R-S4.10-6` which host's directory the Settings page shows Reverse: pass a local repo to `agentHost`.
+- `R-S4.10-7` publish reads from the daemon, and the page refuses an invalid playbook Reverse: have the shell parse the source (the Rust parser is still in core for MCP).
+- `R-S4.11-1` O9 built as (b), tested on macOS only Reverse: `git show 68a5c6a^:alinery-app/src-tauri/alinery-core/src/idle_inhibit.rs` restores the Rust; re-add the `dlopen` in `main.ts`, the `cdylib` crate type and the `ownership/` resource.
+- `R-S4.11-3` the TypeScript fence reads the fields the daemon uses, not the whole serde shape Reverse: write the validator in `readExecutionState`.
+- `R-S4.11-10` verifier follow-up on S4.11's tests
+- `R-S4.12-1` ProviderService shape, capabilities and what stayed out Reverse: change the `requireCapability` argument in `rpc/providers.ts` and the comment in `providers.proto`; no wire change.
+- `R-S4.12-2` the browser stays in the page; a sign-in is pinned to the daemon that started it Reverse: drop `loginHost` in `chat/providerAccess.ts`.
+- `R-S4.12-3` ListModels is the daemon's catalog, not the harness `models_cmd` Reverse: reinstate `list_harness_models_in` from commit 46ef95e and the two commands; the page switch is one line in `shared.tsx`.
+- `R-S5.1-1` the tool map, and the AGENT set is its 21 RPCs Reverse: edit `AGENT_RPCS` and `tools.ts` together; the test fails until they agree.
+- `R-S5.1-2` three sub-task RPCs were missing, so they were added (wire surface, protocol 38) Reverse: revert the commit; nothing else depends on the new RPCs.
+- `R-S5.1-3` the MCP server is the daemon binary, and the shell's managed child is `--mcp --serve --managed` Reverse: `git revert` the commit; the Rust MCP returns from history.
+- `R-S5.1-4` the endpoints file, the 30-second refresh, and what a host's stdio MCP gets Reverse: drop `refresh_mcp_endpoints*` and `mcp_host_args` from `src/mcp.rs`; the child then holds no endpoint.
+- `R-S5.1-5` the Accept grep for writes finds the listener's two runtime files Reverse: (b) is a small change in `paths.rs`, `mcp.rs` and `server.ts`.
+- `R-S5.1-6` gates Reverse: edit the three scripts.
+- `R-S5.2-1` the wire, and 13 requests where 2.3.3 lists 11 Reverse: none planned; the two backup requests are the restore the plan asks this channel to carry.
+- `R-S5.2-2` the Rust side keeps `HostOp` and the JSON reply shapes Reverse: make `HostChannel::call` return typed replies and change the callers.
+- `R-S5.2-5` `check-remote-routing.sh` and `check-remote-offload.sh` stay Reverse: delete the two scripts, their `.txt` files and their lines in `check.sh`.
+- `R-S5.3-7` the daemon publishes the host-guard warning
+- `R-S5.3-8` the gates
+- `R-S5.3-10` the relaunch test starts the daemon from the file the build id hashes
+- `R-S5.3-13` the installer's quiet-machine gate (verifier blocker and major) Reverse: drop the SIGTERM handler and restore the JSON probes in `preflight.sh`; the gate then sees no current daemon again, so also set the updater to refuse, which is the only safe fallback.
+- `R-S5.4-4` the remote-repos docs are annotated, not rewritten Reverse: `git revert` the docs commit; no code depends on it.
+- `R-S6.1-1` the migration keys on the absence of the key Reverse: make the fields `Option<bool>`, or add a separate `onboarding_migrated` flag, and drop the second TOML parse.
+- `R-S6.1-2` the legacy `localStorage` flag is moved by the page, before the wizard decision Reverse: put the flag read in Rust (the shell cannot read the webview's `localStorage`), so this is not reversible without a new IPC.
+- `R-S6.1-3` which host a finished wizard marks, and when the wizard is decided Reverse: change `hostOf` in `onboarding.ts`.
+- `R-S6.2-1` the typed host refusal lives in the shell, not in `host.proto` Reverse: replace the prefix with a structured command error; `parseRefusal` is the one reader.
+- `R-S6.2-2` when the setup screen takes the whole window Reverse: `shouldShowSetup` is the one place.
+- `R-S6.2-3` Test connection probes an unsaved host and Add never installs
+- `R-S6.2-4` onboarding runs after the repo opens, for the host's first daemon Reverse: `openFromSetup` in `App.tsx`.
+- `R-S6.2-5` the daemon steps are one call Reverse: split `set_active_repo` into attach and ensure-ready commands and drive the two lines from them.
+- `R-S6.2-6` one helper for the folder and the Git question
+
+### 3. Deviations from the plan (64)
+
+What was built differently from the plan text, or left unbuilt on purpose. The plan status lines and 4.1 rows name the same items.
+
+- `R-S2.2-1` writeDurable syncs in Rust's order, not the Build bullet's order Reverse: swap two awaits in `platform/fs.ts` `writeDurable`; update `fs.test.ts`.
+- `R-S2.2-2` compiled builds address the Worker by `/$bunfs/root/...` and need a second entry point Reverse: inline the Worker source as a string and use `new Worker(URL.createObjectURL(...))`.
+- `R-S1.1-1` daemon socket umask is 0o177, not the plan's 0o077 Reverse: change the umask constant in `rpc/server.ts` and the Accept text.
+- `R-S1.1-3` other S1.1 choices
+- `R-S1.2-1` additions beyond the plan
+- `R-S1.3-1` Hello is hand-encoded; liveness is not enforced for an already-running daemon
+- `R-S1.4-1` the old JSON `shutdown` op stays as a fallback; a remote restore uses STOP_REMOTE
+- `R-S0.6-1` S0.6 was done on a shared tree
+- `R-S2.3-1` parser shape, sessions dir watch, ENOSPC
+- `R-S2.4-1` Execution entity shape
+- `R-S2.5-1` runtime/ does not exist; DaemonStatus field
+- `R-S2.6-1` job queue and child details
+- `R-S3.1-1` DaemonStatus gained busy and waiting counts; shell half refreshes on focus
+- `R-S3.2-1` session status and attention
+- `R-S3.3-1` transcript stream
+- `R-S3.4-1` terminal stream, and a Protocol-Neutral that removes ops
+- `R-S3.5-2` board derivation moved to the daemon; Rust tests deleted
+- `R-S4.1-5` how the daemon reads the three files
+- `R-S4.1-7` what was deleted, and what stays on purpose Reverse: S4.10 deletes `ReadRepoOverrides`, `remote_github_token` and the core reference writer once imports read the entity or the daemon.
+- `R-S4.2-6` serving stored file states to the UI is not built Reverse: add the `BlobRef` kind for an execution object over `findObject`.
+- `R-S4.2-7` `execution_tests.rs` cases dropped, and why
+- `R-S4.2-13` what `revision` means across writers (review fix)
+- `R-S4.2-15` the second S4.2 review round: ref uniqueness, pruning paths, Struct, lineage wording
+- `R-S4.3-3` the `ReadAttachmentImage` variant stays until S4.5 Reverse: S4.5 deletes the variant and `ipc.readAttachmentImage`.
+- `R-S4.3-9` `WorktreeExists` is a TaskService RPC Reverse: put the bit in the Task entity's board block (the daemon would have to watch the directory).
+- `R-S4.3-10` Rust app tests removed, and where the coverage went; the live remote tests
+- `R-S4.3-11` draft conformance fixtures were not added Reverse: add `conformance/task_draft/*` and let the runner compare `draft-attachments.json` as JSON.
+- `R-S4.4-1` the agent's tool name `alinery_set_session_name` stays Reverse: rename in the five files and bump the daemon prompt; no wire change.
+- `R-S4.4-2` `FinalizeSessionMessageActions` and `PrepareReviewApprovalPrompt` are deferred to S4.5 Reverse: none needed; S4.5 deletes them.
+- `R-S4.4-3` `ReadHistory` without a window returns the replay bytes, not a rendered screen
+- `R-S4.4-13` the open-repos poll is replaced by re-reads, not by a stream Reverse: call the read from a timer again (Accept 2 forbids it).
+- `R-S4.4-15` `close_all_repos` keeps writing the exited-session acks in the shell Reverse: S4.11 (which shrinks `daemon.rs`) decides whether (b) is worth a protocol bump. The test is `tests/session.rs` (the acknowledgment of unended refs).
+- `R-S4.5-4` three differences from the Rust scans, each deliberate
+- `R-S4.5-6` handoff errors are listed, not thrown, after the target has its session
+- `R-S4.5-9` Show in folder is done in the frontend from `reveal_path`, not by a shell command on a `BlobRef` Reverse: hide the button where `repoRef(...).kind === "remote"` (one condition in TaskDetail and the tree).
+- `R-S4.6-1` the Rust playbook parser, `ReadPlaybookTree` and `ApplyPlaybookTree` are not gone (Exit not met) Reverse: S5.1 deletes the MCP use; S4.10 deletes `with_library_at`'s remote branch, `playbook_tree.rs` and the two `RepoOp`s, then the Rust `playbook.rs` parser and `playbook_library.rs` can go. The live remote test ...
+- `R-S4.6-2` how the 11 `deny_unknown_fields` structs are covered
+- `R-S4.6-3` the global half of the picker is served by a local repository's daemon, not the shell Reverse: re-add `read_playbook_picker_preferences` and `save_playbook_picker_preferences` for the global file only and make `savePlaybookPickerPreferences` call them when `repoPath` is empty.
+- `R-S4.6-4` the machine's playbooks need a local repository to read them
+- `R-S4.6-5` a remote repo shows the host's own global playbooks
+- `R-S4.6-6` the community import registry stays in the shell; deleting a repo playbook forgets its import first Reverse: S4.10 moves the registry into the daemon and deletes `forget_community_import`; the page's call goes with it. The command is under `check-remote-routing.sh` and `check-remote-offload.sh` (async, ...
+- `R-S4.7-4` `GitOriginUrl` stays a `RepoOp` (Exit not met in full)
+- `R-S4.7-6` tests moved to TypeScript, not shared with Rust
+- `R-S4.8-1` the manager session's prompt and start were missing from the TypeScript create Reverse: none planned; the Rust `manager_prompt`/`recovery_manager_prompt` in core `shared.rs` still exist and have no caller (see R-S4.8-8).
+- `R-S4.8-3` what stays in core `subtask.rs` (Exit met in part)
+- `R-S4.8-5` tests moved to TypeScript, no cross-language case
+- `R-S4.9-2` the remote restore stays two repo-service ops until S5.2 (Exit met in part)
+- `R-S4.9-3` core `backup.rs` and `storage.rs` stay for `alinery-mcp` until S5.1
+- `R-S4.9-7` host tools, the daemon's status field, and the test image
+- `R-S4.10-1` the issue import stays a prefill; there is no bulk `TaskService.Import` Reverse: add the RPC and have the page call it after a fetch; about 150 lines and a proto change. The telemetry event `import.fetch` is unchanged (the shell still does the fetch).
+- `R-S4.10-4` the library's side of a download row stays in the shell Reverse: add the field to `render_remote_app_toml`, an `UpdateStatus` RPC and a TypeScript fetch; delete `community_remote_status`.
+- `R-S4.11-2` the first Accept line is read as "no libalinery_core" Reverse: none needed.
+- `R-P4X-1` Shutdown now stops job children (P4 review, major) Reverse: drop `stopAll`/`drain`, restore `exit: () => process.exit(0)` and the callback's `process.exit(0)`, and return the wait to 40 iterations.
+- `R-P4X-2` dead alinery-core code from the S4 sessions deleted (P4 review, major) Reverse: `git revert` the commit; nothing else depends on it.
+- `R-S5.1-7` what the Rust deletion removed, and the tests that went with it Reverse: `git revert` the commit.
+- `R-S5.1-11` the quiet-machine gate must not count an MCP child as a daemon Reverse: drop the `--mcp` clause in `is_product_daemon_ps_line`.
+- `R-S5.2-6` `wait_daemon_gone` retries on a reset, and a stale claim after a silent network cut Reverse: remove the `ECONNRESET` line in `waitDaemonGone`.
+- `R-S5.3-2` ten RPCs for ops that still had a caller Reverse: none cheap; the pages call them.
+- `R-S5.3-3` a legacy stop for protocol 38 and older stays in core Reverse: delete `legacy_daemon.rs`, the `legacy` argument of `shutdown_daemon` and its four call sites.
+- `R-S5.3-4` the secret directory is `rpc-secrets` Reverse: rename back and un-reserve field 9 (a wire change).
+- `R-S5.3-6` the drawer shell is created by `CreateSession` and ended by the page
+- `R-S5.3-9` what the live remote tests no longer assert
+- `R-S5.3-14` tests that skipped quietly (verifier major and minor)
+- `R-S5.4-1` the `src/daemon/` services gate is not built Reverse: write (b) if a call ever goes through an untyped path (a string service name); today none does.
+
+### 4. Unverified sessions and open findings (24)
+
+Claims nobody observed, and follow-ups still open. Section F of the full entries is the older hand-kept list; the table in the morning summary marks S4.2 and S4.12 `unverified`.
+
+- `R-S4.2-12` the interop test does not interleave a Rust writer on the same task
+- `R-S4.10-9` not run: the remote-sshd Accept line, and `PROTOCOL_VERSION` 35
+- `R-S4.11-6` takeover needed no change
+- `R-S4.11-7` adoption marks the Rust-shaped records; what the engine does with them is S4.2's
+- `R-S4.11-9` the Linux runtime and the bundle changed, neither was rebuilt
+- `R-S4.11-12` the mcp "invalid defaults" test launched a daemon per run
+- `R-S4.12-4` the remote-sshd Accept line is not run; protocol 37
+- `R-S5.1-9` unverified claims
+- `R-S5.2-4` the runtime build, and what was and was not run
+- `R-S5.3-5` taking over a new-protocol daemon needs its kept token
+- `R-S5.4-2` how AGENTS.md was checked, and what was not
+- `R-S5.4-3` Harness Registry and Core Model not audited against the pi-durable runtime
+- `R-S6.1-4` what the tests do not prove
+- `R-S6.2-7` what the tests do not prove
+- `R-S2.2-3` signalChild gate reads one line at a time; other S2.2 choices
+- `R-S2.1-1` Dedupe is built and unit-tested but not called
+- `R-S4.1-8` environment note for the daemon's tests
+- `R-S4.4-16` follow-ups from the S4.4 verifier
+- `R-S4.12-5` leftovers noticed and not touched
+- `R-S5.1-8` AGENTS.md
+- `R-S5.2-3` what the Rust deletion removed
+- `R-S5.2-7` three live tests were stale
+- `R-S5.2-8` AGENTS.md
+- `R-S5.3-12` AGENTS.md
+
+Open findings by session, as of the wrap-up:
+
+- **S4.2:** the second review round (R-S4.2-15: ref uniqueness, pruning paths, Struct, lineage wording) was fixed and `check.sh` passed, but no verifier reviewed those fixes. A real coding step recording its working files is a live check (L-S4.2-e).
+- **S4.12:** the Accept line that signs in and lists models against the remote-sshd container did not run (no zig at that time; the host runtime needs only Bun since S5.2). `bun test` serves the real `ProviderService` on a real socket for each peer class. Live: L-S4.12-a to -c.
+- **S4.9:** the remote live restore and the Linux runtime test did not run when written; a host with no `zip`/`unzip` (D6/D9 banner) is not built: L-S4.9-c, -f.
+- **S4.11:** the hosted-token push to a real remote host: L-S4.11-f.
+- **S5.2 / S5.3 / S5.4 / S6.1 / S6.2:** all pass `check.sh`; the docs-only follow-up commits (3f4ee36, 2b5993a, 46bda92, 7dc0fe0, 3f0e821 and the plan commits after the S6.2 code) were first covered by the wrap-up full run on `e7372ca`. S6.2 look and feel, the typed refusal kinds on real hosts (L-S6.2-c) and the offline-host rule (L-S6.2-d) were not seen by an agent.
+- **Everything with a live check:** nothing was launched. `docs/thick-daemon-live-checks.md` has 118 entries, all `open`.
+
+### 5. Flaky tests (11)
+
+Timing-bound tests that failed under load. Rerun the one test alone before treating a failure as a regression.
+
+- `R-S0.1-3` install-proto and the first bun test
+- `R-S4.2-9` test races found in the full run
+- `R-S4.5-13` tests removed, gates, environment and flaky notes
+- `R-FLAKE-1` `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach`
+- `R-FLAKE-2` `tests::daemon_rpc::a_takeover_is_bound_to_the_process_it_was_confirmed_for`
+- `R-FLAKE-3` `tests::daemon::takeover_*` (`TakeoverPeer::start`)
+- `R-S4.11-13` protocol bump checklist, and a second timing flake
+- `R-P4X-3` flaky test seen again
+- `R-S5.1-12` the closing-repo flake widened
+- `R-S5.1-11` review fixes after the S5.1 verifier, and a known flaky vitest case
+- `R-S5.2-10` the first full check.sh stopped at the daemon `bun test`
+
+Wrap-up note: the full `check.sh` on `e7372ca` passed without a flake. Known to be sensitive: `tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` (500 ms bound), the `takeover_*` tests (R-FLAKE-2, -3), and the S4.11 two-daemon test (R-S4.11-13).
+
+### 6. Suggested README changes (3)
+
+README.md is human-edited only. Collected text is in section H below and in the entries listed here.
+
+- `R-S5.1-10` suggested README text
+- `R-S5.2-9` suggested README text
+- `R-S5.4-5` README suggestions
+
+Section H (below) holds the running list; the entries above add to it for S5.1, S5.2 and S5.4. In short: the daemon is Vinculum, not `alineryd` (`README.md:77`); the claim that browsing works with the daemon offline (`README.md:87`) is stale after S3.5; the architecture paragraph can say the per-repo daemon is the application and the desktop app is one client; the getting-started text can describe the setup screen (a local repository, or an ssh remote and then a repository on it); remote-host requirements are the Bun binary the app installs, no Rust, zig or cross-compilation (O15 b); telemetry credentials live on hosts that run the daemon (O25 b).
+
+### 7. Other notes and records (33)
+
+Build records, corrections and environment notes.
+
+- `R-S4.2-11` a task archived while its engine runs can recreate `objects/`
+- `R-S4.3-13` `PROTOCOL_VERSION` 28 and the shutdown dialect
+- `R-S4.3-14` environment and gate notes
+- `R-S4.4-8` `PROTOCOL_VERSION` 29
+- `R-S4.4-11` `open_session` is unchanged; `ResumeSession` is served and unused
+- `R-S4.4-12` telemetry source for the daemon's session events is `alineryd`
+- `R-S4.4-14` tests removed, and where the coverage went; gate and environment notes
+- `R-S4.5-7` the three telemetry events are sent by the daemon with source `alineryd`
+- `R-S4.5-8` `PROTOCOL_VERSION` 30
+- `R-S4.5-10` the "after an artifact change" auto-backup no longer fires. A known gap until S4.9
+- `R-S4.5-11` what was deleted, what stayed, and one test seam
+- `R-S4.5-12` draft saves from the UI do not send `expected_revision`
+- `R-S4.5-14` verifier fixes after S4.5 (archived source, O_NOFOLLOW, snapshot test)
+- `R-S4.6-7` concurrency and the revision the page sends
+- `R-S4.6-8` `PROTOCOL_VERSION` 31, the Linux runtime, and the sidecar
+- `R-S4.6-9` smaller things
+- `R-S4.7-3` `SetPrUrl` and `CommitWorktree` have no caller
+- `R-S4.7-5` `PROTOCOL_VERSION` 32 and the Linux runtime
+- `R-S4.7-7` the execution refs and `task_activity.rs`
+- `R-S4.7-8` smaller things
+- `R-S4.8-6` smaller things
+- `R-S4.8-7` `PROTOCOL_VERSION` 33
+- `R-S4.8-8` noticed, not changed
+- `R-S4.9-8` `PROTOCOL_VERSION` 34, tests, and environment notes
+- `R-S4.10-5` O12 (a): where the agent dir is, and what the shell still writes
+- `R-S4.10-8` removed code, gates, and noticed
+- `R-S4.11-4` a refused fence is `code: message` on stderr and exit 1
+- `R-S4.11-5` the hosted token reaches a host's daemon as a settings write (built after the verifier's major finding)
+- `R-S4.11-8` the Rust ownership tests moved
+- `R-S5.3-1` the op inventory and the last caller of each
+- `R-S5.3-11` what was run
+- `R-S5.3-15` drawer-shell cleanup after a switch (verifier minor)
+- `R-S6.2-8` P6 review, "failed" is not "given up"
+
+---
+
+## Full entries
+
+Append-only, unchanged since they were written. Sections keep their original letters.
 
 ## A. Decided by the user (2026-11-05)
 
@@ -1439,3 +1757,12 @@ O15 (b) was decided by the user (R-USER-5); nothing below reopens it.
 - **Reverse:** drop `gave_up` from `RemoteHostView`/`types.ts` and test `state === "failed"` in `shouldShowSetup`.
 - **Files:** `alinery-app/src-tauri/src/remote.rs`, `alinery-app/src/setup.ts`, `alinery-app/src/types.ts`, tests.
 - **Unverified:** the window itself is a few seconds at most and was not observed in a real app; L-S6.2-d now watches the board for 90 s with the container stopped.
+
+## P4 to P6 wrap-up
+
+### R-WRAP-1: how the two ledgers were reorganised
+- **Kind:** decision (provisional).
+- **What:** the plan said to tidy the review ledger into sections; the ledger's own rule says never rewrite an earlier entry. The tidy-up is non-destructive: a morning summary and a review index (grouped by each entry's Kind line) sit above the unchanged full entries, so an entry is moved by an index line, not by editing it. The grouping is by keyword on the Kind line and the title, so a few entries may sit in a neighbouring group (a `decision` that is really a note, for example); the full entry is the truth. In the live checks file every earlier id is kept. The two entries with the id `L-S6.2-a` (a placeholder written before S6.2 existed, and the real one) became one, with the placeholder text kept inside it. The nine `L-SMOKE-*` entries are new; their expected results come from AGENTS.md and the S6.1/S6.2 entries and have not been observed (nothing was launched).
+- **Options:** (a) physically regroup the full entries by kind; (b) this index. (a) would have rewritten history and broken ids quoted in commit messages.
+- **Reverse:** `git show e7372ca:docs/thick-daemon-live-checks.md` and `...review-ledger.md` hold the files as they were before the wrap-up.
+- **Files:** `docs/thick-daemon-live-checks.md`, `docs/thick-daemon-review-ledger.md`, `docs/thick-daemon-plan.md` (Status line, v0.10 changelog).
