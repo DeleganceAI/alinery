@@ -6,6 +6,7 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import { AdminService, Capability, ShutdownOrigin } from "alinery-proto/alinery/v1/admin_pb";
 import { ErrorDetailSchema } from "alinery-proto/alinery/v1/common_pb";
+import { type Job, JobKind, JobState } from "alinery-proto/alinery/v1/entities_pb";
 import { takeSecretFile } from "./auth.ts";
 import { JobRunner } from "../jobs/runner.ts";
 import { Store } from "../sync/store.ts";
@@ -183,6 +184,38 @@ test("a takeover shutdown needs its confirmation_id; the other origins do not", 
   expect(events).toEqual([]);
   expect((await c.shutdown({ origin: ShutdownOrigin.CONFIRMED_TAKEOVER, confirmationId: "c" })).sessionsStopped).toBe(3);
   await new Promise((resolve) => setTimeout(resolve, 250)); // let its exit timer fire inside this test
+});
+
+test("Shutdown mid-job: the job ends CANCELLED and its child process is gone before the exit runs", async () => {
+  const dir = mkdtempSync("/tmp/rpc-j-");
+  const socketPath = join(dir, "rpc.sock");
+  const store = new Store();
+  const jobs = new JobRunner(store, { command: () => [process.execPath, join(import.meta.dir, "../jobs/fake-child.ts")] });
+  // The same two steps main.ts runs: stopAll with the teardown, drain before the exit.
+  const exited = new Promise<void>((resolve) => {
+    const stop = () => {
+      jobs.stopAll();
+      return 0;
+    };
+    void serveRpc({ socketPath, secret: Buffer.from(SECRET), hostExecutable: process.execPath, info, lifecycle: { stop, exit: () => void jobs.drain(1000).then(resolve) }, store, jobs, storageScan, transcripts: async () => undefined }).then((net) => {
+      cleanup.push(() => {
+        net.close();
+        rmSync(dir, { recursive: true, force: true });
+      });
+    });
+  });
+  while (!existsSync(socketPath)) await new Promise((resolve) => setTimeout(resolve, 10));
+  const id = jobs.start(JobKind.BACKUP, { mode: "hang" });
+  let pid = 0;
+  for (let i = 0; i < 300 && !pid; i++) {
+    pid = Number(/pid (\d+)/.exec((store.get(`job/_/${id}`)?.value.value as Job | undefined)?.progress?.label ?? "")?.[1] ?? 0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(pid).toBeGreaterThan(0);
+  await client(socketPath, `Bearer ${SECRET}`).shutdown({ origin: ShutdownOrigin.STOP_DAEMON });
+  await exited;
+  expect(() => process.kill(pid, 0)).toThrow();
+  expect((store.get(`job/_/${id}`)?.value.value as Job).state).toBe(JobState.CANCELLED);
 });
 
 test("no token and a non-shell token cannot shut the daemon down", async () => {

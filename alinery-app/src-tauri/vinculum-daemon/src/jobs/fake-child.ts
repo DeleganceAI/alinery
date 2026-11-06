@@ -24,6 +24,11 @@ switch (params.mode) {
     emit({ progress: { done: 0, total: 1, label: `pid ${process.pid}` } });
     await new Promise(() => {});
     break;
+  case "ignore-term": // like hang, but SIGTERM is ignored, so only SIGKILL ends it
+    process.on("SIGTERM", () => {});
+    emit({ progress: { done: 0, total: 1, label: `pid ${process.pid}` } });
+    await new Promise(() => {});
+    break;
   case "slow": // a result after `ms`
     await Bun.sleep(params.ms);
     emit({ result: info });

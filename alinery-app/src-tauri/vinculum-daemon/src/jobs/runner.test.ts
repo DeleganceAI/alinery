@@ -96,6 +96,45 @@ test("cancel ends a running job CANCELLED and the child is gone", async () => {
   expect(job(id).state).toBe(JobState.CANCELLED);
 });
 
+async function pidOf(job: () => Job | undefined) {
+  let pid = 0;
+  for (let i = 0; i < 300 && !pid; i++) {
+    pid = Number(/pid (\d+)/.exec(job()?.progress?.label ?? "")?.[1] ?? 0);
+    await Bun.sleep(10);
+  }
+  return pid;
+}
+
+test("stopAll ends a running job and a queued one, drain leaves no child alive, and nothing starts after", async () => {
+  const { runner, job } = rig();
+  const running = runner.start(JobKind.BACKUP, { mode: "hang" });
+  const queued = runner.start(JobKind.BACKUP, { mode: "slow", ms: 10 });
+  const pid = await pidOf(() => job(running));
+  expect(alive(pid)).toBe(true);
+  runner.stopAll();
+  expect(job(queued).state).toBe(JobState.CANCELLED);
+  await runner.drain(2000);
+  expect(alive(pid)).toBe(false);
+  expect(job(running).state).toBe(JobState.CANCELLED);
+  expect(job(queued).startedAtMs).toBe(0n);
+  const late = runner.start(JobKind.STORAGE_SCAN, { mode: "slow", ms: 10 });
+  expect(job(late).state).toBe(JobState.CANCELLED);
+  expect(job(late).startedAtMs).toBe(0n);
+});
+
+test("drain kills a job child that ignores SIGTERM once the grace has passed", async () => {
+  const { runner, job } = rig();
+  const id = runner.start(JobKind.PURGE, { mode: "ignore-term" });
+  const pid = await pidOf(() => job(id));
+  runner.stopAll();
+  await Bun.sleep(100);
+  expect(alive(pid)).toBe(true); // SIGTERM alone did not end it
+  const began = Date.now();
+  await runner.drain(200);
+  expect(alive(pid)).toBe(false);
+  expect(Date.now() - began).toBeGreaterThanOrEqual(150);
+});
+
 test("two backups run one after the other, in order; other kinds do not wait for them", async () => {
   const { runner, job, ended } = rig();
   const first = runner.start(JobKind.BACKUP, { mode: "slow", ms: 150 });

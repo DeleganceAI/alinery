@@ -836,7 +836,7 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     stopEverything();
     socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
       socket.end();
-      process.exit(0);
+      void exitWhenJobsEnded();
     });
     return;
   }
@@ -1060,6 +1060,7 @@ async function resumeInterrupted() {
 /** The teardown both shutdown paths run (the JSON `shutdown` op and `AdminService.Shutdown`): ends every
  * session and removes the sockets. Returns how many sessions were still running. */
 function stopEverything(): number {
+  jobs.stopAll();
   mcpHub.close();
   releaseKeepAwake();
   const now = Math.floor(Date.now() / 1000);
@@ -1081,6 +1082,15 @@ function stopEverything(): number {
     }
   }
   return stopped;
+}
+
+// Job children are in their own process groups, so the exit waits for them: the shell treats the process
+// lock's release as "the daemon is gone" and then restores or replaces files under it. The shell's wait
+// (`wait_for_daemon_gone`) allows more than this.
+const JOB_GRACE_MS = 1000;
+async function exitWhenJobsEnded(): Promise<never> {
+  await jobs.drain(JOB_GRACE_MS);
+  process.exit(0);
 }
 
 repairSessionMetas();
@@ -1180,7 +1190,7 @@ await serveRpc({
   secret: rpcSecret,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
-  lifecycle: { stop: stopEverything, exit: () => process.exit(0) },
+  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded() },
   store,
   jobs,
   backups: backupHost,

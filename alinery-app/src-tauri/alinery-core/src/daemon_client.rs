@@ -262,7 +262,8 @@ pub fn wait_for_daemon_gone(repo: &Path, lane: &str) -> Result<(), String> {
     }
     let socket = alineryd_socket_path(repo, Some(lane));
     let lock = crate::alineryd_lock_path(repo, Some(lane));
-    for _ in 0..40 {
+    // 5 s: a daemon waits up to about 1.5 s for its job children before it exits.
+    for _ in 0..100 {
         let before = match fs::symlink_metadata(&lock) {
             Ok(metadata) if metadata.file_type().is_file() => Some(metadata),
             Ok(_) => return Err("cannot establish daemon exit: invalid process lock path".into()),

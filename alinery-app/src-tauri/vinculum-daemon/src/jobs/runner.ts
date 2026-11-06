@@ -49,6 +49,8 @@ export class JobRunner {
   private readonly running = new Set<JobKind>();
   private readonly waiting = new Map<JobKind, Entry[]>();
   private readonly o: Required<RunnerOptions>;
+  // Set by stopAll: nothing new starts, so a queued job cannot launch as a running one ends.
+  private stopping = false;
 
   constructor(
     private readonly store: Store,
@@ -63,7 +65,10 @@ export class JobRunner {
     const id = crypto.randomUUID();
     const entry: Entry = { job: create(JobSchema, { id, kind, state: JobState.QUEUED }), params, cancelled: false, lastProgressAt: 0, waiters: [] };
     this.entries.set(id, entry);
-    if (this.running.has(kind)) {
+    if (this.stopping) {
+      entry.cancelled = true;
+      this.end(entry, JobState.CANCELLED);
+    } else if (this.running.has(kind)) {
       this.waiting.set(kind, [...(this.waiting.get(kind) ?? []), entry]);
       this.commit(entry);
     } else {
@@ -100,6 +105,24 @@ export class JobRunner {
       this.end(entry, JobState.CANCELLED);
     }
     return true;
+  }
+
+  /** Shutdown (plan invariant 1): ends every job that has not ended, a waiting one at once and a running one
+   * by SIGTERM to its child, and starts none after. A job child is in its own process group, so it would
+   * otherwise outlive the daemon and go on deleting or reading `.alinery` while a restore rewrites it. */
+  stopAll(): void {
+    this.stopping = true;
+    for (const [id, entry] of this.entries) if (!TERMINAL.has(entry.job.state)) this.cancel(id);
+  }
+
+  /** After stopAll: resolves once every job child has exited. A child still alive after `graceMs` (purge
+   * finishes the item in hand first) gets SIGKILL and `killMs` more. */
+  async drain(graceMs: number, killMs = 500): Promise<void> {
+    const live = () => [...this.entries.values()].flatMap((e) => (e.child && e.child.exitCode === null && e.child.signalCode === null ? [e.child] : []));
+    const within = (ms: number) => Promise.race([Promise.all(live().map((c) => c.exited)), Bun.sleep(ms)]);
+    await within(graceMs);
+    for (const child of live()) signalChild(child, "SIGKILL", "job-cancel");
+    await within(killMs);
   }
 
   private commit(entry: Entry) {
