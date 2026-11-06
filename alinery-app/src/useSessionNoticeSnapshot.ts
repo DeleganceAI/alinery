@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import * as ipc from "./ipc";
 import { filterSuppressedNoticeRows, notificationClearRefs, type SessionNoticeRow, sessionNoticeRows } from "./sessionAttention";
 import { useSessionItems } from "./sync/board";
 import { useSessionObservations } from "./sync/sessionObservation";
+import { clearSessionNotifications } from "./sync/sessions";
 import type { SessionListItem, SessionObservation } from "./types";
 
 export type SessionNoticeError = {
@@ -50,7 +50,7 @@ export function useSessionNoticeSnapshot(repos: string[], enabled = true): Sessi
     clearing.current = true;
     setState((previous) => ({ ...previous, clearing: true }));
     try {
-      await ipc.clearSessionNotifications(notificationClearRefs(current.rows, current.observations, suppressLive));
+      await clearSessionNotifications(notificationClearRefs(current.rows, current.observations, suppressLive));
       setState({ clearing: false, error: null });
     } catch (clearError) {
       setState({ clearing: false, error: { source: "clear", detail: errorMessage(clearError) } });

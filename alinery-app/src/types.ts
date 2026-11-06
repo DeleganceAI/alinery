@@ -616,6 +616,8 @@ export type SessionObservation = {
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
   transport?: SessionTransport | null;
+  /** What an attention notification calls the session: its task's name (S4.4). */
+  attention_label?: string;
 };
 
 export type ChatPart =

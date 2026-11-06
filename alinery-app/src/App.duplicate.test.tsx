@@ -96,13 +96,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), duplicateTaskForRepo: mocks.duplicateTaskForRepo }));
 vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig: mocks.readEffectiveConfig }));
+vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), startSession: mocks.startSession }));
 vi.mock("./ipc", () =>
   mockIpc({
     getVersion: async () => "0.9.10",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
     listKanbanColumns: async () => [],
-    startSession: mocks.startSession,
     setActiveRepo: mocks.setActiveRepo,
     pickRepoDialog: mocks.pickRepoDialog,
     classifyPickedFolder: mocks.classifyPickedFolder,

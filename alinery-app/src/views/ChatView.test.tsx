@@ -5,6 +5,7 @@ import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import type { VinculumTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
 import { daemonTransport } from "../daemon/transport";
+import { fakeChat } from "../test/chatHooks";
 import { mockIpc } from "../test/mockIpc";
 import { sessionDaemon } from "../test/sessionDaemon";
 import type { ChatThread, SessionMeta, SessionObservation } from "../types";
@@ -30,18 +31,17 @@ vi.mock("./ProviderSetupDialog", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
   archiveChatThread: vi.fn(),
   setChatPinned: vi.fn(),
   resumeChatThread: vi.fn(),
+  renameSession: vi.fn(),
   createChatThread: vi.fn(),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
   chatPrompt: vi.fn(async () => undefined),
   chatAbort: vi.fn(async () => undefined),
   openUrl: vi.fn(),
-  chatThreadName: vi.fn(),
   startChatThread: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
@@ -51,26 +51,28 @@ const mocks = vi.hoisted(() => ({
   getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
+vi.mock("../sync/chat", async (actual) => ({
+  ...(await import("../test/chatHooks")).chatHooks(await actual()),
+  archiveChatThread: mocks.archiveChatThread,
+  setChatPinned: mocks.setChatPinned,
+  resumeChatThread: mocks.resumeChatThread,
+  createChatThread: mocks.createChatThread,
+  startChatThread: mocks.startChatThread,
+  copyChatThreadAttachments: mocks.copyChatThreadAttachments,
+  writeChatThreadAttachmentBytes: mocks.writeChatThreadAttachmentBytes,
+  readChatThreadImage: mocks.readChatThreadImage,
+}));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
   mockIpc({
-    listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
-    archiveChatThread: mocks.archiveChatThread,
-    setChatPinned: mocks.setChatPinned,
-    resumeChatThread: mocks.resumeChatThread,
-    createChatThread: mocks.createChatThread,
     chatSetModel: mocks.chatSetModel,
     chatSetThinkingLevel: mocks.chatSetThinkingLevel,
     chatPrompt: mocks.chatPrompt,
     chatAbort: mocks.chatAbort,
     openUrl: mocks.openUrl,
-    chatThreadName: mocks.chatThreadName,
-    startChatThread: mocks.startChatThread,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
-    copyChatThreadAttachments: mocks.copyChatThreadAttachments,
-    writeChatThreadAttachmentBytes: mocks.writeChatThreadAttachmentBytes,
-    readChatThreadImage: mocks.readChatThreadImage,
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
@@ -141,9 +143,8 @@ beforeEach(() => {
   mocks.openUrl.mockResolvedValue(undefined);
   mocks.archiveChatThread.mockResolvedValue(undefined);
   mocks.setChatPinned.mockReset().mockResolvedValue(undefined);
-  mocks.listChatThreads.mockResolvedValue([]);
+  fakeChat.reset();
   mocks.listChatRepos.mockResolvedValue(["/repo"]);
-  mocks.chatThreadName.mockResolvedValue(null);
   mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
   mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
   mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
@@ -158,11 +159,13 @@ const link = () => screen.getByTestId("chat-view").dataset.link;
 /** The open thread's status, in the title bar (the rail row repeats it). */
 const titleBar = () => within(document.querySelector(".chat-titlebar") as HTMLElement);
 const rail = () => screen.getByTestId("chat-rail");
+/** The open set is read again when the window regains focus (the view has no timer), so a test says when. */
+const rereadRepos = () => act(async () => void window.dispatchEvent(new Event("focus")));
 const NONE_OPEN = "No repositories are currently available to Chat in this window. Open or check one in the repo switcher.";
 
 describe("ChatView", () => {
   it("asks for a repo and leaves the worktree checkbox off", async () => {
-    mocks.listChatThreads.mockResolvedValue([]);
+    fakeChat.set([]);
     render(chat());
     fireEvent.click(screen.getByRole("button", { name: "New thread" }));
     const box = screen.getByRole("checkbox", { name: "New worktree and branch" }) as HTMLInputElement;
@@ -173,7 +176,7 @@ describe("ChatView", () => {
 
   it("archives a checkout thread without deleting the repo", async () => {
     const row = thread("s-checkout");
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     vi.mocked(confirmDanger).mockResolvedValue(true);
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-checko") }));
@@ -186,7 +189,7 @@ describe("ChatView", () => {
 
   it("keeps a worktree unless the remove choice is taken", async () => {
     const row = thread("s-wt", { checkout: false, session: meta("s-wt", { worktree: "/repo/.alinery/chat-worktrees/s-wt" }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     vi.mocked(askConfirm).mockResolvedValueOnce("archive");
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-wt") }));
@@ -208,7 +211,7 @@ describe("ChatView", () => {
   });
 
   it("starts the rail collapsed at 900 and still offers a new chat", () => {
-    mocks.listChatThreads.mockResolvedValue([]);
+    fakeChat.set([]);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
     render(chat());
     expect(screen.queryByTestId("chat-rail")).toBeNull();
@@ -216,7 +219,7 @@ describe("ChatView", () => {
   });
 
   it("hides the composer until a thread is picked and starts a new chat in the first repo", async () => {
-    mocks.listChatThreads.mockResolvedValue([]);
+    fakeChat.set([]);
     mocks.listChatRepos.mockResolvedValue(["/first", "/second"]);
     render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
@@ -227,11 +230,11 @@ describe("ChatView", () => {
 
   it("lists archived threads and resumes immediately", async () => {
     const row = thread("s-arch", { session: meta("s-arch", { archived: true }) });
-    mocks.listChatThreads.mockImplementation(async (includeArchived: boolean) => (includeArchived ? [row] : []));
-    mocks.resumeChatThread.mockResolvedValue(meta("s-next"));
+    fakeChat.set([row]);
+    mocks.resumeChatThread.mockResolvedValue("s-next");
     render(chat());
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
-    await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledWith(true));
     fireEvent.click(await screen.findByRole("button", { name: "Resume" }));
     await waitFor(() => expect(mocks.resumeChatThread).toHaveBeenCalledWith("/repo", "s-arch"));
   });
@@ -239,21 +242,20 @@ describe("ChatView", () => {
   it("pins and unpins a thread from its own row without selecting it", async () => {
     const plain = thread("s-plain");
     const pinned = thread("s-pinned", { session: meta("s-pinned", { pinned: true }) });
-    mocks.listChatThreads.mockResolvedValue([plain, pinned]);
+    fakeChat.set([plain, pinned]);
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: "Pin Chat s-plain" }));
     await waitFor(() => expect(mocks.setChatPinned).toHaveBeenCalledWith("/repo", "s-plain", true));
     fireEvent.click(screen.getByRole("button", { name: "Unpin Chat s-pinned" }));
     await waitFor(() => expect(mocks.setChatPinned).toHaveBeenCalledWith("/repo", "s-pinned", false));
-    // The thread list is re-read so the row's icon and order follow, and nothing was opened.
-    await waitFor(() => expect(mocks.listChatThreads.mock.calls.length).toBeGreaterThan(2));
+    // Nothing was opened; the row's icon and order follow from the rail stream.
     expect(screen.getByRole("heading", { name: "Ava" })).toBeTruthy();
   });
 
   it("archives the hovered thread, not the open one", async () => {
     const open = thread("s-open");
     const other = thread("s-other");
-    mocks.listChatThreads.mockResolvedValue([open, other]);
+    fakeChat.set([open, other]);
     vi.mocked(confirmDanger).mockResolvedValue(true);
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-open") }));
@@ -264,7 +266,7 @@ describe("ChatView", () => {
 
   it("offers Resume instead of row actions on an archived thread", async () => {
     const row = thread("s-arch", { session: meta("s-arch", { archived: true }) });
-    mocks.listChatThreads.mockImplementation(async (includeArchived: boolean) => (includeArchived ? [row] : []));
+    fakeChat.set([row]);
     render(chat());
     fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
     expect(await screen.findByRole("button", { name: "Resume" })).toBeTruthy();
@@ -274,7 +276,7 @@ describe("ChatView", () => {
 
   it("shows the transcript and sends through Vinculum without an OMP attach", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
     setTranscripts({ messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }] });
     render(chat());
@@ -288,7 +290,7 @@ describe("ChatView", () => {
 
   it("shows the model and thinking level from the transcript and applies a set from the reply", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false, model: "stale/model" }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
     const transcript = {
       messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "seeded" }] }],
@@ -326,7 +328,7 @@ describe("ChatView", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const row = thread("s-live", { session: meta("s-live", { started_at: 1, ended_at: null, archived: false }) });
-      mocks.listChatThreads.mockResolvedValue([row]);
+      fakeChat.set([row]);
       for (const id of THREADS) showChat(id, observed("busy"));
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
@@ -342,7 +344,7 @@ describe("ChatView", () => {
 
   it("marks rail threads with the shared status treatments for what was observed", async () => {
     const live = (id: string) => thread(id, { session: meta(id, { started_at: 1, ended_at: null, archived: false }) });
-    mocks.listChatThreads.mockResolvedValue([live("s-run"), live("s-idle"), live("s-ask"), thread("s-done")]);
+    fakeChat.set([live("s-run"), live("s-idle"), live("s-ask"), thread("s-done")]);
     showChat("s-run", observed("busy"));
     showChat("s-idle", observed("idle"));
     showChat("s-ask", observed("waiting_for_input"));
@@ -363,75 +365,48 @@ describe("ChatView", () => {
   const liveMeta = { started_at: 1, ended_at: null, archived: false };
   const live = (id: string, extra: Partial<ChatThread> = {}) => thread(id, { session: meta(id, liveMeta), ...extra });
 
-  it("re-reads the open thread's name 3s after a turn ends and re-lists once it changes", async () => {
+  it("shows the name the daemon publishes after a turn, and never asks for it on a timer", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      mocks.listChatThreads
-        .mockResolvedValueOnce([thread("s-live", { session: meta("s-live", liveMeta) })])
-        .mockResolvedValue([thread("s-live", { name: "Fix the build", session: meta("s-live", liveMeta) })]);
+      fakeChat.set([thread("s-live", { session: meta("s-live", liveMeta) })]);
       for (const id of THREADS) showChat(id, observed("busy"));
-      mocks.chatThreadName.mockResolvedValue("Fix the build");
       render(chat());
       fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
       await screen.findByRole("button", { name: "Abort turn" });
       for (const id of THREADS) showChat(id, observed("idle"));
       await vi.advanceTimersByTimeAsync(1500);
       await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
-      expect(mocks.chatThreadName).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(mocks.chatThreadName).toHaveBeenCalledWith("/repo", "s-live");
-      await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledTimes(2));
+      expect(screen.getByRole("heading", { name: "Chat s-live" })).toBeTruthy();
+      const reads = mocks.listChatRepos.mock.calls.length;
+      // The title lands later: it arrives on the rail stream, with no read in between.
+      act(() => fakeChat.set([thread("s-live", { name: "Fix the build", session: meta("s-live", liveMeta) })]));
       expect(await screen.findByRole("heading", { name: "Fix the build" })).toBeTruthy();
-      // The name changed, so the polling stops.
-      await vi.advanceTimersByTimeAsync(12000);
-      expect(mocks.chatThreadName).toHaveBeenCalledTimes(1);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
+      expect(within(rail()).getByRole("button", { name: /^Fix the build/ })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(mocks.listChatRepos.mock.calls.length).toBe(reads);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("keeps reading the name every 3s for up to a minute when the title lands late, without re-listing", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
-      for (const id of THREADS) showChat(id, observed("busy"));
-      render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
-      await screen.findByRole("button", { name: "Abort turn" });
-      for (const id of THREADS) showChat(id, observed("idle"));
-      await vi.advanceTimersByTimeAsync(1500);
-      await waitFor(() => expect(screen.queryByRole("button", { name: "Abort turn" })).toBeNull());
-      await vi.advanceTimersByTimeAsync(9000);
-      expect(mocks.chatThreadName).toHaveBeenCalledTimes(3);
-      await vi.advanceTimersByTimeAsync(51000);
-      expect(mocks.chatThreadName).toHaveBeenCalledTimes(20);
-      await vi.advanceTimersByTimeAsync(30000);
-      expect(mocks.chatThreadName).toHaveBeenCalledTimes(20);
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not read the name when no turn ran", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      mocks.listChatThreads.mockResolvedValue([thread("s-live", { session: meta("s-live", liveMeta) })]);
-      for (const id of THREADS) showChat(id, observed("idle"));
-      render(chat());
-      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
-      await titleBar().findByText("Idle");
-      await vi.advanceTimersByTimeAsync(12000);
-      expect(mocks.chatThreadName).not.toHaveBeenCalled();
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("renames a thread through the daemon and shows the name once the stream carries it", async () => {
+    fakeChat.set([live("s-live")]);
+    for (const id of THREADS) showChat(id, observed("idle"));
+    mocks.renameSession.mockImplementation(async ({ name }: { name: string }) => {
+      fakeChat.set([live("s-live", { name })]);
+      return { name, source: "user" };
+    });
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename thread" }));
+    fireEvent.change(screen.getByLabelText("Thread name"), { target: { value: "Release notes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.renameSession).toHaveBeenCalledWith({ repoPath: "/repo", taskSlug: "", sessionId: "s-live", name: "Release notes" }));
+    expect(await screen.findByRole("heading", { name: "Release notes" })).toBeTruthy();
   });
 
   it("reads an ended thread's history without attaching or reporting a lost connection", async () => {
-    mocks.listChatThreads.mockResolvedValue([thread("s-done")]);
+    fakeChat.set([thread("s-done")]);
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-done") }));
     await waitFor(() => expect(link()).toBe("offline"));
@@ -439,7 +414,7 @@ describe("ChatView", () => {
   });
 
   it("says a running thread's archive stops it, and leaves Enter on Cancel", async () => {
-    mocks.listChatThreads.mockResolvedValue([live("s-live")]);
+    fakeChat.set([live("s-live")]);
     for (const id of THREADS) showChat(id, observed("idle"));
     vi.mocked(confirmDanger).mockResolvedValue(false);
     render(chat());
@@ -452,7 +427,7 @@ describe("ChatView", () => {
 
   it("will not remove a running thread's worktree on its own", async () => {
     const worktree = "/repo/.alinery/chat-worktrees/s-wt";
-    mocks.listChatThreads.mockResolvedValue([live("s-wt", { checkout: false, session: meta("s-wt", { ...liveMeta, worktree }) })]);
+    fakeChat.set([live("s-wt", { checkout: false, session: meta("s-wt", { ...liveMeta, worktree }) })]);
     for (const id of THREADS) showChat(id, observed("idle"));
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-wt") }));
@@ -464,12 +439,11 @@ describe("ChatView", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
-      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockResolvedValue([]);
+      fakeChat.set([thread("s-live")]);
       render(chat());
       expect(await screen.findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       await waitFor(() => expect(screen.queryByRole("button", { name: threadRow("s-live") })).toBeNull());
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(2);
       expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
       expect(within(rail()).queryByRole("button", { name: "New thread in repo" })).toBeNull();
     } finally {
@@ -493,7 +467,7 @@ describe("ChatView", () => {
     mocks.listChatRepos.mockRejectedValue(new Error("config.json unreadable"));
     render(chat());
     const alert = await within(rail()).findByRole("alert");
-    expect(alert.textContent).toContain("Couldn't read which repositories are open in this window. Retrying every few seconds.");
+    expect(alert.textContent).toContain("Couldn't read which repositories are open in this window. Reading again when you return to this window.");
     expect(within(alert).getByText("config.json unreadable")).toBeTruthy();
     expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
     expect(within(rail()).queryByText("Loading repositories")).toBeNull();
@@ -519,7 +493,7 @@ describe("ChatView", () => {
       mocks.listChatRepos.mockRejectedValueOnce(new Error("config.json unreadable")).mockResolvedValue(["/repo"]);
       render(chat());
       expect(await within(rail()).findByRole("alert")).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
       expect(within(rail()).queryByRole("alert")).toBeNull();
       expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
@@ -534,7 +508,7 @@ describe("ChatView", () => {
       mocks.listChatRepos.mockResolvedValueOnce([]).mockResolvedValue(["/repo"]);
       render(chat());
       expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
       expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
     } finally {
@@ -546,45 +520,18 @@ describe("ChatView", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockRejectedValue(new Error("config.json unreadable"));
-      mocks.listChatThreads.mockResolvedValue([thread("s-live")]);
+      fakeChat.set([thread("s-live")]);
       render(chat());
       expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       const alert = await within(rail()).findByRole("alert");
-      expect(alert.textContent).toContain("Couldn't refresh which repositories are open in this window. Showing the last list read. Retrying every few seconds.");
+      expect(alert.textContent).toContain("Couldn't refresh which repositories are open in this window. Showing the last list read. Reading again when you return to this window.");
       expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
       expect(within(rail()).getByRole("button", { name: "New thread in repo" })).toBeTruthy();
-      expect(mocks.listChatThreads).toHaveBeenCalledTimes(1);
       fireEvent.click(screen.getByRole("button", { name: "New thread" }));
       const dialog = await screen.findByRole("dialog", { name: "New thread" });
       expect((within(dialog).getByRole("combobox") as HTMLSelectElement).value).toBe("/repo");
       expect(within(dialog).getByRole("alert").textContent).toContain("Showing the last list read.");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("never says no repository is available above a closed repo's group still reloading", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      let reloadThreads: (rows: ChatThread[]) => void = () => {};
-      const reloading = new Promise<ChatThread[]>((resolve) => {
-        reloadThreads = resolve;
-      });
-      mocks.listChatRepos.mockResolvedValueOnce(["/repo"]).mockResolvedValue([]);
-      mocks.listChatThreads.mockResolvedValueOnce([thread("s-live")]).mockReturnValue(reloading);
-      render(chat());
-      expect(await within(rail()).findByRole("button", { name: threadRow("s-live") })).toBeTruthy();
-      await vi.advanceTimersByTimeAsync(3000);
-      await waitFor(() => expect(mocks.listChatThreads).toHaveBeenCalledTimes(2));
-      expect(within(rail()).getByRole("button", { name: threadRow("s-live") })).toBeTruthy();
-      expect(within(rail()).queryByText(NONE_OPEN)).toBeNull();
-      await act(async () => {
-        reloadThreads([]);
-        await reloading;
-      });
-      expect(within(rail()).getByText(NONE_OPEN)).toBeTruthy();
-      expect(within(rail()).queryByRole("button", { name: threadRow("s-live") })).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -613,7 +560,7 @@ describe("ChatView", () => {
       fireEvent.click(within(dialog).getByRole("checkbox", { name: "New worktree and branch" }));
       const create = within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement;
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       const alert = await within(dialog).findByRole("alert");
       expect(alert.textContent).toBe("b is not open in this window. Open it again, or choose another repository.");
       expect(select.value).toBe("/b");
@@ -624,7 +571,7 @@ describe("ChatView", () => {
       fireEvent.click(create);
       expect((within(dialog).getByRole("checkbox", { name: "New worktree and branch" }) as HTMLInputElement).checked).toBe(true);
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       await waitFor(() => expect(within(dialog).queryByRole("alert")).toBeNull());
       expect(select.value).toBe("/b");
       expect(create.disabled).toBe(false);
@@ -646,7 +593,7 @@ describe("ChatView", () => {
       const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
       expect(select.value).toBe("/b");
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       expect(await within(dialog).findByRole("alert")).toBeTruthy();
       expect(select.value).toBe("/b");
 
@@ -656,7 +603,7 @@ describe("ChatView", () => {
       expect(within(dialog).queryByRole("option", { name: "b (not open)" })).toBeNull();
       expect((within(dialog).getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       expect(await within(rail()).findByRole("button", { name: "New thread in b" })).toBeTruthy();
       expect(select.value).toBe("/a");
     } finally {
@@ -677,7 +624,7 @@ describe("ChatView", () => {
       const select = within(dialog).getByRole("combobox") as HTMLSelectElement;
       expect(select.value).toBe("/a");
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       await waitFor(() => expect(select.value).toBe("/b"));
       expect(within(dialog).queryByRole("alert")).toBeNull();
       fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
@@ -696,7 +643,7 @@ describe("ChatView", () => {
       fireEvent.click(within(await screen.findByRole("dialog", { name: "New thread" })).getByRole("button", { name: "Cancel" }));
       expect(screen.queryByRole("dialog", { name: "New thread" })).toBeNull();
 
-      await vi.advanceTimersByTimeAsync(3000);
+      await rereadRepos();
       await waitFor(() => expect(within(rail()).queryByRole("button", { name: "New thread in b" })).toBeNull());
       fireEvent.click(within(rail()).getByRole("button", { name: "New thread" }));
       const dialog = await screen.findByRole("dialog", { name: "New thread" });

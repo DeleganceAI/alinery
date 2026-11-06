@@ -52,12 +52,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  killSession: mocks.killSessionForRepo,
+  renameSession: mocks.renameSession,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
-    killSessionForRepo: mocks.killSessionForRepo,
-    renameSession: mocks.renameSession,
   }),
 );
 

@@ -55,8 +55,10 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
+import { readChatImage } from "../sync/chat";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
+import { archiveSession, readSessionOmp, renameSession, sessionArtifactReady, startSession } from "../sync/sessions";
 import { addTaskAttachment, copyTaskAttachments } from "../sync/tasks";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -94,7 +96,7 @@ function prepareChatSend(taskSlug: string, repoPath: string, caption: string, at
       stat: (path) => ipc.chatFileStat(path),
       copy: (paths) => copyTaskAttachments(repoPath, taskSlug, paths),
       writeBytes: (fileName, bytes) => addTaskAttachment(repoPath, taskSlug, fileName, Uint8Array.from(bytes)),
-      readImage: (name) => ipc.readChatImage(taskSlug, name),
+      readImage: (name) => readChatImage(repoPath, taskSlug, name),
       trailerDir: taskAttachmentDir(repoPath, taskSlug),
     },
     caption,
@@ -204,7 +206,7 @@ export function SessionView({
   const currentNameScope = useRef(nameScope);
   currentNameScope.current = nameScope;
   const saveName = async (name: string) => {
-    const value = await ipc.renameSession({ repoPath, taskSlug, sessionId: id, name });
+    const value = await renameSession({ repoPath, taskSlug, sessionId: id, name });
     // A save that finishes after the view moved to another session must not close that session's editor.
     if (currentNameScope.current === nameScope) closeNameEditor();
     onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: taskSlug, session_id: id, value });
@@ -403,8 +405,7 @@ export function SessionView({
     if (effectiveLifecycleState !== "orphaned" && effectiveLifecycleState !== "interrupted") return;
     let alive = true;
     // Refresh preserved-work copy when polling enters recovery, not just on navigation.
-    ipc
-      .sessionArtifactReady(id, taskSlug || "")
+    sessionArtifactReady(repoPath, id, taskSlug || "")
       .then((ready) => {
         if (alive) setArtifactReady(!!ready);
       })
@@ -414,7 +415,7 @@ export function SessionView({
     return () => {
       alive = false;
     };
-  }, [effectiveLifecycleState, id, taskSlug, reclassifyTick]);
+  }, [effectiveLifecycleState, id, taskSlug, reclassifyTick, repoPath]);
 
   useEffect(() => {
     setTerminalConnection("opening");
@@ -454,7 +455,7 @@ export function SessionView({
       );
       if (!ok) return;
       setArchiveBusy(true);
-      await ipc.archiveSession(taskSlug, id);
+      await archiveSession(repoPath, taskSlug, id);
       toast("Session archived", "success");
       onBack();
     } catch (error) {
@@ -970,7 +971,7 @@ export function SessionView({
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
     if (ompStartRef.current === id) return;
     ompStartRef.current = id;
-    void ipc.startSession(taskSlug, id, repoPath).catch((error) => {
+    void startSession(repoPath, taskSlug, id).catch((error) => {
       setTerminalConnection("failed");
       toast(String(error), "error");
     });
@@ -981,12 +982,12 @@ export function SessionView({
   // the turns compaction dropped from OMP's context.
   const loadOmpPage = useCallback(
     async (position: "initial" | "older", end?: number) => {
-      const buffer = await ipc.readSessionOmp({ id, taskSlug: taskSlug || null, end: end ?? null });
+      const buffer = await readSessionOmp(repoPath, { id, taskSlug: taskSlug || null, end: end ?? null });
       const page = decodeOmpPage(buffer);
       setChat((current) => applyFilePage(current, page, position));
       return page;
     },
-    [id, taskSlug],
+    [id, taskSlug, repoPath],
   );
 
   const olderBusy = useRef(false);
@@ -1231,7 +1232,7 @@ export function SessionView({
     if (!canRecoverSession || completionBusy) return;
     setCompletionBusy(true);
     try {
-      await ipc.startSession(taskSlug, id, repoPath);
+      await startSession(repoPath, taskSlug, id);
       setReclassifyTick((tick) => tick + 1);
       setExecutionError("");
     } catch (error) {
@@ -1310,7 +1311,7 @@ export function SessionView({
               if (!executionAvailable || completionBusy || execution?.start_requested) return;
               setCompletionBusy(true);
               try {
-                await ipc.startSession(taskSlug, id, repoPath);
+                await startSession(repoPath, taskSlug, id);
                 setReclassifyTick((tick) => tick + 1);
                 setExecutionError("");
               } catch (error) {

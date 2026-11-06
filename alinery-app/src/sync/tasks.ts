@@ -44,7 +44,7 @@ async function call<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_SET_BYTES = 100 * 1024 * 1024;
 const CHUNK_BYTES = 256 * 1024;
 
@@ -57,14 +57,19 @@ const taskOf = (t: TaskProto | undefined, repo: string): Task => {
 
 const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
-type Target = { kind: "staged" } | { kind: "attachment"; taskSlug: string };
+export type Target = { kind: "staged" } | { kind: "attachment"; taskSlug: string } | { kind: "chat"; threadId: string };
 
 /** Uploads `bytes` in chunks and returns the committed ref's name and (for a staged file) its upload id. */
-async function upload(repo: string, target: Target, name: string, bytes: Uint8Array): Promise<{ name: string; uploadId: string }> {
+export async function upload(repo: string, target: Target, name: string, bytes: Uint8Array): Promise<{ name: string; uploadId: string }> {
   const blobs = taskApi.blobs(repo);
   const sha256 = hex(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
   const ref = create(BlobRefSchema, {
-    target: target.kind === "staged" ? { case: "staged", value: { name } } : { case: "attachment", value: { taskSlug: target.taskSlug, name } },
+    target:
+      target.kind === "staged"
+        ? { case: "staged", value: { name } }
+        : target.kind === "chat"
+          ? { case: "chatAttachment", value: { threadId: target.threadId, name } }
+          : { case: "attachment", value: { taskSlug: target.taskSlug, name } },
   });
   const begun = await call(() => blobs.beginUpload({ meta: newMutationMeta(), target: ref, size: BigInt(bytes.length), sha256 }));
   const size = begun.chunkSize || CHUNK_BYTES;
@@ -75,7 +80,7 @@ async function upload(repo: string, target: Target, name: string, bytes: Uint8Ar
   const committed = await call(() => blobs.commitUpload({ uploadId: begun.uploadId }));
   const done = committed.ref?.target;
   if (done?.case === "staged") return { name: done.value.name, uploadId: done.value.uploadId };
-  if (done?.case === "attachment") return { name: done.value.name, uploadId: "" };
+  if (done?.case === "attachment" || done?.case === "chatAttachment") return { name: done.value.name, uploadId: "" };
   throw new Error(`${name} - the daemon did not confirm the upload`);
 }
 
@@ -150,10 +155,11 @@ export async function readAttachmentBytes(repo: string, taskSlug: string, name: 
   return readBlob(repo, create(BlobRefSchema, { target: { case: "attachment", value: { taskSlug, name } } }));
 }
 
-async function readBlob(repo: string, ref: ReturnType<typeof create<typeof BlobRefSchema>>): Promise<Uint8Array> {
+/** The bytes of a blob, whole; `max` stops the read one byte past it, so a caller can refuse a file without pulling all of it. */
+export async function readBlob(repo: string, ref: ReturnType<typeof create<typeof BlobRefSchema>>, max = 0): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
   let length = 0;
-  for await (const chunk of taskApi.blobs(repo).readBlob({ ref, offset: 0n, length: 0n })) {
+  for await (const chunk of taskApi.blobs(repo).readBlob({ ref, offset: 0n, length: max > 0 ? BigInt(max + 1) : 0n })) {
     parts.push(chunk.data);
     length += chunk.data.length;
   }

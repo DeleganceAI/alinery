@@ -24,7 +24,7 @@ const frame = (items: TranscriptItem[], nextItem: number, replace = false, contr
 /** Each WatchTranscript call runs `script(request, call)`; the calls are kept for the test to read. */
 function serve(script: (req: WatchTranscriptRequest, call: number, signal: AbortSignal) => AsyncGenerator<WatchTranscriptResponse>) {
   const requests: WatchTranscriptRequest[] = [];
-  const sessions: ServiceImpl<typeof SessionService> = {
+  const sessions: Partial<ServiceImpl<typeof SessionService>> = {
     async *watchTranscript(req, ctx) {
       requests.push(req);
       yield* script(req, requests.length - 1, ctx.signal);

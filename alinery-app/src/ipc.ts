@@ -37,14 +37,11 @@ import type {
   ArtifactTreeNode,
   BackupListItem,
   BackupMeta,
-  ChatBranch,
-  ChatThread,
   CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
   ConnectionStatus,
   CreateExecutionSessionReply,
-  CreateExecutionSessionRequest,
   DaemonStatus,
   DesktopCreditsView,
   DownloadStatusRow,
@@ -73,8 +70,6 @@ import type {
   ScopedPlaybook,
   SessionMessageActionProvenance,
   SessionMeta,
-  SessionName,
-  SessionNotificationClearRef,
   SkillInstall,
   SshTarget,
   StagedUpdate,
@@ -288,7 +283,8 @@ export const startMcpServer = () => invoke<McpStatus>("start_mcp_server");
 export const stopMcpServer = () => invoke<McpStatus>("stop_mcp_server");
 
 // ── notify.rs ─────────────────────────────────────────────────────────
-export const notifySessionAttention = (repoPath: string, slug: string | null, reason: string) => invoke<void>("notify_session_attention", { repoPath, slug, reason });
+/** Shows an OS notification. The text is the caller's: it comes from the session entity, so the shell reads no file. */
+export const notifySessionAttention = (body: string) => invoke<void>("notify_session_attention", { body });
 export const notifyTest = () => invoke<void>("notify_test");
 export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge_count", { count });
 
@@ -300,33 +296,14 @@ export const discardSubtask = (taskSlug: string, managerSessionId: string) => in
 
 // ── session.rs ────────────────────────────────────────────────────────
 
-export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
 /** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
 export const listChatRepos = () => invoke<string[]>("list_chat_repos");
-export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
-export const chatThreadName = (repoPath: string, sessionId: string) => invoke<string | null>("chat_thread_name", { repoPath, sessionId });
-export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);
-export const startChatThread = (repoPath: string, sessionId: string) => invoke<CreateExecutionSessionReply>("start_chat_thread", { repoPath, sessionId });
-export const setChatPinned = (repoPath: string, sessionId: string, pinned: boolean) => invoke<void>("set_chat_pinned", { repoPath, sessionId, pinned });
-export const archiveChatThread = (repoPath: string, sessionId: string, removeWorktree: boolean) => invoke<void>("archive_chat_thread", { repoPath, sessionId, removeWorktree });
-export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
-export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
-export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
 export type { SessionControls, VinculumTranscript };
 export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
 export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
 export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
 export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
-export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
-export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
-export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
-export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
-export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
-export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });
 export const openSession = (a: {
   id: string;
   cwd: string;
@@ -340,11 +317,6 @@ export const openSession = (a: {
   cols?: number | null;
   rows?: number | null;
 }) => invoke<void>("open_session", a);
-// Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
-// the wire, and a per-byte JS array before a single row can be parsed).
-export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<ArrayBuffer>("read_session_history", a);
-export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
-export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
 export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
 export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
 export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
@@ -385,12 +357,6 @@ export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_f
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const preArchiveBackup = (repoPath: string, slug: string) => invoke<void>("pre_archive_backup", { repoPath, slug });
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
-export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
-export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
-  invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });
-export const writeChatThreadAttachmentBytes = (repoPath: string, id: string, fileName: string, bytes: number[] | Uint8Array) =>
-  invoke<string>("write_chat_thread_attachment_bytes", { repoPath, id, fileName, bytes });
-export const readChatThreadImage = (repoPath: string, id: string, name: string) => invoke<ChatImage>("read_chat_thread_image", { repoPath, id, name });
 export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
 // ── playbook.rs ───────────────────────────────────────────────────────

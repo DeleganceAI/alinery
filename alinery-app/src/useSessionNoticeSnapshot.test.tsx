@@ -14,11 +14,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
 vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
 let daemon = sessionDaemon();
-vi.mock("./ipc", () =>
-  mockIpc({
-    clearSessionNotifications: mocks.clearSessionNotifications,
-  }),
-);
+vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), clearSessionNotifications: mocks.clearSessionNotifications }));
+vi.mock("./ipc", () => mockIpc({}));
 
 const item = (id: string, over: Partial<SessionListItem> = {}): SessionListItem => ({
   id,

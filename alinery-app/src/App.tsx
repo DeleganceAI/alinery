@@ -43,6 +43,7 @@ import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, To
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
+import { createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
 import { readEffectiveConfig } from "./sync/settings";
 import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
@@ -383,7 +384,7 @@ export default function App() {
   // an independently observed exit). Otherwise the handle stays so the user can retry.
   const stopDrawerTab = useCallback(async (id: string): Promise<boolean> => {
     try {
-      await ipc.killSession(id, "");
+      await killSession((await ipc.readAppConfig()).active_repo, id, "");
       return true;
     } catch {
       try {
@@ -428,7 +429,7 @@ export default function App() {
         if (inFlightDrawerId.current === meta.id) {
           inFlightDrawerId.current = null;
           try {
-            await ipc.killSessionForRepo(repoAtCreate, meta.id, "");
+            await killSession(repoAtCreate, meta.id, "");
           } catch {
             // The id belongs to the repo that created it, which may no longer be active.
           }
@@ -671,7 +672,7 @@ export default function App() {
         setAppConfig(await switchActiveRepo(repoPath));
       }
       try {
-        await ipc.markSessionNotificationRead(repoPath, taskSlug, session.id);
+        await markSessionNotificationRead(repoPath, taskSlug, session.id);
       } catch (error) {
         setRepoErr(String(error));
       }
@@ -715,15 +716,12 @@ export default function App() {
     }
     const reply =
       choice.kind === "existing"
-        ? await ipc.startSession(task.slug, choice.session_id, task.repo_path)
-        : await ipc.createSessionForRepo({
-            repoPath: task.repo_path,
-            request: {
-              task_slug: task.slug,
-              target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
-              ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
-              start: true,
-            },
+        ? await startSession(task.repo_path, task.slug, choice.session_id)
+        : await createSession(task.repo_path, {
+            task_slug: task.slug,
+            target: choice.kind === "primary" ? choice : { kind: "auxiliary", harness, model, prompt },
+            ...(choice.kind === "primary" ? { launch_override: { harness, model }, prompt_extra: prompt } : {}),
+            start: true,
           });
     if (reply.start !== "started") toast(`Session ${reply.start}`);
     const targetTaskView: View = view.kind === "createSession" ? { kind: "task", slug: task.slug, repoPath: task.repo_path, from: view.from } : view;
@@ -1396,7 +1394,12 @@ export default function App() {
                 reading position survive a trip to Tasks or Settings. Hidden, it stops polling. */}
                 {showChat && (chatVisited || view.kind === "chat") && (
                   <div className="view" hidden={view.kind !== "chat" || daemon.repo_busy}>
-                    <ChatView active={view.kind === "chat" && !daemon.repo_busy} terminalFontSize={appearance.terminal_font_size} visibility={chatViewVisibility} />
+                    <ChatView
+                      active={view.kind === "chat" && !daemon.repo_busy}
+                      terminalFontSize={appearance.terminal_font_size}
+                      visibility={chatViewVisibility}
+                      knownRepos={appConfig?.known_repos}
+                    />
                   </div>
                 )}
               </main>
@@ -1416,7 +1419,15 @@ export default function App() {
             </div>
           </div>
           {isDev && <LaunchSourceBar sourceRoot={DEV_LAUNCH_ROOT} />}
-          {showChat ? <QuickChat open={quickChatOpen} visibility={chatViewVisibility} onOpenInChat={() => switchTop("chat")} onHide={() => setQuickChatOpen(false)} /> : null}
+          {showChat ? (
+            <QuickChat
+              open={quickChatOpen}
+              visibility={chatViewVisibility}
+              knownRepos={appConfig?.known_repos}
+              onOpenInChat={() => switchTop("chat")}
+              onHide={() => setQuickChatOpen(false)}
+            />
+          ) : null}
         </div>
         <GlobalSearch open={searchOpen && hasRepo} items={searchItems} loading={searchLoading} error={searchError} onClose={() => setSearchOpen(false)} />
         <Toast busy={busy} />

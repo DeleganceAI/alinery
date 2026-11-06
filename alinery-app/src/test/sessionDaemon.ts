@@ -43,6 +43,7 @@ export function sessionEntity(taskSlug: string, id: string, o: SessionObservatio
           }
         : undefined,
     wait,
+    attentionLabel: o.attention_label ?? "",
   });
   return create(EntitySchema, { key: sessionEntityKey(taskSlug, id), value: { case: "session", value: session } });
 }
@@ -129,7 +130,7 @@ export function sessionDaemon() {
   const transcripts = new Map<string, VinculumTranscript | VinculumMessage[]>();
   const tver = { n: 0 };
   const transcriptCalls: string[] = []; // the session id of every WatchTranscript call
-  const sessions: ServiceImpl<typeof SessionService> = {
+  const sessions: Partial<ServiceImpl<typeof SessionService>> = {
     async *watchTranscript(req, ctx) {
       transcriptCalls.push(req.session?.id ?? "");
       let seen = -1;

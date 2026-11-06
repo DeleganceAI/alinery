@@ -12,7 +12,9 @@ import { repoDisplayPath } from "../remoteRepo";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import { archiveChatThread, createChatThread, removeChatWorktree, resumeChatThread, setChatPinned, useChatThreads, useOpenChatRepos } from "../sync/chat";
 import { useSessionObservations } from "../sync/sessionObservation";
+import { renameSession } from "../sync/sessions";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatPane } from "./ChatPane";
@@ -50,7 +52,7 @@ function OpenReposNotice({ repos, error, className }: { repos: string[] | null; 
     return (
       <InlineStatus tone="error" detail={error}>
         {repos === null ? "Couldn't read which repositories are open in this window." : "Couldn't refresh which repositories are open in this window. Showing the last list read."}{" "}
-        Retrying every few seconds.
+        Reading again when you return to this window.
       </InlineStatus>
     );
   }
@@ -81,82 +83,36 @@ function mayBeRunning(thread: ChatThread, observation: SessionObservation | unde
 
 const RESUME_IN_CHECKOUT = "The conversation is kept. Continuing it later opens in the repository checkout, on whatever branch is checked out then, not on this worktree's branch.";
 
-function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
-  const [threads, setThreads] = useState<ChatThread[]>([]);
+function ChatViewBody({
+  active = true,
+  terminalFontSize,
+  visibility,
+  knownRepos = [],
+}: {
+  active?: boolean;
+  terminalFontSize: number;
+  visibility: ChatPrefs;
+  knownRepos?: string[];
+}) {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 900);
   const [creating, setCreating] = useState(false);
   // null until the first read: the thread list waits for it rather than loading twice.
-  const [openRepos, setOpenRepos] = useState<string[] | null>(null);
-  const [reposError, setReposError] = useState("");
+  const { repos: openRepos, error: reposError } = useOpenChatRepos(active, knownRepos.join("\n"));
   const dirs = openRepos ?? [];
+  const threads = useChatThreads(openRepos ?? undefined, showArchived);
   const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
-  // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
-  const showArchivedRef = useRef(showArchived);
-  showArchivedRef.current = showArchived;
-  const reposKey = openRepos?.join("\n");
   // An explicit pick (the select or a repo's "+") stays the target after its repo closes: the form
   // says so and will not create, rather than quietly retarget another repo. No pick follows the
   // first open repo.
   const repoPath = pickedRepo || (dirs[0] ?? "");
   const pickClosed = pickedRepo !== "" && !dirs.includes(pickedRepo);
-
-  const reload = async (archived = showArchived) => {
-    const rows = await ipc.listChatThreads(archived);
-    setThreads(rows);
-    return rows;
-  };
-
-  // Chat follows the app's open repos: a repo closed at the top level, held by another Alinery,
-  // or without a connected daemon drops out with its threads. Polled while visible; the thread
-  // list reloads only when that set changes.
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    const poll = () => {
-      ipc
-        .listChatRepos()
-        .then((next) => {
-          if (cancelled) return;
-          setReposError("");
-          setOpenRepos((prev) => (prev?.join("\n") === next.join("\n") ? prev : next));
-        })
-        .catch((cause: unknown) => {
-          if (!cancelled) setReposError(errorMessage(cause));
-        });
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [active]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reposKey is the trigger; the open-repo set changed.
-  useEffect(() => {
-    if (reposKey === undefined) return;
-    let cancelled = false;
-    ipc
-      .listChatThreads(showArchivedRef.current)
-      .then((rows) => {
-        if (!cancelled) setThreads(rows);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(String(cause));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reposKey]);
 
   // Every live thread in the rail, from one chat-scope stream per repo.
   const liveRefs = useMemo(
@@ -180,20 +136,13 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     return registry.listenFocus(take);
   }, [registry]);
 
-  const commitThreads = (archived: boolean, resetArchived: boolean) =>
-    ipc.listChatThreads(archived).then((rows) => {
-      flushSync(() => {
-        if (resetArchived) setShowArchived(false);
-        setThreads(rows);
-      });
-    });
-
   const chat = useChatThread(selected, {
     active,
     autoCompaction: visibility.autoCompaction,
     isFocused: (key) => selectedKeyRef.current === key,
-    onReload: () => commitThreads(showArchivedRef.current, false),
-    onResumeRefresh: () => commitThreads(false, true),
+    // The rail follows the chat-scope stream, and every write waits for it to catch up, so there is nothing to reload.
+    onReload: async () => {},
+    onResumeRefresh: async () => flushSync(() => setShowArchived(false)),
     onRebind: (key) => {
       flushSync(() => {
         setShowArchived(false);
@@ -249,48 +198,13 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
       un.then((finish) => finish());
     };
   }, [active, selectionKey]);
-  const turnWasActive = useRef(false);
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
   // A reconnect keeps a half-typed rename. Switching threads does not. The ids are the trigger, not values the effect reads.
   // biome-ignore lint/correctness/useExhaustiveDependencies: selected thread identity.
   useEffect(() => {
-    turnWasActive.current = false;
     setRenaming(false);
   }, [selectedId, selectedRepo]);
-
-  // A thread is titled by its own model after a turn ends (the first message, then every 10th), and the
-  // reply can take a while on a slow or thinking model. So the open thread's name is re-read every 3s
-  // for up to a minute after each turn, and the list is reloaded once when it changes.
-  useEffect(() => {
-    if (activity.turnActive) {
-      turnWasActive.current = true;
-      return;
-    }
-    if (!turnWasActive.current || !selected) return;
-    turnWasActive.current = false;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
-    const before = selected.name ?? null;
-    let ticks = 0;
-    const timer = window.setInterval(() => {
-      if (!activeRef.current) return;
-      ticks += 1;
-      if (ticks > 20) {
-        window.clearInterval(timer);
-        return;
-      }
-      ipc
-        .chatThreadName(repo, id)
-        .then((name) => {
-          if ((name ?? null) === before) return;
-          window.clearInterval(timer);
-          return reload();
-        })
-        .catch(() => {});
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [activity.turnActive]);
 
   const groups = repoGroups(dirs, threads);
   const repoPaths = groups.map((group) => group.path);
@@ -311,7 +225,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           running ? "Stop and archive" : "Archive",
         );
         if (!accepted) return;
-        await ipc.archiveChatThread(repo, id, false);
+        await archiveChatThread(repo, id, false);
       } else {
         const choice = await askConfirm({
           title: "Archive chat",
@@ -324,19 +238,15 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           ],
         });
         if (choice === "cancel") return;
-        await ipc.archiveChatThread(repo, id, choice === "remove");
+        await archiveChatThread(repo, id, choice === "remove");
       }
-      await reload();
     } catch (cause) {
       setError(errorMessage(cause));
     }
   }
 
   function togglePin(thread: ChatThread) {
-    ipc
-      .setChatPinned(thread.repo_path, thread.session.id, !thread.session.pinned)
-      .then(() => reload())
-      .catch((cause: unknown) => setError(String(cause)));
+    setChatPinned(thread.repo_path, thread.session.id, !thread.session.pinned).catch((cause: unknown) => setError(String(cause)));
   }
 
   async function removeWorktree() {
@@ -349,8 +259,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
         "Remove worktree",
       );
       if (!accepted) return;
-      await ipc.removeChatWorktree(selected.repo_path, selected.session.id);
-      await reload();
+      await removeChatWorktree(selected.repo_path, selected.session.id);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -359,11 +268,9 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   async function resume(thread: ChatThread) {
     setError("");
     try {
-      const successor = await ipc.resumeChatThread(thread.repo_path, thread.session.id);
+      const successorId = await resumeChatThread(thread.repo_path, thread.session.id);
       setShowArchived(false);
-      const rows = await ipc.listChatThreads(false);
-      setThreads(rows);
-      setSelectedKey(`${thread.repo_path}:${successor.id}`);
+      setSelectedKey(`${thread.repo_path}:${successorId}`);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -373,10 +280,9 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     if (!repoPath || pickClosed) return;
     setError("");
     try {
-      const reply = await ipc.createChatThread({ repoPath, createWorktree });
+      const reply = await createChatThread({ repoPath, createWorktree });
       setCreating(false);
       setCreateWorktree(false);
-      await reload(false);
       setShowArchived(false);
       setSelectedKey(`${repoPath}:${reply.session.id}`);
       if (reply.start === "failed") setError(reply.errors?.[0]?.message ?? "start failed");
@@ -517,12 +423,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
               className={`btn ghost small${showArchived ? " on" : ""}`}
               aria-pressed={showArchived}
               onClick={() => {
-                const next = !showArchived;
-                setShowArchived(next);
-                ipc
-                  .listChatThreads(next)
-                  .then(setThreads)
-                  .catch((cause: unknown) => setError(String(cause)));
+                setShowArchived(!showArchived);
               }}
             >
               {showArchived ? "Hide archived" : "Show archived"}
@@ -544,9 +445,8 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                 label="Thread name"
                 onCancel={() => setRenaming(false)}
                 onSave={async (name) => {
-                  await ipc.renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name });
+                  await renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name });
                   setRenaming(false);
-                  await reload();
                 }}
               />
             ) : (
@@ -768,7 +668,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   );
 }
 
-export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
+export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs; knownRepos?: string[] }) {
   const existing = useContext(ChatSessionContext);
   if (!existing) {
     return (

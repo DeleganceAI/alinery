@@ -31,9 +31,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
   mockIpc({
-    renameSession: mocks.renameSession,
     notifySessionAttention: mocks.notifySessionAttention,
   }),
 );
@@ -594,7 +594,9 @@ describe("SessionsList filtering", () => {
       await vi.advanceTimersByTimeAsync(1500);
     });
     expect(renderedNames(container)).toEqual(filter === "waiting" ? ["Agent work"] : []);
-    expect(mocks.notifySessionAttention).toHaveBeenCalledExactlyOnceWith("/r", "a-task", reason);
+    expect(mocks.notifySessionAttention).toHaveBeenCalledExactlyOnceWith(
+      `session — ${{ idle: "idle, needs you", waiting_for_input: "waiting for your input", waiting_for_approval: "waiting for your approval" }[reason]}`,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);

@@ -2,6 +2,7 @@ import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within }
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { daemonTransport } from "../daemon/transport";
+import { fakeChat } from "../test/chatHooks";
 import { mockIpc } from "../test/mockIpc";
 import { stubScrollSize } from "../test/scroll";
 import { sessionDaemon } from "../test/sessionDaemon";
@@ -23,25 +24,21 @@ vi.mock("./ProviderSetupDialog", () => ({
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
-  listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
   chatPrompt: vi.fn(),
-  chatThreadName: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
   copyChatThreadAttachments: vi.fn(),
   getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
+vi.mock("../sync/chat", async (actual) => ({ ...(await import("../test/chatHooks")).chatHooks(await actual()), copyChatThreadAttachments: mocks.copyChatThreadAttachments }));
 vi.mock("../ipc", () =>
   mockIpc({
-    listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
     chatPrompt: mocks.chatPrompt,
-    chatThreadName: mocks.chatThreadName,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
-    copyChatThreadAttachments: mocks.copyChatThreadAttachments,
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
@@ -115,13 +112,12 @@ beforeEach(() => {
   localStorage.clear();
   setViewport(VIEW_W, VIEW_H);
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
-  mocks.listChatThreads.mockResolvedValue([]);
+  fakeChat.reset();
   mocks.chatPrompt.mockResolvedValue(undefined);
   // Every chat thread under test is a live idle OMP chat as the daemon reports it.
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);
-  mocks.chatThreadName.mockResolvedValue(null);
   mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
   mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
   mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
@@ -137,7 +133,7 @@ function windowOf({ open = true, visibility = DEFAULT_CHAT_VISIBILITY }: { open?
 }
 
 function pinnedPair() {
-  mocks.listChatThreads.mockResolvedValue([
+  fakeChat.set([
     thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) }),
     thread("s-b", "/repos/two", { name: "Beta", session: meta("s-b", { pinned: true }) }),
   ]);
@@ -268,7 +264,7 @@ describe("QuickChat", () => {
   // optional so CI does not fail on it; set ALINERY_OPTIONAL_TESTS=1 to run it.
   const itOptional = process.env.ALINERY_OPTIONAL_TESTS === "1" ? it : it.skip;
   itOptional("shows one tab per pinned chat across repos, and a composer", async () => {
-    mocks.listChatThreads.mockResolvedValue([
+    fakeChat.set([
       thread("s-plain", "/repos/one", { name: "Plain" }),
       thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) }),
       thread("s-b", "/repos/two", { name: "Beta", session: meta("s-b", { pinned: true }) }),
@@ -295,7 +291,7 @@ describe("QuickChat", () => {
   });
 
   it("stages a picked file and a pasted image, and does not take window drops", async () => {
-    mocks.listChatThreads.mockResolvedValue([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
+    fakeChat.set([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
     mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
     mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
     render(windowOf());
@@ -332,7 +328,7 @@ describe("QuickChat", () => {
 
   it("reads a thread once from Vinculum when Chat and the window both show it", async () => {
     const row = thread("s-live", "/repos/one", { name: "Alpha", session: meta("s-live", { pinned: true }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     render(
       <ChatSessionProvider>
         <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />

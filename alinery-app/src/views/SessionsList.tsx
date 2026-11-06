@@ -1,7 +1,6 @@
 import { ChevronRight, Pencil } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import { awaitingSessionName, NameEditor, PendingSessionName } from "../NameEditor";
 import {
@@ -32,6 +31,7 @@ import {
 } from "../shared";
 import { useRepoBoard, useSessionItems } from "../sync/board";
 import { useSessionObservations } from "../sync/sessionObservation";
+import { renameSession } from "../sync/sessions";
 import type { BoardNav, NameCommit, SessionListItem, SessionObservation } from "../types";
 import { useSessionSort } from "../useSessionSort";
 import "./SessionsList.css";
@@ -146,7 +146,7 @@ export function SessionsList({
 
   const saveName = async (item: SessionListItem, name: string) => {
     const editor = editorVersion.current;
-    const value = await ipc.renameSession({ repoPath: item.repo_path, taskSlug: item.task_slug, sessionId: item.id, name });
+    const value = await renameSession({ repoPath: item.repo_path, taskSlug: item.task_slug, sessionId: item.id, name });
     if (editor === editorVersion.current) closeEditor();
     onNameCommitted?.({ kind: "session", repo_path: item.repo_path, task_slug: item.task_slug, session_id: item.id, value });
   };
@@ -170,7 +170,7 @@ export function SessionsList({
       const key = rowKey(item);
       const observation = observations[key];
       const kind = observation ? observationDisplayKind(observation) : "loading";
-      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, item.repo_path, item.task_slug);
+      notifySessionAttentionTransition(previousKinds.current.get(key) ?? null, kind, observation?.attention_label ?? "");
       next.set(key, kind);
     }
     previousKinds.current = next;

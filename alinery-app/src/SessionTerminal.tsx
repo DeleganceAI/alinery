@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { APPEARANCE_EVENT } from "./appearance";
 import * as ipc from "./ipc";
 import { observationNow } from "./sync/sessionObservation";
+import { readSessionHistory } from "./sync/sessions";
 import { terminalLink } from "./sync/terminal";
 import { attachGpuRenderer } from "./terminalRenderer";
 import { restoreViewport, saveViewport } from "./terminalViewport";
@@ -134,8 +135,9 @@ export function SessionTerminal({
       // Read-only history replay (issue #24 P7): fetch the session's recorded activity
       // chunks once and write them. NO open_session/attach, NO stdin, NO daemon resize —
       // this pane never touches the daemon, so it works after the pty (and daemon) are gone.
-      ipc
-        .readSessionHistory({ id: sessionId, taskSlug: taskSlug || null })
+      sessionIo
+        .repo()
+        .then((repo) => readSessionHistory(repo, { id: sessionId, taskSlug: taskSlug || null }))
         .then((bytes) => {
           if (disposed) return;
           if (bytes.byteLength) term.write(new Uint8Array(bytes));

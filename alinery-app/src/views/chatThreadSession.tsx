@@ -19,6 +19,7 @@ import { compactCommand, getStateCommand, type ImageContent, promptCommand } fro
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import { copyChatThreadAttachments, readChatThreadImage, resumeChatThread, startChatThread, writeChatThreadAttachmentBytes } from "../sync/chat";
 import { useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -527,9 +528,9 @@ function nextAttachmentId() {
 function threadAttachmentStore(repoPath: string, sessionId: string) {
   return {
     stat: (path: string) => ipc.chatFileStat(path),
-    copy: (paths: string[]) => ipc.copyChatThreadAttachments(repoPath, sessionId, paths),
-    writeBytes: (fileName: string, bytes: number[]) => ipc.writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, bytes),
-    readImage: (name: string) => ipc.readChatThreadImage(repoPath, sessionId, name),
+    copy: (paths: string[]) => copyChatThreadAttachments(repoPath, sessionId, paths),
+    writeBytes: (fileName: string, bytes: number[]) => writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, Uint8Array.from(bytes)),
+    readImage: (name: string) => readChatThreadImage(repoPath, sessionId, name),
     trailerDir: chatThreadAttachmentDir(repoPath, sessionId),
   };
 }
@@ -690,8 +691,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.ended_at != null || currentThread.session.archived) {
       registry.setSending(key);
       try {
-        const successor = await ipc.resumeChatThread(repo, id);
-        const next = `${repo}:${successor.id}`;
+        const successorId = await resumeChatThread(repo, id);
+        const next = `${repo}:${successorId}`;
         const refresh = sub()?.onResumeRefresh;
         const rebind = sub()?.onRebind;
         // Checked before the list refresh: that refresh drops the ended row, and flushing it
@@ -714,7 +715,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.started_at == null) {
       registry.setSending(key);
       try {
-        const started = await ipc.startChatThread(repo, id);
+        const started = await startChatThread(repo, id);
         if (started.start === "failed") {
           registry.setSending(null);
           registry.setError(started.errors?.[0]?.message ?? "start failed");

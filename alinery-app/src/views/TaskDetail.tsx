@@ -58,6 +58,7 @@ import {
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
+import { archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
 import { renameTask, restoreTaskForRepo, setAutoApproveAllForRepo, setRelatedTasksForRepo, worktreeExists } from "../sync/tasks";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
@@ -667,13 +668,13 @@ export function TaskDetail({
     onBack();
   };
 
-  const archiveSession = async (id: string) => {
+  const archiveSessionRow = async (id: string) => {
     if (busy || sessionArchivePending.current) return;
     sessionArchivePending.current = true;
     setBusy(`archive-session:${id}`);
     setErr(null);
     try {
-      await ipc.archiveSessionForRepo(repoPath, slug, id);
+      await archiveSession(repoPath, slug, id);
       await load();
     } catch (error) {
       setErr({ msg: "Couldn't archive the session.", detail: String(error) });
@@ -736,7 +737,7 @@ export function TaskDetail({
     setBusy("acknowledge-exits");
     setErr(null);
     try {
-      await Promise.all(unacknowledgedExitedSessions.map((session) => ipc.markSessionNotificationRead(repoPath, slug, session.id)));
+      await Promise.all(unacknowledgedExitedSessions.map((session) => markSessionNotificationRead(repoPath, slug, session.id)));
       await load();
     } catch (error) {
       setErr({ msg: "Couldn't acknowledge exited sessions.", detail: String(error) });
@@ -796,7 +797,7 @@ export function TaskDetail({
               const capturedScope = scope;
               const editor = editorVersion.current;
               if (kind === "session" && sessionId) {
-                const committed = await ipc.renameSession({ repoPath, taskSlug: owner, sessionId, name });
+                const committed = await renameSession({ repoPath, taskSlug: owner, sessionId, name });
                 onNameCommitted?.({ kind: "session", repo_path: repoPath, task_slug: owner, session_id: sessionId, value: committed });
                 if (!capturedScope.alive || scopeRef.current !== capturedScope) return;
                 taskMutationEpoch.current += 1;
@@ -1510,7 +1511,7 @@ export function TaskDetail({
                               <Square className="chat-composer-icon" fill="currentColor" />
                             </button>
                             <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                            <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSession(s.id)}>
+                            <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSessionRow(s.id)}>
                               {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
                             </button>
                             {s.archived && (

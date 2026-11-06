@@ -69,11 +69,11 @@ vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    renameSession: mocks.renameSession,
   }),
 );
 

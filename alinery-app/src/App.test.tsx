@@ -176,10 +176,18 @@ const taskWrites = vi.hoisted(() => ({
 }));
 vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), ...taskWrites }));
 
+// The session writes live in sync/sessions (the daemon's SessionService), not in ipc.
+const sessionWrites = vi.hoisted(() => ({
+  createSession: vi.fn(),
+  startSession: vi.fn(),
+  markSessionNotificationRead: vi.fn(async () => {}),
+  renameSession: vi.fn(),
+  clearSessionNotifications: vi.fn(),
+}));
+vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), ...sessionWrites }));
+
 const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
   const ipcMocks = {
-    createSessionForRepo: vi.fn(),
-    startSession: vi.fn(),
     listPlaybookCatalog: vi.fn<() => Promise<PlaybookCatalog>>(),
     getCurrentWindow: vi.fn(() => ({
       destroy: vi.fn(),
@@ -187,14 +195,11 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     })),
     getName: vi.fn(async () => "Alinery"),
     getVersion: vi.fn(async () => "0.11.1"),
-    markSessionNotificationRead: vi.fn(async () => {}),
-    renameSession: vi.fn(),
     subtaskState: vi.fn(),
     getTaskExecution: vi.fn(),
     listArtifactsWithMetadata: vi.fn(),
     listTaskArtifactTree: vi.fn(),
     listArtifactCommentDraftsForRepo: vi.fn(),
-    clearSessionNotifications: vi.fn(),
     setDockBadgeCount: vi.fn(),
     readAppConfig: vi.fn(),
     setActiveRepo: vi.fn(),
@@ -592,14 +597,14 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   fakeBoard.reset();
   fakeBoard.set({ tasks: [task] as never });
-  ipcMocks.renameSession.mockReset();
+  sessionWrites.renameSession.mockReset();
   ipcMocks.readAppConfig.mockResolvedValue(appConfig);
-  ipcMocks.createSessionForRepo.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
-  ipcMocks.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
+  sessionWrites.createSession.mockResolvedValue({ session: session("created-implementation", "implementation"), execution: null, start: "started" });
+  sessionWrites.startSession.mockResolvedValue({ session: session("queued-design"), execution: null, start: "started" });
   ipcMocks.listPlaybookCatalog.mockResolvedValue({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] });
-  ipcMocks.markSessionNotificationRead.mockResolvedValue(undefined);
+  sessionWrites.markSessionNotificationRead.mockResolvedValue(undefined);
   ipcMocks.setActiveRepo.mockResolvedValue(appConfig);
-  ipcMocks.clearSessionNotifications.mockResolvedValue(undefined);
+  sessionWrites.clearSessionNotifications.mockResolvedValue(undefined);
   ipcMocks.setDockBadgeCount.mockResolvedValue(undefined);
 });
 
@@ -820,7 +825,7 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open created task" }));
     await screen.findByText("task detail:task");
     expect(screen.queryByText("session:root-a")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
   it("attaches only the session explicitly selected from the creation result", async () => {
@@ -829,8 +834,8 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "open second created session" }));
     await screen.findByText("session:root-b");
     expect(screen.getByText("session intent:attach")).toBeTruthy();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "root-b");
-    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "root-b");
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
   });
 
   it("stays on creation when the result has no task", async () => {
@@ -839,7 +844,7 @@ describe("creation result navigation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "report failed creation" }));
     expect(screen.getByRole("button", { name: "open created task" })).toBeTruthy();
     expect(screen.queryByText("task detail:task")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 });
 
@@ -933,14 +938,14 @@ describe("session navigation acknowledgment", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     await screen.findByRole("button", { name: "open detail session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     cleanup();
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open list task" }));
     await screen.findByRole("button", { name: "open detail session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
   });
 
   it("acknowledges task-card and global-list sessions before navigation", async () => {
@@ -952,20 +957,20 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "Kanban4" }));
     fireEvent.click(await screen.findByRole("button", { name: "open active card session" }));
     await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
 
     cleanup();
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Tasks/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open active list session" }));
     await screen.findByText("session:active-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "active-design");
 
     cleanup();
 
     await renderApp();
     let release: (() => void) | undefined;
-    ipcMocks.markSessionNotificationRead.mockImplementationOnce(
+    sessionWrites.markSessionNotificationRead.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -974,28 +979,28 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     fireEvent.click(await screen.findByRole("button", { name: "open global session" }));
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
     await act(async () => release?.());
     await screen.findByText("session:global-design");
   });
   it("opens the session when notification acknowledgment fails", async () => {
-    ipcMocks.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
+    sessionWrites.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
     await renderApp();
 
     await openGlobalSession();
 
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
   });
   it("renders the scoped Notifications tab and routes its exact session through acknowledgment", async () => {
     await renderApp();
     await openNotifications();
     const row = await screen.findByRole("button", { name: "open notification session" });
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     fireEvent.click(row);
     await screen.findByText("session:global-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledOnce();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledOnce();
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
   });
 
   it("switches repositories before acknowledging a foreign notification row", async () => {
@@ -1010,8 +1015,8 @@ describe("session navigation acknowledgment", () => {
     await screen.findByText("session:foreign-design");
 
     expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/foreign", []);
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/foreign", "task", "foreign-design");
-    expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(ipcMocks.markSessionNotificationRead.mock.invocationCallOrder[0]);
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/foreign", "task", "foreign-design");
+    expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(sessionWrites.markSessionNotificationRead.mock.invocationCallOrder[0]);
   });
 
   it("acknowledges Task Detail and newly created sessions exactly", async () => {
@@ -1019,7 +1024,7 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
     await screen.findByText("session:detail-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "detail-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "detail-design");
 
     cleanup();
     await renderApp();
@@ -1027,17 +1032,14 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish create session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: {
-        task_slug: "task",
-        target: { kind: "primary", step_key: "implementation" },
-        launch_override: { harness: "omp", model: "" },
-        prompt_extra: "  edited\nlaunch prompt ✓  ",
-        start: true,
-      },
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
+      task_slug: "task",
+      target: { kind: "primary", step_key: "implementation" },
+      launch_override: { harness: "omp", model: "" },
+      prompt_extra: "  edited\nlaunch prompt ✓  ",
+      start: true,
     });
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "created-implementation");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "created-implementation");
   });
 
   it("preserves an explicit empty prompt and omits terminal prompts", async () => {
@@ -1046,10 +1048,7 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish empty-prompt session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true },
-    });
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true });
 
     cleanup();
     await renderApp();
@@ -1057,9 +1056,10 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish terminal session" }));
     await screen.findByText("session:created-implementation");
-    expect(ipcMocks.createSessionForRepo).toHaveBeenLastCalledWith({
-      repoPath: "/repo",
-      request: { task_slug: "task", target: { kind: "auxiliary", harness: "no-harness", model: "", prompt: undefined }, start: true },
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
+      task_slug: "task",
+      target: { kind: "auxiliary", harness: "no-harness", model: "", prompt: undefined },
+      start: true,
     });
   });
 
@@ -1069,15 +1069,15 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(screen.getByRole("button", { name: "start fresh" }));
     fireEvent.click(await screen.findByRole("button", { name: "start queued session" }));
     await screen.findByText("session:queued-design");
-    expect(ipcMocks.startSession).toHaveBeenCalledWith("task", "queued-design", "/repo");
-    expect(ipcMocks.createSessionForRepo).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).toHaveBeenCalledWith("/repo", "task", "queued-design");
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
     expect(screen.getByText("session intent:attach")).toBeTruthy();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "queued-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "queued-design");
 
     fireEvent.click(screen.getByRole("button", { name: "review handoff" }));
     fireEvent.click(await screen.findByRole("button", { name: "confirm review handoff" }));
     await screen.findByText("session:review-target");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "review-task", "review-target");
   });
 
   it("lists the remapped top-level actions in the command palette", async () => {
@@ -1222,13 +1222,13 @@ describe("global notification owner", () => {
     fakeBoard.set({ sessions: [globalSession] as never });
     await renderApp();
     await openGlobalSession();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "task", "global-design");
 
     cleanup();
-    ipcMocks.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
+    sessionWrites.markSessionNotificationRead.mockRejectedValueOnce(new Error("acknowledgment failed"));
     await renderApp();
     await openGlobalSession();
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenCalledTimes(2);
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenCalledTimes(2);
   });
 
   it("applies saved badge preferences immediately", async () => {
@@ -1256,8 +1256,8 @@ describe("global notification owner", () => {
     expect(notificationView?.getAttribute("data-scope")).toBe("/repo");
     expect(notificationView?.getAttribute("data-global-rows")).toBe("2");
     fireEvent.click(screen.getByRole("button", { name: "clear shared notifications" }));
-    await waitFor(() => expect(ipcMocks.clearSessionNotifications).toHaveBeenCalled());
-    const refs = ipcMocks.clearSessionNotifications.mock.calls[0][0] as Array<Record<string, unknown>>;
+    await waitFor(() => expect(sessionWrites.clearSessionNotifications).toHaveBeenCalled());
+    const refs = sessionWrites.clearSessionNotifications.mock.calls[0][0] as Array<Record<string, unknown>>;
     expect(refs).toHaveLength(2);
     expect(refs).toEqual(
       expect.arrayContaining([
@@ -1280,7 +1280,7 @@ describe("collection filter shortcuts", () => {
     fireEvent.keyDown(status, { key: "Enter", metaKey: true });
     await act(async () => {});
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
 
     fireEvent.keyDown(status, { key: "k", metaKey: true });
     const search = await screen.findByRole("combobox", { name: "Search actions, tasks, and sessions" });
@@ -1304,7 +1304,7 @@ describe("session work names", () => {
     expect(fireEvent.keyDown(rename, { key: "Enter" })).toBe(true);
     await act(async () => {});
     expect(screen.queryByText("session:global-design")).toBeNull();
-    expect(ipcMocks.markSessionNotificationRead).not.toHaveBeenCalled();
+    expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
     fireEvent.click(rename);
     expect(screen.getByRole("textbox", { name: "Session name" })).toHaveProperty("value", "Keyboard work");
   });
@@ -1316,7 +1316,7 @@ describe("session work names", () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByText("Original work");
-    ipcMocks.renameSession.mockImplementation(async () => {
+    sessionWrites.renameSession.mockImplementation(async () => {
       fakeBoard.set({ sessions: [{ ...original, name: "Committed work", name_source: "user" }] as never });
       return { name: "Committed work", source: "user" };
     });
@@ -1334,7 +1334,7 @@ describe("session work names", () => {
     await waitFor(() => expect(within(palette).getByText("External work")).toBeDefined());
     fireEvent.click(within(palette).getByText("External work"));
     await screen.findByText("session:global-design");
-    expect(ipcMocks.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
+    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "global-design");
   });
 
   it("a real child rename patches task and manager search names without replacing manager work names", async () => {

@@ -78,7 +78,7 @@ describe("a session's badge follows its subscription", () => {
     daemon.show("/r", "task", "s1", running("waiting_for_input"), { kind: "input", correlationId: "c1" });
     await screen.findByText("Needs input");
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify).toHaveBeenCalledWith("/r", "task", "waiting_for_input");
+    expect(notify).toHaveBeenCalledWith("session — waiting for your input");
 
     daemon.show("/r", "task", "s1", exited);
     await waitFor(() => expect(screen.queryByText("Needs input")).toBeNull());

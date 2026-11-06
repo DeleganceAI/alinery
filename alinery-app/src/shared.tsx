@@ -13,6 +13,7 @@ import { deriveModelRows } from "./modelFavorites";
 import { parseRemoteRepo, repoDisplayPath } from "./remoteRepo";
 import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
 import { useTaskActivityMap } from "./sync/board";
+import { killSession } from "./sync/sessions";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -1075,12 +1076,17 @@ function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_in
 // settled and now waits on something it was not waiting on (a new Attention `wait`) notifies, and so
 // does busy -> idle. A first sighting ("loading", or no previous kind) and a re-render that shows the
 // same kind again, which is all a reconnect snapshot of an unchanged session is, raise nothing.
-export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
+export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, label: string) {
   const reason = attentionReason(current);
   if (reason === null || previous === null || previous === "loading" || previous === "unknown" || previous === current) return;
   if (reason === "idle" && previous !== "busy") return;
-  ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
+  ipc.notifySessionAttention(attentionBody(label, reason)).catch(() => {});
 }
+
+const ATTENTION_SUFFIX = { idle: "idle, needs you", waiting_for_input: "waiting for your input", waiting_for_approval: "waiting for your approval" } as const;
+
+/** The text of an attention notification: the label the session entity carries (its task's name) and why it needs the person. */
+export const attentionBody = (label: string, reason: keyof typeof ATTENTION_SUFFIX) => `${label || "session"} — ${ATTENTION_SUFFIX[reason]}`;
 
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
 function obsMinimalHide(kind: ObservationDisplayKind): boolean {
@@ -1128,8 +1134,8 @@ export function StatusDot({
     const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
     prevKind.current = { key: pollKey, kind: observedKind };
     if (!notifyTransitions || !slug || !repoPath) return;
-    notifySessionAttentionTransition(prev, observedKind, repoPath, slug);
-  }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
+    notifySessionAttentionTransition(prev, observedKind, obs?.attention_label ?? "");
+  }, [observedKind, notifyTransitions, pollKey, repoPath, slug, obs?.attention_label]);
 
   if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {
     return (
@@ -1271,7 +1277,7 @@ export function KillButton({
       onClick={(e) => {
         e.stopPropagation();
         setBusy(true);
-        (repoPath ? ipc.killSessionForRepo(repoPath, id, slug ?? "") : ipc.killSession(id, slug ?? ""))
+        (repoPath ? killSession(repoPath, id, slug ?? "") : ipc.readAppConfig().then((config) => killSession(config.active_repo, id, slug ?? "")))
           .then(() => {
             toast("Session killed", "success");
             onKilled?.();

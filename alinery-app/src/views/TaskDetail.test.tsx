@@ -93,6 +93,13 @@ vi.mock("../sync/tasks", async (actual) => ({
 }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  createSession: ipcSpies.createSessionForRepo,
+  archiveSession: ipcSpies.archiveSessionForRepo,
+  renameSession: ipcSpies.renameSession,
+  markSessionNotificationRead: mocks.markSessionNotificationRead,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
     subtaskState: mocks.subtaskState,
@@ -101,11 +108,7 @@ vi.mock("../ipc", () =>
     listTaskArtifactTree: mocks.listTaskArtifactTree,
     readArtifact: mocks.readArtifact,
     listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
-    createSessionForRepo: ipcSpies.createSessionForRepo,
-    archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
     sessionAbort: ipcSpies.sessionAbort,
-    renameSession: ipcSpies.renameSession,
-    markSessionNotificationRead: mocks.markSessionNotificationRead,
     startSubtaskManager: ipcSpies.startSubtaskManager,
     recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
     discardSubtask: ipcSpies.discardSubtask,

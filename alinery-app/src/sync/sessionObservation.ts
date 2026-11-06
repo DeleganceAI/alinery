@@ -54,6 +54,7 @@ export function observationOf(entity: Entity | undefined): SessionObservation {
       omp_turn_id: sem?.ompTurnId === undefined ? null : Number(sem.ompTurnId),
     },
     transport: s.status?.transport === "pty" || s.status?.transport === "rpc" ? s.status.transport : null,
+    attention_label: s.attentionLabel || undefined,
   };
 }
 

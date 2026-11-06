@@ -155,6 +155,9 @@ const taskWrites = vi.hoisted(() => ({
   prepareTaskAttachments: vi.fn<TaskWrites["prepareTaskAttachments"]>(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
 }));
 vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), ...taskWrites }));
+// Creating a task must not create or start a session on its own: those are the daemon's SessionService.
+const sessionWrites = vi.hoisted(() => ({ createSession: vi.fn(), startSession: vi.fn() }));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), ...sessionWrites }));
 
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 
@@ -342,8 +345,8 @@ describe("scoped playbook selection", () => {
     expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
     expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
-    expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
-    expect(ipc.startSession).not.toHaveBeenCalled();
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
     await screen.findByRole("region", { name: "SuperDevelop graph" });
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
@@ -1360,8 +1363,8 @@ describe("v2 task creation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open session root-b" }));
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", task: reply.task, selectedSessionId: "root-b" }));
     expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
-    expect(ipc.startSession).not.toHaveBeenCalled();
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).not.toHaveBeenCalled();
   });
 
   it("waits for the stable draft identity and stops autosave throughout promotion", async () => {

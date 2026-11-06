@@ -123,9 +123,10 @@ vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+// The session writes and reads are the daemon's SessionService, not ipc.
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession, archiveSession, sessionArtifactReady, startSession }));
 vi.mock("../ipc", () =>
   mockIpc({
-    renameSession,
     getTaskExecution,
     listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
     listTaskArtifactTree: () => {
@@ -135,9 +136,6 @@ vi.mock("../ipc", () =>
     listArtifactCommentDrafts: async () => [],
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
-    archiveSession,
-    sessionArtifactReady,
-    startSession,
     sessionPrompt,
     sessionAbort,
     sessionSetModel,
@@ -456,7 +454,7 @@ describe("session archive pending feedback", () => {
     fireEvent.click(busy);
     expect(confirmDanger).toHaveBeenCalledTimes(1);
     expect(archiveSession).toHaveBeenCalledTimes(1);
-    expect(archiveSession).toHaveBeenCalledWith("task", "session");
+    expect(archiveSession).toHaveBeenCalledWith("/repo", "task", "session");
     expect(onBack).not.toHaveBeenCalled();
     await act(async () => pending.reject(new Error("daemon timed out")));
     expect((screen.getByRole("button", { name: "Archive session" }) as HTMLButtonElement).disabled).toBe(false);
@@ -814,7 +812,7 @@ describe("held task sessions", () => {
       getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", lifecycle: "running" })]));
     });
     fireEvent.click(recover);
-    await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("/repo", "task", "session"));
     expect(await screen.findByLabelText("Message or /command")).toBeDefined();
 
     cleanup();
@@ -845,7 +843,7 @@ describe("held task sessions", () => {
       getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
     });
     fireEvent.click(start);
-    await waitFor(() => expect(startSession).toHaveBeenCalledWith("task", "session", "/repo"));
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("/repo", "task", "session"));
     expect(await screen.findByLabelText("Message or /command")).toBeDefined();
   });
 
