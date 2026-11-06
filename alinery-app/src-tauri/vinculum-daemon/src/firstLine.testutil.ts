@@ -4,10 +4,8 @@ export async function firstLine(child: Bun.Subprocess<"ignore" | "pipe", "pipe",
   const reader = child.stdout.getReader();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`fixture printed nothing in ${ms} ms`));
-    }, ms);
+    // No kill here (the signal gate keeps `.kill(` out of non-test files); every fixture ends itself after 60 s.
+    timer = setTimeout(() => reject(new Error(`fixture printed nothing in ${ms} ms`)), ms);
   });
   try {
     return new TextDecoder().decode((await Promise.race([reader.read(), timeout])).value).trim();
