@@ -180,3 +180,12 @@ test("a host's own harness row models come first, then the signed-in providers' 
   const listed = (await svc(SECRET).listModels({ harness: "omp" })).models;
   expect(listed[0]).toBe("house/model-a");
 });
+
+test("a daemon started over ssh (the peer is sshd, the token is the proof) lists its own host's models and signs in", async () => {
+  const { svc, meta, repo } = await start(undefined);
+  writeFileSync(join(repo, ".alinery", "harnesses.toml"), '[[harness]]\nkey = "omp"\nname = "OMP"\nbinary = "omp"\nmodels = ["host/model"]\n');
+  const c = svc(SECRET);
+  expect((await c.listModels({ harness: "omp" })).models).toEqual(["host/model"]);
+  const started = (await c.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY })).status!;
+  expect(started.loginId).not.toBe("");
+});
