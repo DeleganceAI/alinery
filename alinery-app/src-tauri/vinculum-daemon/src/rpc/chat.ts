@@ -51,7 +51,7 @@ export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): Se
     archiveChatThread: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
-        await archiveChatThread(c.repo, c.runner, req.threadId, req.removeWorktree);
+        await archiveChatThread(c.repo, c.runner, req.threadId, req.removeWorktree, () => settle(req.threadId));
         await settle(req.threadId);
         return { applied: applied() };
       });

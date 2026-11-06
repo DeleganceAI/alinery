@@ -47,6 +47,7 @@ async function start() {
   const events: TelemetryEvent[] = [];
   const running = new Set<string>();
   const metaAtKill: Record<string, Record<string, unknown>> = {};
+  const storeAtKill: Record<string, unknown> = {};
   const runner: ChatSessions = {
     create: (request) => createExecutionSession(repo, request, async () => {}),
     start: (request) => startSession(repo, request, async (id) => void running.add(id)),
@@ -54,6 +55,7 @@ async function start() {
     isRunning: (id) => running.has(id),
     stop: (id) => {
       metaAtKill[id] = JSON.parse(readFileSync(metaPathOf(repo, id.startsWith("t-") ? "t" : "", id), "utf8"));
+      storeAtKill[id] = store.get(sessionKey(id.startsWith("t-") ? "t" : "", id))?.value;
       running.delete(id);
     },
   };
@@ -87,7 +89,7 @@ async function start() {
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
     interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
   });
-  return { repo, alinery, task, store, feed: f, events, running, metaAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  return { repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -148,6 +150,7 @@ test("archiving a session puts the stamp in the file and the store before the pr
   const out = await c.session.archiveSession({ meta: meta(), session: ref("t", "t-s1") });
   expect(out.killedLive).toBe(true);
   expect(c.metaAtKill["t-s1"]).toMatchObject({ archived: true, phase: "build" });
+  expect(c.storeAtKill["t-s1"]).toMatchObject({ value: { archived: true } });
   expect(c.running.has("t-s1")).toBe(false);
   expect(c.store.get(sessionKey("t", "t-s1"))?.value).toMatchObject({ value: { archived: true } });
   expect(c.events).toEqual([{ event: "session.archive", source: "alineryd", killedLive: true, sessionId: "sess-id", taskId: "task-id" }]);
@@ -199,7 +202,9 @@ test("a chat thread is created, pinned, continued and archived through ChatServi
   const resumed = await c.chat.resumeChatThread({ meta: meta(), threadId: id });
   expect(resumed.successorId).not.toBe(id);
   expect(c.store.get(chatKey(id))?.value).toMatchObject({ value: { superseded: true } });
+  expect(c.running.has(resumed.successorId)).toBe(true);
   await c.chat.archiveChatThread({ meta: meta(), threadId: resumed.successorId, removeWorktree: false });
+  expect(c.storeAtKill[resumed.successorId]).toMatchObject({ value: { archived: true } });
   expect(c.store.get(sessionKey("", resumed.successorId))?.value).toMatchObject({ value: { archived: true } });
   expect(await code(c.chat.setChatPinned({ meta: meta(), threadId: "nope", pinned: true }))).toBe(Code.NotFound);
 });

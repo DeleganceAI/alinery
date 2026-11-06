@@ -104,6 +104,9 @@ test("pinning and the other thread writes are refused for a session that is not 
   writeFileSync(metaPathOf(repo, "", "term"), JSON.stringify({ id: "term", harness: "no-harness", generic: true }));
   expect(() => setChatPinned(repo, "term", true)).toThrow("not a chat thread");
   await expect(archiveChatThread(repo, sessions, "term", false)).rejects.toThrow("not a chat thread");
+  // A Vinculum root session that was not made as a chat thread is refused too (the `generic` clause, not only the harness one).
+  writeFileSync(metaPathOf(repo, "", "plain"), JSON.stringify({ id: "plain", harness: "vinculum", generic: false }));
+  expect(() => setChatPinned(repo, "plain", true)).toThrow("not a chat thread");
   expect(() => setChatPinned(repo, "../x", true)).toThrow("invalid session id");
   expect(() => setChatPinned(repo, "gone", true)).toThrow("session not found");
 });

@@ -535,6 +535,22 @@ The comment asked the plan to make the execution mechanism explicit. Disposition
 - **Flaky test:** R-FLAKE-1 (`a_repo_being_closed_is_not_respawned_by_attach`) did not trip in this session's full `check.sh`.
 - **Suggested README text (not edited):** after S4.4 the README's chat paragraph could say that chat threads, their attachments and their worktrees are kept by the repo's daemon, so a thread made in one window shows in every other window on that repo without a refresh, and a repository on another machine keeps its threads on that machine.
 
+### R-S4.4-15: `close_all_repos` keeps writing the exited-session acks in the shell
+- **Kind:** deviation from the S4.4 Build bullet ("the exited-session acks become `ArchiveSession` calls"); found by the S4.4 verifier. Provisional.
+- **What:** `execute_close_repo_acknowledgment_plan` still calls `acknowledge_exited_session_refs`, which calls `alinery_core::session_actions::mark_exit_notification_read` on each session that was unended when the plan was frozen. It runs after `close_repo_daemon` has shut the daemon down.
+- **Why the bullet cannot be met as written:** the ack stamps `exit_notification_read_at` with the `ended_at` the shutdown just produced, so it needs the exit to have happened, and the daemon is gone by then. `ArchiveSession` would be wrong too (it archives the session, which the old ack never did) and `ClearNotifications` needs a daemon to call. The shell also has no Rust gRPC client (the only gRPC path is the webview bridge, `daemon_rpc.rs`). With the daemon stopped there is no second writer, so the direct write has no race.
+- **Options:** (a) keep the shell write and record it; (b) make the daemon's `Shutdown` op stamp the checkpoint for the sessions it ends (a wire change, and it would change `stop_daemon`'s behaviour, which acks nothing today); (c) have the webview call `ClearNotifications` after the shutdown against a restarted daemon (absurd).
+- **Why (a):** smallest and reversible; no wire change. `close_all_repos` is quit-time only.
+- **Reverse / follow-up:** S4.11 (which shrinks `daemon.rs`) decides whether (b) is worth a protocol bump. The test is `tests/session.rs` (the acknowledgment of unended refs).
+- **Files:** `src/session.rs`, `src/daemon.rs`.
+
+### R-S4.4-16: follow-ups from the S4.4 verifier
+- **Kind:** fix and note.
+- **Fixed:** `archiveChatThread` now takes a `stamped` hook that the RPC uses to refresh the thread's rows between the stamp and the stop, so a subscriber sees the archived put before the exit put, as `ArchiveSession` does. `rpc/sessionWrites.test.ts` records the store row at the moment of `stop` for both paths (it fails with the hook removed). `loadChat`'s `generic !== true` clause has its own test (a Vinculum root session with `generic: false` is refused; it fails with the clause removed).
+- **Not done:** a real-Terminal `ArchiveSession` against a bun-started daemon without the app. I did not build one (the daemon's real runner needs the host setup `main.ts` does, and no existing test starts it), so the real run stays L-S4.4-a.
+- **Accept 1 and the two `RepoOp`s:** unchanged, R-S4.4-1 and R-S4.4-2.
+- **Files:** `vinculum-daemon/src/domain/chat.ts`, `rpc/chat.ts`, `domain/chat.test.ts`, `rpc/sessionWrites.test.ts`.
+
 ---
 
 ## E. Known flaky tests

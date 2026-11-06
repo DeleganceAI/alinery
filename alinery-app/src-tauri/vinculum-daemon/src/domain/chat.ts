@@ -231,10 +231,14 @@ export function setChatPinned(repo: string, id: string, pinned: boolean): void {
   });
 }
 
-/** Stamps the thread archived, then stops it if it runs (the stamp first, so a subscriber sees it before the exit). */
-export async function archiveChatThread(repo: string, sessions: ChatSessions, id: string, removeWorktree: boolean): Promise<void> {
+/**
+ * Stamps the thread archived, then stops it if it runs. `stamped` runs between the two (the caller refreshes the store there),
+ * so a subscriber sees the archived put before the exit put.
+ */
+export async function archiveChatThread(repo: string, sessions: ChatSessions, id: string, removeWorktree: boolean, stamped: () => Promise<void> = async () => {}): Promise<void> {
   const meta = loadChat(repo, id);
   stampSessionArchived(repo, "", id);
+  await stamped();
   if (sessions.isRunning(id)) sessions.stop(id);
   if (removeWorktree) await removeOwnedWorktree(repo, meta);
 }
