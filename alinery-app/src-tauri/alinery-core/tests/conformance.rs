@@ -43,9 +43,49 @@ fn session_meta(input: &Path) -> Value {
     Value::Object(out)
 }
 
+/// Every `tasks/*/task.md` under `input/.alinery`, keyed `task/<dir>/<dir>`; a file Rust refuses is absent.
+fn task_dirs(input: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = fs::read_dir(input.join(".alinery/tasks")) else { return vec![] };
+    entries.flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect()
+}
+
+fn task(input: &Path) -> Value {
+    let mut out = Map::new();
+    for (slug, _) in task_dirs(input) {
+        if let Ok(task) = alinery_core::board::read_task_checked(input, &slug) {
+            out.insert(format!("task/{slug}/{slug}"), serde_json::to_value(task).unwrap());
+        }
+    }
+    Value::Object(out)
+}
+
+/// The derived board fields of each task (current step and friends), from `board_task`. `updated`
+/// follows file mtimes and is left out; the daemon's `total_sessions` has no Rust counterpart.
+fn board(input: &Path) -> Value {
+    let mut out = Map::new();
+    for (slug, _) in task_dirs(input) {
+        let Ok(task) = alinery_core::board::read_task_checked(input, &slug) else { continue };
+        let row = alinery_core::board::board_task(input, "", task).unwrap();
+        out.insert(
+            format!("task/{slug}/{slug}"),
+            serde_json::json!({
+                "session_count": row.session_count,
+                "playbook_title": row.playbook_title,
+                "playbook_steps": row.playbook_steps,
+                "current_phase": row.current_phase,
+                "current_step_title": row.current_step_title,
+                "latest_session_title": row.latest_session_title,
+            }),
+        );
+    }
+    Value::Object(out)
+}
+
 fn run(domain: &str, input: &Path) -> Value {
     match domain {
         "session_meta" => session_meta(input),
+        "task" => task(input),
+        "board" => board(input),
         other => panic!("no Rust reader for conformance domain {other}"),
     }
 }
@@ -70,5 +110,5 @@ fn rust_readers_match_expected_json() {
             cases += 1;
         }
     }
-    assert!(cases >= 6, "found only {cases} conformance cases");
+    assert!(cases >= 12, "found only {cases} conformance cases");
 }

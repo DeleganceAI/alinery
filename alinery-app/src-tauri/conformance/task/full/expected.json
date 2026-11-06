@@ -1,0 +1,52 @@
+{
+  "task/full/full": {
+    "active_subtask": "child",
+    "archived": true,
+    "auto_advance": [
+      "clarify",
+      "plan"
+    ],
+    "auto_approve_all": true,
+    "branch": "full",
+    "created": 20,
+    "draft": true,
+    "draft_base_ref": "refs/heads/main",
+    "engine_version": 2,
+    "github_issue": "owner/repo#2",
+    "has_worktree": false,
+    "launch_defaults": {
+      "harness": "omp",
+      "model": "m1"
+    },
+    "linear_id": "LIN-1",
+    "max_live_sessions": 3,
+    "name": "Full",
+    "parent_task": "parent",
+    "playbook": "superdevelop",
+    "playbook_ref": {
+      "key": "superdevelop",
+      "scope": "repo"
+    },
+    "pr_url": "https://example.test/pr/1",
+    "related_tasks": [
+      {
+        "name": "Other",
+        "repo_path": "/repo/other",
+        "slug": "other"
+      },
+      {
+        "repo_path": "/repo/two",
+        "slug": "two"
+      }
+    ],
+    "requested_slug": "full-req",
+    "slug": "full",
+    "step_models": {
+      "build": "big",
+      "plan": "small"
+    },
+    "subtask_outcome": "finished",
+    "telemetry_id": "tel-1",
+    "worktree": "/w/full"
+  }
+}

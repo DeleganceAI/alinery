@@ -13,9 +13,80 @@ message SessionRef {
 // session meta S2.3 (status and attention S2.5), execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
 // an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
 // tell one row from another.
+message PlaybookRef {
+  string scope = 1;  // bundled, global or repo
+  string key = 2;
+}
+message LaunchChoices {
+  string harness = 1;
+  string model = 2;
+}
+message RelatedTaskRef {
+  string repo_path = 1;
+  string slug = 2;
+  string name = 3;
+}
+message BoardStep {
+  string key = 1;
+  string title = 2;
+}
+// What the board shows about a task that no single file holds: derived by the daemon (S3.5, rule R3)
+// from the task, its non-archived sessions and its playbook, and recomputed when any of them commits.
+message BoardProjection {
+  uint64 session_count = 1;  // non-archived sessions
+  uint64 total_sessions = 2;  // archived ones included; a client opens a task stream only when this is above 0
+  string playbook_title = 3;
+  repeated BoardStep playbook_steps = 4;
+  uint64 updated = 5;
+  string current_phase = 6;
+  string current_step_title = 7;
+  string latest_session_title = 8;
+}
+message TaskActivitySession {
+  string id = 1;
+  string worktree = 2;
+  string phase = 3;
+  string harness = 4;
+  string model = 5;
+  string playbook = 6;
+  bool generic = 7;
+  string step_title = 8;
+}
+// The newest actionable session's status and the session to open, as `resolve_task_activity_for_repo` answered.
+message TaskActivity {
+  string status = 1;  // running, waiting_for_input, waiting_for_approval, failed, completed, or "" for none
+  optional TaskActivitySession active_session = 2;
+}
+// `Task` (alinery-core types.rs) in the names task.md and its serde JSON use, then what the daemon derives.
 message Task {
   string slug = 1;
-  string title = 2;
+  string name = 2;
+  string requested_slug = 3;
+  string branch = 4;
+  string worktree = 5;
+  bool has_worktree = 6;
+  uint64 created = 7;
+  bool archived = 8;
+  string pr_url = 9;
+  string linear_id = 10;
+  string github_issue = 11;
+  string playbook = 12;
+  uint32 engine_version = 13;
+  optional PlaybookRef playbook_ref = 14;
+  uint32 max_live_sessions = 15;
+  LaunchChoices launch_defaults = 16;
+  repeated string auto_advance = 17;
+  bool auto_approve_all = 18;
+  map<string, string> step_models = 19;
+  string parent_task = 20;
+  string active_subtask = 21;
+  string subtask_outcome = 22;
+  bool draft = 23;
+  optional string draft_base_ref = 24;
+  repeated RelatedTaskRef related_tasks = 25;
+  string telemetry_id = 26;
+  BoardProjection board = 40;
+  TaskActivity activity = 41;
 }
 message Draft {}
 // One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
@@ -93,6 +164,10 @@ message Session {
   SemanticCheckpoint semantic = 33;
   string telemetry_id = 34;
   SessionWait wait = 35;  // unset when the agent waits for nothing
+  // From `<id>.name.json` (session_name.rs); unset when there is no name file or Rust would refuse it.
+  optional string name = 36;
+  string name_source = 37;  // auto or user
+  optional string name_error = 38;
 }
 message Artifact {}
 message Comment {}

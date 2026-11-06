@@ -1,0 +1,18 @@
+{
+  "task/drafty/drafty": {
+    "current_phase": "clarify",
+    "current_step_title": "clarify",
+    "latest_session_title": "Draft",
+    "playbook_steps": [],
+    "playbook_title": "",
+    "session_count": 1
+  },
+  "task/empty/empty": {
+    "current_phase": "",
+    "current_step_title": "",
+    "latest_session_title": "No sessions",
+    "playbook_steps": [],
+    "playbook_title": "",
+    "session_count": 0
+  }
+}

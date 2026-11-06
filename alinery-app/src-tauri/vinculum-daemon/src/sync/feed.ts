@@ -21,10 +21,18 @@ export class Feed {
     readonly alinery: string,
     /** Applied to each entity before it is committed: the live state a file cannot hold (S2.5). */
     private readonly decorate: (entity: Entity) => Entity = (e) => e,
+    /** The paths to re-read after a path changed: rows derived from more than their own file (S3.5). Applied once, never to a path it caused. */
+    private readonly dependents: (rel: string) => string[] = () => [],
   ) {}
 
+  /** The path re-read, then the paths derived from it. */
+  async refresh(rel: string): Promise<void> {
+    await this.reread(rel);
+    for (const d of this.dependents(rel)) await this.reread(d).catch(() => {});
+  }
+
   /** One path at a time per file, so a slow read can't land after a newer one. */
-  refresh(rel: string): Promise<void> {
+  private reread(rel: string): Promise<void> {
     if (!route(rel)) return Promise.resolve();
     const run = (this.chains.get(rel) ?? Promise.resolve()).then(() => this.read(rel));
     const tail = run.catch(() => {});
@@ -68,8 +76,11 @@ export class Feed {
     return out;
   }
 
+  /** Every path once, then each path derived from them once: a scan of 10,000 artifacts re-reads each task one time, not ten. */
   private async refreshAll(rels: string[]) {
-    for (let i = 0; i < rels.length; i += BATCH) await Promise.all(rels.slice(i, i + BATCH).map((r) => this.refresh(r)));
+    for (let i = 0; i < rels.length; i += BATCH) await Promise.all(rels.slice(i, i + BATCH).map((r) => this.reread(r)));
+    const derived = [...new Set(rels.flatMap((r) => this.dependents(r)))];
+    for (let i = 0; i < derived.length; i += BATCH) await Promise.all(derived.slice(i, i + BATCH).map((r) => this.reread(r)));
   }
 
   /** Start-up: every file through its parser. */

@@ -7,7 +7,7 @@ import { expect } from "bun:test";
 import type { Store, Timers } from "./store.ts";
 
 export const task = (slug: string, title = "", id = slug): Entity =>
-  create(EntitySchema, { key: `task/${slug}/${id}`, value: { case: "task", value: { slug, title } } });
+  create(EntitySchema, { key: `task/${slug}/${id}`, value: { case: "task", value: { slug, name: title } } });
 export const session = (slug: string, id: string, status: string): Entity =>
   create(EntitySchema, { key: `session/${slug || "_"}/${id}`, value: { case: "session", value: { ref: { taskSlug: slug, id }, status: { process: status } } } });
 
@@ -87,3 +87,20 @@ export function same(a: Map<string, Entity>, b: Map<string, Entity>) {
 }
 
 export const expected = (store: Store, scope = repoScope) => new Map([...store.rowsMatching(scope)].map((e) => [e.key, e]));
+
+/** Conformance comparison: both sides drop null and default-valued fields and compare numbers as strings (proto3 JSON omits defaults and writes 64-bit integers as strings). */
+export function normalize(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(normalize);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) {
+      const n = normalize(x);
+      if (n === null || n === "" || n === 0 || n === false || n === "0") continue;
+      if (typeof n === "object" && !Array.isArray(n) && !Object.keys(n as object).length) continue;
+      if (Array.isArray(n) && !n.length) continue;
+      out[k] = n;
+    }
+    return out;
+  }
+  return typeof v === "number" ? String(v) : v;
+}

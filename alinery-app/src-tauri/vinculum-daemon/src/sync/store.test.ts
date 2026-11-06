@@ -68,8 +68,8 @@ test("the store keeps its own copy: the caller's object is neither changed nor s
   const e = task("a", "A");
   store.commit([e]);
   expect(e.revision).toBe(0n);
-  if (e.value.case === "task") e.value.value.title = "changed by the caller";
-  expect(store.get("task/a/a")?.value).toMatchObject({ case: "task", value: { title: "A" } });
+  if (e.value.case === "task") e.value.value.name = "changed by the caller";
+  expect(store.get("task/a/a")?.value).toMatchObject({ case: "task", value: { name: "A" } });
 });
 
 test("scopes filter keys as 2.2.6 says", () => {

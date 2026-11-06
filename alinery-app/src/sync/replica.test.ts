@@ -4,7 +4,7 @@ import { expect, it, vi } from "vitest";
 import { cursor, daemonHarness, entity, put, scriptedSync, snapshot } from "../test/daemonHarness";
 import { Replica, runReplica } from "./replica";
 
-const task = (slug: string) => entity(`task/${slug}`, { case: "task", value: { slug, title: slug } as never });
+const task = (slug: string) => entity(`task/${slug}`, { case: "task", value: { slug, name: slug } as never });
 const wait = async (ok: () => boolean) => {
   for (let i = 0; i < 200 && !ok(); i++) await new Promise((r) => setTimeout(r, 5));
   expect(ok()).toBe(true);

@@ -12,7 +12,9 @@ import { forgetTask, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts"
 import { Replica, taskScope } from "../sync/testkit.ts";
 import { Store } from "../sync/store.ts";
 import { getTaskExecution } from "../tasks.ts";
-import { commitExecution, executionKey } from "./executions.ts";
+import { commitExecution, executionKey, executionParser } from "./executions.ts";
+import { Feed } from "../sync/feed.ts";
+import { parsers } from "../sync/parsers/index.ts";
 
 // A four-step fork and join, the shape of the retired parallel-numbers playbook: seed, then sum and
 // product side by side, then combine.
@@ -150,4 +152,25 @@ test("a task with no execution state has no row", () => {
   const repo = mkdtempSync(join(tmpdir(), "vinculum-exec-none-"));
   commitExecution(store, repo, "ghost", "lane", "identity");
   expect(store.seq).toBe(0n);
+});
+
+test("a scan puts the execution row of a task no engine event has touched, and a rewrite of execution.json updates it", async () => {
+  const { repo, dir } = fixture("cold");
+  const parser = executionParser(repo, "lane", "id");
+  parsers.push(parser);
+  try {
+    const store = new Store();
+    const feed = new Feed(store, join(repo, ".alinery"));
+    await feed.scan();
+    const row = () => {
+      const e = store.get(executionKey("cold"));
+      return e?.value.case === "execution" ? toJson(StructSchema, e.value.value.state!) : undefined;
+    };
+    expect(row()).toMatchObject({ auto_approve_all: false, owning_lane: "lane" });
+    writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: KEYS, auto_approve_all: true }));
+    await feed.refresh("tasks/cold/execution.json");
+    expect(row()).toMatchObject({ auto_approve_all: true });
+  } finally {
+    parsers.splice(parsers.indexOf(parser), 1);
+  }
 });
