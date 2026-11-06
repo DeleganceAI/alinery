@@ -6,6 +6,7 @@ import { DEFAULT_APPEARANCE } from "./appearance";
 import * as ipc from "./ipc";
 import type { SessionNoticeRow } from "./sessionAttention";
 import { fakeBoard } from "./test/boardHooks";
+import { fakeExecution } from "./test/executionFeed";
 import type {
   AppConfig,
   BoardTask,
@@ -178,17 +179,6 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
     renameTask: vi.fn(),
     subtaskState: vi.fn(),
     getTaskExecution: vi.fn(),
-    observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
-      Promise.all(
-        tasks.map(async (task) => {
-          try {
-            return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMocks.getTaskExecution(task.taskSlug, task.repoPath) };
-          } catch (error) {
-            return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
-          }
-        }),
-      ),
-    ),
     listArtifactsWithMetadata: vi.fn(),
     listTaskArtifactTree: vi.fn(),
     listArtifactCommentDraftsForRepo: vi.fn(),
@@ -220,6 +210,8 @@ const { ipcMocks, ipcModule, readEffectiveConfig } = vi.hoisted(() => {
 });
 
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
+vi.mock("./sync/execution", async (actual) => (await import("./test/executionFeed")).executionHooks(await actual()));
+fakeExecution.source = (slug, repo) => ipcMocks.getTaskExecution(slug, repo);
 vi.mock("./ipc", () => ipcModule);
 vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig }));
 vi.mock("./tabMotion", () => {

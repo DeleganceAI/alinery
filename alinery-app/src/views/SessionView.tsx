@@ -55,6 +55,7 @@ import {
   sameArtifactListItems,
 } from "../shared";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
+import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
@@ -72,7 +73,6 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
-import { readTaskExecution } from "../useExecutionObservation";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
@@ -214,7 +214,7 @@ export function SessionView({
   }, [repoPath, taskSlug, id]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionAvailable = executionView?.live?.status === "available" && !executionError;
+  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
   const [completionBusy, setCompletionBusy] = useState(false);
   const [dismissedCompletionId, setDismissedCompletionId] = useState("");
   const execution = Object.values(executionView?.state.executions ?? {}).find((record) => record.owner_session_id === id || record.previous_session_ids.includes(id));
@@ -429,31 +429,12 @@ export function SessionView({
     setupOpenedRef.current = false;
   }, [id, taskSlug, repoPath, intent]);
 
+  // The execution row is pushed by the daemon; an approval's refusal is shown until the next row lands.
+  const executionFeed = useTaskExecution(repoPath, taskSlug);
   useEffect(() => {
-    let alive = true;
-    setExecutionView(null);
-    setExecutionError("");
-    if (!taskSlug) return;
-    let timer = 0;
-    const refresh = async () => {
-      try {
-        const next = await readTaskExecution(repoPath, taskSlug);
-        if (alive) {
-          setExecutionView(next);
-          setExecutionError("");
-        }
-      } catch (error) {
-        if (alive) setExecutionError(String(error));
-      } finally {
-        if (alive) timer = window.setTimeout(refresh, 1500);
-      }
-    };
-    void refresh();
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-    };
-  }, [taskSlug, repoPath, id]);
+    if (executionFeed.reply) setExecutionView(executionFeed.reply);
+    setExecutionError(executionFeed.error);
+  }, [executionFeed, taskSlug, repoPath, id]);
 
   const handleArchive = async () => {
     if (archivePending.current) return;
@@ -1186,8 +1167,7 @@ export function SessionView({
       }
       setCompletionBusy(true);
       try {
-        await ipc.allowExecutionCompletion(taskSlug, execution.id, id, repoPath);
-        setExecutionView(await readTaskExecution(repoPath, taskSlug));
+        await allowExecutionCompletion(repoPath, taskSlug, execution.id, executionView?.revision);
         setExecutionError("");
       } catch (error) {
         setExecutionError(String(error));
@@ -1252,7 +1232,6 @@ export function SessionView({
     try {
       await ipc.startSession(taskSlug, id, repoPath);
       setReclassifyTick((tick) => tick + 1);
-      setExecutionView(await readTaskExecution(repoPath, taskSlug));
       setExecutionError("");
     } catch (error) {
       setExecutionError(String(error));
@@ -1332,7 +1311,6 @@ export function SessionView({
               try {
                 await ipc.startSession(taskSlug, id, repoPath);
                 setReclassifyTick((tick) => tick + 1);
-                setExecutionView(await readTaskExecution(repoPath, taskSlug));
                 setExecutionError("");
               } catch (error) {
                 setExecutionError(String(error));

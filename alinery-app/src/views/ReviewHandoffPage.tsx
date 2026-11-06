@@ -4,9 +4,9 @@ import * as ipc from "../ipc";
 import { repoDisplayPath, sameMachine } from "../remoteRepo";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
 import { useRepoBoard } from "../sync/board";
+import { readTaskExecution } from "../sync/execution";
 import { readEffectiveConfig } from "../sync/settings";
 import type { NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
-import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function ReviewHandoffPage({

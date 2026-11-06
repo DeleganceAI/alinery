@@ -811,6 +811,8 @@ export type TaskExecutionState = {
   max_live_sessions: number;
   enabled_steps: string[];
   auto_approve_all?: boolean;
+  /** O21: the records are the old runner's. They show as finished history, with no approve or resume. */
+  history_only?: boolean;
   launch_defaults: LaunchChoices;
   executions: Record<string, ExecutionRecord>;
   occurrences: Record<string, ArtifactOccurrence>;
@@ -830,7 +832,13 @@ export type TaskExecutionState = {
   >;
 };
 export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
-export type TaskExecutionReply = { state: TaskExecutionState; definition: NormalizedPlaybook; live: ExecutionAvailability };
+export type TaskExecutionReply = {
+  state: TaskExecutionState;
+  definition: NormalizedPlaybook;
+  live: ExecutionAvailability;
+  /** The execution row's revision, sent back as `expected_revision` when the person approves from this view. */
+  revision?: bigint;
+};
 export type TaskAttachment = { name: string; bytes: string };
 export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
 export type CreateTaskRequest = {

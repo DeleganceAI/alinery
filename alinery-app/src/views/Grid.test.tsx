@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { navReady, requireNav } from "../test/nav";
 import type {
   BoardNav,
@@ -183,17 +184,6 @@ const taskExecutions: Record<string, TaskExecutionReply> = {
 const ipcMock = vi.hoisted(() => ({
   listKanbanColumns: vi.fn(async (_allRepos: boolean): Promise<KanbanColumn[]> => []),
   getTaskExecution: vi.fn<(slug: string, repoPath?: string) => Promise<TaskExecutionReply>>(),
-  observeTaskExecutions: vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
-    Promise.all(
-      tasks.map(async (task) => {
-        try {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await ipcMock.getTaskExecution(task.taskSlug, task.repoPath) };
-        } catch (error) {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
-        }
-      }),
-    ),
-  ),
   readPlaybook: vi.fn<(reference: PlaybookRef, repoPath?: string) => Promise<ScopedPlaybook>>(),
   listTaskPullRequests: vi.fn(async (_tasks: TaskActivityRef[]): Promise<Record<string, PullRequestSnapshot>> => ({})),
   openUrl: vi.fn(async (_url: string): Promise<void> => {}),
@@ -201,7 +191,9 @@ const ipcMock = vi.hoisted(() => ({
   removeWorktreeForRepo: vi.fn(async (_repoPath: string, _slug: string): Promise<void> => {}),
 }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () => ipcMock);
+fakeExecution.source = (slug, repo) => ipcMock.getTaskExecution(slug, repo);
 vi.mock("../WindowChrome", () => ({ WindowControls: () => null }));
 
 const storedGridWorkspaces = new Map<string, string>();

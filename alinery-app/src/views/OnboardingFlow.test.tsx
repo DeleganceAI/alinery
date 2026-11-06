@@ -18,6 +18,7 @@ import { OnboardingFlow } from "./OnboardingFlow";
 const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
   ResizeHandles: () => null,
   WindowControls: () => null,
@@ -392,7 +393,6 @@ describe("Empty Grid Playbook Starter Gate", () => {
 
   beforeEach(() => {
     vi.spyOn(ipc, "listKanbanColumns").mockResolvedValue(columns);
-    vi.spyOn(ipc, "observeTaskExecutions").mockResolvedValue([]);
     vi.spyOn(ipc, "listTaskPullRequests").mockResolvedValue({});
   });
 

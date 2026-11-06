@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type * as Ipc from "../ipc";
 import type { PlaybookCatalog, TaskExecutionReply } from "../types";
+import { fakeExecution } from "./executionFeed";
 
 /**
  * A stand-in for the whole ipc module, for tests that render a component.
@@ -21,20 +22,6 @@ import type { PlaybookCatalog, TaskExecutionReply } from "../types";
 const NOT_COMMANDS = new Set(["then", "catch", "finally", "__esModule"]);
 
 type ExecutionStub = (taskSlug: string, repoPath?: string) => Promise<TaskExecutionReply>;
-
-function executionBatch(single: ExecutionStub) {
-  return vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
-    Promise.all(
-      tasks.map(async (task) => {
-        try {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await single(task.taskSlug, task.repoPath) };
-        } catch (error) {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
-        }
-      }),
-    ),
-  );
-}
 
 export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: ExecutionStub } = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
@@ -86,16 +73,9 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
       ),
     ],
   ]);
-  return new Proxy({} as typeof Ipc, {
+  const ipc = new Proxy({} as typeof Ipc, {
     get(_target, prop: string | symbol) {
       if (typeof prop !== "string" || NOT_COMMANDS.has(prop)) return undefined;
-      if (prop === "observeTaskExecutions" && !(prop in overrides)) {
-        if (!cache.has(prop)) {
-          const single = overrides.getTaskExecution ?? (cache.get("getTaskExecution") as ExecutionStub);
-          cache.set(prop, executionBatch(single));
-        }
-        return cache.get(prop);
-      }
       if (prop in overrides) return (overrides as Record<string, unknown>)[prop];
       if (!cache.has(prop)) {
         cache.set(
@@ -109,4 +89,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
     // every command as absent and a destructuring import would fail at module load.
     has: () => true,
   });
+  // The execution feed answers from this test's `getTaskExecution`, read when the view asks.
+  fakeExecution.source = (taskSlug, repoPath) => (ipc as unknown as { getTaskExecution: ExecutionStub }).getTaskExecution(taskSlug, repoPath);
+  return ipc;
 }

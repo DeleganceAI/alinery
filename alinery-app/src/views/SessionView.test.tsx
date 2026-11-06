@@ -6,6 +6,7 @@ import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import type { SessionMessageDraft } from "../sessionMessage";
 import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import { sessionDaemon } from "../test/sessionDaemon";
 import { Toast, toast } from "../toast";
@@ -61,7 +62,6 @@ const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as 
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
 const readChatImage = vi.hoisted(() => vi.fn(async () => ({ mime_type: "image/png", data: "aa" })));
 const getTaskExecution = vi.hoisted(() => vi.fn());
-const allowExecutionCompletion = vi.hoisted(() => vi.fn());
 const renameSession = vi.hoisted(() => vi.fn());
 
 const task: BoardTask = {
@@ -122,11 +122,11 @@ const initialTree: ArtifactTreeNode[] = [
 vi.mock("../SessionTerminal", () => ({ SessionTerminal: () => <div data-testid="terminal" /> }));
 vi.mock("../confirm", () => ({ confirmDanger }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
     renameSession,
     getTaskExecution,
-    allowExecutionCompletion,
     listArtifactsWithMetadata: async () => scenario.items ?? (scenario.itemCalls++ === 0 ? initialItems : updatedItems),
     listTaskArtifactTree: () => {
       scenario.treeCalls += 1;
@@ -760,16 +760,16 @@ describe("session-scoped completion permission", () => {
     scenario.items = [];
     sessionStatus.mockReset().mockResolvedValue(liveObservation("rpc"));
     getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session" })]));
-    allowExecutionCompletion.mockReset().mockImplementation(async (_slug: string, executionId: string, sessionId: string) => {
+    fakeExecution.allow.mockReset().mockImplementation(async (_repo: string, _slug: string, executionId: string) => {
       getTaskExecution.mockResolvedValue(
-        executionReply([executionRecord({ owner_session_id: sessionId, permission: { kind: "human_granted", execution_id: executionId, session_id: sessionId } })]),
+        executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: executionId, session_id: "session" } })]),
       );
     });
   });
   afterEach(() => {
     cleanup();
     getTaskExecution.mockReset();
-    allowExecutionCompletion.mockReset();
+    fakeExecution.reset();
     vi.useRealTimers();
   });
 
@@ -877,7 +877,7 @@ describe("Vinculum session chat", () => {
   afterEach(() => {
     cleanup();
     getTaskExecution.mockReset();
-    allowExecutionCompletion.mockReset();
+    fakeExecution.reset();
   });
 
   it("streams the transcript into the chat pane and does not attach OMP", async () => {
@@ -945,14 +945,14 @@ describe("Vinculum session chat", () => {
 
   it("shows Finish step for a locked Vinculum execution and grants it without an OMP reply", async () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "locked" } })]));
-    allowExecutionCompletion.mockImplementation(async () => {
+    fakeExecution.allow.mockImplementation(async () => {
       getTaskExecution.mockResolvedValue(
         executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "human_granted", execution_id: "execution-a", session_id: "session" } })]),
       );
     });
     renderSession({ intent: "attach", harness: "vinculum" });
     fireEvent.click(await screen.findByRole("button", { name: "Finish step" }));
-    await waitFor(() => expect(allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("task", "execution-a", "session", "/repo"));
+    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/repo", "task", "execution-a", undefined));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Finish step" })).toBeNull());
     expect(screen.getByLabelText("Message or /command")).toBeDefined();
   });

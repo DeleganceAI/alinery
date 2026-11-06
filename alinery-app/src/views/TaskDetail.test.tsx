@@ -4,6 +4,7 @@ import { DEFAULT_APPEARANCE } from "../appearance";
 import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
 import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import { sessionDaemon } from "../test/sessionDaemon";
@@ -65,7 +66,6 @@ const ipcSpies = vi.hoisted(() => ({
 const mocks = vi.hoisted(() => ({
   subtaskState: vi.fn(),
   getTaskExecution: vi.fn(),
-  allowExecutionCompletion: vi.fn(),
   listArtifactsWithMetadata: vi.fn(),
   listTaskArtifactTree: vi.fn(),
   readArtifact: vi.fn(),
@@ -85,11 +85,11 @@ const toastSpies = vi.hoisted(() => ({
 vi.mock("../toast", () => toastSpies);
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", () =>
   mockIpc({
     subtaskState: mocks.subtaskState,
     getTaskExecution: mocks.getTaskExecution,
-    allowExecutionCompletion: mocks.allowExecutionCompletion,
     listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
     listTaskArtifactTree: mocks.listTaskArtifactTree,
     readArtifact: mocks.readArtifact,
@@ -345,7 +345,7 @@ beforeEach(() => {
     return scenario.state;
   });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
-  mocks.allowExecutionCompletion.mockReset().mockResolvedValue(undefined);
+  fakeExecution.reset();
   mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
   mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
   mocks.readArtifact.mockReset().mockResolvedValue("");
@@ -1604,11 +1604,11 @@ describe("authoritative task execution", () => {
     const fixture = task();
     scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(executionReply());
-    mocks.allowExecutionCompletion.mockRejectedValue(new Error("owner changed"));
+    fakeExecution.allow.mockRejectedValue(new Error("owner changed"));
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
-    await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
+    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledWith("/r", "a-task", "execution-a", undefined));
     await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
     expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -1637,44 +1637,48 @@ describe("authoritative task execution", () => {
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
 
     live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
 
     live = { status: "available" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(completion().disabled).toBe(false);
     expect(screen.queryByText("Different app configuration owns this lane")).toBeNull();
     await act(async () => {
       fireEvent.click(completion());
     });
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("a-task", "execution-a", "owner-a", "/r");
+    expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", undefined);
 
     corrupt = true;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(within(screen.getByRole("alert")).getByText("Error: Invalid execution.json")).toBeDefined();
     expect(completion().disabled).toBe(true);
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledTimes(1);
+    expect(fakeExecution.allow).toHaveBeenCalledTimes(1);
 
     corrupt = false;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(completion().disabled).toBe(false);

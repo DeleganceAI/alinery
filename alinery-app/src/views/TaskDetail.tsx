@@ -56,6 +56,7 @@ import {
   useMinuteNow,
 } from "../shared";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
+import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { TaskRunGraph } from "../TaskRunGraph";
 import { toast } from "../toast";
@@ -76,7 +77,6 @@ import type {
 } from "../types";
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
-import { readTaskExecution } from "../useExecutionObservation";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
@@ -192,7 +192,7 @@ export function TaskDetail({
   const [repoTasks, setRepoTasks] = useState<Task[]>([]);
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [executionError, setExecutionError] = useState("");
-  const executionRequest = useRef(0);
+  const feed = useTaskExecution(repoPath, slug);
   const steps = executionView?.definition.step ?? [];
   const executions = Object.values(executionView?.state.executions ?? {});
   const executionForSession = (session: SessionMeta) =>
@@ -349,26 +349,11 @@ export function TaskDetail({
   const commitFetchedTask = (fetched: Task | null) => {
     setTask((current) => (current && fetched && sameTask(current, fetched) ? current : fetched));
   };
-  const refreshExecution = async () => {
-    const request = ++executionRequest.current;
-    const capturedScope = scope;
-    try {
-      const value = await readTaskExecution(repoPath, slug);
-      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
-      setExecutionView(value);
-      setExecutionError("");
-    } catch (error) {
-      if (!capturedScope.alive || scopeRef.current !== capturedScope || request !== executionRequest.current) return;
-      setExecutionError(String(error));
-    }
-  };
-
-  const allowCompletion = async (executionId: string, sessionId: string) => {
-    if (executionView?.live?.status !== "available" || executionError || busy) return;
+  const allowCompletion = async (executionId: string) => {
+    if (executionView?.live?.status !== "available" || executionView.state.history_only || executionError || busy) return;
     setBusy(`allow:${executionId}`);
     try {
-      await ipc.allowExecutionCompletion(slug, executionId, sessionId, repoPath);
-      await refreshExecution();
+      await allowExecutionCompletion(repoPath, slug, executionId, executionView.revision);
     } catch (error) {
       setExecutionError(String(error));
     } finally {
@@ -381,12 +366,11 @@ export function TaskDetail({
     // Every optional read is pre-wrapped so one rejection can never fail the shared
     // Promise.all — a removed custom playbook or a transient artifact-scan error must not
     // discard whatever else in this wave succeeded.
-    const [managerResult, , artifactsResult, artifactTreeResult] = await Promise.all([
+    const [managerResult, artifactsResult, artifactTreeResult] = await Promise.all([
       ipc.subtaskState(slug, repoPath).then(
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      refreshExecution(),
       ipc.listArtifactsWithMetadata(slug).then(
         (value) => ({ ok: true, value }) as const,
         (error) => ({ ok: false, error }) as const,
@@ -426,7 +410,6 @@ export function TaskDetail({
         (value) => ({ ok: true, value }) as const,
         () => ({ ok: false }) as const,
       ),
-      refreshExecution(),
     ]);
     if (!scope.alive || scopeRef.current !== scope) return;
     if (artifactTreeResult.ok) setArtifactTree(artifactTreeResult.value);
@@ -475,10 +458,15 @@ export function TaskDetail({
       scope.alive = false;
       taskMutationEpoch.current += 1;
       nameReadRequest.current += 1;
-      executionRequest.current += 1;
       window.clearTimeout(timer);
     };
   }, [repoPath, slug]);
+
+  // The execution row arrives as a delta; an approval or a conflict is shown as it lands.
+  useEffect(() => {
+    if (feed.reply) setExecutionView(feed.reply);
+    setExecutionError(feed.error);
+  }, [feed, repoPath, slug]);
 
   // Declared after the scope reset below so that on a scope change the streams' rows land last.
   useEffect(() => {
@@ -1800,12 +1788,12 @@ export function TaskDetail({
                           Completion permission: {execution.permission.kind}
                           {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
                         </p>
-                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && (
+                        {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
                           <button
                             type="button"
                             className="btn small"
                             disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                            onClick={() => void allowCompletion(execution.id, execution.owner_session_id)}
+                            onClick={() => void allowCompletion(execution.id)}
                           >
                             Allow this session to complete · {execution.owner_session_id}
                           </button>

@@ -72,6 +72,12 @@ describe("recovery from execution.json alone", () => {
     prepareGraphs(refRepo, agentHooks("fj"));
     await runUntil(() => done("fj"));
     const reference = shape(loadStored(refRepo, "fj"));
+    // The lineage a view draws from: which occurrence each execution produced and consumed.
+    const lineageOf = (repo: string) => {
+      const file = JSON.parse(readFileSync(executionPath(repo, "fj"), "utf8"));
+      return { occurrences: file.occurrences, inputs: Object.fromEntries(Object.entries(file.executions as Record<string, { candidate: { inputs: unknown } }>).map(([id, e]) => [id, e.candidate.inputs])) };
+    };
+    const referenceLineage = lineageOf(refRepo);
 
     const repo = mkdtempSync(join(tmpdir(), "vinculum-kill-"));
     const dir = forkJoin(repo, "fj");
@@ -92,6 +98,7 @@ describe("recovery from execution.json alone", () => {
     await runUntil(() => done("fj"));
     const finished = shape(loadStored(repo, "fj"));
     expect(finished).toEqual(reference);
+    expect(lineageOf(repo)).toEqual(referenceLineage);
     // Every execution that existed before the kill kept its session id, and the restart opened none of those again.
     const idsAfter = Object.fromEntries(engineExecutions("fj").map((e) => [e.id, e.sessionId]));
     for (const [id, session] of Object.entries(idsBefore)) {
@@ -200,7 +207,7 @@ describe("a task from before this change", () => {
 
 describe("the task-mutation lock", () => {
   beforeAll(() => void holderBinary(), 120_000);
-  test("addExecution waits for a Rust holder and returns within 200 ms of its release", async () => {
+  test("addExecution waits for a Rust holder and returns within 100 ms of its release", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-lockwait-"));
     forkJoin(repo, "t");
     const holder = await holdFromRust(join(repo, ".alinery", ".task-mutation.lock"));
@@ -211,7 +218,7 @@ describe("the task-mutation lock", () => {
     const released = Date.now();
     await holder.release();
     await call;
-    expect(finished - released).toBeLessThan(200);
+    expect(finished - released).toBeLessThan(100);
     expect(Object.keys(JSON.parse(readFileSync(executionPath(repo, "t"), "utf8")).executions)).toEqual(["manual-1"]);
   }, 30_000);
 });

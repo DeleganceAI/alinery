@@ -36,6 +36,7 @@ const task: BoardTask = {
 };
 const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () =>
   mockIpc({

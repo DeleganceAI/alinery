@@ -5,8 +5,8 @@ import * as ipc from "../ipc";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
 import { useRepoBoard } from "../sync/board";
+import { readTaskExecution } from "../sync/execution";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
-import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function CreateSessionPage({
@@ -77,7 +77,7 @@ export function CreateSessionPage({
   const existing = mode === "existing";
   const effectiveHarness = auxiliary ? harness : "omp";
   const exactTaskLoaded = loadedTaskId === taskId;
-  const executionAvailable = executionView?.live?.status === "available" && !executionError;
+  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
 
   useEffect(() => {
     let alive = true;

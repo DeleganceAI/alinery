@@ -88,7 +88,6 @@ import type {
   TakeoverPreview,
   Task,
   TaskActivityRef,
-  TaskExecutionReply,
   TaskSourceBranches,
   UpdateResult,
   UpdateStatus,
@@ -329,10 +328,6 @@ export const archiveSession = (taskSlug: string, id: string) => invoke<void>("ar
 export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
 export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
 export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
-export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
-export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
-  invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
 export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
 export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
 export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });

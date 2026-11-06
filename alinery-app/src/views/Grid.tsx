@@ -18,8 +18,8 @@ import {
   useBoardTaskActivity,
 } from "../shared";
 import { useRepoBoard } from "../sync/board";
+import { readTaskExecutions } from "../sync/execution";
 import type { BoardNav, BoardTask, KanbanColumn, PlaybookRef, TaskActivityStatus, TaskExecutionReply } from "../types";
-import { readTaskExecutions } from "../useExecutionObservation";
 import { usePointerDrag } from "../usePointerDrag";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 

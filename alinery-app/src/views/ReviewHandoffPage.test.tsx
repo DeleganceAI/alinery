@@ -100,6 +100,7 @@ const mocks = vi.hoisted(() => ({
 const readEffectiveConfig = vi.hoisted(() => vi.fn());
 vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../ipc", async () => {
   // The hoisted IPC factory runs before shared.tsx finishes importing its dependencies.
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
