@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { stateHasStart } from "./domain/executionStore.ts";
 import type { SessionHooks } from "./graph.ts";
-import { engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, logHasStart, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
+import { engineExecutions, executionModel, forgetTask, handoffForStep, liveSessionCap, prepareGraphs, resetGraphs, runTask, sessionHarnessStatus, taskShouldHold, tickGraphs } from "./graph.ts";
 
 describe("execution model", () => {
   test("uses the task default when the playbook leaves the model blank", () => {
@@ -30,6 +31,7 @@ describe("task record", () => {
     expect(taskShouldHold(false, false)).toBe(true);
     expect(taskShouldHold(true, false)).toBe(false);
     expect(taskShouldHold(false, true)).toBe(false);
+    expect(stateHasStart(undefined)).toBe(false);
     expect(liveSessionCap(3)).toBe(3);
     expect(liveSessionCap(0)).toBe(0);
     expect(liveSessionCap(1.5)).toBe(0);
@@ -47,7 +49,6 @@ describe("task record", () => {
     expect(review.PROMPT_EXTRA).toBe("keep the tests");
     expect(review.REVIEW_HANDOFF_FILE).toBe(join(artifacts, "review-handoff-001.md"));
     expect(handoffForStep(sessions, artifacts, "build")).toEqual({ PROMPT_EXTRA: "", REVIEW_HANDOFF_FILE: "" });
-    expect(logHasStart(join(root, "missing.jsonl"))).toBe(false);
   });
 
   test("a failed row is failed, and waiting is not", () => {
@@ -99,7 +100,7 @@ function recordingHooks(): SessionHooks & { opened: Array<{ id: string; model: s
 }
 
 describe("playbook host", () => {
-  test("create without starting does not launch, and a log that already started does", async () => {
+  test("create without starting does not launch, and an old log that already started is converted once", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-hold-"));
     const hooks = recordingHooks();
     resetGraphs();
@@ -109,10 +110,25 @@ describe("playbook host", () => {
     expect(hooks.opened).toEqual([]);
 
     taskFixture(repo, "again", { start: false });
-    writeFileSync(join(repo, ".alinery", "tasks", "again", "engine.jsonl"), `${JSON.stringify({ t: "started", execId: "gone", sessionId: "s" })}\n`);
+    const dir = join(repo, ".alinery", "tasks", "again");
+    const ticket = join(dir, "artifacts", "ticket.md");
+    writeFileSync(ticket, "the task");
+    const log = [
+      { t: "seeded", occurrences: [{ id: "seed/ticket.md", role: "ticket.md", path: ticket, producer: null }] },
+      { t: "reserved", execution: { id: "e1", step: "work", depth: 1, inputs: { "ticket.md": ["seed/ticket.md"] }, outDir: join(dir, "artifacts", "1-work-1"), origin: null, automatic: true } },
+      { t: "started", execId: "e1", sessionId: "old-session" },
+    ];
+    const bytes = `${log.map((line) => JSON.stringify(line)).join("\n")}\n`;
+    writeFileSync(join(dir, "engine.jsonl"), bytes);
     await tickGraphs();
-    expect(hooks.opened.map((row) => row.prompt.length > 0)).toEqual([true]);
+    // The log showed a start, so the task is not held; its execution continues with the session it had.
+    expect(hooks.opened).toEqual([]);
+    expect(engineExecutions("again").map((row) => [row.id, row.status, row.sessionId])).toEqual([["e1", "live", "old-session"]]);
     expect(engineExecutions("waiting")).toEqual([]);
+    // The state moved into execution.json and the log was left as it was.
+    const stored = JSON.parse(readFileSync(join(dir, "execution.json"), "utf8"));
+    expect(stored.engine.executions.map((row: { id: string }) => row.id)).toEqual(["e1"]);
+    expect(readFileSync(join(dir, "engine.jsonl"), "utf8")).toBe(bytes);
   });
 
   test("runTask releases a held task", async () => {

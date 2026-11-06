@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "bun:test";
@@ -6,13 +6,13 @@ import { toJson } from "@bufbuild/protobuf";
 import { StructSchema } from "@bufbuild/protobuf/wkt";
 import { Engine } from "playbook-engine/src/engine.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import { fold, readLog } from "playbook-engine/src/state.ts";
 import { complete, FakeHarness } from "playbook-engine/test/fake-harness.ts";
 import { forgetTask, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts";
 import { Replica, taskScope } from "../sync/testkit.ts";
 import { Store } from "../sync/store.ts";
 import { getTaskExecution } from "../tasks.ts";
 import { commitExecution, executionKey, executionParser } from "./executions.ts";
+import { loadEngineState, saveEngineState } from "./executionStore.ts";
 import { Feed } from "../sync/feed.ts";
 import { parsers } from "../sync/parsers/index.ts";
 
@@ -47,7 +47,7 @@ async function settle(engine: Engine) {
   }
 }
 
-test("every engine event commits the execution, and the last one is getTaskExecution", async () => {
+test("every engine save commits the execution, and the last one is getTaskExecution", async () => {
   const { repo, dir } = fixture("fj");
   const store = new Store();
   const replica = new Replica();
@@ -63,17 +63,17 @@ test("every engine event commits the execution, and the last one is getTaskExecu
     }
     await complete(launch, session);
   });
-  const logPath = join(dir, "engine.jsonl");
   let events = 0;
   const seqs: bigint[] = [];
   const engine = Engine.open({
     playbook: parsePlaybookMd(readFileSync(join(dir, "playbook.md"), "utf8")).playbook!,
     harness,
-    logPath,
+    load: () => undefined,
+    save: (state) => saveEngineState(repo, "fj", state),
     artifactsDir: join(dir, "artifacts"),
     cwd: repo,
     enabledSteps: () => KEYS,
-    onEvent: () => {
+    onSaved: () => {
       events++;
       commitExecution(store, repo, "fj", "lane", "identity");
       seqs.push(store.seq);
@@ -84,8 +84,8 @@ test("every engine event commits the execution, and the last one is getTaskExecu
   expect(engine.state.executions.size).toBe(4);
   expect([...engine.state.executions.values()].every((e) => e.status === "done")).toBe(true);
 
-  // One delta per event: each event moved the store's seq by exactly one.
-  expect(events).toBeGreaterThan(8);
+  // One delta per save: each save moved the store's seq by exactly one.
+  expect(events).toBeGreaterThan(4);
   expect(seqs.map((s, i) => s - (seqs[i - 1] ?? 0n))).toEqual(seqs.map(() => 1n));
 
   // The subscriber ends up with exactly what the RPC read returns.
@@ -102,25 +102,29 @@ test("every engine event commits the execution, and the last one is getTaskExecu
   ac.abort();
   await stream;
 
-  // A log written before onEvent existed has the same format; folding it gives the live state.
-  const folded = fold(readLog(logPath));
-  expect([...folded.executions.values()]).toEqual([...engine.state.executions.values()]);
-  expect(folded.seeds).toEqual(engine.state.seeds);
+  // The stored state, loaded again, is the live state. No log was written.
+  const loaded = loadEngineState(repo, "fj");
+  if (loaded.kind !== "stored") throw new Error(`expected a stored state, got ${loaded.kind}`);
+  expect([...loaded.state.executions.values()]).toEqual([...engine.state.executions.values()]);
+  expect(loaded.state.seeds).toEqual(engine.state.seeds);
+  expect(existsSync(join(dir, "engine.jsonl"))).toBe(false);
 });
 
-test("a throwing onEvent never fails the engine", async () => {
+test("a throwing onSaved never fails the engine", async () => {
   const { repo, dir } = fixture("boom");
   const engine = Engine.open({
     playbook: parsePlaybookMd(readFileSync(join(dir, "playbook.md"), "utf8")).playbook!,
     harness: new FakeHarness(async () => {}),
-    logPath: join(dir, "engine.jsonl"),
+    load: () => undefined,
+    save: () => {},
     artifactsDir: join(dir, "artifacts"),
     cwd: repo,
-    onEvent: () => {
+    onSaved: () => {
       throw new Error("subscriber broke");
     },
   });
   engine.seed([{ role: "ticket.md", path: join(dir, "artifacts", "ticket.md") }]);
+  await engine.flush();
   expect(engine.state.seeds).toHaveLength(1);
 });
 

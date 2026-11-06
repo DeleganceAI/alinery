@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { resetGraphs } from "./graph.ts";
 import { holderBinary, holdFromRust } from "./platform/rustHolder.ts";
-import { addExecution, completeSessionMeta, completionPermission, getTaskExecution } from "./tasks.ts";
+import { completionPermission } from "./domain/executionProjection.ts";
+import { addExecution, completeSessionMeta, getTaskExecution } from "./tasks.ts";
 
 test("a session born without a meta file still has the fields SessionMeta requires", () => {
   const born = completeSessionMeta({ id: "s" }, { started_at: 10, harness: "omp", harness_resume_token: "", model: "alinery/x" }, "s", "/wt", 10);
@@ -110,12 +111,13 @@ describe("task execution reply", () => {
     expect(reply.state.executions.e1.owner_session_id).toBe("sess-clarify");
     expect(reply.state.occurrences["seed/ticket.md"]).toMatchObject({ producer_execution_id: null, relative_path: "00-ticket.md" });
     expect(reply.state.executions.e1.outputs).toEqual([{ selector: "assessment.md", relative_path: "1-clarify-1/assessment.md", discriminator: 0, required: true }]);
-    expect(reply.state.executions.placeholder).toBeUndefined();
-    expect(reply.state.occurrences["rust-seed"]).toBeUndefined();
+    // Records that are not the engine's (the old runner's, a manual session's) stay beside the engine's.
+    expect(reply.state.executions.placeholder).toMatchObject({ id: "placeholder" });
+    expect(reply.state.occurrences["rust-seed"]).toMatchObject({ id: "rust-seed" });
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
-  test("no log leaves the on-disk executions and occurrences alone", () => {
+  test("records with no engine state and no log are history (O21): shown unchanged and flagged", () => {
     resetGraphs();
     const repo = mkdtempSync(join(tmpdir(), "vinculum-lineage-"));
     const slug = "plain";
@@ -130,6 +132,7 @@ describe("task execution reply", () => {
     const reply = getTaskExecution(repo, slug, "lane", "app") as ExecutionReply;
     expect(reply.state.executions.placeholder).toMatchObject({ id: "placeholder", owner_session_id: "kept" });
     expect(reply.state.occurrences["rust-seed"]).toMatchObject({ producer_execution_id: null, relative_path: "00-ticket.md" });
+    expect(reply.state.history_only).toBe(true);
   });
 });
 

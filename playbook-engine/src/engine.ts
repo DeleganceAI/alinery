@@ -142,6 +142,12 @@ export class Engine {
     await this.flush();
   }
 
+  /** Save the State as it is, though no event changed it. Used once, to store a State converted from an old log. */
+  persist(): void {
+    this.#dirty = true;
+    if (!this.#saving) this.#drain();
+  }
+
   /** Wait until the state on disk is the state in memory. One retry after a failed save, then the error. */
   async flush(): Promise<void> {
     for (let retried = false; ; ) {
@@ -360,8 +366,7 @@ export class Engine {
   /** The single write path: apply in memory, then save the whole State. */
   #append(ev: Event): void {
     apply(this.#state, ev);
-    this.#dirty = true;
-    if (!this.#saving) this.#drain();
+    this.persist();
   }
 
   #drain(): void {

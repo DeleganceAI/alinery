@@ -10,7 +10,7 @@ import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension,
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarnessStatus, startGraphs } from "./graph.ts";
+import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
@@ -40,7 +40,7 @@ import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 26;
+const PROTOCOL = 27;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -987,20 +987,6 @@ async function handle(socket: Socket, header: Record<string, unknown>, body: Buf
     reply(socket, { ok: true }, true);
     return;
   }
-  if (op === "allow_execution_completion") {
-    if (!uiAuthorized.has(socket)) {
-      reply(socket, { error: "completion permission requires an authenticated UI control connection" });
-      return;
-    }
-    const request = header.request;
-    const sessionId = request && typeof request === "object" && !Array.isArray(request) ? String((request as { session_id?: unknown }).session_id ?? "") : "";
-    if (sessionId && (await permitSession(sessionId))) {
-      reply(socket, { ok: true }, true);
-      return;
-    }
-    reply(socket, { error: "session has no engine execution to permit" });
-    return;
-  }
   if (op === "vinculum_customizations") {
     try {
       reply(socket, await mcpHub.refresh());
@@ -1190,9 +1176,13 @@ server.listen(uiSocket, () => {
       writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
       commitSession(row.taskSlug, row.id);
     },
-    bind(id, executionId) {
+    bind(id, executionId, step) {
       const row = live.get(id);
-      if (row) row.executionId = executionId;
+      if (!row) return;
+      row.executionId = executionId;
+      // The session's own file says which execution and step it is (disagreement 6), so the board follows the run.
+      writeMeta(row.taskSlug, id, { execution_id: executionId, phase: step });
+      commitSession(row.taskSlug, id);
     },
-  }, appConfig));
+  }, appConfig, { lane, identity }));
 });

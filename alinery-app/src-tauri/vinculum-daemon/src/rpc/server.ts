@@ -5,6 +5,7 @@ import { rmSync } from "node:fs";
 import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import * as grpc from "@grpc/grpc-js";
 import { AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import { ExecutionService } from "alinery-proto/alinery/v1/executions_pb";
 import { JobService } from "alinery-proto/alinery/v1/jobs_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
@@ -17,6 +18,7 @@ import type { JobRunner } from "../jobs/runner.ts";
 import type { StorageParams } from "../jobs/storage.ts";
 import { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
+import { executionService } from "./executions.ts";
 import { jobService } from "./jobs.ts";
 import { sessionService, type Transcripts } from "./sessions.ts";
 import { repoService, settingsService, type SettingsDeps } from "./settings.ts";
@@ -34,6 +36,7 @@ function makeServer(peer: PeerClass, secret: Buffer, info: DaemonInfo, lifecycle
   addService(server, JobService, jobService(jobs, dedupe, store, storageScan), values);
   addService(server, SessionService, sessionService(transcripts), values);
   addService(server, TerminalService, terminal, values);
+  addService(server, ExecutionService, executionService(dedupe, store), values);
   if (settings) {
     addService(server, SettingsService, settingsService(settings, dedupe, store), values);
     addService(server, RepoService, repoService(settings, dedupe, store), values);

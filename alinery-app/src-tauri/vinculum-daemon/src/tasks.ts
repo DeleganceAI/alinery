@@ -6,10 +6,11 @@ import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { writeAtomic } from "./platform/fs.ts";
 import { withTaskMutation } from "./platform/lock.ts";
-import { engineExecutions, engineSnapshot, resumeFailedSession, runTask } from "./graph.ts";
+import { engineExecutions, resumeFailedSession, runTask } from "./graph.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import { type Execution, occurrences, type State } from "playbook-engine/src/state.ts";
 import type { Playbook, Step } from "playbook-engine/src/playbook.ts";
+import { projectExecution, projectionContext, taskAutoApproveAll } from "./domain/executionProjection.ts";
+import { EMPTY_ENGINE, executionPath, loadEngineState, mergedRecords } from "./domain/executionStore.ts";
 
 type Request = Record<string, unknown>;
 
@@ -99,127 +100,18 @@ function definitionOf(playbook: Playbook): Record<string, unknown> {
   };
 }
 
-function lifecycle(execution: Execution): string {
-  if (execution.status === "reserved") return "queued";
-  if (execution.status === "finishing") return "finishing";
-  if (execution.status === "done") return "completed";
-  if (execution.status === "failed") return "failed";
-  return "running";
-}
-
-/** A closed gate stays locked until this execution is permitted. Auto-approve-all opens it without rewriting the snapshot. */
-export function completionPermission(execution: Pick<Execution, "id" | "sessionId" | "permitted" | "automatic">, autoApproveAll: boolean): Record<string, unknown> {
-  if (execution.permitted) return { kind: "human_granted", execution_id: execution.id, session_id: execution.sessionId ?? "" };
-  if (execution.automatic === false && !autoApproveAll) return { kind: "locked" };
-  return { kind: "automatic" };
-}
-
-function projectExecution(execution: Execution, autoApproveAll = false, project?: { steps: Step[]; artifactsDir: string }): Record<string, unknown> {
-  return {
-    id: execution.id,
-    binding_key: execution.id,
-    candidate: {
-      step_key: execution.step,
-      context_id: "root",
-      inputs: execution.inputs,
-      complete_collection_id: null,
-      each_collection_id: null,
-      each_member_id: null,
-      manual: false,
-    },
-    outputs: project ? projectOutputs(execution, project.steps, project.artifactsDir) : [],
-    parent_execution_ids: [],
-    depth: execution.depth,
-    owner_session_id: execution.sessionId ?? "",
-    previous_session_ids: [],
-    launch: { harness: "omp", model: "" },
-    is_coding_step: false,
-    start_requested: true,
-    lifecycle: lifecycle(execution),
-    permission: completionPermission(execution, autoApproveAll),
-    receipt_id: execution.receipt ? execution.id : null,
-    exit_code: null,
-    shutdown_confirmed: execution.status === "done" || execution.status === "failed",
-    error: execution.failure,
-  };
-}
-
-/** Path under the task artifacts directory, or undefined when the file lives elsewhere. The graph opens this string. */
-function artifactRelative(artifactsDir: string, filePath: string): string | undefined {
-  if (!artifactsDir || !filePath) return undefined;
-  const rel = relative(artifactsDir, filePath);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return undefined;
-  return rel.split("\\").join("/");
-}
-
-function projectOutputs(execution: Execution, steps: Step[], artifactsDir: string): Record<string, unknown>[] {
-  const step = steps.find((item) => item.key === execution.step);
-  if (!step) return [];
-  const dir = artifactRelative(artifactsDir, execution.outDir) ?? "";
-  return step.outputs.map((output) => {
-    const row: Record<string, unknown> = {
-      selector: output.path,
-      relative_path: dir ? `${dir}/${output.path}` : output.path,
-      discriminator: 0,
-    };
-    if (output.required) row.required = true;
-    return row;
-  });
-}
-
-function projectOccurrences(state: State, artifactsDir: string): Record<string, unknown> {
-  const projected: Record<string, unknown> = {};
-  for (const occurrence of occurrences(state)) {
-    const producer = occurrence.producer ? state.executions.get(occurrence.producer) : undefined;
-    projected[occurrence.id] = {
-      id: occurrence.id,
-      producer_execution_id: occurrence.producer,
-      selector: occurrence.role,
-      logical_path: occurrence.role,
-      relative_path: artifactRelative(artifactsDir, occurrence.path) ?? occurrence.role,
-      depth: producer?.depth ?? 0,
-      discriminator: 0,
-      context_id: "root",
-      collection_ids: [],
-    };
-  }
-  return projected;
-}
-
-function projectionContext(repo: string, slug: string): { steps: Step[]; artifactsDir: string } {
-  const artifactsDir = join(repo, ".alinery", "tasks", slug, "artifacts");
-  try {
-    const parsed = parsePlaybookMd(readFileSync(join(repo, ".alinery", "tasks", slug, "playbook.md"), "utf8"));
-    return { steps: parsed.playbook?.steps ?? [], artifactsDir };
-  } catch {
-    return { steps: [], artifactsDir };
-  }
-}
-
-function taskAutoApproveAll(repo: string, slug: string): boolean {
-  const path = join(repo, ".alinery", "tasks", slug, "execution.json");
-  try {
-    const state = JSON.parse(readFileSync(path, "utf8")) as { auto_approve_all?: unknown };
-    return state.auto_approve_all === true;
-  } catch {
-    return false;
-  }
-}
-
 function executionState(repo: string, slug: string, lane: string, appIdentity: string): Record<string, unknown> | undefined {
-  const path = join(repo, ".alinery", "tasks", slug, "execution.json");
+  const path = executionPath(repo, slug);
   if (!existsSync(path)) return undefined;
   const state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  const autoApproveAll = state.auto_approve_all === true;
-  const snapshot = engineSnapshot(repo, slug);
-  // The file keeps Rust uuid occurrences. The graph joins engine ids, so a log replaces both maps. No log leaves the file alone.
-  if (snapshot && (snapshot.seeds.length > 0 || snapshot.executions.size > 0)) {
-    const project = projectionContext(repo, slug);
-    const executions: Record<string, unknown> = {};
-    for (const execution of snapshot.executions.values()) executions[execution.id] = projectExecution(execution, autoApproveAll, project);
-    state.executions = executions;
-    state.occurrences = projectOccurrences(snapshot, project.artifactsDir);
+  // The file holds the engine's state (or an old log is folded for it); its records are projected again here, so the
+  // permission follows `auto_approve_all` as it is now, which a Rust writer can change without a save.
+  const stored = loadEngineState(repo, slug);
+  if ((stored.kind === "stored" || stored.kind === "converted") && (stored.state.seeds.length > 0 || stored.state.executions.size > 0)) {
+    Object.assign(state, mergedRecords(state, stored.state, repo, slug));
   }
+  // O21: records the old runner wrote are history. The views offer no approve or resume for them.
+  if (stored.kind === "history_only") state.history_only = true;
   state.owning_lane = typeof state.owning_lane === "string" ? state.owning_lane : lane;
   state.owning_app_config_identity = typeof state.owning_app_config_identity === "string" ? state.owning_app_config_identity : appIdentity;
   return state;
@@ -352,9 +244,11 @@ function reservedExecution(id: string, step: string, sessionId: string, harness:
 // Read, append and write under the task-mutation flock, so a concurrent writer (another call here, or Rust) is not lost.
 export function addExecution(repo: string, slug: string, execution: Record<string, unknown>): Promise<void> {
   return withTaskMutation(repo, "add_execution", () => {
-    const path = join(repo, ".alinery", "tasks", slug, "execution.json");
-    const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown> };
+    const path = executionPath(repo, slug);
+    const state = JSON.parse(readFileSync(path, "utf8")) as { executions?: Record<string, unknown>; engine?: unknown };
     state.executions = { ...(state.executions ?? {}), [String(execution.id)]: execution };
+    // Marks the task as this daemon's, so the records are not taken for the old runner's (O21). An old log has its own mark.
+    if (!state.engine && !existsSync(join(dirname(path), "engine.jsonl"))) state.engine = EMPTY_ENGINE;
     writeAtomic(path, JSON.stringify(state));
   });
 }

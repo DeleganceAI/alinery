@@ -166,6 +166,10 @@ pub struct TaskExecutionState {
     pub executions: BTreeMap<String, ExecutionRecord>,
     pub occurrences: BTreeMap<String, ArtifactOccurrence>,
     pub collections: BTreeMap<String, ArtifactCollection>,
+    /// The playbook engine's own state (S4.2), written by the daemon. Rust never reads it; it is carried
+    /// through unchanged so a Rust writer's read-modify-write cannot erase it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -271,6 +275,7 @@ pub fn new_execution_state(
         executions: BTreeMap::new(),
         occurrences: BTreeMap::new(),
         collections: BTreeMap::new(),
+        engine: None,
     })
 }
 fn normalize_step_models(definition: &NormalizedPlaybook, raw: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
