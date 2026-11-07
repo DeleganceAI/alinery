@@ -59,12 +59,12 @@ function sameCatalogue(cached: ChatModelOption[] | undefined, next: ChatModelOpt
   return cached.every((row, index) => row.provider === next[index]?.provider && row.id === next[index]?.id);
 }
 
-/** A successful catalogue reply, matching the `get_available_models` branch in `applyRpcLine`. */
-function successfulModelsReply(value: unknown): value is { id?: unknown } {
+/** A failed catalogue reply, or a successful one with catalogue data. */
+function modelsReply(value: unknown): value is { id?: unknown; success?: unknown; error?: unknown } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const rec = value as Record<string, unknown>;
   const data = rec.data;
-  return rec.type === "response" && rec.command === "get_available_models" && rec.success !== false && data !== null && typeof data === "object" && !Array.isArray(data);
+  return rec.type === "response" && rec.command === "get_available_models" && (rec.success === false || (data !== null && typeof data === "object" && !Array.isArray(data)));
 }
 
 export function ProviderSetupDialog({
@@ -123,11 +123,17 @@ export function ProviderSetupDialog({
         // `applyRpcLine` takes the parsed value, not the raw line: handed a string it silently
         // no-ops, so every provider row would vanish without an error anywhere.
         const value: unknown = JSON.parse(line);
+        const catalogueReply = modelsReply(value);
+        if (catalogueReply && value.success === false) {
+          if (value.id !== catalogueId) return false;
+          setCatalogueStatus("failed");
+          setModelError(typeof value.error === "string" && value.error.trim() ? value.error : "Could not load the model list.");
+          return true;
+        }
         const next = applyRpcLine(chatRef.current, value);
         chatRef.current = next;
         setChat(next);
         // Only the current attachment can populate the next open's cache.
-        const catalogueReply = successfulModelsReply(value);
         if (catalogueReply) {
           const nextModels = next.sessionMeta.models ?? [];
           if (!sameCatalogue(lastCatalogue, nextModels)) {

@@ -272,6 +272,28 @@ describe("ProviderSetupDialog", () => {
     expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
   });
 
+  it.each(["Catalogue unavailable", undefined])("settles a failed catalogue reply with error %s while the stream stays open", async (error) => {
+    const stopWatching = vi.fn();
+    mocks.onStreamClosed.mockReturnValueOnce(Object.assign(stopWatching, { ready: Promise.resolve() }));
+    renderModelsPicker([]);
+    await waitFor(() => expect(mocks.rpcWriteSession).toHaveBeenCalledTimes(3));
+    const request = mocks.rpcWriteSession.mock.lastCall?.[1];
+    const failure = { type: "response", id: request.id, command: "get_available_models", success: false, error, data: { models: [{ provider: "failed", id: "invalid-model" }] } };
+
+    await emit({ ...failure, id: "old-catalogue-request" });
+    await emit({ ...failure, command: "get_state" });
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await emit(failure);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Provider setup couldn't be loaded.");
+    expect(screen.getByText(error ?? "Could not load the model list.")).toBeTruthy();
+    expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "failed/invalid-model" })).toBeNull();
+    expect(stopWatching).toHaveBeenCalledOnce();
+    expect(mocks.ompSetupSession).toHaveBeenCalledTimes(1);
+  });
+
   it("retries ompSetupSession when the daemon is not connected then shows providers", async () => {
     vi.useFakeTimers();
     mocks.ompSetupSession.mockRejectedValueOnce(new Error("daemon not connected")).mockResolvedValue("__omp-setup__");
