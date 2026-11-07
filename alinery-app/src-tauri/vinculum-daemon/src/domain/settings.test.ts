@@ -73,7 +73,8 @@ describe("settings conformance (write)", () => {
       const dir = join(CONFORMANCE, "settings_write", name);
       const repo = mkdtempSync(join(tmpdir(), "alinery-settings-"));
       try {
-        cpSync(join(dir, "input"), repo, { recursive: true });
+        // A case that only writes ships no `input/`: the repo starts empty.
+        if (existsSync(join(dir, "input"))) cpSync(join(dir, "input"), repo, { recursive: true });
         const command = JSON.parse(readFileSync(join(dir, "command.json"), "utf8"));
         let ok = true;
         try {
