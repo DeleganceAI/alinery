@@ -3082,8 +3082,15 @@ const OMP_SETUP_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// than the one real sessions use, which is exactly the class of bug this workstream exists to
 /// close. Registration is a normal `Sess`, so `rpc_write` and `rpc_attach` work unchanged.
 fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemon_namespace: &str, protected_host: &ProtectedHost) -> Result<(), String> {
-    if reg.lock().unwrap_or_else(|e| e.into_inner()).contains_key(OMP_SETUP_SESSION_ID) {
-        return Ok(());
+    {
+        let mut map = reg.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(session) = map.get(OMP_SETUP_SESSION_ID) {
+            let exited = matches!(session.inner.lock().unwrap_or_else(|e| e.into_inner()).state.process, ProcessState::Exited { .. });
+            if !exited {
+                return Ok(());
+            }
+            map.remove(OMP_SETUP_SESSION_ID);
+        }
     }
     let harness = alinery_core::resolve_harness_strict_for(app_config, repo, "omp")?;
     if harness.adapter != HarnessAdapter::Omp {
@@ -3100,12 +3107,12 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
     let runner_path = resolve_runner_path()?;
     let cwd = repo.to_string_lossy().into_owned();
 
-    // An explicit model lets OMP reach login RPC before credentials exist. No prompt is sent
-    // and no task journal is requested with `--session-dir`.
+    // OMP needs a model to reach login RPC before credentials exist. Let it resolve the
+    // provider so disabling Codex does not prevent this prompt-free probe from starting.
     let mut child_args: Vec<String> = harness.args.iter().map(|arg| subst(arg, &cwd, "", "")).collect();
     child_args.push("--mode".into());
     child_args.push("rpc".into());
-    child_args.push("--model=openai-codex/gpt-5.5".into());
+    child_args.push("--model=gpt-5.5".into());
 
     let event_token = uuid::Uuid::new_v4().to_string();
     let launch = LaunchFields {
@@ -3213,6 +3220,7 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
     }
 
     let inner_reader = inner.clone();
+    let setup_app_config = app_config.to_path_buf();
     std::thread::spawn(move || {
         let mut reader = stdout;
         let mut buf = Vec::new();
@@ -3222,9 +3230,14 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
             match reader.read(&mut tmp) {
                 Ok(0) | Err(_) => {
                     let code = child.wait().ok().and_then(|status| status.code());
-                    let mut inner = inner_reader.lock().unwrap_or_else(|error| error.into_inner());
-                    let before = inner.state.clone();
-                    inner.state = process_exited(&before, code);
+                    {
+                        let mut inner = inner_reader.lock().unwrap_or_else(|error| error.into_inner());
+                        inner.state = process_exited(&inner.state, code);
+                        inner.clients.clear();
+                    }
+                    if let Some(code) = code.filter(|code| *code != 0) {
+                        alinery_core::append_exception(&setup_app_config, &format!("daemon.omp-setup-exited code={code}"));
+                    }
                     break;
                 }
                 Ok(n) => {
@@ -3265,46 +3278,38 @@ fn spawn_omp_setup_session(reg: &Registry, repo: &Path, app_config: &Path, daemo
         let mut idle_since: Option<Instant> = None;
         loop {
             std::thread::sleep(Duration::from_secs(2));
-            let still_registered = {
-                let map = reaper_reg.lock().unwrap_or_else(|e| e.into_inner());
-                map.contains_key(OMP_SETUP_SESSION_ID)
-            };
-            if !still_registered {
-                return;
-            }
-            let attached = {
+            let removed = {
+                let mut map = reaper_reg.lock().unwrap_or_else(|e| e.into_inner());
+                // The reserved id may already point at a replacement. Keep attachment and
+                // removal under the same registry lock so a new client cannot race cleanup.
+                if !map.get(OMP_SETUP_SESSION_ID).is_some_and(|sess| Arc::ptr_eq(&sess.inner, &reaper_inner)) {
+                    return;
+                }
                 let inner = reaper_inner.lock().unwrap_or_else(|e| e.into_inner());
                 if matches!(inner.state.process, ProcessState::Exited { .. }) {
                     drop(inner);
-                    reaper_reg.lock().unwrap_or_else(|e| e.into_inner()).remove(OMP_SETUP_SESSION_ID);
+                    map.remove(OMP_SETUP_SESSION_ID);
                     return;
                 }
-                !inner.clients.is_empty()
+                if !inner.clients.is_empty() {
+                    ever_attached = true;
+                    idle_since = None;
+                    continue;
+                }
+                // A slow first attach must not race the idle timeout.
+                if !ever_attached || idle_since.get_or_insert_with(Instant::now).elapsed() < OMP_SETUP_IDLE_TIMEOUT {
+                    continue;
+                }
+                drop(inner);
+                map.remove(OMP_SETUP_SESSION_ID)
             };
-            if attached {
-                ever_attached = true;
-                idle_since = None;
-                continue;
+            if let Some(pid) = removed.and_then(|sess| sess.pid) {
+                // Same shape as the `kill` op: SIGTERM the group, brief grace, SIGKILL.
+                unsafe { libc::killpg(pid as i32, libc::SIGTERM) };
+                std::thread::sleep(Duration::from_millis(500));
+                unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
             }
-            // The clock only starts once somebody has attached, so a slow first attach cannot
-            // race the reaper into killing the session it was about to use.
-            if !ever_attached {
-                continue;
-            }
-            match idle_since {
-                None => idle_since = Some(Instant::now()),
-                Some(since) if since.elapsed() >= OMP_SETUP_IDLE_TIMEOUT => {
-                    let removed = reaper_reg.lock().unwrap_or_else(|e| e.into_inner()).remove(OMP_SETUP_SESSION_ID);
-                    if let Some(pid) = removed.and_then(|sess| sess.pid) {
-                        // Same shape as the `kill` op: SIGTERM the group, brief grace, SIGKILL.
-                        unsafe { libc::killpg(pid as i32, libc::SIGTERM) };
-                        std::thread::sleep(Duration::from_millis(500));
-                        unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
-                    }
-                    return;
-                }
-                Some(_) => {}
-            }
+            return;
         }
     });
 

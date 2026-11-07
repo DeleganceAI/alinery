@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 const listeners: ((event: { payload: { id: string; attach_id: number; stream_token?: number } }) => void)[] = [];
+const listen = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, handler: (typeof listeners)[number]) => {
+  listen: listen.mockImplementation(async (_name: string, handler: (typeof listeners)[number]) => {
     listeners.push(handler);
     return () => {};
   }),
@@ -11,6 +12,25 @@ vi.mock("@tauri-apps/api/event", () => ({
 const { onStreamClosed } = await import("./ipc");
 
 describe("onStreamClosed", () => {
+  it("exposes registration readiness and cleans up when disposed before registration", async () => {
+    let registered!: (unlisten: () => void) => void;
+    const registration = new Promise<() => void>((resolve) => {
+      registered = resolve;
+    });
+    listen.mockReturnValueOnce(registration);
+    const stop = vi.fn();
+    const watch = onStreamClosed("pending", 1, vi.fn(), vi.fn());
+    const ready = vi.fn();
+    void watch.ready.then(ready);
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    watch();
+    registered(stop);
+    await watch.ready;
+    expect(ready).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("fires for its own attach only and gives up after six closes in 30s", async () => {
     const onClosed = vi.fn();
     const onGiveUp = vi.fn();

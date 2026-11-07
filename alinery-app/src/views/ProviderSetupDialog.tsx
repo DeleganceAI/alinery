@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { settleOpenUrl } from "../chat/openUrl";
 import { isInteractivePromptLoginError, needsProviderSetup, shouldOfferProviderSetup } from "../chat/providers";
-import { loginReply, requireWritten, setModelReply } from "../chat/send";
+import { DispatchFailure, loginReply, requireWritten, setModelReply } from "../chat/send";
 import type { ProvidersDialogTab } from "../chat/slash";
 import { applyRpcLine, type ChatModelOption, type ChatTranscriptState, dismissPendingUi, emptyTranscript, isPresentationUi, type PendingUi } from "../chatTranscript";
 import * as ipc from "../ipc";
@@ -43,7 +43,8 @@ export type ProviderSetupClose =
   /** The dialog was shown and the user closed it. */
   | "dismissed";
 
-const DAEMON_BACKOFF_MS = [250, 500, 1000, 2000] as const;
+const SETUP_BACKOFF_MS = [250, 500, 1000, 2000] as const;
+const SETUP_CONNECTION_CLOSED = "Oh My Pi closed the connection before returning the model list.";
 
 /** Last successful `get_available_models` rows for this JS realm. An app restart drops it. */
 let lastCatalogue: ChatModelOption[] | undefined;
@@ -58,12 +59,12 @@ function sameCatalogue(cached: ChatModelOption[] | undefined, next: ChatModelOpt
   return cached.every((row, index) => row.provider === next[index]?.provider && row.id === next[index]?.id);
 }
 
-/** A successful catalogue reply, matching the `get_available_models` branch in `applyRpcLine`. */
-function successfulModelsReply(value: unknown): boolean {
+/** A failed catalogue reply, or a successful one with catalogue data. */
+function modelsReply(value: unknown): value is { id?: unknown; success?: unknown; error?: unknown } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const rec = value as Record<string, unknown>;
   const data = rec.data;
-  return rec.type === "response" && rec.command === "get_available_models" && rec.success !== false && data !== null && typeof data === "object" && !Array.isArray(data);
+  return rec.type === "response" && rec.command === "get_available_models" && (rec.success === false || (data !== null && typeof data === "object" && !Array.isArray(data)));
 }
 
 export function ProviderSetupDialog({
@@ -117,18 +118,23 @@ export function ProviderSetupDialog({
 
   useEffect(() => {
     let cancelled = false;
-    const apply = (line: string) => {
-      if (cancelled) return;
+    const apply = (line: string, catalogueId: string) => {
       try {
         // `applyRpcLine` takes the parsed value, not the raw line: handed a string it silently
         // no-ops, so every provider row would vanish without an error anywhere.
         const value: unknown = JSON.parse(line);
+        const catalogueReply = modelsReply(value);
+        if (catalogueReply && value.success === false) {
+          if (value.id !== catalogueId) return false;
+          setCatalogueStatus("failed");
+          setModelError(typeof value.error === "string" && value.error.trim() ? value.error : "Could not load the model list.");
+          return true;
+        }
         const next = applyRpcLine(chatRef.current, value);
         chatRef.current = next;
         setChat(next);
-        // Publish only a live successful catalogue. A close that already set `cancelled`
-        // returned above, so a racing reply cannot become the next open's cache.
-        if (successfulModelsReply(value)) {
+        // Only the current attachment can populate the next open's cache.
+        if (catalogueReply) {
           const nextModels = next.sessionMeta.models ?? [];
           if (!sameCatalogue(lastCatalogue, nextModels)) {
             lastCatalogue = nextModels.map((row) => ({ provider: row.provider, id: row.id }));
@@ -168,35 +174,67 @@ export function ProviderSetupDialog({
             }
           }
         }
+        return catalogueReply && value.id === catalogueId;
       } catch {
-        /* ignore non-JSON */
+        return false;
       }
     };
 
-    const attachId = Math.floor(Math.random() * 2 ** 31);
-    let attached: string | null = null;
+    type Attachment = { id: string; attachId: number; stopWatching: () => void };
+    let activeAttachment: Attachment | null = null;
     let backoffTimer: number | undefined;
 
-    const reap = (id: string) => {
-      void ipc.detachSession(id, attachId);
-      if (sessionIdRef.current === id) sessionIdRef.current = "";
-      if (attached === id) attached = null;
+    const reap = (attachment: Attachment) => {
+      attachment.stopWatching();
+      if (activeAttachment === attachment) {
+        activeAttachment = null;
+        sessionIdRef.current = "";
+      }
+      void ipc.detachSession(attachment.id, attachment.attachId).catch(() => undefined);
     };
 
     const attachAndQuery = async (id: string) => {
-      sessionIdRef.current = id;
+      const attachId = ipc.nextAttachId();
+      const catalogueCommand = getAvailableModelsCommand();
+      let settleCatalogue!: (received: boolean) => void;
+      const catalogueReply = new Promise<boolean>((resolve) => {
+        settleCatalogue = resolve;
+      });
+      const closed = () => settleCatalogue(false);
+      const streamWatch = ipc.onStreamClosed(id, attachId, closed, closed);
+      let unlisten: (() => void) | undefined = streamWatch;
+      const attachment = {
+        id,
+        attachId,
+        stopWatching: () => {
+          unlisten?.();
+          unlisten = undefined;
+          closed();
+        },
+      };
+      if (!cancelled) {
+        activeAttachment = attachment;
+        sessionIdRef.current = id;
+      }
       // Attach even when the effect is already torn down. The daemon's setup-session reaper only
       // arms once it has seen a client, so a session nobody ever attached to is never reaped --
       // attaching and immediately detaching below is what lets it go.
       try {
-        await ipc.rpcAttachSession({ id, attachId, streamToken: attachId, onLine: apply });
+        await streamWatch.ready;
+        await ipc.rpcAttachSession({
+          id,
+          attachId,
+          streamToken: attachId,
+          onLine: (line) => {
+            if (activeAttachment === attachment && apply(line, catalogueCommand.id)) settleCatalogue(true);
+          },
+        });
       } catch (error) {
-        reap(id);
+        reap(attachment);
         throw error;
       }
-      attached = id;
       if (cancelled) {
-        reap(id);
+        reap(attachment);
         return;
       }
       // The daemon negotiates protocol v2 for this session on `ready`, so go straight to
@@ -205,7 +243,10 @@ export function ProviderSetupDialog({
       if (cancelled) return;
       requireWritten(await ipc.rpcWriteSession(id, getLoginProvidersCommand()));
       if (cancelled) return;
-      requireWritten(await ipc.rpcWriteSession(id, getAvailableModelsCommand()));
+      requireWritten(await ipc.rpcWriteSession(id, catalogueCommand));
+      // A successful write only means the bytes made it into stdin.
+      if (!(await catalogueReply) && !cancelled) throw new Error(SETUP_CONNECTION_CLOSED);
+      attachment.stopWatching();
     };
 
     const run = async () => {
@@ -217,20 +258,19 @@ export function ProviderSetupDialog({
           return;
         } catch (error) {
           if (cancelled) return;
-          const leaked = attached || sessionIdRef.current;
-          if (leaked) reap(leaked);
-          const message = String(error);
-          if (!message.includes("daemon not connected")) {
+          if (activeAttachment) reap(activeAttachment);
+          // Only the bootstrap reads can be replayed. Sign-in and model changes use their own handlers.
+          const message = error instanceof DispatchFailure ? error.reason : error instanceof Error ? error.message : String(error);
+          const disconnected = message.includes("daemon not connected");
+          const interrupted =
+            message === "unknown-session" || message === "stale session transport" || message === SETUP_CONNECTION_CLOSED || message.startsWith("rpc-write: Broken pipe");
+          const canRetry = attempt < SETUP_BACKOFF_MS.length || (mode === "auto" && disconnected);
+          if (!canRetry || !(disconnected || interrupted)) {
             setCatalogueStatus("failed");
             setModelError(message);
             return;
           }
-          if (mode === "manual" && attempt >= DAEMON_BACKOFF_MS.length) {
-            setCatalogueStatus("failed");
-            setModelError(message);
-            return;
-          }
-          const delay = DAEMON_BACKOFF_MS[Math.min(attempt, DAEMON_BACKOFF_MS.length - 1)] ?? 2000;
+          const delay = SETUP_BACKOFF_MS[Math.min(attempt, SETUP_BACKOFF_MS.length - 1)] ?? 2000;
           attempt += 1;
           await new Promise<void>((resolve) => {
             backoffTimer = window.setTimeout(resolve, delay);
@@ -266,8 +306,7 @@ export function ProviderSetupDialog({
     return () => {
       cancelled = true;
       if (backoffTimer != null) window.clearTimeout(backoffTimer);
-      const id = attached || sessionIdRef.current;
-      if (id) reap(id);
+      if (activeAttachment) reap(activeAttachment);
     };
   }, [mode]);
 
@@ -382,6 +421,7 @@ export function ProviderSetupDialog({
   const shownModels = modelsSettled ? models : (lastCatalogue ?? []);
   const modelsStatus = modelsSettled || lastCatalogue ? "ready" : catalogueStatus === "failed" ? "failed" : "connecting";
   const decided = mode === "manual" || (hostedLoaded && providers !== undefined && providers.length > 0);
+  // The setup probe can choose an unauthenticated provider even when another one is ready.
   const offer =
     mode === "manual" ||
     shouldOfferProviderSetup({
@@ -390,7 +430,6 @@ export function ProviderSetupDialog({
       busy: false,
       providers: providers ?? [],
       models,
-      currentModel: chat.sessionMeta.model,
       hostedReady: hosted?.ready === true,
     });
   useEffect(() => {
