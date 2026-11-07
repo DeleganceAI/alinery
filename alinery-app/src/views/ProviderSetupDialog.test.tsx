@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   ompSetupSession: vi.fn(),
   rpcAttachSession: vi.fn(),
   rpcWriteSession: vi.fn(),
-  onStreamClosed: vi.fn((_id: string, _attachId: number, _onClosed: () => void) => () => {}),
+  onStreamClosed: vi.fn((_id: string, _attachId: number, _onClosed: () => void) => Object.assign(() => {}, { ready: Promise.resolve() })),
   readOmpModelRoles: vi.fn(),
   hostedCatalog: vi.fn(),
   accountSignIn: vi.fn(),
@@ -346,7 +346,7 @@ describe("ProviderSetupDialog", () => {
     expect(mocks.rpcAttachSession).toHaveBeenCalledWith(expect.objectContaining({ id: "__omp-setup-2__" }));
   });
 
-  it.each(["broken pipe", "stream closed"])("reconnects after %s and ignores replies from the old attachment", async (failure) => {
+  it.each(["broken pipe", "stream closed", "delayed listener"])("reconnects after %s and ignores replies from the old attachment", async (failure) => {
     vi.useFakeTimers();
     mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
     mocks.readOmpModelRoles.mockResolvedValue({});
@@ -357,9 +357,23 @@ describe("ProviderSetupDialog", () => {
     if (failure === "broken pipe") {
       mocks.rpcWriteSession.mockResolvedValueOnce({ status: "unknown", reason: "rpc-write: Broken pipe (os error 32)" });
     }
+    let registered!: () => void;
+    if (failure === "delayed listener") {
+      const ready = new Promise<void>((resolve) => {
+        registered = resolve;
+      });
+      mocks.onStreamClosed.mockReturnValueOnce(Object.assign(vi.fn(), { ready }));
+    }
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
 
-    if (failure === "stream closed") {
+    if (failure === "delayed listener") {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mocks.rpcAttachSession).not.toHaveBeenCalled();
+      await act(async () => registered());
+    }
+    if (failure !== "broken pipe") {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });

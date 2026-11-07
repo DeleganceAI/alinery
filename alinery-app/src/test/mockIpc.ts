@@ -51,7 +51,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
       ),
     ],
     ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
-    ["onStreamClosed", vi.fn(() => () => {})],
+    ["onStreamClosed", vi.fn(() => Object.assign(() => {}, { ready: Promise.resolve() }))],
     ["nextAttachId", vi.fn(() => ++attachIds)],
     [
       "getTaskExecution",

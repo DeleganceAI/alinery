@@ -195,7 +195,8 @@ export function ProviderSetupDialog({
         settleCatalogue = resolve;
       });
       const closed = () => settleCatalogue(false);
-      let unlisten: (() => void) | undefined = ipc.onStreamClosed(id, attachId, closed, closed);
+      const streamWatch = ipc.onStreamClosed(id, attachId, closed, closed);
+      let unlisten: (() => void) | undefined = streamWatch;
       const attachment = {
         id,
         attachId,
@@ -213,6 +214,7 @@ export function ProviderSetupDialog({
       // arms once it has seen a client, so a session nobody ever attached to is never reaped --
       // attaching and immediately detaching below is what lets it go.
       try {
+        await streamWatch.ready;
         await ipc.rpcAttachSession({
           id,
           attachId,

@@ -9,8 +9,28 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const { onStreamClosed } = await import("./ipc");
+const { listen } = await import("@tauri-apps/api/event");
 
 describe("onStreamClosed", () => {
+  it("exposes registration readiness and cleans up when disposed before registration", async () => {
+    let registered!: (unlisten: () => void) => void;
+    const registration = new Promise<() => void>((resolve) => {
+      registered = resolve;
+    });
+    vi.mocked(listen).mockReturnValueOnce(registration);
+    const stop = vi.fn();
+    const watch = onStreamClosed("pending", 1, vi.fn(), vi.fn());
+    const ready = vi.fn();
+    void watch.ready.then(ready);
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    watch();
+    registered(stop);
+    await watch.ready;
+    expect(ready).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("fires for its own attach only and gives up after six closes in 30s", async () => {
     const onClosed = vi.fn();
     const onGiveUp = vi.fn();

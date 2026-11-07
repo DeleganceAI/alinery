@@ -1806,7 +1806,11 @@ fn omp_setup_replaces_an_exited_child() {
         line.clear();
     }
     let exited = fixture.rpc(json!({"op": "status", "id": id}));
-    assert_eq!(exited["process"], json!({"state": "exited", "code": 23}), "{exited}");
+    // The setup reaper may already have removed the exited row.
+    assert!(
+        exited["process"] == json!({"state": "exited", "code": 23}) || exited["error"] == "unknown-session",
+        "{exited}"
+    );
 
     let reopened = fixture.rpc(json!({"op": "omp_setup"}));
     assert_eq!(reopened["id"], id, "{reopened}");

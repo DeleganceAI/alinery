@@ -512,12 +512,12 @@ const streamCloses = new Map<string, number[]>();
  * Without a listener the view keeps showing a running turn that never prints again while OMP works
  * on. `onClosed` fires for this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX
  * closes in 30s, so a stream that keeps closing stops instead of re-reading the journal in a loop.
- * Returns the unlisten.
+ * Returns the unlisten. Await `ready` before attaching when a missed close would block loading.
  */
-export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
+export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): (() => void) & { ready: Promise<void> } {
   let disposed = false;
   let stop: (() => void) | null = null;
-  void listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
+  const ready = listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
     if (disposed || event.payload.id !== id || event.payload.attach_id !== attachId) return;
     const now = Date.now();
     const recent = (streamCloses.get(id) ?? []).filter((at) => now - at < STREAM_RECOVERY_WINDOW_MS);
@@ -529,8 +529,9 @@ export function onStreamClosed(id: string, attachId: number, onClosed: () => voi
     if (disposed) unlisten();
     else stop = unlisten;
   });
-  return () => {
+  const unlisten = () => {
     disposed = true;
     stop?.();
   };
+  return Object.assign(unlisten, { ready });
 }
