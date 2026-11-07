@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 const listeners: ((event: { payload: { id: string; attach_id: number; stream_token?: number } }) => void)[] = [];
+const listen = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, handler: (typeof listeners)[number]) => {
+  listen: listen.mockImplementation(async (_name: string, handler: (typeof listeners)[number]) => {
     listeners.push(handler);
     return () => {};
   }),
 }));
 
 const { onStreamClosed } = await import("./ipc");
-const { listen } = await import("@tauri-apps/api/event");
 
 describe("onStreamClosed", () => {
   it("exposes registration readiness and cleans up when disposed before registration", async () => {
@@ -17,7 +17,7 @@ describe("onStreamClosed", () => {
     const registration = new Promise<() => void>((resolve) => {
       registered = resolve;
     });
-    vi.mocked(listen).mockReturnValueOnce(registration);
+    listen.mockReturnValueOnce(registration);
     const stop = vi.fn();
     const watch = onStreamClosed("pending", 1, vi.fn(), vi.fn());
     const ready = vi.fn();
