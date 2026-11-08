@@ -4,24 +4,11 @@ import { alineryFilePath, attachmentFilePath, readNodeBytes } from "./sync/artif
 import { readAttachmentBytes } from "./sync/tasks";
 
 /**
- * The image is read from the daemon (BlobService): a tree node by `nodeId`, an attachment of the task by `name`.
- * `revealBelow` is a tree node's path below `.alinery/`; without it the attachment's own place is used.
+ * Blob URL for an attachment image, read from the daemon (BlobService, so a remote repo works too): a tree node by
+ * `nodeId`, an attachment of the task by `name`. Empty while loading or when `name` is empty; `setError` lets a caller
+ * report a decode or reveal failure in the same slot.
  */
-export function AttachmentPreview({
-  taskSlug,
-  name,
-  nodeId,
-  repoPath,
-  revealBelow,
-  children,
-}: {
-  taskSlug: string;
-  name: string;
-  nodeId?: string;
-  repoPath: string;
-  revealBelow?: string;
-  children?: ReactNode;
-}) {
+export function useAttachmentImageSrc(repoPath: string, taskSlug: string, name: string, nodeId?: string) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -30,6 +17,7 @@ export function AttachmentPreview({
     let url = "";
     setSrc("");
     setError("");
+    if (!name) return;
     (nodeId ? readNodeBytes(repoPath, taskSlug, nodeId) : readAttachmentBytes(repoPath, taskSlug, name)).then(
       (bytes) => {
         if (cancelled) return;
@@ -45,6 +33,27 @@ export function AttachmentPreview({
       if (url) URL.revokeObjectURL(url);
     };
   }, [taskSlug, name, nodeId, repoPath]);
+
+  return { src, error, setError };
+}
+
+/** `revealBelow` is a tree node's path below `.alinery/`; without it the attachment's own place is used. */
+export function AttachmentPreview({
+  taskSlug,
+  name,
+  nodeId,
+  repoPath,
+  revealBelow,
+  children,
+}: {
+  taskSlug: string;
+  name: string;
+  nodeId?: string;
+  repoPath: string;
+  revealBelow?: string;
+  children?: ReactNode;
+}) {
+  const { src, error, setError } = useAttachmentImageSrc(repoPath, taskSlug, name, nodeId);
 
   return (
     <details className="attachment-preview" open>

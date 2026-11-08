@@ -222,6 +222,34 @@ describe("SessionView artifact pane", () => {
     expect(screen.getByText("3/3")).toBeDefined();
   });
 
+  it("resolves a parent-context artifact's relative image through the parent's attachment node", async () => {
+    const parent = (id: string, kind: ArtifactTreeNode["kind"], label: string, children: ArtifactTreeNode[] = []): ArtifactTreeNode => ({
+      id,
+      kind,
+      label,
+      owner_task_slug: "parent",
+      source: "parent_context",
+      children,
+    });
+    fakeArtifacts.set("task", {
+      tree: [
+        parent("parent-context", "subtask_folder", "Parent context", [
+          parent("parent-attachments", "subtask_folder", "Attachments", [parent("parent-shot", "attachment", "shot.png")]),
+          parent("parent-ticket", "referenced", "00-parent-ticket.md"),
+        ]),
+      ],
+    });
+    fakeArtifacts.nodeTexts["parent-ticket"] = "![shot](attachments/shot.png)";
+    renderSession({ phase: "review-checks", playbook: "review" });
+    await flushPromises();
+
+    fireEvent.click(screen.getByRole("button", { name: /00-parent-ticket\.md/ }));
+    await flushPromises();
+
+    expect(fakeArtifacts.readNode).toHaveBeenCalledWith("/repo", "task", "parent-ticket");
+    expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "task", "parent-shot");
+  });
+
   it("shows a comment another client added, with no poll", async () => {
     renderSession({ phase: "review-checks", playbook: "review" });
     await flushPromises();
