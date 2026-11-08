@@ -578,6 +578,39 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
   };
 }
 
+describe("exited Chat activity", () => {
+  beforeEach(() => {
+    resetDaemon();
+    fakeBoard.set({ anyRepoTasks: [task] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("keeps a live busy turn active", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ intent: "attach" });
+    expect(await screen.findByRole("button", { name: "Queue" })).toBeDefined();
+    expect(screen.getByPlaceholderText("Send after this turn…")).toBeDefined();
+  });
+
+  it("settles a session whose process exited with its last agent state still busy", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ intent: "attach" });
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDefined();
+
+    const live = liveObservation("rpc", { state: "busy" });
+    sessionStatus.mockResolvedValue({ ...live, lifecycle: { state: "live_exited" }, state: live.state && { ...live.state, process: { state: "exited", code: null } } });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
+    expect(screen.queryByPlaceholderText("Send after this turn…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDefined();
+  });
+});
+
 describe("session lifecycle polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();

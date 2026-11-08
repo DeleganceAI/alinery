@@ -679,7 +679,7 @@ export function SessionView({
     const busy = isTurnActive({
       pendingTurn: chatRef.current.pendingTurn,
       turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
+      observation,
     });
     setMessageSending(true);
     setMessageError("");
@@ -900,7 +900,7 @@ export function SessionView({
       busy: isTurnActive({
         pendingTurn: chat.pendingTurn,
         turnOpen: chat.turnOpen,
-        agentState: observation?.state?.agent?.state,
+        observation,
       }),
       providers: providerAccess.loginProviders,
       models: providerAccess.models,
@@ -916,7 +916,7 @@ export function SessionView({
     chat.sessionMeta.model,
     chat.pendingTurn,
     chat.turnOpen,
-    observation?.state?.agent?.state,
+    observation,
     modelDialog,
     hosted,
     hostedLoaded,
@@ -972,7 +972,7 @@ export function SessionView({
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
-    agentState: observedState?.agent?.state,
+    observation,
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;

@@ -70,9 +70,7 @@ export function chatActivity(
   transcript: ChatTranscriptState,
 ): { status: SessionChatStatus; turnActive: boolean; kind: ObservationDisplayKind } {
   const raw = observation ? observationDisplayKind(observation) : null;
-  // OMP that died mid-turn never sends turn_end, and the daemon keeps its last agent state: neither is a running turn.
-  const exited = observation?.state ? observation.state.process.state === "exited" : raw === "exited";
-  const turnActive = !exited && isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, agentState: observation?.state?.agent?.state });
+  const turnActive = isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, observation });
   const answering = transcript.pendingUi.some((request) => needsUiReply(request.method));
   // Approval with no card is a stuck harness, not a prompt the user can answer. Keep Stop available.
   const status: SessionChatStatus = raw === "waiting_for_approval" && answering ? "waiting_approval" : turnActive ? "running" : "idle";
