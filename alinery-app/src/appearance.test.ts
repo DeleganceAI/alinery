@@ -214,6 +214,22 @@ describe("artifact pane CSS tokens", () => {
   });
 });
 
+describe("repo switcher floor (#144)", () => {
+  const css = readFileSync("src/theme.css", "utf8");
+  const start = css.indexOf(".repo-switcher {");
+  const rule = css.slice(start, css.indexOf("}", start));
+
+  it("grows with --ui-scale above 1x and holds its 1x value below", () => {
+    // The trigger chrome is fixed px; a floor that shrank at 0.75x/0.875x would squeeze the trigger below it and collapse the status dot.
+    expect(rule).toMatch(/min-width: calc\(var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
+  });
+
+  it("makes room for both add buttons when Add remote repository is shown", () => {
+    const pair = css.slice(css.indexOf(".repo-switcher:has(.repo-add ~ .repo-add) {"));
+    expect(pair.slice(0, pair.indexOf("}"))).toMatch(/min-width: calc\(2 \* var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
+  });
+});
+
 describe("applyAppearance", () => {
   beforeEach(() => {
     applyAppearance({ ...DEFAULT_APPEARANCE, mode: "dark" });

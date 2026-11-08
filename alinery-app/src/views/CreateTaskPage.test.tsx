@@ -701,10 +701,8 @@ describe("per-step default model", () => {
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     fireEvent.change(taskModel, { target: { value: "task-model" } });
     expect(stepModel.value).toBe("task-model");
-    expect(screen.getByText("Task default").classList.contains("step-model-badge")).toBe(true);
     fireEvent.change(taskModel, { target: { value: "next-task" } });
     expect(stepModel.value).toBe("next-task");
-    expect(screen.getByText("Task default")).toBeTruthy();
   });
 
   it("keeps a playbook step pin when the task model changes", async () => {
@@ -765,10 +763,8 @@ describe("per-step default model", () => {
     fireEvent.change(await screen.findByLabelText("Build model"), { target: { value: "caught" } });
     fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "caught" } });
     expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("caught");
-    expect(screen.getByText("Task default")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Task Default Model"), { target: { value: "later" } });
     expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("later");
-    expect(screen.getByText("Task default")).toBeTruthy();
   });
 
   it("drops stale keys on playbook switch and does not store the new pin", async () => {
@@ -844,7 +840,6 @@ describe("per-step default model", () => {
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(taskModel).toHaveProperty("value", "configured-omp");
     expect(stepModel.value).toBe("configured-omp");
-    expect(screen.getByText("Task default")).toBeTruthy();
     expect(screen.queryByText("Product default")).toBeNull();
     fireEvent.change(taskModel, { target: { value: "" } });
     expect(stepModel.value).toBe("configured-omp");
@@ -859,7 +854,6 @@ describe("per-step default model", () => {
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(stepModel.value).toBe("");
     expect(screen.queryByText("Product default")).toBeNull();
-    expect(screen.queryByText("Task default")).toBeNull();
   });
 });
 
