@@ -1246,3 +1246,31 @@ describe("configurable task grid", () => {
     expect(screen.getByRole("button", { name: /^B first, repo-b/ }).getAttribute("aria-current")).toBe("true");
   });
 });
+
+// The stage path reads `state.executions` and `definition.step`, which a reply need not carry:
+// `getTaskExecution` omits `executions` for a history-only task, and an error-shaped definition has
+// no `step`. TaskDetail (196) and CreateSessionPage (72) already default both with `?? {}`; the grid
+// dereferenced them bare and threw "Cannot convert undefined or null to object" from Object.values,
+// which unmounted the whole app and left a black window with nothing in alinery.log.
+describe("execution reply without the optional maps", () => {
+  const props = { allRepos: false, onOpen: () => {}, registerNav: () => {}, storageKey: "sparse-reply", initialPreset: "progress" as const };
+
+  it("draws the stage path from known steps when executions is absent", async () => {
+    fakeBoard.set({ tasks: [makeTask({ name: "Sparse task", slug: "sparse", current_phase: "research", current_step_title: "Research" })] });
+    fakeBoard.set({ activity: { "/repo-a:sparse": { status: "running", active_session: null } } });
+    const sparse = {
+      live: { status: "available" },
+      definition: { step: [step("research", "Research"), step("design", "Design")] },
+      state: { version: 2, revision: 1, history_only: true },
+    } as unknown as TaskExecutionReply;
+    ipcMock.getTaskExecution.mockResolvedValue(sparse);
+
+    const errors: unknown[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => errors.push(args[0]));
+
+    const { container } = render(<Grid repoPaths={["/repo-a"]} {...props} />);
+    await screen.findByRole("button", { name: /^Sparse task, repo-a/ });
+    expect(errors.filter((e) => String(e).includes("Cannot convert undefined or null to object"))).toEqual([]);
+    expect([...container.querySelectorAll(".task-grid-lane-step")].map((n) => n.textContent)).toEqual(["Research", "Design"]);
+  });
+});

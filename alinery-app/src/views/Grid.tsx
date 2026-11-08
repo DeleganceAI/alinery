@@ -555,13 +555,13 @@ function stagePath(fact: TaskFacts, executions: Record<string, TaskExecutionRepl
   const execution = executions[fact.id];
   const activeSteps = new Set<string>();
   if (execution) {
-    for (const record of Object.values(execution.state.executions)) {
+    for (const record of Object.values(execution.state.executions ?? {})) {
       if (record.lifecycle === "starting" || record.lifecycle === "running" || record.lifecycle === "finishing") {
         activeSteps.add(record.candidate.step_key);
       }
     }
   }
-  const steps = execution?.definition.step ?? knownSteps;
+  const steps = execution?.definition?.step ?? knownSteps;
   const path: ProgressCell[] = steps.map((step) => ({
     key: step.key,
     label: step.title || step.key,
