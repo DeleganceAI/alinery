@@ -20,7 +20,7 @@ Never launch, build-and-open, or `open` the desktop app (`npm run tauri dev` or 
 - **Attachment** = a user-supplied file copied at task creation into `artifacts/attachments/`. Deliberately invisible to every artifact scan; a harness reaches it through `{{ARTIFACTS_DIR}}/attachments/`.
 - **Worktree** = one per task (`git worktree add` on branch `<slug>`). Kept until explicit removal.
 - **Current step** = derived from the latest non-archived playbook session's phase. Auxiliary sessions do not regress board position (no stored field).
-- **Grid / Kanban** = read-only projection grouping tasks by derived playbook step.
+- **Grid** = read-only projection grouping tasks by derived playbook step.
 
 ## Storage Layout
 
@@ -150,7 +150,7 @@ MCP is the daemon binary's `--mcp` mode (`alinery-app/src-tauri/vinculum-daemon/
 
 ## Frontend Views (no router)
 
-`useState` switch: Task list, Grid, Kanban, Task detail, Session (xterm.js). Reuse `<SessionTerminal>` everywhere.
+`useState` switch: Task list, Grid, Task detail, Session (xterm.js). Reuse `<SessionTerminal>` everywhere.
 
 **Never use `window.confirm` / `alert` / `prompt`.** `tauri_plugin_dialog::init()` injects an init script that replaces them: `window.confirm` becomes **async**, so `if (!window.confirm(msg)) return;` tests a Promise (always truthy) and the destructive action runs with no dialog. Every confirmation goes through `alinery-app/src/confirm.tsx`: `await confirmDanger(...)` for yes/no, `await askConfirm({choices, defaultKey})` when there are more than two answers. Default focus is the safe choice, never the danger button. Guarded by `scripts/tests/check-no-window-confirm.sh`.
 

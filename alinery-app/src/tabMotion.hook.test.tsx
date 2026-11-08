@@ -17,7 +17,7 @@ describe("useTabPill", () => {
     useTabPill(ref, active, instant);
     return (
       <nav ref={ref} className="tabs">
-        <button type="button" className="tab" data-tab="kanban" />
+        <button type="button" className="tab" data-tab="list" />
         <button type="button" className="tab" data-tab="list" />
       </nav>
     );
