@@ -45,13 +45,8 @@ fi
 # bun install is a registry round trip and the compile rewrites a 70 MB binary, so
 # an up-to-date output short-circuits both.
 if [ "$FORCE" = 0 ] && [ -f "$DEST" ]; then
-  stale=0
-  for input in "$PIN_FILE" "$PKG/package.json" "$PKG"/src/*.ts "$ROOT"/proto/gen/alinery/v1/*.ts; do
-    if [ "$input" -nt "$DEST" ]; then
-      stale=1
-    fi
-  done
-  if [ "$stale" = 0 ]; then
+  # Recursive: most of the daemon is under src/domain, src/rpc and src/sync, and it bundles playbook-engine.
+  if [ -z "$(find "$PIN_FILE" "$PKG/package.json" "$PKG/src" "$ROOT/playbook-engine/src" "$ROOT/proto/gen" -type f -newer "$DEST" -print -quit)" ]; then
     echo "alinery-vinculum-daemon: $DEST (up to date)"
     exit 0
   fi

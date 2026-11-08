@@ -48,6 +48,13 @@ case "$SRC" in
   *) echo "FAIL - fetch short-circuits an up-to-date output"; fails=$((fails + 1)) ;;
 esac
 
+# The daemon's logic lives under src/domain, src/rpc, src/sync and in playbook-engine, so a staleness
+# check that globs only src/*.ts keeps a binary that predates an edit there.
+case "$SRC" in
+  *'"$PKG/src" "$ROOT/playbook-engine/src"'*'-newer "$DEST"'*) echo "ok   - staleness covers every daemon source directory" ;;
+  *) echo "FAIL - staleness covers every daemon source directory"; fails=$((fails + 1)) ;;
+esac
+
 # A launch may compile the optional daemon, but it must never reach the network
 # for a toolchain or fail the launch when Bun is absent.
 LAUNCHER="$ROOT/alinery-app/scripts/tauri.mjs"
