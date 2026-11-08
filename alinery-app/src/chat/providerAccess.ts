@@ -20,6 +20,7 @@ export function useProviderAccess(enabled: boolean) {
   const [error, setError] = useState<string | null>(null);
   const [choice, setChoice] = useState<LoginProvider | null>(null);
   const [login, setLogin] = useState<ProviderLoginStatus | null>(null);
+  const [signedIn, setSignedIn] = useState<string | null>(null);
   const loginId = useRef<string | null>(null);
   const loginHost = useRef<string | null>(null);
   const opened = useRef(new Set<string>());
@@ -82,7 +83,13 @@ export function useProviderAccess(enabled: boolean) {
           if (status.status === "done" || status.status === "error" || status.status === "cancelled") {
             loginId.current = null;
             setBusy(null);
-            if (status.status === "done") void reload().catch((cause: unknown) => setError(String(cause)));
+            if (status.status === "done") {
+              setLogin(null);
+              void reload().then(
+                (next) => setSignedIn(next.providers.find((p) => p.id === busy)?.name ?? busy),
+                (cause: unknown) => setError(String(cause)),
+              );
+            }
             if (status.status === "error") setError(status.failure || "Login failed");
           }
         },
@@ -100,6 +107,7 @@ export function useProviderAccess(enabled: boolean) {
   const start = useCallback(async (provider: string, method: "api_key" | "oauth") => {
     setError(null);
     setChoice(null);
+    setSignedIn(null);
     try {
       const { status, host } = await providers.providerLoginStart(provider, method);
       loginHost.current = host;
@@ -173,6 +181,7 @@ export function useProviderAccess(enabled: boolean) {
     error,
     choice,
     login,
+    signedIn,
     start,
     choose: setChoice,
     reply,

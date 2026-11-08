@@ -13,7 +13,7 @@ function eventText(event: ProviderLoginStatus["events"][number]): string {
 
 export function ProviderAccessPanel({ access }: { access: Access }) {
   const prompt = access.login?.prompt;
-  const shown = !!(access.choice || access.busy);
+  const shown = !!(access.choice || access.busy || access.signedIn);
   const eventCount = access.login?.events.length ?? 0;
   const promptMessage = prompt?.message;
   const ref = useRef<HTMLDivElement>(null);
@@ -24,6 +24,11 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
   }, [shown, eventCount, promptMessage]);
   return (
     <div ref={ref}>
+      {access.signedIn ? (
+        <p className="chat-ui-prompt" role="status">
+          Successfully signed in to {access.signedIn}.
+        </p>
+      ) : null}
       {access.choice ? (
         <div className="chat-ui-prompt">
           <p className="chat-msg-title">{access.choice.name}</p>
