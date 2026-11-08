@@ -1,11 +1,12 @@
-import { ArrowLeft, BookOpen, Check, Download, Eye, Share2, Upload, X } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, BookOpen, Check, Download, Eye, Share2, Star, Upload, X } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import "./Playbooks.css";
 import { askConfirm } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
-import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef, starredPlaybookKeys, withPlaybookStar } from "../shared";
 import * as community from "../sync/community";
 import {
   deletePlaybookSource,
@@ -22,7 +23,6 @@ import type {
   CommunitySummary,
   DownloadStatusRow,
   NormalizedPlaybook,
-  PickerPreference,
   PickerPreferences,
   PlaybookCatalog,
   PlaybookRef,
@@ -54,6 +54,7 @@ const blankDefinition: NormalizedPlaybook = {
   preamble: "",
   section_order: ["work"],
 };
+const featuredPlaybookKeys = ["superdevelop", "academic-survey", "bug-hunting", "systematic-evidence-review", "one-shot"];
 const scopeLabels = { repo: "Repository", global: "Global", bundled: "Bundled" };
 const catalogContains = (catalog: PlaybookCatalog, reference: PlaybookRef) => catalog.candidates.some((candidate) => samePlaybookRef(candidate.source.reference, reference));
 // The accounts contract's label rule (^[a-z0-9][a-z0-9-]{1,31}$), one home for both
@@ -84,12 +85,13 @@ const libraryColumns = [
   { field: "name", label: "Playbook Name", initialDirection: "asc" },
   { field: "source", label: "Source", initialDirection: "asc" },
   { field: "modified", label: "Last modified", initialDirection: "desc" },
-  { field: "preferred", label: "Preferred for this repo", initialDirection: "desc" },
+  { field: "starred", label: "Starred", initialDirection: "desc" },
 ];
 
 function PlaybookIdentity({ playbookKey, name }: { playbookKey: string; name: string }) {
   return (
     <span className="playbooks-identity">
+      <BookOpen size={20} strokeWidth={1.5} aria-hidden="true" />
       <small>{playbookKey}</small>
       <span>{name}</span>
     </span>
@@ -121,20 +123,6 @@ function RowIcon({
   );
 }
 
-function CommunityColumns({ labels }: { labels: string[] }) {
-  return (
-    <thead>
-      <tr>
-        {labels.map((label) => (
-          <th key={label} scope="col">
-            {label}
-          </th>
-        ))}
-      </tr>
-    </thead>
-  );
-}
-
 function CatalogDownload({
   name,
   missing = false,
@@ -153,26 +141,27 @@ function CatalogDownload({
   if (missing || remoteVersion === null) return null;
   if (!imported) {
     return (
-      <RowIcon label={`Download ${name}`} onClick={onDownload}>
+      <RowIcon label={`Download ${name}`} caption="Download" onClick={onDownload}>
         <Download size={16} aria-hidden="true" />
       </RowIcon>
     );
   }
   if (remoteVersion > imported.importedVersion) {
     return (
-      <RowIcon label={`Download update ${name}`} onClick={onUpdate}>
+      <RowIcon label={`Download update ${name}`} caption="Update" onClick={onUpdate}>
         <Download size={16} aria-hidden="true" />
       </RowIcon>
     );
   }
   return (
-    <RowIcon label={`Downloaded ${name}`} disabled>
+    <RowIcon label={`Downloaded ${name}`} caption="Downloaded" disabled>
       <Check size={16} aria-hidden="true" />
     </RowIcon>
   );
 }
 
 export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCreateTask: (reference: PlaybookRef) => void }) {
+  const sortDescriptionId = useId();
   const [catalog, setCatalog] = useState<PlaybookCatalog | null>(null);
   const [selected, setSelected] = useState<ScopedPlaybook | null>(null);
   const [editorRepoPath, setEditorRepoPath] = useState(repoPath);
@@ -183,7 +172,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [graphFraction, setGraphFraction] = useState(2 / 3);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState("name-asc");
-  const [preferredOnly, setPreferredOnly] = useState(false);
+  const [starredOnly, setStarredOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [diagnostics, setDiagnostics] = useState<PlaybookValidationError[]>([]);
   const [error, setError] = useState("");
@@ -441,6 +430,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setNotice("");
     try {
       install(await readPlaybook(reference, owner), owner);
+      setLibraryTab("local");
       setMode("graph");
     } catch (e) {
       setError(errorText(e));
@@ -865,30 +855,20 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       }
     }
   };
-  const setPreferred = (reference: PlaybookRef, preferred: boolean) => {
-    if (!preferences) return;
-    const existing = preferences.entries.find((entry) => samePlaybookRef(entry.reference, reference));
-    const entry: PickerPreference = {
-      reference,
-      hidden: false,
-      collapsed: false,
-      badge: null,
-      color: null,
-      last_imported_at_ms: null,
-      ...existing,
-      preferred,
-    };
-    void savePreferences({
-      ...preferences,
-      entries: existing ? preferences.entries.map((item) => (samePlaybookRef(item.reference, reference) ? entry : item)) : [...preferences.entries, entry],
-    });
+  const setStarred = (reference: PlaybookRef, starred: boolean) => {
+    if (preferences) void savePreferences(withPlaybookStar(preferences, reference, starred));
   };
-  const preferredKeys = new Set(repoPath ? preferences?.entries.filter((entry) => entry.preferred).map((entry) => playbookRefKey(entry.reference)) : []);
+  const starredKeys = starredPlaybookKeys(repoPath ? preferences : undefined);
+  const featuredPlaybooks = featuredPlaybookKeys.flatMap((key) => {
+    const candidate = catalog?.candidates.find((candidate) => candidate.source.reference.scope === "bundled" && candidate.source.reference.key === key);
+    return candidate ? [candidate] : [];
+  });
+  const starredCount = catalog?.candidates.filter((candidate) => starredKeys.has(playbookRefKey(candidate.source.reference))).length ?? 0;
   const candidates = catalog?.candidates
     .filter(
       (candidate) =>
         `${candidate.title || ""} ${candidate.description || ""} ${playbookRefKey(candidate.source.reference)}`.toLowerCase().includes(query.trim().toLowerCase()) &&
-        (!preferredOnly || !repoPath || !preferences || preferredKeys.has(playbookRefKey(candidate.source.reference))),
+        (!starredOnly || !repoPath || !preferences || starredKeys.has(playbookRefKey(candidate.source.reference))),
     )
     .sort((left, right) => {
       const identityOrder = playbookRefKey(left.source.reference).localeCompare(playbookRefKey(right.source.reference));
@@ -903,9 +883,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         const sourceDifference = scopeLabels[left.source.reference.scope].localeCompare(scopeLabels[right.source.reference.scope]);
         return (sort === "source-desc" ? -sourceDifference : sourceDifference) || difference || identityOrder;
       }
-      if (sort.startsWith("preferred")) {
-        const preferredDifference = Number(preferredKeys.has(playbookRefKey(left.source.reference))) - Number(preferredKeys.has(playbookRefKey(right.source.reference)));
-        return (sort === "preferred-desc" ? -preferredDifference : preferredDifference) || difference || identityOrder;
+      if (sort.startsWith("starred")) {
+        const starredDifference = Number(starredKeys.has(playbookRefKey(left.source.reference))) - Number(starredKeys.has(playbookRefKey(right.source.reference)));
+        return (sort === "starred-desc" ? -starredDifference : starredDifference) || difference || identityOrder;
       }
       return (sort === "name-desc" ? -difference : difference) || identityOrder;
     });
@@ -973,7 +953,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     communityFilter === "all" ? communityPlaybooks.length === 0 : communityFilter === "downloaded" ? visibleDownloads.length === 0 : publishedRows.length === 0;
 
   return (
-    <main className="playbooks-page">
+    <main className={`playbooks-page${open ? "" : " playbooks-explore"}`}>
       <div className="playbooks-detail">
         <div className="playbooks-toolbar">
           {open ? (
@@ -988,7 +968,10 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               <ArrowLeft size={16} aria-hidden="true" /> Back to playbooks
             </button>
           ) : (
-            <h1>Playbooks</h1>
+            <div className="playbooks-explore-heading">
+              <h1>Explore Playbooks</h1>
+              <p>Reusable workflows for your next task. Browse your library or discover community playbooks.</p>
+            </div>
           )}
           {open && (
             <div className="modes" aria-label="Playbook view">
@@ -1098,69 +1081,118 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
             {error}
           </InlineStatus>
         )}
-        {!open && libraryTab === "local" && (
-          <section
-            ref={libraryRef}
-            className="playbooks-library"
-            aria-label="Playbook library"
-            onScroll={(event) => {
-              libraryScrollTop.current = event.currentTarget.scrollTop;
-            }}
-          >
-            <section aria-label={repoPath ? `Preferred for ${repoName(repoPath)}` : "Preferred playbooks"}>
-              <h2>{repoPath ? `Preferred for ${repoName(repoPath)}` : "Preferred playbooks"}</h2>
-              <div className="playbooks-library-controls">
-                <label className="playbooks-search">
-                  Search playbooks
-                  <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, description or key…" />
-                </label>
-                <Checkbox label="Preferred only" checked={!!repoPath && !!preferences && preferredOnly} disabled={!repoPath || !preferences} onChange={setPreferredOnly} />
-              </div>
-              {!repoPath && <p className="hint">Select a repository to manage its preferred playbooks.</p>}
-              {preferenceError && <InlineStatus tone="error">{preferenceError}</InlineStatus>}
-              {preferenceSaving && <p role="status">Saving preferred playbooks…</p>}
-            </section>
-            {catalogError && (
-              <InlineStatus tone="error">
-                {catalogError}
-                <button className="btn ghost" type="button" onClick={() => void refresh(repoPath)}>
-                  Retry library
+        <div className={open ? undefined : "playbooks-explore-layout"}>
+          {!open && (
+            <aside className="playbooks-explore-sidebar" aria-label="Your library">
+              <div className="playbooks-explore-panel">
+                <div className="playbooks-explore-profile">
+                  <BookOpen size={28} strokeWidth={1.5} aria-hidden="true" />
+                  <h2>Your library</h2>
+                  <p>{repoPath ? repoName(repoPath) : "Global library"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    showLocal();
+                    setStarredOnly(false);
+                    setQuery("");
+                  }}
+                >
+                  <span>Installed playbooks</span> <strong>{catalog?.candidates.length ?? "—"}</strong>
                 </button>
-              </InlineStatus>
-            )}
-            {!catalog && !catalogError && <LoadingState label="Loading playbooks" state={ORB_STATE} />}
-            <div className="playbooks-table-scroll">
-              <table className="playbooks-table" aria-label="Playbook library">
-                <thead>
-                  <tr>
-                    {libraryColumns.map(({ field, label, initialDirection }) => {
-                      const active = sort.startsWith(`${field}-`);
-                      const descending = sort.endsWith("-desc");
-                      const nextDirection = active ? (descending ? "asc" : "desc") : initialDirection;
-                      const header = (
-                        <th key={field} scope="col" aria-sort={active ? (descending ? "descending" : "ascending") : undefined}>
-                          <button
-                            type="button"
-                            className={`playbooks-sort-header${active ? " active" : ""}`}
-                            aria-label={`Sort by ${label}`}
-                            title={`Sort ${label} ${nextDirection === "desc" ? "descending" : "ascending"}`}
-                            onClick={() => setSort(`${field}-${nextDirection}`)}
-                          >
-                            {label} <span aria-hidden="true">{active ? (descending ? "↓" : "↑") : "↕"}</span>
-                          </button>
-                        </th>
-                      );
-                      return header;
-                    })}
-                  </tr>
-                </thead>
-                <tbody>
+                <button
+                  type="button"
+                  disabled={!repoPath || !preferences}
+                  onClick={() => {
+                    showLocal();
+                    setStarredOnly(true);
+                    setQuery("");
+                  }}
+                >
+                  <span>Starred playbooks</span> <strong>{preferences && repoPath ? starredCount : "—"}</strong>
+                </button>
+                <button
+                  type="button"
+                  disabled={!repoPath}
+                  onClick={() => {
+                    void showCommunity();
+                    setCommunityFilter("downloaded");
+                    setCommunityQuery("");
+                  }}
+                >
+                  <span>Downloads</span> <strong>{repoPath ? imports.length : "—"}</strong>
+                </button>
+              </div>
+              <p className="playbooks-explore-caption">Your local definitions stay on your device. Library changes apply to future tasks only.</p>
+            </aside>
+          )}
+          {!open && libraryTab === "local" && (
+            <section
+              ref={libraryRef}
+              className="playbooks-library"
+              aria-label="Playbook library"
+              onScroll={(event) => {
+                libraryScrollTop.current = event.currentTarget.scrollTop;
+              }}
+            >
+              <section aria-label={repoPath ? `Playbooks for ${repoName(repoPath)}` : "Installed playbooks"}>
+                <h2>{repoPath ? `Playbooks for ${repoName(repoPath)}` : "Installed playbooks"}</h2>
+                <div className="playbooks-library-controls">
+                  <label className="playbooks-search">
+                    Search playbooks
+                    <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, description or key…" />
+                  </label>
+                  <Checkbox label="Starred only" checked={!!repoPath && !!preferences && starredOnly} disabled={!repoPath || !preferences} onChange={setStarredOnly} />
+                </div>
+                {!repoPath && <p className="hint">Select a repository to manage its starred playbooks.</p>}
+                {preferenceError && <InlineStatus tone="error">{preferenceError}</InlineStatus>}
+                {preferenceSaving && <p role="status">Saving starred playbooks…</p>}
+              </section>
+              {catalogError && (
+                <InlineStatus tone="error">
+                  {catalogError}
+                  <button className="btn ghost" type="button" onClick={() => void refresh(repoPath)}>
+                    Retry library
+                  </button>
+                </InlineStatus>
+              )}
+              {!catalog && !catalogError && <LoadingState label="Loading playbooks" state={ORB_STATE} />}
+              <div className="playbooks-feed">
+                <div className="playbooks-sort-controls" role="group" aria-label="Sort playbooks">
+                  {libraryColumns.map(({ field, label, initialDirection }) => {
+                    const active = sort.startsWith(`${field}-`);
+                    const descending = sort.endsWith("-desc");
+                    const nextDirection = active ? (descending ? "asc" : "desc") : initialDirection;
+                    const header = (
+                      <span key={field}>
+                        <button
+                          type="button"
+                          className={`playbooks-sort-header${active ? " active" : ""}`}
+                          aria-label={`Sort by ${label}`}
+                          aria-pressed={active}
+                          aria-describedby={active ? `${sortDescriptionId}-${field}` : undefined}
+                          title={`Sort ${label} ${nextDirection === "desc" ? "descending" : "ascending"}`}
+                          onClick={() => setSort(`${field}-${nextDirection}`)}
+                        >
+                          {label} <span aria-hidden="true">{active ? (descending ? "↓" : "↑") : "↕"}</span>
+                        </button>
+                        {active && (
+                          <span className="sr-only" id={`${sortDescriptionId}-${field}`}>
+                            Sorted {descending ? "descending" : "ascending"}
+                          </span>
+                        )}
+                      </span>
+                    );
+                    return header;
+                  })}
+                </div>
+                <ul className="playbooks-card-list" aria-label="Playbook library">
                   {candidates?.map((candidate) => {
                     const identity = playbookRefKey(candidate.source.reference);
-                    const isPreferred = preferredKeys.has(identity);
+                    const isStarred = starredKeys.has(identity);
                     return (
-                      <tr key={identity} aria-label={identity}>
-                        <td>
+                      <li className="playbooks-explore-card" key={identity} aria-label={identity}>
+                        <div>
                           <button
                             className="playbooks-library-row"
                             type="button"
@@ -1182,8 +1214,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                               {item.field ? ` · ${item.field}` : ""}
                             </p>
                           ))}
-                        </td>
-                        <td>
+                        </div>
+                        <div className="playbooks-card-metadata">
                           <span className="playbooks-library-source">
                             {scopeLabels[candidate.source.reference.scope]}
                             {candidate.source.reference.scope === "repo" &&
@@ -1196,129 +1228,125 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                   </span>
                                 ))}
                           </span>
-                        </td>
-                        <td>
-                          {candidate.modified_at_ms === null ? (
-                            "—"
-                          ) : (
+                        </div>
+                        {candidate.modified_at_ms !== null && (
+                          <div className="playbooks-card-date">
                             <time dateTime={new Date(candidate.modified_at_ms).toISOString()} title={new Date(candidate.modified_at_ms).toLocaleString()}>
                               {new Date(candidate.modified_at_ms).toLocaleDateString()}
                             </time>
-                          )}
-                        </td>
-                        <td>
-                          <Checkbox
-                            label={<span className="sr-only">Preferred for this repo: {identity}</span>}
-                            checked={isPreferred}
+                          </div>
+                        )}
+                        <div className="playbooks-card-star">
+                          <button
+                            type="button"
+                            className="playbook-star-button"
+                            aria-label={`Star playbook: ${identity}`}
+                            title={`${isStarred ? "Unstar" : "Star"} ${candidate.title || candidate.source.reference.key}`}
+                            aria-pressed={isStarred}
                             disabled={!repoPath || !preferences || preferenceSaving}
-                            onChange={(checked) => setPreferred(candidate.source.reference, checked)}
-                          />
-                        </td>
-                      </tr>
+                            onClick={() => setStarred(candidate.source.reference, !isStarred)}
+                          >
+                            <Star size={16} strokeWidth={1.5} fill={isStarred ? "currentColor" : "none"} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </li>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-            {catalog && candidates?.length === 0 && <p>{query || preferredOnly ? "No matching playbooks." : "No playbooks yet. Create or import a definition."}</p>}
-            {catalog?.diagnostics.map((item) => (
-              <InlineStatus key={`${item.code}:${item.message}`} tone="error">
-                {item.code === "picker_preferences" && (
-                  <>
-                    <p>Couldn't read saved playbook preferences. Preference changes are disabled to protect the file. Fix the file, then retry.</p>
-                    <button className="btn ghost" type="button" onClick={() => void refresh(repoPath)}>
-                      Retry preferences
-                    </button>
-                  </>
-                )}
-                {item.code}: {item.message}
-              </InlineStatus>
-            ))}
-            <p className="playbooks-library-note">Library changes apply to future tasks only.</p>
-          </section>
-        )}
-        {!open && libraryTab === "community" && (
-          <section className="playbooks-library">
-            <div className="playbooks-library-controls" role="group" aria-label="Community list">
-              <button
-                type="button"
-                className={`btn ghost small${communityFilter === "all" ? " on" : ""}`}
-                aria-pressed={communityFilter === "all"}
-                onClick={() => {
-                  setCommunityQuery("");
-                  setCommunityFilter("all");
-                }}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                className={`btn ghost small${communityFilter === "downloaded" ? " on" : ""}`}
-                aria-pressed={communityFilter === "downloaded"}
-                onClick={() => {
-                  setCommunityQuery("");
-                  setCommunityFilter("downloaded");
-                }}
-              >
-                Downloaded
-              </button>
-              <button
-                type="button"
-                className={`btn ghost small${communityFilter === "published" ? " on" : ""}`}
-                aria-pressed={communityFilter === "published"}
-                onClick={() => {
-                  setCommunityQuery("");
-                  setCommunityFilter("published");
-                }}
-              >
-                My Playbooks
-              </button>
-            </div>
-            <label>
-              Search community playbooks
-              <input type="search" value={communityQuery} onChange={(event) => setCommunityQuery(event.target.value)} />
-            </label>
-            {communityQuery.trim().length > 80 && <p>Invalid query.</p>}
-            {communityFilter === "all" && communityQuery.trim().length > 0 && communityQuery.trim().length <= 80 && <p>Search can omit matches.</p>}
-            {communityError && communityFilter !== "published" && <InlineStatus tone="error">{communityError}</InlineStatus>}
-            {communityFilter === "published" && mineError && <InlineStatus tone="error">{mineError}</InlineStatus>}
-            {communityFilter === "published" && mineTruncated && <p>Only the newest 1000 publications are listed.</p>}
-            {communityFilter === "published" && communitySignedIn === false && (
-              <p className="playbook-empty">
-                Sign in to see playbooks you published.
-                <button type="button" className="btn small" onClick={() => void withAccount(async () => reloadMine())}>
-                  Sign up
+                </ul>
+              </div>
+              {catalog && candidates?.length === 0 && <p>{query || starredOnly ? "No matching playbooks." : "No playbooks yet. Create or import a definition."}</p>}
+              {catalog?.diagnostics.map((item) => (
+                <InlineStatus key={`${item.code}:${item.message}`} tone="error">
+                  {item.code === "picker_preferences" && (
+                    <>
+                      <p>Couldn't read saved playbook preferences. Preference changes are disabled to protect the file. Fix the file, then retry.</p>
+                      <button className="btn ghost" type="button" onClick={() => void refresh(repoPath)}>
+                        Retry preferences
+                      </button>
+                    </>
+                  )}
+                  {item.code}: {item.message}
+                </InlineStatus>
+              ))}
+              <p className="playbooks-library-note">Library changes apply to future tasks only.</p>
+            </section>
+          )}
+          {!open && libraryTab === "community" && (
+            <section className="playbooks-library">
+              <div className="playbooks-library-controls" role="group" aria-label="Community list">
+                <button
+                  type="button"
+                  className={`btn ghost small${communityFilter === "all" ? " on" : ""}`}
+                  aria-pressed={communityFilter === "all"}
+                  onClick={() => {
+                    setCommunityQuery("");
+                    setCommunityFilter("all");
+                  }}
+                >
+                  All
                 </button>
-              </p>
-            )}
-            {communityFilter === "published" && communitySignedIn !== false && !mineReady && <LoadingState label="Loading your playbooks" state={ORB_STATE} />}
-            {((communityFilter === "all" && communityReady) ||
-              communityFilter === "downloaded" ||
-              (communityFilter === "published" && (communitySignedIn === false || mineReady))) && (
-              <table className="playbooks-table playbooks-community-table" aria-label="Community playbooks">
-                {communityFilter === "all" ? (
-                  <CommunityColumns labels={["Playbook", "Title", "Description", "Version", "Updated", "Actions"]} />
-                ) : communityFilter === "downloaded" ? (
-                  <CommunityColumns labels={["Playbook", "Title", "Imported", "Catalog", "Status", "Actions"]} />
-                ) : (
-                  <CommunityColumns labels={["Playbook", "Title", "Status", "Version", "Local", "Actions"]} />
-                )}
-                <tbody>
+                <button
+                  type="button"
+                  className={`btn ghost small${communityFilter === "downloaded" ? " on" : ""}`}
+                  aria-pressed={communityFilter === "downloaded"}
+                  onClick={() => {
+                    setCommunityQuery("");
+                    setCommunityFilter("downloaded");
+                  }}
+                >
+                  Downloaded
+                </button>
+                <button
+                  type="button"
+                  className={`btn ghost small${communityFilter === "published" ? " on" : ""}`}
+                  aria-pressed={communityFilter === "published"}
+                  onClick={() => {
+                    setCommunityQuery("");
+                    setCommunityFilter("published");
+                  }}
+                >
+                  My Playbooks
+                </button>
+              </div>
+              <label>
+                Search community playbooks
+                <input type="search" value={communityQuery} onChange={(event) => setCommunityQuery(event.target.value)} />
+              </label>
+              {communityQuery.trim().length > 80 && <p>Invalid query.</p>}
+              {communityFilter === "all" && communityQuery.trim().length > 0 && communityQuery.trim().length <= 80 && <p>Search can omit matches.</p>}
+              {communityError && communityFilter !== "published" && <InlineStatus tone="error">{communityError}</InlineStatus>}
+              {communityFilter === "published" && mineError && <InlineStatus tone="error">{mineError}</InlineStatus>}
+              {communityFilter === "published" && mineTruncated && <p>Only the newest 1000 publications are listed.</p>}
+              {communityFilter === "published" && communitySignedIn === false && (
+                <p className="playbook-empty">
+                  Sign in to see playbooks you published.
+                  <button type="button" className="btn small" onClick={() => void withAccount(async () => reloadMine())}>
+                    Sign up
+                  </button>
+                </p>
+              )}
+              {communityFilter === "published" && communitySignedIn !== false && !mineReady && <LoadingState label="Loading your playbooks" state={ORB_STATE} />}
+              {((communityFilter === "all" && communityReady) ||
+                communityFilter === "downloaded" ||
+                (communityFilter === "published" && (communitySignedIn === false || mineReady))) && (
+                <ul className="playbooks-card-list playbooks-community-cards" aria-label="Community playbooks">
                   {communityFilter === "all"
                     ? communityPlaybooks.map((item) => {
                         const imported = imports.find((row) => row.id === item.id);
                         const name = `${item.label}/${item.playbookKey}`;
                         const updateAvailable = !!imported && item.version > imported.importedVersion;
                         return (
-                          <tr key={item.id}>
-                            <td>
+                          <li className="playbooks-explore-card" key={item.id}>
+                            <div>
                               <PlaybookIdentity playbookKey={item.playbookKey} name={item.title} />
-                            </td>
-                            <td>{item.title}</td>
-                            <td>{item.description}</td>
-                            <td>{item.version}</td>
-                            <td>{item.updatedAt}</td>
-                            <td>
+                            </div>
+                            <div className="playbooks-card-publisher">
+                              By {item.label} · {item.stepCount} {item.stepCount === 1 ? "step" : "steps"}
+                            </div>
+                            <p className="playbooks-card-description">{item.description}</p>
+                            <div className="playbooks-card-metadata">Version {item.version}</div>
+                            <div className="playbooks-card-metadata">Updated {item.updatedAt}</div>
+                            <div>
                               <span className="playbooks-row-actions">
                                 {(!imported || updateAvailable) && (
                                   <RowIcon ghost label={`Preview ${name}`} onClick={() => void withAccount(() => previewPublication(item.id, name))}>
@@ -1333,8 +1361,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                   onUpdate={() => void withAccount(() => updatePublication(repoPath, item.id, false))}
                                 />
                               </span>
-                            </td>
-                          </tr>
+                            </div>
+                          </li>
                         );
                       })
                     : communityFilter === "downloaded"
@@ -1350,15 +1378,15 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                   ? `${row.importedVersion} ${row.remoteVersion}`
                                   : `Up to date${row.localMissing ? " Local copy missing" : ""}`;
                           return (
-                            <tr key={row.id}>
-                              <td>
+                            <li className="playbooks-explore-card" key={row.id}>
+                              <div>
                                 <PlaybookIdentity playbookKey={row.playbookKey} name={row.title || row.playbookKey} />
-                              </td>
-                              <td>{row.title}</td>
-                              <td>{row.importedVersion}</td>
-                              <td>{row.remoteVersion ?? ""}</td>
-                              <td>{status}</td>
-                              <td>
+                              </div>
+                              <div className="playbooks-card-publisher">By {row.label}</div>
+                              <div className="playbooks-card-metadata">Imported version {row.importedVersion}</div>
+                              <div className="playbooks-card-metadata">Catalog version {row.remoteVersion ?? "—"}</div>
+                              <div>{status}</div>
+                              <div>
                                 <span className="playbooks-row-actions">
                                   {row.updateAvailable && !row.remoteMissing && (
                                     <RowIcon ghost label={`Preview ${name}`} onClick={() => void withAccount(() => previewPublication(row.id, name))}>
@@ -1374,22 +1402,22 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                     onUpdate={() => void withAccount(() => updatePublication(repoPath, row.id, false))}
                                   />
                                 </span>
-                              </td>
-                            </tr>
+                              </div>
+                            </li>
                           );
                         })
                       : publishedRows.map((row) => {
                           const publicationId = row.publicationId;
                           return (
-                            <tr key={row.key}>
-                              <td>
+                            <li className="playbooks-explore-card" key={row.key}>
+                              <div>
                                 <PlaybookIdentity playbookKey={row.playbookKey} name={row.title} />
-                              </td>
-                              <td>{row.title}</td>
-                              <td>{row.status}</td>
-                              <td>{row.version}</td>
-                              <td>{row.local}</td>
-                              <td>
+                              </div>
+                              <div className="playbooks-card-publisher">By {row.author}</div>
+                              <div>{row.status}</div>
+                              <div className="playbooks-card-metadata">Version {row.version}</div>
+                              <div>{row.local}</div>
+                              <div>
                                 <span className="playbooks-row-actions">
                                   {publicationId && (
                                     <CatalogDownload
@@ -1416,40 +1444,72 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
                                     {row.pushName.startsWith("Publish") ? <Share2 size={16} aria-hidden="true" /> : <Upload size={16} aria-hidden="true" />}
                                   </RowIcon>
                                 </span>
-                              </td>
-                            </tr>
+                              </div>
+                            </li>
                           );
                         })}
-                </tbody>
-              </table>
-            )}
-            {communityListReady && communityRowsEmpty && <p className="playbook-empty">No playbooks found</p>}
-            {communityFilter === "all" && communityPage.cursor && communityPage.query === communityQuery.trim() && communityQuery.trim().length <= 80 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const cursor = communityPage.cursor;
-                  if (!cursor) return;
-                  const trimmed = communityPage.query;
-                  const generation = communityGeneration.current;
-                  const args = trimmed ? { q: trimmed, cursor } : { cursor };
-                  void Promise.resolve(ipc.listCommunityPlaybooks(args))
-                    .then((page) => {
-                      if (!page || generation !== communityGeneration.current) return;
-                      setCommunityPlaybooks((current) => [...current, ...page.playbooks]);
-                      setCommunityPage({ query: trimmed, cursor: page.nextCursor });
-                    })
-                    .catch((error) => {
-                      if (generation !== communityGeneration.current) return;
-                      setCommunityError(errorText(error));
-                    });
-                }}
-              >
-                Load more
-              </button>
-            )}
-          </section>
-        )}
+                </ul>
+              )}
+              {communityListReady && communityRowsEmpty && <p className="playbook-empty">No playbooks found</p>}
+              {communityFilter === "all" && communityPage.cursor && communityPage.query === communityQuery.trim() && communityQuery.trim().length <= 80 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cursor = communityPage.cursor;
+                    if (!cursor) return;
+                    const trimmed = communityPage.query;
+                    const generation = communityGeneration.current;
+                    const args = trimmed ? { q: trimmed, cursor } : { cursor };
+                    void Promise.resolve(ipc.listCommunityPlaybooks(args))
+                      .then((page) => {
+                        if (!page || generation !== communityGeneration.current) return;
+                        setCommunityPlaybooks((current) => [...current, ...page.playbooks]);
+                        setCommunityPage({ query: trimmed, cursor: page.nextCursor });
+                      })
+                      .catch((error) => {
+                        if (generation !== communityGeneration.current) return;
+                        setCommunityError(errorText(error));
+                      });
+                  }}
+                >
+                  Load more
+                </button>
+              )}
+            </section>
+          )}
+          {!open && (
+            <aside className="playbooks-explore-aside" aria-label="Featured Playbooks">
+              <div className="playbooks-explore-panel">
+                <h2>
+                  <BookOpen size={16} aria-hidden="true" /> Featured Playbooks
+                </h2>
+                {featuredPlaybooks.map((candidate) => (
+                  <button
+                    key={playbookRefKey(candidate.source.reference)}
+                    type="button"
+                    disabled={busy || candidate.diagnostics.length > 0}
+                    onClick={() => void load(candidate.source.reference)}
+                  >
+                    <span>
+                      <strong>{candidate.title || candidate.source.reference.key}</strong>
+                      <small>{candidate.description || candidate.source.reference.key}</small>
+                    </span>
+                  </button>
+                ))}
+                {catalogError && (
+                  <>
+                    <p>Featured playbooks are unavailable.</p>
+                    <button type="button" onClick={() => void refresh(repoPath)}>
+                      Retry featured playbooks
+                    </button>
+                  </>
+                )}
+                {!catalog && !catalogError && <p>Loading featured playbooks…</p>}
+                <p>Included with the app. Open a definition to explore its steps or make your own copy.</p>
+              </div>
+            </aside>
+          )}
+        </div>
         {publishGuideOpen && (
           <Dialog onClose={() => setPublishGuideOpen(false)} role="dialog" ariaLabel="Publish a playbook">
             <div className="mh">

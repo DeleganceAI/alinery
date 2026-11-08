@@ -356,6 +356,54 @@ describe("OnboardingFlow wizard", () => {
 describe("Empty Grid Playbook Starter Gate", () => {
   beforeEach(() => {});
 
+  it("selects a playbook without creating a task and uses that selection for both shared actions", async () => {
+    fakeBoard.set({ tasks: [] });
+    const onCreate = vi.fn();
+    render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} onCreate={onCreate} />);
+
+    const gate = await screen.findByTestId("grid-starter-gate");
+    expect(within(gate).getAllByRole("radio")).toHaveLength(4);
+    expect((within(gate).getByRole("radio", { name: /SuperDevelop/ }) as HTMLInputElement).checked).toBe(true);
+    expect(within(gate).getAllByRole("button", { name: /Use playbook/ })).toHaveLength(1);
+    expect(within(gate).getAllByRole("button", { name: "Try starter preset" })).toHaveLength(1);
+
+    for (const archetype of CURATED_PLAYBOOK_ARCHETYPES.slice(0, 4)) {
+      onCreate.mockClear();
+      const choice = within(gate).getByRole("radio", { name: new RegExp(archetype.title) });
+      fireEvent.click(choice);
+      expect((choice as HTMLInputElement).checked).toBe(true);
+      expect(onCreate).not.toHaveBeenCalled();
+
+      fireEvent.click(within(gate).getByRole("button", { name: /Use playbook/ }));
+      expect(onCreate.mock.calls).toEqual([[archetype.reference]]);
+
+      fireEvent.click(within(gate).getByRole("button", { name: "Try starter preset" }));
+      expect(onCreate.mock.calls).toEqual([[archetype.reference], [archetype.reference, archetype.starterPreset]]);
+    }
+
+    expect(within(gate).queryByRole("button", { name: "New task" })).toBeNull();
+    expect(within(gate).getByRole("link", { name: "Browse the Playbook Library" }).getAttribute("href")).toBe("https://alinery.ai/playbooks");
+    expect(within(gate).queryByRole("button", { name: "How playbooks work" })).toBeNull();
+  });
+
+  it("keeps library and guide actions available independently of task creation", async () => {
+    fakeBoard.set({ tasks: [] });
+    const openUrl = vi.spyOn(ipc, "openUrl").mockResolvedValue();
+    const onReplayOnboarding = vi.fn();
+    render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} onReplayOnboarding={onReplayOnboarding} />);
+
+    const gate = await screen.findByTestId("grid-starter-gate");
+    for (const name of [/Use playbook/, "Try starter preset"]) {
+      expect((within(gate).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    const libraryLink = within(gate).getByRole("link", { name: "Browse the Playbook Library" });
+    expect(libraryLink.getAttribute("href")).toBe("https://alinery.ai/playbooks");
+    fireEvent.click(libraryLink);
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("https://alinery.ai/playbooks");
+    fireEvent.click(within(gate).getByRole("button", { name: "How playbooks work" }));
+    expect(onReplayOnboarding).toHaveBeenCalledOnce();
+  });
+
   it("renders GridPlaybookStarterGate when repository has 0 tasks, and filter empty message when tasks are filtered out", async () => {
     fakeBoard.set({ tasks: [] });
     const onCreate = vi.fn();
@@ -369,7 +417,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
     expect(within(gate).getByRole("heading", { name: "Start your first task with a playbook" })).toBeTruthy();
     expect(screen.queryByText("No tasks match this grid configuration.")).toBeNull();
 
-    fireEvent.click(within(gate).getByRole("button", { name: "New task with SuperDevelop" }));
+    fireEvent.click(within(gate).getByRole("button", { name: /Use playbook/ }));
     expect(onCreate).toHaveBeenCalledWith({ scope: "bundled", key: "superdevelop" });
 
     fireEvent.click(within(gate).getByRole("button", { name: "How playbooks work" }));

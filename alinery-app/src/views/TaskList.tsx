@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
+import type { StarterTaskPreset } from "../onboarding";
+import { PlaybookStarterDeck } from "../PlaybookStarterDeck";
 import {
   ArchiveTaskModal,
   EMPTY_TASK_ACTIVITY,
@@ -18,7 +20,7 @@ import {
   useMinuteNow,
 } from "../shared";
 import { useRepoBoard } from "../sync/board";
-import type { BoardNav, BoardTask, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
+import type { BoardNav, BoardTask, PlaybookRef, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
 import "./TaskList.css";
 
 export type TaskListRow = {
@@ -113,6 +115,7 @@ export function TaskList({
   registerNav,
   onOpenActiveSession,
   onCreate,
+  onReplayOnboarding,
 }: {
   allRepos: boolean;
   /** The repos this list shows: every known repo, or the active one. Each has its own stream. */
@@ -121,7 +124,8 @@ export function TaskList({
   onDuplicate: (task: BoardTask) => void;
   registerNav: (n: BoardNav | null) => void;
   onOpenActiveSession: (task: BoardTask, session: TaskActivitySession) => void;
-  onCreate: () => void;
+  onCreate: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
+  onReplayOnboarding?: () => void;
 }) {
   const [selectedKey, setSelectedKey] = useState("");
   const [err, setErr] = useState<ErrState>(null);
@@ -204,6 +208,8 @@ export function TaskList({
     if (visibleSelectedKey && visibleSelectedKey !== selectedKey) setSelectedKey(visibleSelectedKey);
   }, [visibleSelectedKey, selectedKey]);
   const empty = loaded && tasks.length === 0;
+  // A repo the daemon cannot reach is not known to be empty, so it gets no starter (as a load error gets none).
+  const unreachable = Object.values(board.repos).some((state) => !state.reachable);
   const noMatches = loaded && !empty && rows.length === 0;
 
   // Keyboard selection (j/k, arrows) must stay visible in long lists.
@@ -248,7 +254,7 @@ export function TaskList({
     <>
       <h1 className="view-title">Tasks</h1>
       {!empty && (
-        <button type="button" className="btn small" onClick={onCreate}>
+        <button type="button" className="btn small" onClick={() => onCreate()}>
           New task
         </button>
       )}
@@ -333,18 +339,7 @@ export function TaskList({
       <RepoLinkNotices repos={board.repos} />
       {!loaded && <LoadingState label="Loading tasks" state={ORB_STATE} />}
       {empty ? (
-        <div className="list list-empty">
-          <EmptyState
-            art
-            title={showArchived ? "No tasks in this repository." : "No tasks yet."}
-            hint={showArchived ? undefined : "A task owns one branch and worktree, and holds every agent session you run on it."}
-            action={
-              <button type="button" className="btn" onClick={onCreate}>
-                New task
-              </button>
-            }
-          />
-        </div>
+        <div className="list list-empty task-list-starter">{!err && !unreachable && <PlaybookStarterDeck onCreate={onCreate} onReplayOnboarding={onReplayOnboarding} />}</div>
       ) : noMatches ? (
         <div className="list list-empty task-list-no-matches">
           <EmptyState title="No tasks match these filters." hint={`Clear filters to show all ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}.`} />
