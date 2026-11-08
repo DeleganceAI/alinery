@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, test } from "bun:test";
-import { toJson } from "@bufbuild/protobuf";
-import { StructSchema } from "@bufbuild/protobuf/wkt";
+import { fromBinary, toBinary } from "@bufbuild/protobuf";
+import { EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import { Engine } from "playbook-engine/src/engine.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
 import { complete, FakeHarness } from "playbook-engine/test/fake-harness.ts";
@@ -11,7 +11,7 @@ import { forgetTask, prepareGraphs, resetGraphs, tickGraphs } from "../graph.ts"
 import { Replica, taskScope } from "../sync/testkit.ts";
 import { Store } from "../sync/store.ts";
 import { getTaskExecution } from "../tasks.ts";
-import { commitExecution, executionKey, executionParser } from "./executions.ts";
+import { commitExecution, executionEntity, executionKey, executionParser } from "./executions.ts";
 import { loadEngineState, saveEngineState } from "./executionStore.ts";
 import { Feed } from "../sync/feed.ts";
 import { parsers } from "../sync/parsers/index.ts";
@@ -92,10 +92,9 @@ test("every engine save commits the execution, and the last one is getTaskExecut
   for (let i = 0; i < 100 && replica.cursor?.seq !== store.seq; i++) await Bun.sleep(1);
   const row = replica.rows.get(executionKey("fj"));
   expect(row).toBeDefined();
-  // toJson(EntitySchema) leaves a nested Struct as raw messages, so each Struct is converted on its own.
   if (row!.value.case !== "execution") throw new Error("not an execution row");
   const exec = row!.value.value;
-  const body = { execution: { slug: exec.slug, state: toJson(StructSchema, exec.state!), definition: toJson(StructSchema, exec.definition!) } };
+  const body = { execution: { slug: exec.slug, state: exec.state!, definition: exec.definition! } };
   const read = JSON.parse(JSON.stringify(getTaskExecution(repo, "fj", "lane", "identity")));
   expect(body.execution).toEqual({ slug: "fj", state: read.state, definition: read.definition });
   expect(Object.keys(read.state.executions)).toHaveLength(4);
@@ -168,7 +167,7 @@ test("a scan puts the execution row of a task no engine event has touched, and a
     await feed.scan();
     const row = () => {
       const e = store.get(executionKey("cold"));
-      return e?.value.case === "execution" ? toJson(StructSchema, e.value.value.state!) : undefined;
+      return e?.value.case === "execution" ? e.value.value.state! : undefined;
     };
     expect(row()).toMatchObject({ auto_approve_all: false, owning_lane: "lane" });
     writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: KEYS, auto_approve_all: true }));
@@ -177,4 +176,14 @@ test("a scan puts the execution row of a task no engine event has touched, and a
   } finally {
     parsers.splice(parsers.indexOf(parser), 1);
   }
+});
+
+test("the execution row reaches a client as plain JSON, not a Struct message encoded as JSON", () => {
+  const { repo } = fixture("wire");
+  const entity = executionEntity(repo, "wire", "lane", "identity");
+  if (!entity) throw new Error("no execution entity");
+  const row = fromBinary(EntitySchema, toBinary(EntitySchema, entity)).value;
+  if (row.case !== "execution") throw new Error(`unexpected case ${row.case}`);
+  expect(row.value.state?.creation).toBe("ready");
+  expect(row.value.definition?.key).toBe("fork-join");
 });
