@@ -144,9 +144,7 @@ vi.mock("./DaemonConflictBanner", () => ({ DaemonConflictBanner: () => null, Rep
 vi.mock("./WindowChrome", () => ({ ResizeHandles: () => null, WindowControls: () => null, useWindowFullscreen: () => false }));
 vi.mock("./useDaemonStatus", () => ({ useDaemonStatus: () => ({ repo_busy: false, conflict: null, refresh: () => {} }) }));
 vi.mock("./useMcpStatus", () => ({ useMcpStatus: () => ({}) }));
-// Both board views are stubbed the same way: the duplicate coordinator is what is under test
-// here, and it does not care which board raised the request. Grid is the default board, so it is
-// the one these tests actually mount; Kanban stays stubbed for the show_original_kanban route.
+// Both board views share a stub because the duplicate coordinator handles either source.
 const boardStub = ({ onDuplicate }: { onDuplicate: (task: BoardTask) => void }) => (
   <button type="button" onClick={() => onDuplicate(sourceBoardTask)}>
     duplicate-source
@@ -208,6 +206,7 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     const trigger = await screen.findByText("duplicate-source");
 
     fireEvent.click(trigger);
@@ -227,6 +226,7 @@ describe("App duplicate coordinator", () => {
     mocks.duplicateTaskForRepo.mockRejectedValue(new Error("copy failed"));
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("copy failed")));
@@ -248,6 +248,7 @@ describe("App duplicate coordinator", () => {
     } satisfies CreateTaskResult);
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await screen.findByText("task:source-2");
@@ -268,6 +269,7 @@ describe("App duplicate coordinator", () => {
     } satisfies CreateTaskResult);
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("source unavailable")));
@@ -286,6 +288,7 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
     await waitFor(() => expect(mocks.duplicateTaskForRepo).toHaveBeenCalledOnce());
 
@@ -304,6 +307,7 @@ describe("App duplicate coordinator", () => {
     mocks.setActiveRepo.mockRejectedValue(new Error("switch failed"));
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("/repo-b/source-2: Error: switch failed")));
@@ -322,6 +326,7 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     const trigger = await screen.findByText("duplicate-source");
     fireEvent.click(trigger);
 
@@ -345,6 +350,7 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     fireEvent.keyDown(document.body, { key: "n", metaKey: true });
@@ -369,6 +375,7 @@ describe("App duplicate coordinator", () => {
     );
     const { default: App } = await import("./App");
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Canvas/ }));
     await screen.findByText("duplicate-source");
 
     fireEvent.keyDown(document.body, { key: "n", metaKey: true });

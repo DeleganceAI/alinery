@@ -26,7 +26,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
+import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -48,6 +48,7 @@ import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { shouldShowSetup } from "./setup";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { resolveStartupView } from "./startupView";
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
 import { readPlaybook } from "./sync/playbooks";
@@ -145,16 +146,6 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
 const liveSessions = (repo: string) => liveSessionsNow(repo);
 
-function initialView(): View {
-  try {
-    const gridViewId = window.localStorage.getItem(ACTIVE_GRID_VIEW_STORAGE_KEY)?.trim();
-    if (gridViewId) return { kind: "grid", gridViewId };
-  } catch {
-    // Navigation persistence is optional; settings reconciliation below still chooses a safe view.
-  }
-  return { kind: "grid", gridViewId: DEFAULT_GRID_VIEW_ID };
-}
-
 // Grid layout is one workspace per view, not per repository. The first time a
 // shared key is missing, adopt the scope the user is already looking at so the
 // switch does not reset tile size, preset, or column order.
@@ -188,7 +179,7 @@ function drawerAfterClose(handle: DrawerHandle, id: string): DrawerHandle | null
   return { ...handle, tabs, activeId: next.id };
 }
 export default function App() {
-  const [view, setView] = useState<View>(initialView);
+  const [view, setView] = useState<View>({ kind: "list" });
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
@@ -279,6 +270,7 @@ export default function App() {
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
+    if (view.kind === "playbooks") setPlaybooksVisited(true);
   }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
@@ -303,20 +295,6 @@ export default function App() {
       return resolveGridTopLevelRoute(current, gridViews);
     });
   }, [appConfig, gridViews, showChat]);
-
-  const selectedGridViewId = gridViewIdOf(view);
-  useEffect(() => {
-    if (!appConfig) return;
-    try {
-      if (selectedGridViewId && gridViews.some((gridView) => gridView.id === selectedGridViewId)) {
-        window.localStorage.setItem(ACTIVE_GRID_VIEW_STORAGE_KEY, selectedGridViewId);
-      } else {
-        window.localStorage.removeItem(ACTIVE_GRID_VIEW_STORAGE_KEY);
-      }
-    } catch {
-      // The in-memory route still works when browser storage is unavailable.
-    }
-  }, [appConfig, gridViews, selectedGridViewId]);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
@@ -491,6 +469,7 @@ export default function App() {
         setAppConfig({ ...cfg, appearance: normalized });
         // With no repo the setup screen is shown instead; onboarding follows it once a repo is open.
         const wizardOpens = Boolean(cfg.active_repo) && !isHostOnboarded(cfg, cfg.active_repo);
+        setView(wizardOpens || !cfg.active_repo ? { kind: "list" } : resolveStartupView(normalized.startup_view, cfg.global));
         if (wizardOpens) {
           setOnboardingStep(readSavedOnboardingStep());
           setOnboardingOpen(true);
@@ -606,7 +585,6 @@ export default function App() {
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
     setNavInstant(Boolean(opts?.instant));
     if (kind === "playbooks" && view.kind !== "playbooks") playbooksReturnView.current = view;
-    if (kind === "playbooks") setPlaybooksVisited(true);
     if (kind === "grid") {
       const gridViewId = opts?.gridViewId ?? gridViews[0].id;
       if (!gridViews.some((gridView) => gridView.id === gridViewId)) return;
@@ -1383,7 +1361,7 @@ export default function App() {
               strip is the only actionable surface (defense-in-depth). */}
               <main>
                 {daemon.repo_busy ? null : content}
-                {playbooksVisited && (
+                {(playbooksVisited || view.kind === "playbooks") && (
                   <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
                     <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                   </div>

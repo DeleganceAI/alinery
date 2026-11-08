@@ -10,6 +10,7 @@ import { fakeBoard } from "./test/boardHooks";
 import { fakeExecution } from "./test/executionFeed";
 import type {
   AppConfig,
+  AppearancePrefs,
   BoardTask,
   Config,
   CreateTaskResult,
@@ -521,10 +522,23 @@ vi.mock("./views/CreateTaskPage", async (importOriginal) => {
 });
 vi.mock("./views/Settings", () => ({
   SECTIONS: [],
-  Settings: ({ onNotificationsChange }: { onNotificationsChange: (next: NotificationPrefs) => void }) => (
-    <button type="button" onClick={() => onNotificationsChange({ ...notificationPrefs, dock_badge_failures: false })}>
-      save notification settings
-    </button>
+  Settings: ({
+    appearance,
+    onAppearanceChange,
+    onNotificationsChange,
+  }: {
+    appearance: AppearancePrefs;
+    onAppearanceChange: (next: AppearancePrefs) => void;
+    onNotificationsChange: (next: NotificationPrefs) => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onNotificationsChange({ ...notificationPrefs, dock_badge_failures: false })}>
+        save notification settings
+      </button>
+      <button type="button" onClick={() => onAppearanceChange({ ...appearance, startup_view: "list" })}>
+        save task list startup
+      </button>
+    </div>
   ),
 }));
 vi.mock("./views/SessionView", () => ({
@@ -705,7 +719,7 @@ describe("onboarding gate", () => {
     render(<App />);
     await screen.findByTestId("setup-screen");
     fireEvent.click(screen.getByTitle(task.repo_path));
-    await screen.findByTestId("grid:view:default-kanban-plus");
+    await screen.findByRole("button", { name: "open list task" });
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
     expect(ipcMocks.setHostOnboarded).not.toHaveBeenCalled();
   });
@@ -751,11 +765,11 @@ describe("onboarding gate", () => {
     fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
     fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
     fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/second"));
-    await screen.findByTestId("grid:view:default-kanban-plus");
+    await screen.findByRole("button", { name: "open list task" });
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
-  it("offers a configured install the guide once at Playbooks, then lands on the grid after Skip", async () => {
+  it("offers a configured install the guide once at Playbooks, then lands on the task list after Skip", async () => {
     notOnboarded();
     render(<App />);
     await screen.findByTestId("onboarding-step-playbooks");
@@ -764,14 +778,14 @@ describe("onboarding gate", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
-    await screen.findByTestId("grid:view:default-kanban-plus");
+    await screen.findByRole("button", { name: "open list task" });
     expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
 
     // The shell now answers with the mark set.
     cleanup();
     ipcMocks.readAppConfig.mockResolvedValue(appConfig);
     render(<App />);
-    await screen.findByTestId("grid:view:default-kanban-plus");
+    await screen.findByRole("button", { name: "open list task" });
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
@@ -837,7 +851,7 @@ describe("onboarding gate", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alinery onboarding" })).toBeNull());
-    await screen.findByTestId("grid:view:default-kanban-plus");
+    await screen.findByRole("button", { name: "open list task" });
     expect(ipcMocks.setHostOnboarded).toHaveBeenCalledWith("local", true);
   });
 
@@ -851,7 +865,7 @@ describe("onboarding gate", () => {
       expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
 
       fireEvent.click(screen.getByRole("button", { name: "Skip Onboarding" }));
-      await screen.findByTestId("grid:view:default-kanban-plus");
+      await screen.findByRole("button", { name: "open list task" });
       expect(screen.queryByRole("alertdialog", { name: "Share anonymous usage?" })).toBeNull();
       const dialog = await screen.findByRole("alertdialog", { name: "Share anonymous usage?" }, { timeout: 3000 });
       expect(screen.queryByTestId("provider-setup:auto")).toBeNull();
@@ -868,6 +882,93 @@ async function renderApp() {
   render(<App />);
   await screen.findByRole("button", { name: "Search" });
 }
+
+describe("startup view", () => {
+  it.each([undefined, "list"] as const)("opens the task list with startup preference %s despite a previously visited canvas", async (startupView) => {
+    window.localStorage.setItem("alinery:navigation:active-grid-view", "default-kanban-plus");
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, appearance: { ...DEFAULT_APPEARANCE, startup_view: startupView } });
+
+    await renderApp();
+
+    expect(screen.getByRole("button", { name: "open list task" })).toBeTruthy();
+    expect(screen.queryByTestId("grid:view:default-kanban-plus")).toBeNull();
+  });
+
+  it("opens the saved Sessions view at startup", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, appearance: { ...DEFAULT_APPEARANCE, startup_view: "sessions" } });
+
+    await renderApp();
+
+    expect(screen.getByRole("button", { name: "open global session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+  });
+
+  it("opens the saved Playbooks library at startup", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, appearance: { ...DEFAULT_APPEARANCE, startup_view: "playbooks" } });
+
+    await renderApp();
+
+    expect(await screen.findByRole("table", { name: "Playbook library" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+  });
+
+  it("shows the setup screen when Playbooks is saved but no repository is selected", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({
+      ...appConfig,
+      active_repo: "",
+      appearance: { ...DEFAULT_APPEARANCE, startup_view: "playbooks" },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByTestId("setup-screen")).toBeTruthy();
+    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+  });
+
+  it("keeps incomplete onboarding visible when Playbooks is saved", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, local_onboarded: false, appearance: { ...DEFAULT_APPEARANCE, startup_view: "playbooks" } });
+
+    render(<App />);
+
+    expect(await screen.findByRole("dialog", { name: "Alinery onboarding" })).toBeTruthy();
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(screen.queryByRole("table", { name: "Playbook library" })).toBeNull();
+  });
+
+  it("opens the saved configured canvas at startup", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({
+      ...appConfig,
+      appearance: { ...DEFAULT_APPEARANCE, startup_view: "grid:research" },
+      global: {
+        ...appConfig.global,
+        grid_views: [
+          { id: "default-kanban-plus", name: "Canvas", slot: 1 },
+          { id: "research", name: "Research", slot: 2 },
+        ],
+      },
+    });
+
+    await renderApp();
+
+    expect(screen.getByTestId("grid:view:research")).toBeTruthy();
+    expect(screen.queryByTestId("grid:view:default-kanban-plus")).toBeNull();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+  });
+
+  it("keeps the current page when preferences change after startup", async () => {
+    ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, appearance: { ...DEFAULT_APPEARANCE, startup_view: "sessions" } });
+    await renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "save notification settings" }));
+    expect(screen.getByRole("button", { name: "save task list startup" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "save task list startup" }));
+    expect(screen.getByRole("button", { name: "save notification settings" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "open list task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "open global session" })).toBeNull();
+  });
+});
 
 // Notifications lives in the account menu, above Settings, not in the top-bar tabs.
 async function openNotifications() {
@@ -918,11 +1019,13 @@ describe("draft routing", () => {
 
   it("opens active drafts in Create Task and archived drafts in Task Detail", async () => {
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open active draft" }));
     await screen.findByText("create task:active-draft");
 
     cleanup();
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open archived draft" }));
     await screen.findByText("task detail:archived-draft");
   });
@@ -1045,6 +1148,7 @@ describe("Playbooks navigation", () => {
 describe("session navigation acknowledgment", () => {
   it("does not acknowledge when opening only a task", async () => {
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     await screen.findByRole("button", { name: "open detail session" });
     expect(sessionWrites.markSessionNotificationRead).not.toHaveBeenCalled();
@@ -1119,6 +1223,7 @@ describe("session navigation acknowledgment", () => {
 
   it("acknowledges Task Detail and newly created sessions exactly", async () => {
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
     await screen.findByText("session:detail-design");
@@ -1126,6 +1231,7 @@ describe("session navigation acknowledgment", () => {
 
     cleanup();
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish create session" }));
@@ -1142,6 +1248,7 @@ describe("session navigation acknowledgment", () => {
 
   it("preserves an explicit empty prompt and omits terminal prompts", async () => {
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish empty-prompt session" }));
@@ -1150,6 +1257,7 @@ describe("session navigation acknowledgment", () => {
 
     cleanup();
     await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish terminal session" }));
@@ -1544,6 +1652,7 @@ describe("repository switch keeps the current page", () => {
     window.localStorage.setItem("alinery:grid:all-repositories:view:default-kanban-plus", JSON.stringify({ config: { tileWidth: 96 } }));
     await renderApp();
 
+    fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     const grid = () => screen.getByTestId("grid:view:default-kanban-plus");
     expect(grid()).toBeTruthy();
     expect(window.localStorage.getItem("alinery:grid:view:default-kanban-plus")).toBe(legacy);
