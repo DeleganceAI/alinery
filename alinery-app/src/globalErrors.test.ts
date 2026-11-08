@@ -33,6 +33,13 @@ describe("global error reports", () => {
     expect(mocks.toast.error).toHaveBeenCalledWith(expect.stringContaining("cannot read properties of undefined"));
   });
 
+  it("ignores the browser's ResizeObserver loop notice", () => {
+    const event = new Event("error") as Event & { message: string };
+    event.message = "ResizeObserver loop completed with undelivered notifications.";
+    window.dispatchEvent(event);
+    expect(mocks.toast.error).not.toHaveBeenCalled();
+  });
+
   it("stays quiet for a rejection with nothing to say", () => {
     const event = new Event("unhandledrejection") as Event & { reason: unknown };
     event.reason = undefined;
