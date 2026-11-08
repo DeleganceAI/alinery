@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProviderLoginStatus } from "../chat/providers";
 import { mockIpc } from "../test/mockIpc";
 import type { HostedCatalogView } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
@@ -12,10 +13,19 @@ const mocks = vi.hoisted(() => ({
   grokKeyReady: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
+  openUrl: vi.fn(),
+  providerLoginStart: vi.fn(),
+  providerLoginPoll: vi.fn(),
+  providerLoginReply: vi.fn(),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
 // The catalog is the host daemon's ProviderService (sync/providers).
-vi.mock("../sync/providers", () => ({ providerCatalog: mocks.providerCatalog }));
+vi.mock("../sync/providers", () => ({
+  providerCatalog: mocks.providerCatalog,
+  providerLoginStart: mocks.providerLoginStart,
+  providerLoginPoll: mocks.providerLoginPoll,
+  providerLoginReply: mocks.providerLoginReply,
+}));
 // The model roles are the host daemon's (sync/agent).
 vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
 
@@ -106,5 +116,63 @@ describe("ProviderSetupDialog", () => {
     const catalogOrder = mocks.hostedCatalog.mock.invocationCallOrder[1];
     expect(signInOrder).toBeLessThan(refreshOrder);
     expect(refreshOrder).toBeLessThan(catalogOrder);
+  });
+});
+
+// The daemon's sign-in (ProviderService): the dialog polls LoginPoll and shows what the browser needs typed.
+describe("provider sign-in", () => {
+  const codex = { id: "openai-codex", name: "OpenAI Codex", authenticated: false, stored: false, apiKey: false, oauth: true, apiKeyName: "", oauthName: "" };
+  const status = (patch: Partial<ProviderLoginStatus>): ProviderLoginStatus => ({ loginId: "l1", status: "pending", events: [], failure: "", ...patch });
+
+  async function startLogin(polls: ProviderLoginStatus[]) {
+    settleIpc(readyHosted);
+    mocks.providerCatalog.mockResolvedValue({ providers: [codex], models: [], custom: [] });
+    mocks.providerLoginStart.mockResolvedValue({ host: "alinery+ssh://host/srv/project", status: status({}) });
+    for (const poll of polls) mocks.providerLoginPoll.mockResolvedValueOnce(poll);
+    mocks.providerLoginPoll.mockResolvedValue(polls[polls.length - 1]);
+    mocks.openUrl.mockResolvedValue(undefined);
+    render(<ProviderSetupDialog mode="manual" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /OpenAI Codex/ }));
+    await waitFor(() => expect(mocks.providerLoginStart).toHaveBeenCalledWith("openai-codex", "oauth"));
+  }
+
+  it("shows a device code with a copy control while the sign-in waits, and drops it when it ends", async () => {
+    const device = { type: "device_code" as const, userCode: "ABCD-EFGH", verificationUri: "https://auth.openai.com/codex/device" };
+    await startLogin([status({ events: [device] }), status({ events: [device] })]);
+    expect(await screen.findByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(mocks.providerLoginPoll).toHaveBeenCalledWith("l1", "alinery+ssh://host/srv/project");
+
+    mocks.providerCatalog.mockResolvedValue({ providers: [{ ...codex, authenticated: true }], models: [], custom: [] });
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "done", events: [device] }));
+    await waitFor(() => expect(screen.queryByText(/ABCD-EFGH/)).toBeNull());
+    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
+    expect(await screen.findByRole("button", { name: /OpenAI Codex.*Signed in/ })).toBeTruthy();
+  });
+
+  it("keeps a sign-in link's instructions after the browser opens, with Copy code on a trailing code", async () => {
+    const link = { type: "auth_url" as const, url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" };
+    await startLogin([status({ events: [link] })]);
+    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device"));
+    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "error", failure: "Device authorization timed out", events: [link] }));
+    await waitFor(() => expect(screen.queryByText(/ABCD-EFGH/)).toBeNull());
+    expect(screen.getByText(/Device authorization timed out/)).toBeTruthy();
+  });
+
+  it("removes the unused manual-code prompt when browser sign-in succeeds", async () => {
+    const link = { type: "auth_url" as const, url: "https://auth.openai.com/authorize" };
+    const title = "Paste the authorization code (or full redirect URL):";
+    await startLogin([status({ status: "prompt", events: [link], prompt: { type: "text", message: title } })]);
+    expect(await screen.findByRole("textbox", { name: title })).toBeTruthy();
+
+    mocks.providerCatalog.mockResolvedValue({ providers: [{ ...codex, authenticated: true }], models: [], custom: [] });
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "done", events: [link] }));
+    const provider = await screen.findByRole("button", { name: /OpenAI Codex.*Signed in/ });
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: title })).toBeNull();
+    expect(mocks.providerLoginReply).not.toHaveBeenCalled();
   });
 });

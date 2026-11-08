@@ -1,4 +1,4 @@
-import { Search, Star, X } from "lucide-react";
+import { Check, Search, Star, X } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { costBand } from "../chat/costBand";
 import { BUILTIN_MODEL_ROLES, type ModelRolesMap } from "../chat/modelRoles";
@@ -322,7 +322,10 @@ export function ChatModelDialog({
                         onClick={() => (canSignOut ? onLogout?.(p.id) : onLogin(p.id))}
                       >
                         <span>{p.name}</span>
-                        <span className="chat-provider-status">{canSignOut ? "Sign out" : p.authenticated ? "Signed in" : busy ? "Signing in…" : "Sign in"}</span>
+                        <span className="chat-provider-status">
+                          {p.authenticated ? <Check className="chat-provider-check" size={16} strokeWidth={2} aria-hidden="true" /> : null}
+                          {canSignOut ? "Sign out" : p.authenticated ? "Signed in" : busy ? "Signing in…" : "Sign in"}
+                        </span>
                       </button>
                     </li>
                   );
