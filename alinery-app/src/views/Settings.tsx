@@ -11,6 +11,10 @@ import {
   CHAT_FONT_MAX,
   CHAT_FONT_MIN,
   CHAT_RAIL_FONT_DEFAULT,
+  COMPACTION_PERCENT_MAX,
+  COMPACTION_PERCENT_MIN,
+  COMPACTION_TOKENS_MAX,
+  COMPACTION_TOKENS_MIN,
   DEFAULT_APPEARANCE,
   normalizeArtifactViewerWidth,
   normalizeChatFontSize,
@@ -18,6 +22,9 @@ import {
   normalizeChatRailDensity,
   normalizeChatRailFontSize,
   normalizeChatView,
+  normalizeCompactionBasis,
+  normalizeCompactionPercent,
+  normalizeCompactionTokens,
   normalizeSessionDefaultView,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
@@ -40,6 +47,7 @@ import { type ToastLength, toast } from "../toast";
 import type {
   AppearancePrefs,
   BackupListItem,
+  ChatCompactionBasis,
   ChatMaxWidth,
   ChatRailDensity,
   ChatViewPrefs,
@@ -1278,6 +1286,82 @@ export function Settings({
             </div>
             <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
           </div>
+          {!isGlobal && globalOnly("Auto-compaction")}
+          <Checkbox
+            checked={appearance.chat_auto_compaction !== false}
+            disabled={!isGlobal}
+            onChange={(enabled) => {
+              if (isGlobal) saveAppearance({ ...appearance, chat_auto_compaction: enabled });
+            }}
+            label={
+              <>
+                Auto-compaction <span className="dsc">— ask Vinculum to compact context when the session fills up</span>
+              </>
+            }
+          />
+          {appearance.chat_auto_compaction !== false && (
+            <div className="field">
+              <label id="chat-compaction-basis-label">Compact when context reaches</label>
+              <div className="theme-cards" role="group" aria-labelledby="chat-compaction-basis-label">
+                {(["percent", "tokens"] as const satisfies readonly ChatCompactionBasis[]).map((basis) => {
+                  const active = normalizeCompactionBasis(appearance.chat_compaction_basis) === basis;
+                  return (
+                    <button
+                      key={basis}
+                      type="button"
+                      className={`theme-card ${active ? "active" : ""}`}
+                      disabled={!isGlobal}
+                      aria-pressed={active}
+                      onClick={() => {
+                        if (isGlobal) saveAppearance({ ...appearance, chat_compaction_basis: basis });
+                      }}
+                    >
+                      <span>{basis === "percent" ? "Percent" : "Tokens"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {normalizeCompactionBasis(appearance.chat_compaction_basis) === "tokens" ? (
+                <>
+                  <input
+                    className="field-input"
+                    type="number"
+                    min={COMPACTION_TOKENS_MIN}
+                    max={COMPACTION_TOKENS_MAX}
+                    step={1}
+                    disabled={!isGlobal}
+                    aria-label="Compaction token count"
+                    value={normalizeCompactionTokens(appearance.chat_compaction_tokens)}
+                    style={{ maxWidth: 180, marginTop: 8 }}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (isGlobal && Number.isFinite(next)) saveAppearance({ ...appearance, chat_compaction_tokens: normalizeCompactionTokens(next) });
+                    }}
+                  />
+                  <span className="dsc">Token count is a maximum. If it is higher than the selected model's context window, that model's maximum is used.</span>
+                </>
+              ) : (
+                <>
+                  <input
+                    className="field-input"
+                    type="number"
+                    min={COMPACTION_PERCENT_MIN}
+                    max={COMPACTION_PERCENT_MAX}
+                    step={1}
+                    disabled={!isGlobal}
+                    aria-label="Compaction percent of context"
+                    value={normalizeCompactionPercent(appearance.chat_compaction_percent)}
+                    style={{ maxWidth: 120, marginTop: 8 }}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (isGlobal && Number.isFinite(next)) saveAppearance({ ...appearance, chat_compaction_percent: normalizeCompactionPercent(next) });
+                    }}
+                  />
+                  <span className="dsc">Percent of the selected model's context window.</span>
+                </>
+              )}
+            </div>
+          )}
         </details>
       </>
     );
@@ -1540,18 +1624,6 @@ export function Settings({
           label={
             <>
               Auto-collapse thinking <span className="dsc">— close rails when streaming ends; expand-by-default wins if both are on</span>
-            </>
-          }
-        />
-        <Checkbox
-          checked={view.chat_auto_compaction !== false}
-          disabled={!isGlobal}
-          onChange={(enabled) => {
-            if (isGlobal) saveView({ ...view, chat_auto_compaction: enabled });
-          }}
-          label={
-            <>
-              Auto-compaction <span className="dsc">— ask OMP to compact context when the session fills up</span>
             </>
           }
         />

@@ -1,7 +1,10 @@
 /** "system" follows the macOS appearance; explicit choices override it. */
 export type AppearanceMode = "system" | "light" | "dark";
-/** Journal spacing. Absent / unknown → normal. */
+/** Chat journal spacing. Absent / unknown → normal. */
 export type ChatRailDensity = "dense" | "normal" | "comfortable";
+/** How the auto-compaction limit is read. Absent → percent. */
+export type ChatCompactionBasis = "percent" | "tokens";
+
 /** Centered Chat column max width. Absent → "900". */
 export type ChatMaxWidth = "600" | "900" | "1200" | "none";
 /** Preferred OMP hatch when starting a session. Absent → "chat". */
@@ -33,8 +36,14 @@ export type AppearancePrefs = {
   chat_show_subagent_drawer?: boolean;
   /** Collapse thinking when streaming ends unless expand-by-default is on. Absent → true. */
   chat_auto_collapse_thinking?: boolean;
-  /** Push set_auto_compaction to OMP. Absent → true. */
+  /** Ask Vinculum to compact when context fills. Absent → true. */
   chat_auto_compaction?: boolean;
+  /** `percent` or `tokens`. Absent → percent. */
+  chat_compaction_basis?: ChatCompactionBasis;
+  /** Percent of the model window. Absent → 80. */
+  chat_compaction_percent?: number;
+  /** Token ceiling. A larger value is capped at the selected model's context window. Absent → 128000. */
+  chat_compaction_tokens?: number;
   /** Stick scroll to bottom on new entries. Absent → true. */
   chat_auto_scroll?: boolean;
   /** Rail / journal spacing. Absent → normal. */
@@ -81,6 +90,9 @@ export type ChatViewPrefs = Pick<
   | "chat_show_subagent_drawer"
   | "chat_auto_collapse_thinking"
   | "chat_auto_compaction"
+  | "chat_compaction_basis"
+  | "chat_compaction_percent"
+  | "chat_compaction_tokens"
   | "chat_auto_scroll"
   | "chat_rail_density"
   | "chat_font_size"

@@ -129,6 +129,9 @@ describe("normalizeChatView", () => {
       chat_show_subagent_drawer: false,
       chat_auto_collapse_thinking: false,
       chat_auto_compaction: false,
+      chat_compaction_basis: "tokens",
+      chat_compaction_percent: 40,
+      chat_compaction_tokens: 50_000,
       chat_auto_scroll: false,
       chat_rail_density: "comfortable",
       chat_font_size: 18,
@@ -156,6 +159,15 @@ describe("normalizeChatView", () => {
       chat_rail_font_size: "big",
     } as unknown as Partial<AppearancePrefs>;
     expect(normalizeChatView(junk)).toEqual(normalizeChatView({}));
+  });
+
+  it("clamps the compaction limit", () => {
+    expect(normalizeChatView({ chat_compaction_basis: "tokens", chat_compaction_percent: 0, chat_compaction_tokens: 99_000_000 })).toMatchObject({
+      chat_compaction_basis: "tokens",
+      chat_compaction_percent: 1,
+      chat_compaction_tokens: 10_000_000,
+    });
+    expect(normalizeChatView({ chat_compaction_basis: "loud" as "percent" })).toMatchObject({ chat_compaction_basis: "percent", chat_compaction_percent: 80 });
   });
 
   it("clamps out-of-range font sizes", () => {

@@ -1,4 +1,4 @@
-import type { AppearanceMode, AppearancePrefs, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
+import type { AppearanceMode, AppearancePrefs, ChatCompactionBasis, ChatMaxWidth, ChatRailDensity, ChatViewPrefs, SessionDefaultView } from "./types";
 
 export const DEFAULT_ACCENT_COLOR = "#315bff";
 export const ARTIFACT_VIEWER_WIDTH_DEFAULT = 360;
@@ -28,6 +28,9 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   chat_show_subagent_drawer: true,
   chat_auto_collapse_thinking: true,
   chat_auto_compaction: true,
+  chat_compaction_basis: "percent",
+  chat_compaction_percent: 80,
+  chat_compaction_tokens: 128_000,
   chat_auto_scroll: true,
   chat_rail_density: "normal",
   chat_font_size: CHAT_FONT_DEFAULT,
@@ -62,6 +65,22 @@ export function normalizeChatFontSize(size: number | undefined): number {
 export function normalizeChatRailFontSize(size: number | undefined): number {
   if (typeof size !== "number" || !Number.isFinite(size)) return CHAT_RAIL_FONT_DEFAULT;
   return Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(size)));
+}
+export const COMPACTION_PERCENT_MIN = 1;
+export const COMPACTION_PERCENT_MAX = 100;
+export const COMPACTION_TOKENS_MIN = 1;
+export const COMPACTION_TOKENS_MAX = 10_000_000;
+
+export function normalizeCompactionBasis(value: string | undefined): ChatCompactionBasis {
+  return value === "tokens" ? "tokens" : "percent";
+}
+export function normalizeCompactionPercent(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 80;
+  return Math.min(COMPACTION_PERCENT_MAX, Math.max(COMPACTION_PERCENT_MIN, Math.round(value)));
+}
+export function normalizeCompactionTokens(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 128_000;
+  return Math.min(COMPACTION_TOKENS_MAX, Math.max(COMPACTION_TOKENS_MIN, Math.round(value)));
 }
 export function normalizeChatRailDensity(value: string | undefined): ChatRailDensity {
   if (value === "dense" || value === "comfortable") return value;
@@ -108,6 +127,9 @@ export function normalizeChatView(raw: Partial<ChatViewPrefs>): ChatViewPrefs {
     chat_show_subagent_drawer: raw.chat_show_subagent_drawer !== false,
     chat_auto_collapse_thinking: raw.chat_auto_collapse_thinking !== false,
     chat_auto_compaction: raw.chat_auto_compaction !== false,
+    chat_compaction_basis: normalizeCompactionBasis(raw.chat_compaction_basis),
+    chat_compaction_percent: normalizeCompactionPercent(raw.chat_compaction_percent),
+    chat_compaction_tokens: normalizeCompactionTokens(raw.chat_compaction_tokens),
     chat_auto_scroll: raw.chat_auto_scroll !== false,
     chat_rail_density: normalizeChatRailDensity(raw.chat_rail_density),
     chat_font_size: normalizeChatFontSize(raw.chat_font_size),

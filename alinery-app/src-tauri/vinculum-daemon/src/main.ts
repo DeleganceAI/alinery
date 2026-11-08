@@ -7,6 +7,7 @@ import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension,
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
+import { readCompactionSettings } from "./compaction.ts";
 import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
@@ -420,6 +421,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     {
       models,
       registry,
+      settings: () => readCompactionSettings(appConfig, models),
       env: () => {
         const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id) });
         rememberSessionEnv(env, id);

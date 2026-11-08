@@ -25,6 +25,15 @@ pub(crate) fn default_chat_rail_font_size() -> u16 {
 pub(crate) fn default_chat_rail_density() -> String {
     "normal".into()
 }
+pub(crate) fn default_compaction_basis() -> String {
+    "percent".into()
+}
+pub(crate) fn default_compaction_percent() -> u16 {
+    80
+}
+pub(crate) fn default_compaction_tokens() -> u32 {
+    128_000
+}
 pub(crate) fn default_chat_max_width() -> String {
     "900".into()
 }
@@ -71,6 +80,13 @@ pub(crate) struct AppearancePrefs {
     pub(crate) chat_auto_collapse_thinking: bool,
     #[serde(default = "default_true")]
     pub(crate) chat_auto_compaction: bool,
+    /// `percent` uses `chat_compaction_percent` of the model window. `tokens` uses `chat_compaction_tokens`, capped at that window.
+    #[serde(default = "default_compaction_basis")]
+    pub(crate) chat_compaction_basis: String,
+    #[serde(default = "default_compaction_percent")]
+    pub(crate) chat_compaction_percent: u16,
+    #[serde(default = "default_compaction_tokens")]
+    pub(crate) chat_compaction_tokens: u32,
     #[serde(default = "default_true")]
     pub(crate) chat_auto_scroll: bool,
     #[serde(default = "default_chat_rail_density")]
@@ -127,6 +143,9 @@ impl Default for AppearancePrefs {
             chat_show_subagent_drawer: true,
             chat_auto_collapse_thinking: true,
             chat_auto_compaction: true,
+            chat_compaction_basis: default_compaction_basis(),
+            chat_compaction_percent: default_compaction_percent(),
+            chat_compaction_tokens: default_compaction_tokens(),
             chat_auto_scroll: true,
             chat_rail_density: default_chat_rail_density(),
             chat_font_size: default_chat_font_size(),
@@ -281,6 +300,12 @@ pub(crate) fn sanitize_appearance(prefs: AppearancePrefs) -> AppearancePrefs {
         chat_show_subagent_drawer: prefs.chat_show_subagent_drawer,
         chat_auto_collapse_thinking: prefs.chat_auto_collapse_thinking,
         chat_auto_compaction: prefs.chat_auto_compaction,
+        chat_compaction_basis: match prefs.chat_compaction_basis.trim() {
+            "tokens" => "tokens".into(),
+            _ => default_compaction_basis(),
+        },
+        chat_compaction_percent: prefs.chat_compaction_percent.clamp(1, 100),
+        chat_compaction_tokens: prefs.chat_compaction_tokens.clamp(1, 10_000_000),
         chat_auto_scroll: prefs.chat_auto_scroll,
         chat_rail_density: match prefs.chat_rail_density.trim() {
             "dense" | "compact" => "dense".into(),

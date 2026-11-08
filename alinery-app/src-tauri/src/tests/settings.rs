@@ -151,6 +151,9 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(empty.appearance.chat_show_subagent_drawer);
     assert!(empty.appearance.chat_auto_collapse_thinking);
     assert!(empty.appearance.chat_auto_compaction);
+    assert_eq!(empty.appearance.chat_compaction_basis, "percent");
+    assert_eq!(empty.appearance.chat_compaction_percent, 80);
+    assert_eq!(empty.appearance.chat_compaction_tokens, 128_000);
     assert!(empty.appearance.chat_auto_scroll);
     assert_eq!(empty.appearance.chat_rail_density, "normal");
     assert_eq!(empty.appearance.chat_font_size, 14);
@@ -192,6 +195,9 @@ fn appearance_defaults_sanitize_and_round_trip() {
         chat_show_subagent_drawer: false,
         chat_auto_collapse_thinking: false,
         chat_auto_compaction: false,
+        chat_compaction_basis: "tokens".into(),
+        chat_compaction_percent: 40,
+        chat_compaction_tokens: 50_000,
         chat_auto_scroll: false,
         chat_rail_density: "compact".into(),
         chat_font_size: 16,
@@ -233,6 +239,18 @@ fn appearance_defaults_sanitize_and_round_trip() {
     assert!(!ava.contains_key("not_a_chat_key"));
     assert_eq!(back.chat_rail_font_size, 13);
     assert_eq!(back.session_default_view, "terminal");
+    assert_eq!(back.chat_compaction_basis, "tokens");
+    assert_eq!(back.chat_compaction_percent, 40);
+    assert_eq!(back.chat_compaction_tokens, 50_000);
+    let clamped = sanitize_appearance(AppearancePrefs {
+        chat_compaction_basis: "loud".into(),
+        chat_compaction_percent: 0,
+        chat_compaction_tokens: 99_000_000,
+        ..AppearancePrefs::default()
+    });
+    assert_eq!(clamped.chat_compaction_basis, "percent");
+    assert_eq!(clamped.chat_compaction_percent, 1);
+    assert_eq!(clamped.chat_compaction_tokens, 10_000_000);
 
     // Legacy compact sanitizes to dense.
     assert_eq!(
