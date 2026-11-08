@@ -420,6 +420,6 @@ it("draws a history-only state that carries neither map", () => {
   expect(graph.connections).toEqual([]);
   expect([...graph.nodes.values()].map((node) => node.key)).toEqual(["session:s1"]);
 
-  render(<TaskRunGraph sessions={[session("s1")] as SessionDisplayMeta[]} state={sparse as never} />);
+  render(<TaskRunGraph sessions={[session("s1")] as SessionDisplayMeta[]} state={sparse as never} onOpenSession={() => {}} onOpenArtifact={() => {}} />);
   expect(screen.queryByText(/Cannot convert undefined or null to object/)).toBeNull();
 });

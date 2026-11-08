@@ -54,7 +54,7 @@ it("reads the row as the reply the views already use, with the revision it was r
   expect(reply.revision).toBe(5n);
   expect(reply.live).toEqual({ status: "available" });
   expect(reply.definition.title).toBe("Fork join");
-  expect(reply.state.executions.e1).toMatchObject({ owner_session_id: "s1", lifecycle: "running", permission: { kind: "locked" } });
+  expect(reply.state.executions?.e1).toMatchObject({ owner_session_id: "s1", lifecycle: "running", permission: { kind: "locked" } });
 });
 
 it("a task with no row, and a daemon that does not answer, are errors with a reason", async () => {
@@ -91,7 +91,7 @@ it("an approval carries the task, the execution, the revision seen and a mutatio
     row({ kind: "human_granted" }, 6n),
   );
   const { result } = renderHook(() => useTaskExecution("/d", "task"));
-  await waitFor(() => expect(result.current.reply?.state.executions.e1.permission.kind).toBe("locked"));
+  await waitFor(() => expect(result.current.reply?.state.executions?.e1.permission.kind).toBe("locked"));
   const seen = result.current.reply?.revision;
   expect(seen).toBe(5n);
 
@@ -101,7 +101,7 @@ it("an approval carries the task, the execution, the revision seen and a mutatio
   expect(calls[0].client).not.toBe("");
   expect(calls[0].mutation).not.toBe("");
   // The promise waited for the replica to pass the write's cursor, so the row is already the new one.
-  expect(result.current.reply?.state.executions.e1.permission.kind).toBe("human_granted");
+  expect(result.current.reply?.state.executions?.e1.permission.kind).toBe("human_granted");
   expect(result.current.reply?.revision).toBe(6n);
 });
 
@@ -114,7 +114,7 @@ it("a row that moved on is refused as a conflict and the card stays as the daemo
   await expect(allowExecutionCompletion("/e", "task", "e1", 5n)).rejects.toBeInstanceOf(ExecutionConflict);
   await expect(allowExecutionCompletion("/e", "task", "e1", 5n)).rejects.toThrow("changed since revision 5");
   const reply = await readTaskExecution("/e", "task");
-  expect(reply.state.executions.e1.permission.kind).toBe("locked");
+  expect(reply.state.executions?.e1.permission.kind).toBe("locked");
 });
 
 it("any other refusal keeps its message and is not a conflict", async () => {

@@ -1266,7 +1266,7 @@ describe("execution reply without the optional maps", () => {
     ipcMock.getTaskExecution.mockResolvedValue(sparse);
 
     const errors: unknown[] = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((...args) => errors.push(args[0]));
+    vi.spyOn(console, "error").mockImplementation((...args) => errors.push(args[0]));
 
     const { container } = render(<Grid repoPaths={["/repo-a"]} {...props} />);
     await screen.findByRole("button", { name: /^Sparse task, repo-a/ });
