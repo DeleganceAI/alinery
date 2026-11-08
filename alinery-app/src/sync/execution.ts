@@ -1,6 +1,8 @@
 // A task's execution state from the daemon's `execution/<slug>/<slug>` entity (plan S4.2): what the shell's observation
 // commands answered, and the approval that replaced the shell's allow command. The row is the Rust-shaped state plus the playbook
 // definition; the engine behind it is the daemon's.
+
+import type { JsonObject } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
@@ -16,6 +18,27 @@ export const executionKey = (slug: string) => `execution/${slug}/${slug}`;
 
 export type ExecutionRead = { repoPath: string; taskSlug: string };
 
+/**
+ * A definition from the row's free-form Struct. The daemon sends `definitionOf`, but a Struct carries
+ * only the keys that were filled: a row written by an older build, or one still being written, arrives
+ * without `step` or `section_order`. Normalize here, as `definitionOf` (`sync/playbooks.ts`) does for
+ * the typed path, so no view has to defend against a half-filled definition.
+ */
+function definitionOfStruct(d: JsonObject): NormalizedPlaybook {
+  const raw = d as Partial<NormalizedPlaybook>;
+  return {
+    version: raw.version ?? 2,
+    key: raw.key ?? "",
+    title: raw.title ?? "",
+    description: raw.description ?? "",
+    default_model: raw.default_model ?? "",
+    default_harness: raw.default_harness ?? "",
+    step: raw.step ?? [],
+    preamble: raw.preamble ?? "",
+    section_order: raw.section_order ?? [],
+  };
+}
+
 /** The reply a row stands for. Its `live` is always available: a row only arrives over a working stream. */
 export function replyOf(e: Entity | undefined): TaskExecutionReply | undefined {
   if (e?.value.case !== "execution") return undefined;
@@ -27,7 +50,7 @@ export function replyOf(e: Entity | undefined): TaskExecutionReply | undefined {
   if (!row.state || !row.definition) return undefined;
   return {
     state: row.state as unknown as TaskExecutionState,
-    definition: row.definition as unknown as NormalizedPlaybook,
+    definition: definitionOfStruct(row.definition),
     live: { status: "available" },
     revision: e.revision,
   };

@@ -700,6 +700,8 @@ export type NormalizedPlaybook = {
   description: string;
   default_model: string;
   default_harness: string;
+  /** Required: this is the normalized shape. A raw Struct is normalized at the boundary that reads
+   * it (`definitionOfStruct` in `sync/execution.ts`), so a view never sees a definition without it. */
   step: NormalizedStep[];
   preamble: string;
   section_order: string[];

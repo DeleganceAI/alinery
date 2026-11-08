@@ -147,3 +147,19 @@ it("treats a row without a definition as no row, instead of casting an empty obj
   });
   expect(replyOf(otherHalf)).toBeUndefined();
 });
+
+// `definition` is a free-form Struct, so a row can carry it and still lack `step` (an older build's
+// row, or one still being written). Views read `definition.step.find`, which threw and blanked the
+// window. The boundary normalizes, exactly as `definitionOf` does for the typed path.
+it("normalizes a definition whose step was never filled", () => {
+  const hollow = create(EntitySchema, {
+    key: executionKey("task"),
+    revision: 1n,
+    value: { case: "execution", value: { slug: "task", state: state({ kind: "locked" }), definition: {} } as never },
+  });
+  const reply = replyOf(hollow);
+  expect(reply?.definition.step).toEqual([]);
+  expect(reply?.definition.section_order).toEqual([]);
+  // What the views do with it.
+  expect(reply?.definition.step.find((step) => step.key === "seed")).toBeUndefined();
+});
