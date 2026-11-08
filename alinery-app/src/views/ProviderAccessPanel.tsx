@@ -46,7 +46,7 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
       ) : null}
       {access.login && access.login.events.length > 0 ? <p className="dim">{access.login.events.map(eventText).filter(Boolean).join("\n")}</p> : null}
       {access.busy && !prompt ? (
-        // A login with no prompt (a device code waiting for approval) has no other way out.
+        // A login waiting on a device code asks nothing, so this is its only way out.
         <div className="chat-ui-prompt-options">
           <button type="button" className="btn ghost small" onClick={() => void access.cancel()}>
             Cancel sign-in
