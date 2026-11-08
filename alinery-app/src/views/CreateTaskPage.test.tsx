@@ -733,6 +733,25 @@ describe("scoped playbook selection", () => {
     }
   });
 
+  it("keeps the workflow dialog open during refresh but closes it after source failure", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "View workflow" }));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+    const refreshedSource = deferred<ScopedPlaybook>();
+    vi.mocked(playbookReads.readPlaybook).mockReturnValue(refreshedSource.promise);
+    await act(async () => fireEvent.focus(window));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+    await act(async () => refreshedSource.reject(new Error("Could not read updated playbook")));
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+    await act(async () => fireEvent.focus(window));
+    expect(screen.getByRole("region", { name: "SuperDevelop workflow preview" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View workflow" }));
+    expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
+  });
+
   it.each(["request", "diagnostics"] as const)("clears a recovered catalog error after focus refresh (%s)", async (failure) => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
@@ -1036,6 +1055,39 @@ describe("per-step default model", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
     expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ keep: "kept-override" });
+  });
+
+  it("preserves saved step overrides through a failed focus refresh and draft reopen", async () => {
+    let saved: BoardTask = { ...draftTask, step_models: { build: "saved-override" } };
+    vi.mocked(taskWrites.writeDraftForRepo).mockImplementation(async (args) => {
+      saved = { ...saved, name: args.name, step_models: args.stepModels ?? undefined };
+      return { slug: saved.slug } as Task;
+    });
+    vi.useFakeTimers();
+    try {
+      let form!: ReturnType<typeof render>;
+      await act(async () => {
+        form = render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(screen.getByLabelText("Build model")).toHaveProperty("value", "saved-override");
+      vi.mocked(playbookReads.readPlaybook).mockRejectedValue(new Error("Could not read updated playbook"));
+      await act(async () => fireEvent.focus(window));
+      expect(within(screen.getByRole("complementary", { name: "Playbook" })).getByText(/Could not read updated playbook/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
+      fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited while unavailable" } });
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Edited while unavailable", stepModels: { build: "saved-override" } }));
+      form.unmount();
+      vi.mocked(playbookReads.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+      await act(async () => {
+        render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+      });
+      expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Edited while unavailable");
+      expect(screen.getByLabelText("Build model")).toHaveProperty("value", "saved-override");
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 
   it("restores one override and shows the chain on the other steps", async () => {

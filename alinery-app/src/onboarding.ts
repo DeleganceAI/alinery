@@ -4,12 +4,12 @@ import type { AppConfig, PlaybookRef } from "./types";
 
 export const ONBOARDING_STEP_KEY = "alinery.onboardingStep.v1";
 
-export type OnboardingStepId = "playbooks" | "models" | "launch";
+// The repository is chosen on the setup screen before onboarding opens, so the wizard starts at Models.
+export type OnboardingStepId = "playbooks" | "models";
 
 export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
-  { id: "playbooks", number: "01", label: "Playbooks", title: "How playbooks coordinate agents" },
-  { id: "models", number: "02", label: "Models", title: "Verify your agent & model provider" },
-  { id: "launch", number: "03", label: "First task", title: "Launch your first playbook task" },
+  { id: "models", number: "01", label: "Models", title: "Verify your agent & model provider" },
+  { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
 ];
 
 /** Where the pre-S6.1 install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
@@ -72,13 +72,15 @@ function clearSavedOnboardingStep(): void {
 export function readSavedOnboardingStep(): OnboardingStepId {
   try {
     const raw = localStorage.getItem(ONBOARDING_STEP_KEY);
+    // The First task step is gone; a run saved there resumes at the step that now ends onboarding.
+    if (raw === "launch") return "playbooks";
     if (raw && ONBOARDING_STEPS.some((step) => step.id === raw)) {
       return raw as OnboardingStepId;
     }
   } catch {
     // Fall through to default.
   }
-  return "playbooks";
+  return "models";
 }
 
 export function writeSavedOnboardingStep(step: OnboardingStepId): void {

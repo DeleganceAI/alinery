@@ -51,11 +51,9 @@ import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, To
 import { resolveStartupView } from "./startupView";
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
-import { readPlaybook } from "./sync/playbooks";
 import { observationNow } from "./sync/sessionObservation";
 import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
-import { readEffectiveConfig } from "./sync/settings";
-import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
+import { duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -191,7 +189,7 @@ export default function App() {
   // starting at Playbooks. Finish, Skip and Esc mark completion; replay never clears it.
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStepId | undefined>(undefined);
-  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void } | null>(null);
+  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void; preselect?: string } | null>(null);
   // The usage-sharing question never sits on top of the wizard; when it is still owed it is
   // asked shortly after onboarding finishes, and the auto provider offer waits for its answer
   // so the two dialogs never stack.
@@ -742,7 +740,7 @@ export default function App() {
     const hosts = await ipc.listHosts().catch(() => []);
     const entry = hosts.find((candidate) => candidate.host_id === (machineOf(key) || "local"));
     if (entry && !entry.onboarded) {
-      setOnboardingStep("playbooks");
+      setOnboardingStep(readSavedOnboardingStep());
       setOnboardingOpen(true);
     }
     return true;
@@ -1033,45 +1031,6 @@ export default function App() {
     void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook, initialPreset }));
   };
 
-  const handleLaunchStarterTask = async (playbookRef: PlaybookRef, preset: StarterTaskPreset) => {
-    if (!appConfig?.active_repo) return;
-    if (!taskMutationGuard.claim("create")) return;
-    const repoPath = appConfig.active_repo;
-    flushSync(() => setBusy("create"));
-    await afterPaint();
-    try {
-      const [scoped, repoCfg] = await Promise.all([readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
-      const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
-      const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
-      const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
-      const result = await createTaskForRepo({
-        repoPath,
-        request: {
-          name: preset.name,
-          description: preset.description,
-          evidence: preset.evidence,
-          playbook: { reference: scoped.source.reference, source: scoped.source_text },
-          launch_defaults: { harness, model },
-          auto_advance_steps,
-          start: true,
-        },
-      });
-      if (result.creation !== "ready" || result.start === "failed" || result.errors.length) {
-        toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Open the task to inspect its status."}`);
-      }
-      completeOnboarding();
-      refreshBoards();
-      if (result.task) {
-        const fromView: View = { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
-        const taskView: View = { kind: "task", slug: result.task.slug, repoPath, from: fromView, initialTask: result.task };
-        setView(taskView);
-      }
-    } finally {
-      taskMutationGuard.release();
-      setBusy(null);
-    }
-  };
-
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
     if (!appConfigRef.current) return;
     if (!taskMutationGuard.claim("duplicate")) return;
@@ -1277,6 +1236,7 @@ export default function App() {
           <ProviderSetupDialog
             mode="manual"
             initialTab={manualProviderSetup.tab}
+            preselect={manualProviderSetup.preselect}
             unsignedOpensAccounts={manualProviderSetup.tab === "models"}
             onPick={manualProviderSetup.onPick}
             onClose={() => setManualProviderSetup(null)}
@@ -1485,13 +1445,12 @@ export default function App() {
           completeOnboarding();
           openSetup();
         }}
-        onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+        onOpenProviderSetup={(tab, onPick, preselect) => setManualProviderSetup({ tab, onPick, preselect })}
         onCompleteToWorkspace={completeOnboarding}
         onOpenCreateWithPlaybook={(playbook, preset) => {
           completeOnboarding();
           openCreate(playbook, preset);
         }}
-        onLaunchStarterTask={handleLaunchStarterTask}
       />
     </Dialog>
   );
