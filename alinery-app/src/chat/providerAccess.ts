@@ -69,10 +69,12 @@ export function useProviderAccess(enabled: boolean) {
       void providers.providerLoginPoll(id, loginHost.current ?? undefined).then(
         (status) => {
           if (cancelled || loginId.current !== id) return;
-          setLogin(status);
+          // The daemon drains events on every poll; keep them, or a device code shows for one tick and vanishes.
+          setLogin((prev) => (prev?.loginId === status.loginId ? { ...status, events: [...prev.events, ...status.events] } : status));
           for (const event of status.events ?? []) {
-            if (event.type !== "auth_url") continue;
-            const url = browsable(event.url);
+            // A device-code flow (xAI) sends no auth_url: its verification page is the one to open.
+            const raw = event.type === "auth_url" ? event.url : event.type === "device_code" ? event.verificationUri : undefined;
+            const url = browsable(raw);
             if (!url || opened.current.has(url)) continue;
             opened.current.add(url);
             void ipc.openUrl(url).catch((cause: unknown) => setError(String(cause)));
