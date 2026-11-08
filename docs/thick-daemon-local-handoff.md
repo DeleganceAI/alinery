@@ -6,7 +6,7 @@ You are a local agent on the machine where the user is running Alinery from bran
 
 - Branch `remote-daemon` (PR #154) is the thick-daemon plan, P0 to P6. It stacks on `experimental-pi-durable-as-a-harness` (PR #135), not on `main`. Never merge `main` into it.
 - The base branch has one commit this branch does not have yet: `8b4937c` (super-prompt-writer playbook). Do not rebase onto it unless the user asks.
-- **Nobody has run this in the real app.** Every session passed its own tests, and the full `./scripts/check.sh` passed on `8fffcf2` (the history rewrite since then changed no code). All 118 live checks in `docs/thick-daemon-live-checks.md` are `open`. Expect bugs; the likeliest are at seams a unit test cannot reach (the Tauri shell to the daemon, ssh, real PTYs, the setup screen).
+- **Nobody has run this in the real app.** Every session passed its own tests, and the full `./scripts/check.sh` passed on `8fffcf2` (the history rewrite since then changed no code). All 118 entries in `docs/thick-daemon-live-checks.md` are `open` (some of the Part 0 smoke entries overlap deeper entries by design, so 118 entries is more work than 118 distinct checks). Expect bugs; the likeliest are at seams a unit test cannot reach (the Tauri shell to the daemon, ssh, real PTYs, the setup screen).
 - The branch history was rewritten and force-pushed on 2026-11-06. If this checkout had the branch before that, reset it first (this discards local commits on the branch, so check `git log origin/remote-daemon..HEAD` first):
   ```bash
   git fetch origin && git checkout remote-daemon && git reset --hard origin/remote-daemon
@@ -37,8 +37,9 @@ The exact commands are in `L-SMOKE-0`. In short, from the repo root with the PAT
 ```bash
 cd alinery-app && npm ci && cd ..          # only if node_modules is missing
 scripts/dev-fetch-bun.sh                    # compiles alinery-vinculum-daemon
-scripts/dev-fetch-omp.sh                    # only for OMP agent sessions
 ```
+
+There is no OMP binary to fetch: the agent runtime is the daemon's in-process pi-durable conversation (`AGENTS.md`), so `scripts/dev-fetch-omp.sh` and `npm run omp:fetch` are never needed for `tauri dev`.
 
 The smoke test starts from a fresh app config (`~/Library/Application Support/ai.delegance.alinery` moved to `.bak-live`). Do not move it yourself; ask.
 
@@ -50,15 +51,15 @@ The smoke test starts from a fresh app config (`~/Library/Application Support/ai
 | Is a daemon running, how many | `pgrep -fl alinery-vinculum-daemon`; `ls -a <repo>/.alinery/` for `rpc.sock`, `.repo-owner.lock`, `.alinery-app.lock` |
 | Page shows stale or missing state | `src/sync/replica.ts`, `src/sync/hooks.ts`, the daemon's `sync/` store; check the entity arrives with `SyncService.Subscribe` |
 | A call fails with a gRPC code | the handler in `vinculum-daemon/src/rpc/<service>.ts`, auth in `rpc/auth.ts` (capability `VIEW`/`ACT`/`APPROVE`/`ADMIN`/`AGENT`) |
+| Remote check runs stale code | **A change under `vinculum-daemon/` or `proto/` makes the remote runtime tarball stale.** Run `scripts/build-remote-runtimes.sh` (Bun only; `--check` lists what is missing) before any remote check |
 | Webview cannot reach a daemon | `src/daemon/transport.ts`, `src-tauri/src/daemon_rpc.rs` (the generic h2 bridge) |
 | Daemon will not start, "conflict", takeover | `src-tauri/src/daemon.rs` (`ensure_daemon`, `classify_hello`), `alinery-core/src/repo_ownership.rs`, `PROTOCOL_VERSION` in `alinery-core/src/protocol.rs` |
 | Terminal output or reattach | `rpc/terminal.ts`; scrollback is `tasks/<slug>/sessions/<id>.scrollback`, replayed from an offset |
 | Task, board, execution state | `domain/` in the daemon; `tasks/<slug>/task.md`, `execution.json` are the only truth |
-| Setup screen, add repo, SSH host | `views/SetupScreen.tsx`, `setup.ts`, `AddSshHostDialog.tsx`, `folderSetup.ts`, `src-tauri/src/remote.rs` |
+| Setup screen, add repo, SSH host | `views/SetupScreen.tsx`, `setup.ts`, `src/AddSshHostDialog.tsx`, `folderSetup.ts`, `src-tauri/src/remote.rs` |
 | Remote host install or connect | `remote.rs`, `host_wire.rs`, `vinculum-daemon/src/hostService/`, runtime tarballs in `src-tauri/resources/remote/` |
 | MCP | `vinculum-daemon/src/mcpServer/`, `src-tauri/src/mcp.rs` |
 
-A change under `vinculum-daemon/` or `proto/` means the remote runtime tarball is stale for remote checks: run `scripts/build-remote-runtimes.sh` (Bun only; `--check` lists what is missing).
 
 ## How to investigate one issue
 
@@ -73,7 +74,7 @@ A change under `vinculum-daemon/` or `proto/` means the remote runtime tarball i
 
 - Rust change: `cd alinery-app/src-tauri && cargo check -p alinery-app` (fast), then `cargo test --workspace` (never bare `cargo test`; it runs a third of the suite). On a fresh clone run `src-tauri/scripts/copy-sidecar.sh debug` first.
 - Daemon change: `bun test` in `alinery-app/src-tauri/vinculum-daemon/`.
-- `proto/alinery/` change: `npm --prefix proto run gen`, `(cd proto && bun golden.ts)`, `bun test` in `proto/`, `./scripts/tests/check-proto-gen.sh`, **and bump `PROTOCOL_VERSION`** (now 38 as of S5.1; verify in `protocol.rs`).
+- `proto/alinery/` change: `npm --prefix proto run gen`, `(cd proto && bun golden.ts)`, `bun test` in `proto/`, `./scripts/tests/check-proto-gen.sh`, **and bump `PROTOCOL_VERSION`** (now 39 as of S5.3; always read the current value from `protocol.rs`).
 - `playbook-engine/` change: `bun test` there.
 - Before calling anything done: `./scripts/check.sh` (or `--quick`).
 
@@ -90,11 +91,11 @@ A change under `vinculum-daemon/` or `proto/` means the remote runtime tarball i
 
 ## Flaky tests (rerun the single test before treating a failure as a regression)
 
-`tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` (500 ms bound), `tests::daemon::takeover_*` and `tests::daemon_rpc::a_takeover_is_bound_to_the_process_it_was_confirmed_for`, and the S4.11 two-daemon test. Details are in the ledger's section 5.
+`tests::daemon::a_repo_being_closed_is_not_respawned_by_attach` (R-FLAKE-1, a 500 ms bound) and the S4.11 two-daemon test (R-S4.11-13) are live. R-FLAKE-2 (`a_takeover_is_bound_to_the_process_it_was_confirmed_for`) and R-FLAKE-3 (`takeover_*`) were fixed with 30 s waits and kill-on-drop; a failure there is a regression, not a flake. Details are in the ledger's section E.
 
 ## Leaked test daemons
 
-Earlier test runs left orphan `alinery-vinculum-daemon` processes (parent pid 1, `--repo` pointing at a deleted `/tmp` directory such as `alinery-mcp-invalid-create-*` or `ato-*`). The takeover tests now clean up after themselves, but if you see many, list them with `ps -axo pid,ppid,command | grep alinery-vinculum-daemon` and stop only those whose `--repo` path no longer exists, one pid at a time with `kill -TERM <pid>`. Never stop one whose repo is a real project the user has open.
+Earlier test runs left orphan `alinery-vinculum-daemon` processes (parent pid 1, `--repo` pointing at a deleted `/tmp` directory). The takeover tests now clean up after themselves, but if you see many, list them with `ps -axo pid,ppid,command | grep alinery-vinculum-daemon` and stop only those whose `--repo` path no longer exists, one pid at a time with `kill -TERM <pid>`. Never stop one whose repo is a real project the user has open.
 
 ## Report back with
 
