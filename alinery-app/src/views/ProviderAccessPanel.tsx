@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { useProviderAccess } from "../chat/providerAccess";
 import type { ProviderLoginStatus } from "../chat/providers";
 
@@ -13,8 +13,17 @@ function eventText(event: ProviderLoginStatus["events"][number]): string {
 
 export function ProviderAccessPanel({ access }: { access: Access }) {
   const prompt = access.login?.prompt;
+  const shown = !!(access.choice || access.busy);
+  const eventCount = access.login?.events.length ?? 0;
+  const promptMessage = prompt?.message;
+  const ref = useRef<HTMLDivElement>(null);
+  // The panel sits above the provider list; a row clicked near the bottom would otherwise start a login the user can't see.
+  useEffect(() => {
+    if (!shown && !eventCount && !promptMessage) return;
+    ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [shown, eventCount, promptMessage]);
   return (
-    <>
+    <div ref={ref}>
       {access.choice ? (
         <div className="chat-ui-prompt">
           <p className="chat-msg-title">{access.choice.name}</p>
@@ -36,6 +45,14 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
         </div>
       ) : null}
       {access.login && access.login.events.length > 0 ? <p className="dim">{access.login.events.map(eventText).filter(Boolean).join("\n")}</p> : null}
+      {access.busy && !prompt ? (
+        // A login with no prompt (a device code waiting for approval) has no other way out.
+        <div className="chat-ui-prompt-options">
+          <button type="button" className="btn ghost small" onClick={() => void access.cancel()}>
+            Cancel sign-in
+          </button>
+        </div>
+      ) : null}
       {prompt ? (
         prompt.type === "select" ? (
           <div className="chat-ui-prompt">
@@ -56,7 +73,7 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
           <PromptForm prompt={prompt} secret={prompt.type === "secret"} onSubmit={(value) => void access.reply(value)} onCancel={() => void access.cancel()} />
         )
       ) : null}
-    </>
+    </div>
   );
 }
 
