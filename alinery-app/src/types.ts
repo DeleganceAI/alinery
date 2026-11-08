@@ -842,10 +842,18 @@ export type TaskExecutionState = {
   /** O21: the records are the old runner's. They show as finished history, with no approve or resume. */
   history_only?: boolean;
   launch_defaults: LaunchChoices;
-  executions: Record<string, ExecutionRecord>;
-  occurrences: Record<string, ArtifactOccurrence>;
-  contexts: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
-  collections: Record<
+  /**
+   * The maps below come from the engine block, and `getTaskExecution` merges them only for a
+   * `stored` or `converted` state. A `history_only` task (the old runner's records, no engine
+   * state) and a `fresh` one answer without them, so every reader defaults them.
+   *
+   * They are optional for that reason: treating them as required is what let two callers throw
+   * `Cannot convert undefined or null to object` during render and blank the window.
+   */
+  executions?: Record<string, ExecutionRecord>;
+  occurrences?: Record<string, ArtifactOccurrence>;
+  contexts?: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
+  collections?: Record<
     string,
     {
       id: string;

@@ -22,7 +22,7 @@ export function buildTaskRunGraph(sessions: SessionMeta[], state: TaskExecutionS
 
   const consumers = new Map<string, Set<string>>();
   if (state) {
-    for (const execution of Object.values(state.executions)) {
+    for (const execution of Object.values(state.executions ?? {})) {
       const attempts = [execution.owner_session_id, ...execution.previous_session_ids];
       for (const id of attempts) {
         const node = nodes.get(sessionKey(id));
@@ -39,8 +39,8 @@ export function buildTaskRunGraph(sessions: SessionMeta[], state: TaskExecutionS
         for (const id of attempts) targets.add(sessionKey(id));
       }
     }
-    for (const occurrence of Object.values(state.occurrences)) {
-      const producer = occurrence.producer_execution_id ? state.executions[occurrence.producer_execution_id] : undefined;
+    for (const occurrence of Object.values(state.occurrences ?? {})) {
+      const producer = occurrence.producer_execution_id ? state.executions?.[occurrence.producer_execution_id] : undefined;
       let from = producer ? sessionKey(producer.owner_session_id) : "";
       if (!nodes.has(from)) {
         from = `source:${occurrence.id}`;

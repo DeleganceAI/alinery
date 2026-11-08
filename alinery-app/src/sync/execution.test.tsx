@@ -6,7 +6,7 @@ import type { AllowCompletionRequest } from "alinery-proto/alinery/v1/executions
 import { afterEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness, put, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
-import { allowExecutionCompletion, ExecutionConflict, executionKey, readTaskExecution, readTaskExecutions, useTaskExecution } from "./execution";
+import { allowExecutionCompletion, ExecutionConflict, executionKey, readTaskExecution, readTaskExecutions, replyOf, useTaskExecution } from "./execution";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
@@ -126,4 +126,24 @@ it("any other refusal keeps its message and is not a conflict", async () => {
   const error = await allowExecutionCompletion("/f", "task", "e1").catch((e) => e);
   expect(error).not.toBeInstanceOf(ExecutionConflict);
   expect(String(error.message)).toContain("only a live execution can be permitted");
+});
+
+// `state` and `definition` are `google.protobuf.Struct` fields, so proto3 lets either arrive unset.
+// `replyOf` used to substitute `{}` and cast that through `as unknown as` — an empty object that
+// satisfied the cast and then threw in a view (`definition.step.find` on `{}`). A row missing a
+// half is not a reply; the caller's "no row yet" path already covers it.
+it("treats a row without a definition as no row, instead of casting an empty object", () => {
+  const half = create(EntitySchema, {
+    key: executionKey("task"),
+    revision: 1n,
+    value: { case: "execution", value: { slug: "task", state: state({ kind: "locked" }) } as never },
+  });
+  expect(replyOf(half)).toBeUndefined();
+
+  const otherHalf = create(EntitySchema, {
+    key: executionKey("task"),
+    revision: 1n,
+    value: { case: "execution", value: { slug: "task", definition } as never },
+  });
+  expect(replyOf(otherHalf)).toBeUndefined();
 });

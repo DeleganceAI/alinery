@@ -1195,7 +1195,7 @@ export function SessionView({
             <ul aria-label="Execution inputs">
               {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
                 ids.map((occurrenceId) => {
-                  const occurrence = executionView.state.occurrences[occurrenceId];
+                  const occurrence = executionView.state.occurrences?.[occurrenceId];
                   return (
                     <li key={`${selector}:${occurrenceId}`}>
                       <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}

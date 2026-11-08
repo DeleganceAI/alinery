@@ -20,9 +20,14 @@ export type ExecutionRead = { repoPath: string; taskSlug: string };
 export function replyOf(e: Entity | undefined): TaskExecutionReply | undefined {
   if (e?.value.case !== "execution") return undefined;
   const row = e.value.value;
+  // The row is generated types on one side and the views' types on the other, so each half is
+  // cast. Do not default a missing half to `{}` and cast that: an empty object satisfies the cast
+  // and then throws in a view (`definition.step.find` on `{}`). A row without both halves is not
+  // a reply, and the caller already has the "no row yet" path for it.
+  if (!row.state || !row.definition) return undefined;
   return {
-    state: (row.state ?? {}) as unknown as TaskExecutionState,
-    definition: (row.definition ?? {}) as unknown as NormalizedPlaybook,
+    state: row.state as unknown as TaskExecutionState,
+    definition: row.definition as unknown as NormalizedPlaybook,
     live: { status: "available" },
     revision: e.revision,
   };

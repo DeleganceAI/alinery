@@ -97,7 +97,7 @@ export function CreateSessionPage({
           setLoadedTaskId(taskKey(task));
           setExecutionError("");
           if (initial) {
-            const queued = Object.values(value.state.executions).find((record) => record.lifecycle === "queued");
+            const queued = Object.values(value.state.executions ?? {}).find((record) => record.lifecycle === "queued");
             if (queued) setSelection(`existing:${queued.id}`);
           }
           initial = false;
@@ -300,7 +300,7 @@ export function CreateSessionPage({
               {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
                 ids.map((id) => (
                   <li key={`${selector}:${id}`}>
-                    <code>{selector}</code> ← <code>{executionView?.state.occurrences[id]?.relative_path ?? id}</code> · occurrence {id}
+                    <code>{selector}</code> ← <code>{executionView?.state.occurrences?.[id]?.relative_path ?? id}</code> · occurrence {id}
                   </li>
                 )),
               )}

@@ -470,7 +470,7 @@ export function ExecutionAvailabilityNotice({ live, controls = false }: { live: 
 }
 
 export function ExecutionOutputs({ execution, occurrences }: { execution: ExecutionRecord; occurrences: TaskExecutionState["occurrences"] }) {
-  const accepted = Object.values(occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id);
+  const accepted = Object.values(occurrences ?? {}).filter((occurrence) => occurrence.producer_execution_id === execution.id);
   return (
     <ul aria-label="Execution outputs">
       {execution.outputs.map((output) => {
