@@ -6149,6 +6149,56 @@ dialog.modal::backdrop {
   padding: 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  container-type: inline-size;
+}
+/* Keyboard hints left, character count centered, session controls right. */
+.chat-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-composer-footer.has-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.chat-composer-footer.has-actions > .chat-composer-context {
+  margin-left: 0;
+  justify-self: center;
+}
+.chat-composer-actions {
+  min-width: 0;
+  max-width: 100%;
+  justify-self: end;
+}
+.chat-session-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-composer-actions .chat-session-controls > .btn {
+  height: 20px;
+  min-height: 20px;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+/* The model name and turn meta are long; below this width they take their own row rather than clip. */
+@container (max-width: 900px) {
+  .chat-composer-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 .chat-composer-box {
   position: relative;
@@ -6249,7 +6299,6 @@ dialog.modal::backdrop {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  margin-top: 8px;
   font-size: 12px;
   color: var(--text-muted);
 }

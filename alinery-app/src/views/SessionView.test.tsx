@@ -1008,6 +1008,11 @@ describe("Vinculum session chat", () => {
     renderSession({ intent: "attach", model: "stale/model" });
     expect(await screen.findByText("playbook prompt")).toBeDefined();
     expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("xai/grok-4.6");
+    // The pickers sit in the composer footer, beside the input, not in a bar above the transcript.
+    const footer = screen.getByRole("button", { name: "Change model" }).closest(".chat-composer-footer") as HTMLElement;
+    expect(footer).not.toBeNull();
+    expect(within(footer).getByRole("combobox", { name: "Thinking level" })).toBeDefined();
+    expect(document.querySelector(".chat-meta")).toBeNull();
     const picker = screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
     expect(picker.value).toBe("high");
     fireEvent.change(picker, { target: { value: "low" } });

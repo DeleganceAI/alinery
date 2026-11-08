@@ -1004,6 +1004,37 @@ export function SessionView({
       (error) => toast(String(error), "error"),
     );
   };
+  // Model, thinking and the turn meta sit under the input while the composer shows, else in their own bar.
+  const sessionControls = chatVisibility.showMeta ? (
+    <div className="chat-session-controls">
+      <button
+        type="button"
+        className="btn ghost small"
+        aria-label="Change model"
+        title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
+        onClick={() => {
+          setModelError(null);
+          setModelDialog({ tab: "models", preselect: "", setup: false });
+        }}
+      >
+        {chatMetaHead || "Model"}
+      </button>
+      {" · "}
+      {chat.sessionMeta.thinking ? (
+        <>
+          <ThinkingSelect
+            level={chat.sessionMeta.thinking}
+            levels={chat.sessionMeta.thinkingLevels}
+            disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
+            title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+            onPick={pickThinking}
+          />
+          {" · "}
+        </>
+      ) : null}
+      {chatMetaTail}
+    </div>
+  ) : null;
 
   const approveChat = async (requestId: string, allow: boolean) => {
     // The row stays mounted across the await, so without this a double-click sends two responses.
@@ -1262,38 +1293,7 @@ export function SessionView({
             <>
               {showChat ? (
                 <>
-                  {chatVisibility.showMeta ? (
-                    <div className="chat-meta">
-                      <div>
-                        <button
-                          type="button"
-                          className="btn ghost small"
-                          aria-label="Change model"
-                          title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
-                          onClick={() => {
-                            setModelError(null);
-                            setModelDialog({ tab: "models", preselect: "", setup: false });
-                          }}
-                        >
-                          {chatMetaHead || "Model"}
-                        </button>
-                        {" · "}
-                        {chat.sessionMeta.thinking ? (
-                          <>
-                            <ThinkingSelect
-                              level={chat.sessionMeta.thinking}
-                              levels={chat.sessionMeta.thinkingLevels}
-                              disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
-                              title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
-                              onPick={pickThinking}
-                            />
-                            {" · "}
-                          </>
-                        ) : null}
-                        {chatMetaTail}
-                      </div>
-                    </div>
-                  ) : null}
+                  {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
                   <div className="terminal-frame">
                     <ChatPane
                       entries={chatEntries}
@@ -1308,6 +1308,7 @@ export function SessionView({
                   {showChatComposer ? (
                     <>
                       <ChatComposer
+                        actions={sessionControls}
                         body={messageDraft.body}
                         status={chatStatus}
                         catalog={chat.commands}
