@@ -225,6 +225,7 @@ pub enum TelemetryEvent {
     SettingsChange {
         source: TelemetrySource,
         scope: SettingsChangeScope,
+        setting: &'static str,
     },
     RepoActivate {
         source: TelemetrySource,
@@ -479,9 +480,10 @@ pub fn event_props(event: &TelemetryEvent) -> Map<String, Value> {
             insert_str(&mut props, "source", source.as_str());
             insert_str(&mut props, "trigger", trigger.as_str());
         }
-        TelemetryEvent::SettingsChange { source, scope } => {
+        TelemetryEvent::SettingsChange { source, scope, setting } => {
             insert_str(&mut props, "source", source.as_str());
             insert_str(&mut props, "scope", scope.as_str());
+            insert_str(&mut props, "setting", *setting);
         }
         TelemetryEvent::RepoRemove { source, was_active } => {
             insert_str(&mut props, "source", source.as_str());
@@ -818,6 +820,29 @@ endpoint = "{endpoint}"
             TelemetryEvent::AppOpen { cold_start: true }
         });
         assert!(built.load(std::sync::atomic::Ordering::SeqCst), "a consenting user still gets the event built");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn settings_change_requires_complete_consent() {
+        let dir = unique_temp("alinery_tel_settings_consent");
+        for (enabled, prompted, install_id) in [(false, true, "anonymous"), (true, false, "anonymous"), (true, true, "")] {
+            let path = write_app_toml(&dir, enabled, prompted, install_id, "http://127.0.0.1:1");
+            record_event_with(&path, || {
+                panic!("settings event must not be built without complete consent");
+            });
+        }
+        let path = write_app_toml(&dir, true, true, "anonymous", "http://127.0.0.1:1");
+        let built = std::cell::Cell::new(false);
+        record_event_with(&path, || {
+            built.set(true);
+            TelemetryEvent::SettingsChange {
+                source: TelemetrySource::App,
+                scope: SettingsChangeScope::Global,
+                setting: "defaults.model",
+            }
+        });
+        assert!(built.get());
         let _ = std::fs::remove_dir_all(dir);
     }
 
