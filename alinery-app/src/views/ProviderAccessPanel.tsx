@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CopyTextButton } from "../chat/CopyMessage";
 import type { useProviderAccess } from "../chat/providerAccess";
 import type { ProviderLoginStatus } from "../chat/providers";
@@ -41,8 +41,22 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
   const waiting = access.login?.status === "pending" || access.login?.status === "prompt";
   const events = access.login?.events ?? [];
   const notes = events.map(eventText).filter(Boolean);
+  const shown = !!(access.choice || access.busy || access.signedIn);
+  const eventCount = access.login?.events.length ?? 0;
+  const promptMessage = prompt?.message;
+  const ref = useRef<HTMLDivElement>(null);
+  // The panel sits above the provider list; a row clicked near the bottom would otherwise start a login the user can't see.
+  useEffect(() => {
+    if (!shown && !eventCount && !promptMessage) return;
+    ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [shown, eventCount, promptMessage]);
   return (
-    <>
+    <div ref={ref}>
+      {access.signedIn ? (
+        <p className="chat-ui-prompt" role="status">
+          Successfully signed in to {access.signedIn}.
+        </p>
+      ) : null}
       {access.choice ? (
         <div className="chat-ui-prompt">
           <p className="chat-msg-title">{access.choice.name}</p>
@@ -70,6 +84,14 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
           ))
         : null}
       {notes.length > 0 ? <p className="dim">{notes.join("\n")}</p> : null}
+      {access.busy && !prompt ? (
+        // A login waiting on a device code asks nothing, so this is its only way out.
+        <div className="chat-ui-prompt-options">
+          <button type="button" className="btn ghost small" onClick={() => void access.cancel()}>
+            Cancel sign-in
+          </button>
+        </div>
+      ) : null}
       {prompt ? (
         prompt.type === "select" ? (
           <div className="chat-ui-prompt">
@@ -90,7 +112,7 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
           <PromptForm prompt={prompt} secret={prompt.type === "secret"} onSubmit={(value) => void access.reply(value)} onCancel={() => void access.cancel()} />
         )
       ) : null}
-    </>
+    </div>
   );
 }
 

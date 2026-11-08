@@ -54,7 +54,7 @@ it("lists the daemon's playbook rows and saves a star through the picker service
   render(
     <>
       <ConfirmHost />
-      <Playbooks repoPath="/a" />
+      <Playbooks repoPath="/a" onCreateTask={() => {}} />
     </>,
   );
 

@@ -28,7 +28,8 @@ export function installGlobalErrorReports(): void {
     // A failed module/chunk load arrives here too, and it is the one that matters most
     // in a lazy view: React cannot recover from it, so say what did not load.
     const message = event.message || describe(event.error);
-    if (!message) return;
+    // The browser's notice that resize notifications slipped to the next frame: they are still delivered, so nothing broke.
+    if (!message || message.startsWith("ResizeObserver loop")) return;
     console.error("uncaught error", event.error ?? message);
     toast.error(`Something broke: ${message}`);
   });

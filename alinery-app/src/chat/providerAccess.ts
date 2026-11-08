@@ -20,6 +20,7 @@ export function useProviderAccess(enabled: boolean) {
   const [error, setError] = useState<string | null>(null);
   const [choice, setChoice] = useState<LoginProvider | null>(null);
   const [login, setLogin] = useState<ProviderLoginStatus | null>(null);
+  const [signedIn, setSignedIn] = useState<string | null>(null);
   const loginId = useRef<string | null>(null);
   const loginHost = useRef<string | null>(null);
   const opened = useRef(new Set<string>());
@@ -69,10 +70,12 @@ export function useProviderAccess(enabled: boolean) {
       void providers.providerLoginPoll(id, loginHost.current ?? undefined).then(
         (status) => {
           if (cancelled || loginId.current !== id) return;
-          setLogin(status);
+          // The daemon drains events on every poll; keep them, or a device code shows for one tick and vanishes.
+          setLogin((prev) => (prev?.loginId === status.loginId ? { ...status, events: [...prev.events, ...status.events] } : status));
           for (const event of status.events ?? []) {
-            if (event.type !== "auth_url") continue;
-            const url = browsable(event.url);
+            // A device-code flow (xAI) sends no auth_url: its verification page is the one to open.
+            const raw = event.type === "auth_url" ? event.url : event.type === "device_code" ? event.verificationUri : undefined;
+            const url = browsable(raw);
             if (!url || opened.current.has(url)) continue;
             opened.current.add(url);
             void ipc.openUrl(url).catch((cause: unknown) => setError(String(cause)));
@@ -80,7 +83,13 @@ export function useProviderAccess(enabled: boolean) {
           if (status.status === "done" || status.status === "error" || status.status === "cancelled") {
             loginId.current = null;
             setBusy(null);
-            if (status.status === "done") void reload().catch((cause: unknown) => setError(String(cause)));
+            if (status.status === "done") {
+              setLogin(null);
+              void reload().then(
+                (next) => setSignedIn(next.providers.find((p) => p.id === busy)?.name ?? busy),
+                (cause: unknown) => setError(String(cause)),
+              );
+            }
             if (status.status === "error") setError(status.failure || "Login failed");
           }
         },
@@ -98,6 +107,7 @@ export function useProviderAccess(enabled: boolean) {
   const start = useCallback(async (provider: string, method: "api_key" | "oauth") => {
     setError(null);
     setChoice(null);
+    setSignedIn(null);
     try {
       const { status, host } = await providers.providerLoginStart(provider, method);
       loginHost.current = host;
@@ -171,6 +181,7 @@ export function useProviderAccess(enabled: boolean) {
     error,
     choice,
     login,
+    signedIn,
     start,
     choose: setChoice,
     reply,

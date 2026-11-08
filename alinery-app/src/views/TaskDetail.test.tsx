@@ -11,6 +11,7 @@ import { navReady, requireNav } from "../test/nav";
 import { sessionDaemon } from "../test/sessionDaemon";
 import type {
   AgentState,
+  ArtifactOccurrence,
   ArtifactTreeNode,
   BoardNav,
   BoardTask,
@@ -450,7 +451,7 @@ describe("task run graph", () => {
     retained.definition.section_order.push("never-run");
     retained.state.occurrences = {
       "accepted-result": {
-        ...retained.state.occurrences["input-a"],
+        ...(retained.state.occurrences?.["input-a"] as ArtifactOccurrence),
         id: "accepted-result",
         producer_execution_id: produced.id,
         selector: "result.md",
