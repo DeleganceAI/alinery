@@ -1,0 +1,10 @@
+{
+  "op": "write",
+  "overrides": {
+    "github": {},
+    "defaults": {
+      "thinking": "low"
+    },
+    "backup": {}
+  }
+}

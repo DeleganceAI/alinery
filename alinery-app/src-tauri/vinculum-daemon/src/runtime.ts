@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveAzureBaseUrl } from "@earendil-works/pi-ai/api/azure-openai-config";
@@ -8,6 +8,7 @@ import { stream as bedrockStream, streamSimple as bedrockStreamSimple } from "@e
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { CreateModelsOptions, MutableModels } from "@earendil-works/pi-ai/models";
+import { writeOwnerOnly } from "./platform/fs.ts";
 import { credentialPath, openCredentialStore } from "./credentials.ts";
 import { customProviderPath, openCustomProviders, type CustomProviderPublic } from "./customProviders.ts";
 import { createLoginBroker, type LoginStatus } from "./login.ts";
@@ -131,8 +132,7 @@ function deviceId(appConfig: string): string {
   }
   const id = randomUUID();
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, id, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  writeOwnerOnly(path, id);
   return id;
 }
 

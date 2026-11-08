@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ipc from "../ipc";
+import * as providers from "../sync/providers";
 import { type LoginProvider, loginProvidersFromCatalog, type ProviderCatalog, type ProviderLoginStatus } from "./providers";
 
 function browsable(raw: string | undefined): string | null {
@@ -20,10 +21,11 @@ export function useProviderAccess(enabled: boolean) {
   const [choice, setChoice] = useState<LoginProvider | null>(null);
   const [login, setLogin] = useState<ProviderLoginStatus | null>(null);
   const loginId = useRef<string | null>(null);
+  const loginHost = useRef<string | null>(null);
   const opened = useRef(new Set<string>());
 
   const reload = useCallback(async () => {
-    const next = await ipc.providerCatalog();
+    const next = await providers.providerCatalog();
     setCatalog(next);
     setSettled(true);
     return next;
@@ -36,7 +38,7 @@ export function useProviderAccess(enabled: boolean) {
       let last = "daemon not connected";
       for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
         try {
-          const next = await ipc.providerCatalog();
+          const next = await providers.providerCatalog();
           if (cancelled) return;
           setCatalog(next);
           setError(null);
@@ -64,7 +66,7 @@ export function useProviderAccess(enabled: boolean) {
     const timer = setInterval(() => {
       const id = loginId.current;
       if (!id || cancelled) return;
-      void ipc.providerLoginPoll(id).then(
+      void providers.providerLoginPoll(id, loginHost.current ?? undefined).then(
         (status) => {
           if (cancelled || loginId.current !== id) return;
           setLogin(status);
@@ -97,7 +99,8 @@ export function useProviderAccess(enabled: boolean) {
     setError(null);
     setChoice(null);
     try {
-      const status = await ipc.providerLoginStart(provider, method);
+      const { status, host } = await providers.providerLoginStart(provider, method);
+      loginHost.current = host;
       loginId.current = status.loginId;
       setLogin(status);
       setBusy(provider);
@@ -110,7 +113,7 @@ export function useProviderAccess(enabled: boolean) {
     const id = loginId.current;
     if (!id) return;
     try {
-      await ipc.providerLoginReply(id, value, false);
+      await providers.providerLoginReply(id, value, false, loginHost.current ?? undefined);
     } catch (cause) {
       setError(String(cause));
     }
@@ -124,7 +127,7 @@ export function useProviderAccess(enabled: boolean) {
     setChoice(null);
     if (!id) return;
     try {
-      await ipc.providerLoginReply(id, "", true);
+      await providers.providerLoginReply(id, "", true, loginHost.current ?? undefined);
     } catch {
       /* the dialog is already gone */
     }
@@ -133,7 +136,7 @@ export function useProviderAccess(enabled: boolean) {
   const logout = useCallback(async (provider: string) => {
     setError(null);
     try {
-      setCatalog(await ipc.providerLogout(provider));
+      setCatalog(await providers.providerLogout(provider));
     } catch (cause) {
       setError(String(cause));
     }
@@ -142,7 +145,7 @@ export function useProviderAccess(enabled: boolean) {
   const saveCustom = useCallback(async (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) => {
     setError(null);
     try {
-      setCatalog(await ipc.customProviderSave(input));
+      setCatalog(await providers.customProviderSave(input));
     } catch (cause) {
       setError(String(cause));
       throw cause;
@@ -152,7 +155,7 @@ export function useProviderAccess(enabled: boolean) {
   const deleteCustom = useCallback(async (id: string) => {
     setError(null);
     try {
-      setCatalog(await ipc.customProviderDelete(id));
+      setCatalog(await providers.customProviderDelete(id));
     } catch (cause) {
       setError(String(cause));
     }

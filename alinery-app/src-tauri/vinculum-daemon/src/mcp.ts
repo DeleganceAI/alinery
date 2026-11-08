@@ -1,13 +1,13 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { signalChild, spawnDetached } from "./platform/process.ts";
 
 /** Must match `OMP_ENV_ALLOWLIST` in alinery-core. A stdio MCP child gets only these, then its own env. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
 export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "alinery_phase_complete", "alinery_set_session_name"];
-const MISSING_BINARY = "bundled alinery-mcp was not found";
 const COULD_NOT_START = "could not start";
 const OAUTH = "OAuth is not supported";
 const COULD_NOT_LIST = "could not list tools";
@@ -35,27 +35,11 @@ type Endpoint = {
 
 type Live = { key: string; extension: InstalledExtension; endpoint: Endpoint; report: McpServerReport };
 
-export function resolveAlineryMcp(execPath: string, here = import.meta.dir): string | null {
-  const dirs = [dirname(execPath), join(here, "..", "..", "target", "debug")];
-  for (const dir of dirs) {
-    let names: string[] = [];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    const exact = names.find((name) => name === "alinery-mcp");
-    const prefixed = names.find((name) => name.startsWith("alinery-mcp-"));
-    const found = exact ?? prefixed;
-    if (!found) continue;
-    const path = join(dir, found);
-    try {
-      if (statSync(path).isFile()) return path;
-    } catch {
-      /* keep looking */
-    }
-  }
-  return null;
+/** The built-in `alinery` server is this binary run with `--mcp` (plan S5.1, O10 b). Under `bun run` the script comes first; in a
+ * `bun build --compile` binary the entry is the binary itself, as for a job child. */
+export function selfMcpCommand(): { command: string; args: string[] } {
+  const compiled = import.meta.url.includes("/$bunfs/");
+  return { command: process.execPath, args: [...(compiled ? [] : [Bun.main]), "--mcp"] };
 }
 
 export class McpHub {
@@ -64,7 +48,7 @@ export class McpHub {
 
   constructor(
     private readonly registry: ToolRegistry,
-    private readonly options: { repo: string; appConfig: string; agentDir: string; resolveBuiltin?: () => string | null },
+    private readonly options: McpHubOptions,
   ) {}
 
   refresh(): Promise<CustomizationsReply> {
@@ -124,17 +108,22 @@ export class McpHub {
   }
 }
 
-function desiredServers(options: { repo: string; appConfig: string; agentDir: string; resolveBuiltin?: () => string | null }): Desired[] {
-  const builtinPath = (options.resolveBuiltin ?? (() => resolveAlineryMcp(process.execPath)))();
-  const builtin: Desired = builtinPath
-    ? {
-        name: "alinery",
-        builtin: true,
-        state: "start",
-        key: `builtin:${builtinPath}`,
-        spec: { kind: "stdio", command: builtinPath, args: ["--app-config", options.appConfig, "--repo", options.repo], cwd: options.repo, env: {} },
-      }
-    : { name: "alinery", builtin: true, state: "error", error: MISSING_BINARY, key: "builtin:missing" };
+/** `rpc` is how the built-in server reaches this daemon: the socket and the AGENT token minted for it (O20 c). `resolveBuiltin` is the test seam for a stand-in server. */
+export type McpHubOptions = { repo: string; appConfig: string; agentDir: string; rpc?: { socket: string; token: string }; resolveBuiltin?: () => string | null };
+
+function desiredServers(options: McpHubOptions): Desired[] {
+  const stand = options.resolveBuiltin?.();
+  const self = selfMcpCommand();
+  const command = stand ?? self.command;
+  const args = [...(stand ? [] : self.args), "--app-config", options.appConfig, "--repo", options.repo];
+  const env = options.rpc ? { ALINERY_RPC_SOCKET: options.rpc.socket, ALINERY_RPC_TOKEN: options.rpc.token } : {};
+  const builtin: Desired = {
+    name: "alinery",
+    builtin: true,
+    state: "start",
+    key: `builtin:${command}:${args.join(" ")}`,
+    spec: { kind: "stdio", command, args, cwd: options.repo, env },
+  };
   return [builtin, ...readUserServers(options.agentDir, options.repo)];
 }
 
@@ -243,7 +232,7 @@ function allowlistedEnv(extra: Record<string, string>): Record<string, string> {
 }
 
 function spawnStdio(spec: StdioSpec): Endpoint {
-  const proc = Bun.spawn([spec.command, ...spec.args], {
+  const proc = spawnDetached([spec.command, ...spec.args], {
     cwd: spec.cwd,
     env: allowlistedEnv(spec.env),
     stdin: "pipe",
@@ -319,11 +308,7 @@ function spawnStdio(spec: StdioSpec): Endpoint {
   const endpoint: Endpoint = {
     alive: () => !failed && proc.exitCode === null,
     close: () => {
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
+      signalChild(proc, "SIGTERM", "mcp-restart");
     },
     async list() {
       await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "alinery-vinculum", version: "1" } });

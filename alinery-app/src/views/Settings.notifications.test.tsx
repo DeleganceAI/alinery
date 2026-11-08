@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { effectiveOf, fakeSettings } from "../test/settingsHooks";
 import { Toast } from "../toast";
 import type { GlobalSettings, NotificationPrefs } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
@@ -41,10 +42,11 @@ const mocks = vi.hoisted(() => ({ writeGlobalSettings: vi.fn() }));
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    storageInfo: () => new Promise<never>(() => {}),
     writeGlobalSettings: mocks.writeGlobalSettings,
   }),
 );
+
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 
 import { Settings } from "./Settings";
 
@@ -55,6 +57,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -81,7 +84,11 @@ function renderNotifications(onNotificationsChange = vi.fn()) {
   return onNotificationsChange;
 }
 
-beforeEach(() => mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next));
+beforeEach(() => {
+  mocks.writeGlobalSettings.mockReset().mockImplementation(async (next: GlobalSettings) => next);
+  fakeSettings.reset();
+  fakeSettings.serve("/repo", (overrides) => effectiveOf(globalSettings, overrides));
+});
 afterEach(cleanup);
 
 describe("notification badge settings", () => {

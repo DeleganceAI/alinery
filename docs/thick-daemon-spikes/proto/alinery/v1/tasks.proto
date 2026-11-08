@@ -1,0 +1,27 @@
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// The 2.1.6 pattern in the shape buf STANDARD lint accepts: the RPC name carries the
+// entity, and every RPC has its own Request and Response; a write answers with Applied.
+service TaskService {
+  rpc RenameTask(RenameTaskRequest) returns (RenameTaskResponse);
+  rpc ArchiveTask(ArchiveTaskRequest) returns (ArchiveTaskResponse);
+}
+
+message RenameTaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string title = 3;
+  uint64 expected_revision = 4;
+}
+
+message ArchiveTaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  uint64 expected_revision = 3;
+}
+
+message RenameTaskResponse { Applied applied = 1; }
+message ArchiveTaskResponse { Applied applied = 1; }

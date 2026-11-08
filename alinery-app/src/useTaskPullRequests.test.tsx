@@ -1,11 +1,11 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mockIpc } from "./test/mockIpc";
 import type { PullRequestSnapshot, TaskActivityRef } from "./types";
 import { useTaskPullRequests } from "./useTaskPullRequests";
 
 const listTaskPullRequests = vi.hoisted(() => vi.fn());
-vi.mock("./ipc", () => mockIpc({ listTaskPullRequests }));
+// The lookup itself (daemon inputs, GitHub, record back) is sync/git, which has its own test.
+vi.mock("./sync/git", () => ({ listTaskPullRequests }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

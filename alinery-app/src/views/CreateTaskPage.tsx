@@ -5,6 +5,12 @@ import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { Checkbox, InlineStatus, ModelInput, ompDefaultModel, orderPlaybookCandidates, playbookRefKey, samePlaybookRef } from "../shared";
+import { readArtifactText } from "../sync/artifacts";
+import { taskSourceBranchesForRepo } from "../sync/git";
+import { importGithubIssue } from "../sync/imports";
+import { listPlaybookCatalog, readPlaybook } from "../sync/playbooks";
+import { readEffectiveConfig } from "../sync/settings";
+import { createTaskForRepo, deleteDraftForRepo, prepareTaskAttachments, readDraftAttachmentsForRepo, writeDraftForRepo } from "../sync/tasks";
 import * as taskMutationGuard from "../taskMutationGuard";
 import { toast } from "../toast";
 import type {
@@ -239,8 +245,7 @@ export function CreateTaskPage({
     if (!initialDraft) return;
     let alive = true;
     const generation = attachmentGeneration.current;
-    ipc
-      .readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
+    readDraftAttachmentsForRepo(initialDraft.repo_path, initialDraft.slug)
       .then((saved) => {
         if (!alive || generation !== attachmentGeneration.current) return;
         const restored: PastedImage[] = [];
@@ -299,8 +304,7 @@ export function CreateTaskPage({
     const selected = baseRefRef.current;
     setBranchesLoading(true);
     setBranchError("");
-    ipc
-      .taskSourceBranchesForRepo(repoPath, selected)
+    taskSourceBranchesForRepo(repoPath, selected)
       .then((snapshot) => {
         if (!alive || request !== branchRequest.current) return;
         branchSnapshotRequest.current = request;
@@ -341,7 +345,7 @@ export function CreateTaskPage({
     setErr(null);
     setCatalogLoading(true);
     setSelectedSource(null);
-    Promise.all([ipc.readConfigForRepo(repoPath), ipc.listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
+    Promise.all([readEffectiveConfig(repoPath), listPlaybookCatalog(repoPath), ipc.accountStatus().catch(() => null)])
       .then(async ([c, catalog, account]) => {
         if (!alive || request !== targetRequest.current) return;
         setDraftAutosave(c.defaults.draft_autosave !== false);
@@ -372,7 +376,7 @@ export function CreateTaskPage({
         setCatalogLoading(false);
         if (initialDraft && initialDraft.repo_path === repoPath && !ticketLoaded.current) {
           try {
-            const raw = await ipc.readArtifactForRepo(repoPath, initialDraft.slug, "00-ticket.md");
+            const raw = await readArtifactText(repoPath, initialDraft.slug, "00-ticket.md");
             if (!alive || request !== targetRequest.current) return;
             // The composer emits the heading exactly once and always after the description,
             // so the occurrence nearest the end is the machine-written one.
@@ -406,8 +410,7 @@ export function CreateTaskPage({
     setSelectedSource(null);
     setSourceError("");
     if (!playbook || catalogLoading || playbookNeedsReselection) return;
-    ipc
-      .readPlaybook(playbook, repoPath)
+    readPlaybook(playbook, repoPath)
       .then((source) => {
         if (!alive || !samePlaybookRef(source.source.reference, playbook)) return;
         setSelectedSource(source);
@@ -473,7 +476,7 @@ export function CreateTaskPage({
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
           const savedImages = await Promise.all(images.map(async (image) => ({ name: image.name, bytes: await encodeImage(image.file), mime_type: image.file.type })));
           if (creatingRef.current || taskMutationGuard.currentKind() || generation !== draftWriteGeneration.current) return;
-          const t = await ipc.writeDraftForRepo({
+          const t = await writeDraftForRepo({
             repoPath: target,
             draftSlug: draftIdentities.current.get(target) ?? "",
             name: n,
@@ -615,13 +618,13 @@ export function CreateTaskPage({
     afterPaint()
       .then(() => draftSaveInFlightRef.current)
       .then(async () => {
-        const prepared = await ipc.prepareTaskAttachments(capturedPaths);
+        const prepared = await prepareTaskAttachments(target, capturedPaths);
         const encodedImages: TaskAttachment[] = [];
         for (const image of capturedImages) {
           encodedImages.push({ name: image.name, bytes: await encodeImage(image.file) });
         }
         provisioningRequested = true;
-        return ipc.createTaskForRepo({
+        return createTaskForRepo({
           repoPath: target,
           request: {
             ...prepared,
@@ -658,7 +661,7 @@ export function CreateTaskPage({
         if (result.creation === "ready" && result.task) {
           const origins = [...draftOrigins, ...Array.from(draftIdentities.current, ([originRepo, slug]) => ({ repoPath: originRepo, slug }))];
           for (const origin of origins) {
-            void ipc.deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
+            void deleteDraftForRepo(origin.repoPath, origin.slug).catch(() => {
               // Deletion is draft-only; a promoted task is never removed.
             });
           }
@@ -762,8 +765,7 @@ export function CreateTaskPage({
     dirtyRef.current = false;
     setImporting(true);
     setErr(null);
-    ipc
-      .importGithubForRepo(target, r)
+    importGithubIssue(target, r)
       .then((i) => {
         if (generation !== importGeneration.current) return;
         setLinearId("");
@@ -861,7 +863,7 @@ export function CreateTaskPage({
     draftSaveInFlightRef.current
       .then(() => {
         const storedSlug = draftIdentities.current.get(target) ?? slug;
-        if (storedSlug) return ipc.deleteDraftForRepo(target, storedSlug);
+        if (storedSlug) return deleteDraftForRepo(target, storedSlug);
       })
       .then(() => {
         setDraftOrigins((origins) => origins.filter((origin) => origin.repoPath !== target || origin.slug !== slug));

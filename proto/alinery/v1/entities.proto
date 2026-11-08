@@ -1,0 +1,577 @@
+// proto/alinery/v1/entities.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "google/protobuf/struct.proto";
+
+message SessionRef {
+  string task_slug = 1;  // "" for taskless chat sessions, as the daemon's metaPath does today
+  string id = 2;
+}
+
+// Each entity message gets its real fields in the session that first produces it (plan 2.1.4):
+// session meta S2.3 (status and attention S2.5), execution S2.4, daemon status S2.5, job S2.6, task S3.5, the rest P4. Until then
+// an entity is empty, except Task and Session, which carry the few fields S2.1's tests need to
+// tell one row from another.
+message PlaybookRef {
+  string scope = 1;  // bundled, global or repo
+  string key = 2;
+}
+message LaunchChoices {
+  string harness = 1;
+  string model = 2;
+}
+message RelatedTaskRef {
+  string repo_path = 1;
+  string slug = 2;
+  string name = 3;
+}
+message BoardStep {
+  string key = 1;
+  string title = 2;
+}
+// What the board shows about a task that no single file holds: derived by the daemon (S3.5, rule R3)
+// from the task, its non-archived sessions and its playbook, and recomputed when any of them commits.
+message BoardProjection {
+  uint64 session_count = 1;  // non-archived sessions
+  uint64 total_sessions = 2;  // archived ones included; a client opens a task stream only when this is above 0
+  string playbook_title = 3;
+  repeated BoardStep playbook_steps = 4;
+  uint64 updated = 5;
+  string current_phase = 6;
+  string current_step_title = 7;
+  string latest_session_title = 8;
+}
+message TaskActivitySession {
+  string id = 1;
+  string worktree = 2;
+  string phase = 3;
+  string harness = 4;
+  string model = 5;
+  string playbook = 6;
+  bool generic = 7;
+  string step_title = 8;
+}
+// The newest actionable session's status and the session to open, as `resolve_task_activity_for_repo` answered.
+message TaskActivity {
+  string status = 1;  // running, waiting_for_input, waiting_for_approval, failed, completed, or "" for none
+  optional TaskActivitySession active_session = 2;
+}
+// `Task` (alinery-core types.rs) in the names task.md and its serde JSON use, then what the daemon derives.
+message Task {
+  string slug = 1;
+  string name = 2;
+  string requested_slug = 3;
+  string branch = 4;
+  string worktree = 5;
+  bool has_worktree = 6;
+  uint64 created = 7;
+  bool archived = 8;
+  string pr_url = 9;
+  string linear_id = 10;
+  string github_issue = 11;
+  string playbook = 12;
+  uint32 engine_version = 13;
+  optional PlaybookRef playbook_ref = 14;
+  uint32 max_live_sessions = 15;
+  LaunchChoices launch_defaults = 16;
+  repeated string auto_advance = 17;
+  bool auto_approve_all = 18;
+  map<string, string> step_models = 19;
+  string parent_task = 20;
+  string active_subtask = 21;
+  string subtask_outcome = 22;
+  bool draft = 23;
+  optional string draft_base_ref = 24;
+  repeated RelatedTaskRef related_tasks = 25;
+  string telemetry_id = 26;
+  BoardProjection board = 40;
+  TaskActivity activity = 41;
+}
+// What the create form saved beside a draft task: the attachment entries the person typed and the pasted images (their
+// bytes are read through BlobService; a draft's images can be megabytes and must not ride the board stream).
+message DraftImageInfo {
+  string name = 1;
+  string mime_type = 2;
+  uint64 size = 3;
+}
+message Draft {
+  string slug = 1;
+  repeated string entries = 2;
+  repeated DraftImageInfo images = 3;
+}
+// One task's execution state, as `getTaskExecution` returns it (`TaskExecutionState` and the playbook
+// definition) in JSON form. S4.2 replaces the two Structs with typed fields when it moves the state
+// into execution.json; until then the entity and the RPC read are built by the same function.
+message Execution {
+  string slug = 1;
+  google.protobuf.Struct state = 2;
+  google.protobuf.Struct definition = 3;
+}
+// Fields 3 and up are `SessionMeta` (alinery-core types.rs), named as in the meta.json the daemon and
+// Rust both write, so the parser (S2.3) and Rust's serde output compare field by field. `ref` comes
+// from the file's path; `status` is the live state, which S2.5 fills.
+message SemanticCheckpoint {
+  optional uint64 phase_completed_at = 1;
+  optional string omp_session_id = 2;
+  optional uint64 omp_turn_id = 3;
+}
+message NotificationSuppression {
+  string notice = 1;  // waiting_for_input, waiting_for_approval or failure
+  string occurrence = 2;
+}
+// The live state `sessionState` reports (main.ts): process, agent and playbook axes, as the `list` and
+// `status` ops carry them. Not on disk; the daemon fills it while the session is live.
+message SessionStatus {
+  string process = 1;  // starting, alive or exited
+  string agent = 2;    // idle, busy, waiting_for_input, waiting_for_approval, ...
+  string agent_correlation_id = 3;
+  string agent_reason = 4;
+  string playbook = 5;
+  string playbook_reason = 6;
+  string adapter = 7;
+  string message_adapter = 8;
+  string transport = 9;  // pty (a terminal session) or rpc (an agent session), as the `status` op reports it
+}
+// The Attention doc's `wait` (plan S2.5): what the agent is waiting on, a field of the session.
+message SessionWait {
+  string kind = 1;  // input or approval
+  string correlation_id = 2;
+  optional string prompt = 3;
+}
+message Session {
+  SessionRef ref = 1;
+  SessionStatus status = 2;  // unset for a session with no live runner
+  string id = 3;
+  string worktree = 4;
+  uint64 created = 5;
+  bool archived = 6;
+  bool pinned = 7;
+  string phase = 8;
+  string harness = 9;
+  string model = 10;
+  string playbook = 11;
+  string execution_id = 12;
+  uint64 execution_revision = 13;
+  bool generic = 14;
+  bool subtask_manager = 15;
+  string subtask_slug = 16;
+  string artifact = 17;
+  string handoff_artifact = 18;
+  string prompt_extra = 19;
+  optional string prompt = 20;  // set (even to "") is the exact fresh-spawn prompt; unset derives it
+  optional uint64 started_at = 21;
+  optional uint64 status_changed_at = 22;
+  optional uint64 activity_at = 23;
+  uint64 status_revision = 24;
+  optional uint64 ended_at = 25;
+  optional int32 exit_code = 26;
+  string harness_resume_token = 27;
+  optional string resume_of = 28;
+  string daemon_namespace = 29;
+  optional uint64 notification_read_at = 30;
+  optional uint64 exit_notification_read_at = 31;
+  optional NotificationSuppression notification_suppression = 32;
+  SemanticCheckpoint semantic = 33;
+  string telemetry_id = 34;
+  SessionWait wait = 35;  // unset when the agent waits for nothing
+  // From `<id>.name.json` (session_name.rs); unset when there is no name file or Rust would refuse it.
+  optional string name = 36;
+  string name_source = 37;  // auto or user
+  optional string name_error = 38;
+  // What an attention notification calls this session: its task's name, else the slug, else "session" (S4.4). The
+  // shell shows the OS notification; the text comes from here, so it reads no meta file.
+  string attention_label = 39;
+}
+// A review handoff's sidecar (`<artifact>.handoff.json`, `.handoff-NNN.json`), as `ReviewHandoffRecord` writes it.
+message HandoffRecord {
+  uint32 version = 1;
+  string direction = 2;  // outbound or inbound
+  string source_repo_path = 3;
+  string target_repo_path = 4;
+  string source_task = 5;
+  string source_session = 6;
+  string source_artifact = 7;
+  string target_task = 8;
+  string target_artifact = 9;
+  string target_session = 10;
+  string target_phase = 11;
+  uint64 created_at_ms = 12;
+}
+// One row of a task's artifact list (`artifact/<slug>/<name>`, S4.5), as `board::artifacts_with_metadata` made it: the visible
+// files, and the files an execution has yet to write (no `modified_at_ms`). `position` is the row's place in that list's order.
+message Artifact {
+  string slug = 1;
+  string name = 2;  // relative to the task's artifacts directory
+  optional uint64 modified_at_ms = 3;
+  string playbook_step = 4;
+  string session_id = 5;
+  repeated HandoffRecord handoffs = 6;
+  optional string execution_id = 7;
+  optional string step_key = 8;
+  optional string logical_path = 9;
+  optional uint64 depth = 10;
+  optional uint64 discriminator = 11;
+  optional bool accepted = 12;
+  uint32 position = 13;
+}
+// A human review comment (`comment/<slug>/<artifact>/<id>`), from `<artifact>.comments.json`.
+message Comment {
+  string slug = 1;
+  string id = 2;
+  string artifact = 3;
+  string anchor_id = 4;
+  string anchor_kind = 5;
+  string anchor_label = 6;
+  string anchor_excerpt = 7;
+  uint32 line_start = 8;
+  uint32 line_end = 9;
+  string body = 10;
+  uint64 created_at_ms = 11;
+}
+// A comment not yet added (`comment_draft/<slug>/<artifact>/<anchor_id>`), from `artifact-comment-drafts.json`.
+// `stale`: the artifact changed since the draft was saved.
+message CommentDraft {
+  string slug = 1;
+  string artifact = 2;
+  string anchor_id = 3;
+  string anchor_kind = 4;
+  string anchor_label = 5;
+  string anchor_excerpt = 6;
+  uint32 line_start = 7;
+  uint32 line_end = 8;
+  string body = 9;
+  string artifact_hash = 10;
+  uint64 updated_at_ms = 11;
+  bool stale = 12;
+}
+// A review sent for an artifact and not yet answered (`review_pending/<slug>/<artifact>`): the artifact is unchanged since.
+message ReviewPending {
+  string slug = 1;
+  string artifact = 2;
+  string review = 3;  // the review file's name
+}
+// A taskless chat thread (key `chat/_/<id>`): what the rail shows beside the thread's `session/_/<id>` row (S4.4).
+message ChatThread {
+  string id = 1;
+  string branch_label = 2;  // the branch the thread works on
+  bool checkout = 3;        // true: the repository checkout; false: the thread's own worktree
+  bool superseded = 4;      // a later thread continues this one (resume_of); the rail hides it
+}
+// A background job (plan 2.3.5): a child process of the daemon's binary, reported through this entity.
+// Progress arrives through Subscribe. The result's oneof numbers are fixed: backup = 10 and purge = 12 (S4.9),
+// storage = 11 (S2.6); import = 13 is S4.10's.
+message Job {
+  string id = 1;
+  JobKind kind = 2;
+  JobState state = 3;
+  Progress progress = 4;
+  string error = 5;
+  int64 started_at_ms = 6;
+  int64 ended_at_ms = 7;
+  oneof result {
+    BackupResult backup = 10;
+    StorageInfo storage = 11;
+    PurgeResult purge = 12;
+  }
+}
+// What a finished backup job made: `BackupMeta` of the archive (alinery-core backup.rs, snake_case as serde writes
+// it) and where the archive is. `trigger` is the meta's string: manual, pre_archive, post_artifact_change, post_push_commit or mcp.
+message BackupResult {
+  string path = 1;
+  string repo_name = 2;
+  string repo_path = 3;
+  uint64 created_at = 4;
+  uint32 schema_version = 5;
+  string alinery_version = 6;
+  string trigger = 7;
+  repeated string included_dirs = 8;
+}
+// `PurgeArchivedResult` of alinery-core storage.rs, with the slugs the job removed so a client can drop their rows.
+message PurgeResult {
+  uint32 deleted_tasks = 1;
+  uint32 deleted_sessions = 2;
+  uint32 deleted_worktrees = 3;
+  repeated PurgeFailure errors = 4;
+  repeated string deleted_task_slugs = 5;
+}
+// What failed: `task:<slug>`, `session:<id>` or `worktree:<slug>`.
+message PurgeFailure {
+  string target = 1;
+  string error = 2;
+}
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_STORAGE_SCAN = 1;
+  JOB_KIND_BACKUP = 2;
+  JOB_KIND_PURGE = 3;
+  JOB_KIND_IMPORT = 4;
+}
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_DONE = 3;
+  JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELLED = 5;
+}
+message Progress {
+  uint64 done = 1;
+  uint64 total = 2;
+  string label = 3;
+}
+// `StorageInfo` of alinery-core storage.rs, field for field (snake_case as serde writes it), so the
+// scan and the Rust command compare directly. `archived_bytes` is what a purge frees.
+message StorageInfo {
+  string app_config_path = 1;
+  string repo_path = 2;
+  string alinery_dir = 3;
+  string repo_config_path = 4;
+  string harnesses_path = 5;
+  string tasks_dir = 6;
+  string worktrees_dir = 7;
+  string alineryd_socket_path = 8;
+  string alineryd_lock_path = 9;
+  string mcp_socket_path = 10;
+  string mcp_status_path = 11;
+  uint32 archived_task_count = 12;
+  uint32 archived_session_count = 13;
+  uint64 archived_bytes = 14;
+  uint64 active_bytes = 15;
+}
+// Where a setting's value comes from (alinery-core `SettingSource`).
+enum SettingSource {
+  SETTING_SOURCE_UNSPECIFIED = 0;
+  SETTING_SOURCE_GLOBAL = 1;
+  SETTING_SOURCE_REPOSITORY = 2;
+}
+message NotificationPrefs {
+  bool enabled = 1;
+  bool sound = 2;
+  bool bounce = 3;
+  bool banner = 4;
+  bool dock_badge = 5;
+  bool dock_badge_input_waits = 6;
+  bool dock_badge_approval_waits = 7;
+  bool dock_badge_failures = 8;
+  bool dock_badge_completions = 9;
+}
+message BackupSettings {
+  string destination = 1;
+  bool enabled = 2;
+  uint32 retention = 3;
+  bool trigger_pre_archive = 4;
+  bool trigger_post_artifact_change = 5;
+  bool trigger_post_push_commit = 6;
+}
+message TelemetryPrefs {
+  bool enabled = 1;
+  bool prompted = 2;
+  string install_id = 3;
+  string endpoint = 4;
+}
+message HarnessChoice {
+  string harness = 1;
+  string model = 2;
+  string thinking = 3;
+  PlaybookRef playbook = 4;
+  bool draft_autosave = 5;
+}
+message ChoiceProvenance {
+  SettingSource harness = 1;
+  SettingSource model = 2;
+  SettingSource thinking = 3;
+  SettingSource playbook = 4;
+  SettingSource draft_autosave = 5;
+}
+// `EffectiveConfig` (alinery-core types.rs): the global tier with the repository's overrides over it, and
+// where each value came from. Notifications and telemetry are global-only.
+message EffectiveSettings {
+  NotificationPrefs notifications = 1;
+  string github_token = 2;
+  HarnessChoice defaults = 3;
+  SettingSource github_token_source = 4;
+  ChoiceProvenance defaults_source = 5;
+  BackupSettings backup = 6;
+  TelemetryPrefs telemetry = 7;
+}
+// The repository's `config.toml`, field for field. An unset field inherits the global value; a field
+// set to "" is a value.
+message RepoGitHubOverrides {
+  optional string token = 1;
+}
+message RepoDefaultsOverrides {
+  optional string harness = 1;
+  optional string model = 2;
+  optional string thinking = 3;
+  optional PlaybookRef playbook = 4;
+  optional bool draft_autosave = 5;
+}
+message RepoBackupOverrides {
+  optional string destination = 1;
+  optional bool enabled = 2;
+  optional uint32 retention = 3;  // 0 to 255; the effective value is clamped to 1..100
+  optional bool trigger_pre_archive = 4;
+  optional bool trigger_post_artifact_change = 5;
+  optional bool trigger_post_push_commit = 6;
+}
+message RepoOverrides {
+  RepoGitHubOverrides github = 1;
+  RepoDefaultsOverrides defaults = 2;
+  RepoBackupOverrides backup = 3;
+}
+message HarnessResume {
+  bool enabled = 1;
+  string id_source = 2;
+  repeated string launch_args = 3;
+  repeated string resume_args = 4;
+}
+message Harness {
+  string key = 1;
+  string name = 2;
+  string binary = 3;
+  repeated string args = 4;
+  repeated string model_arg = 5;
+  repeated string prompt_arg = 6;
+  map<string, string> env = 7;
+  string prompt_injection = 8;
+  string adapter = 9;          // omp or unsupported
+  string message_adapter = 10;  // omp_bracketed_paste or unsupported
+  repeated string models = 11;
+  string models_cmd = 12;
+  optional HarnessResume resume = 13;
+}
+message EffectiveHarness {
+  Harness harness = 1;
+  SettingSource source = 2;
+}
+// `settings/_/repo` (S4.1): what `read_scoped_settings_strict` and `effective_harnesses_for` answered, built from
+// the repository's `config.toml` and `harnesses.toml` and the daemon's `app.toml`. When a file
+// is refused, as serde refuses it, only `error` is set.
+message Settings {
+  RepoOverrides overrides = 1;
+  EffectiveSettings effective = 2;
+  repeated EffectiveHarness harnesses = 3;
+  string error = 4;
+}
+// The daemon's half of the shell's `DaemonStatus`; `reachable`, `build_drift`, `conflict` and the lanes
+// are the shell's, because only it can see them.
+message DaemonStatus {
+  uint32 protocol = 1;
+  string build_id = 2;
+  uint32 live_sessions = 3;  // sessions whose process is not exited
+  string host_guard_warning = 4;  // "" until S4.1 adds the host-tool check
+  bool watch_exhausted = 5;  // inotify ran out of watches (ENOSPC); the 30 s reconcile keeps the store right
+  // Agent-state counts over live sessions (S3.1): the status dot's busy/waiting colour needs them with no poll.
+  uint32 busy = 6;
+  uint32 waiting_for_input = 7;
+  uint32 waiting_for_approval = 8;
+}
+// A problem the playbook library found: a playbook that does not parse (`code`, `field` and `line` say where), or a directory it could
+// not read. The same record the parser makes (playbook-engine `DocDiagnostic`).
+message PlaybookDiagnostic {
+  string code = 1;
+  string message = 2;
+  optional uint32 line = 3;
+  optional string field = 4;
+  string severity = 5;
+}
+// One definition the library offers (`playbook/<scope>/<key>`, S4.6): bundled, global or the repository's. Only what the
+// catalog shows; the whole definition is `PlaybookService.Read`, because the bundled set alone is half a megabyte of prompts.
+// A definition that does not parse is still a row, with `diagnostics` and no title.
+message Playbook {
+  PlaybookRef reference = 1;
+  optional string path = 2;  // absent for a bundled playbook
+  optional string title = 3;
+  optional string description = 4;
+  optional uint64 modified_at_ms = 5;
+  repeated PlaybookDiagnostic diagnostics = 6;
+}
+message PickerEntry {
+  PlaybookRef reference = 1;
+  bool preferred = 2;
+  bool hidden = 3;
+  bool collapsed = 4;
+  optional string badge = 5;
+  optional string color = 6;
+  optional uint64 last_imported_at_ms = 7;
+}
+// The picker's preferences: `playbook/_/picker` is the repository's own file, `playbook/_/picker-global` the one a window with
+// no repository uses. `error` is why the file was refused (the preferences are then empty).
+message PlaybookPicker {
+  repeated PlaybookRef order = 1;
+  repeated PickerEntry entries = 2;
+  string error = 3;
+}
+// `playbook/_/library`: what the scan of the library's directories could not read.
+message PlaybookLibrary {
+  repeated PlaybookDiagnostic diagnostics = 1;
+}
+// One playbook the person downloaded from the community library (a record of `.alinery/playbooks/community-imports.toml`), with
+// what the daemon can say about the local file: whether it is gone, and whether it no longer matches what was imported.
+message CommunityImport {
+  string id = 1;
+  string label = 2;
+  string playbook_key = 3;
+  string local_key = 4;
+  uint64 imported_version = 5;
+  string local_sha256 = 6;
+  string imported_at = 7;
+  bool local_missing = 8;
+  bool locally_edited = 9;
+}
+// `playbook/_/community` (S4.10): the repository's community import registry. `error` is why it could not be read (the list is then empty).
+message PlaybookCommunity {
+  repeated CommunityImport imports = 1;
+  string error = 2;
+}
+// A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
+message Attachment {
+  string slug = 1;
+  string name = 2;
+  optional uint64 modified_at_ms = 3;
+  uint32 position = 4;
+}
+// One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
+// parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
+// an attachment only; a client names a file by `id` (BlobService `ArtifactNodeBlob`), never by that path.
+message ArtifactTreeNode {
+  string id = 1;
+  string kind = 2;
+  string label = 3;
+  string owner_task_slug = 4;
+  string source = 5;
+  repeated ArtifactTreeNode children = 6;
+  string reveal_path = 7;
+}
+// The tree as one task sees it (`artifact_tree/<slug>/<slug>`): its own artifacts and attachments, its parent's as context,
+// its active child's, and the snapshots of finished sub-tasks. One row, because a node's id depends on the viewer.
+message ArtifactTree {
+  string slug = 1;
+  repeated ArtifactTreeNode nodes = 2;
+}
+
+message Entity {
+  string key = 1;       // "<kind>/<task slug or _>/<id>", e.g. "session/fix-login/7f3a"
+  uint64 revision = 2;  // seq of this entity's last change; the expected_revision for writes
+  oneof value {
+    Task task = 10;
+    Draft draft = 11;
+    Execution execution = 12;
+    Session session = 13;
+    Artifact artifact = 14;
+    Comment comment = 15;
+    ChatThread chat_thread = 16;
+    Job job = 17;
+    Settings settings = 18;
+    DaemonStatus daemon_status = 19;
+    Playbook playbook = 20;
+    Attachment attachment = 21;
+    CommentDraft comment_draft = 22;
+    ReviewPending review_pending = 23;
+    ArtifactTree artifact_tree = 24;
+    PlaybookPicker playbook_picker = 25;
+    PlaybookLibrary playbook_library = 26;
+    PlaybookCommunity playbook_community = 27;
+  }
+}

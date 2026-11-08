@@ -1,0 +1,235 @@
+// proto/alinery/v1/sessions.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+import "alinery/v1/tasks.proto";
+import "google/protobuf/struct.proto";
+
+// Pi sessions have transcripts, not just bytes. The read side of a session is the `session/<slug>/<id>` entity; the
+// unary calls are its writes (S4.4), each with MutationMeta first, and they replace the JSON-lines ops of the same job.
+// The history reads are one-off byte answers, not entities.
+service SessionService {
+  rpc WatchTranscript(WatchTranscriptRequest) returns (stream WatchTranscriptResponse);  // VIEW
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);                // ACT
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);                   // ACT
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);                // ACT
+  rpc RenameSession(RenameSessionRequest) returns (RenameSessionResponse);                // ACT
+  // Stamps `archived`, then kills the process, in that order (2.3.4 rule 2): a subscriber sees the stamp before the exit.
+  rpc ArchiveSession(ArchiveSessionRequest) returns (ArchiveSessionResponse);             // ACT
+  rpc KillSession(KillSessionRequest) returns (KillSessionResponse);                      // ACT
+  // Marks the sessions' completion and failed-exit notifications read, and records a suppression the person chose.
+  rpc ClearNotifications(ClearNotificationsRequest) returns (ClearNotificationsResponse);  // ACT
+  rpc ReadHistory(ReadHistoryRequest) returns (ReadHistoryResponse);                      // VIEW
+  rpc ReadOmpWindow(ReadOmpWindowRequest) returns (ReadOmpWindowResponse);                // VIEW
+  rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
+  // The turn controls of a live harness session (S5.3: the JSON-lines prompt, abort, set_model and set_thinking_level ops).
+  rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
+  rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);                   // ACT
+  rpc SetSessionModel(SetSessionModelRequest) returns (SetSessionModelResponse);          // ACT
+  rpc SetSessionThinkingLevel(SetSessionThinkingLevelRequest) returns (SetSessionThinkingLevelResponse);  // ACT
+}
+
+// The session is named by id alone: a live session's id is unique in its daemon, and a chat thread has no task.
+message PromptSessionRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string text = 3;
+}
+message PromptSessionResponse {}
+message AbortSessionRequest { string session_id = 1; }
+message AbortSessionResponse {}
+message SetSessionModelRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string model = 3;  // provider/id
+}
+message SetSessionThinkingLevelRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string level = 3;
+}
+message SetSessionModelResponse { SessionControls controls = 1; }
+message SetSessionThinkingLevelResponse { SessionControls controls = 1; }
+
+message PrimaryTarget {
+  string step_key = 1;
+  optional string execution_id = 2;
+  optional OccurrenceIds input_occurrences = 3;  // unset: the engine's choice
+}
+message OccurrenceIds { repeated string ids = 1; }
+message AuxiliaryTarget {
+  string harness = 1;
+  optional string model = 2;
+  optional string prompt = 3;
+}
+message SubtaskManagerTarget {
+  optional string subtask_slug = 1;
+  bool recover = 2;
+  string harness = 3;
+  optional string model = 4;
+}
+// A session for a task ("" task_slug: a taskless one, the drawer terminal or a chat thread).
+message CreateSessionRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  oneof target {
+    PrimaryTarget primary = 3;
+    AuxiliaryTarget auxiliary = 4;
+    SubtaskManagerTarget subtask_manager = 5;
+  }
+  optional LaunchChoices launch_override = 6;
+  optional string prompt_extra = 7;
+  optional string handoff_artifact = 8;
+  bool start = 9;
+}
+// The session and execution in the JSON form the app has always decoded; typed when the session views read entities.
+message SessionStarted {
+  google.protobuf.Struct session = 1;
+  optional google.protobuf.Struct execution = 2;
+  string start = 3;  // not_requested, started, queued or failed
+  repeated CreationError errors = 4;
+}
+message CreateSessionResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+message StartSessionRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string session_id = 3;
+}
+message StartSessionResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+
+// Spawns, resumes or (intent "attach") re-checks a session's process. The bytes come from TerminalService.Attach.
+message ResumeSessionRequest {
+  MutationMeta meta = 1;
+  SessionRef session = 2;
+  string intent = 3;  // spawn, attach or resume
+  string cwd = 4;
+  optional string phase = 5;
+  optional string model = 6;
+  optional string resume_token = 7;
+  optional uint32 cols = 8;
+  optional uint32 rows = 9;
+}
+message ResumeSessionResponse { Applied applied = 1; }
+
+message RenameSessionRequest {
+  MutationMeta meta = 1;
+  SessionRef session = 2;
+  string name = 3;
+  uint64 expected_revision = 4;  // 0: no check
+}
+message RenameSessionResponse {
+  Applied applied = 1;
+  string name = 2;
+  string source = 3;  // user
+}
+message ArchiveSessionRequest {
+  MutationMeta meta = 1;
+  SessionRef session = 2;
+}
+message ArchiveSessionResponse {
+  Applied applied = 1;
+  bool killed_live = 2;
+}
+message KillSessionRequest {
+  MutationMeta meta = 1;
+  SessionRef session = 2;
+}
+message KillSessionResponse { Applied applied = 1; }
+
+message ClearNotificationRef {
+  SessionRef session = 1;
+  optional NotificationSuppression suppression = 2;
+}
+message ClearNotificationsRequest {
+  MutationMeta meta = 1;
+  repeated ClearNotificationRef sessions = 2;
+  bool exit_only = 3;  // only the failed-exit notification
+}
+message ClearNotificationsResponse { Applied applied = 1; }
+
+// With no offset and limit: the tail of the scrollback (at most 8 MiB, terminal queries left out). With both: that
+// window of raw bytes (at most 1 MiB), and the reply says where the next one starts.
+message ReadHistoryRequest {
+  SessionRef session = 1;
+  optional uint64 offset = 2;
+  optional uint64 limit = 3;
+}
+message ReadHistoryResponse {
+  bytes data = 1;
+  uint64 length = 2;       // windowed reads only
+  uint64 next_offset = 3;  // windowed reads only
+  bool eof = 4;            // windowed reads only
+}
+// One backward page of an OMP journal; `end` unset is the tail.
+message ReadOmpWindowRequest {
+  SessionRef session = 1;
+  optional uint64 end = 2;
+  optional uint64 want = 3;
+}
+message ReadOmpWindowResponse {
+  bytes data = 1;
+  uint64 start = 2;
+  uint64 end = 3;
+  uint64 length = 4;
+}
+message ArtifactReadyRequest { SessionRef session = 1; }
+message ArtifactReadyResponse { bool ready = 1; }
+
+// `from_item` is an index into the item list. 0 starts with everything.
+message WatchTranscriptRequest {
+  SessionRef session = 1;
+  uint64 from_item = 2;
+}
+
+// A frame covers items [next_item - items.length, next_item). With replace unset those are new items
+// appended to the client's list. With replace set the client drops everything from that index on and
+// takes these items: a streaming message changed in place, or the list got shorter.
+message WatchTranscriptResponse {
+  repeated TranscriptItem items = 1;
+  uint64 next_item = 2;
+  bool replace = 3;
+  SessionControls controls = 4;  // set on the first frame and whenever it changes
+}
+
+// The model and thinking level the next turn will use. No levels means no thinking menu.
+message SessionControls {
+  string model = 1;
+  string thinking = 2;
+  repeated string thinking_levels = 3;
+}
+
+// One message of the pane, as `formatTranscript` builds it (transcript.ts). Pi stores thinking, text and
+// tool calls as parts on the assistant message, and a tool result as its own message.
+message TranscriptItem {
+  string id = 1;
+  string role = 2;  // user, assistant or toolResult
+  bool streaming = 3;
+  repeated TranscriptPart content = 4;
+  string tool_name = 5;
+  string tool_call_id = 6;
+  bool is_error = 7;
+  repeated string running_tool_ids = 8;
+}
+
+message TranscriptPart {
+  oneof kind {
+    string text = 1;
+    string thinking = 2;
+    RedactedThinking redacted_thinking = 3;  // only the marker: the signature is for the provider, not the pane
+    ToolCallPart tool_call = 4;
+  }
+}
+message RedactedThinking {}
+message ToolCallPart {
+  optional string id = 1;
+  optional string name = 2;
+  google.protobuf.Value arguments = 3;  // unset when the call has none
+}

@@ -1,7 +1,5 @@
-import { createServer, type Socket } from "node:net";
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync, existsSync, statSync, realpathSync, readlinkSync } from "node:fs";
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { dlopen, FFIType, ptr, CString } from "bun:ffi";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
@@ -9,20 +7,53 @@ import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension,
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
-import { completeSession, engineAxis, enginePlaybook, permitSession, sessionHarnessStatus, startGraphs } from "./graph.ts";
+import { completeSession, engineAxis, enginePlaybook, sessionHarnessStatus, startGraphs } from "./graph.ts";
 import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChatTitle } from "./naming.ts";
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
-import { completeSessionMeta, getTaskExecution, ownershipLibrary, suggestSessionName, taskOp, taskWorktree } from "./tasks.ts";
-import { attachShell, detachPty, hasPty, isPty, killPty, resizePty, startShell, writePty } from "./terminal.ts";
+import { writeAtomic } from "./platform/fs.ts";
+import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
+import { eventsChanges } from "./runtime/transcript.ts";
+import { serveRpc } from "./rpc/server.ts";
+import type { TaskDeps } from "./rpc/tasks.ts";
+import { Feed } from "./sync/feed.ts";
+import { Reconciler } from "./sync/reconcile.ts";
+import { BoardProjector } from "./domain/board.ts";
+import { BlobStore } from "./domain/blobs.ts";
+import { ArtifactProjector } from "./domain/artifactProjector.ts";
+import { appConfigDirOf } from "./domain/playbookLibrary.ts";
+import { PlaybookProjector } from "./domain/playbookProjector.ts";
+import { executionRecords } from "./rpc/artifacts.ts";
+import { openPreflight } from "./domain/openPreflight.ts";
+import { commitExecution, executionParser } from "./domain/executions.ts";
+import { parsers } from "./sync/parsers/index.ts";
+import { settingsParser } from "./sync/parsers/settings.ts";
+import { telemetrySender } from "./platform/telemetry.ts";
+import { SessionPublisher } from "./domain/sessions.ts";
+import { runHostService } from "./hostService/serve.ts";
+import { runJobChild, runRestoreBackup } from "./jobs/child.ts";
+import { BackupHost } from "./jobs/backupHost.ts";
+import { JobRunner } from "./jobs/runner.ts";
+import { Store } from "./sync/store.ts";
+import { Watcher } from "./sync/watcher.ts";
+import { completeSessionMeta, createExecutionSession, getTaskExecution, materializeSessions, overlayStart, startSession, taskWorktree } from "./tasks.ts";
+import { ChatPublisher, type ChatSessions, loadChat } from "./domain/chat.ts";
+import { setSessionName } from "./domain/sessionOps.ts";
+import { readTask } from "./domain/taskFiles.ts";
+import { DomainError } from "./platform/lock.ts";
+import { acquireRepoOwnership } from "./domain/ownership.ts";
+import { KeepAwake } from "./platform/keepawake.ts";
+import type { SessionControl, TurnControl } from "./rpc/sessions.ts";
+import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
+import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 23;
+const PROTOCOL = 39;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -57,6 +88,7 @@ type Live = {
   executionId: string;
   titledBucket: number;
   titleInFlight: boolean;
+  wait?: { kind: string; correlationId: string; prompt?: string };
 };
 
 const live = new Map<string, Live>();
@@ -66,6 +98,15 @@ if (args.includes("--protocol-version")) {
   process.exit(0);
 }
 
+// A job child (plan 2.3.5) is this binary run with --job <kind>; it does nothing a daemon does.
+if (args.includes("--job")) process.exit(await runJobChild(args[args.indexOf("--job") + 1] ?? ""));
+// The MCP server (plan S5.1, O10 b) is this binary run with --mcp: a client of a daemon, never one itself.
+if (args.includes("--mcp")) process.exit(await runMcp(args, PROTOCOL));
+// The host service (plan S5.2, O15 b) is this binary run with --host-service: the work a host needs while no daemon runs.
+if (args.includes("--host-service")) process.exit(await runHostService(args));
+// The restore of a backup (S4.9) is run by the shell after it has stopped the daemon: `--restore-backup <repo> <archive>`.
+if (args.includes("--restore-backup")) process.exit(await runRestoreBackup(args[args.indexOf("--restore-backup") + 1] ?? "", args[args.indexOf("--restore-backup") + 2] ?? ""));
+
 function flag(name: string): string {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] ?? "" : "";
@@ -73,6 +114,11 @@ function flag(name: string): string {
 
 const repo = flag("--repo");
 const appConfig = flag("--app-config");
+// The RPC bearer token (R8): a file the app wrote, read and deleted before the daemon listens or
+// resumes anything, then held only in memory.
+const rpcSecretFile = flag("--rpc-secret-file");
+const rpcSecret = rpcSecretFile ? takeSecretFile(rpcSecretFile) : Buffer.alloc(0);
+
 const namespace = flag("--socket-namespace");
 const buildId = flag("--build-id") || "alinery-vinculum-daemon";
 if (!repo || !appConfig) {
@@ -89,14 +135,28 @@ if (!sources.hosted && !sources.grok) {
 
 const lane = namespace;
 const identity = appConfigIdentity(appConfig);
-acquireOwnership(repo, lane, identity);
-const uiSocket = join(repo, ".alinery", `${namespace ? `alineryd-${namespace}` : "alineryd"}.sock`);
+const store = new Store();
+const board = new BoardProjector(store, join(repo, ".alinery"));
+const feed = new Feed(store, join(repo, ".alinery"), (entity) => board.decorate(publisher.decorate(entity)), board.dependents, { "app.toml": appConfig });
+parsers.push(executionParser(repo, lane, identity), settingsParser(join(repo, ".alinery"), appConfig));
+// The version in a telemetry event: the app passes its own, since a daemon binary has none.
+const telemetry = telemetrySender(appConfig, flag("--app-version") || "unknown");
+const publisher = new SessionPublisher(store, feed, () => [...live.values()].map(liveView), {
+  protocol: PROTOCOL,
+  buildId,
+  watchExhausted: () => watcher.status.enospc,
+  // Peers of the shell role are screened against the app's executable; a daemon started without one cannot, and the shell says so.
+  hostGuardWarning: process.env.ALINERY_HOST_EXECUTABLE ? undefined : "no canonical executable for dynamic host screening",
+});
+// One owner per repository (S4.11): a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
 try {
-  unlinkSync(uiSocket);
-} catch {
-  /* absent */
+  await acquireRepoOwnership(repo, lane ?? "", identity);
+} catch (error) {
+  console.error(`${error instanceof DomainError ? error.code : "ownership_failed"}: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
 }
-mkdirSync(dirname(uiSocket), { recursive: true });
+const rpcSocket = join(repo, ".alinery", `${namespace ? `rpc-${namespace}` : "rpc"}.sock`);
+mkdirSync(dirname(rpcSocket), { recursive: true });
 
 const providers = openProviderRuntime(appConfig);
 const models = providers.models;
@@ -163,9 +223,13 @@ const sessionNameTool = defineTool({
   execute: async (args, api) => {
     const row = sessionForCall(api.env, api.conversationId);
     if (!row?.taskSlug) return { output: [{ type: "text", text: "Only a task session can name itself this way." }], isError: true };
-    const outcome = suggestSessionName(repo, row.taskSlug, row.id, args.name);
-    if ("error" in outcome) return { output: [{ type: "text", text: outcome.error }], isError: true };
-    return { output: [{ type: "text", text: `Session name: ${outcome.value.name}` }] };
+    try {
+      const outcome = await setSessionName(repo, row.taskSlug, row.id, args.name, "auto");
+      await feed.refresh(`tasks/${row.taskSlug}/sessions/${row.id}.name.json`);
+      return { output: [{ type: "text", text: `Session name: ${outcome.value.name}` }] };
+    } catch (error) {
+      return { output: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+    }
   },
 });
 
@@ -192,24 +256,11 @@ function appConfigIdentity(path: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
-let releaseKeepAwake = () => undefined as void;
-
-function startKeepAwake(library: string) {
-  const lib = dlopen(library, {
-    alinery_keep_awake_start: { args: [FFIType.cstring], returns: FFIType.void },
-    alinery_keep_awake_sessions: { args: [FFIType.u32], returns: FFIType.void },
-    alinery_keep_awake_release: { args: [], returns: FFIType.void },
-  });
-  lib.symbols.alinery_keep_awake_start(ptr(Buffer.from(`${appConfig}\0`)));
-  setInterval(() => {
-    const count = [...live.values()].filter((row) => row.process !== "exited").length;
-    lib.symbols.alinery_keep_awake_sessions(count);
-  }, 1000);
-  releaseKeepAwake = () => lib.symbols.alinery_keep_awake_release();
-}
+const keepAwake = new KeepAwake({ appConfig, liveSessions: () => [...live.values()].filter((row) => row.process !== "exited").length });
+const releaseKeepAwake = () => keepAwake.release();
 
 // These consts are initialized above. Calling the extensions any earlier reads sessionNameTool and releaseKeepAwake in the temporal dead zone, and the bundled daemon exits before it listens.
-startKeepAwake(ownershipLibrary());
+keepAwake.start();
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
@@ -220,22 +271,10 @@ registry.install(
     sections: [section("skills", () => skillCatalog(agentDir))],
   }),
 );
-const mcpHub = new McpHub(registry, { repo, appConfig, agentDir });
+// The AGENT tokens this daemon mints (O20 c): one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
+const agentTokens = new TokenRegistry();
+const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
 void mcpHub.refresh();
-
-function acquireOwnership(repoPath: string, laneName: string, configIdentity: string) {
-  const library = ownershipLibrary();
-  const lib = dlopen(library, {
-    alinery_pi_acquire: { args: [FFIType.cstring, FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
-    alinery_pi_acquire_error: { args: [], returns: FFIType.cstring },
-  });
-  const code = lib.symbols.alinery_pi_acquire(ptr(Buffer.from(`${repoPath}\0`)), ptr(Buffer.from(`${laneName}\0`)), ptr(Buffer.from(`${configIdentity}\0`)));
-  if (code !== 0) {
-    const message = lib.symbols.alinery_pi_acquire_error();
-    const text = typeof message === "string" ? message : typeof message === "number" && message !== 0 ? new CString(message).toString() : "ownership acquire failed";
-    throw new Error(text || "ownership acquire failed");
-  }
-}
 
 function sqlitePath(taskSlug: string, id: string): string {
   return taskSlug ? join(repo, ".alinery", "tasks", taskSlug, "sessions", `${id}.pi.sqlite`) : join(repo, ".alinery", "sessions", `${id}.pi.sqlite`);
@@ -267,7 +306,7 @@ function writeMeta(taskSlug: string, id: string, patch: Record<string, unknown>)
   mkdirSync(dirname(path), { recursive: true });
   const worktree = taskSlug ? taskWorktree(repo, taskSlug) : repo;
   const next = completeSessionMeta(readMeta(taskSlug, id), patch, id, worktree, Math.floor(Date.now() / 1000));
-  writeFileSync(path, JSON.stringify(next));
+  writeAtomic(path, JSON.stringify(next));
 }
 
 // Files already on disk from a writer that omitted SessionMeta's required fields.
@@ -305,6 +344,7 @@ function startRecordedShell(id: string, taskSlug: string) {
     const row = live.get(id);
     if (row) row.process = "exited";
     writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+    commitSession(taskSlug, id);
   });
   if (!live.has(id)) {
     live.set(id, {
@@ -321,6 +361,7 @@ function startRecordedShell(id: string, taskSlug: string) {
       titledBucket: 0,
       titleInFlight: false,
     });
+    commitSession(taskSlug, id);
   }
 }
 
@@ -334,6 +375,16 @@ function sessionState(row: Live) {
     adapter: "omp",
     message_adapter: "unsupported",
   };
+}
+
+// The store's view of a live row is exactly what `list` answers (engine playbook axis included), plus the Attention wait.
+function liveView(row: Live) {
+  return { id: row.id, taskSlug: row.taskSlug, ...sessionState({ ...row, playbook: enginePlaybook(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc", wait: row.wait };
+}
+
+// S2.5: every change to a session row goes through here, so a subscriber needs no poll.
+function commitSession(taskSlug: string, id: string) {
+  publisher.changed(taskSlug, id);
 }
 
 async function openSession(id: string, taskSlug: string, model: string, prompt = "") {
@@ -355,6 +406,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     titleInFlight: false,
   };
   live.set(id, row);
+  commitSession(taskSlug, id);
   const meta = readMeta(taskSlug, id);
   if (!meta.started_at) writeMeta(taskSlug, id, { started_at: Math.floor(Date.now() / 1000), harness: "vinculum", harness_resume_token: "" });
   if (typeof meta.ended_at === "number") writeMeta(taskSlug, id, { ended_at: null, exit_code: null });
@@ -405,6 +457,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
   if (exists) harness.resume();
   await seedPrompt(root, prompt);
   row.process = "alive";
+  commitSession(taskSlug, id);
   return row;
 }
 
@@ -481,9 +534,9 @@ async function maybeTitleChat(row: Live) {
     ]);
     const name = cleanChatTitle(reply);
     if (!name) return;
-    const outcome = suggestSessionName(repo, "", row.id, name);
-    if ("error" in outcome) return;
+    await setSessionName(repo, "", row.id, name, "auto");
     row.titledBucket = bucket;
+    commitSession(row.taskSlug, row.id);
   } catch (error) {
     console.error(`chat title failed for ${row.id}: ${error}`);
   } finally {
@@ -527,17 +580,21 @@ function watch(row: Live, harness: OpenedHarness, conversationId: string) {
         state: value.wait.kind === "approval" ? "waiting_for_approval" : "waiting_for_input",
         correlation_id: value.wait.correlationId,
       };
-      return;
+      row.wait = value.wait;
+    } else {
+      row.wait = undefined;
+      if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
+        row.agent = { state: row.liveRun ? "busy" : "idle" };
+      }
     }
-    if (row.agent.state === "waiting_for_input" || row.agent.state === "waiting_for_approval") {
-      row.agent = { state: row.liveRun ? "busy" : "idle" };
-    }
+    commitSession(row.taskSlug, row.id);
   });
   attach(harness.watchDoc(LiveDoc, conversationId, context), (value) => {
     const running = Boolean(value?.run);
     const finished = row.liveRun && !running;
     row.liveRun = running;
     if (row.agent.state !== "waiting_for_input" && row.agent.state !== "waiting_for_approval") row.agent = { state: running ? "busy" : "idle" };
+    commitSession(row.taskSlug, row.id);
     if (finished && !row.taskSlug) void maybeTitleChat(row);
   });
   attach(harness.watchDoc(PhaseRequest, conversationId, context), (value) => {
@@ -579,6 +636,7 @@ function applyPhaseReply(row: Live, reply: Record<string, unknown>) {
   if (reply.outcome === "waiting_for_input") row.agent = { state: "waiting_for_input", correlation_id: String(reply.correlation_id ?? "") };
   if (reply.outcome === "accepted") row.agent = { state: "idle" };
   if (reply.playbook) row.playbook = { state: String(reply.playbook) };
+  commitSession(row.taskSlug, row.id);
 }
 
 async function requestPhase(api: { conversationId: string; env?: unknown }) {
@@ -624,459 +682,168 @@ function ownershipRefusal(reply: Record<string, unknown>): Record<string, unknow
   return { error: "task execution ownership mismatch" };
 }
 
-function socketFd(socket: Socket): number | null {
-  const record: unknown = socket;
-  if (!record || typeof record !== "object" || !("_handle" in record)) return null;
-  const handle = record._handle;
-  if (!handle || typeof handle !== "object" || !("fd" in handle) || typeof handle.fd !== "number") return null;
-  return handle.fd;
-}
-
-// libSystem has no getpeerid. Match alinery-core peer_process_id: getpeereid, then LOCAL_PEERPID.
-const SOL_LOCAL = 0;
-const LOCAL_PEERPID = 0x002;
-const SOL_SOCKET = 1;
-const SO_PEERCRED = 17;
-
-function peerExecutable(socket: Socket): string | null {
-  const fd = socketFd(socket);
-  if (fd == null) return null;
+/** Ends a session's process and stamps its exit; the same for the `kill` op and `SessionService.KillSession`. */
+function killSession(id: string) {
+  if (isPty(id)) killPty(id);
+  const row = live.get(id);
+  if (!row) return;
   try {
-    if (process.platform === "darwin") return darwinPeerExecutable(fd);
-    if (process.platform === "linux") return linuxPeerExecutable(fd);
-    return null;
+    if (row.harness) void row.harness.close(context);
   } catch {
-    return null;
+    /* already closed */
   }
+  writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
+  live.delete(id);
+  commitSession(row.taskSlug, id);
 }
 
-function darwinPeerExecutable(fd: number): string | null {
-  const libc = dlopen("libSystem.B.dylib", {
-    getpeereid: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    geteuid: { args: [], returns: FFIType.u32 },
-    proc_pidpath: { args: [FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-  });
-  const uid = Buffer.alloc(4);
-  const gid = Buffer.alloc(4);
-  if (libc.symbols.getpeereid(fd, ptr(uid), ptr(gid)) !== 0) return null;
-  if (uid.readUInt32LE(0) !== libc.symbols.geteuid()) return null;
-  const pid = Buffer.alloc(4);
-  const size = Buffer.alloc(4);
-  size.writeUInt32LE(4, 0);
-  if (libc.symbols.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, ptr(pid), ptr(size)) !== 0) return null;
-  if (size.readUInt32LE(0) !== 4) return null;
-  const pidNum = pid.readInt32LE(0);
-  if (pidNum <= 0) return null;
-  const path = Buffer.alloc(4096);
-  const length = libc.symbols.proc_pidpath(pidNum, ptr(path), path.length);
-  if (length <= 0) return null;
-  return path.subarray(0, length).toString().replace(/\0+$/, "");
-}
-
-function linuxPeerExecutable(fd: number): string | null {
-  const libc = dlopen("libc.so.6", {
-    getsockopt: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-    geteuid: { args: [], returns: FFIType.u32 },
-  });
-  const cred = Buffer.alloc(12);
-  const size = Buffer.alloc(4);
-  size.writeUInt32LE(12, 0);
-  if (libc.symbols.getsockopt(fd, SOL_SOCKET, SO_PEERCRED, ptr(cred), ptr(size)) !== 0) return null;
-  if (size.readUInt32LE(0) < 12) return null;
-  const pidNum = cred.readInt32LE(0);
-  const peerUid = cred.readUInt32LE(4);
-  if (pidNum <= 0 || peerUid !== libc.symbols.geteuid()) return null;
-  return readlinkSync(`/proc/${pidNum}/exe`);
-}
-function samePath(left: string, right: string): boolean {
-  if (left === right) return true;
+/**
+ * `spawn`, `attach` and `resume`: starts or rejoins a session's process. Answers `{ ok: true }` or the refusal; the
+ * socket op and `SessionService.ResumeSession` / the chat runner both go through it.
+ */
+async function openOp(op: string, header: Record<string, unknown>): Promise<{ answer: Record<string, unknown>; keep: boolean }> {
+  const id = String(header.id ?? "");
+  const taskSlug = String(header.task_slug ?? "");
+  let metaHarness: string | undefined;
   try {
-    return realpathSync(left) === realpathSync(right);
+    metaHarness = String((JSON.parse(readFileSync(metaPath(taskSlug, id), "utf8")) as Record<string, unknown>).harness ?? "");
   } catch {
-    return false;
+    /* no readable meta: the root-session rule allows it, and a task session is checked below */
   }
-}
-
-const kept = new WeakSet<Socket>();
-const uiAuthorized = new WeakSet<Socket>();
-
-function reply(socket: Socket, value: unknown, keep = false) {
-  socket.write(`${JSON.stringify(value)}\n`);
-  if (keep) kept.add(socket);
-  else socket.end();
-}
-
-async function handle(socket: Socket, header: Record<string, unknown>, body: Buffer | null) {
-  const op = String(header.op ?? "");
-  if (header.body_bytes != null && body == null) return;
-  if (op === "version") {
-    reply(socket, { protocol: PROTOCOL, build_id: buildId, app_config_identity: identity, host_guard_ready: true });
-    return;
+  const refusal = openPreflight(repo, taskSlug, metaHarness);
+  if (refusal) {
+    return { answer: { error: refusal }, keep: false };
   }
-  if (op === "list") {
-    const byId = new Map<string, { state: string; reason?: string }>();
-    for (const row of engineAxis()) byId.set(row.id, row.playbook);
-    const sessions = [...live.values()]
-      .filter((row) => row.id !== "__omp-setup__")
-      .map((row) => ({ id: row.id, ...sessionState({ ...row, playbook: byId.get(row.id) ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" }));
-    reply(socket, { sessions });
-    return;
-  }
-  if (op === "status") {
-    const row = live.get(String(header.id ?? ""));
-    if (!row) {
-      reply(socket, { error: "unknown-session" });
-      return;
-    }
-    const fromEngine = enginePlaybook(row.id);
-    reply(socket, { ...sessionState({ ...row, playbook: fromEngine ?? row.playbook }), transport: isPty(row.id) ? "pty" : "rpc" });
-    return;
-  }
-  if (op === "shutdown") {
-    mcpHub.close();
-    releaseKeepAwake();
-    const now = Math.floor(Date.now() / 1000);
-    for (const row of live.values()) {
-      if (isPty(row.id)) killPty(row.id);
-      writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
-      row.process = "exited";
-    }
-    live.clear();
-    try {
-      unlinkSync(uiSocket);
-    } catch {
-      /* already gone */
-    }
-    socket.write(`${JSON.stringify({ ok: true })}\n`, () => {
-      socket.end();
-      process.exit(0);
-    });
-    return;
-  }
-  if (op === "spawn" || op === "attach" || op === "resume") {
-    const id = String(header.id ?? "");
-    const taskSlug = String(header.task_slug ?? "");
-    if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
-      const cols = Number(header.cols ?? 0);
-      const rows = Number(header.rows ?? 0);
-      const attachId = Number(header.attach_id ?? 0);
-      if (!hasPty(id)) {
-        if (op === "attach") {
-          reply(socket, { error: "unknown-session" });
-          return;
-        }
-        const owned = await taskOpenAllowed(taskSlug);
-        if (!owned.ok) {
-          reply(socket, ownershipRefusal(owned.reply));
-          return;
-        }
-        const cwd = String(header.cwd ?? repo);
-        startShell(id, cwd || repo, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), cols, rows, () => {
-          const row = live.get(id);
-          if (row) row.process = "exited";
-          writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
-        });
-        if (!live.has(id)) {
-          live.set(id, {
-            id,
-            taskSlug,
-            process: "alive",
-            agent: { state: "idle" },
-            playbook: { state: "in_progress" },
-            harness: null,
-            conversationId: "",
-            liveRun: false,
-            seenNonce: "",
-            executionId: "",
-          });
-        }
+  if (isPty(id) || String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+    const cols = Number(header.cols ?? 0);
+    const rows = Number(header.rows ?? 0);
+    if (!hasPty(id)) {
+      if (op === "attach") {
+        return { answer: { error: "unknown-session" }, keep: false };
       }
-      const row = live.get(id);
-      if (row && row.process !== "exited") row.process = "alive";
-      if (!attachShell(id, socket, attachId, cols, rows)) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      kept.add(socket);
-      return;
-    }
-    if (op !== "attach" && id && !live.has(id)) {
-      const taskSlug = String(header.task_slug ?? "");
       const owned = await taskOpenAllowed(taskSlug);
       if (!owned.ok) {
-        reply(socket, ownershipRefusal(owned.reply));
-        return;
+        return { answer: ownershipRefusal(owned.reply), keep: false };
       }
-      const model = String(header.model ?? "");
-      void openSession(id, taskSlug, model).catch((error) => {
+      const cwd = String(header.cwd ?? repo);
+      startShell(id, cwd || repo, metaPath(taskSlug, id).replace(/\.meta\.json$/, ".scrollback"), cols, rows, () => {
         const row = live.get(id);
-        if (row) row.playbook = { state: "failed", reason: String(error) };
+        if (row) row.process = "exited";
+        writeMeta(taskSlug, id, { ended_at: Math.floor(Date.now() / 1000) });
+        commitSession(taskSlug, id);
       });
+      if (!live.has(id)) {
+        live.set(id, {
+          id,
+          taskSlug,
+          process: "alive",
+          agent: { state: "idle" },
+          playbook: { state: "in_progress" },
+          harness: null,
+          conversationId: "",
+          liveRun: false,
+          seenNonce: "",
+          executionId: "",
+        });
+        commitSession(taskSlug, id);
+      }
     }
-    reply(socket, { ok: true }, true);
-    return;
+    const row = live.get(id);
+    if (row && row.process !== "exited") row.process = "alive";
+    // The bytes come from TerminalService.Attach (rpc/terminal.ts); this op only starts the shell.
+    return { answer: { ok: true }, keep: false };
   }
-  if (op === "detach" || op === "kill") {
-    const id = String(header.id ?? "");
-    if (op === "detach") detachPty(id, Number(header.attach_id ?? 0));
-    if (op === "kill") {
-      if (isPty(id)) killPty(id);
+  if (op !== "attach" && id && !live.has(id)) {
+    const owned = await taskOpenAllowed(taskSlug);
+    if (!owned.ok) {
+      return { answer: ownershipRefusal(owned.reply), keep: false };
+    }
+    const model = String(header.model ?? "");
+    void openSession(id, taskSlug, model).catch((error) => {
       const row = live.get(id);
       if (row) {
-        const harness = row.harness;
-        try {
-          if (harness) void harness.close(context);
-        } catch {
-          /* already closed */
-        }
-        writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000), exit_code: 0 });
-        live.delete(id);
+        row.playbook = { state: "failed", reason: String(error) };
+        commitSession(row.taskSlug, id);
       }
-    }
-    reply(socket, { ok: true });
-    return;
+    });
   }
-  if (op === "write" || op === "resize" || op === "send_message") {
-    const id = String(header.id ?? "");
-    if (op === "write" && writePty(id, String(header.data ?? ""))) {
-      reply(socket, { ok: true });
-      return;
-    }
-    if (op === "resize" && resizePty(id, Number(header.cols ?? 0), Number(header.rows ?? 0))) {
-      reply(socket, { ok: true });
-      return;
-    }
-    reply(socket, { error: "unsupported" });
-    return;
-  }
-  if (op === "event") {
-    reply(socket, { error: "event-rejected" });
-    return;
-  }
-  if (op === "transcript" || op === "prompt" || op === "abort") {
-    const row = live.get(String(header.id ?? ""));
-    if (!row) {
-      reply(socket, { error: "unknown-session" });
-      return;
-    }
-    try {
-      const conversation = await conversationFor(row);
-      if (!conversation) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      if (op === "transcript") {
-        const transcript = await transcriptMessages(row, conversation);
-        reply(socket, { messages: formatTranscript(transcript.messages, transcript.tools), ...(await sessionControls(conversation)) });
-        return;
-      }
-      if (op === "prompt") {
-        const text = typeof header.text === "string" ? header.text : "";
-        if (!text.trim()) {
-          reply(socket, { error: "empty-prompt" });
-          return;
-        }
-        const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-        if (!resolved) {
-          reply(socket, { error: "no model is configured" });
-          return;
-        }
-        await ensureModel(conversation, resolved, context);
-        await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
-        reply(socket, { ok: true });
-        return;
-      }
-      try {
-        await conversation.abort(context);
-      } catch (error) {
-        // A completion wait is local agent state, not a live run. Abort still has to release it.
-        if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
-      }
-      if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
-        row.agent = { state: row.liveRun ? "busy" : "idle" };
-      }
-      reply(socket, { ok: true });
-    } catch (error) {
-      reply(socket, { error: String(error) });
-    }
-    return;
-  }
-  if (op === "set_model" || op === "set_thinking_level") {
-    const row = live.get(String(header.id ?? ""));
-    const requested = op === "set_model" && typeof header.model === "string" ? header.model : "";
-    const refusal = op === "set_model" ? setModelRefusal(Boolean(row), requested) : row ? null : "unknown-session";
-    if (refusal || !row) {
-      reply(socket, { error: refusal ?? "unknown-session" });
-      return;
-    }
-    try {
-      const conversation = await conversationFor(row);
-      if (!conversation) {
-        reply(socket, { error: "unknown-session" });
-        return;
-      }
-      if (op === "set_model") {
-        const resolved = resolveModel(appConfig, requested);
-        if (!resolved) {
-          reply(socket, { error: "no model is configured" });
-          return;
-        }
-        await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
-      } else {
-        const level = typeof header.level === "string" ? header.level : "";
-        const agent = await conversation.agent(context);
-        const current = agent.model;
-        const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
-        await changeThinkingLevel(conversation, level, catalog, context);
-      }
-      reply(socket, { ok: true, ...(await sessionControls(conversation)) });
-    } catch (error) {
-      reply(socket, { error: error instanceof Error ? error.message : String(error) });
-    }
-    return;
-  }
-  if (
-    op === "provider_catalog" ||
-    op === "provider_logout" ||
-    op === "provider_login_start" ||
-    op === "provider_login_poll" ||
-    op === "provider_login_reply" ||
-    op === "custom_provider_save" ||
-    op === "custom_provider_delete"
-  ) {
-    try {
-      if (op === "provider_catalog") {
-        reply(socket, await providers.catalog());
-        return;
-      }
-      if (op === "provider_logout") {
-        reply(socket, await providers.logout(typeof header.provider === "string" ? header.provider : ""));
-        return;
-      }
-      if (op === "provider_login_start") {
-        const method = header.method === "oauth" ? "oauth" : header.method === "api_key" ? "api_key" : "";
-        if (!method) {
-          reply(socket, { error: "login method must be api_key or oauth" });
-          return;
-        }
-        reply(socket, providers.startLogin(typeof header.provider === "string" ? header.provider : "", method));
-        return;
-      }
-      if (op === "provider_login_poll") {
-        reply(socket, providers.pollLogin(typeof header.login_id === "string" ? header.login_id : ""));
-        return;
-      }
-      if (op === "provider_login_reply") {
-        const loginId = typeof header.login_id === "string" ? header.login_id : "";
-        if (header.cancel === true) providers.cancelLogin(loginId);
-        else providers.replyLogin(loginId, typeof header.value === "string" ? header.value : "");
-        reply(socket, { ok: true });
-        return;
-      }
-      if (op === "custom_provider_delete") {
-        reply(socket, await providers.deleteCustom(typeof header.id === "string" ? header.id : ""));
-        return;
-      }
-      const typedKey = typeof header.api_key === "string" ? header.api_key.trim() : "";
-      reply(
-        socket,
-        await providers.saveCustom({
-          id: typeof header.id === "string" ? header.id : "",
-          name: typeof header.name === "string" ? header.name : "",
-          baseUrl: typeof header.base_url === "string" ? header.base_url : "",
-          apiKey: typedKey || undefined,
-          clearKey: !typedKey && header.keep_key !== true,
-          models: Array.isArray(header.models) ? header.models.filter((model): model is string => typeof model === "string") : [],
-        }),
-      );
-    } catch (error) {
-      reply(socket, { error: error instanceof Error ? error.message : String(error) });
-    }
-    return;
-  }
-  if (op === "ui_control") {
-    const host = process.env.ALINERY_HOST_EXECUTABLE;
-    const peer = peerExecutable(socket);
-    if (!host || !peer || !samePath(peer, host)) {
-      reply(socket, { error: "UI control requires the protected UI host" });
-      return;
-    }
-    uiAuthorized.add(socket);
-    reply(socket, { ok: true }, true);
-    return;
-  }
-  if (op === "allow_execution_completion") {
-    if (!uiAuthorized.has(socket)) {
-      reply(socket, { error: "completion permission requires an authenticated UI control connection" });
-      return;
-    }
-    const request = header.request;
-    const sessionId = request && typeof request === "object" && !Array.isArray(request) ? String((request as { session_id?: unknown }).session_id ?? "") : "";
-    if (sessionId && (await permitSession(sessionId))) {
-      reply(socket, { ok: true }, true);
-      return;
-    }
-    reply(socket, { error: "session has no engine execution to permit" });
-    return;
-  }
-  if (op === "vinculum_customizations") {
-    try {
-      reply(socket, await mcpHub.refresh());
-    } catch {
-      reply(socket, { error: "could not read customizations" });
-    }
-    return;
-  }
-  if (["get_task_execution", "create_execution_session", "start_session", "create_task", "create_subtask"].includes(op)) {
-    try {
-      reply(socket, (await taskOp(repo, lane, identity, op, header, body, (id, taskSlug, model, prompt) => {
-        if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
-          startRecordedShell(id, taskSlug);
-          return Promise.resolve();
-        }
-        return openSession(id, taskSlug, model, prompt).then(() => undefined);
-      })) ?? { error: "unhandled" });
-    } catch (error) {
-      reply(socket, { error: String(error) });
-    }
-    return;
-  }
-  reply(socket, { error: "unknown-op" });
+  return { answer: { ok: true }, keep: true };
 }
 
-const server = createServer((socket) => {
-  let buffer = Buffer.alloc(0);
-  let header: Record<string, unknown> | null = null;
-  let need = 0;
-  socket.on("error", () => {});
-  socket.on("data", (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    for (;;) {
-      if (!header) {
-        const newline = buffer.indexOf(0x0a);
-        if (newline < 0) return;
-        try {
-          header = JSON.parse(buffer.subarray(0, newline).toString()) as Record<string, unknown>;
-        } catch {
-          buffer = Buffer.alloc(0);
-          if (!kept.has(socket)) reply(socket, { error: "invalid-json" });
-          return;
-        }
-        buffer = buffer.subarray(newline + 1);
-        need = Number(header.body_bytes ?? 0);
-      }
-      if (need > 0 && buffer.length < need) return;
-      const body = need > 0 ? buffer.subarray(0, need) : null;
-      if (need > 0) buffer = buffer.subarray(need);
-      const current = header;
-      header = null;
-      need = 0;
-      void handle(socket, current, body);
-      if (buffer.length === 0) return;
+/** The process of a session just created or started: a recorded terminal gets its shell, anything else its harness. */
+function openCreated(id: string, taskSlug: string, model: string, prompt: string): Promise<void> {
+  if (String(readMeta(taskSlug, id).harness ?? "") === "no-harness") {
+    startRecordedShell(id, taskSlug);
+    return Promise.resolve();
+  }
+  return openSession(id, taskSlug, model, prompt).then(() => undefined);
+}
+
+/** The live harness session `id` and its conversation, or the refusal a caller reads. */
+async function harnessSession(id: string): Promise<{ row: Live; conversation: Conversation }> {
+  const row = live.get(id);
+  const conversation = row ? await conversationFor(row) : null;
+  if (!row || !conversation) throw new DomainError("not_found", "unknown-session");
+  return { row, conversation };
+}
+
+/** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
+ * and `set_thinking_level` ops of the JSON-lines wire). */
+const rawTurns: TurnControl = {
+  async prompt(id, text) {
+    const { row, conversation } = await harnessSession(id);
+    if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
+    const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+    if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
+    await ensureModel(conversation, resolved, context);
+    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+  },
+  async abort(id) {
+    const { row, conversation } = await harnessSession(id);
+    try {
+      await conversation.abort(context);
+    } catch (error) {
+      // A completion wait is local agent state, not a live run. Abort still has to release it.
+      if (row.agent.state !== "waiting_for_approval" && row.agent.state !== "waiting_for_input") throw error;
     }
-  });
-});
+    if (row.agent.state === "waiting_for_approval" || row.agent.state === "waiting_for_input") {
+      row.agent = { state: row.liveRun ? "busy" : "idle" };
+      row.wait = undefined;
+      commitSession(row.taskSlug, row.id);
+    }
+  },
+  async setModel(id, requested) {
+    const refusal = setModelRefusal(live.has(id), requested);
+    if (refusal) throw new DomainError(refusal === "unknown-session" ? "not_found" : "invalid_argument", refusal);
+    const { row, conversation } = await harnessSession(id);
+    const resolved = resolveModel(appConfig, requested);
+    if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
+    await changeSessionModel(conversation, resolved, context, (patch) => writeMeta(row.taskSlug, row.id, patch));
+    return sessionControls(conversation);
+  },
+  async setThinkingLevel(id, level) {
+    const { conversation } = await harnessSession(id);
+    const agent = await conversation.agent(context);
+    const current = agent.model;
+    const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
+    await changeThinkingLevel(conversation, level, catalog, context);
+    return sessionControls(conversation);
+  },
+};
+/** What the harness refuses (a model it does not have, a thinking level it does not offer) reaches the caller as a failed precondition with its text. */
+const refused = async <T>(run: () => Promise<T>): Promise<T> => {
+  try {
+    return await run();
+  } catch (error) {
+    throw error instanceof DomainError ? error : new DomainError("failed_precondition", error instanceof Error ? error.message : String(error));
+  }
+};
+const turns: TurnControl = {
+  prompt: (id, text) => refused(() => rawTurns.prompt(id, text)),
+  abort: (id) => refused(() => rawTurns.abort(id)),
+  setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
+  setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),
+};
 
 async function resumeInterrupted() {
   const pending: Promise<unknown>[] = [];
@@ -1115,39 +882,215 @@ async function resumeInterrupted() {
   await Promise.all(pending);
 }
 
+/** The teardown `AdminService.Shutdown` runs: ends every
+ * session and removes the sockets. Returns how many sessions were still running. */
+function stopEverything(): number {
+  jobs.stopAll();
+  mcpHub.close();
+  releaseKeepAwake();
+  const now = Math.floor(Date.now() / 1000);
+  let stopped = 0;
+  for (const row of live.values()) {
+    if (row.process !== "exited") stopped += 1;
+    if (isPty(row.id)) killPty(row.id);
+    writeMeta(row.taskSlug, row.id, { ended_at: now, exit_code: 0 });
+    row.process = "exited";
+  }
+  const stoppedRows = [...live.values()];
+  live.clear();
+  for (const row of stoppedRows) commitSession(row.taskSlug, row.id);
+  for (const path of [rpcSocket]) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
+  }
+  return stopped;
+}
+
+// Job children are in their own process groups, so the exit waits for them: the shell treats the process
+// lock's release as "the daemon is gone" and then restores or replaces files under it. The shell's wait
+// (`wait_for_daemon_gone`) allows more than this.
+const JOB_GRACE_MS = 1000;
+async function exitWhenJobsEnded(): Promise<never> {
+  await jobs.drain(JOB_GRACE_MS);
+  process.exit(0);
+}
+
 repairSessionMetas();
-server.listen(uiSocket, () => {
-  void resumeInterrupted().then(() => startGraphs(repo, {
-    open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
-    status(id) {
-      return Promise.resolve(sessionHarnessStatus(live.get(id)));
-    },
-    async send(id, text) {
-      const row = live.get(id);
-      const conversation = row ? await conversationFor(row) : null;
-      if (!row || !conversation) throw new Error(`unknown session ${id}`);
-      const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
-      if (!resolved) throw new Error("no model is configured");
-      await ensureModel(conversation, resolved, context);
-      await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
-    },
-    async stop(id) {
-      const row = live.get(id);
-      if (!row || row.process === "exited") return;
-      const conversation = await conversationFor(row);
-      if (conversation) {
-        try {
-          await conversation.abort(context);
-        } catch {
-          /* already idle */
-        }
-      }
-      row.process = "exited";
-      writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
-    },
-    bind(id, executionId) {
-      const row = live.get(id);
-      if (row) row.executionId = executionId;
-    },
-  }, appConfig));
+// Files reach the store (2.2.8): scan with the parsers, then watch, then the 30 s reconcile, and only
+// then does the RPC server listen, so a first Subscribe never sees a half-built store.
+await feed.scan();
+const watcher = new Watcher(join(repo, ".alinery"), (rel) => void feed.refresh(rel).catch((e) => console.error(`feed ${rel}: ${(e as Error).message}`)), { log: (line) => console.error(line), appConfig, globalPlaybooks: join(appConfigDirOf(appConfig), "playbooks") });
+watcher.start();
+publisher.commitStatus();
+new Reconciler(feed, { log: (line) => console.error(line) }).start();
+// Backups and purges (S4.9): jobs the daemon starts itself, and the automatic triggers that publish into them.
+let backupHost: BackupHost;
+const jobs = new JobRunner(store, { onEnd: (job, params) => backupHost.ended(job, params) });
+backupHost = new BackupHost(jobs, {
+  repo,
+  appConfig,
+  version: flag("--app-version") || "unknown",
+  telemetry,
+  sessions: { isRunning: (id) => runner.isRunning(id), stop: (id) => runner.stop(id) },
+  afterPurge: async () => {
+    await feed.reconcile();
+    await artifactProjector.pass();
+  },
 });
+// Task writes: TaskService and DraftService serve them.
+const taskDeps: TaskDeps = {
+  backups: backupHost,
+  repo,
+  lane,
+  identity,
+  refresh: (rel) => feed.refresh(rel),
+  telemetry,
+  // Constructing the store clears `.alinery/tmp/uploads`: a restart drops uploads nothing claimed.
+  blobs: new BlobStore(repo),
+  afterCreate: async (created, start) => {
+    const out = start ? await overlayStart(repo, { ...created }, true) : await materializeSessions(repo, { ...created });
+    const errors = (out.errors ?? []) as typeof created.errors;
+    return {
+      sessions: (out.sessions ?? []) as never,
+      executions: (out.executions ?? []) as never,
+      start: String(out.start ?? created.start),
+      // A started task's launch errors join the files the create could not import; a reserved one keeps its own.
+      errors: start ? [...created.errors, ...errors] : errors,
+    };
+  },
+};
+// Session writes and chat threads (S4.4): the processes stay with this file, the files and the store with the domain code.
+const chat = new ChatPublisher(store, repo);
+const runner: ChatSessions = {
+  create: (request) => createExecutionSession(repo, request, openCreated),
+  start: (request) => startSession(repo, request, openCreated),
+  async open(header) {
+    const { answer } = await openOp(String(header.op ?? "resume"), header);
+    if (typeof answer.error === "string") throw new DomainError("failed_precondition", answer.error);
+  },
+  isRunning: (id) => {
+    const row = live.get(id);
+    return row !== undefined && row.process !== "exited";
+  },
+  stop: killSession,
+};
+const sessionControl: SessionControl = {
+  repo,
+  backups: backupHost,
+  refresh: (rel) => feed.refresh(rel),
+  telemetry,
+  chat,
+  runner,
+  turns,
+  telemetryIds: (slug, id) => {
+    let session = "";
+    try {
+      session = String((JSON.parse(readFileSync(metaPath(slug, id), "utf8")) as Record<string, unknown>).telemetry_id ?? "");
+    } catch {
+      /* a session without a readable meta has no id to report */
+    }
+    return { session, task: slug ? String(readTask(repo, slug)?.telemetry_id ?? "") : "" };
+  },
+};
+await chat.refreshAll();
+setInterval(() => void chat.refreshAll(), 30_000).unref();
+// Artifact rows (S4.5): every task once, then on each change the feed reports and on the 30 s pass for a missed event.
+const taskExecution = (slug: string) => getTaskExecution(repo, slug, lane, identity);
+const artifactProjector = new ArtifactProjector(store, repo, executionRecords(taskExecution));
+// Playbook library rows (S4.6): the compiled-in set, the machine's and the repository's, once, then on each change the watcher reports and on the 30 s pass.
+const playbookProjector = new PlaybookProjector(store, { globalConfigDir: appConfigDirOf(appConfig), repoDir: repo });
+feed.onChanged = (rel) => {
+  artifactProjector.changed(rel);
+  playbookProjector.changed(rel);
+};
+await artifactProjector.pass();
+playbookProjector.refresh();
+setInterval(() => void artifactProjector.pass().catch((e) => console.error(`artifact pass: ${(e as Error).message}`)), 30_000).unref();
+setInterval(() => playbookProjector.refresh(), 30_000).unref();
+// Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
+await serveRpc({
+  socketPath: rpcSocket,
+  secret: rpcSecret,
+  tokens: agentTokens,
+  hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
+  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
+  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__omp-setup__").map((row) => row.id) },
+  store,
+  jobs,
+  backups: backupHost,
+  backupReads: { repo, appConfig },
+  storageScan: { repo, appConfig, namespace: lane },
+  settings: { repo, appConfig, refresh: (rel) => feed.refresh(rel), telemetry },
+  tasks: taskDeps,
+  sessions: sessionControl,
+  playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
+  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub },
+  providers: { providers, repo, appConfig },
+  artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
+  transcripts: async (taskSlug, id) => {
+    const row = live.get(id);
+    if (!row || row.taskSlug !== taskSlug || !row.harness) return undefined;
+    const conversation = await conversationFor(row);
+    if (!conversation) return undefined;
+    return {
+      read: async () => {
+        const { messages, tools } = await transcriptMessages(row, conversation);
+        return { items: formatTranscript(messages, tools), controls: await sessionControls(conversation) };
+      },
+      subscribe: eventsChanges(row.harness, conversation.id, context),
+    };
+  },
+});
+// The installer and the updater hold no token for the wire, so a user's yes to "stop everything and install" reaches the daemon as
+// SIGTERM (scripts/lib/preflight.sh). It runs the teardown `Shutdown` runs, so sessions are recorded ended rather than interrupted.
+process.once("SIGTERM", () => {
+  console.error("SIGTERM: ending sessions and exiting");
+  stopEverything();
+  void exitWhenJobsEnded();
+});
+void resumeInterrupted().then(() => startGraphs(repo, {
+  executionChanged: (taskSlug) => {
+    commitExecution(store, repo, taskSlug, lane, identity);
+    // The engine owns the playbook axis of a task's sessions, so they move with the execution.
+    for (const row of live.values()) if (row.taskSlug === taskSlug) commitSession(taskSlug, row.id);
+  },
+  open: (id, taskSlug, model, prompt) => openSession(id, taskSlug, model, prompt).then(() => undefined),
+  status(id) {
+    return Promise.resolve(sessionHarnessStatus(live.get(id)));
+  },
+  async send(id, text) {
+    const row = live.get(id);
+    const conversation = row ? await conversationFor(row) : null;
+    if (!row || !conversation) throw new Error(`unknown session ${id}`);
+    const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
+    if (!resolved) throw new Error("no model is configured");
+    await ensureModel(conversation, resolved, context);
+    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+  },
+  async stop(id) {
+    const row = live.get(id);
+    if (!row || row.process === "exited") return;
+    const conversation = await conversationFor(row);
+    if (conversation) {
+      try {
+        await conversation.abort(context);
+      } catch {
+        /* already idle */
+      }
+    }
+    row.process = "exited";
+    writeMeta(row.taskSlug, row.id, { ended_at: Math.floor(Date.now() / 1000) });
+    commitSession(row.taskSlug, row.id);
+  },
+  bind(id, executionId, step) {
+    const row = live.get(id);
+    if (!row) return;
+    row.executionId = executionId;
+    // The session's own file says which execution and step it is (disagreement 6), so the board follows the run.
+    writeMeta(row.taskSlug, id, { execution_id: executionId, phase: step });
+    commitSession(row.taskSlug, id);
+  },
+}, appConfig, { lane, identity }));

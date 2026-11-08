@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Context } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { Conversation } from "@earendil-works/pi-durable";
-import { parse } from "smol-toml";
+import { defaultGlobal, effectiveSettings, emptyOverrides, parseGlobal, parseOverrides } from "./domain/settings.ts";
 import type { ResolvedModel } from "./provider.ts";
 
 /** The seven names `alinery-core` `THINKING_LEVELS` launches with. An unknown value is not one of them. */
@@ -28,31 +28,17 @@ export function thinkingLaunchLevel(raw: string | undefined): ThinkingLevel {
   return (THINKING_LEVELS as readonly string[]).includes(level) ? (level as ThinkingLevel) : "high";
 }
 
-function defaultsThinking(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const thinking = (value as { thinking?: unknown }).thinking;
-  return typeof thinking === "string" ? thinking : undefined;
+/** The effective defaults for a launch: the repo file over the global one, by the one precedence in `domain/settings.ts`.
+ * A file serde would refuse reads as absent (the defaults), as it does in Rust. */
+function launchDefaults(globalText: string | null, repoText: string | null) {
+  const global = (globalText ? parseGlobal(globalText) : undefined) ?? defaultGlobal();
+  const overrides = (repoText ? parseOverrides(repoText) : undefined) ?? emptyOverrides();
+  return effectiveSettings(global, overrides).defaults;
 }
 
 /** Repo `defaults.thinking` wins when the key is present, including a blank. A blank or unknown name is `high`. */
 export function launchThinkingFromFiles(globalText: string | null, repoText: string | null): ThinkingLevel {
-  let global = "";
-  try {
-    if (globalText) {
-      const parsed = parse(globalText) as { global?: { defaults?: unknown } };
-      const thinking = defaultsThinking(parsed.global?.defaults);
-      if (thinking !== undefined) global = thinking;
-    }
-  } catch {
-    global = "";
-  }
-  let override: string | undefined;
-  try {
-    if (repoText) override = defaultsThinking((parse(repoText) as { defaults?: unknown }).defaults);
-  } catch {
-    override = undefined;
-  }
-  return thinkingLaunchLevel(override !== undefined ? override : global);
+  return thinkingLaunchLevel(launchDefaults(globalText, repoText)?.thinking);
 }
 
 /** Settings `defaults.model`, kept only for an empty harness or a launch harness. A leftover key drops it. */
@@ -62,40 +48,10 @@ export function launchModelFromChoice(harness: string, model: string): string {
   return "";
 }
 
-function defaultsChoice(value: unknown): { harness?: string; model?: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const row = value as { harness?: unknown; model?: unknown };
-  return {
-    ...(typeof row.harness === "string" ? { harness: row.harness } : {}),
-    ...(typeof row.model === "string" ? { model: row.model } : {}),
-  };
-}
-
 /** Repo keys win when present, including a blank. Same file split as `launchThinkingFromFiles`. */
 export function launchModelFromFiles(globalText: string | null, repoText: string | null): string {
-  let harness = "";
-  let model = "";
-  try {
-    if (globalText) {
-      const parsed = parse(globalText) as { global?: { defaults?: unknown } };
-      const choice = defaultsChoice(parsed.global?.defaults);
-      if (choice.harness !== undefined) harness = choice.harness;
-      if (choice.model !== undefined) model = choice.model;
-    }
-  } catch {
-    harness = "";
-    model = "";
-  }
-  try {
-    if (repoText) {
-      const choice = defaultsChoice((parse(repoText) as { defaults?: unknown }).defaults);
-      if (choice.harness !== undefined) harness = choice.harness;
-      if (choice.model !== undefined) model = choice.model;
-    }
-  } catch {
-    /* a broken repo file keeps the global choice */
-  }
-  return launchModelFromChoice(harness, model);
+  const defaults = launchDefaults(globalText, repoText);
+  return launchModelFromChoice(defaults?.harness ?? "", defaults?.model ?? "");
 }
 
 /** Every launch. A blank here is not the hosted fallback; that stays in `resolveModel`. */

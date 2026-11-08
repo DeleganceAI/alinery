@@ -1,0 +1,385 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "/x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     ""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "../x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a/./x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a/../x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a//x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "x.txt"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "**.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "*/x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a*b*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "C:\\\\x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a\\\\x.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a?.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a[1].md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "a:b.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "ticket-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "mode = \"single\"",
+     "mode = \"each\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "ticket-*.md"
+    ],
+    [
+     "mode = \"single\"",
+     "mode = \"each\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "ticket-*.md"
+    ],
+    [
+     "mode = \"single\"",
+     "mode = \"each\""
+    ],
+    [
+     "is_coding_step = false",
+     "is_coding_step = true"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "ticket-*.md"
+    ],
+    [
+     "mode = \"single\"",
+     "mode = \"each\""
+    ],
+    [
+     "mode = \"each\"}",
+     "mode = \"each\"}, {path = \"other-*.md\", mode = \"complete\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "outputs = [{path = \"result.md\"}]",
+     "outputs = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "ticket.md",
+     "research/result-*.md"
+    ],
+    [
+     "mode = \"single\"",
+     "mode = \"complete\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "attachments/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "attachments/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "Attachments/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "Attachments/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "ATTACHMENTS/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "ATTACHMENTS/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "aTtAcHmEnTs/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "aTtAcHmEnTs/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "subtasks/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "subtasks/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "Subtasks/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "Subtasks/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "SUBTASKS/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "SUBTASKS/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "sUbTaSkS/result.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "sUbTaSkS/nested/result-*.md"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace_all": [
+    [
+     "result.md",
+     "nested/attachments/result-*.md"
+    ],
+    [
+     "is_coding_step = false",
+     "is_coding_step = true"
+    ]
+   ]
+  }
+ ]
+}

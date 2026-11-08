@@ -3,288 +3,6 @@
 //! `use super::*` reaches the shared imports and fixtures in tests/mod.rs.
 use super::*;
 
-use crate::git_ops::{task_source_branches_in, TaskSourceHead};
-
-fn source_git(repo: &Path, args: &[&str]) -> String {
-    let output = git_cmd(repo).args(args).output().unwrap();
-    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8(output.stdout).unwrap().trim_end_matches('\n').to_owned()
-}
-
-#[test]
-fn task_sources_report_local_heads_for_the_selected_checkout() {
-    let repo = init_git_test_repo("task-sources-checkout");
-    source_git(&repo, &["branch", "-m", "current"]);
-    fs::write(repo.join("tracked"), "committed\n").unwrap();
-    source_git(&repo, &["add", "tracked"]);
-    source_git(&repo, &["commit", "-qm", "tracked"]);
-    source_git(&repo, &["branch", "chosen"]);
-    source_git(&repo, &["tag", "chosen"]);
-    source_git(&repo, &["update-ref", "refs/remotes/origin/remote-only", "HEAD"]);
-    let linked = repo.join("linked");
-    source_git(&repo, &["worktree", "add", "-q", linked.to_str().unwrap(), "chosen"]);
-    fs::write(repo.join("tracked"), "staged\n").unwrap();
-    source_git(&repo, &["add", "tracked"]);
-    fs::write(repo.join("tracked"), "unstaged\n").unwrap();
-    fs::write(repo.join("untracked"), "untracked\n").unwrap();
-    fs::write(linked.join("tracked"), "linked dirty\n").unwrap();
-    let head = fs::read(repo.join(".git/HEAD")).unwrap();
-    let oid = source_git(&repo, &["rev-parse", "HEAD"]);
-    let index = fs::read(repo.join(".git/index")).unwrap();
-    let linked_head_path = source_git(&linked, &["rev-parse", "--git-path", "HEAD"]);
-    let linked_index_path = source_git(&linked, &["rev-parse", "--git-path", "index"]);
-    let linked_head = fs::read(&linked_head_path).unwrap();
-    let linked_index = fs::read(&linked_index_path).unwrap();
-
-    let sources = task_source_branches_in(&repo, Some("refs/heads/chosen")).unwrap();
-    assert_eq!(
-        sources.branches.iter().map(|branch| (branch.full_ref.as_str(), branch.name.as_str())).collect::<Vec<_>>(),
-        [("refs/heads/chosen", "chosen"), ("refs/heads/current", "current")]
-    );
-    assert_eq!(
-        sources.head,
-        TaskSourceHead::Branch {
-            full_ref: "refs/heads/current".into(),
-            name: "current".into()
-        }
-    );
-    assert!(sources.selected.unwrap().available);
-    let linked_sources = task_source_branches_in(&linked, None).unwrap();
-    assert_eq!(
-        linked_sources.head,
-        TaskSourceHead::Branch {
-            full_ref: "refs/heads/chosen".into(),
-            name: "chosen".into()
-        }
-    );
-    assert_eq!(linked_sources.branches, sources.branches);
-    assert!(linked_sources.selected.is_none());
-    assert_eq!(fs::read(repo.join(".git/HEAD")).unwrap(), head);
-    assert_eq!(source_git(&repo, &["rev-parse", "HEAD"]), oid);
-    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
-    assert_eq!(fs::read(repo.join("tracked")).unwrap(), b"unstaged\n");
-    assert_eq!(fs::read(repo.join("untracked")).unwrap(), b"untracked\n");
-    assert_eq!(fs::read(&linked_head_path).unwrap(), linked_head);
-    assert_eq!(fs::read(&linked_index_path).unwrap(), linked_index);
-    assert_eq!(fs::read(linked.join("tracked")).unwrap(), b"linked dirty\n");
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn task_sources_preserve_a_captured_detached_commit() {
-    let repo = init_git_test_repo("task-sources-detached");
-    let first = source_git(&repo, &["rev-parse", "HEAD"]);
-    source_git(&repo, &["checkout", "-q", "--detach"]);
-    let sources = task_source_branches_in(&repo, None).unwrap();
-    assert_eq!(sources.head, TaskSourceHead::Detached { oid: first.clone() });
-    source_git(&repo, &["commit", "--allow-empty", "-qm", "later"]);
-    let later = source_git(&repo, &["rev-parse", "HEAD"]);
-    assert_ne!(first, later);
-    let sources = task_source_branches_in(&repo, Some(&first)).unwrap();
-    assert_eq!(sources.head, TaskSourceHead::Detached { oid: later });
-    let selected = sources.selected.unwrap();
-    assert_eq!(selected.base_ref, first);
-    assert!(selected.available);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn task_sources_distinguish_unborn_from_broken_head() {
-    let repo = init_git_test_repo("task-sources-unborn");
-    let empty_repo = repo.join("empty");
-    fs::create_dir(&empty_repo).unwrap();
-    source_git(&empty_repo, &["init", "-q"]);
-    source_git(&empty_repo, &["symbolic-ref", "HEAD", "refs/heads/new"]);
-    let empty = task_source_branches_in(&empty_repo, None).unwrap();
-    assert!(empty.branches.is_empty());
-    assert_eq!(
-        empty.head,
-        TaskSourceHead::Unborn {
-            full_ref: "refs/heads/new".into(),
-            name: "new".into()
-        }
-    );
-    source_git(&repo, &["branch", "-m", "committed"]);
-    source_git(&repo, &["checkout", "-q", "--orphan", "new"]);
-    let sources = task_source_branches_in(&repo, Some("refs/heads/new")).unwrap();
-    assert_eq!(
-        sources.head,
-        TaskSourceHead::Unborn {
-            full_ref: "refs/heads/new".into(),
-            name: "new".into()
-        }
-    );
-    assert_eq!(sources.branches.iter().map(|branch| branch.full_ref.as_str()).collect::<Vec<_>>(), ["refs/heads/committed"]);
-    assert!(!sources.selected.unwrap().available);
-    source_git(&repo, &["branch", "-D", "committed"]);
-    let empty = task_source_branches_in(&repo, None).unwrap();
-    assert!(empty.branches.is_empty());
-    assert_eq!(empty.head, sources.head);
-    fs::write(repo.join(".git/refs/heads/new"), format!("{}\n", "1".repeat(40))).unwrap();
-    assert!(task_source_branches_in(&repo, None).is_err(), "present broken HEAD must not be unborn");
-    fs::write(repo.join(".git/HEAD"), "invalid HEAD\n").unwrap();
-    assert!(task_source_branches_in(&repo, None).is_err());
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn task_sources_reject_invalid_selection_without_substitution() {
-    let repo = init_git_test_repo("task-sources-selection");
-    source_git(&repo, &["branch", "chosen"]);
-    source_git(&repo, &["tag", "chosen"]);
-    source_git(&repo, &["branch", "-D", "chosen"]);
-    fs::write(repo.join("blob"), "not a commit").unwrap();
-    let blob = source_git(&repo, &["hash-object", "-w", "blob"]);
-    let tree = source_git(&repo, &["rev-parse", "HEAD^{tree}"]);
-    let missing = "1".repeat(40);
-    let missing_sha256 = "1".repeat(64);
-    for invalid in [
-        "refs/heads/chosen",
-        missing.as_str(),
-        missing_sha256.as_str(),
-        blob.as_str(),
-        tree.as_str(),
-        "",
-        "chosen",
-        "HEAD",
-        "HEAD~0",
-        "refs/tags/chosen",
-        "refs/remotes/origin/main",
-        "--help",
-        " refs/heads/chosen",
-        "refs/heads/chosen ",
-        "refs/heads/chosen\n",
-        "refs/heads/../chosen",
-        "refs/heads/bad\0ref",
-        &blob[..12],
-    ] {
-        let selected = task_source_branches_in(&repo, Some(invalid)).unwrap().selected.unwrap();
-        assert_eq!(selected.base_ref, invalid);
-        assert!(!selected.available, "accepted invalid selection {invalid:?}");
-    }
-    let oid = source_git(&repo, &["rev-parse", "HEAD"]);
-    assert!(task_source_branches_in(&repo, Some(&oid)).unwrap().selected.unwrap().available);
-    let sha256 = repo.join("sha256");
-    fs::create_dir(&sha256).unwrap();
-    let initialized = git_cmd(&sha256).args(["init", "-q", "--object-format=sha256"]).output().unwrap();
-    if initialized.status.success() {
-        source_git(&sha256, &["config", "user.email", "test@alinery.local"]);
-        source_git(&sha256, &["config", "user.name", "alinery Test"]);
-        source_git(&sha256, &["commit", "--allow-empty", "-qm", "sha256"]);
-        let oid = source_git(&sha256, &["rev-parse", "HEAD"]);
-        assert_eq!(oid.len(), 64);
-        source_git(&sha256, &["checkout", "-q", "--detach"]);
-        let sources = task_source_branches_in(&sha256, Some(&oid)).unwrap();
-        assert_eq!(sources.head, TaskSourceHead::Detached { oid: oid.clone() });
-        assert_eq!(sources.selected.as_ref().unwrap().base_ref, oid);
-        assert!(sources.selected.unwrap().available);
-        let abbreviated = &oid[..40];
-        let sources = task_source_branches_in(&sha256, Some(abbreviated)).unwrap();
-        let selected = sources.selected.unwrap();
-        assert_eq!(selected.base_ref, abbreviated);
-        assert!(!selected.available, "a SHA-256 abbreviation is not a full saved commit identity");
-        assert!(!sources.branches.is_empty(), "invalid saved identity must not block replacement");
-    } else {
-        let error = String::from_utf8_lossy(&initialized.stderr);
-        assert!(error.contains("unknown hash algorithm") || error.contains("unknown option"), "{error}");
-        eprintln!("SHA-256 Git fixture unsupported: {error}");
-    }
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn task_sources_surface_read_failures_instead_of_empty_success() {
-    for damage in ["packed-ref", "loose-ref", "missing-object", "corrupt-object", "noncommit-ref", "invalid-repo"] {
-        let repo = init_git_test_repo(&format!("task-sources-{damage}"));
-        let oid = source_git(&repo, &["rev-parse", "HEAD"]);
-        match damage {
-            "packed-ref" => fs::write(repo.join(".git/packed-refs"), "not a packed ref\n").unwrap(),
-            "loose-ref" => fs::write(repo.join(".git/refs/heads/broken"), "not an oid\n").unwrap(),
-            "missing-object" => fs::remove_file(repo.join(".git/objects").join(&oid[..2]).join(&oid[2..])).unwrap(),
-            "corrupt-object" => {
-                let object = repo.join(".git/objects").join(&oid[..2]).join(&oid[2..]);
-                fs::remove_file(&object).unwrap();
-                fs::write(object, "corrupt").unwrap();
-            }
-            "noncommit-ref" => {
-                let tree = source_git(&repo, &["rev-parse", "HEAD^{tree}"]);
-                fs::write(repo.join(".git/refs/heads/broken"), format!("{tree}\n")).unwrap();
-            }
-            "invalid-repo" => fs::remove_dir_all(repo.join(".git")).unwrap(),
-            _ => unreachable!(),
-        }
-        assert!(task_source_branches_in(&repo, None).is_err(), "accepted {damage}");
-        let _ = fs::remove_dir_all(repo);
-    }
-    let repo = init_git_test_repo("task-sources-corrupt-selection");
-    let saved = source_git(&repo, &["rev-parse", "HEAD"]);
-    source_git(&repo, &["commit", "--allow-empty", "-qm", "new tip"]);
-    let object = repo.join(".git/objects").join(&saved[..2]).join(&saved[2..]);
-    fs::remove_file(&object).unwrap();
-    fs::write(object, "corrupt").unwrap();
-    assert!(task_source_branches_in(&repo, Some(&saved)).is_err(), "corrupt saved object must not become missing");
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[cfg(unix)]
-#[test]
-fn task_sources_surface_git_execution_and_output_failures() {
-    use std::os::unix::fs::PermissionsExt;
-    const CHILD_REPO: &str = "ALINERY_TEST_SOURCE_BOUNDARY_REPO";
-    if let Some(repo) = std::env::var_os(CHILD_REPO) {
-        let result = task_source_branches_in(Path::new(&repo), Some(&"1".repeat(40)));
-        assert!(result.is_err(), "invalid Git boundary became a successful source snapshot: {result:?}");
-        return;
-    }
-    let repo = init_git_test_repo("task-sources-boundary");
-    let executable = std::env::current_exe().unwrap();
-    let real_git = git_cmd(&repo).get_program().to_string_lossy().replace('\'', "'\\''");
-    let wrapper = repo.join("boundary-git");
-    for (command, failure) in [
-        ("for-each-ref", "printf '\\377\\n'"),
-        ("for-each-ref", "printf 'malformed output\\n'"),
-        ("for-each-ref", "printf 'warning: ignoring broken ref\\n' >&2"),
-        ("symbolic-ref", "exit 2"),
-        ("symbolic-ref", "printf 'HEAD\\n'"),
-        ("cat-file", "printf 'malformed object output\\n'"),
-        ("cat-file", "exit 2"),
-    ] {
-        fs::write(
-            &wrapper,
-            format!("#!/bin/sh\nfor arg do\n  if [ \"$arg\" = '{command}' ]; then\n    {failure}\n    exit 0\n  fi\ndone\nexec '{real_git}' \"$@\"\n"),
-        )
-        .unwrap();
-        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
-        let child = std::process::Command::new(&executable)
-            .args(["--exact", "tests::git_ops::task_sources_surface_git_execution_and_output_failures", "--nocapture"])
-            .env(CHILD_REPO, &repo)
-            .env("ALINERY_GIT_PATH", &wrapper)
-            .output()
-            .unwrap();
-        assert!(
-            child.status.success(),
-            "{command} / {failure}: {}{}",
-            String::from_utf8_lossy(&child.stdout),
-            String::from_utf8_lossy(&child.stderr)
-        );
-    }
-    // An existing but non-executable override must fail spawning, not select PATH Git.
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o644)).unwrap();
-    let child = std::process::Command::new(executable)
-        .args(["--exact", "tests::git_ops::task_sources_surface_git_execution_and_output_failures", "--nocapture"])
-        .env(CHILD_REPO, &repo)
-        .env("ALINERY_GIT_PATH", &wrapper)
-        .output()
-        .unwrap();
-    assert!(
-        child.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&child.stdout),
-        String::from_utf8_lossy(&child.stderr)
-    );
-    let _ = fs::remove_dir_all(repo);
-}
-
 #[test]
 fn git_top_level_rejects_non_git_dir() {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -293,112 +11,6 @@ fn git_top_level_rejects_non_git_dir() {
     let err = git_top_level(&dir).unwrap_err();
     let _ = fs::remove_dir_all(&dir);
     assert!(err.contains("not a git repo"));
-}
-
-#[test]
-fn compare_url_ssh_https_github_gitea() {
-    // GitHub: both ssh and https resolve to the same compare URL, with ?expand=1.
-    let gh = "https://github.com/owner/repo/compare/main...feat?expand=1";
-    assert_eq!(compare_url("git@github.com:owner/repo.git", "main", "feat").as_deref(), Some(gh));
-    assert_eq!(compare_url("https://github.com/owner/repo.git", "main", "feat").as_deref(), Some(gh));
-    assert_eq!(compare_url("https://github.com/owner/repo", "main", "feat").as_deref(), Some(gh));
-    assert_eq!(compare_url("ssh://git@github.com/owner/repo.git", "main", "feat").as_deref(), Some(gh));
-    // Gitea (self-hosted host): NO ?expand=1.
-    assert_eq!(
-        compare_url("git@git.example.com:team/proj.git", "main", "wip").as_deref(),
-        Some("https://git.example.com/team/proj/compare/main...wip")
-    );
-    assert_eq!(
-        compare_url("https://gitea.example.com/team/proj", "trunk", "wip").as_deref(),
-        Some("https://gitea.example.com/team/proj/compare/trunk...wip")
-    );
-    // Garbage / non-remote strings don't parse into a URL.
-    assert_eq!(compare_url("not a url", "main", "x"), None);
-    assert_eq!(compare_url("https://github.com/onlyowner", "main", "x"), None);
-    // Embedded credentials in an https remote are STRIPPED (never leak into the URL).
-    assert_eq!(
-        compare_url("https://x-access-token:ghp_secret@github.com/owner/repo.git", "main", "feat").as_deref(),
-        Some(gh)
-    );
-    // ssh:// with an explicit SSH port drops the port (unknowable web port → default https).
-    assert_eq!(
-        compare_url("ssh://git@gitea.example.com:2222/team/proj.git", "main", "wip").as_deref(),
-        Some("https://gitea.example.com/team/proj/compare/main...wip")
-    );
-    // ...but an https remote's explicit web port is KEPT (it IS the web port).
-    assert_eq!(
-        compare_url("https://gitea.example.com:3000/team/proj", "main", "wip").as_deref(),
-        Some("https://gitea.example.com:3000/team/proj/compare/main...wip")
-    );
-}
-
-#[test]
-fn worktree_exists_flags_missing_dir() {
-    let _guard = ACTIVE_REPO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let repo = init_git_test_repo("worktree-exists");
-    set_active_repo_global(Some(repo.clone())).unwrap();
-
-    let task = create_task_for_test(&repo, "Worktree Exists Task", true, "", "");
-    assert!(worktree_exists(task.slug.clone()).expect("worktree_exists ok"));
-
-    fs::remove_dir_all(&task.worktree).unwrap();
-    assert!(!worktree_exists(task.slug.clone()).expect("worktree_exists ok after removal"));
-
-    // A task whose `worktree` field is already "" (e.g. after remove_worktree) is never
-    // reported as existing, regardless of what's on disk.
-    let mut bare = task.clone();
-    bare.worktree.clear();
-    write_task(&repo, &bare).unwrap();
-    assert!(!worktree_exists(bare.slug.clone()).expect("worktree_exists ok for empty path"));
-
-    set_active_repo_global(None).unwrap();
-    let _ = fs::remove_dir_all(&repo);
-}
-
-#[test]
-fn post_git_updates_do_not_resurrect_a_purged_task() {
-    let repo = init_git_test_repo("post-git-purge");
-    let task = create_task_for_test(&repo, "Post Git Purge", true, "", "");
-    let worktree = task.worktree.clone();
-    let branch = task.branch.clone();
-    alinery_core::mutate_task(&repo, &task.slug, "archive test task", |task| {
-        task.archived = true;
-        Ok(())
-    })
-    .unwrap();
-
-    let result = alinery_core::purge_archived_storage(&repo, &|_, _| {}).unwrap();
-    assert_eq!(result.deleted_tasks, 1);
-    assert!(!task_dir(&repo, &task.slug).exists());
-
-    let push_error = crate::record_pushed_url_in(&repo, &task.slug, &branch, "https://example.com/pr/1").unwrap_err();
-    assert_eq!(push_error, format!("no such task: {}", task.slug));
-    let removal_error = crate::record_removed_worktree_in(&repo, &task.slug, &worktree).unwrap_err();
-    assert_eq!(removal_error, format!("no such task: {}", task.slug));
-    assert!(!task_dir(&repo, &task.slug).exists());
-
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn commit_worktree_stages_and_commits_then_reports_clean() {
-    let repo = init_git_test_repo("commit-worktree");
-    let task = create_task_for_test(&repo, "Commit Demo", true, "", "");
-
-    fs::write(Path::new(&task.worktree).join("new-file.txt"), "hello\n").unwrap();
-    commit_worktree_in(&repo, task.slug.clone(), "test commit".into()).expect("commit succeeds");
-
-    let status = git_cmd(&task.worktree).args(["status", "--porcelain"]).output().unwrap();
-    assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty(), "worktree clean after commit");
-
-    let log = git_cmd(&task.worktree).args(["log", "-1", "--format=%s"]).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "test commit");
-
-    // Nothing changed since -> git's own "nothing to commit" surfaces verbatim.
-    let err = commit_worktree_in(&repo, task.slug.clone(), "again".into()).unwrap_err();
-    assert!(err.contains("nothing to commit"), "unexpected error: {err}");
-
-    let _ = fs::remove_dir_all(&repo);
 }
 
 // Git refuses to create `fix/thing` when a ref named `fix` exists, and vice versa —
@@ -437,104 +49,6 @@ fn branch_ref_conflicts_is_false_outside_a_git_repo_rather_than_panicking() {
     let dir = std::env::temp_dir().join(format!("alinery-not-a-repo-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     assert!(!crate::branch_ref_conflicts(&dir, "anything"));
-}
-
-#[test]
-fn default_base_branch_falls_back_to_main_without_an_origin_head() {
-    // A fresh local repo has no origin/HEAD. The PR compare URL still needs a base, and
-    // guessing "main" is better than failing the whole flow.
-    let repo = init_git_test_repo("default-base-branch");
-    assert_eq!(crate::default_base_branch(&repo), "main");
-}
-
-#[test]
-fn default_base_branch_reads_origin_head_when_it_is_set() {
-    let repo = init_git_test_repo("default-base-branch-origin");
-    // What `git remote set-head origin` leaves behind. symbolic-ref creates the file
-    // itself; pre-creating an empty one at that path makes it refuse.
-    let out = git_cmd(&repo)
-        .args(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "symbolic-ref failed: {}", String::from_utf8_lossy(&out.stderr));
-
-    assert_eq!(crate::default_base_branch(&repo), "trunk");
-}
-
-#[test]
-fn pull_request_batch_bounds_concurrency_deduplicates_and_isolates_errors() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{mpsc, Condvar};
-
-    let mut refs: Vec<_> = (0..12)
-        .map(|index| crate::TaskActivityRef {
-            repo_path: format!("/repo-{}", index % 2),
-            task_slug: format!("task-{}", index / 2),
-        })
-        .collect();
-    refs.push(crate::TaskActivityRef {
-        repo_path: "/repo-0".into(),
-        task_slug: "task-0".into(),
-    });
-    let active = AtomicUsize::new(0);
-    let peak = AtomicUsize::new(0);
-    let seen = Mutex::new(Vec::new());
-    let release = (Mutex::new(false), Condvar::new());
-    let (started_tx, started_rx) = mpsc::channel();
-    let (started, snapshots) = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| {
-            crate::task_pull_request_snapshots_with(refs, |reference| {
-                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
-                peak.fetch_max(count, Ordering::SeqCst);
-                seen.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(crate::task_activity_key(&reference.repo_path, &reference.task_slug));
-                started_tx.send(()).unwrap();
-                let _released = release
-                    .1
-                    .wait_while(release.0.lock().unwrap_or_else(|e| e.into_inner()), |released| !*released)
-                    .unwrap_or_else(|e| e.into_inner());
-                active.fetch_sub(1, Ordering::SeqCst);
-                if reference.task_slug == "task-0" {
-                    if reference.repo_path == "/repo-0" {
-                        return Err("lookup failed".into());
-                    }
-                    return Ok(Some(crate::PullRequest {
-                        number: 42,
-                        url: "https://github.com/team/project/pull/42".into(),
-                        state: crate::PullRequestState::Open,
-                    }));
-                }
-                Ok(None)
-            })
-        });
-        // Hold lookups open until four start; release even on failure so a serial
-        // regression fails an assertion instead of leaving the test deadlocked.
-        let started = (0..4).all(|_| started_rx.recv_timeout(Duration::from_secs(10)).is_ok());
-        *release.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
-        release.1.notify_all();
-        (started, worker.join().unwrap())
-    });
-    assert!(started, "four independent lookups must start before any completes");
-    assert_eq!(peak.load(Ordering::SeqCst), 4, "the batch must not exceed four concurrent lookups");
-    let mut seen = seen.into_inner().unwrap();
-    assert_eq!(seen.len(), 12, "duplicate references must not trigger another lookup");
-    seen.sort();
-    seen.dedup();
-    assert_eq!(seen.len(), 12);
-    assert_eq!(snapshots.len(), 12);
-    assert_eq!(snapshots["/repo-0:task-0"].error.as_deref(), Some("lookup failed"));
-    assert!(snapshots["/repo-0:task-0"].pr.is_none());
-    assert_eq!(snapshots["/repo-1:task-0"].pr.as_ref().unwrap().number, 42);
-    for (key, snapshot) in &snapshots {
-        if key != "/repo-0:task-0" {
-            assert!(snapshot.error.is_none(), "one failure must not discard unrelated results");
-        }
-        if !key.ends_with(":task-0") {
-            assert!(snapshot.pr.is_none());
-        }
-    }
-    assert!(crate::task_pull_request_snapshots_with(vec![], |_| panic!("empty batch must not look up a task")).is_empty());
 }
 
 fn github_pull_fixture(number: u64, owner: &str, branch: &str, state: &str, merged: bool) -> serde_json::Value {
@@ -600,96 +114,73 @@ fn branch_pull_requests_require_exact_head_and_prefer_open_then_latest() {
 }
 
 #[test]
-fn discovery_persists_real_link_and_queries_it_after_branch_removal() {
-    let repo = init_git_test_repo("pr-discovery");
-    let mut task = create_task_for_test(&repo, "PR discovery", false, "", "");
-    task.pr_url = "https://github.com/team/project/compare/main...feature".into();
-    write_task(&repo, &task).unwrap();
-    let discovered = crate::task_pull_request_with(
-        &repo,
-        &task.slug,
-        || Ok(Some(("team".into(), "project".into()))),
-        |_, fields| {
-            if fields.contains(&("state", "open")) {
-                Ok(serde_json::json!([]))
-            } else {
-                Ok(serde_json::json!([github_pull_fixture(42, "team", &task.branch, "closed", true)]))
-            }
-        },
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(discovered.state, crate::PullRequestState::Merged);
-    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, discovered.url);
-    crate::record_pushed_url_in(&repo, &task.slug, &task.branch, "https://github.com/team/project/compare/main...feature").unwrap();
-    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, discovered.url);
-    alinery_core::mutate_task(&repo, &task.slug, "remove task branch", |task| {
-        task.branch.clear();
-        task.worktree.clear();
-        Ok(())
-    })
-    .unwrap();
-    let retained = crate::task_pull_request_with(
-        &repo,
-        &task.slug,
-        || panic!("stored PR must not depend on origin or branch"),
-        |endpoint, _| {
-            assert_eq!(endpoint, "repos/team/project/pulls/42");
-            Ok(github_pull_fixture(42, "team", "deleted-branch", "closed", true))
-        },
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(retained, discovered);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn failed_discovery_does_not_look_like_no_pull_request_or_change_the_link() {
-    let repo = init_git_test_repo("pr-lookup-error");
-    let task = create_task_for_test(&repo, "PR lookup error", false, "", "");
-    let error = crate::task_pull_request_with(
-        &repo,
-        &task.slug,
-        || Ok(Some(("team".into(), "project".into()))),
-        |_, _| Err("authentication failed".into()),
-    )
-    .unwrap_err();
-    assert_eq!(error, "authentication failed");
-    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, task.pr_url);
-    let no_pr = crate::task_pull_request_with(&repo, &task.slug, || Ok(Some(("team".into(), "project".into()))), |_, _| Ok(serde_json::json!([]))).unwrap();
-    assert_eq!(no_pr, None);
-    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, task.pr_url);
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
-fn discovery_does_not_overwrite_concurrent_branch_or_link_edits() {
-    let repo = init_git_test_repo("pr-discovery-race");
-    let task = create_task_for_test(&repo, "PR discovery race", false, "", "");
-    alinery_core::mutate_task(&repo, &task.slug, "replace branch", |task| {
-        task.branch = "replacement".into();
-        Ok(())
-    })
-    .unwrap();
-    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &task.branch, &task.pr_url, "https://github.com/team/project/pull/42").is_err());
-    let changed = read_task(&repo, &task.slug).unwrap();
-    assert_eq!(changed.branch, "replacement");
-    assert_eq!(changed.pr_url, task.pr_url);
-    crate::set_pr_url_in(&repo, task.slug.clone(), "https://github.com/team/project/pull/99".into()).unwrap();
-    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &changed.branch, &changed.pr_url, "https://github.com/team/project/pull/42").is_err());
-    assert_eq!(read_task(&repo, &task.slug).unwrap().pr_url, "https://github.com/team/project/pull/99");
-    fs::remove_dir_all(task_dir(&repo, &task.slug)).unwrap();
-    assert!(crate::record_discovered_pull_request_in(&repo, &task.slug, &changed.branch, &changed.pr_url, "https://github.com/team/project/pull/42").is_err());
-    assert!(!task_dir(&repo, &task.slug).exists());
-    let _ = fs::remove_dir_all(repo);
-}
-
-#[test]
 fn malformed_pull_request_state_and_url_are_errors_not_missing_prs() {
     let mut pull = github_pull_fixture(42, "team", "feature", "unknown", false);
     assert!(crate::select_branch_pull_request(&serde_json::json!([pull.clone()]), "team", "project", "feature").is_err());
     pull["state"] = serde_json::json!("open");
     pull["html_url"] = serde_json::json!("https://example.com/team/project/pull/42");
     assert!(crate::select_branch_pull_request(&serde_json::json!([pull]), "team", "project", "feature").is_err());
+}
+
+#[test]
+fn a_stored_pull_request_link_is_looked_up_by_number_without_the_branch_or_origin() {
+    let found = crate::find_task_pull_request(
+        "https://github.com/team/project/pull/42",
+        "",
+        || panic!("a stored PR must not depend on the origin"),
+        |endpoint, fields| {
+            assert_eq!(endpoint, "repos/team/project/pulls/42");
+            assert!(fields.is_empty());
+            Ok(github_pull_fixture(42, "team", "deleted-branch", "closed", true))
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(found.number, 42);
+    assert_eq!(found.state, crate::PullRequestState::Merged);
+    // GitHub answering with another number is not the stored PR.
+    let wrong = crate::find_task_pull_request(
+        "https://github.com/team/project/pull/42",
+        "",
+        || Ok(None),
+        |_, _| Ok(github_pull_fixture(43, "team", "x", "open", false)),
+    );
+    assert!(wrong.is_err());
+}
+
+#[test]
+fn a_creation_form_link_falls_back_to_the_branch_and_asks_open_before_all() {
+    let mut asked = Vec::new();
+    let found = crate::find_task_pull_request(
+        "https://github.com/team/project/compare/main...feature?expand=1",
+        "feature",
+        || Ok(Some(("team".into(), "project".into()))),
+        |endpoint, fields| {
+            assert_eq!(endpoint, "repos/team/project/pulls");
+            let state = fields.iter().find(|(key, _)| *key == "state").unwrap().1.to_string();
+            asked.push(state.clone());
+            if state == "open" {
+                Ok(serde_json::json!([]))
+            } else {
+                Ok(serde_json::json!([github_pull_fixture(42, "team", "feature", "closed", true)]))
+            }
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(asked, ["open", "all"]);
+    assert_eq!(found.state, crate::PullRequestState::Merged);
+}
+
+#[test]
+fn a_failed_lookup_is_an_error_and_no_origin_or_no_branch_is_no_pull_request() {
+    let origin = || Ok(Some(("team".to_string(), "project".to_string())));
+    let error = crate::find_task_pull_request("", "feature", origin, |_, _| Err("authentication failed".into())).unwrap_err();
+    assert_eq!(error, "authentication failed");
+    assert_eq!(crate::find_task_pull_request("", "feature", origin, |_, _| Ok(serde_json::json!([]))).unwrap(), None);
+    assert_eq!(
+        crate::find_task_pull_request("", "feature", || Ok(None), |_, _| panic!("no origin, no request")).unwrap(),
+        None
+    );
+    assert_eq!(crate::find_task_pull_request("", "", origin, |_, _| panic!("no branch, no request")).unwrap(), None);
 }

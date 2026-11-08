@@ -13,21 +13,30 @@ import {
   type ChatTranscriptState,
   emptyTranscript,
   needsUiReply,
-  type PendingUi,
-  watchVinculumTranscript,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import {
+  abortChatThread,
+  copyChatThreadAttachments,
+  promptChatThread,
+  readChatThreadImage,
+  resumeChatThread,
+  setChatModel,
+  startChatThread,
+  writeChatThreadAttachmentBytes,
+} from "../sync/chat";
+import { useSessionObservation } from "../sync/sessionObservation";
+import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
-import { applyPlainSend, chatTerminalIo, olderPageState, sendCommand, sendNowCommand } from "./chatSession";
+import { applyPlainSend, chatTerminalIo, sendCommand, sendNowCommand } from "./chatSession";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
-import { useChatUiReplies } from "./useChatUiReplies";
 
 export function threadLabel(thread: ChatThread): string {
   if (thread.name) return thread.name;
@@ -82,7 +91,6 @@ export type ChatThreadSnapshot = {
   attachments: DraftAttachment[];
   sending: boolean;
   error: string;
-  loadingOlder: boolean;
   processLive: boolean;
   inTerminal: boolean;
   terminalIo: SessionTerminalIo | undefined;
@@ -92,7 +100,6 @@ export type ChatThreadSnapshot = {
   blocked: boolean;
   disconnected: string | null;
   sendNowEnabled: boolean;
-  prompt: PendingUi | undefined;
   providersDialog: { tab: ProvidersDialogTab; preselect: string } | null;
   toolsOpen: boolean;
   mcpDialog: { rows: McpServerRow[]; empty: boolean } | null;
@@ -103,8 +110,6 @@ type ChatThreadApi = {
   sendNow: (who: symbol) => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setDraft: (value: string) => void;
   stagePaths: (paths: string[]) => void;
   stageBlobs: (files: File[]) => void;
@@ -113,9 +118,6 @@ type ChatThreadApi = {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
   applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
@@ -130,7 +132,6 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   attachments: [],
   sending: false,
   error: "",
-  loadingOlder: false,
   processLive: false,
   inTerminal: false,
   terminalIo: undefined,
@@ -140,7 +141,6 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   blocked: false,
   disconnected: null,
   sendNowEnabled: false,
-  prompt: undefined,
   providersDialog: null,
   toolsOpen: false,
   mcpDialog: null,
@@ -151,8 +151,6 @@ const NO_API: ChatThreadApi = {
   sendNow: () => {},
   abort: () => {},
   reconnect: () => {},
-  loadOlder: () => {},
-  setObserved: () => {},
   setDraft: () => {},
   stagePaths: () => {},
   stageBlobs: () => {},
@@ -161,9 +159,6 @@ const NO_API: ChatThreadApi = {
   setProvidersDialog: () => {},
   setToolsOpen: () => {},
   setMcpDialog: () => {},
-  approve: () => {},
-  reply: () => {},
-  cancelUi: () => {},
   applyControls: () => {},
 };
 
@@ -430,14 +425,9 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   sendNow: () => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
   applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
 };
 
@@ -507,11 +497,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const entry = key ? registry.entries.get(key) : undefined;
   const api = entry?.api ?? NO_API;
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
-  // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
-  // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback((id: string, allow: boolean) => {
-    entry?.api.approve(id, allow);
-  }, [entry]);
   return {
     ...snap,
     error,
@@ -535,14 +520,9 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     },
     abort: () => api.abort(),
     reconnect: () => api.reconnect(),
-    loadOlder: () => api.loadOlder(),
-    setObserved: (value) => api.setObserved(value),
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
-    approve,
-    reply: (id, value) => api.reply(id, value),
-    cancelUi: (id) => api.cancelUi(id),
     applyControls: (controls) => api.applyControls(controls),
   };
 }
@@ -557,9 +537,9 @@ function nextAttachmentId() {
 function threadAttachmentStore(repoPath: string, sessionId: string) {
   return {
     stat: (path: string) => ipc.chatFileStat(path),
-    copy: (paths: string[]) => ipc.copyChatThreadAttachments(repoPath, sessionId, paths),
-    writeBytes: (fileName: string, bytes: number[]) => ipc.writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, bytes),
-    readImage: (name: string) => ipc.readChatThreadImage(repoPath, sessionId, name),
+    copy: (paths: string[]) => copyChatThreadAttachments(repoPath, sessionId, paths),
+    writeBytes: (fileName: string, bytes: number[]) => writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, Uint8Array.from(bytes)),
+    readImage: (name: string) => readChatThreadImage(repoPath, sessionId, name),
     trailerDir: chatThreadAttachmentDir(repoPath, sessionId),
   };
 }
@@ -583,13 +563,13 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const [transcript, setTranscript] = useState<ChatTranscriptState>(NO_TRANSCRIPT);
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
-  const [observation, setObservation] = useState<SessionObservation | null>(null);
+  const observation = useSessionObservation(repo, "", id);
+  const endedRef = useRef<(() => void) | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
   const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const mcpListWait = useRef(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const [autoCompaction, setAutoCompactionState] = useState(entry.autoCompaction);
   const autoCompactionRef = useRef(autoCompaction);
   autoCompactionRef.current = entry.autoCompaction;
@@ -617,7 +597,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   useEffect(() => {
     const threadNow = entry.thread ?? thread;
     compactionPushed.current = `${key}:${autoCompactionRef.current}`;
-    const attachId = ipc.nextAttachId();
     const claimed = registry.pendingPrompt?.key === key ? registry.pendingPrompt : null;
     let cancelled = false;
     registry.setError((current) => (current === "cannot continue" ? "" : current));
@@ -629,50 +608,16 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       setConnection({ state: "offline" });
       for (const sub of entry.subs.values()) void Promise.resolve(sub.onReload()).catch(() => {});
     };
-    const stopClosed = ipc.onStreamClosed(
-      id,
-      attachId,
-      () => {
-        ipc.chatSessionStatus(repo, id).then(
-          (next) => {
-            if (cancelled || next.transport === "pty") return;
-            if (next.transport === "rpc" && next.lifecycle.state === "live") setEpoch((value) => value + 1);
-            else ended();
-          },
-          () => {
-            if (!cancelled) setEpoch((value) => value + 1);
-          },
-        );
-      },
-      () => {
-        if (!cancelled) setConnection({ state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." });
-      },
-    );
-    const observe = () => {
-      if (!entryIsActive(entry)) return;
-      ipc
-        .chatSessionStatus(repo, id)
-        .then((next) => {
-          if (cancelled) return;
-          setObservation(next);
-          if (threadNow.session.ended_at == null && (next.lifecycle.state === "exited" || next.lifecycle.state === "live_exited")) ended();
-        })
-        .catch(() => {});
-    };
-    observe();
-    const timer = window.setInterval(observe, 1500);
+    endedRef.current = ended;
     const dropClaim = (message: string) => {
       if (!claimed || registry.pendingPrompt !== claimed) return;
       registry.pendingPrompt = null;
       registry.setSending(null);
       registry.setError(message);
     };
-    const stopTranscript = watchVinculumTranscript(
-      () => ipc.chatTranscript(repo, id),
-      (messages) => {
-        if (!cancelled) updateTranscript(() => applyVinculumTranscript(messages));
-      },
-    );
+    const stopTranscript = watchSessionTranscript(repo, { taskSlug: "", id }, (reply) => {
+      if (!cancelled) updateTranscript(() => applyVinculumTranscript(reply));
+    });
     if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
       setConnection({ state: "offline" });
       dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
@@ -699,11 +644,17 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     }
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      endedRef.current = null;
       stopTranscript();
-      stopClosed();
     };
   }, [epoch, repo, id]);
+
+  // A thread whose process has exited ends the attach, once per attach.
+  const stopped = observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a new attach, which may need ending again
+  useEffect(() => {
+    if (stopped && (entry.thread ?? thread).session.ended_at == null && entryIsActive(entry)) endedRef.current?.();
+  }, [stopped, epoch]);
 
   async function writeSend(
     text: string,
@@ -715,7 +666,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      await ipc.chatPrompt(repo, id, text);
+      await promptChatThread(repo, id, text);
     } catch (cause) {
       entry.verdicts.delete(command.id);
       throw cause;
@@ -749,8 +700,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.ended_at != null || currentThread.session.archived) {
       registry.setSending(key);
       try {
-        const successor = await ipc.resumeChatThread(repo, id);
-        const next = `${repo}:${successor.id}`;
+        const successorId = await resumeChatThread(repo, id);
+        const next = `${repo}:${successorId}`;
         const refresh = sub()?.onResumeRefresh;
         const rebind = sub()?.onRebind;
         // Checked before the list refresh: that refresh drops the ended row, and flushing it
@@ -773,7 +724,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.started_at == null) {
       registry.setSending(key);
       try {
-        const started = await ipc.startChatThread(repo, id);
+        const started = await startChatThread(repo, id, currentThread.session.model ?? "");
         if (started.start === "failed") {
           registry.setSending(null);
           registry.setError(started.errors?.[0]?.message ?? "start failed");
@@ -861,7 +812,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     try {
       const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
       const row = prepared ? draftToRowAttachments(attachments) : undefined;
-      await ipc.chatAbort(repo, id).catch(() => undefined);
+      await abortChatThread(repo, id).catch(() => undefined);
       await writeSend(
         prepared?.message ?? text,
         sendNowCommand(prepared?.message ?? text, prepared?.images),
@@ -878,19 +829,11 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   function abort() {
     updateTranscript((current) => appendOptimisticAbort(current));
-    ipc.chatAbort(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
+    abortChatThread(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
   }
 
   const activity = chatActivity(observation, transcript);
   const processLive = observation?.state?.process.state === "alive";
-  const ui = useChatUiReplies({
-    repo,
-    id,
-    live: processLive,
-    transcript,
-    setTranscript: updateTranscript,
-    onError: (message) => registry.setError(message),
-  });
   const inTerminal = processLive && observation?.transport === "pty";
   const terminalIo = useMemo(() => chatTerminalIo(repo, id), [repo, id]);
   const agentState = observation?.state?.agent?.state;
@@ -902,24 +845,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     agentState !== "waiting_for_approval" &&
     !pendingUiReply &&
     (entry.draft.trim().length > 0 || entry.attachments.length > 0);
-
-  const olderBusy = useRef(false);
-  const loadOlder = useCallback(() => {
-    const from = transcriptRef.current.fileStart;
-    if (olderBusy.current || from == null || from === 0) return;
-    olderBusy.current = true;
-    setLoadingOlder(true);
-    ipc
-      .readChatOmp({ repoPath: repo, id, end: from })
-      .then((buffer) => {
-        if (alive.current) updateTranscript((current) => olderPageState(current, buffer));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        olderBusy.current = false;
-        if (alive.current) setLoadingOlder(false);
-      });
-  }, [repo, id, updateTranscript]);
 
   useEffect(() => {
     const pushed = `${key}:${autoCompaction}`;
@@ -998,8 +923,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     },
     abort,
     reconnect: () => setEpoch((value) => value + 1),
-    loadOlder,
-    setObserved: (value) => setObservation(value),
     setDraft: (value) => {
       entry.draft = value;
       registry.touch(entry);
@@ -1025,9 +948,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     setProvidersDialog,
     setToolsOpen,
     setMcpDialog,
-    approve: ui.approve,
-    reply: ui.reply,
-    cancelUi: ui.cancel,
     applyControls: (controls) => updateTranscript((current) => applySessionControls(current, controls)),
   };
 
@@ -1040,7 +960,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     attachments: entry.attachments,
     sending: registry.sendingKey === key,
     error: registry.error,
-    loadingOlder,
     processLive,
     inTerminal,
     terminalIo,
@@ -1050,7 +969,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     blocked: registry.error === "cannot continue",
     disconnected: connection.state === "failed" && !inTerminal ? connection.detail : null,
     sendNowEnabled,
-    prompt: ui.prompt,
     providersDialog,
     toolsOpen,
     mcpDialog,
@@ -1076,7 +994,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           current={transcript.sessionMeta.model}
           onPick={(model) => {
             setProvidersDialog(null);
-            void ipc.chatSetModel(repo, id, model).then(
+            void setChatModel(repo, id, model).then(
               (controls) => updateTranscript((current) => applySessionControls(current, controls)),
               (cause: unknown) => registry.setError(String(cause)),
             );

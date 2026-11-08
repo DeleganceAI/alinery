@@ -1,0 +1,67 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "repo",
+    "key": "team"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "team"
+   },
+   "bundled": {
+    "key": "one-shot",
+    "title": "X"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "repo",
+    "key": "team"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "global",
+    "key": "gone"
+   },
+   "bundled": {
+    "key": "one-shot",
+    "title": "G",
+    "set_key": "gone"
+   }
+  },
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "bundled",
+    "key": "one-shot"
+   }
+  },
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "bundled",
+    "key": "one-shot"
+   }
+  }
+ ],
+ "no_repo": true
+}

@@ -1,8 +1,11 @@
 //! mcp: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-// R2: spawn (or reuse) a managed alinery-mcp child in --serve mode for the active repo.
+// R2: spawn (or reuse) the managed MCP child for the active repo: the daemon binary in `--mcp --serve --managed` mode (S5.1, O10 b).
 // The child lives only as long as the app (or until repo switch). It is killed on app exit.
+//
+// It calls each daemon over its RPC socket with an AGENT token this app mints (O20 c) and keeps in an owner-only endpoints file the
+// child re-reads on every call, so a repository opened or a daemon restarted after the child started is found without restarting it.
 pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Path, restart: bool) {
     // Selection stays stable through check/stop/spawn. A stale caller for A must
     // never terminate B's MCP after a concurrent repository switch.
@@ -14,16 +17,18 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
         return;
     };
     state.set_mcp_error(None);
-    if !load_app_config(app).mcp_enabled {
+    let config = load_app_config(app);
+    if !config.mcp_enabled {
         state.kill_mcp();
         return;
     }
+    refresh_mcp_endpoints_in_background(app, config.known_repos, restart);
 
     // Hold the mcp_child lock across the whole check-spawn-store sequence. Callers
     // (one poller per visible task card, per-3s) can fire concurrently on Kanban/list
     // mount; without a single critical section they'd all observe "no live child yet"
     // before the first spawn finishes storing its child, racing each other into
-    // spawning duplicate alinery-mcp processes (the "spawned managed alinery-mcp" log loop).
+    // spawning duplicate MCP processes (the "spawned managed alinery-mcp" log loop).
     let mut guard = state.mcp_child.lock().unwrap_or_else(|e| e.into_inner());
     if restart {
         if let Some(mut managed) = guard.take() {
@@ -56,8 +61,8 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
     reap_mcp_listener(&mcp_sock);
     let _ = fs::remove_file(&mcp_status);
     let _ = fs::remove_file(&mcp_sock);
-    let Some(mcp_path) = resolve_mcp_path() else {
-        state.set_mcp_error(Some("alinery-mcp binary not found — restart the app (npm run tauri dev rebuilds it)".into()));
+    let Some(mcp_path) = mcp_binary_path() else {
+        state.set_mcp_error(Some("alinery-vinculum-daemon binary not found — restart the app (npm run tauri dev rebuilds it)".into()));
         return;
     };
     let app_config = match app_config_path(app) {
@@ -68,7 +73,7 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
         }
     };
     let mut cmd = Command::new(&mcp_path);
-    cmd.arg("--repo").arg(repo).arg("--app-config").arg(app_config).arg("--serve").arg("--managed");
+    cmd.args(mcp_host_args(&app_config, ns_ref)).arg("--repo").arg(repo).arg("--serve").arg("--managed");
     if let Some(n) = ns_ref {
         cmd.arg("--socket-namespace").arg(n);
     }
@@ -99,23 +104,96 @@ pub(crate) fn ensure_mcp_server<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Pa
         Err(e) => state.set_mcp_error(Some(format!("alinery-mcp spawn failed: {e}"))),
     }
 }
-// Locate the alinery-mcp binary: a sibling of the app exe (bundled via externalBin as `alinery-mcp` or
-// `alinery-mcp-<triple>`), else the dev build under target/.
-pub(crate) fn resolve_mcp_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    if let Ok(entries) = fs::read_dir(dir) {
-        for e in entries.flatten() {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            if name == "alinery-mcp" || name.starts_with("alinery-mcp-") {
-                return Some(e.path());
-            }
+/// The MCP server is the Vinculum daemon binary beside the app, started with `--mcp`.
+pub(crate) fn mcp_binary_path() -> Option<PathBuf> {
+    crate::pi_durable::resolve_alongside("alinery-vinculum-daemon")
+}
+
+/// Where the AGENT tokens the managed MCP uses are kept, one file per lane like the sockets.
+pub(crate) fn mcp_endpoints_path(app_config: &Path, ns: Option<&str>) -> Option<PathBuf> {
+    let dir = alinery_core::app_config_dir_of(app_config)?;
+    Some(dir.join(match ns {
+        Some(n) if !n.is_empty() => format!("mcp-endpoints-{n}.json"),
+        _ => "mcp-endpoints.json".into(),
+    }))
+}
+
+/// The arguments that start this app's MCP over stdio for a host (Claude Desktop and the like) that runs it itself: the same endpoints file, so the
+/// host's MCP reaches the daemons of the repositories this app has open. The host does not get `alinery_send_review_handoff` (O22 a).
+pub(crate) fn mcp_host_args(app_config: &Path, ns: Option<&str>) -> Vec<String> {
+    let mut args = vec!["--mcp".to_string(), "--app-config".into(), app_config.to_string_lossy().into_owned()];
+    if let Some(file) = mcp_endpoints_path(app_config, ns) {
+        args.push("--endpoints-file".into());
+        args.push(file.to_string_lossy().into_owned());
+    }
+    args
+}
+
+const MCP_ENDPOINT_LABEL: &str = "alinery-managed-mcp";
+const MCP_ENDPOINTS_REFRESH: Duration = Duration::from_secs(30);
+
+/// `{"version":1,"repos":{<repo>:{"socket","token"}}}`, owner-only and written whole, the shape `vinculum-daemon/src/mcpServer/endpoints.ts` reads.
+pub(crate) fn write_mcp_endpoints(path: &Path, repos: &std::collections::BTreeMap<String, (PathBuf, String)>) -> Result<(), String> {
+    let repos: serde_json::Map<String, Value> = repos
+        .iter()
+        .map(|(repo, (socket, token))| (repo.clone(), serde_json::json!({ "socket": socket.to_string_lossy(), "token": token })))
+        .collect();
+    let body = serde_json::to_vec(&serde_json::json!({ "version": 1, "repos": repos })).map_err(|e| e.to_string())?;
+    alinery_core::write_owner_only_bytes(path, &body)
+}
+
+/// One AGENT token for each local repository whose daemon answers, and the endpoints file written from them. A remote repository is left out: MCP is
+/// on the daemon's host only (O20 c). Blocking. Returns how many tokens were minted.
+fn refresh_mcp_endpoints(app_config: &Path, known_repos: &[String]) -> Result<usize, String> {
+    let dir = alinery_core::app_config_dir_of(app_config).ok_or("app config root unavailable")?;
+    let ns = alineryd_socket_namespace();
+    let mut endpoints = std::collections::BTreeMap::new();
+    for repo in known_repos {
+        if !matches!(RepoRef::parse(repo), Ok(RepoRef::Local(_))) {
+            continue;
+        }
+        let Ok((socket, secret)) = crate::daemon_rpc::resolve(repo, dir, ns.as_deref()) else {
+            continue;
+        };
+        if !socket.exists() {
+            continue;
+        }
+        let minted = tauri::async_runtime::block_on(async {
+            let admin = crate::daemon_rpc::rpc_token(&socket, &secret).await?;
+            crate::daemon_rpc::mint_agent_token(&socket, &admin, MCP_ENDPOINT_LABEL).await
+        });
+        if let Ok(token) = minted {
+            endpoints.insert(repo.clone(), (socket, token));
         }
     }
-    // dev: bare binary next to the cargo tauri dev exe in target/debug (script also populates tripled sidecar)
-    let dev = dir.join("alinery-mcp");
-    dev.exists().then_some(dev)
+    let path = mcp_endpoints_path(app_config, ns.as_deref()).ok_or("app config root unavailable")?;
+    write_mcp_endpoints(&path, &endpoints)?;
+    Ok(endpoints.len())
+}
+
+/// Mints again at most every 30 s (a restarted daemon forgets its tokens; `force` is for the callers that just restarted one), off the calling
+/// thread because a daemon that does not answer costs ten seconds.
+fn refresh_mcp_endpoints_in_background<R: tauri::Runtime>(app: &AppHandle<R>, known_repos: Vec<String>, force: bool) {
+    static STATE: Mutex<(Option<Instant>, bool)> = Mutex::new((None, false));
+    {
+        let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = state.0.is_some_and(|at| at.elapsed() < MCP_ENDPOINTS_REFRESH);
+        if state.1 || (fresh && !force) {
+            return;
+        }
+        state.1 = true;
+    }
+    let Ok(app_config) = app_config_path(app) else {
+        STATE.lock().unwrap_or_else(|e| e.into_inner()).1 = false;
+        return;
+    };
+    std::thread::spawn(move || {
+        let minted = refresh_mcp_endpoints(&app_config, &known_repos);
+        let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        state.1 = false;
+        // A refresh that reached no daemon (none started yet) is tried again on the next call.
+        state.0 = matches!(minted, Ok(n) if n > 0).then(Instant::now);
+    });
 }
 
 #[derive(serde::Serialize)]
@@ -126,6 +204,8 @@ pub(crate) struct McpStatus {
     pub(crate) socket_reachable: bool,
     pub(crate) binary_found: bool,
     pub(crate) binary_path: String,
+    /// What follows `binary_path` in a host's stdio config (`--mcp ...`).
+    pub(crate) host_args: Vec<String>,
     pub(crate) repo: String,
     pub(crate) socket_path: String,
     pub(crate) error: String,
@@ -145,7 +225,10 @@ pub(crate) fn mcp_socket_listening(_path: &str) -> bool {
 
 pub(crate) fn mcp_status_inner(app: &AppHandle, state: &AppState) -> McpStatus {
     let app_cfg = load_app_config(app);
-    let binary_path = resolve_mcp_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let binary_path = mcp_binary_path().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let host_args = app_config_path(app)
+        .map(|path| mcp_host_args(&path, alineryd_socket_namespace().as_deref()))
+        .unwrap_or_default();
     let binary_found = !binary_path.is_empty();
     let repo_s = active_repo_cell()
         .read()
@@ -189,6 +272,7 @@ pub(crate) fn mcp_status_inner(app: &AppHandle, state: &AppState) -> McpStatus {
         socket_reachable: running,
         binary_found,
         binary_path,
+        host_args,
         repo: repo_s,
         socket_path,
         error: state.mcp_error(),

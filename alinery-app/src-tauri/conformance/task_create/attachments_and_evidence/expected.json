@@ -1,0 +1,47 @@
+{
+  "evidence-slug": {
+    "artifacts/00-ticket.md": "# Evidence Task\n\nSee the attached log.\n\n## Evidence & Pointers\n\nStack trace at the bottom.\n\n- https://example.com/issue/1\n- attachments/trace.log\n- attachments/notes.md\n- (not copied: /gone/file.bin - No such file or directory)\n",
+    "artifacts/attachments/notes.md": "# notes\n",
+    "artifacts/attachments/trace.log": "line one\n",
+    "execution.json": {
+      "creation": "ready",
+      "definition_identity": "77824ddb9d5e8a28",
+      "enabled_steps": [],
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "max_live_sessions": 10,
+      "owning_lane": "",
+      "reference": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "version": 1
+    },
+    "task.md": {
+      "archived": false,
+      "auto_advance": [],
+      "auto_approve_all": false,
+      "branch": "evidence-slug",
+      "draft": false,
+      "engine_version": 2,
+      "github_issue": "o/r#2",
+      "has_worktree": true,
+      "launch_defaults": {
+        "harness": "",
+        "model": ""
+      },
+      "linear_id": "ENG-1",
+      "max_live_sessions": 10,
+      "name": "Evidence Task",
+      "playbook": "",
+      "playbook_ref": {
+        "key": "one-shot",
+        "scope": "bundled"
+      },
+      "pr_url": "",
+      "slug": "evidence-slug"
+    }
+  }
+}

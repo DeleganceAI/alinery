@@ -232,7 +232,10 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), before, "naming must not bump graph revision");
         let new_id = crate::with_task_mutation_lock(&repo.0, "recover", || {
             let mut saved = read_execution_state(&repo.0, "task")?;
-            let id = recover_execution_owner(&mut saved, "e1")?;
+            // What a resume does to the record: the old session becomes history, a new one owns it.
+            let record = saved.executions.get_mut("e1").ok_or("unknown execution")?;
+            let id = format!("s{}", uuid::Uuid::new_v4());
+            record.previous_session_ids.push(std::mem::replace(&mut record.owner_session_id, id.clone()));
             write_execution_state_unlocked(&repo.0, "task", &mut saved)?;
             Ok(id)
         })

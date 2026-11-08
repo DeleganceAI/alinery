@@ -1,24 +1,43 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
+import { fakeArtifacts } from "../test/artifactHooks";
+import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
+import { sessionDaemon } from "../test/sessionDaemon";
 import type {
+  AgentState,
   BoardNav,
   BoardTask,
   ExecutionAvailability,
   SessionDisplayMeta,
   SessionMeta,
   SessionObservation,
+  SessionState,
   SubtaskManagerState,
   Task,
-  TaskActivityRef,
   TaskActivitySummary,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
 import { TaskDetail } from "./TaskDetail";
 
+let daemon = sessionDaemon();
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+const explicitStatuses = new Set<string>();
+// `sessionStatuses.mockResolvedValue({ id: observation })` states what the fake daemon says about those sessions.
+const sessionStatuses = {
+  mockResolvedValue(map: Record<string, SessionObservation>) {
+    for (const [id, o] of Object.entries(map)) {
+      explicitStatuses.add(id);
+      daemon.showId(id, o);
+    }
+    return sessionStatuses;
+  },
+};
 const scenario = vi.hoisted(() => ({
   task: {} as Task,
   relatedTasks: [] as Task[],
@@ -34,12 +53,10 @@ const scenario = vi.hoisted(() => ({
 
 const ipcSpies = vi.hoisted(() => ({
   startSubtaskManager: vi.fn(),
-  recoverSubtaskManager: vi.fn(),
   discardSubtask: vi.fn(),
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
-  rpcWriteSession: vi.fn(),
   sessionAbort: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
@@ -47,20 +64,8 @@ const ipcSpies = vi.hoisted(() => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listTasks: vi.fn(),
   subtaskState: vi.fn(),
-  listTaskActivity: vi.fn(),
-  listBoardTasks: vi.fn(),
   getTaskExecution: vi.fn(),
-  allowExecutionCompletion: vi.fn(),
-  listSessions: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
-  listTaskArtifactTree: vi.fn(),
-  readArtifact: vi.fn(),
-  listArtifactCommentDrafts: vi.fn(),
-  sessionStatuses: vi.fn(),
-  sessionStatus: vi.fn(),
   worktreeExists: vi.fn(),
   markSessionNotificationRead: vi.fn(),
 }));
@@ -75,37 +80,34 @@ const toastSpies = vi.hoisted(() => ({
 }));
 vi.mock("../toast", () => toastSpies);
 
+vi.mock("../sync/tasks", async (actual) => ({
+  ...(await actual<typeof import("../sync/tasks")>()),
+  worktreeExists: mocks.worktreeExists,
+  restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
+  renameTask: ipcSpies.renameTask,
+  setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
+}));
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  createSession: ipcSpies.createSessionForRepo,
+  archiveSession: ipcSpies.archiveSessionForRepo,
+  renameSession: ipcSpies.renameSession,
+  markSessionNotificationRead: mocks.markSessionNotificationRead,
+  abortSession: ipcSpies.sessionAbort,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
-    getTask: mocks.getTask,
-    listTasks: mocks.listTasks,
-    subtaskState: mocks.subtaskState,
-    listTaskActivity: mocks.listTaskActivity,
-    listBoardTasks: mocks.listBoardTasks,
     getTaskExecution: mocks.getTaskExecution,
-    allowExecutionCompletion: mocks.allowExecutionCompletion,
-    listSessions: mocks.listSessions,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    listTaskArtifactTree: mocks.listTaskArtifactTree,
-    readArtifact: mocks.readArtifact,
-    listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
-    sessionStatuses: mocks.sessionStatuses,
-    sessionStatus: mocks.sessionStatus,
-    worktreeExists: mocks.worktreeExists,
-    createSessionForRepo: ipcSpies.createSessionForRepo,
-    restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
-    archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
-    rpcWriteSession: ipcSpies.rpcWriteSession,
-    sessionAbort: ipcSpies.sessionAbort,
-    renameSession: ipcSpies.renameSession,
-    renameTask: ipcSpies.renameTask,
-    setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
-    markSessionNotificationRead: mocks.markSessionNotificationRead,
-    startSubtaskManager: ipcSpies.startSubtaskManager,
-    recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
-    discardSubtask: ipcSpies.discardSubtask,
   }),
 );
+vi.mock("../sync/subtasks", () => ({
+  subtaskState: mocks.subtaskState,
+  startSubtaskManager: ipcSpies.startSubtaskManager,
+  discardSubtask: ipcSpies.discardSubtask,
+}));
 
 const parentTask: Task = {
   name: "Parent",
@@ -236,6 +238,30 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
   checkpoint: {},
 });
 
+let lastBoard = "";
+// A test that states nothing about the task leaves the streams unanswered, so the view shows its seed.
+let streamsSilent = false;
+
+/** Puts the scenario on the fake streams: the task and its relatives, the child's board row and activity, and the session rows. */
+function syncBoard() {
+  if (streamsSilent) return;
+  // A listed session the test gave no status reads as never started (or as the manager scenario says).
+  for (const row of scenario.sessions ?? [])
+    if (!explicitStatuses.has(row.id)) daemon.showId(row.id, scenario.managerObservation ?? { lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+  const next = {
+    ready: true,
+    anyRepoTasks: [scenario.task, ...scenario.relatedTasks] as never,
+    tasks: [scenario.childBoardTask] as never,
+    anyActivity: scenario.childActivity,
+    taskSessions: scenario.sessions,
+  };
+  // A stream that has nothing new sends nothing, so an unchanged scenario leaves the views' rows as they are.
+  const key = JSON.stringify(next);
+  if (key === lastBoard) return;
+  lastBoard = key;
+  fakeBoard.set(next);
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -264,18 +290,23 @@ beforeEach(() => {
   };
   scenario.childBoardTask = { ...childBoardTask };
   scenario.managerObservation = null;
+  explicitStatuses.clear();
   vi.stubGlobal("localStorage", {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
   });
-  ipcSpies.startSubtaskManager.mockResolvedValue({ session: { ...manager }, execution: null, start: "started" });
-  ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
+  // Starting and recovering are one call; `recover` binds the new manager to the active child.
+  ipcSpies.startSubtaskManager.mockReset().mockImplementation(async (_repo: string, _slug: string, recover?: boolean) => ({
+    session: recover ? { ...manager, subtask_slug: "child" } : { ...manager },
+    execution: null,
+    start: "started",
+  }));
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
-  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue(undefined);
   ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
+    syncBoard();
     return { name, source: "user" };
   });
   ipcSpies.setAutoApproveAllForRepo.mockReset();
@@ -288,6 +319,7 @@ beforeEach(() => {
       ...scenario.state,
       active_subtask: scenario.state.active_subtask?.slug === childSlug ? { ...scenario.state.active_subtask, name } : scenario.state.active_subtask,
     };
+    syncBoard();
     return updated;
   });
   ipcSpies.discardSubtask.mockImplementation(async () => {
@@ -308,47 +340,36 @@ beforeEach(() => {
     } else {
       scenario.sessions = [];
     }
+    syncBoard();
   });
   confirmSpies.confirmDanger.mockResolvedValue(true);
-  mocks.getTask.mockReset().mockImplementation(async (slug: string) => (slug === scenario.task.slug ? scenario.task : null));
-  mocks.listTasks.mockReset().mockImplementation(async () => [scenario.task, ...scenario.relatedTasks]);
-  mocks.subtaskState.mockReset().mockImplementation(async () => scenario.state);
-  mocks.listTaskActivity
-    .mockReset()
-    .mockImplementation(async (refs: TaskActivityRef[]) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, scenario.childActivity])));
-  mocks.listBoardTasks.mockReset().mockImplementation(async () => [scenario.childBoardTask]);
+  // The daemon's stream carries what the scenario holds; a poll is where a test's change reaches the view.
+  mocks.subtaskState.mockReset().mockImplementation(async () => {
+    syncBoard();
+    return scenario.state;
+  });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
-  mocks.allowExecutionCompletion.mockReset().mockResolvedValue(undefined);
-  mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
-  mocks.readArtifact.mockReset().mockResolvedValue("");
-  mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockImplementation(async (ids: string[]) =>
-    Object.fromEntries(
-      ids.map((id) => [
-        id,
-        scenario.managerObservation ?? {
-          lifecycle: { state: "never_started" as const },
-          state: null,
-          checkpoint: {},
-        },
-      ]),
-    ),
-  );
-  mocks.sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+  fakeExecution.reset();
+  fakeArtifacts.reset();
+  fakeArtifacts.readArtifact.mockResolvedValue("");
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.worktreeExists.mockReset().mockResolvedValue(true);
   mocks.markSessionNotificationRead.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   cleanup();
+  fakeBoard.reset();
+  lastBoard = "";
+  streamsSilent = false;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 async function renderDetail(slug = "parent", sessionView: "controls" | "graph" = "controls") {
+  syncBoard();
   const onOpenSession = vi.fn();
   const onOpenRelatedTask = vi.fn();
   const onNewSession = vi.fn();
@@ -381,7 +402,7 @@ describe("task run graph", () => {
       { ...session({ id: "prior" }), name: "Prior attempt" },
     ];
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["prior"] })]));
-    mocks.sessionStatuses.mockResolvedValue(
+    sessionStatuses.mockResolvedValue(
       observed
         ? {
             unread: observation("idle"),
@@ -440,7 +461,7 @@ describe("task run graph", () => {
     };
     scenario.sessions = [producer, consumer];
     mocks.getTaskExecution.mockResolvedValue(retained);
-    mocks.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
+    fakeArtifacts.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
 
     const { onOpenSession } = await renderDetail("parent", "graph");
     const graph = within(screen.getByRole("region", { name: "Task run graph" }));
@@ -466,7 +487,7 @@ describe("task run graph", () => {
     // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
-    expect(mocks.readArtifact).toHaveBeenCalledExactlyOnceWith("parent", "research/2-result-10.md");
+    expect(fakeArtifacts.readArtifact).toHaveBeenCalledExactlyOnceWith("/repo", "parent", "research/2-result-10.md");
     expect(screen.getByRole("button", { name: "Back to artifact list" })).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -559,7 +580,7 @@ describe("session work names", () => {
 
   it("shows a waiting ellipsis for a live unnamed OMP session and still opens rename", async () => {
     scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     await renderDetail();
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -570,13 +591,13 @@ describe("session work names", () => {
   it("replaces the name animation with a dash when a live agent becomes idle", async () => {
     vi.useFakeTimers();
     scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     const rendered = renderDetail();
     await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
     await rendered;
     expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
 
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -588,7 +609,7 @@ describe("session work names", () => {
 
   it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
     scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       terminal: observation("busy"),
       stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
     });
@@ -750,7 +771,7 @@ describe("retained name editing", () => {
     expect(await within(row).findByText("Preserved manager purpose")).toBeDefined();
   });
 
-  it("older_relationship_task_and_board_reads_cannot_undo_child_name_commit", async () => {
+  it("a child rename shows at once and the stream's later name replaces it", async () => {
     vi.useFakeTimers();
     const oldChild = { ...childBoardTask, name: "Old child purpose" };
     scenario.relatedTasks = [oldChild];
@@ -763,16 +784,6 @@ describe("retained name editing", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    const tasksRead = deferred<Task[]>();
-    const relationshipRead = deferred<SubtaskManagerState>();
-    const boardRead = deferred<BoardTask[]>();
-    const oldRelationship = scenario.state;
-    mocks.listTasks.mockReturnValueOnce(tasksRead.promise);
-    mocks.subtaskState.mockReturnValueOnce(relationshipRead.promise);
-    mocks.listBoardTasks.mockReturnValueOnce(boardRead.promise);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
     const row = screen.getByRole("button", { name: "Open manager session" }).closest("tr") as HTMLTableRowElement;
     fireEvent.click(within(row).getByRole("button", { name: "Rename task" }));
     fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Committed child purpose" } });
@@ -780,11 +791,6 @@ describe("retained name editing", () => {
       fireEvent.keyDown(within(row).getByRole("textbox"), { key: "Enter" });
     });
     expect(within(row).getByText("Committed child purpose")).toBeDefined();
-    await act(async () => {
-      tasksRead.resolve([scenario.task, oldChild]);
-      relationshipRead.resolve(oldRelationship);
-      boardRead.resolve([oldChild]);
-    });
     expect(within(row).queryByText("Old child purpose")).toBeNull();
     expect(screen.getByRole("button", { name: "Open Committed child purpose" })).toBeDefined();
     expect(within(row).getByText("Manager purpose")).toBeDefined();
@@ -832,7 +838,7 @@ describe("task session archive pending feedback", () => {
 describe("task session row Stop", () => {
   it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
     scenario.sessions = [session({ id: "stop-me", harness: "vinculum" })];
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
     const pending = deferred<void>();
     ipcSpies.sessionAbort.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
@@ -843,13 +849,13 @@ describe("task session row Stop", () => {
       fireEvent.click(stop);
     });
     expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(1);
-    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("stop-me");
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("/repo", "stop-me");
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => pending.reject(new Error("abort delivery failed")));
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
@@ -866,11 +872,20 @@ describe("task session row Stop", () => {
       { id: "terminal", agent: "busy", transport: "pty", live: true },
     ] as const;
     scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
-    mocks.sessionStatuses.mockResolvedValue(
+    sessionStatuses.mockResolvedValue(
       Object.fromEntries(
-        rows.map(({ id, agent, transport, live }) => {
+        rows.map(({ id, agent, transport, live }): [string, SessionObservation] => {
           const obs = observation("busy");
-          return [id, { ...obs, transport, lifecycle: live ? obs.lifecycle : { state: "exited", code: 0 }, state: { ...obs.state, agent: { state: agent } } }];
+          // A daemon that still holds an exited session reports its process as exited.
+          return [
+            id,
+            {
+              ...obs,
+              transport,
+              lifecycle: live ? obs.lifecycle : { state: "live_exited" },
+              state: { ...obs.state, process: live ? { state: "alive" } : { state: "exited", code: 0 }, agent: { state: agent } as AgentState } as SessionState,
+            },
+          ];
         }),
       ),
     );
@@ -966,7 +981,7 @@ describe("Task Detail sub-task manager projection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start sub-task" }));
 
     await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledOnce());
-    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("parent");
+    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent");
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -1128,7 +1143,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Discard setup",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     await waitFor(() => expect(screen.queryByText("Sub-task setup")).toBeNull());
     expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1166,7 +1181,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Kill sub-task",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -1248,14 +1263,14 @@ describe("Task Detail sub-task manager projection", () => {
     });
     scenario.sessions = [unavailableManager, session({ id: "unrelated", created: 1 })];
     const { onOpenSession } = await renderDetail();
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
 
     const childRow = screen.getByText("Child", { selector: "span" }).closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("Manager unavailable")).toBeDefined();
     const replace = within(childRow).getByRole("button", { name: "Replace manager session" });
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
-    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
+    await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent", true));
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -1266,8 +1281,8 @@ describe("Task Detail sub-task manager projection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Kill sub-task" }));
 
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", ""));
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", ""));
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -1280,6 +1295,9 @@ describe("Task Detail sub-task manager projection", () => {
   it("refreshes relationship pointers and manager rows during polling", async () => {
     vi.useFakeTimers();
     const renderPromise = renderDetail();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Parent" })).toBeDefined());
     await renderPromise;
     expect(screen.queryByText("Child", { selector: "span" })).toBeNull();
@@ -1300,6 +1318,10 @@ describe("Task Detail sub-task manager projection", () => {
 const noop = () => {};
 
 function renderSeededDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
+  // A test that stated nothing about the task has its streams not yet answering, so the seed shows.
+  streamsSilent = scenario.task.slug !== (props.slug ?? "a-task");
+  if (streamsSilent) fakeBoard.set({ ready: false });
+  else syncBoard();
   return render(
     <TaskDetail
       slug={props.slug ?? "a-task"}
@@ -1486,6 +1508,8 @@ describe("archived task recovery action", () => {
 
 describe("keying by slug", () => {
   it("remounts on slug change instead of keeping the previous task's rows", () => {
+    streamsSilent = true;
+    fakeBoard.set({ ready: false });
     const taskA = task({ slug: "a", name: "Task A", branch: "branch-a" });
     const taskB = task({ slug: "b", name: "Task B", branch: "branch-b" });
     const { rerender } = render(
@@ -1533,7 +1557,7 @@ describe("keying by slug", () => {
 describe("authoritative task execution", () => {
   it("distinguishes accepted outputs from omissions and counts only this execution's wildcard publications", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(partiallyPublishedExecution());
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
@@ -1551,7 +1575,7 @@ describe("authoritative task execution", () => {
 
   it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(
       executionReply([
         executionRecord(),
@@ -1559,11 +1583,11 @@ describe("authoritative task execution", () => {
         executionRecord({ id: "execution-old", owner_session_id: "owner-old", lifecycle: "completed", receipt_id: "accepted-old", shutdown_confirmed: true }),
       ]),
     );
-    mocks.listSessions.mockResolvedValue([
+    scenario.sessions = [
       session({ id: "auxiliary-newest", created: 100, generic: true, phase: "" }),
       session({ id: "owner-b", created: 3 }),
       session({ id: "owner-a", created: 2 }),
-    ]);
+    ];
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
@@ -1580,13 +1604,13 @@ describe("authoritative task execution", () => {
 
   it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(executionReply());
-    mocks.allowExecutionCompletion.mockRejectedValue(new Error("owner changed"));
+    fakeExecution.allow.mockRejectedValue(new Error("owner changed"));
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
-    await waitFor(() => expect(mocks.allowExecutionCompletion).toHaveBeenCalledWith("a-task", "execution-a", "owner-a", "/r"));
+    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledWith("/r", "a-task", "execution-a", undefined));
     await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
     expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -1597,7 +1621,7 @@ describe("authoritative task execution", () => {
     const retained = executionReply();
     let live: ExecutionAvailability = { status: "offline", detail: "Daemon socket disconnected" };
     let corrupt = false;
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockImplementation(async () => {
       if (corrupt) throw new Error("Invalid execution.json");
       return { ...retained, live };
@@ -1615,44 +1639,48 @@ describe("authoritative task execution", () => {
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
 
     live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(completion().disabled).toBe(true);
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).not.toHaveBeenCalled();
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
 
     live = { status: "available" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(completion().disabled).toBe(false);
     expect(screen.queryByText("Different app configuration owns this lane")).toBeNull();
     await act(async () => {
       fireEvent.click(completion());
     });
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledExactlyOnceWith("a-task", "execution-a", "owner-a", "/r");
+    expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", undefined);
 
     corrupt = true;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(within(screen.getByRole("alert")).getByText("Error: Invalid execution.json")).toBeDefined();
     expect(completion().disabled).toBe(true);
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
     fireEvent.click(completion());
-    expect(mocks.allowExecutionCompletion).toHaveBeenCalledTimes(1);
+    expect(fakeExecution.allow).toHaveBeenCalledTimes(1);
 
     corrupt = false;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(completion().disabled).toBe(false);
@@ -1669,7 +1697,7 @@ describe("authoritative task execution", () => {
     ]);
     retained.state.creation = "partial";
     retained.state.creation_error = "One root could not launch";
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(retained);
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
@@ -1731,7 +1759,7 @@ describe("Task Detail duplicate action", () => {
       worktree: "",
       archived: true,
     });
-    mocks.getTask.mockResolvedValue(source);
+    scenario.task = source;
     const onDuplicate = vi.fn();
     let nav: BoardNav | null = null;
     const rendered = renderSeededDetail({
@@ -1785,9 +1813,9 @@ describe("session list without identifiers", () => {
     const archived = session({ id: "opaque-archived", archived: true, created: 10 });
     const resumed = session({ id: "opaque-resumed", resume_of: archived.id, created: 20 });
     const newest = session({ id: "opaque-newest", created: 30 });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([archived, resumed, newest]);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    scenario.sessions = [archived, resumed, newest];
+    sessionStatuses.mockResolvedValue({});
     const onOpenSession = vi.fn();
     const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
@@ -1840,9 +1868,9 @@ describe("attention-first session order", () => {
       }),
       session({ id: "older-design", created: 10, phase: "design" }),
     ]);
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({
+    scenario.task = fixture;
+    scenario.sessions = [...backendRows];
+    sessionStatuses.mockResolvedValue({
       "older-design": observation("busy"),
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
@@ -1852,8 +1880,6 @@ describe("attention-first session order", () => {
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
     });
-    expect(mocks.sessionStatuses).toHaveBeenCalledTimes(1);
-    expect(mocks.sessionStatuses).toHaveBeenCalledWith(["newer-tdd", "older-design"], "a-task");
     expect(backendRows.map((row) => row.id)).toEqual(["newer-tdd", "older-design"]);
   });
 
@@ -1867,9 +1893,9 @@ describe("attention-first session order", () => {
       semantic: { phase_completed_at: 90 },
       notification_read_at: 90,
     });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([unread, acknowledged]);
-    mocks.sessionStatuses.mockResolvedValue({
+    scenario.task = fixture;
+    scenario.sessions = [unread, acknowledged];
+    sessionStatuses.mockResolvedValue({
       "unread-design": {
         lifecycle: { state: "exited", code: 0 },
         state: null,
@@ -1895,12 +1921,15 @@ describe("attention-first session order", () => {
     const fixture = task();
     let stopped = session({ id: "stopped-generic", created: 20, generic: true, phase: "", ended_at: 100, exit_code: 143 });
     const idle = session({ id: "current-structure", created: 30, phase: "structure" });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockImplementation(async () => [idle, stopped]);
+    scenario.task = fixture;
+    scenario.sessions = [idle, stopped];
     mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
-      if (id === stopped.id) stopped = { ...stopped, exit_notification_read_at: 100 };
+      if (id !== stopped.id) return;
+      stopped = { ...stopped, exit_notification_read_at: 100 };
+      scenario.sessions = [idle, stopped];
+      syncBoard();
     });
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       "stopped-generic": {
         lifecycle: { state: "exited", code: 143 },
         state: null,
@@ -1940,9 +1969,9 @@ describe("session time columns and sorting", () => {
       session({ id: "older", phase: "design", created: 20, started_at: 100 }),
       session({ id: "newer", phase: "build", created: 10, started_at: 200 }),
     ]);
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    scenario.sessions = [...backendRows];
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
@@ -1974,9 +2003,9 @@ describe("session time columns and sorting", () => {
     vi.useFakeTimers();
     const fixture = task();
     let rows = [session({ id: "a", phase: "design", created: 20, status_changed_at: 100 }), session({ id: "b", phase: "build", created: 10, status_changed_at: 200 })];
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockImplementation(async () => rows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    scenario.sessions = rows;
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
@@ -1986,6 +2015,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     rows = [{ ...rows[0], status_changed_at: 300 }, rows[1]];
+    scenario.sessions = rows;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2015,18 +2045,17 @@ describe("session time columns and sorting", () => {
       checkpoint: {},
     });
     let targetObservation = failedObservation("StaleSource");
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(rows);
-    mocks.sessionStatuses.mockImplementation(async () => ({
-      target: targetObservation,
-    }));
+    scenario.task = fixture;
+    scenario.sessions = rows;
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
 
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
-    expect(screen.getByText("Stale")).toBeDefined();
+    await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
 
     targetObservation = failedObservation("boom");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2037,6 +2066,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     targetObservation = failedObservation("StaleSource");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2073,37 +2103,18 @@ describe("session time columns and sorting", () => {
 });
 
 describe("the empty-sessions state", () => {
-  it("never renders before load() settles, and appears once it does", async () => {
+  it("never renders before the sessions stream has a snapshot, and appears once it does", async () => {
     const fixture = task();
-    const getTaskDeferred = deferred<Task | null>();
-    const listSessionsDeferred = deferred<SessionMeta[]>();
-    mocks.getTask.mockReturnValue(getTaskDeferred.promise);
-    mocks.listSessions.mockReturnValue(listSessionsDeferred.promise);
-    mocks.listArtifactsWithMetadata.mockResolvedValue([]);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    sessionStatuses.mockResolvedValue({});
 
+    scenario.sessions = null as never; // the stream has no snapshot yet
     renderSeededDetail({ initialTask: fixture });
-
-    // Do not show an empty graph before the first successful session read.
+    // Do not show an empty graph before the first snapshot.
     expect(screen.queryByText("No sessions yet.")).toBeNull();
 
-    getTaskDeferred.resolve(fixture);
-    listSessionsDeferred.resolve([]);
-
+    scenario.sessions = [];
+    act(() => syncBoard());
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
-  });
-});
-
-describe("a get_task error", () => {
-  it("surfaces in the error bar without hiding the seeded header", async () => {
-    const fixture = task();
-    mocks.getTask.mockRejectedValue(new Error("parse task.md: bad toml"));
-
-    renderSeededDetail({ initialTask: fixture });
-
-    await waitFor(() => expect(screen.getByText(/parse task\.md: bad toml/)).toBeDefined());
-    // The seeded header must survive the error — a regression here (e.g. an unguarded
-    // `.catch` that also clears `task`) would blank it.
-    expect(screen.getByText(fixture.name)).toBeDefined();
   });
 });

@@ -1,0 +1,20 @@
+settings_version = 1
+
+[global.github]
+token = "ghp-global"
+
+[global.defaults]
+harness = "omp"
+model = "gpt-5"
+thinking = "medium"
+draft_autosave = false
+
+[global.defaults.playbook]
+scope = "global"
+key = "mine"
+
+[global.backup]
+destination = "/backups"
+enabled = true
+retention = 20
+trigger_pre_archive = true

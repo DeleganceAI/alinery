@@ -31,6 +31,7 @@ const mcp: McpStatus = {
   socket_reachable: false,
   binary_found: true,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",

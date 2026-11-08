@@ -248,6 +248,11 @@ pub fn inference_spawn_cache_fresh(config_dir: &Path, now: u64) -> bool {
     load_inference_file(&inference_path(config_dir)).is_some_and(|file| inference_unexpired(&file, now) && !inference_due_for_renewal(&file, now))
 }
 
+/// When the cached hosted token stops working, for a caller that shows it to the user.
+pub fn inference_expires_at(config_dir: &Path) -> Option<u64> {
+    load_inference_file(&inference_path(config_dir)).map(|file| file.expires_at)
+}
+
 pub fn minted_catalog_if_unexpired(config_dir: &Path) -> Option<HostedCatalog> {
     let file = load_inference_file(&inference_path(config_dir))?;
     inference_unexpired(&file, now_secs()).then_some(file.catalog)

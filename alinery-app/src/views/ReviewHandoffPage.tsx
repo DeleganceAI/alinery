@@ -1,25 +1,27 @@
 import type { KeyboardEvent } from "react";
-import { useEffect, useState } from "react";
-import * as ipc from "../ipc";
+import { useEffect, useMemo, useState } from "react";
+import { repoDisplayPath, sameMachine } from "../remoteRepo";
 import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
-import type { BoardTask, NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
-import { readTaskExecution } from "../useExecutionObservation";
+import { sendReviewHandoff } from "../sync/artifacts";
+import { useRepoBoard } from "../sync/board";
+import { readTaskExecution } from "../sync/execution";
+import { readEffectiveConfig } from "../sync/settings";
+import type { NormalizedStep, ReviewHandoffResult, ReviewHandoffSource } from "../types";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function ReviewHandoffPage({
   source,
-  allRepos,
+  repos,
   activeRepo,
   onCancel,
   onConfirmed,
 }: {
   source: ReviewHandoffSource;
-  allRepos: boolean;
+  repos: string[];
   activeRepo: string;
   onCancel: () => void;
   onConfirmed: (result: ReviewHandoffResult) => void;
 }) {
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [pickModel, setPickModel] = useState(false);
   const [steps, setSteps] = useState<NormalizedStep[]>([]);
   const [taskId, setTaskId] = useState("");
@@ -32,25 +34,23 @@ export function ReviewHandoffPage({
   const [attempted, setAttempted] = useState(false);
   const [created, setCreated] = useState<ReviewHandoffResult | null>(null);
 
+  const board = useRepoBoard(repos);
+  const tasks = useMemo(
+    () =>
+      board.tasks.filter(
+        (task) =>
+          !task.archived &&
+          !task.draft &&
+          Boolean(task.worktree) &&
+          // The artifact is copied between the two repos' files, so the target must be on the source's machine.
+          sameMachine(task.repo_path, source.source_repo_path) &&
+          !(task.slug === source.source_slug && task.repo_path === source.source_repo_path),
+      ),
+    [board.tasks, source.source_slug, source.source_repo_path],
+  );
   useEffect(() => {
-    let alive = true;
-    ipc
-      .listBoardTasks(allRepos)
-      .then((loaded) => {
-        if (!alive) return;
-        const candidates = loaded.filter(
-          (task) => !task.archived && !task.draft && Boolean(task.worktree) && !(task.slug === source.source_slug && task.repo_path === source.source_repo_path),
-        );
-        setTasks(candidates);
-        setTaskId((current) => (candidates.some((task) => taskKey(task) === current) ? current : ""));
-      })
-      .catch((error) => {
-        if (alive) setErr(String(error));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [allRepos, activeRepo, source.source_slug, source.source_repo_path]);
+    setTaskId((current) => (tasks.some((task) => taskKey(task) === current) ? current : ""));
+  }, [tasks]);
 
   const selectedTask = taskId ? tasks.find((task) => taskKey(task) === taskId) : null;
 
@@ -61,11 +61,11 @@ export function ReviewHandoffPage({
     setModel("");
     setErr("");
     if (!selectedTask) return;
-    Promise.all([readTaskExecution(selectedTask.repo_path, selectedTask.slug), ipc.readScopedSettingsForRepo(selectedTask.repo_path)])
-      .then(([execution, settings]) => {
+    Promise.all([readTaskExecution(selectedTask.repo_path, selectedTask.slug), readEffectiveConfig(selectedTask.repo_path)])
+      .then(([execution, config]) => {
         if (!alive) return;
         setSteps(execution.definition.step);
-        setModel(ompDefaultModel(settings.effective.defaults));
+        setModel(ompDefaultModel(config.defaults));
       })
       .catch((error) => {
         if (alive) setErr(String(error));
@@ -81,19 +81,18 @@ export function ReviewHandoffPage({
     setBusy(true);
     setAttempted(true);
     setErr("");
-    ipc
-      .sendReviewHandoff({
-        sourceRepoPath: source.source_repo_path,
-        sourceSlug: source.source_slug,
-        sourceSession: source.source_session,
-        sourceArtifact: source.source_artifact,
-        targetSlug: selectedTask.slug,
-        targetRepoPath: selectedTask.repo_path,
-        targetPhase: phase,
-        harness,
-        model,
-        promptExtra,
-      })
+    sendReviewHandoff({
+      sourceRepoPath: source.source_repo_path,
+      sourceSlug: source.source_slug,
+      sourceSession: source.source_session,
+      sourceArtifact: source.source_artifact,
+      targetSlug: selectedTask.slug,
+      targetRepoPath: selectedTask.repo_path,
+      targetPhase: phase,
+      harness,
+      model,
+      promptExtra,
+    })
       .then((result) => {
         if (result.errors.length > 0 || result.start === "failed") setCreated(result);
         else onConfirmed(result);
@@ -111,7 +110,7 @@ export function ReviewHandoffPage({
         <h2 className="create-title">Send review findings to task</h2>
         <div className="handoff-summary">
           <span className="pill">Source task: {source.source_slug}</span>
-          <span className="pill">Source repository: {source.source_repo_path}</span>
+          <span className="pill">Source repository: {repoDisplayPath(source.source_repo_path)}</span>
           <span className="pill">Session: {source.source_session}</span>
           <span className="pill">Artifact: {source.source_artifact}</span>
         </div>
@@ -122,7 +121,7 @@ export function ReviewHandoffPage({
             {tasks.map((task) => (
               <option key={taskKey(task)} value={taskKey(task)}>
                 {task.name}
-                {` — ${repoName(task.repo_path)} (${task.repo_path})`} · {task.branch || "no branch"}
+                {` — ${repoName(task.repo_path)} (${repoDisplayPath(task.repo_path)})`} · {task.branch || "no branch"}
                 {task.pr_url ? ` · ${task.pr_url}` : ""}
               </option>
             ))}
@@ -183,7 +182,7 @@ export function ReviewHandoffPage({
         )}
         {created && (
           <InlineStatus tone="error" detail={created.errors.map((error) => `${error.stage}: ${error.message}`).join("\n")}>
-            Session {created.target_session.id} was created in {created.target_repo_path}; start status: {created.start}.
+            Session {created.target_session.id} was created in {repoDisplayPath(created.target_repo_path)}; start status: {created.start}.
           </InlineStatus>
         )}
         <div className="create-actions">

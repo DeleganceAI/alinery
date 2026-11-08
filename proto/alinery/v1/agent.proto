@@ -1,0 +1,85 @@
+// proto/alinery/v1/agent.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// The host's agent directory (S4.10, O12 a): `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
+// so each host has its own and the daemon on it owns it. It holds the model roles (`config.yml`), the skills, the extensions
+// and the user MCP servers a session of that host loads. Nothing here is executed: the inventory only reads names and metadata.
+service AgentService {
+  rpc ReadModelRoles(ReadModelRolesRequest) returns (ReadModelRolesResponse);        // VIEW
+  rpc WriteModelRoles(WriteModelRolesRequest) returns (WriteModelRolesResponse);     // ACT
+  rpc ReadCustomizations(ReadCustomizationsRequest) returns (ReadCustomizationsResponse);  // VIEW; a computed scan, not an entity
+  // `upload_id` is a committed `staged` upload (BlobService) of a `.md` or `.zip` skill; `file_name` says which (its extension).
+  rpc InstallSkill(InstallSkillRequest) returns (InstallSkillResponse);              // ACT
+  rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);                 // ACT
+  rpc CustomizationPrompt(CustomizationPromptRequest) returns (CustomizationPromptResponse);  // VIEW
+  // The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
+  rpc ReadMcpStatus(ReadMcpStatusRequest) returns (ReadMcpStatusResponse);            // VIEW
+}
+
+message ReadMcpStatusRequest {}
+message McpServerStatus {
+  string name = 1;
+  bool builtin = 2;
+  string state = 3;  // connected, disabled or error
+  optional string error = 4;
+}
+message ReadMcpStatusResponse {
+  repeated string tools = 1;
+  repeated McpServerStatus servers = 2;
+}
+
+message ReadModelRolesRequest {}
+message ReadModelRolesResponse {
+  map<string, string> roles = 1;
+  string agent_dir = 2;
+}
+message WriteModelRolesRequest {
+  MutationMeta meta = 1;
+  map<string, string> roles = 2;  // the whole set: roles left out are removed
+}
+message WriteModelRolesResponse {
+  Applied applied = 1;
+  map<string, string> roles = 2;
+}
+
+message ReadCustomizationsRequest {}
+message Customization {
+  string name = 1;
+  string kind = 2;    // "Skill", "Extension" or "MCP server"
+  string source = 3;
+  optional string path = 4;
+  optional bool offered = 5;  // skills only: false when the model is not told about the file
+}
+message ReadCustomizationsResponse {
+  repeated Customization items = 1;
+  repeated string errors = 2;
+  string agent_dir = 3;
+}
+
+message InstallSkillRequest {
+  MutationMeta meta = 1;
+  string upload_id = 2;
+  string file_name = 3;
+  bool replace = 4;
+}
+message InstallSkillResponse {
+  Applied applied = 1;
+  string name = 2;
+  bool exists = 3;  // the skill directory already existed and `replace` was false; nothing was written
+}
+
+message DeleteSkillRequest {
+  MutationMeta meta = 1;
+  string name = 2;
+}
+message DeleteSkillResponse {
+  Applied applied = 1;
+}
+
+message CustomizationPromptRequest {}
+message CustomizationPromptResponse {
+  string prompt = 1;
+}

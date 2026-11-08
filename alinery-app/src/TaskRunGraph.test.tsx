@@ -406,3 +406,20 @@ it("keeps isolated sessions navigable without execution state and does not reord
   expect(screen.getByText("No sessions yet.")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Open session/ })).toBeNull();
 });
+
+// `getTaskExecution` merges the engine maps only for a stored or converted state, so a
+// history-only task answers without `executions` or `occurrences`. Both reads used to be
+// bare Object.values calls, which threw during render and blanked the window.
+it("draws a history-only state that carries neither map", () => {
+  const reply = executionReply([]);
+  const sparse = { ...reply.state, history_only: true } as Record<string, unknown>;
+  delete sparse.executions;
+  delete sparse.occurrences;
+
+  const graph = buildTaskRunGraph([session("s1")] as SessionDisplayMeta[], sparse as never);
+  expect(graph.connections).toEqual([]);
+  expect([...graph.nodes.values()].map((node) => node.key)).toEqual(["session:s1"]);
+
+  render(<TaskRunGraph sessions={[session("s1")] as SessionDisplayMeta[]} state={sparse as never} />);
+  expect(screen.queryByText(/Cannot convert undefined or null to object/)).toBeNull();
+});

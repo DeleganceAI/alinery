@@ -1,5 +1,5 @@
 //! Isolated one-request legacy peers. Child handles, never machine-wide PID searches.
-use alinery_core::daemon_client::{audited_shutdown_protocol, wait_for_daemon_gone, BoundDaemonConnection, DaemonClient, PeerProcessIdentity};
+use alinery_core::legacy_daemon::{audited_shutdown_protocol, wait_for_daemon_gone, BoundDaemonConnection, PeerProcessIdentity};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -37,8 +37,8 @@ impl Peer {
             assert!(Instant::now() < end, "fixture readiness timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
-        let client = DaemonClient::connect_path(peer.socket.clone()).unwrap();
-        assert_eq!(client.version_checked().unwrap().protocol, Some(12));
+        let version = BoundDaemonConnection::connect(&peer.socket, None, Duration::from_secs(5)).unwrap().version().unwrap();
+        assert_eq!(version.protocol, Some(12));
         fs::write(&peer.log, b"").unwrap();
         peer
     }
@@ -156,9 +156,9 @@ fn legacy_fixture_preserves_unknown_list_and_records_requests() {
         r#"{"error":"unsupported"}"#,
         r#"{"ok":true}"#,
     );
-    let client = DaemonClient::connect_path(peer.socket.clone()).unwrap();
-    assert_eq!(client.version_checked().unwrap().protocol, Some(12));
-    assert!(client.session_statuses_observed().is_err());
+    let version = peer.connect(None).unwrap().version().unwrap();
+    assert_eq!(version.protocol, Some(12));
+    assert!(peer.connect(None).unwrap().sessions().is_err());
     assert_eq!(peer.requests(), ["version", "list"]);
 }
 
@@ -247,7 +247,7 @@ fn bound_shutdown_requires_checked_ack_without_retry() {
 
 #[test]
 fn legacy_dialect_and_unknown_impact_are_distinct() {
-    for protocol in [9, 10, 12, 15, 16, 18] {
+    for protocol in [9, 10, 12, 15, 16, 18, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33] {
         assert!(audited_shutdown_protocol(Some(protocol)));
     }
     for protocol in [None, Some(0), Some(11), Some(13), Some(14), Some(17), Some(u32::MAX)] {
@@ -262,7 +262,7 @@ fn legacy_dialect_and_unknown_impact_are_distinct() {
             let identity = connection.identity().clone();
             let observed = connection.version().unwrap();
             assert!(audited_shutdown_protocol(observed.protocol));
-            assert!(!alinery_core::daemon_client::classify_version_reply(&observed, "new-build", "new-config").usable());
+            assert!(!alinery_core::legacy_daemon::classify_version_reply(&observed, "new-build", "new-config").usable());
             let sessions = peer.connect(Some(&identity)).unwrap().sessions();
             if list == r#"{"sessions":[]}"# {
                 assert!(sessions.unwrap().is_empty());

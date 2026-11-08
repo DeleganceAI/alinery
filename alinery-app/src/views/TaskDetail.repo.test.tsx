@@ -1,7 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
+import { fakeArtifacts } from "../test/artifactHooks";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
+import { sessionDaemon } from "../test/sessionDaemon";
 import type { SessionMeta, SessionObservation, Task } from "../types";
 import { TaskDetail } from "./TaskDetail";
 
@@ -39,34 +43,31 @@ const task = (over: Partial<Task> = {}): Task =>
 
 // `vi.mock` factories are hoisted above imports, so the mocks it references must be created
 // through `vi.hoisted` rather than plain module-scope `const`.
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listSessions: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
-  sessionStatuses: vi.fn(),
   pushAndCompareUrlForRepo: vi.fn(),
   killSessionForRepo: vi.fn(),
   renameSession: vi.fn(),
 }));
 
-vi.mock("../ipc", () =>
-  mockIpc({
-    getTask: mocks.getTask,
-    listSessions: mocks.listSessions,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    sessionStatuses: mocks.sessionStatuses,
-    pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
-    killSessionForRepo: mocks.killSessionForRepo,
-    renameSession: mocks.renameSession,
-  }),
-);
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  killSession: mocks.killSessionForRepo,
+  renameSession: mocks.renameSession,
+}));
+vi.mock("../sync/git", () => ({ pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo, listTaskPullRequests: async () => ({}) }));
+vi.mock("../ipc", () => mockIpc());
 
 beforeEach(() => {
   localStorage.removeItem("alinery.taskSessionView");
-  mocks.getTask.mockReset().mockResolvedValue(null);
-  mocks.listSessions.mockReset().mockResolvedValue([]);
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockResolvedValue({});
+  fakeBoard.reset();
+
+  fakeArtifacts.reset();
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.pushAndCompareUrlForRepo.mockReset().mockResolvedValue("https://example.test/compare");
   mocks.killSessionForRepo.mockReset().mockResolvedValue(undefined);
   mocks.renameSession.mockReset();
@@ -85,7 +86,7 @@ describe("task identity includes the repository", () => {
     const taskA = task({ name: "Task A", branch: "branch-a", worktree: "/w/a", pr_url: "https://a.example/pr/1" });
     const taskB = task({ name: "Task B", branch: "branch-b", worktree: "/w/b", pr_url: "https://b.example/pr/2" });
 
-    mocks.getTask.mockResolvedValue(taskA);
+    fakeBoard.set({ anyRepoTasks: [taskA] as never });
     const { rerender } = render(
       <TaskDetail
         key={`task:${repoA}:task-x`}
@@ -110,7 +111,7 @@ describe("task identity includes the repository", () => {
 
     // Same slug, different repo: App.tsx builds a different `key` (`task:${repoPath}:${slug}`),
     // forcing React to unmount repo A's TaskDetail and mount a fresh one instead of reusing it.
-    mocks.getTask.mockResolvedValue(taskB);
+    fakeBoard.set({ anyRepoTasks: [taskB] as never });
     rerender(
       <TaskDetail
         key={`task:${repoB}:task-x`}
@@ -151,24 +152,24 @@ describe("a session kill issued from task detail", () => {
   it("targets the repository the row was rendered for", async () => {
     const repoB = "/repos/b";
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([
-      {
-        id: "s1",
-        worktree: "/w/a-task",
-        created: 1,
-        archived: false,
-        phase: "research",
-        harness: "claude",
-        model: "",
-        playbook: "superdevelop",
-        generic: false,
-        harness_resume_token: "",
-      } as SessionMeta,
-    ]);
-    mocks.sessionStatuses.mockResolvedValue({
-      s1: { lifecycle: { state: "live" }, state: null, checkpoint: {} },
-    } as Record<string, SessionObservation>);
+    fakeBoard.set({ anyRepoTasks: [fixture] as never });
+    fakeBoard.set({
+      taskSessions: [
+        {
+          id: "s1",
+          worktree: "/w/a-task",
+          created: 1,
+          archived: false,
+          phase: "research",
+          harness: "claude",
+          model: "",
+          playbook: "superdevelop",
+          generic: false,
+          harness_resume_token: "",
+        } as SessionMeta,
+      ] as never,
+    });
+    daemon.show(repoB, "task-x", "s1", { lifecycle: { state: "live" }, state: null, checkpoint: {} } as SessionObservation);
 
     render(
       <TaskDetail
@@ -223,8 +224,8 @@ it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_re
     harness_resume_token: "",
     name: "Repo A purpose",
   };
-  mocks.getTask.mockResolvedValue(task({ name: "Repo A task" }));
-  mocks.listSessions.mockResolvedValue([session]);
+  fakeBoard.set({ anyRepoTasks: [task({ name: "Repo A task" })] as never });
+  fakeBoard.set({ taskSessions: [session] as never });
   const view = (repoPath: string) => (
     <TaskDetail
       slug="task-x"
@@ -246,8 +247,8 @@ it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_re
   fireEvent.click(await screen.findByRole("button", { name: "Rename session" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Session name" }), { target: { value: "Committed in A" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  mocks.getTask.mockResolvedValue(task({ name: "Repo B task" }));
-  mocks.listSessions.mockResolvedValue([{ ...session, name: "Repo B purpose" }]);
+  fakeBoard.set({ anyRepoTasks: [task({ name: "Repo B task" })] as never });
+  fakeBoard.set({ taskSessions: [{ ...session, name: "Repo B purpose" }] as never });
   rerender(view("/repo-b"));
   await screen.findByText("Repo B purpose");
   fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -271,11 +272,30 @@ it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_re
   else expect(onNameCommitted).not.toHaveBeenCalled();
 });
 
-it("late name-bearing reads cannot replace another repository's task or sessions", async () => {
-  const oldTask = deferred<Task>();
-  const oldSessions = deferred<SessionMeta[]>();
-  mocks.getTask.mockReturnValueOnce(oldTask.promise).mockResolvedValue(task({ name: "Current repository task" }));
-  mocks.listSessions.mockReturnValueOnce(oldSessions.promise).mockResolvedValue([]);
+it("each repository shows its own task and sessions for the same slug", async () => {
+  const row = (repo: string, name: string) => ({
+    id: "same-session",
+    worktree: "/w",
+    created: 1,
+    archived: false,
+    phase: "research",
+    harness: "omp",
+    model: "",
+    playbook: "",
+    generic: true,
+    harness_resume_token: "",
+    name,
+    task_slug: "task-x",
+    repo_path: repo,
+  });
+  fakeBoard.set({
+    tasks: [
+      { ...task({ name: "Task in A" }), repo_path: "/repo-a" },
+      { ...task({ name: "Task in B" }), repo_path: "/repo-b" },
+    ] as never,
+    sessions: [row("/repo-a", "Session in A"), row("/repo-b", "Session in B")] as never,
+    taskSessions: null,
+  });
   const props = {
     slug: "task-x",
     onBack: noop,
@@ -289,28 +309,10 @@ it("late name-bearing reads cannot replace another repository's task or sessions
     onAppearanceChange: noop,
   };
   const { rerender } = render(<TaskDetail {...props} repoPath="/repo-a" />);
+  await screen.findByRole("heading", { name: "Task in A" });
   rerender(<TaskDetail {...props} repoPath="/repo-b" />);
-  await screen.findByRole("heading", { name: "Current repository task" });
-  await act(async () => {
-    oldTask.reject(new Error("Old repository read failure"));
-    oldSessions.resolve([
-      {
-        id: "same-session",
-        worktree: "/w",
-        created: 1,
-        archived: false,
-        phase: "research",
-        harness: "omp",
-        model: "",
-        playbook: "",
-        generic: true,
-        harness_resume_token: "",
-        ...{ name: "Old repository session" },
-      },
-    ]);
-  });
-  expect(screen.getByRole("heading", { name: "Current repository task" })).toBeDefined();
-  expect(screen.queryByText("Old repository session")).toBeNull();
-  expect(screen.queryByText(/Old repository read failure/)).toBeNull();
-  expect(screen.getByText("No sessions yet.")).toBeDefined();
+  await screen.findByRole("heading", { name: "Task in B" });
+  expect(screen.queryByText("Session in A")).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "Show list view" }));
+  expect(await screen.findByText("Session in B")).toBeDefined();
 });

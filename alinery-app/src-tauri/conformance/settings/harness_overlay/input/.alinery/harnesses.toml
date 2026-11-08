@@ -1,0 +1,32 @@
+[[harness]]
+key = "omp"
+name = "OMP (repo)"
+binary = "omp"
+args = ["--fast"]
+model_arg = ["--model={model}"]
+prompt_injection = "arg"
+prompt_arg = ["--", "{prompt}"]
+adapter = "omp"
+message_adapter = "omp_bracketed_paste"
+models = ["a", "b"]
+models_cmd = "rm -rf /"
+
+[harness.env]
+Z = "1"
+A = "2"
+
+[[harness]]
+key = "vinculum"
+name = "Vinculum"
+binary = "vinculum"
+models_cmd = "echo ignored"
+
+[[harness]]
+key = "claude"
+name = "leftover"
+binary = "claude"
+
+[[harness]]
+key = "no-harness"
+name = "overlay of the sentinel"
+binary = "x"

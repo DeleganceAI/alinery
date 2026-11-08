@@ -1,0 +1,35 @@
+{
+  "session/fix-login/d1": {
+    "archived": false,
+    "artifact": "",
+    "created": 1700000010,
+    "daemon_namespace": "",
+    "ended_at": null,
+    "execution_id": "ex-2",
+    "execution_revision": 0,
+    "exit_code": null,
+    "exit_notification_read_at": null,
+    "generic": false,
+    "handoff_artifact": "",
+    "harness": "vinculum",
+    "harness_resume_token": "",
+    "id": "d1",
+    "model": "openai/gpt",
+    "notification_read_at": null,
+    "phase": "clarify",
+    "pinned": false,
+    "playbook": "",
+    "prompt": null,
+    "prompt_extra": "",
+    "resume_of": null,
+    "semantic": {
+      "omp_session_id": null,
+      "omp_turn_id": null,
+      "phase_completed_at": null
+    },
+    "started_at": 1700000011,
+    "status_changed_at": null,
+    "status_revision": 0,
+    "worktree": "/w/fix-login"
+  }
+}

@@ -334,41 +334,6 @@ fn save_linear_oauth_tokens(tokens: &LinearOAuthTokens) -> Result<(), String> {
     }
 }
 
-pub(crate) fn output_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<std::process::Output> {
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-    // Drain both pipes while the child runs: API responses can exceed a pipe's capacity.
-    let mut stdout = child.stdout.take().expect("piped stdout");
-    let mut stderr = child.stderr.take().expect("piped stderr");
-    let stdout_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let deadline = Instant::now() + timeout;
-    loop {
-        // A descendant may keep a pipe open after the direct child exits. Do not
-        // join either reader until it finishes; the same deadline still applies.
-        if let Some(status) = child.try_wait()?.filter(|_| stdout_reader.is_finished() && stderr_reader.is_finished()) {
-            return Ok(std::process::Output {
-                status,
-                stdout: stdout_reader.join().map_err(|_| std::io::Error::other("stdout reader panicked"))??,
-                stderr: stderr_reader.join().map_err(|_| std::io::Error::other("stderr reader panicked"))??,
-            });
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "command timed out"));
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
 fn github_connection_status() -> ConnectionStatus {
     let credential = match alinery_core::git_credential_fill(alinery_core::GITHUB_CREDENTIAL_FILL) {
         Ok(credential) => credential,

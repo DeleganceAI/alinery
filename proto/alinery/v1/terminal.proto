@@ -1,0 +1,59 @@
+// proto/alinery/v1/terminal.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/entities.proto";
+
+// A no-harness shell's bytes (plan 2.1.5). Attach streams output; input comes back as unary Write calls
+// because a fetch has no request stream (O8 a). The daemon keeps each attach's writes in input_seq order.
+service TerminalService {
+  rpc Attach(AttachRequest) returns (stream AttachResponse);  // VIEW; read-only unless the credential has ACT
+  rpc Write(WriteRequest) returns (WriteResponse);            // ACT
+  rpc Resize(ResizeRequest) returns (ResizeResponse);         // ACT
+  rpc Detach(DetachRequest) returns (DetachResponse);         // VIEW
+}
+
+message AttachRequest {
+  SessionRef session = 1;
+  uint64 from_offset = 2;  // byte offset in sessions/<id>.scrollback; 0 means the kept tail
+  uint32 cols = 3;
+  uint32 rows = 4;
+  bool read_only = 5;      // VIEW capability attaches read-only
+}
+
+// One frame of terminal output. The next frame starts at offset + data.length, except that replay leaves
+// out terminal queries (the replayed screen must not answer them again), so a replay frame can be followed
+// by one that starts later. A client reattaches from the end of the last frame it rendered.
+message AttachResponse {
+  oneof body {
+    bytes data = 1;
+    Exit exit = 2;
+  }
+  uint64 offset = 3;     // offset of the first byte of data
+  string attach_id = 4;  // first frame only
+  bool truncated = 5;    // from_offset was 0 and the file is longer than the replay tail
+}
+
+message Exit {
+  int32 code = 1;
+  string signal = 2;
+}
+
+message WriteRequest {
+  string attach_id = 1;
+  uint64 input_seq = 2;  // starts at 0 for each attach; the daemon applies writes in this order
+  bytes data = 3;
+}
+message WriteResponse {}
+
+message ResizeRequest {
+  string attach_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+message ResizeResponse {}
+
+message DetachRequest {
+  string attach_id = 1;
+}
+message DetachResponse {}

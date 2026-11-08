@@ -22,83 +22,38 @@
 // Add a wrapper when a view needs one, not before.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ProviderCatalog, ProviderLoginStatus } from "./chat/providers";
 import type { SessionControls, VinculumTranscript } from "./chatTranscript";
+import type { DaemonRpc, DaemonRpcCancel } from "./daemon/bridgeFetch";
 import type {
   AccountSignOutResult,
   AccountStatus,
   AppConfig,
   AppearancePrefs,
-  ArtifactComment,
-  ArtifactCommentDraft,
-  ArtifactListItem,
-  ArtifactReviewPendingStatus,
-  ArtifactTreeNode,
-  BackupListItem,
-  BackupMeta,
-  BoardTask,
-  ChatBranch,
-  ChatThread,
-  CommunityImportRow,
   CommunityMineResult,
   CommunityPlaybookPage,
-  Config,
+  CommunitySourceResult,
   ConnectionStatus,
-  CreateExecutionSessionReply,
-  CreateExecutionSessionRequest,
-  CreateTaskRequest,
-  CreateTaskResult,
-  DaemonStatus,
   DesktopCreditsView,
-  DownloadStatusRow,
   GitHubIssue,
   GlobalSettings,
+  HostEntry,
   HostedCatalogView,
-  ImportResult,
-  KanbanColumn,
+  HostTestReport,
   LinearTicket,
   McpStatus,
-  NormalizedPlaybook,
-  PickerPreferences,
-  PlaybookCatalog,
-  PlaybookRef,
-  PlaybookValidation,
-  PreparedSessionMessageAction,
-  PreparedTaskAttachments,
   PreviewResult,
   PublishResult,
-  PullRequestSnapshot,
-  PurgeArchivedResult,
-  RelatedTaskRef,
-  RepoOverrides,
-  ReviewHandoffResult,
-  SavePlaybookRequest,
-  ScopedPlaybook,
-  ScopedSettings,
-  SessionDisplayContext,
-  SessionDisplayMeta,
-  SessionListItem,
-  SessionMessageActionProvenance,
-  SessionMeta,
-  SessionName,
-  SessionNotificationClearRef,
-  SessionObservation,
-  SessionStatusRef,
-  SkillInstall,
+  PullRequest,
+  RemoteDirListing,
+  RemoteHostView,
+  RemoteSharingView,
+  RemoteStatusRow,
+  ShellDaemonStatus,
+  SshTarget,
   StagedUpdate,
-  StorageInfo,
-  SubtaskManagerState,
   TakeoverOutcome,
   TakeoverPreview,
-  Task,
-  TaskActivityRef,
-  TaskActivitySummary,
-  TaskExecutionReply,
-  TaskSourceBranches,
-  UpdateResult,
   UpdateStatus,
-  VinculumCustomizations,
-  VinculumDaemonCustomizations,
 } from "./types";
 
 export { getName, getVersion } from "@tauri-apps/api/app";
@@ -126,119 +81,61 @@ export const classifyPickedFolder = (path: string) => invoke<PickedFolder>("clas
 export const initPickedFolder = (path: string) => invoke<InitializedFolder>("init_picked_folder", { path });
 export const readAppConfig = () => invoke<AppConfig>("read_app_config");
 export const removeRepo = (path: string) => invoke<AppConfig>("remove_repo", { path });
-export const setActiveRepo = (path: string, drawerSessionIds: string[]) => invoke<AppConfig>("set_active_repo", { path, drawerSessionIds });
+export const setActiveRepo = (path: string) => invoke<AppConfig>("set_active_repo", { path });
 export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig>("write_appearance", { appearance });
 
-// ── artifacts.rs ──────────────────────────────────────────────────────
-export const addArtifactComment = (a: {
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<ArtifactComment[]>("add_artifact_comment", a);
-export const addArtifactCommentForRepo = (a: {
-  repoPath: string;
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<ArtifactComment[]>("add_artifact_comment_for_repo", a);
-export const prepareArtifactCommentsPrompt = (taskSlug: string, artifacts: string[]) =>
-  invoke<PreparedSessionMessageAction>("prepare_artifact_comments_prompt", { taskSlug, artifacts });
-export const archiveArtifactComments = (taskSlug: string, artifact: string) => invoke<string>("archive_artifact_comments", { taskSlug, artifact });
-export const archiveArtifactCommentsForRepo = (repoPath: string, taskSlug: string, artifact: string) =>
-  invoke<string>("archive_artifact_comments_for_repo", { repoPath, taskSlug, artifact });
-export const artifactReviewPendingStatus = (taskSlug: string, artifact: string) =>
-  invoke<ArtifactReviewPendingStatus | null>("artifact_review_pending_status", { taskSlug, artifact });
-export const attachmentPath = (taskSlug: string, name: string) => invoke<string>("attachment_path", { taskSlug, name });
-export const artifactNodePath = (taskSlug: string, nodeId: string) => invoke<string>("artifact_node_path", { taskSlug, nodeId });
-export const clearArtifactReviewPending = (taskSlug: string, artifact: string) => invoke<void>("clear_artifact_review_pending", { taskSlug, artifact });
-export const clearArtifactReviewPendingForRepo = (repoPath: string, taskSlug: string, artifact: string) =>
-  invoke<void>("clear_artifact_review_pending_for_repo", { repoPath, taskSlug, artifact });
-export const deleteArtifactCommentDraft = (taskSlug: string, artifact: string, anchorId: string) => invoke<void>("delete_artifact_comment_draft", { taskSlug, artifact, anchorId });
-export const deleteArtifactCommentDraftForRepo = (repoPath: string, taskSlug: string, artifact: string, anchorId: string) =>
-  invoke<void>("delete_artifact_comment_draft_for_repo", { repoPath, taskSlug, artifact, anchorId });
-export const listArtifactCommentDrafts = (taskSlug: string) => invoke<ArtifactCommentDraft[]>("list_artifact_comment_drafts", { taskSlug });
-export const listArtifactCommentDraftsForRepo = (repoPath: string, taskSlug: string) =>
-  invoke<ArtifactCommentDraft[]>("list_artifact_comment_drafts_for_repo", { repoPath, taskSlug });
-export const listArtifactComments = (taskSlug: string, artifact: string) => invoke<ArtifactComment[]>("list_artifact_comments", { taskSlug, artifact });
-export const listArtifactsWithMetadata = (taskSlug: string) => invoke<ArtifactListItem[]>("list_artifacts_with_metadata", { taskSlug });
-export const listTaskArtifactTree = (taskSlug: string) => invoke<ArtifactTreeNode[]>("list_task_artifact_tree", { taskSlug });
-export const readArtifact = (taskSlug: string, name: string) => invoke<string>("read_artifact", { taskSlug, name });
-export const readArtifactForRepo = (repoPath: string, taskSlug: string, name: string) => invoke<string>("read_artifact_for_repo", { repoPath, taskSlug, name });
-export const readTaskArtifactNode = (taskSlug: string, nodeId: string) => invoke<string>("read_task_artifact_node", { taskSlug, nodeId });
-export const saveArtifactCommentDraft = (a: {
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<void>("save_artifact_comment_draft", a);
-export const saveArtifactCommentDraftForRepo = (a: {
-  repoPath: string;
-  taskSlug: string;
-  artifact: string;
-  anchorId: string;
-  anchorKind: string;
-  anchorLabel: string;
-  anchorExcerpt: string;
-  lineStart: number;
-  lineEnd: number;
-  body: string;
-}) => invoke<void>("save_artifact_comment_draft_for_repo", a);
-export const sendReviewHandoff = (a: {
-  sourceRepoPath: string;
-  targetRepoPath: string;
-  sourceSlug: string;
-  sourceSession: string;
-  sourceArtifact: string;
-  targetSlug: string;
-  targetPhase: string;
-  harness: string;
-  model: string;
-  promptExtra: string;
-}) => invoke<ReviewHandoffResult>("send_review_handoff", a);
+// ── remote.rs ─────────────────────────────────────────────────────────
+// A failed connect whose message starts with HOST_KEY_UNKNOWN (remoteRepo.ts) means first
+// contact with the host: confirm with the user, then connect again with trust = true.
+export const listHosts = () => invoke<HostEntry[]>("list_hosts");
+export const setHostOnboarded = (hostId: string, onboarded: boolean) => invoke<void>("set_host_onboarded", { hostId, onboarded });
+export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
+export const remoteAddHost = (destination: string, label?: string) => invoke<RemoteHostView>("remote_add_host", { destination, label: label ?? null });
+export const remoteSshAliases = () => invoke<string[]>("remote_ssh_aliases");
+export const remoteDescribeDestination = (destination: string) => invoke<SshTarget>("remote_describe_destination", { destination });
+export const remoteTestHost = (destination: string, trust: boolean) => invoke<HostTestReport>("remote_test_host", { destination, trust });
+export const remoteDiscardHost = (hostId: string) => invoke<void>("remote_discard_host", { hostId });
+export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
+export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
+export const remoteSharing = (hostId: string) => invoke<RemoteSharingView>("remote_sharing", { hostId });
+export const remoteSetSharing = (hostId: string, shared: string[]) => invoke<RemoteSharingView>("remote_set_sharing", { hostId, shared });
+export const remoteListDir = (hostId: string, path: string, showHidden: boolean) => invoke<RemoteDirListing>("remote_list_dir", { hostId, path, showHidden });
+export const remoteClassify = (hostId: string, path: string) => invoke<PickedFolder>("remote_classify", { hostId, path });
+export const remoteInit = (hostId: string, path: string) => invoke<InitializedFolder>("remote_init", { hostId, path });
+export const remoteAddRepo = (hostId: string, path: string) => invoke<string>("remote_add_repo", { hostId, path });
+export const removeRemoteRepoKeepRunning = (path: string) => invoke<AppConfig>("remove_remote_repo_keep_running", { path });
 
 // ── backup.rs ─────────────────────────────────────────────────────────
-export const backupBusy = (repoPath: string | null) => invoke<boolean>("backup_busy", { repoPath });
-export const backupNow = (repoPath: string | null) => invoke<BackupMeta>("backup_now", { repoPath });
-export const listBackups = (repoPath: string | null) => invoke<BackupListItem[]>("list_backups", { repoPath });
 export const pickBackupDestinationDialog = (repoPath: string) => invoke<string | null>("pick_backup_destination_dialog", { repoPath });
 export const restoreBackup = (repoPath: string | null, backupPath: string) => invoke<void>("restore_backup", { repoPath, backupPath });
 
 // ── daemon.rs ─────────────────────────────────────────────────────────
 export const cancelQuit = () => invoke<void>("cancel_quit");
 export const closeAllRepos = () => invoke<number>("close_all_repos");
-export const daemonStatus = () => invoke<DaemonStatus>("daemon_status");
-export const repoLiveSessions = (path: string) => invoke<number>("repo_live_sessions", { path });
+// daemon_rpc.rs: the webview bridge (plan 2.1.9). The body goes raw; the call and the Channel ride in headers.
+// Non-ASCII is escaped so the JSON is a legal header value.
+const asciiJson = (v: unknown) => JSON.stringify(v).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+export const daemonRpc =
+  (repo: string): DaemonRpc =>
+  async (callId, path, headers, body, onMessage) => {
+    const channel = new Channel<ArrayBuffer>();
+    channel.onmessage = (m) => onMessage(new Uint8Array(m));
+    await invoke<void>("daemon_rpc", body, {
+      headers: { "x-alinery-rpc": asciiJson({ repo, call_id: callId, path, headers }), "x-alinery-channel": channel.toJSON() },
+    });
+  };
+export const daemonRpcCancel: DaemonRpcCancel = (callId) => {
+  invoke<void>("daemon_rpc_cancel", { callId }).catch(() => {});
+};
+export const daemonStatus = () => invoke<ShellDaemonStatus>("daemon_status");
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────
-export const commitWorktree = (slug: string, message: string) => invoke<void>("commit_worktree", { slug, message });
-export const commitWorktreeForRepo = (repoPath: string, slug: string, message: string) => invoke<void>("commit_worktree_for_repo", { repoPath, slug, message });
-export const pushAndCompareUrl = (slug: string) => invoke<string>("push_and_compare_url", { slug });
-export const pushAndCompareUrlForRepo = (repoPath: string, slug: string) => invoke<string>("push_and_compare_url_for_repo", { repoPath, slug });
-export const removeWorktreeForRepo = (repoPath: string, slug: string) => invoke<void>("remove_worktree_for_repo", { repoPath, slug });
-export const setPrUrl = (slug: string, url: string) => invoke<void>("set_pr_url", { slug, url });
-export const setPrUrlForRepo = (repoPath: string, slug: string, url: string) => invoke<void>("set_pr_url_for_repo", { repoPath, slug, url });
-export const worktreeExists = (slug: string) => invoke<boolean>("worktree_exists", { slug });
+export const lookupTaskPullRequest = (prUrl: string, branch: string, originUrl: string | null) =>
+  invoke<PullRequest | null>("lookup_task_pull_request", { prUrl, branch, originUrl });
 
 // ── connections.rs ────────────────────────────────────────────────────
 export const connectionStatuses = () => invoke<ConnectionStatus[]>("connection_statuses");
@@ -258,7 +155,9 @@ export const accountCredits = () => invoke<DesktopCreditsView>("account_credits"
 export const accountOpenPlans = () => invoke<void>("account_open_plans");
 
 // ── imports.rs ────────────────────────────────────────────────────────
-export const importGithubForRepo = (repoPath: string, reference: string) => invoke<GitHubIssue>("import_github_for_repo", { repoPath, reference });
+/** The request goes out from this machine with this machine's credentials. `originUrl` (the repo's `origin`, for a bare `#123`) and `tokenOverride` (its settings row's GitHub token, null: none) come from the repository's daemon (sync/imports.ts). */
+export const importGithubForRepo = (repoPath: string, reference: string, originUrl: string | null, tokenOverride: string | null) =>
+  invoke<GitHubIssue>("import_github_for_repo", { repoPath, reference, originUrl, tokenOverride });
 export const importLinearForRepo = (repoPath: string, reference: string) => invoke<LinearTicket>("import_linear_for_repo", { repoPath, reference });
 
 // ── mcp.rs ────────────────────────────────────────────────────────────
@@ -267,260 +166,68 @@ export const startMcpServer = () => invoke<McpStatus>("start_mcp_server");
 export const stopMcpServer = () => invoke<McpStatus>("stop_mcp_server");
 
 // ── notify.rs ─────────────────────────────────────────────────────────
-export const notifySessionAttention = (repoPath: string, slug: string | null, reason: string) => invoke<void>("notify_session_attention", { repoPath, slug, reason });
+/** Shows an OS notification. The text is the caller's: it comes from the session entity, so the shell reads no file. */
+export const notifySessionAttention = (body: string) => invoke<void>("notify_session_attention", { body });
 export const notifyTest = () => invoke<void>("notify_test");
 export const setDockBadgeCount = (count: number) => invoke<void>("set_dock_badge_count", { count });
 
-// ── subtask.rs ────────────────────────────────────────────────────────
-export const subtaskState = (taskSlug: string, repoPath?: string) => invoke<SubtaskManagerState>("subtask_state", { taskSlug, repoPath });
-export const startSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("start_subtask_manager", { taskSlug });
-export const recoverSubtaskManager = (taskSlug: string) => invoke<CreateExecutionSessionReply>("recover_subtask_manager", { taskSlug });
-export const discardSubtask = (taskSlug: string, managerSessionId: string) => invoke<void>("discard_subtask", { taskSlug, managerSessionId });
-
 // ── session.rs ────────────────────────────────────────────────────────
 
-export const renameSession = (a: { repoPath: string; taskSlug: string; sessionId: string; name: string }) => invoke<SessionName>("rename_session", a);
 /** Repos open in this window (owned, daemon connected): the only repos chat lists or offers. */
 export const listChatRepos = () => invoke<string[]>("list_chat_repos");
-export const listChatThreads = (includeArchived: boolean) => invoke<ChatThread[]>("list_chat_threads", { includeArchived });
-export const chatThreadName = (repoPath: string, sessionId: string) => invoke<string | null>("chat_thread_name", { repoPath, sessionId });
-export const createChatThread = (a: { repoPath: string; model?: string | null; createWorktree: boolean }) => invoke<CreateExecutionSessionReply>("create_chat_thread", a);
-export const startChatThread = (repoPath: string, sessionId: string) => invoke<CreateExecutionSessionReply>("start_chat_thread", { repoPath, sessionId });
-export const setChatPinned = (repoPath: string, sessionId: string, pinned: boolean) => invoke<void>("set_chat_pinned", { repoPath, sessionId, pinned });
-export const archiveChatThread = (repoPath: string, sessionId: string, removeWorktree: boolean) => invoke<void>("archive_chat_thread", { repoPath, sessionId, removeWorktree });
-export const removeChatWorktree = (repoPath: string, sessionId: string) => invoke<void>("remove_chat_worktree", { repoPath, sessionId });
-export const resumeChatThread = (repoPath: string, sessionId: string) => invoke<SessionMeta>("resume_chat_thread", { repoPath, sessionId });
-export const chatBranchLabel = (repoPath: string, sessionId: string) => invoke<ChatBranch>("chat_branch_label", { repoPath, sessionId });
+/**
+ * Refreshes the hosted-model credentials the daemon reads at spawn; run before a start, create, spawn or resume that may launch a
+ * hosted model. `harness` is a hint for that refresh and nothing else; unset means the default harness.
+ */
+export const prepareHostedInference = (model: string, harness?: string) => invoke<void>("prepare_hosted_inference", { model, harness });
 export type { SessionControls, VinculumTranscript };
-export const chatTranscript = (repoPath: string, id: string) => invoke<VinculumTranscript>("chat_transcript", { repoPath, id });
-export const chatPrompt = (repoPath: string, id: string, text: string) => invoke<void>("chat_prompt", { repoPath, id, text });
-export const chatAbort = (repoPath: string, id: string) => invoke<void>("chat_abort", { repoPath, id });
-export const chatSetModel = (repoPath: string, id: string, model: string) => invoke<SessionControls>("chat_set_model", { repoPath, id, model });
-export const chatSetThinkingLevel = (repoPath: string, id: string, level: string) => invoke<SessionControls>("chat_set_thinking_level", { repoPath, id, level });
-export const chatRpcWrite = (repoPath: string, id: string, payload: unknown) => invoke<void>("chat_rpc_write", { repoPath, id, payload });
-export const chatDetach = (repoPath: string, id: string, attachId: number) => invoke<void>("chat_detach", { repoPath, id, attachId });
-export const chatSessionStatus = (repoPath: string, id: string) => invoke<SessionObservation>("chat_session_status", { repoPath, id });
-export const chatRestate = (repoPath: string, id: string, transport: "pty" | "rpc") => invoke<void>("chat_restate", { repoPath, id, transport });
-export const chatPtyAttach = (a: {
-  repoPath: string;
-  id: string;
-  attachId: number;
-  streamToken: number;
-  cols?: number | null;
-  rows?: number | null;
-  onBytes: Channel<ArrayBuffer>;
-}) => invoke<void>("chat_pty_attach", a);
-export const chatPtyWrite = (repoPath: string, id: string, data: string) => invoke<void>("chat_pty_write", { repoPath, id, data });
-export const chatPtyResize = (repoPath: string, id: string, cols: number, rows: number) => invoke<void>("chat_pty_resize", { repoPath, id, cols, rows });
-export const readChatOmp = (a: { repoPath: string; id: string; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_chat_omp", a);
-export const chatRpcAttach = (a: { repoPath: string; id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
-  const onLine = new Channel<string>();
-  onLine.onmessage = a.onLine;
-  return invoke<void>("chat_rpc_attach", { repoPath: a.repoPath, id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
-};
-export const renameTask = (repoPath: string, taskSlug: string, name: string) => invoke<Task>("rename_task", { repoPath, taskSlug, name });
-export const getSessionDisplay = (repoPath: string, taskSlug: string, sessionId: string) => invoke<SessionDisplayContext>("get_session_display", { repoPath, taskSlug, sessionId });
-export const archiveSession = (taskSlug: string, id: string) => invoke<void>("archive_session", { taskSlug, id });
-export const archiveSessionForRepo = (repoPath: string, taskSlug: string, id: string) => invoke<void>("archive_session_for_repo", { repoPath, taskSlug, id });
-export const createSession = (request: CreateExecutionSessionRequest) => invoke<CreateExecutionSessionReply>("create_session", { request });
-export const createSessionForRepo = (a: { repoPath: string; request: CreateExecutionSessionRequest }) => invoke<CreateExecutionSessionReply>("create_session_for_repo", a);
-export type TaskExecutionOutcome = { repo_path: string; task_slug: string; execution?: TaskExecutionReply; error?: string };
-export const observeTaskExecutions = (tasks: { repoPath: string; taskSlug: string }[]) => invoke<TaskExecutionOutcome[]>("observe_task_executions", { tasks });
-export const allowExecutionCompletion = (taskSlug: string, executionId: string, sessionId: string, repoPath?: string) =>
-  invoke<void>("allow_execution_completion", { taskSlug, executionId, sessionId, repoPath });
-export const startSession = (taskSlug: string, sessionId: string, repoPath?: string) => invoke<CreateExecutionSessionReply>("start_session", { taskSlug, sessionId, repoPath });
-export const detachSession = (id: string, attachId: number) => invoke<void>("detach_session", { id, attachId });
-export const ensureDrawerTerminal = () => invoke<SessionMeta>("ensure_drawer_terminal");
-export const killSession = (id: string, taskSlug: string) => invoke<void>("kill_session", { id, taskSlug });
-export const killSessionForRepo = (repoPath: string, id: string, taskSlug: string) => invoke<void>("kill_session_for_repo", { repoPath, id, taskSlug });
-export const listSessionItems = (allRepos: boolean, includeArchived: boolean, repoPath?: string) =>
-  invoke<SessionListItem[]>("list_session_items", { allRepos, includeArchived, repoPath });
-export const listSessions = (taskSlug: string, repoPath?: string) => invoke<SessionDisplayMeta[]>("list_sessions", { taskSlug, repoPath });
-export const markSessionNotificationRead = (repoPath: string, taskSlug: string, id: string) => invoke<void>("mark_session_notification_read", { repoPath, taskSlug, id });
-export const clearSessionNotifications = (refs: SessionNotificationClearRef[]) => invoke<void>("clear_session_notifications", { refs });
-export const openSession = (a: {
-  id: string;
-  cwd: string;
-  attachId: number;
-  streamToken: number;
-  taskSlug?: string | null;
-  phase?: string | null;
-  model?: string | null;
-  intent?: string | null;
-  resumeToken?: string | null;
-  cols?: number | null;
-  rows?: number | null;
-  onBytes: Channel<ArrayBuffer>;
-}) => invoke<void>("open_session", a);
-// Raw bytes, not number[]: a Vec<u8> return would cross IPC as a JSON array of numbers (3.4x on
-// the wire, and a per-byte JS array before a single row can be parsed).
-export const readSessionHistory = (a: { id: string; taskSlug?: string | null; offset?: number | null; limit?: number | null }) => invoke<ArrayBuffer>("read_session_history", a);
-export const readSessionOmp = (a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }) => invoke<ArrayBuffer>("read_session_omp", a);
-export const resizeSession = (id: string, cols: number, rows: number) => invoke<void>("resize_session", { id, cols, rows });
-export const sessionArtifactReady = (id: string, taskSlug: string) => invoke<boolean>("session_artifact_ready", { id, taskSlug });
-export const sessionListStatuses = (refs: SessionStatusRef[]) => invoke<Record<string, SessionObservation>>("session_list_statuses", { refs });
-export const sessionTranscript = (id: string) => invoke<VinculumTranscript>("session_transcript", { id });
-export const sessionPrompt = (id: string, text: string) => invoke<void>("session_prompt", { id, text });
-export const sessionSetModel = (id: string, model: string) => invoke<SessionControls>("session_set_model", { id, model });
-export const sessionSetThinkingLevel = (id: string, level: string) => invoke<SessionControls>("session_set_thinking_level", { id, level });
-export const providerCatalog = () => invoke<ProviderCatalog>("provider_catalog");
-export const providerLogout = (provider: string) => invoke<ProviderCatalog>("provider_logout", { provider });
-export const providerLoginStart = (provider: string, method: "api_key" | "oauth") => invoke<ProviderLoginStatus>("provider_login_start", { provider, method });
-export const providerLoginPoll = (loginId: string) => invoke<ProviderLoginStatus>("provider_login_poll", { loginId });
-export const providerLoginReply = (loginId: string, value: string, cancel: boolean) => invoke<void>("provider_login_reply", { loginId, value, cancel });
-export const customProviderSave = (input: { id: string; name: string; baseUrl: string; apiKey: string; keepKey: boolean; models: string[] }) =>
-  invoke<ProviderCatalog>("custom_provider_save", input);
-export const customProviderDelete = (id: string) => invoke<ProviderCatalog>("custom_provider_delete", { id });
-export const sessionAbort = (id: string) => invoke<void>("session_abort", { id });
-export const sessionStatus = (id: string, taskSlug: string | null) => invoke<SessionObservation>("session_status", { id, taskSlug });
-export const sessionStatuses = (ids: string[], taskSlug: string) => invoke<Record<string, SessionObservation>>("session_statuses", { ids, taskSlug });
-export const writeSession = (id: string, data: string) => invoke<void>("write_session", { id, data });
-export const restateSession = (id: string, transport: "pty" | "rpc") => invoke<void>("restate_session", { id, transport });
-export const rpcWriteSession = (id: string, payload: unknown) => invoke<void>("rpc_write_session", { id, payload });
-/** Bring up (or reuse) the reserved setup session and get its id. Attach to it like any session. */
-export const ompSetupSession = () => invoke<string>("omp_setup_session");
-export const rpcAttachSession = (a: { id: string; attachId: number; streamToken: number; onLine: (line: string) => void }) => {
-  const onLine = new Channel<string>();
-  onLine.onmessage = a.onLine;
-  return invoke<void>("rpc_attach_session", { id: a.id, attachId: a.attachId, streamToken: a.streamToken, onLine });
-};
-export const prepareReviewApprovalPrompt = (taskSlug: string, reviewArtifact: string) =>
-  invoke<PreparedSessionMessageAction>("prepare_review_approval_prompt", { taskSlug, reviewArtifact });
-export const finalizeSessionMessageActions = (id: string, taskSlug: string, actions: SessionMessageActionProvenance[]) =>
-  invoke<void>("finalize_session_message_actions", { id, taskSlug, actions });
 
 // ── settings.rs ───────────────────────────────────────────────────────
-export const clearRepoOverrideForRepo = (repoPath: string, field: string) => invoke<ScopedSettings>("clear_repo_override_for_repo", { repoPath, field });
-export const deleteAllArchivedStorage = (repoPath: string) => invoke<PurgeArchivedResult>("delete_all_archived_storage", { repoPath });
-export const listHarnessModels = (harness: string) => invoke<string[]>("list_harness_models", { harness });
 export const grokKeyReady = () => invoke<boolean>("grok_key_ready");
-export const listHarnessModelsForRepo = (repoPath: string, harness: string) => invoke<string[]>("list_harness_models_for_repo", { repoPath, harness });
-export const readConfig = () => invoke<Config>("read_config");
-export const readConfigForRepo = (repoPath: string) => invoke<Config>("read_config_for_repo", { repoPath });
 export const readGlobalSettings = () => invoke<GlobalSettings>("read_global_settings");
 export const readModelFavorites = (harness: string) => invoke<string[]>("read_model_favorites", { harness });
-export const readScopedSettingsForRepo = (repoPath: string) => invoke<ScopedSettings>("read_scoped_settings_for_repo", { repoPath });
-export const storageInfo = (repoPath: string) => invoke<StorageInfo>("storage_info", { repoPath });
 export const setModelFavorite = (harness: string, model: string, favorite: boolean) => invoke<string[]>("set_model_favorite", { harness, model, favorite });
 export const writeGlobalSettings = (global: GlobalSettings) => invoke<GlobalSettings>("write_global_settings", { global });
-export const writeRepoOverridesForRepo = (repoPath: string, overrides: RepoOverrides) => invoke<ScopedSettings>("write_repo_overrides_for_repo", { repoPath, overrides });
 
 // ── task.rs ───────────────────────────────────────────────────────────
-export const archiveTaskForRepo = (repoPath: string, slug: string) => invoke<void>("archive_task_for_repo", { repoPath, slug });
-export const restoreTaskForRepo = (repoPath: string, slug: string) => invoke<void>("restore_task_for_repo", { repoPath, slug });
-export const createTaskForRepo = (a: { repoPath: string; request: CreateTaskRequest }) => invoke<CreateTaskResult>("create_task_for_repo", a);
-export const taskSourceBranchesForRepo = (repoPath: string, selectedBaseRef?: string | null) =>
-  invoke<TaskSourceBranches>("task_source_branches_for_repo", { repoPath, selectedBaseRef: selectedBaseRef ?? null });
-export const prepareTaskAttachments = (entries: string[]) => invoke<PreparedTaskAttachments>("prepare_task_attachments", { entries });
-export const duplicateTaskForRepo = (repoPath: string, sourceSlug: string) => invoke<CreateTaskResult>("duplicate_task_for_repo", { repoPath, sourceSlug });
-export const deleteDraftForRepo = (repoPath: string, slug: string) => invoke<void>("delete_draft_for_repo", { repoPath, slug });
-export const getTask = (slug: string, repoPath?: string) => invoke<Task | null>("get_task", { slug, repoPath });
-export const listBoardTasks = (allRepos: boolean) => invoke<BoardTask[]>("list_board_tasks", { allRepos });
-export const listTaskActivity = (refs: TaskActivityRef[]) => invoke<Record<string, TaskActivitySummary>>("list_task_activity", { refs });
-export const listTaskPullRequests = (tasks: TaskActivityRef[]) => invoke<Record<string, PullRequestSnapshot>>("list_task_pull_requests", { tasks });
-export const listTasks = (repoPath?: string) => invoke<Task[]>("list_tasks", { repoPath });
-export const setAutoApproveAllForRepo = (repoPath: string, slug: string, enabled: boolean) => invoke<Task>("set_auto_approve_all_for_repo", { repoPath, slug, enabled });
-export const setRelatedTasksForRepo = (repoPath: string, slug: string, related: RelatedTaskRef[]) => invoke<Task>("set_related_tasks_for_repo", { repoPath, slug, related });
-export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
-export const readDraftAttachmentsForRepo = (repoPath: string, slug: string) => invoke<DraftAttachments>("read_draft_attachments_for_repo", { repoPath, slug });
-export const writeDraftForRepo = (a: {
-  repoPath: string;
-  name: string;
-  taskSlug: string;
-  description: string;
-  evidence: string;
-  linearId: string;
-  githubIssue: string;
-  playbook: PlaybookRef;
-  harness: string;
-  model: string;
-  autoAdvance?: string[] | null;
-  stepModels?: Record<string, string> | null;
-  maxLiveSessions: number;
-  branchName: string;
-  worktreeName: string;
-  draftSlug: string;
-  draftBaseRef?: string | null;
-  draftAttachments?: DraftAttachments;
-}) => invoke<Task>("write_draft_for_repo", a);
 export type ChatFileStat = { name: string; bytes: number };
 export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] };
 export type ChatImage = { mime_type: string; data: string };
+/** A local file's bytes (25 MB at most), for the webview to upload through BlobService. */
+export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_file", { path });
+/** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
-export const copyChatAttachments = (taskSlug: string, paths: string[]) => invoke<CopyChatAttachmentsResult>("copy_chat_attachments", { taskSlug, paths });
-export const writeChatAttachmentBytes = (taskSlug: string, fileName: string, bytes: number[] | Uint8Array, repoPath?: string) =>
-  invoke<string>("write_chat_attachment_bytes", { taskSlug, fileName, bytes, repoPath });
-export const readChatImage = (taskSlug: string, name: string) => invoke<ChatImage>("read_chat_image", { taskSlug, name });
-export const copyChatThreadAttachments = (repoPath: string, id: string, paths: string[]) =>
-  invoke<CopyChatAttachmentsResult>("copy_chat_thread_attachments", { repoPath, id, paths });
-export const writeChatThreadAttachmentBytes = (repoPath: string, id: string, fileName: string, bytes: number[] | Uint8Array) =>
-  invoke<string>("write_chat_thread_attachment_bytes", { repoPath, id, fileName, bytes });
-export const readChatThreadImage = (repoPath: string, id: string, name: string) => invoke<ChatImage>("read_chat_thread_image", { repoPath, id, name });
-export const readAttachmentImage = (taskSlug: string, name: string, nodeId?: string) => invoke<ArrayBuffer>("read_attachment_image", { taskSlug, name, nodeId });
 
-// ── playbook.rs ───────────────────────────────────────────────────────
-export const listKanbanColumns = (allRepos: boolean) => invoke<KanbanColumn[]>("list_kanban_columns", { allRepos });
-export const listPlaybookCatalog = (repoPath?: string) => invoke<PlaybookCatalog>("list_playbook_catalog", { repoPath });
-export const readPlaybook = (reference: PlaybookRef, repoPath?: string) => invoke<ScopedPlaybook>("read_playbook", { reference, repoPath });
-export const validatePlaybookSource = (source: string) => invoke<PlaybookValidation>("validate_playbook_source", { source });
-export const renderPlaybookSource = (definition: NormalizedPlaybook) => invoke<string>("render_playbook_source", { definition });
-export const savePlaybookSource = (request: SavePlaybookRequest, repoPath?: string) => invoke<ScopedPlaybook>("save_playbook_source", { request, repoPath });
-export const deletePlaybookSource = (reference: PlaybookRef, repoPath?: string) => invoke<void>("delete_playbook_source", { reference, repoPath });
-export const readPlaybookPickerPreferences = (repoPath?: string) => invoke<PickerPreferences>("read_playbook_picker_preferences", { repoPath });
-export const savePlaybookPickerPreferences = (preferences: PickerPreferences, repoPath?: string) => invoke<void>("save_playbook_picker_preferences", { preferences, repoPath });
+// ── community_playbooks.rs ────────────────────────────────────────────
+// The network half of the community library, with this machine's account. The registry and the import rules are the repository's daemon
+// (sync/community.ts); a downloaded package reaches it as a staged upload.
 export const listCommunityPlaybooks = (args: { q?: string; cursor?: string }) => invoke<CommunityPlaybookPage>("list_community_playbooks", args);
 export const listMyCommunityPlaybooks = () => invoke<CommunityMineResult>("list_my_community_playbooks");
-export const listCommunityImports = (args: { repoPath: string }) => invoke<{ imports: CommunityImportRow[] }>("list_community_imports", args);
-export const communityDownloadStatus = (args: { repoPath: string }) => invoke<{ rows: DownloadStatusRow[] }>("community_download_status", args);
-export const importCommunityPlaybook = (args: { id: string; repoPath: string; overwrite: boolean }) => invoke<ImportResult>("import_community_playbook", args);
-export const updateCommunityImport = (args: { id: string; repoPath: string; overwriteEdited: boolean }) => invoke<UpdateResult>("update_community_import", args);
+export const communityRemoteStatus = (ids: string[]) => invoke<RemoteStatusRow[]>("community_remote_status", { ids });
+export const downloadCommunitySource = (id: string) => invoke<CommunitySourceResult>("download_community_source", { id });
 export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
-export const publishCommunityPlaybook = (args: { reference: PlaybookRef; repoPath: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
+/** `source` is the playbook as the repository's daemon holds it and `key` its declared key. */
+export const publishCommunityPlaybook = (args: { source: string; key: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
+
+// ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");
 export const downloadUpdate = (version: string) => invoke<StagedUpdate>("download_update", { version });
 export const applyUpdate = (version: string) => invoke<void>("apply_update", { version });
 
-// ── omp_update.rs ─────────────────────────────────────────────────────
-export const ompAgentSessionsDir = () => invoke<string>("omp_agent_sessions_dir");
-export const readOmpModelRoles = () => invoke<Record<string, string>>("read_omp_model_roles");
-export const writeOmpModelRoles = (roles: Record<string, string>) => invoke<Record<string, string>>("write_omp_model_roles", { roles });
+// ── vinculum_customizations.rs ────────────────────────────────────────
+// The Finder window and the file picker; the agent directory itself is the daemon's (sync/agent.ts).
 export const openVinculumAgentDir = () => invoke<void>("open_vinculum_agent_dir");
-export const vinculumCustomizationPrompt = () => invoke<string>("vinculum_customization_prompt");
-export const readVinculumCustomizations = () => invoke<VinculumCustomizations>("read_vinculum_customizations");
 export const pickVinculumSkillDialog = () => invoke<string | null>("pick_vinculum_skill_dialog");
-export const installVinculumSkill = (sourcePath: string, replace: boolean) => invoke<SkillInstall>("install_vinculum_skill", { sourcePath, replace });
-export const deleteVinculumSkill = (name: string) => invoke<void>("delete_vinculum_skill", { name });
-export const vinculumCustomizations = () => invoke<VinculumDaemonCustomizations>("vinculum_customizations");
-
-// One attach-id space per daemon session, shared by every pane that can attach to it (terminal,
-// chat, session chat). Per-pane counters collided: one pane's detach dropped another's stream.
-let attachIdSeq = 1;
-export const nextAttachId = () => attachIdSeq++;
-
-const STREAM_RECOVERY_WINDOW_MS = 30_000;
-const STREAM_RECOVERY_MAX = 6;
-const streamCloses = new Map<string, number[]>();
 
 /**
- * An attach's reader emits `session_stream_closed` whenever it stops: the daemon dropped a client
- * more than 2 MB behind (so it can never block OMP), the socket failed or ended, or the view's
- * channel closed. The event carries no cause, so a view says the connection closed, never why.
- * Without a listener the view keeps showing a running turn that never prints again while OMP works
- * on. `onClosed` fires for this attach only; `onGiveUp` replaces it after STREAM_RECOVERY_MAX
- * closes in 30s, so a stream that keeps closing stops instead of re-reading the journal in a loop.
- * Returns the unlisten.
+ * A remote host was connected (the first time, or brought back after it dropped). A pane that lost
+ * its stream while the host was away rejoins here. Returns the unlisten.
  */
-export function onStreamClosed(id: string, attachId: number, onClosed: () => void, onGiveUp: () => void): () => void {
+export function onRemoteHostConnected(handler: () => void): () => void {
   let disposed = false;
   let stop: (() => void) | null = null;
-  void listen<{ id: string; attach_id: number }>("session_stream_closed", (event) => {
-    if (disposed || event.payload.id !== id || event.payload.attach_id !== attachId) return;
-    const now = Date.now();
-    const recent = (streamCloses.get(id) ?? []).filter((at) => now - at < STREAM_RECOVERY_WINDOW_MS);
-    recent.push(now);
-    streamCloses.set(id, recent);
-    if (recent.length > STREAM_RECOVERY_MAX) onGiveUp();
-    else onClosed();
+  void listen("remote_host_connected", () => {
+    if (!disposed) handler();
   }).then((unlisten) => {
     if (disposed) unlisten();
     else stop = unlisten;

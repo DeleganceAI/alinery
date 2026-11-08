@@ -1,0 +1,4 @@
+[defaults]
+harness = "omp"
+model = "gpt-5"
+thinking = "low"

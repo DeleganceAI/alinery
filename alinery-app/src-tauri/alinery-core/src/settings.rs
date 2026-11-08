@@ -11,9 +11,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::log::{append_exception, append_info, quote_log_value};
-use crate::paths::{alinery_dir, config_toml_path};
 use crate::types::{
-    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, RepoOverrides, TelemetryPrefs, DEFAULT_GRID_VIEW_ID, DEFAULT_GRID_VIEW_NAME,
+    default_grid_views, default_telemetry_endpoint, GlobalSettings, GridViewDefinition, HarnessFile, TelemetryPrefs, DEFAULT_GRID_VIEW_ID, DEFAULT_GRID_VIEW_NAME,
     DEFAULT_HARNESSES_TOML, LEGACY_DEFAULT_GRID_VIEW_NAME, MAX_GRID_VIEWS,
 };
 
@@ -37,12 +36,6 @@ pub struct SettingsLogReason {
     pub kind: &'static str,
     pub line: Option<usize>,
     pub column: Option<usize>,
-}
-
-pub enum RepoSettingsEvent<'a> {
-    Written { prior: &'a LoadPrior<RepoOverrides>, next: &'a RepoOverrides },
-    UnparseableOverlay { source: &'a str, error: &'a toml::de::Error },
-    WriteFailed { error: &'a str },
 }
 
 pub(crate) fn bundled_harness_file() -> HarnessFile {
@@ -168,20 +161,6 @@ pub fn load_global_settings_strict(app_config: &Path) -> Result<GlobalSettings, 
     }
 }
 
-pub fn load_repo_overrides_strict(repo: &Path) -> Result<RepoOverrides, String> {
-    let path = config_toml_path(repo);
-    match fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).map_err(|error| {
-            format!(
-                "invalid repository settings {} (playbook defaults require a scope-qualified v2 reference): {error}",
-                path.display()
-            )
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RepoOverrides::default()),
-        Err(error) => Err(format!("read settings {}: {error}", path.display())),
-    }
-}
-
 pub fn prepare_telemetry_prefs(mut t: TelemetryPrefs) -> TelemetryPrefs {
     if t.prompted && t.enabled && t.install_id.is_empty() {
         t.install_id = uuid::Uuid::new_v4().to_string();
@@ -257,24 +236,6 @@ fn try_load_global_settings(app_config: &Path) -> LoadPrior<GlobalSettings> {
     }
 }
 
-fn try_load_repo_overrides(repo: &Path) -> LoadPrior<RepoOverrides> {
-    match fs::read_to_string(config_toml_path(repo)) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => LoadPrior::Missing,
-        Err(_) => LoadPrior::Unreadable(io_reason()),
-        Ok(text) => repo_overrides_prior_from_text(Some(&text)),
-    }
-}
-
-pub fn repo_overrides_prior_from_text(text: Option<&str>) -> LoadPrior<RepoOverrides> {
-    match text {
-        None => LoadPrior::Missing,
-        Some(text) => match toml::from_str::<RepoOverrides>(text) {
-            Ok(value) => LoadPrior::Parsed(value),
-            Err(e) => LoadPrior::Unreadable(parse_reason(&e, text)),
-        },
-    }
-}
-
 pub fn write_global_settings(app_config: &Path, global: &GlobalSettings) -> Result<(), String> {
     let prior = try_load_global_settings(app_config);
     let mut global = global.clone();
@@ -306,33 +267,6 @@ pub fn write_global_settings(app_config: &Path, global: &GlobalSettings) -> Resu
                 LoadPrior::Unreadable(reason) => log_global_unreadable(app_config, reason),
                 LoadPrior::Missing => log_global_diff(app_config, &default_global_settings(), &next),
                 LoadPrior::Parsed(prev) => log_global_diff(app_config, &normalize_global_settings(prev), &next),
-            }
-            Ok(())
-        }
-    }
-}
-
-pub fn load_repo_overrides(repo: &Path) -> RepoOverrides {
-    fs::read_to_string(config_toml_path(repo))
-        .ok()
-        .and_then(|text| toml::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-pub fn write_repo_overrides(app_config: Option<&Path>, repo: &Path, overrides: &RepoOverrides) -> Result<(), String> {
-    let prior = app_config.map(|_| try_load_repo_overrides(repo));
-    fs::create_dir_all(alinery_dir(repo)).map_err(|e| e.to_string())?;
-    let path = config_toml_path(repo);
-    match fs::write(&path, toml::to_string(overrides).map_err(|e| e.to_string())?) {
-        Err(e) => {
-            if let Some(cfg) = app_config {
-                log_repo_settings_event(cfg, repo, RepoSettingsEvent::WriteFailed { error: &e.to_string() });
-            }
-            Err(format!("write {}: {e}", path.display()))
-        }
-        Ok(()) => {
-            if let (Some(cfg), Some(prior)) = (app_config, prior) {
-                log_repo_settings_event(cfg, repo, RepoSettingsEvent::Written { prior: &prior, next: overrides });
             }
             Ok(())
         }
@@ -374,33 +308,6 @@ fn push_opt_secret(fields: &mut Vec<String>, key: &str, prev: &Option<String>, n
         fields.push(format!("{key}=cleared"));
     } else {
         fields.push(format!("{key}=changed"));
-    }
-}
-
-fn push_opt_quoted(fields: &mut Vec<String>, key: &str, prev: &Option<String>, next: &Option<String>) {
-    match (prev, next) {
-        (a, b) if a == b => {}
-        (Some(_), None) => fields.push(format!("{key}=cleared")),
-        (_, Some(value)) => fields.push(format!("{key}={}", quote_log_value(value))),
-        (None, None) => {}
-    }
-}
-
-fn push_opt_bool(fields: &mut Vec<String>, key: &str, prev: Option<bool>, next: Option<bool>) {
-    match (prev, next) {
-        (a, b) if a == b => {}
-        (Some(_), None) => fields.push(format!("{key}=cleared")),
-        (_, Some(value)) => fields.push(format!("{key}={value}")),
-        (None, None) => {}
-    }
-}
-
-fn push_opt_u8(fields: &mut Vec<String>, key: &str, prev: Option<u8>, next: Option<u8>) {
-    match (prev, next) {
-        (a, b) if a == b => {}
-        (Some(_), None) => fields.push(format!("{key}=cleared")),
-        (_, Some(value)) => fields.push(format!("{key}={value}")),
-        (None, None) => {}
     }
 }
 
@@ -480,77 +387,11 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
     append_info(app_config, &format!("settings.global {}", fields.join(" ")));
 }
 
-pub fn log_repo_settings_event(app_config: &Path, repo: &Path, event: RepoSettingsEvent<'_>) {
-    match event {
-        RepoSettingsEvent::Written { prior, next } => match prior {
-            LoadPrior::Unreadable(reason) => {
-                let mut message = format!("settings.repo unreadable repo={}", quote_log_value(&repo.display().to_string()));
-                message.push(' ');
-                push_reason(&mut message, *reason);
-                append_exception(app_config, &message);
-            }
-            LoadPrior::Missing => log_repo_field_diff(app_config, repo, &RepoOverrides::default(), next),
-            LoadPrior::Parsed(prev) => log_repo_field_diff(app_config, repo, prev, next),
-        },
-        RepoSettingsEvent::UnparseableOverlay { source, error } => {
-            let mut message = format!("settings.repo unparseable-overlay repo={}", quote_log_value(&repo.display().to_string()));
-            message.push(' ');
-            push_reason(&mut message, parse_reason(error, source));
-            append_exception(app_config, &message);
-        }
-        RepoSettingsEvent::WriteFailed { error } => {
-            append_exception(
-                app_config,
-                &format!(
-                    "settings.repo write-failed repo={} reason=io err={}",
-                    quote_log_value(&repo.display().to_string()),
-                    quote_log_value(error)
-                ),
-            );
-        }
-    }
-}
-
-fn log_repo_field_diff(app_config: &Path, repo: &Path, prev: &RepoOverrides, next: &RepoOverrides) {
-    let mut fields = Vec::new();
-    push_opt_secret(&mut fields, "github.token", &prev.github.token, &next.github.token);
-    push_opt_quoted(&mut fields, "defaults.harness", &prev.defaults.harness, &next.defaults.harness);
-    push_opt_quoted(&mut fields, "defaults.model", &prev.defaults.model, &next.defaults.model);
-    push_opt_quoted(&mut fields, "defaults.thinking", &prev.defaults.thinking, &next.defaults.thinking);
-    if prev.defaults.playbook != next.defaults.playbook {
-        fields.push("defaults.playbook=changed".into());
-    }
-    push_opt_bool(&mut fields, "defaults.draft_autosave", prev.defaults.draft_autosave, next.defaults.draft_autosave);
-    push_opt_quoted(&mut fields, "backup.destination", &prev.backup.destination, &next.backup.destination);
-    push_opt_bool(&mut fields, "backup.enabled", prev.backup.enabled, next.backup.enabled);
-    push_opt_u8(&mut fields, "backup.retention", prev.backup.retention, next.backup.retention);
-    push_opt_bool(&mut fields, "backup.trigger_pre_archive", prev.backup.trigger_pre_archive, next.backup.trigger_pre_archive);
-    push_opt_bool(
-        &mut fields,
-        "backup.trigger_post_artifact_change",
-        prev.backup.trigger_post_artifact_change,
-        next.backup.trigger_post_artifact_change,
-    );
-    push_opt_bool(
-        &mut fields,
-        "backup.trigger_post_push_commit",
-        prev.backup.trigger_post_push_commit,
-        next.backup.trigger_post_push_commit,
-    );
-    if fields.is_empty() {
-        return;
-    }
-    append_info(
-        app_config,
-        &format!("settings.repo repo={} {}", quote_log_value(&repo.display().to_string()), fields.join(" ")),
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::log_path;
-    use crate::types::RepoBackupOverrides;
+
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -569,62 +410,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         (dir.clone(), dir.join("app.toml"))
-    }
-
-    fn temp_pair(name: &str) -> (PathBuf, PathBuf, PathBuf) {
-        let dir = unique_temp(name);
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let app_config = dir.join("app.toml");
-        let repo = dir.join("repo");
-        fs::create_dir_all(alinery_dir(&repo)).unwrap();
-        (dir, app_config, repo)
-    }
-
-    #[test]
-    fn legacy_defaults_migrate_and_round_trip_without_losing_settings() {
-        use crate::playbook::{PlaybookRef, PlaybookScope};
-
-        let (dir, app_config, repo) = temp_pair("legacy-playbook-defaults");
-        let original = "active_repo='/keep'\nknown_repos=['/keep','/another']\n[appearance]\nui_scale=1.25\n[global.defaults]\nplaybook='superdevelop'\nmodel='saved-model'\n";
-        fs::write(&app_config, original).unwrap();
-        fs::write(config_toml_path(&repo), "[defaults]\nplaybook='custom'\n[backup]\nenabled=true\n").unwrap();
-
-        let scoped = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
-        assert_eq!(
-            scoped.global.defaults.playbook,
-            PlaybookRef {
-                scope: PlaybookScope::Bundled,
-                key: "superdevelop".into()
-            }
-        );
-        assert_eq!(
-            scoped.effective.defaults.playbook,
-            PlaybookRef {
-                scope: PlaybookScope::Repo,
-                key: "custom".into()
-            }
-        );
-        assert_eq!(scoped.effective.defaults.model, "saved-model");
-        assert!(scoped.effective.backup.enabled);
-        assert_eq!(fs::read_to_string(&app_config).unwrap(), original, "reading must not rewrite user files");
-
-        write_global_settings(&app_config, &scoped.global).unwrap();
-        write_repo_overrides(Some(&app_config), &repo, &scoped.overrides).unwrap();
-        let saved: toml::Value = toml::from_str(&fs::read_to_string(&app_config).unwrap()).unwrap();
-        assert_eq!(saved["active_repo"].as_str(), Some("/keep"));
-        assert_eq!(
-            saved["known_repos"].as_array().unwrap(),
-            &vec![toml::Value::String("/keep".into()), toml::Value::String("/another".into())]
-        );
-        assert_eq!(saved["appearance"]["ui_scale"].as_float(), Some(1.25));
-        assert_eq!(saved["global"]["defaults"]["playbook"]["scope"].as_str(), Some("bundled"));
-        let saved_repo: toml::Value = toml::from_str(&fs::read_to_string(config_toml_path(&repo)).unwrap()).unwrap();
-        assert_eq!(saved_repo["defaults"]["playbook"]["scope"].as_str(), Some("repo"));
-        let reloaded = crate::read_scoped_settings_strict(&app_config, &repo).unwrap();
-        assert_eq!(reloaded.global, scoped.global);
-        assert_eq!(reloaded.overrides, scoped.overrides);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -953,84 +738,6 @@ mod tests {
         assert!(!text.contains("sk-live-secret"), "{text}");
         assert!(!text.contains("api_key = "), "{text}");
         assert!(!text.contains("TOML parse error"), "{text}");
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn repo_diff_logs_when_app_config_supplied() {
-        let (dir, app_config, repo) = temp_pair("alinery_log_repo_diff");
-        let overrides = RepoOverrides {
-            backup: RepoBackupOverrides {
-                enabled: Some(true),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        write_repo_overrides(Some(&app_config), &repo, &overrides).unwrap();
-        let text = log_text(&app_config);
-        let quoted = quote_log_value(&repo.display().to_string());
-        assert!(text.contains("settings.repo"), "{text}");
-        assert!(text.contains(&format!("repo={quoted}")), "{text}");
-        assert!(text.contains("backup.enabled=true"), "{text}");
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn repo_none_app_config_is_silent() {
-        let (dir, app_config, repo) = temp_pair("alinery_log_repo_silent");
-        let overrides = RepoOverrides {
-            backup: RepoBackupOverrides {
-                enabled: Some(true),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        write_repo_overrides(None, &repo, &overrides).unwrap();
-        assert!(!log_text(&app_config).contains("settings.repo"));
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn repo_cleared_option_logs_cleared() {
-        let (dir, app_config, repo) = temp_pair("alinery_log_repo_cleared");
-        let prior = RepoOverrides {
-            backup: RepoBackupOverrides {
-                enabled: Some(true),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        write_repo_overrides(Some(&app_config), &repo, &prior).unwrap();
-        write_repo_overrides(Some(&app_config), &repo, &RepoOverrides::default()).unwrap();
-        assert!(log_text(&app_config).contains("backup.enabled=cleared"));
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn malformed_repo_secret_is_not_copied_into_any_log_generation() {
-        let (dir, app_config, repo) = temp_pair("alinery_log_repo_secret_parse");
-        fs::write(config_toml_path(&repo), "[linear]\napi_key = \"sk-live-secret\n").unwrap();
-        write_repo_overrides(Some(&app_config), &repo, &RepoOverrides::default()).unwrap();
-        let text = all_log_generations(&app_config);
-        assert!(text.contains("settings.repo unreadable"), "{text}");
-        assert!(text.contains("reason=parse"), "{text}");
-        assert!(!text.contains("sk-live-secret"), "{text}");
-        assert!(!text.contains("api_key = "), "{text}");
-        assert!(!text.contains("TOML parse error"), "{text}");
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn unparseable_overlay_logs_reason_parse_without_source() {
-        let (dir, app_config, repo) = temp_pair("alinery_log_repo_overlay");
-        let source = "github = \"sk-overlay-secret\"\n";
-        let err = toml::from_str::<RepoOverrides>(source).unwrap_err();
-        log_repo_settings_event(&app_config, &repo, RepoSettingsEvent::UnparseableOverlay { source, error: &err });
-        let text = all_log_generations(&app_config);
-        assert!(text.contains("unparseable-overlay"), "{text}");
-        assert!(text.contains("reason=parse"), "{text}");
-        assert!(!text.contains("sk-overlay-secret"), "{text}");
-        assert!(!text.contains("invalid type"), "{text}");
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -1,10 +1,24 @@
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeOwnerOnly } from "./platform/fs.ts";
 import type { CreateModelsOptions } from "@earendil-works/pi-ai/models";
 
 /** One credential per provider. The shape is whatever Pi stored; this file does not interpret it. */
 type Credential = NonNullable<Awaited<ReturnType<NonNullable<CreateModelsOptions["credentials"]>["read"]>>>;
 type Store = NonNullable<CreateModelsOptions["credentials"]>;
+
+/** The whole store, `{}` for a file that is not there yet. A file that is not a JSON object is unreadable, never "empty". */
+export function readStore(path: string): Record<string, Credential> {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("credential store is not an object");
+    return parsed as Record<string, Credential>;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (code === "ENOENT") return {};
+    throw new Error("credential store is unreadable");
+  }
+}
 
 export function credentialPath(appConfig: string): string {
   return join(dirname(appConfig), "provider-credentials.json");
@@ -25,22 +39,11 @@ export function openCredentialStore(path: string): Store {
     return run;
   };
 
-  const readAll = (): Record<string, Credential> => {
-    try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("credential store is not an object");
-      return parsed as Record<string, Credential>;
-    } catch (error) {
-      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-      if (code === "ENOENT") return {};
-      throw new Error("credential store is unreadable");
-    }
-  };
+  const readAll = (): Record<string, Credential> => readStore(path);
 
   const writeAll = (all: Record<string, Credential>) => {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(all), { mode: 0o600 });
-    chmodSync(path, 0o600);
+    writeOwnerOnly(path, JSON.stringify(all));
   };
 
   return {
@@ -87,10 +90,11 @@ export function openCredentialStore(path: string): Store {
   };
 }
 
-async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+export async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  // 250 x 20 ms: long enough to outwait the 5 s steal below (the Mac's credential sync, now the host service, used the same numbers).
+  for (let attempt = 0; attempt < 250; attempt += 1) {
     try {
       const fd = openSync(lock, "wx", 0o600);
       closeSync(fd);
@@ -116,4 +120,27 @@ async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
     }
   }
   throw new Error("credential store is busy");
+}
+
+const isOauth = (credential: unknown) => !!credential && typeof credential === "object" && (credential as { type?: unknown }).type === "oauth";
+
+/**
+ * What the Mac asks of a host's store (credential_sync.rs `apply`): `set` replaces those providers; `remove` drops API keys the
+ * app copied earlier (a sign-in made on the host since is kept); `eraseOauth` drops every browser sign-in, once. Returns the
+ * sign-ins erased. Under the same `<file>.lock` the daemon takes, so a sign-in finishing at that moment is not lost.
+ */
+export function applyCredentialChanges(path: string, set: Record<string, Credential>, remove: string[], eraseOauth: boolean): Promise<string[]> {
+  return withFileLock(path, async () => {
+    const store = readStore(path);
+    let erased: string[] = [];
+    if (eraseOauth) {
+      erased = Object.keys(store).filter((provider) => isOauth(store[provider]));
+      for (const provider of erased) delete store[provider];
+    }
+    for (const provider of remove) if (provider in store && !isOauth(store[provider])) delete store[provider];
+    Object.assign(store, set);
+    mkdirSync(dirname(path), { recursive: true });
+    writeOwnerOnly(path, JSON.stringify(store));
+    return erased;
+  });
 }

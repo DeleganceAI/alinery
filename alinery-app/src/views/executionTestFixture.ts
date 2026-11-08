@@ -103,6 +103,8 @@ export function partiallyPublishedExecution(ownerSessionId = "owner-a"): TaskExe
       ],
     }),
   ]);
+  const occurrences = reply.state.occurrences ?? {};
+  reply.state.occurrences = occurrences;
   for (const [id, producer, selector, relativePath] of [
     ["options", "execution-a", "resolution-options.md", "2-resolution-options-10.md"],
     ["paper-a", "execution-a", "papers/*.md", "papers/2-a-12.md"],
@@ -110,8 +112,8 @@ export function partiallyPublishedExecution(ownerSessionId = "owner-a"): TaskExe
     ["other-fix", "execution-b", "selected-fix.md", "2-selected-fix-20.md"],
     ["other-note", "execution-b", "notes/*.md", "notes/2-other-21.md"],
   ]) {
-    reply.state.occurrences[id] = {
-      ...reply.state.occurrences["input-a"],
+    occurrences[id] = {
+      ...occurrences["input-a"],
       id,
       producer_execution_id: producer,
       selector,

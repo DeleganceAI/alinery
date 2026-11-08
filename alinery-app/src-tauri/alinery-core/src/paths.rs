@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
 
+/// The uid this process runs as; keys per-user scratch directories such as `/tmp/alinery-<uid>`.
+pub fn effective_uid() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
 /// Stable application configuration root, including development instance paths.
 pub fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
     let dir = app_config.parent()?;
@@ -62,6 +67,18 @@ fn mcp_stem(namespace: Option<&str>) -> String {
     }
 }
 
+/// The daemon's gRPC socket (plan T1): `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
+pub fn rpc_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
+    let clean = namespace
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(48)
+        .collect::<String>();
+    let stem = if clean.is_empty() { "rpc".to_string() } else { format!("rpc-{clean}") };
+    alinery_dir(repo).join(format!("{stem}.sock"))
+}
+
 /// Reconciler transaction lock (one per repo, separate from daemon ownership).
 pub fn alineryd_reconciler_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".alineryd-reconciler.lock")
@@ -84,8 +101,8 @@ pub fn task_mutation_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".task-mutation.lock")
 }
 
-/// Enumerate alineryd lane sockets under `.alinery/`: `(namespace, path)`.
-/// Prod lane uses `namespace == ""` for `alineryd.sock`.
+/// Enumerate the daemon lane sockets under `.alinery/`: `(namespace, path)`. A lane has the gRPC socket
+/// `rpc[-ns].sock`, and an older daemon's lane also has `alineryd[-ns].sock`. The prod lane uses `namespace == ""`.
 pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     let dir = alinery_dir(repo);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -95,14 +112,12 @@ pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     for ent in entries.flatten() {
         let name = ent.file_name();
         let Some(s) = name.to_str() else { continue };
-        if !s.ends_with(".sock") || !s.starts_with("alineryd") {
-            continue;
-        }
+        let Some(stem) = s.strip_suffix(".sock") else { continue };
         // skip unrelated *.sock
-        let ns = if s == "alineryd.sock" {
+        let ns = if stem == "alineryd" || stem == "rpc" {
             String::new()
-        } else if let Some(rest) = s.strip_prefix("alineryd-") {
-            rest.trim_end_matches(".sock").to_string()
+        } else if let Some(rest) = stem.strip_prefix("alineryd-").or_else(|| stem.strip_prefix("rpc-")) {
+            rest.to_string()
         } else {
             continue;
         };
@@ -126,19 +141,11 @@ pub fn harnesses_toml_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("harnesses.toml")
 }
 
-pub fn playbooks_dir(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("playbooks")
-}
-
 pub fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
     tasks_dir(repo).join(slug).join("artifacts")
 }
 
 // Compat alias for alineryd and old code (ponytail: no bigger rename yet)
-pub fn artifacts_dir_for(repo: &Path, slug: &str) -> PathBuf {
-    artifacts_dir(repo, slug)
-}
-
 pub fn attachments_dir(repo: &Path, slug: &str) -> PathBuf {
     artifacts_dir(repo, slug).join("attachments")
 }
@@ -207,10 +214,6 @@ pub fn session_omp_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
 
 // Files a taskless chat thread attached. Sibling of `<id>.omp`, not inside the worktree,
 // so removing that worktree does not delete them and they are not untracked git files.
-pub fn chat_attachments_dir(repo: &Path, id: &str) -> PathBuf {
-    root_sessions_dir(repo).join(format!("{id}.attachments"))
-}
-
 // The daemon appends raw session output to this single-file sidecar.
 pub fn session_scrollback_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
@@ -251,10 +254,6 @@ fn collect_meta_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 pub fn worktrees_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("worktrees")
-}
-
-pub fn chat_worktrees_dir(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("chat-worktrees")
 }
 
 // task_dir moved to task.rs to avoid glob import ambiguity
@@ -447,11 +446,6 @@ pub const OMP_ENV_ALLOWLIST: &[&str] = &[
     "no_proxy",
 ];
 
-/// The allowlisted variables that are actually set, ready to re-apply after an `env_clear()`.
-pub fn omp_inherited_env() -> Vec<(&'static str, String)> {
-    OMP_ENV_ALLOWLIST.iter().filter_map(|key| std::env::var(key).ok().map(|value| (*key, value))).collect()
-}
-
 /// Packaged OMP binary: `ALINERY_OMP_PATH` override → install-root sibling →
 /// default alongside dir. Fail-closed; never PATH search.
 pub fn resolve_packaged_omp_path() -> Result<PathBuf, String> {
@@ -506,13 +500,6 @@ mod tests {
         assert_eq!(session_omp_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.omp"));
         // Sibling of meta, not nested under it, not a worktree path, not ~/.omp.
         assert_eq!(session_omp_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
-    }
-
-    #[test]
-    fn chat_attachments_dir_sits_beside_the_session() {
-        let repo = Path::new("/repo");
-        assert_eq!(chat_attachments_dir(repo, "s1"), root_sessions_dir(repo).join("s1.attachments"));
-        assert_eq!(chat_attachments_dir(repo, "s1").parent(), session_omp_dir(repo, "", "s1").parent());
     }
 
     #[test]

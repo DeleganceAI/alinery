@@ -76,28 +76,3 @@ export function applySendPlan(state: ChatTranscriptState, text: string, plan: Ch
   // it; under-claiming is the bug this exists to prevent.
   return { state: plan.invokesModel ? { ...next, pendingTurn: true } : next, entryId };
 }
-
-export function commandOutputText(value: unknown): string | null {
-  const rec = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  if (!rec || rec.type !== "command_output") return null;
-  if (typeof rec.text === "string") return rec.text;
-  if (typeof rec.message === "string") return rec.message;
-  if (typeof rec.output === "string") return rec.output;
-  return "";
-}
-
-export function setModelReply(value: unknown): { ok: boolean; error?: string } | null {
-  const rec = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  if (!rec || rec.type !== "response" || rec.command !== "set_model") return null;
-  if (rec.success === false) return { ok: false, error: typeof rec.error === "string" ? rec.error : "Could not set model." };
-  return { ok: true };
-}
-
-export function loginReply(value: unknown): { ok: boolean; providerId?: string; error?: string } | null {
-  const rec = value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-  if (!rec || rec.type !== "response" || rec.command !== "login") return null;
-  if (rec.success === false) return { ok: false, error: typeof rec.error === "string" ? rec.error : "Login failed." };
-  const data = rec.data !== null && typeof rec.data === "object" && !Array.isArray(rec.data) ? (rec.data as Record<string, unknown>) : null;
-  const providerId = data && typeof data.providerId === "string" ? data.providerId : undefined;
-  return { ok: true, providerId };
-}

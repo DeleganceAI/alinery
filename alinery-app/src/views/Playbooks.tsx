@@ -6,6 +6,16 @@ import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
 import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import * as community from "../sync/community";
+import {
+  deletePlaybookSource,
+  listPlaybookCatalog,
+  readPlaybook,
+  renderPlaybookSource,
+  savePlaybookPickerPreferences,
+  savePlaybookSource,
+  validatePlaybookSource,
+} from "../sync/playbooks";
 import { toast } from "../toast";
 import type {
   CommunityImportRow,
@@ -248,8 +258,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setPreferenceError("");
     setPreferenceSaving(false);
     pendingPreference.current = null;
-    ipc
-      .listPlaybookCatalog(repoPath)
+    listPlaybookCatalog(repoPath)
       .then((value) => {
         if (live) setCatalog(value);
       })
@@ -257,7 +266,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         if (live) setCatalogError(errorText(e));
       });
     if (repoPath) {
-      ipc
+      community
         .listCommunityImports({ repoPath })
         .then((value) => {
           if (live) setImports(value.imports);
@@ -323,7 +332,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (libraryTab !== "community" || communityFilter !== "downloaded" || !repoPath) return;
     let live = true;
     setDownloadsReady(false);
-    ipc
+    community
       .communityDownloadStatus({ repoPath })
       .then((value) => {
         if (!live) return;
@@ -398,7 +407,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
 
   const refresh = async (owner: string | undefined) => {
     try {
-      const value = await ipc.listPlaybookCatalog(owner);
+      const value = await listPlaybookCatalog(owner);
       if (currentRepo.current === owner) {
         setCatalog(value);
         setCatalogError("");
@@ -431,7 +440,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setError("");
     setNotice("");
     try {
-      install(await ipc.readPlaybook(reference, owner), owner);
+      install(await readPlaybook(reference, owner), owner);
       setMode("graph");
     } catch (e) {
       setError(errorText(e));
@@ -446,8 +455,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setError("");
     setNotice("");
     try {
-      const content = kind === "new" ? await ipc.renderPlaybookSource(blankDefinition) : kind === "copy" ? source : kind === "file" && file ? await file.text() : "";
-      const checked = content ? await ipc.validatePlaybookSource(content) : null;
+      const content = kind === "new" ? await renderPlaybookSource(blankDefinition) : kind === "copy" ? source : kind === "file" && file ? await file.text() : "";
+      const checked = content ? await validatePlaybookSource(content) : null;
       setEditorRepoPath(owner);
       setSelected(null);
       setSource(content);
@@ -464,7 +473,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
   };
   const validate = async () => {
-    const checked = await ipc.validatePlaybookSource(source);
+    const checked = await validatePlaybookSource(source);
     setDiagnostics(checked.diagnostics);
     return checked.definition;
   };
@@ -483,7 +492,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         return;
       }
       if (!selected && parsed.key !== target.key) {
-        const current = await ipc.listPlaybookCatalog(owner);
+        const current = await listPlaybookCatalog(owner);
         const documentTarget = { scope, key: parsed.key };
         const documentConflict = catalogContains(current, documentTarget);
         const destinationConflict = catalogContains(current, target);
@@ -545,9 +554,9 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         else if (choice !== "destination") return;
       }
       // Pass matching source through; only an acknowledged save-as rewrites its key here.
-      const content = parsed.key === target.key ? source : await ipc.renderPlaybookSource({ ...parsed, key: target.key });
+      const content = parsed.key === target.key ? source : await renderPlaybookSource({ ...parsed, key: target.key });
       // The library may have changed while the key-choice dialog was open.
-      const latest = await ipc.listPlaybookCatalog(owner);
+      const latest = await listPlaybookCatalog(owner);
       const exists = catalogContains(latest, target);
       if (
         exists &&
@@ -561,7 +570,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })) !== "overwrite"
       )
         return;
-      const saved = await ipc.savePlaybookSource({ target, source: content, overwrite: exists }, owner);
+      const saved = await savePlaybookSource({ target, source: content, overwrite: exists }, owner);
       install(saved, owner);
       setNotice("Definition saved.");
       await refresh(owner);
@@ -588,7 +597,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const reloadImports = async (owner: string | undefined) => {
     if (!owner) return;
     try {
-      const imports = (await ipc.listCommunityImports({ repoPath: owner })).imports;
+      const imports = (await community.listCommunityImports({ repoPath: owner })).imports;
       if (currentRepo.current === owner) setImports(imports);
     } catch {
       if (currentRepo.current === owner) setImports([]);
@@ -661,7 +670,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   };
   const refreshDownloads = async (owner: string | undefined) => {
     if (!owner) return;
-    const rows = (await ipc.communityDownloadStatus({ repoPath: owner })).rows;
+    const rows = (await community.communityDownloadStatus({ repoPath: owner })).rows;
     if (currentRepo.current === owner) setDownloadRows(rows);
   };
   const previewPublication = async (id: string, name: string) => {
@@ -676,7 +685,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   };
   const importPublication = async (owner: string | undefined, id: string, overwrite: boolean) => {
     if (!owner) return;
-    const result = await ipc.importCommunityPlaybook({ id, repoPath: owner, overwrite });
+    const result = await community.importCommunityPlaybook({ id, repoPath: owner, overwrite });
     if (result.kind === "needs_account") {
       openSignup(() => importPublication(owner, id, overwrite));
       return;
@@ -727,7 +736,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       await updatePublication(owner, id, true);
       return;
     }
-    const result = await ipc.updateCommunityImport({ id, repoPath: owner, overwriteEdited });
+    const result = await community.updateCommunityImport({ id, repoPath: owner, overwriteEdited });
     if (!result) return;
     if (result.kind === "needs_account") {
       openSignup(() => updatePublication(owner, id, overwriteEdited));
@@ -777,8 +786,8 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (showPublishLabel && !labelPattern.test(publishLabel)) return;
     const { reference } = publishConfirm;
     const result = showPublishLabel
-      ? await ipc.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
-      : await ipc.publishCommunityPlaybook({ reference, repoPath });
+      ? await community.publishCommunityPlaybook({ reference, repoPath, label: publishLabel })
+      : await community.publishCommunityPlaybook({ reference, repoPath });
     if (!result) return;
     if (result.kind === "needs_account") {
       openSignup(() => confirmPublish());
@@ -824,7 +833,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setBusy(true);
     setError("");
     try {
-      await ipc.deletePlaybookSource(selected.source.reference, editorRepoPath);
+      await deletePlaybookSource(selected.source.reference, editorRepoPath);
       await refresh(editorRepoPath);
       await reloadImports(editorRepoPath);
       close();
@@ -843,7 +852,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     setPreferenceSaving(true);
     setPreferenceError("");
     try {
-      await ipc.savePlaybookPickerPreferences(next, owner);
+      await savePlaybookPickerPreferences(next, owner);
       if (currentRepo.current === owner && preferenceGeneration.current === generation) {
         setCatalog((value) => value && { ...value, picker_preferences: next });
       }

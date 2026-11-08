@@ -27,14 +27,6 @@ if [ -n "$hits" ]; then
   exit 1
 fi
 
-ts_hits=$(grep -rn -E 'spawn(Sync)?\([[:space:]]*"git"|spawn(Sync)?\([[:space:]]*'\''git'\''' \
-  --include='*.ts' \
-  "$TAURI/vinculum-daemon" || true)
-
-if [ -n "$ts_hits" ]; then
-  echo "ERROR: Vinculum must call alinery-core provisioning, not spawn git itself:" >&2
-  echo "$ts_hits" >&2
-  exit 1
-fi
+# The daemon's own git spawn site is checked by check-daemon-git-spawn.sh.
 
 echo "OK: all git spawns go through alinery_core::git_cmd"

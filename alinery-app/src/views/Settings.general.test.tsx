@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { effectiveOf, fakeSettings } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -34,32 +35,20 @@ const globalSettings: GlobalSettings = {
   updates: { check_enabled: false },
 };
 
-// Repo scope reads the global tier too; on here so the disabled box visibly mirrors it.
-const repoGlobal: GlobalSettings = { ...globalSettings, power: { keep_awake: true } };
-
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
-    readScopedSettingsForRepo: async () => ({
-      global: repoGlobal,
-      overrides: { github: {}, defaults: {}, backup: {} },
-      effective: {
-        notifications: repoGlobal.notifications,
-        github: repoGlobal.github,
-        defaults: repoGlobal.defaults,
-        provenance: {
-          github_token: "global",
-          defaults: { harness: "global", model: "global", thinking: "global", playbook: "global", draft_autosave: "global" },
-        },
-        backup: repoGlobal.backup,
-        telemetry: repoGlobal.telemetry,
-      },
-    }),
     getVersion: async () => "0.0.0",
-    storageInfo: () => new Promise(() => {}),
   }),
 );
+
+// The playbook library is the daemon's PlaybookService (sync/playbooks); the default-playbook picker reads an empty catalog here.
+vi.mock("../sync/playbooks", async (actual) => ({
+  ...(await actual<typeof import("../sync/playbooks")>()),
+  listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
+}));
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 
 import * as ipc from "../ipc";
 import { SECTIONS, Settings } from "./Settings";
@@ -71,6 +60,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -88,6 +78,11 @@ function renderGeneral() {
 const keepAwake = () => screen.findByRole("checkbox", { name: /Keep this computer awake/ }) as Promise<HTMLInputElement>;
 const telemetry = () => screen.getByRole("checkbox", { name: /Share anonymous usage/ }) as HTMLInputElement;
 const lastWrite = () => vi.mocked(ipc.writeGlobalSettings).mock.lastCall?.[0] as GlobalSettings;
+
+beforeEach(() => {
+  fakeSettings.reset();
+  fakeSettings.serve("/r", (overrides) => effectiveOf(globalSettings, overrides));
+});
 
 afterEach(() => {
   cleanup();
@@ -155,8 +150,8 @@ describe("Settings General", () => {
     renderGeneral();
     await keepAwake();
     fireEvent.click(screen.getByRole("button", { name: "r" }));
-    await waitFor(async () => expect((await keepAwake()).checked).toBe(true));
     const box = await keepAwake();
+    expect(box.checked).toBe(false); // repo scope mirrors the global tier it reads
     expect(box.disabled).toBe(true);
     expect(telemetry().disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);

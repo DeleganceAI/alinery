@@ -8,7 +8,6 @@ if grep -RInE 'spawn(Sync)?\([[:space:]]*"omp"|Command::new\("omp"\)|CommandBuil
   "$ROOT/alinery-app/src-tauri/vinculum-daemon" \
   "$ROOT/alinery-app/src-tauri/src" \
   "$ROOT/alinery-app/src-tauri/alinery-core/src" \
-  "$ROOT/alinery-app/src-tauri/mcp" \
   --include='*.ts' --include='*.rs'; then
   echo "ERROR: omp must not be spawned" >&2
   status=1

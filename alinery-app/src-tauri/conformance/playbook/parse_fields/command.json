@@ -1,0 +1,378 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "remove_lines_sweep"
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"Bad\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"-bad\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"a/b\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"a.b\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"a b\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"é\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "key = \"test\"",
+     "key = \"0-a\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "title = \"Test\"",
+     "title = \" \""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "base": "fixture2",
+   "replace": [
+    [
+     "key = \"other\"",
+     "key = \"run\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\nsteps = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\nedge = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\ncolumns = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\nkind = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\ntypo = []"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nartifact = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nprompt = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nprompt_inline = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\ncolumn = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nkind = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nhuman = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nretry = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nretry_max = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nattempts = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nrerun = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nrerun_on_failure = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\non_failure = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\ncompletion = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nhuman_approval = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\nallow_empty_prompt = \"\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result-*.md\", required = true}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result.md\", required = true}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "mode = \"single\"",
+     "mode = \"single\", optional = true"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result.md\", mode = \"single\"}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "\"result.md\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{}"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "mode = \"single\"",
+     "mode = \"zip\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "title = \"Test\"",
+     "title = 5"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "is_coding_step = false",
+     "is_coding_step = \"no\""
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "inputs = [",
+     "inputs = 1\nxx = ["
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "[[step]]",
+     "step_extra = 1\n[[step]]"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"t\"\ntitle = \"T\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\nstep = []\n+++\n"
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\nkey = \"t\"\ntitle = \"T\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\nstep = [1]\n+++\n"
+  }
+ ]
+}

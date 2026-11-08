@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { writeOwnerOnly } from "./platform/fs.ts";
 import { dirname, join } from "node:path";
 import { createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -30,8 +31,7 @@ export function openCustomProviders(path: string) {
 
   const persist = () => {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(rows), { mode: 0o600 });
-    chmodSync(path, 0o600);
+    writeOwnerOnly(path, JSON.stringify(rows));
   };
 
   return {

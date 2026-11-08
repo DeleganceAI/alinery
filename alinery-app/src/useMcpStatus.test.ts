@@ -10,6 +10,7 @@ const status = (over: Partial<McpStatus> = {}): McpStatus => ({
   socket_reachable: true,
   binary_found: true,
   binary_path: "/bin/alinery-mcp",
+  host_args: [],
   repo: "/r",
   socket_path: "/r/.alinery/mcp.sock",
   error: "",

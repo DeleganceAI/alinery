@@ -1,7 +1,27 @@
 import { type ReactNode, useEffect, useState } from "react";
-import * as ipc from "./ipc";
+import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
+import { alineryFilePath, attachmentFilePath, readNodeBytes } from "./sync/artifacts";
+import { readAttachmentBytes } from "./sync/tasks";
 
-export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
+/**
+ * The image is read from the daemon (BlobService): a tree node by `nodeId`, an attachment of the task by `name`.
+ * `revealBelow` is a tree node's path below `.alinery/`; without it the attachment's own place is used.
+ */
+export function AttachmentPreview({
+  taskSlug,
+  name,
+  nodeId,
+  repoPath,
+  revealBelow,
+  children,
+}: {
+  taskSlug: string;
+  name: string;
+  nodeId?: string;
+  repoPath: string;
+  revealBelow?: string;
+  children?: ReactNode;
+}) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -10,7 +30,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
     let url = "";
     setSrc("");
     setError("");
-    ipc.readAttachmentImage(taskSlug, name, nodeId).then(
+    (nodeId ? readNodeBytes(repoPath, taskSlug, nodeId) : readAttachmentBytes(repoPath, taskSlug, name)).then(
       (bytes) => {
         if (cancelled) return;
         url = URL.createObjectURL(new Blob([bytes]));
@@ -24,7 +44,7 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [taskSlug, name, nodeId]);
+  }, [taskSlug, name, nodeId, repoPath]);
 
   return (
     <details className="attachment-preview" open>
@@ -45,17 +65,19 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
         )}
       </div>
       <div className="attachment-preview-actions">
-        <button
-          type="button"
-          className="btn ghost small"
-          aria-label={`Show ${name} in folder`}
-          onClick={() => {
-            const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
-            path.then(ipc.revealItemInDir).catch((reason) => setError(String(reason)));
-          }}
-        >
-          Show in folder
-        </button>
+        {(!nodeId || revealBelow) && (
+          <button
+            type="button"
+            className="btn ghost small"
+            aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
+            onClick={() => {
+              const path = revealBelow ? alineryFilePath(repoPath, revealBelow) : attachmentFilePath(repoPath, taskSlug, name);
+              revealPath(path).catch((reason) => setError(String(reason)));
+            }}
+          >
+            {revealActionLabel()}
+          </button>
+        )}
         {children}
       </div>
     </details>

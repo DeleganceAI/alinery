@@ -1,36 +1,75 @@
-import type { PlaybookRef } from "./types";
+import { setHostOnboarded } from "./ipc";
+import { machineOf } from "./remoteRepo";
+import type { AppConfig, PlaybookRef } from "./types";
 
-export const ONBOARDING_COMPLETED_KEY = "alinery.onboardingCompleted.v1";
 export const ONBOARDING_STEP_KEY = "alinery.onboardingStep.v1";
 
-export type OnboardingStepId = "workspace" | "playbooks" | "models" | "launch";
+export type OnboardingStepId = "playbooks" | "models" | "launch";
 
 export const ONBOARDING_STEPS: { id: OnboardingStepId; number: string; label: string; title: string }[] = [
-  { id: "workspace", number: "01", label: "Repository", title: "Connect a repository" },
-  { id: "playbooks", number: "02", label: "Playbooks", title: "How playbooks coordinate agents" },
-  { id: "models", number: "03", label: "Models", title: "Verify your agent & model provider" },
-  { id: "launch", number: "04", label: "First task", title: "Launch your first playbook task" },
+  { id: "playbooks", number: "01", label: "Playbooks", title: "How playbooks coordinate agents" },
+  { id: "models", number: "02", label: "Models", title: "Verify your agent & model provider" },
+  { id: "launch", number: "03", label: "First task", title: "Launch your first playbook task" },
 ];
 
-export function isOnboardingCompleted(): boolean {
-  try {
-    return localStorage.getItem(ONBOARDING_COMPLETED_KEY) === "1";
-  } catch {
-    return false;
-  }
+/** Where the pre-S6.1 install kept its single "onboarded" flag. Read once, by `migrateLegacyOnboarding`. */
+const LEGACY_COMPLETED_KEY = "alinery.onboardingCompleted.v1";
+
+/** The onboarded mark lives in the app config, per host: the key `local` or a remote host id. */
+const LOCAL_HOST = "local";
+const hostOf = (repoKey: string) => machineOf(repoKey) || LOCAL_HOST;
+
+/** Whether the host the repo lives on has run onboarding. An empty key is this computer. */
+export function isHostOnboarded(cfg: AppConfig, repoKey: string): boolean {
+  const host = hostOf(repoKey);
+  return host === LOCAL_HOST ? cfg.local_onboarded === true : cfg.remote_hosts?.[host]?.onboarded === true;
 }
 
-export function markOnboardingCompleted(): void {
+/** `cfg` with the repo's host marked onboarded, so the page does not wait for a re-read. */
+export function withHostOnboarded(cfg: AppConfig, repoKey: string): AppConfig {
+  const host = hostOf(repoKey);
+  if (host === LOCAL_HOST) return { ...cfg, local_onboarded: true };
+  const entry = cfg.remote_hosts?.[host];
+  return entry ? { ...cfg, remote_hosts: { ...cfg.remote_hosts, [host]: { ...entry, onboarded: true } } } : cfg;
+}
+
+/** Record in the app config that onboarding has run on the repo's host. */
+export async function markHostOnboarded(repoKey: string): Promise<void> {
+  clearSavedOnboardingStep();
+  await setHostOnboarded(hostOf(repoKey), true);
+}
+
+/**
+ * An install from before the per-host mark kept one flag in `localStorage`. Hand it to the
+ * shell once as this computer's mark and delete it, so the key is read in this one place.
+ * The key stays if the shell refuses, and the answer still holds for this launch.
+ */
+export async function migrateLegacyOnboarding(cfg: AppConfig): Promise<AppConfig> {
+  let legacy = false;
   try {
-    localStorage.setItem(ONBOARDING_COMPLETED_KEY, "1");
+    legacy = localStorage.getItem(LEGACY_COMPLETED_KEY) === "1";
+  } catch {
+    return cfg;
+  }
+  if (!legacy) return cfg;
+  try {
+    await setHostOnboarded(LOCAL_HOST, true);
+    localStorage.removeItem(LEGACY_COMPLETED_KEY);
+  } catch {
+    // Retried at the next launch.
+  }
+  return { ...cfg, local_onboarded: true };
+}
+
+function clearSavedOnboardingStep(): void {
+  try {
     localStorage.removeItem(ONBOARDING_STEP_KEY);
   } catch {
-    // Ignore storage quota / privacy mode failures.
+    // Ignore storage errors.
   }
 }
 
-export function readSavedOnboardingStep(hasActiveRepo: boolean): OnboardingStepId {
-  if (!hasActiveRepo) return "workspace";
+export function readSavedOnboardingStep(): OnboardingStepId {
   try {
     const raw = localStorage.getItem(ONBOARDING_STEP_KEY);
     if (raw && ONBOARDING_STEPS.some((step) => step.id === raw)) {

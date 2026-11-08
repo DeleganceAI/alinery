@@ -11,7 +11,12 @@ export function sessionIsRecoverable(harness: string, sessionId: string, executi
 }
 
 /** Terminal word for a session that is not live. Null means the live status still applies. */
-export function sessionTerminalLabel(harness: string, sessionId: string, execution: RecoverableExecution | null | undefined, ended: boolean): "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null {
+export function sessionTerminalLabel(
+  harness: string,
+  sessionId: string,
+  execution: RecoverableExecution | null | undefined,
+  ended: boolean,
+): "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null {
   if (execution && execution.owner_session_id !== sessionId) return ended ? "Exited" : null;
   if (sessionIsRecoverable(harness, sessionId, execution)) return "Recoverable";
   if (execution?.lifecycle === "finishing") return "Ready to advance";

@@ -10,6 +10,7 @@ import type { AppConfig, BoardTask, Config, CreateTaskResult, Task } from "./typ
 const appConfig: AppConfig = {
   active_repo: "/repo-a",
   known_repos: ["/repo-a", "/repo-b"],
+  local_onboarded: true,
   mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
 };
@@ -86,36 +87,42 @@ const mocks = vi.hoisted(() => ({
   classifyPickedFolder: vi.fn(),
   initPickedFolder: vi.fn(),
   readAppConfig: vi.fn(),
-  readConfigForRepo: vi.fn(),
+  readEffectiveConfig: vi.fn(),
   toast: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   onCloseRequested: vi.fn(async () => () => {}),
 }));
 
+vi.mock("./sync/playbooks", async (actual) => ({
+  ...(await actual<typeof import("./sync/playbooks")>()),
+  listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
+}));
+vi.mock("./sync/git", () => ({
+  taskSourceBranchesForRepo: async () => ({
+    branches: [{ full_ref: "refs/heads/main", name: "main" }],
+    head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
+    selected: null,
+  }),
+  listTaskPullRequests: async () => ({}),
+  removeWorktreeForRepo: async () => {},
+  pushAndCompareUrlForRepo: async () => "",
+}));
+vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
+vi.mock("./sync/tasks", async (actual) => ({ ...(await actual<typeof import("./sync/tasks")>()), duplicateTaskForRepo: mocks.duplicateTaskForRepo }));
+vi.mock("./sync/settings", async (actual) => ({ ...(await actual<typeof import("./sync/settings")>()), readEffectiveConfig: mocks.readEffectiveConfig }));
+vi.mock("./sync/sessions", async (actual) => ({ ...(await actual<typeof import("./sync/sessions")>()), startSession: mocks.startSession }));
 vi.mock("./ipc", () =>
   mockIpc({
     getVersion: async () => "0.9.10",
     getName: async () => "Alinery Test",
     readAppConfig: mocks.readAppConfig,
-    listBoardTasks: async () => [],
-    listKanbanColumns: async () => [],
-    duplicateTaskForRepo: mocks.duplicateTaskForRepo,
-    startSession: mocks.startSession,
     setActiveRepo: mocks.setActiveRepo,
     pickRepoDialog: mocks.pickRepoDialog,
     classifyPickedFolder: mocks.classifyPickedFolder,
     initPickedFolder: mocks.initPickedFolder,
     getCurrentWindow: (() => ({ onCloseRequested: mocks.onCloseRequested, destroy: vi.fn() })) as never,
     getCurrentWebview: () => ({ onDragDropEvent: async () => () => {} }) as unknown as ReturnType<typeof import("./ipc").getCurrentWebview>,
-    readConfigForRepo: mocks.readConfigForRepo,
-    taskSourceBranchesForRepo: async () => ({
-      branches: [{ full_ref: "refs/heads/main", name: "main" }],
-      head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
-      selected: null,
-    }),
-    listPlaybookCatalog: async () => ({ candidates: [], picker_preferences: { order: [], entries: [] }, diagnostics: [] }),
-    listHarnessModelsForRepo: async () => [],
     connectionStatuses: async () => [],
   }),
 );
@@ -161,7 +168,7 @@ vi.mock("./views/TaskDetail", () => ({
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: {
-    getItem: vi.fn((key: string) => (key === "alinery.onboardingCompleted.v1" ? "1" : null)),
+    getItem: vi.fn(() => null),
     setItem: vi.fn(),
   },
 });
@@ -176,7 +183,7 @@ beforeEach(() => {
   mocks.duplicateTaskForRepo.mockReset();
   mocks.startSession.mockReset();
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
-  mocks.readConfigForRepo.mockReset().mockResolvedValue({
+  mocks.readEffectiveConfig.mockReset().mockResolvedValue({
     defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
@@ -245,7 +252,7 @@ describe("App duplicate coordinator", () => {
     fireEvent.click(await screen.findByText("duplicate-source"));
 
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b", []);
+    expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-b");
     expect(mocks.startSession).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("binary missing"));
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
@@ -285,11 +292,11 @@ describe("App duplicate coordinator", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Repository" }));
     fireEvent.click(screen.getByTitle("/repo-a"));
-    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a", []));
+    await waitFor(() => expect(mocks.setActiveRepo).toHaveBeenCalledWith("/repo-a"));
 
     resolveDuplicate(duplicateResult());
     await screen.findByText("task:source-2");
-    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b", []);
+    expect(mocks.setActiveRepo).toHaveBeenLastCalledWith("/repo-b");
     expect(mocks.startSession).not.toHaveBeenCalled();
   });
 
@@ -355,8 +362,8 @@ describe("App duplicate coordinator", () => {
 
   it("hides the opening toast when the form appears, without waiting for configuration", async () => {
     let resolveConfig: (config: Config) => void = () => {};
-    const config = await mocks.readConfigForRepo();
-    mocks.readConfigForRepo.mockReturnValue(
+    const config = await mocks.readEffectiveConfig();
+    mocks.readEffectiveConfig.mockReturnValue(
       new Promise<Config>((resolve) => {
         resolveConfig = resolve;
       }),

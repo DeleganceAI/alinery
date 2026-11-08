@@ -1,0 +1,90 @@
+// proto/alinery/v1/chat.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/sessions.proto";
+
+// Taskless chat threads (S4.4). The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
+// These are the writes. A thread's attachments go through BlobService (`ChatAttachmentBlob`), never as a path.
+service ChatService {
+  // Mints a thread (and its own worktree when asked) and starts it. A thread that could not start comes back with
+  // `start = "failed"` and the launch error, as it always has.
+  rpc CreateChatThread(CreateChatThreadRequest) returns (CreateChatThreadResponse);  // ACT
+  rpc StartChatThread(StartChatThreadRequest) returns (StartChatThreadResponse);     // ACT
+  rpc SetChatPinned(SetChatPinnedRequest) returns (SetChatPinnedResponse);           // ACT
+  // Stops the thread if it runs, stamps it archived, and removes its worktree when asked.
+  rpc ArchiveChatThread(ArchiveChatThreadRequest) returns (ArchiveChatThreadResponse);  // ACT
+  rpc RemoveChatWorktree(RemoveChatWorktreeRequest) returns (RemoveChatWorktreeResponse);  // ACT
+  // Continues a thread in a new one that resumes its harness conversation.
+  rpc ResumeChatThread(ResumeChatThreadRequest) returns (ResumeChatThreadResponse);  // ACT
+  // The turn controls of a thread, the chat form of SessionService's: the thread must be a chat thread (a root session).
+  rpc PromptChatThread(PromptChatThreadRequest) returns (PromptChatThreadResponse);  // ACT
+  rpc AbortChatThread(AbortChatThreadRequest) returns (AbortChatThreadResponse);     // ACT
+  rpc SetChatModel(SetChatModelRequest) returns (SetChatModelResponse);              // ACT
+  rpc SetChatThinkingLevel(SetChatThinkingLevelRequest) returns (SetChatThinkingLevelResponse);  // ACT
+}
+
+message PromptChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string text = 3;
+}
+message PromptChatThreadResponse {}
+message AbortChatThreadRequest { string thread_id = 1; }
+message AbortChatThreadResponse {}
+message SetChatModelRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string model = 3;
+}
+message SetChatThinkingLevelRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string level = 3;
+}
+message SetChatModelResponse { SessionControls controls = 1; }
+message SetChatThinkingLevelResponse { SessionControls controls = 1; }
+
+message CreateChatThreadRequest {
+  MutationMeta meta = 1;
+  string model = 2;
+  bool create_worktree = 3;
+}
+message CreateChatThreadResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+message StartChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+}
+message StartChatThreadResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+message SetChatPinnedRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  bool pinned = 3;
+}
+message SetChatPinnedResponse { Applied applied = 1; }
+message ArchiveChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  bool remove_worktree = 3;
+}
+message ArchiveChatThreadResponse { Applied applied = 1; }
+message RemoveChatWorktreeRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+}
+message RemoveChatWorktreeResponse { Applied applied = 1; }
+message ResumeChatThreadRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+}
+message ResumeChatThreadResponse {
+  Applied applied = 1;
+  string successor_id = 2;  // the thread that continues it; the thread itself when one already did
+}

@@ -1,13 +1,7 @@
-//! Model-role helpers. They follow the Vinculum agent directory. This version does not
-//! ship or update an OMP binary. The customization list and its prompt live in
-//! `vinculum_customizations`.
+//! The one model-role write the shell still makes: the hosted default role (`ensure_default_model_role`, called by `hosted.rs` after a
+//! sync) into this machine's agent directory. Reading and writing the roles a person edits is the daemon's `AgentService` (S4.10, O12 a);
+//! its `domain/agentDir.ts` holds the same line parser and renderer, and S4.11 moves the hosted default there too.
 use crate::*;
-
-#[tauri::command]
-pub(crate) fn omp_agent_sessions_dir(app: AppHandle) -> Result<String, String> {
-    let (agent_dir, _) = alinery_core::vinculum_home_dirs(&app_config_path(&app)?);
-    Ok(agent_dir.join("sessions").to_string_lossy().into_owned())
-}
 
 fn omp_agent_config_yml(agent_dir: &Path) -> PathBuf {
     let yml = agent_dir.join("config.yml");
@@ -166,17 +160,4 @@ pub(crate) fn ensure_default_model_role(agent_dir: &Path, selector: &str) -> Res
     }
     roles.insert("default".into(), selector.to_string());
     write_model_roles_to_agent_dir(agent_dir, &roles)
-}
-
-#[tauri::command]
-pub(crate) fn read_omp_model_roles(app: AppHandle) -> Result<HashMap<String, String>, String> {
-    let (agent_dir, _) = alinery_core::vinculum_home_dirs(&app_config_path(&app)?);
-    Ok(read_model_roles_from_agent_dir(&agent_dir))
-}
-
-#[tauri::command]
-pub(crate) fn write_omp_model_roles(app: AppHandle, roles: HashMap<String, String>) -> Result<HashMap<String, String>, String> {
-    let (agent_dir, _) = alinery_core::vinculum_home_dirs(&app_config_path(&app)?);
-    write_model_roles_to_agent_dir(&agent_dir, &roles)?;
-    Ok(roles)
 }

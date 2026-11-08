@@ -7,15 +7,21 @@ import { parse } from "smol-toml";
 import { Engine } from "playbook-engine/src/engine.ts";
 import type { CompletionReply, Harness, Launch, SessionStatus } from "playbook-engine/src/harness.ts";
 import { parsePlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import { type Execution, fold, readLog, type State } from "playbook-engine/src/state.ts";
+import type { Execution } from "playbook-engine/src/state.ts";
+import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./domain/executionStore.ts";
+import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
+import { recordWorktreeTree } from "./domain/gitActions.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
   status(id: string): Promise<SessionStatus>;
   send(id: string, text: string): Promise<void>;
   stop(id: string): Promise<void>;
-  bind(id: string, executionId: string): void;
+  /** A session the engine launched: it stands for this execution of this step. */
+  bind(id: string, executionId: string, step: string): void;
+  /** A task's playbook engine saved its state to `execution.json`, so its execution entity may have changed (S2.4, S4.2). */
+  executionChanged?(taskSlug: string): void;
 };
 
 export type PlaybookView = { state: string; reason?: string };
@@ -29,6 +35,8 @@ const held = new Set<string>();
 let hooks: SessionHooks | null = null;
 let repoRoot = "";
 let appConfigPath = "";
+/** The lane and app identity this daemon owns tasks as. A task another lane owns is not opened. */
+let owner: { lane: string; identity: string } | undefined;
 
 /** Reported when a live row already failed for a reason the engine did not request. */
 export const SESSION_FAILED = "session failed";
@@ -75,12 +83,14 @@ export async function completeSession(sessionId: string): Promise<Record<string,
   return phaseReply(await engine.requestCompletion(link.execId), link.execId);
 }
 
-export async function permitSession(sessionId: string): Promise<boolean> {
-  const link = bound.get(sessionId);
-  const engine = link ? running.get(link.slug)?.engine : undefined;
-  if (!link || !engine) return false;
-  await engine.permit(link.execId);
-  return true;
+/** The person lets one live execution finish. Not found, or not live, is a precondition failure the caller reports. */
+export async function permitExecution(slug: string, execId: string): Promise<void> {
+  const engine = running.get(slug)?.engine;
+  if (!engine) throw new DomainError("not_found", `task ${slug} has no running playbook engine in this daemon`);
+  const execution = engine.state.executions.get(execId);
+  if (!execution) throw new DomainError("not_found", `task ${slug} has no execution ${execId}`);
+  if (execution.status !== "live" || !execution.sessionId) throw new DomainError("failed_precondition", `execution ${execId} is ${execution.status}; only a live execution can be permitted`);
+  await engine.permit(execId);
 }
 
 /** Step override, then the playbook, then the task default, then Settings. A blank is not the hosted fallback. */
@@ -99,28 +109,9 @@ export function liveSessionCap(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
 }
 
-/** Create-without-starting holds until the log shows the task was actually started. */
-export function taskShouldHold(initialStartRequested: boolean, logHasStart: boolean): boolean {
-  return !initialStartRequested && !logHasStart;
-}
-
-export function logHasStart(logPath: string): boolean {
-  let text = "";
-  try {
-    text = readFileSync(logPath, "utf8");
-  } catch {
-    return false;
-  }
-  for (const line of text.split("\n")) {
-    if (!line) continue;
-    try {
-      const event = JSON.parse(line) as { t?: string };
-      if (event.t === "started" || event.t === "resumed") return true;
-    } catch {
-      /* a torn last line is not a start */
-    }
-  }
-  return false;
+/** Create-without-starting holds until the stored state shows the task was actually started. */
+export function taskShouldHold(initialStartRequested: boolean, hasStart: boolean): boolean {
+  return !initialStartRequested && !hasStart;
 }
 
 function safeArtifactName(name: string): boolean {
@@ -230,13 +221,13 @@ function harnessFor(slug: string, hooks: SessionHooks, taskDir: string): Harness
       const id = randomUUID();
       bound.set(id, { slug, execId: launch.executionId });
       await hooks.open(id, slug, modelFor(launch), launch.prompt);
-      hooks.bind(id, launch.executionId);
+      hooks.bind(id, launch.executionId, launch.step);
       return id;
     },
     async resume(id: string, launch: Launch) {
       bound.set(id, { slug, execId: launch.executionId });
       await hooks.open(id, slug, modelFor(launch), launch.prompt);
-      hooks.bind(id, launch.executionId);
+      hooks.bind(id, launch.executionId, launch.step);
       return id;
     },
     status(id: string) {
@@ -266,6 +257,11 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   if (!existsSync(sourcePath)) return;
   const execution = readExecutionFile(taskDir);
   if (!execution || execution.creation !== "ready") return;
+  // One daemon owns a task. The same check guards a session open (main.ts taskOpenAllowed).
+  if (owner && ((typeof execution.owning_lane === "string" && execution.owning_lane !== owner.lane) || (typeof execution.owning_app_config_identity === "string" && execution.owning_app_config_identity !== owner.identity))) return;
+  const stored = loadEngineState(repo, slug);
+  // O21: records the old Rust runner wrote. They stay as history; nothing is seeded, reserved or launched.
+  if (stored.kind === "history_only") return;
   const parsed = parsePlaybookMd(readFileSync(sourcePath, "utf8"));
   if (!parsed.playbook) {
     rejected.add(slug);
@@ -274,11 +270,22 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
   }
   const task = readTaskModels(taskDir);
   const cwd = task.cwd || repo;
-  const logPath = join(taskDir, "engine.jsonl");
   const engine = Engine.open({
     playbook: parsed.playbook,
     harness: harnessFor(slug, hooks, taskDir),
-    logPath,
+    load: () => (stored.kind === "stored" || stored.kind === "converted" ? stored.state : undefined),
+    save: (state) => saveEngineState(repo, slug, state),
+    onSaved: () => hooks?.executionChanged?.(slug),
+    historyDir: historyDir(repo, slug),
+    // A failed record (git missing, a damaged repository) must not fail the acceptance it documents.
+    recordWorktree: async (execution) => {
+      try {
+        return await recordWorktreeTree(cwd, slug, execution.id);
+      } catch (error) {
+        console.error(`vinculum: ${slug} ${execution.id} worktree not recorded: ${error}`);
+        return undefined;
+      }
+    },
     artifactsDir: join(taskDir, "artifacts"),
     cwd,
     maxLiveSessions: () => liveSessionCap(readExecutionFile(taskDir)?.max_live_sessions),
@@ -296,6 +303,8 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     },
     stepTokens: (step) => handoffForStep(join(taskDir, "sessions"), join(taskDir, "artifacts"), step),
   });
+  // A task folded from an old log is saved once, so the log is not read again.
+  if (stored.kind === "converted") engine.persist();
   const ticket = ticketPath(taskDir);
   if (ticket && engine.state.seeds.length === 0) engine.seed([{ role: "ticket.md", path: ticket }]);
   confirmEndedExecutions(engine, (id) => readSessionMeta(taskDir, id));
@@ -303,7 +312,7 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
     if (row.sessionId) bound.set(row.sessionId, { slug, execId: row.id });
   }
   running.set(slug, { slug, engine });
-  if (release || !taskShouldHold(execution.initial_start_requested === true, logHasStart(logPath))) held.delete(slug);
+  if (release || !taskShouldHold(execution.initial_start_requested === true, stateHasStart(engine.state))) held.delete(slug);
   else held.add(slug);
 }
 
@@ -323,15 +332,6 @@ export function holdTask(slug: string) {
 
 export function engineExecutions(slug: string): Execution[] {
   return [...(running.get(slug)?.engine.state.executions.values() ?? [])];
-}
-
-/** Live engine when this process has the task open. Otherwise the log, so a restart still has the bindings. Undefined when there is no log. */
-export function engineSnapshot(repo: string, slug: string): State | undefined {
-  const live = running.get(slug)?.engine.state;
-  if (live) return live;
-  const logPath = join(repo, ".alinery", "tasks", slug, "engine.jsonl");
-  if (!existsSync(logPath)) return undefined;
-  return fold(readLog(logPath));
 }
 
 export async function runTask(slug: string) {
@@ -356,7 +356,7 @@ export async function resumeFailedSession(slug: string, sessionId: string): Prom
   return true;
 }
 
-/** Drop the in-memory engine so the next tick opens the log again. Tests use this as a restart. */
+/** Drop the in-memory engine so the next tick loads the stored state again. Tests use this as a restart. */
 export function forgetTask(slug: string) {
   running.delete(slug);
   rejected.delete(slug);
@@ -371,10 +371,11 @@ export function resetGraphs() {
   held.clear();
 }
 
-export function prepareGraphs(repo: string, sessionHooks: SessionHooks, configPath = "") {
+export function prepareGraphs(repo: string, sessionHooks: SessionHooks, configPath = "", taskOwner?: { lane: string; identity: string }) {
   hooks = sessionHooks;
   repoRoot = repo;
   appConfigPath = configPath;
+  owner = taskOwner;
   markReady();
 }
 
@@ -395,8 +396,8 @@ export async function tickGraphs() {
   }
 }
 
-export function startGraphs(repo: string, sessionHooks: SessionHooks, configPath = "") {
-  prepareGraphs(repo, sessionHooks, configPath);
+export function startGraphs(repo: string, sessionHooks: SessionHooks, configPath = "", taskOwner?: { lane: string; identity: string }) {
+  prepareGraphs(repo, sessionHooks, configPath, taskOwner);
   void tickGraphs();
   setInterval(() => void tickGraphs(), 2000);
 }

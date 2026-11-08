@@ -47,6 +47,19 @@ export function piDaemonCompile(args) {
   return { release: args.includes("--release") || (subcommand === "build" && !args.includes("--debug")) };
 }
 
+// Remote (SSH) repos install the Linux runtimes bundled by scripts/build-remote-runtimes.sh.
+// A build without them still serves local repos, so a missing set only warns; release sets
+// ALINERY_REQUIRE_REMOTE_RUNTIMES=1 to make it fatal.
+export function remoteRuntimesProblem(manifestText) {
+  let targets = {};
+  try {
+    targets = JSON.parse(manifestText ?? "").targets ?? {};
+  } catch {
+    // Absent or unreadable manifest counts as no runtimes.
+  }
+  return Object.keys(targets).length > 0 ? undefined : "no bundled remote runtimes (run scripts/build-remote-runtimes.sh); remote repositories will be unavailable in this build";
+}
+
 function devServerConfig(port) {
   return JSON.stringify({
     build: {
@@ -230,6 +243,16 @@ async function run(args) {
     }
     const launch = selectTauriLaunch(args, import.meta.url, reservation?.port);
     const compile = piDaemonCompile(args);
+    if (args.find((arg) => TAURI_SUBCOMMANDS.has(arg)) === "build") {
+      const manifest = await readFile(join(launch.packageRoot, "src-tauri", "resources", "remote", "manifest.json"), "utf8").catch(() => undefined);
+      const problem = remoteRuntimesProblem(manifest);
+      if (problem && process.env.ALINERY_REQUIRE_REMOTE_RUNTIMES === "1") {
+        throw new Error(problem);
+      }
+      if (problem) {
+        console.warn(problem);
+      }
+    }
     if (compile) {
       await compilePiDaemon(launch.sourceRoot, compile.release);
     }

@@ -1,0 +1,186 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 2\ntypo = 1"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "short = \"\"",
+     "short = \"\"\ntypo = 1"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "mode = \"single\"",
+     "mode = \"single\", typo = 1"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "{path = \"result.md\"}",
+     "{path = \"result.md\", typo = 1}"
+    ]
+   ]
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "order = []\nentries = []\ntypo = 1\n"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "entries = [{ reference = { scope = \"repo\", key = \"a\" }, typo = 1 }]\n"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "order = [{ scope = \"repo\", key = \"a\", typo = 1 }]\n"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "strict_json",
+   "type": "NormalizedPlaybook",
+   "field": "typo",
+   "value": {
+    "version": 2,
+    "key": "t",
+    "title": "T",
+    "description": "",
+    "default_model": "",
+    "default_harness": "",
+    "step": [
+     {
+      "key": "run",
+      "title": "Run",
+      "short": "",
+      "is_coding_step": false,
+      "auto_advance_default": false,
+      "inputs": [],
+      "outputs": [],
+      "model": "",
+      "harness": "",
+      "prompt": "x"
+     }
+    ],
+    "preamble": "",
+    "section_order": [
+     "run"
+    ],
+    "typo": 1
+   }
+  },
+  {
+   "op": "strict_json",
+   "type": "NormalizedStep",
+   "field": "typo",
+   "value": {
+    "key": "run",
+    "title": "Run",
+    "short": "",
+    "is_coding_step": false,
+    "auto_advance_default": false,
+    "inputs": [],
+    "outputs": [],
+    "model": "",
+    "harness": "",
+    "prompt": "x",
+    "typo": 1
+   }
+  },
+  {
+   "op": "strict_json",
+   "type": "SavePlaybookRequest",
+   "field": "typo",
+   "value": {
+    "target": {
+     "scope": "repo",
+     "key": "a"
+    },
+    "source": "",
+    "overwrite": false,
+    "typo": 1
+   }
+  },
+  {
+   "op": "strict_json",
+   "type": "SavePlaybookRequest",
+   "field": "typo",
+   "value": {
+    "target": {
+     "scope": "repo",
+     "key": "a",
+     "typo": 1
+    },
+    "source": "",
+    "overwrite": false
+   }
+  },
+  {
+   "op": "strict_json",
+   "type": "PlaybookRoots",
+   "field": "typo",
+   "value": {
+    "global_config_dir": "/a",
+    "repo_dir": "",
+    "typo": 1
+   }
+  },
+  {
+   "op": "strict_json",
+   "type": "NormalizedPlaybook",
+   "field": "typo",
+   "value": {
+    "version": 2,
+    "key": "t",
+    "title": "T",
+    "description": "",
+    "default_model": "",
+    "default_harness": "",
+    "step": [
+     {
+      "key": "run",
+      "title": "Run",
+      "short": "",
+      "is_coding_step": false,
+      "auto_advance_default": false,
+      "inputs": [],
+      "outputs": [],
+      "model": "",
+      "harness": "",
+      "prompt": "x",
+      "typo": 1
+     }
+    ],
+    "preamble": "",
+    "section_order": [
+     "run"
+    ]
+   }
+  }
+ ]
+}

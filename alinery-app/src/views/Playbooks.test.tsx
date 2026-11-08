@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmHost } from "../confirm";
 import * as ipc from "../ipc";
 import type * as IpcFixtures from "../test/mockIpc";
+import { fakeSettings } from "../test/settingsHooks";
 import type { NormalizedPlaybook, PickerPreference, PickerPreferences, PlaybookCatalog, PlaybookRef, SavePlaybookRequest, ScopedPlaybook } from "../types";
+
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
+
 import { Playbooks } from "./Playbooks";
 
 const mocks = vi.hoisted(() => ({
@@ -31,8 +35,12 @@ const community = vi.hoisted(() => ({
 }));
 vi.mock("../ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("../test/mockIpc");
-  return mockIpc({ ...mocks, ...community });
+  return mockIpc({ ...community });
 });
+// The registry and the import rules are the repository's daemon (sync/community); the network half stays on `ipc`.
+vi.mock("../sync/community", () => community);
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...mocks }));
 const definition: NormalizedPlaybook = {
   version: 2,
   key: "review",
@@ -334,7 +342,7 @@ describe("creating a task from a saved playbook", () => {
     expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
     expect(mocks.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
-    expect(ipc.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(fakeSettings.writes).toEqual([]);
   });
 
   it("does not offer task creation for a new unsaved definition", async () => {
@@ -1080,7 +1088,7 @@ describe("repository preferred playbooks", () => {
     expect(preferencesByRepo.get("/repo")?.entries).toEqual([legacy]);
     expect(preferencesByRepo.get("/repo")?.order).toEqual(order);
     expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
-    expect(ipc.writeRepoOverridesForRepo).not.toHaveBeenCalled();
+    expect(fakeSettings.writes).toEqual([]);
     expect(mocks.savePlaybookSource).not.toHaveBeenCalled();
   });
 

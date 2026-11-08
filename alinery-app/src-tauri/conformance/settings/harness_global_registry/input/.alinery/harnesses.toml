@@ -1,0 +1,5 @@
+[[harness]]
+key = "omp"
+name = "Repo OMP"
+binary = "omp"
+models_cmd = "evil"

@@ -28,9 +28,10 @@ CONST_FILE="alinery-app/src-tauri/alinery-core/src/protocol.rs"
 SURFACE=(
   "alinery-app/src-tauri/vinculum-daemon/src/main.ts"
   "$CONST_FILE"
-  # Shared app/MCP wire client (ops / version classify). Keep this out of app lib.rs so
-  # the gate is not drowned in unrelated UI/FS noise.
-  "alinery-app/src-tauri/alinery-core/src/daemon_client.rs"
+  # The wire itself since S5.3: every RPC and message the daemon serves on rpc[-ns].sock.
+  "proto/alinery/v1"
+  # What is left of the JSON-lines wire: observing and stopping a daemon of protocol 38 or older (plan O23).
+  "alinery-app/src-tauri/alinery-core/src/legacy_daemon.rs"
 )
 
 # `A...B` for `git diff` is the merge-base diff; the equivalent commit set is
@@ -81,7 +82,7 @@ fi
 # train everyone to bump reflexively, which is exactly how a real wire change slips
 # through. So a surface-touching commit may declare *itself* protocol-neutral:
 #
-#   Protocol-Neutral: moved request construction into daemon_client.rs, no op changed
+#   Protocol-Neutral: moved request construction into legacy_daemon.rs, no op changed
 #
 # It is a claim by a human, recorded in history and visible in review, rather than a verdict
 # this script can compute — which is precisely why it may not be spent twice. Searching the

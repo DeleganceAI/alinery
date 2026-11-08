@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { collectLiveSubagents } from "./chat/subagents";
+import type { ChatEntry } from "./chat/types";
 import {
   appendHarnessNotice,
   appendOptimisticAbort,
@@ -19,7 +20,6 @@ import {
   mapHydratedMessage,
   matchingSendFailure,
   settleRefusedSend,
-  vinculumTranscriptPollMs,
 } from "./chatTranscript";
 import type { ChatMessage } from "./types";
 
@@ -580,7 +580,7 @@ describe("subagent envelopes", () => {
       type: "subagent_progress",
       payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
     });
-    const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
+    const finished = done.entries.find((entry): entry is Extract<ChatEntry, { type: "subagent_status" }> => entry.type === "subagent_status" && entry.subagentId === "sa-1");
     expect(finished?.id).toBe(row?.id);
     expect(finished?.status).toBe("completed");
     expect(finished?.summary).toBe("Search the repo");
@@ -1593,8 +1593,6 @@ describe("applyVinculumTranscript", () => {
     ]);
     expect(grown.entries.map((entry) => entry.id)).toEqual(ids);
     expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
-    expect(vinculumTranscriptPollMs(reply)).toBe(200);
-    expect(vinculumTranscriptPollMs([reply[0]])).toBe(1000);
   });
 
   it("keeps a committed tool call running while its slot has output", () => {
