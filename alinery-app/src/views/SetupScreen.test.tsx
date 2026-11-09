@@ -406,10 +406,11 @@ describe("Add SSH connection", () => {
   });
 
   it.each([
-    ["not_linux", "This host is not Linux"],
+    ["unsupported_os", "This host's system is not supported"],
     ["unsupported_cpu", "This host's CPU is not supported"],
     ["no_glibc", "This host has no glibc"],
     ["old_glibc", "This host's glibc is too old"],
+    ["old_macos", "This Mac's macOS is too old"],
     ["large_pages", "This arm64 host uses 64 KiB pages"],
     ["missing_tools", "The host is missing git, zip"],
     ["no_runtime", "This build has no runtime for the host"],

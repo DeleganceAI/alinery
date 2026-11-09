@@ -47,7 +47,7 @@ export function piDaemonCompile(args) {
   return { release: args.includes("--release") || (subcommand === "build" && !args.includes("--debug")) };
 }
 
-// Remote (SSH) repos install the Linux runtimes bundled by scripts/build-remote-runtimes.sh.
+// Remote (SSH) repos install the Linux and macOS runtimes bundled by scripts/build-remote-runtimes.sh.
 // A build without them still serves local repos, so a missing set only warns; release sets
 // ALINERY_REQUIRE_REMOTE_RUNTIMES=1 to make it fatal.
 export function remoteRuntimesProblem(manifestText) {
