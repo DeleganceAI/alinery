@@ -1,14 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EMPTY_STATE_ART } from "../emptyStateArt";
+import { CURATED_PLAYBOOK_ARCHETYPES } from "../onboarding";
 import { fakeBoard } from "../test/boardHooks";
-import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
 import type { BoardNav, BoardTask, TaskActivitySummary } from "../types";
 import { flattenTaskRows, TaskList } from "./TaskList";
 
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
-vi.mock("../ipc", () => mockIpc());
+vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc());
 
 function task(slugOrOverrides: string | Partial<BoardTask> = "a-task", taskOverrides: Partial<BoardTask> = {}): BoardTask {
   const slug = typeof slugOrOverrides === "string" ? slugOrOverrides : "a-task";
@@ -205,19 +204,38 @@ describe("Task List relationship projection", () => {
     render(<TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} onCreate={() => {}} registerNav={() => {}} />);
     await screen.findByText("r: no daemon connection");
     expect(document.querySelectorAll(".task-name-text")).toHaveLength(0);
+    expect(screen.queryByTestId("grid-starter-gate")).toBeNull();
   });
 });
 
 describe("TaskList empty", () => {
-  it("renders a catalog plate on the major empty surface", async () => {
-    const { container } = render(
-      <TaskList repos={["/r"]} allRepos={false} onOpen={() => {}} onDuplicate={() => {}} onOpenActiveSession={() => {}} registerNav={() => {}} onCreate={() => {}} />,
+  it("creates from the selected playbook or preset and offers the guide", async () => {
+    const onCreate = vi.fn();
+    const onReplayOnboarding = vi.fn();
+    render(
+      <TaskList
+        repos={["/r"]}
+        allRepos={false}
+        onOpen={() => {}}
+        onDuplicate={() => {}}
+        onOpenActiveSession={() => {}}
+        registerNav={() => {}}
+        onCreate={onCreate}
+        onReplayOnboarding={onReplayOnboarding}
+      />,
     );
-    await screen.findByText("No tasks yet.");
-    const img = container.querySelector("img.empty-state-art");
-    expect(img).not.toBeNull();
-    expect(EMPTY_STATE_ART).toContain(img?.getAttribute("src"));
-    expect(container.querySelector(".list-empty")).not.toBeNull();
+    const deck = within(await screen.findByTestId("grid-starter-gate"));
+    expect(deck.getByRole("radio", { name: "SuperDevelop" })).toHaveProperty("checked", true);
+    expect(deck.getAllByRole("radio")).toHaveLength(4);
+    fireEvent.click(deck.getByRole("radio", { name: "Bug Hunting" }));
+    fireEvent.click(deck.getByRole("button", { name: "Use playbook: Bug Hunting" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" });
+    fireEvent.click(deck.getByRole("button", { name: "Try starter preset" }));
+    expect(onCreate).toHaveBeenLastCalledWith({ scope: "bundled", key: "bug-hunting" }, CURATED_PLAYBOOK_ARCHETYPES[1].starterPreset);
+    expect(deck.queryByRole("button", { name: "New task" })).toBeNull();
+    expect(deck.getByRole("link", { name: "Browse the Playbook Library" })).toBeDefined();
+    fireEvent.click(deck.getByRole("button", { name: "How playbooks work" }));
+    expect(onReplayOnboarding).toHaveBeenCalledTimes(1);
   });
 
   it("shows only the highest-priority session status and opens the selected active session", async () => {
@@ -536,7 +554,8 @@ describe("Task List filters", () => {
 
     fireEvent.change(search, { target: { value: "no such task" } });
     expect(names()).toEqual([]);
-    expect(screen.queryByText("No tasks yet.")).toBeNull();
+    expect(screen.getByText("No tasks match these filters.")).toBeDefined();
+    expect(screen.queryByTestId("grid-starter-gate")).toBeNull();
     onOpen.mockClear();
     onDuplicate.mockClear();
     act(() => {

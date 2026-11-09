@@ -12,6 +12,7 @@ import { sessionDaemon } from "../test/sessionDaemon";
 import type {
   AgentState,
   ArtifactOccurrence,
+  ArtifactTreeNode,
   BoardNav,
   BoardTask,
   ExecutionAvailability,
@@ -2117,5 +2118,34 @@ describe("the empty-sessions state", () => {
     scenario.sessions = [];
     act(() => syncBoard());
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
+  });
+});
+
+describe("artifact preview images", () => {
+  it("resolves a nested snapshot artifact's relative image through the snapshot's attachment node", async () => {
+    const node = (id: string, kind: ArtifactTreeNode["kind"], label: string, children: ArtifactTreeNode[] = []): ArtifactTreeNode => ({
+      id,
+      kind,
+      label,
+      owner_task_slug: "child",
+      source: "snapshot",
+      children,
+    });
+    fakeArtifacts.set("parent", {
+      tree: [
+        node("snapshot", "subtask_folder", "child", [
+          node("snapshot-attachments", "subtask_folder", "Attachments", [node("snapshot-shot", "attachment", "shot.png")]),
+          node("snapshot-research", "subtask_folder", "research", [node("snapshot-findings", "referenced", "findings.md")]),
+        ]),
+      ],
+    });
+    fakeArtifacts.nodeTexts["snapshot-findings"] = "![shot](../attachments/shot.png)";
+    await renderDetail();
+
+    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /findings\.md/ }));
+
+    await waitFor(() => expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "parent", "snapshot-shot"));
+    expect(fakeArtifacts.readNode).toHaveBeenCalledWith("/repo", "parent", "snapshot-findings");
   });
 });

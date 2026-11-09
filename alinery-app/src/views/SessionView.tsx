@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
 import { ArtifactMarkdown, formatArtifactCommentTarget } from "../ArtifactMarkdown";
-import { ArtifactTree, isDirectOwnedArtifactNode } from "../ArtifactTree";
+import { ArtifactTree, isDirectOwnedArtifactNode, treeArtifactImages } from "../ArtifactTree";
 import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
@@ -171,6 +171,7 @@ export function SessionView({
   const artifactNames = artifactItems.map((a) => a.name);
   const [selectedArtifact, setSelectedArtifact] = useState("");
   const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
+  const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
   const selectedArtifactTreeId = selectedArtifactNode?.id;
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifactItem && !selectedArtifactItem.attachment);
@@ -678,7 +679,7 @@ export function SessionView({
     const busy = isTurnActive({
       pendingTurn: chatRef.current.pendingTurn,
       turnOpen: chatRef.current.turnOpen,
-      agentState: observation?.state?.agent?.state,
+      observation,
     });
     setMessageSending(true);
     setMessageError("");
@@ -899,7 +900,7 @@ export function SessionView({
       busy: isTurnActive({
         pendingTurn: chat.pendingTurn,
         turnOpen: chat.turnOpen,
-        agentState: observation?.state?.agent?.state,
+        observation,
       }),
       providers: providerAccess.loginProviders,
       models: providerAccess.models,
@@ -915,7 +916,7 @@ export function SessionView({
     chat.sessionMeta.model,
     chat.pendingTurn,
     chat.turnOpen,
-    observation?.state?.agent?.state,
+    observation,
     modelDialog,
     hosted,
     hostedLoaded,
@@ -971,7 +972,7 @@ export function SessionView({
   const turnActive = isTurnActive({
     pendingTurn: chat.pendingTurn,
     turnOpen: chat.turnOpen,
-    agentState: observedState?.agent?.state,
+    observation,
   });
   const chatStatus: SessionChatStatus = chat.sessionMeta.isCompacting ? "waiting_approval" : turnActive ? "running" : "idle";
   const agentState = observedState?.agent?.state;
@@ -1003,6 +1004,37 @@ export function SessionView({
       (error) => toast(String(error), "error"),
     );
   };
+  // Model, thinking and the turn meta sit under the input while the composer shows, else in their own bar.
+  const sessionControls = chatVisibility.showMeta ? (
+    <div className="chat-session-controls">
+      <button
+        type="button"
+        className="btn ghost small"
+        aria-label="Change model"
+        title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
+        onClick={() => {
+          setModelError(null);
+          setModelDialog({ tab: "models", preselect: "", setup: false });
+        }}
+      >
+        {chatMetaHead || "Model"}
+      </button>
+      {" · "}
+      {chat.sessionMeta.thinking ? (
+        <>
+          <ThinkingSelect
+            level={chat.sessionMeta.thinking}
+            levels={chat.sessionMeta.thinkingLevels}
+            disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
+            title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+            onPick={pickThinking}
+          />
+          {" · "}
+        </>
+      ) : null}
+      {chatMetaTail}
+    </div>
+  ) : null;
 
   const approveChat = async (requestId: string, allow: boolean) => {
     // The row stays mounted across the await, so without this a double-click sends two responses.
@@ -1261,38 +1293,7 @@ export function SessionView({
             <>
               {showChat ? (
                 <>
-                  {chatVisibility.showMeta ? (
-                    <div className="chat-meta">
-                      <div>
-                        <button
-                          type="button"
-                          className="btn ghost small"
-                          aria-label="Change model"
-                          title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
-                          onClick={() => {
-                            setModelError(null);
-                            setModelDialog({ tab: "models", preselect: "", setup: false });
-                          }}
-                        >
-                          {chatMetaHead || "Model"}
-                        </button>
-                        {" · "}
-                        {chat.sessionMeta.thinking ? (
-                          <>
-                            <ThinkingSelect
-                              level={chat.sessionMeta.thinking}
-                              levels={chat.sessionMeta.thinkingLevels}
-                              disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
-                              title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
-                              onPick={pickThinking}
-                            />
-                            {" · "}
-                          </>
-                        ) : null}
-                        {chatMetaTail}
-                      </div>
-                    </div>
-                  ) : null}
+                  {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
                   <div className="terminal-frame">
                     <ChatPane
                       entries={chatEntries}
@@ -1307,6 +1308,7 @@ export function SessionView({
                   {showChatComposer ? (
                     <>
                       <ChatComposer
+                        actions={sessionControls}
                         body={messageDraft.body}
                         status={chatStatus}
                         catalog={chat.commands}
@@ -1535,6 +1537,10 @@ export function SessionView({
                       <article className="md artifactmd">
                         <ArtifactMarkdown
                           text={artifactText}
+                          repoPath={repoPath}
+                          taskSlug={taskSlug}
+                          artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                          attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
                           comments={artifactComments}
                           draftAnchorIds={recoverableArtifactDraftAnchorIds}
                           onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}

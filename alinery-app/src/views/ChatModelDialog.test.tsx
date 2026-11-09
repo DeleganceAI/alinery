@@ -108,6 +108,23 @@ describe("ChatModelDialog", () => {
     expect(fireEvent.keyDown(search, { key: "Escape" })).toBe(true);
   });
 
+  it("starts Accounts filtered to a preselected provider needle", () => {
+    render(
+      <ChatModelDialog
+        {...base}
+        tab="accounts"
+        preselect="codex"
+        loginProviders={[
+          { id: "anthropic", name: "Anthropic", available: true, authenticated: false },
+          { id: "openai-codex", name: "ChatGPT", available: true, authenticated: false },
+        ]}
+      />,
+    );
+    expect((screen.getByRole("textbox", { name: "Search providers" }) as HTMLInputElement).value).toBe("codex");
+    expect(screen.getByRole("button", { name: /ChatGPT/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Anthropic/ })).toBeNull();
+  });
+
   it("filters Models with the same search field and empty line", () => {
     render(
       <ChatModelDialog

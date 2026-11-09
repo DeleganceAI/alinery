@@ -12,7 +12,6 @@ import {
   Plus,
   RefreshCw,
   Settings as SettingsIcon,
-  SquareKanban,
   SquareTerminal,
   SunMoon,
   Terminal,
@@ -27,7 +26,7 @@ import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
 import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
-import { ACTIVE_GRID_VIEW_STORAGE_KEY, DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
+import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
 import * as ipc from "./ipc";
@@ -49,13 +48,12 @@ import { PRIORITY_SESSION_SORT, type SessionSort } from "./sessionAttention";
 import { EMPTY_SESSION_MESSAGE_DRAFT, type SessionMessageDraft, sessionMessageDraftKey } from "./sessionMessage";
 import { shouldShowSetup } from "./setup";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
+import { resolveStartupView } from "./startupView";
 import { useRepoBoard, useSessionItems } from "./sync/board";
 import { liveSessionsNow } from "./sync/hooks";
-import { readPlaybook } from "./sync/playbooks";
 import { observationNow } from "./sync/sessionObservation";
 import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
-import { readEffectiveConfig } from "./sync/settings";
-import { createTaskForRepo, duplicateTaskForRepo } from "./sync/tasks";
+import { duplicateTaskForRepo } from "./sync/tasks";
 import { clampDrawerWidth, DRAWER_DEFAULT_WIDTH, type DrawerTab, TerminalDrawer } from "./TerminalDrawer";
 import { gridViewIdOf, isPrimaryTab, primaryTabOf, viewFadeClass } from "./tabMotion";
 import * as taskMutationGuard from "./taskMutationGuard";
@@ -93,7 +91,6 @@ import { CreateSessionPage } from "./views/CreateSessionPage";
 import { CreateTaskPage } from "./views/CreateTaskPage";
 import { ChatSessionProvider } from "./views/chatThreadSession";
 import { Grid } from "./views/Grid";
-import { Kanban } from "./views/Kanban";
 import { NotificationsList } from "./views/NotificationsList";
 import { OnboardingFlow } from "./views/OnboardingFlow";
 import { Playbooks } from "./views/Playbooks";
@@ -147,16 +144,6 @@ const ReviewHandoffPage = lazy(() => import("./views/ReviewHandoffPage").then((m
 // warning is about. Unreachable daemon ⇒ 0: there is nothing running to lose.
 const liveSessions = (repo: string) => liveSessionsNow(repo);
 
-function initialView(): View {
-  try {
-    const gridViewId = window.localStorage.getItem(ACTIVE_GRID_VIEW_STORAGE_KEY)?.trim();
-    if (gridViewId) return { kind: "grid", gridViewId };
-  } catch {
-    // Navigation persistence is optional; settings reconciliation below still chooses a safe view.
-  }
-  return { kind: "grid", gridViewId: DEFAULT_GRID_VIEW_ID };
-}
-
 // Grid layout is one workspace per view, not per repository. The first time a
 // shared key is missing, adopt the scope the user is already looking at so the
 // switch does not reset tile size, preset, or column order.
@@ -190,7 +177,7 @@ function drawerAfterClose(handle: DrawerHandle, id: string): DrawerHandle | null
   return { ...handle, tabs, activeId: next.id };
 }
 export default function App() {
-  const [view, setView] = useState<View>(initialView);
+  const [view, setView] = useState<View>({ kind: "list" });
   const [navInstant, setNavInstant] = useState(true);
   const playbooksReturnView = useRef<View | null>(null);
   const [playbooksVisited, setPlaybooksVisited] = useState(false);
@@ -202,7 +189,7 @@ export default function App() {
   // starting at Playbooks. Finish, Skip and Esc mark completion; replay never clears it.
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStepId | undefined>(undefined);
-  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void } | null>(null);
+  const [manualProviderSetup, setManualProviderSetup] = useState<{ tab: "models" | "accounts"; onPick?: (model: string) => void; preselect?: string } | null>(null);
   // The usage-sharing question never sits on top of the wizard; when it is still owed it is
   // asked shortly after onboarding finishes, and the auto provider offer waits for its answer
   // so the two dialogs never stack.
@@ -278,10 +265,10 @@ export default function App() {
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
-  const showOriginalKanban = appConfig?.global?.experiments?.show_original_kanban ?? true;
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
+    if (view.kind === "playbooks") setPlaybooksVisited(true);
   }, [view.kind]);
   const repoKey = appConfig?.active_repo ? `${scope}:${appConfig.active_repo}:${appConfig.known_repos.join("|")}:${reloadNonce}` : "";
   const activeGridViewId = view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId) ? view.gridViewId : undefined;
@@ -302,24 +289,10 @@ export default function App() {
     setView((current) => {
       // Turning the Chat tab off while it is open sends you to the first Grid view.
       if (current.kind === "chat" && !showChat) return { kind: "grid", gridViewId: gridViews[0].id };
-      if (current.kind !== "grid" && current.kind !== "kanban") return current;
-      return resolveGridTopLevelRoute(current, showOriginalKanban, gridViews);
+      if (current.kind !== "grid") return current;
+      return resolveGridTopLevelRoute(current, gridViews);
     });
-  }, [appConfig, gridViews, showOriginalKanban, showChat]);
-
-  const selectedGridViewId = gridViewIdOf(view);
-  useEffect(() => {
-    if (!appConfig) return;
-    try {
-      if (selectedGridViewId && gridViews.some((gridView) => gridView.id === selectedGridViewId)) {
-        window.localStorage.setItem(ACTIVE_GRID_VIEW_STORAGE_KEY, selectedGridViewId);
-      } else {
-        window.localStorage.removeItem(ACTIVE_GRID_VIEW_STORAGE_KEY);
-      }
-    } catch {
-      // The in-memory route still works when browser storage is unavailable.
-    }
-  }, [appConfig, gridViews, selectedGridViewId]);
+  }, [appConfig, gridViews, showChat]);
 
   const navRef = useRef<BoardNav | null>(null);
   const registerNav = useCallback((n: BoardNav | null) => {
@@ -494,6 +467,7 @@ export default function App() {
         setAppConfig({ ...cfg, appearance: normalized });
         // With no repo the setup screen is shown instead; onboarding follows it once a repo is open.
         const wizardOpens = Boolean(cfg.active_repo) && !isHostOnboarded(cfg, cfg.active_repo);
+        setView(wizardOpens || !cfg.active_repo ? { kind: "list" } : resolveStartupView(normalized.startup_view, cfg.global));
         if (wizardOpens) {
           setOnboardingStep(readSavedOnboardingStep());
           setOnboardingOpen(true);
@@ -609,14 +583,13 @@ export default function App() {
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
     setNavInstant(Boolean(opts?.instant));
     if (kind === "playbooks" && view.kind !== "playbooks") playbooksReturnView.current = view;
-    if (kind === "playbooks") setPlaybooksVisited(true);
     if (kind === "grid") {
       const gridViewId = opts?.gridViewId ?? gridViews[0].id;
       if (!gridViews.some((gridView) => gridView.id === gridViewId)) return;
       setView({ kind: "grid", gridViewId });
       return;
     }
-    if ((kind === "kanban" && !showOriginalKanban) || (kind === "chat" && !showChat)) {
+    if (kind === "chat" && !showChat) {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
@@ -767,7 +740,7 @@ export default function App() {
     const hosts = await ipc.listHosts().catch(() => []);
     const entry = hosts.find((candidate) => candidate.host_id === (machineOf(key) || "local"));
     if (entry && !entry.onboarded) {
-      setOnboardingStep("playbooks");
+      setOnboardingStep(readSavedOnboardingStep());
       setOnboardingOpen(true);
     }
     return true;
@@ -1043,6 +1016,11 @@ export default function App() {
     }
   };
 
+  const replayPlaybookGuide = () => {
+    setOnboardingStep("playbooks");
+    setOnboardingOpen(true);
+  };
+
   const openCreate = (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => {
     setSearchOpen(false);
     if (taskMutationGuard.refuseIfBusy()) return;
@@ -1051,45 +1029,6 @@ export default function App() {
     const from = view;
     flushSync(() => setBusy("open-create"));
     void afterPaint().then(() => setView({ kind: "create", from, initialPlaybook, initialPreset }));
-  };
-
-  const handleLaunchStarterTask = async (playbookRef: PlaybookRef, preset: StarterTaskPreset) => {
-    if (!appConfig?.active_repo) return;
-    if (!taskMutationGuard.claim("create")) return;
-    const repoPath = appConfig.active_repo;
-    flushSync(() => setBusy("create"));
-    await afterPaint();
-    try {
-      const [scoped, repoCfg] = await Promise.all([readPlaybook(playbookRef, repoPath), readEffectiveConfig(repoPath)]);
-      const auto_advance_steps = scoped.definition.step.filter((s) => s.auto_advance_default).map((s) => s.key);
-      const harness = scoped.definition.default_harness || repoCfg.defaults?.harness || "omp";
-      const model = scoped.definition.default_model || repoCfg.defaults?.model || "";
-      const result = await createTaskForRepo({
-        repoPath,
-        request: {
-          name: preset.name,
-          description: preset.description,
-          evidence: preset.evidence,
-          playbook: { reference: scoped.source.reference, source: scoped.source_text },
-          launch_defaults: { harness, model },
-          auto_advance_steps,
-          start: true,
-        },
-      });
-      if (result.creation !== "ready" || result.start === "failed" || result.errors.length) {
-        toast.error(`Task creation needs attention: ${result.errors.map((error) => error.message).join("; ") || "Open the task to inspect its status."}`);
-      }
-      completeOnboarding();
-      refreshBoards();
-      if (result.task) {
-        const fromView: View = { kind: "grid", gridViewId: gridViews[0]?.id ?? DEFAULT_GRID_VIEW_ID };
-        const taskView: View = { kind: "task", slug: result.task.slug, repoPath, from: fromView, initialTask: result.task };
-        setView(taskView);
-      }
-    } finally {
-      taskMutationGuard.release();
-      setBusy(null);
-    }
   };
 
   const duplicateTask = async ({ repoPath, sourceSlug }: { repoPath: string; sourceSlug: string }) => {
@@ -1140,18 +1079,8 @@ export default function App() {
   useEffect(() => {
     if (view.kind !== "task" && view.kind !== "session") setDiagramZoomOpen(false);
   }, [view.kind]);
-  const board: "kanban" | "grid" | "list" | "sessions" | "notifications" | null =
-    view.kind === "kanban"
-      ? "kanban"
-      : view.kind === "grid"
-        ? "grid"
-        : view.kind === "list"
-          ? "list"
-          : view.kind === "sessions"
-            ? "sessions"
-            : view.kind === "notifications"
-              ? "notifications"
-              : null;
+  const board: "grid" | "list" | "sessions" | "notifications" | null =
+    view.kind === "grid" ? "grid" : view.kind === "list" ? "list" : view.kind === "sessions" ? "sessions" : view.kind === "notifications" ? "notifications" : null;
 
   const hasRepo = Boolean(appConfig?.active_repo);
 
@@ -1167,13 +1096,9 @@ export default function App() {
       if (hasRepo) openCreate();
     },
     gridCount: gridViews.length,
-    showKanban: showOriginalKanban,
     showChat,
     goList: () => {
       if (hasRepo) switchTop("list", { instant: true });
-    },
-    goKanban: () => {
-      if (hasRepo) switchTop("kanban", { instant: true });
     },
     goGrid: (slot) => {
       const gridView = gridViews[slot];
@@ -1236,12 +1161,7 @@ export default function App() {
           ),
           action("tasks", pi(List), "Go to Tasks", `⌘${trailingTabDigit(gridViews.length, "tasks")}`, () => switchTop("list", { instant: true })),
           action("sessions", pi(SquareTerminal), "Go to Sessions", `⌘${trailingTabDigit(gridViews.length, "sessions")}`, () => switchTop("sessions", { instant: true })),
-          ...(showOriginalKanban
-            ? [action("kanban", pi(SquareKanban), "Go to Kanban", `⌘${trailingTabDigit(gridViews.length, "kanban")}`, () => switchTop("kanban", { instant: true }))]
-            : []),
-          ...(showChat
-            ? [action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat", showOriginalKanban)}`, () => switchTop("chat", { instant: true }))]
-            : []),
+          ...(showChat ? [action("chat", pi(MessageSquare), "Go to Chat", `⌘${trailingTabDigit(gridViews.length, "chat")}`, () => switchTop("chat", { instant: true }))] : []),
           action("notifications", pi(Bell), "Go to Notifications", "⌘8", () => switchTop("notifications", { instant: true })),
           action("settings", pi(SettingsIcon), "Open Settings", "⌘9", () => openSettings(undefined, { instant: true })),
           ...SETTINGS_SECTIONS.map((section) =>
@@ -1260,10 +1180,7 @@ export default function App() {
         ]
       : []),
     action("playbooks", pi(List), "Go to Playbooks", "", () => switchTop("playbooks", { instant: true })),
-    action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", () => {
-      setOnboardingStep("playbooks");
-      setOnboardingOpen(true);
-    }),
+    action("onboarding-guide", pi(BookOpen), "Replay playbook onboarding guide", "", replayPlaybookGuide),
     action("appearance", pi(SunMoon), "Appearance: cycle system / light / dark", "⌘G", cycleAppearance),
     action("add-repo", pi(FolderPlus), "Add repo", "", () => openSetup()),
   ];
@@ -1319,6 +1236,7 @@ export default function App() {
           <ProviderSetupDialog
             mode="manual"
             initialTab={manualProviderSetup.tab}
+            preselect={manualProviderSetup.preselect}
             unsignedOpensAccounts={manualProviderSetup.tab === "models"}
             onPick={manualProviderSetup.onPick}
             onClose={() => setManualProviderSetup(null)}
@@ -1405,7 +1323,7 @@ export default function App() {
               strip is the only actionable surface (defense-in-depth). */}
               <main>
                 {daemon.repo_busy ? null : content}
-                {playbooksVisited && (
+                {(playbooksVisited || view.kind === "playbooks") && (
                   <div className="view playbooks-view" hidden={view.kind !== "playbooks" || daemon.repo_busy}>
                     <Playbooks repoPath={appConfig?.active_repo || undefined} onCreateTask={(reference) => openCreate(reference)} />
                   </div>
@@ -1500,7 +1418,6 @@ export default function App() {
       scope={scope}
       appConfig={appConfig}
       gridViews={gridViews}
-      showOriginalKanban={showOriginalKanban}
       showChat={showChat}
       instant={navInstant}
       onSwitch={switchTop}
@@ -1528,13 +1445,12 @@ export default function App() {
           completeOnboarding();
           openSetup();
         }}
-        onOpenProviderSetup={(tab, onPick) => setManualProviderSetup({ tab, onPick })}
+        onOpenProviderSetup={(tab, onPick, preselect) => setManualProviderSetup({ tab, onPick, preselect })}
         onCompleteToWorkspace={completeOnboarding}
         onOpenCreateWithPlaybook={(playbook, preset) => {
           completeOnboarding();
           openCreate(playbook, preset);
         }}
-        onLaunchStarterTask={handleLaunchStarterTask}
       />
     </Dialog>
   );
@@ -1554,13 +1470,15 @@ export default function App() {
                 onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
                 onOpenActiveSession={openActiveTaskSession}
                 registerNav={registerNav}
-                onCreate={() => openCreate()}
+                onCreate={(playbook, preset) => openCreate(playbook, preset)}
+                onReplayOnboarding={replayPlaybookGuide}
               />
             </div>
           )}
           {view.kind === "create" && (
             <div className="view nopad">
               <CreateTaskPage
+                key={view.draft ? JSON.stringify([view.draft.repo_path, view.draft.slug]) : "new"}
                 initialDraft={view.kind === "create" ? view.draft : undefined}
                 initialPlaybook={view.initialPlaybook}
                 initialPreset={view.initialPreset}
@@ -1588,20 +1506,6 @@ export default function App() {
                     setRepoErr(String(e));
                   }
                 }}
-              />
-            </div>
-          )}
-          {view.kind === "kanban" && (
-            <div className="view">
-              <Kanban
-                key={`kanban:${repoKey}`}
-                allRepos={scope === "all"}
-                repos={boardRepos}
-                onOpen={openBoardTask}
-                onDuplicate={(task) => duplicateTask({ repoPath: task.repo_path, sourceSlug: task.slug })}
-                onOpenActiveSession={openActiveTaskSession}
-                registerNav={registerNav}
-                onCreate={() => openCreate()}
               />
             </div>
           )}
@@ -1806,11 +1710,7 @@ export default function App() {
               storageKey={sharedGridStorageKey(gridView.id, legacyGridScopeKey)}
               initialPreset={gridView.id === DEFAULT_GRID_VIEW_ID ? "progress" : "steps"}
               onCreate={(playbook, preset) => openCreate(playbook, preset)}
-              onOpenPlaybooks={() => switchTop("playbooks")}
-              onReplayOnboarding={() => {
-                setOnboardingStep("playbooks");
-                setOnboardingOpen(true);
-              }}
+              onReplayOnboarding={replayPlaybookGuide}
               liveStatusExplainedFor={daemon.conflict?.repo}
             />
           </div>

@@ -1,18 +1,46 @@
 import { useEffect, useRef, useState } from "react";
+import { CopyTextButton } from "../chat/CopyMessage";
 import type { useProviderAccess } from "../chat/providerAccess";
 import type { ProviderLoginStatus } from "../chat/providers";
 
 type Access = ReturnType<typeof useProviderAccess>;
+type LoginEvent = ProviderLoginStatus["events"][number];
 
-function eventText(event: ProviderLoginStatus["events"][number]): string {
-  if (event.type === "device_code") return `Code ${event.userCode} at ${event.verificationUri}`;
+/** The code and link instructions are typed into the browser, so they show only while the sign-in waits. */
+const isCodeEvent = (event: LoginEvent) => event.type === "device_code" || (event.type === "auth_url" && !!event.instructions);
+
+function eventText(event: LoginEvent): string {
   if (event.type === "info" || event.type === "progress") return event.message;
-  if (event.type === "auth_url") return event.instructions || "Opened the sign-in page.";
+  if (event.type === "auth_url" && !event.instructions) return "Opened the sign-in page.";
   return "";
+}
+
+/** What a sign-in needs typed into the browser. A device flow's instructions end with `code: XXXX`, so that part gets a copy control. */
+function SignInInstructions({ text, code = /code:?\s*(\S+)\s*$/i.exec(text)?.[1] }: { text: string; code?: string }) {
+  return (
+    <p className="chat-sign-in-instructions">
+      {text} {code ? <CopyTextButton text={code} label="code" /> : null}
+    </p>
+  );
+}
+
+function CodeEvent({ event }: { event: LoginEvent }) {
+  if (event.type === "device_code") {
+    return (
+      <>
+        <SignInInstructions text={`Enter code: ${event.userCode}`} code={event.userCode} />
+        <p className="dim">at {event.verificationUri}</p>
+      </>
+    );
+  }
+  return event.type === "auth_url" && event.instructions ? <SignInInstructions text={event.instructions} /> : null;
 }
 
 export function ProviderAccessPanel({ access }: { access: Access }) {
   const prompt = access.login?.prompt;
+  const waiting = access.login?.status === "pending" || access.login?.status === "prompt";
+  const events = access.login?.events ?? [];
+  const notes = events.map(eventText).filter(Boolean);
   const shown = !!(access.choice || access.busy || access.signedIn);
   const eventCount = access.login?.events.length ?? 0;
   const promptMessage = prompt?.message;
@@ -49,7 +77,13 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
           </div>
         </div>
       ) : null}
-      {access.login && access.login.events.length > 0 ? <p className="dim">{access.login.events.map(eventText).filter(Boolean).join("\n")}</p> : null}
+      {waiting
+        ? events.filter(isCodeEvent).map((event, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the daemon appends events and never reorders them
+            <CodeEvent key={index} event={event} />
+          ))
+        : null}
+      {notes.length > 0 ? <p className="dim">{notes.join("\n")}</p> : null}
       {access.busy && !prompt ? (
         // A login waiting on a device code asks nothing, so this is its only way out.
         <div className="chat-ui-prompt-options">

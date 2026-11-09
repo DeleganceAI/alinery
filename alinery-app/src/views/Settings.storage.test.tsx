@@ -6,7 +6,7 @@ import { effectiveOf, fakeSettings } from "../test/settingsHooks";
 import type { GlobalSettings, SettingsSectionKey, StorageInfo } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
-const SCOPE_EMPTY = "Select a settings scope to see these settings";
+const SCOPE_EMPTY = "Select a repo to see these settings";
 
 const globalSettings: GlobalSettings = {
   notifications: {

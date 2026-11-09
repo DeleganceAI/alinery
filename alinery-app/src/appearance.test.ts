@@ -26,6 +26,13 @@ import type { AppearancePrefs } from "./types";
 const prefs = (over: Partial<AppearancePrefs> = {}): AppearancePrefs => ({ ...DEFAULT_APPEARANCE, ...over });
 
 describe("normalizeAppearance", () => {
+  it("defaults older startup preferences to Task List and preserves valid choices", () => {
+    expect(normalizeAppearance(prefs({ startup_view: undefined })).startup_view).toBe("list");
+    expect(normalizeAppearance(prefs({ startup_view: "sessions" })).startup_view).toBe("sessions");
+    expect(normalizeAppearance(prefs({ startup_view: "grid:custom" })).startup_view).toBe("grid:custom");
+    expect(normalizeAppearance({ ...prefs(), startup_view: "invalid" } as unknown as AppearancePrefs).startup_view).toBe("list");
+  });
+
   it("snaps ui_scale to the nearest allowed step", () => {
     expect(normalizeAppearance(prefs({ ui_scale: 1.1 })).ui_scale).toBe(1.125);
     expect(normalizeAppearance(prefs({ ui_scale: 0.9 })).ui_scale).toBe(0.875);
@@ -214,6 +221,22 @@ describe("artifact pane CSS tokens", () => {
   });
 });
 
+describe("repo switcher floor (#144)", () => {
+  const css = readFileSync("src/theme.css", "utf8");
+  const start = css.indexOf(".repo-switcher {");
+  const rule = css.slice(start, css.indexOf("}", start));
+
+  it("grows with --ui-scale above 1x and holds its 1x value below", () => {
+    // The trigger chrome is fixed px; a floor that shrank at 0.75x/0.875x would squeeze the trigger below it and collapse the status dot.
+    expect(rule).toMatch(/min-width: calc\(var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
+  });
+
+  it("makes room for both add buttons when Add remote repository is shown", () => {
+    const pair = css.slice(css.indexOf(".repo-switcher:has(.repo-add ~ .repo-add) {"));
+    expect(pair.slice(0, pair.indexOf("}"))).toMatch(/min-width: calc\(2 \* var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
+  });
+});
+
 describe("applyAppearance", () => {
   beforeEach(() => {
     applyAppearance({ ...DEFAULT_APPEARANCE, mode: "dark" });
@@ -261,7 +284,7 @@ describe("applyAppearance", () => {
       chat_show_agent_bubbles: true,
       chat_show_copy_buttons: true,
     });
-    // Absent keys: labels, reply bubbles and block copy buttons start off; the per-message copy icon starts on.
+    // Missing preferences use the defaults without overriding saved false values.
     expect(
       normalizeAppearance({
         ...prefs(),
@@ -271,9 +294,9 @@ describe("applyAppearance", () => {
         chat_show_copy_buttons: undefined,
       }),
     ).toMatchObject({
-      chat_show_actor_labels: false,
-      chat_show_agent_bubbles: false,
-      chat_show_block_copy_buttons: false,
+      chat_show_actor_labels: true,
+      chat_show_agent_bubbles: true,
+      chat_show_block_copy_buttons: true,
       chat_show_copy_buttons: true,
     });
   });

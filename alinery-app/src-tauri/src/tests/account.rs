@@ -752,6 +752,8 @@ fn refresh_clears_a_stale_plan_when_the_entitlement_is_gone() {
     server.join().unwrap();
     assert!(status.signed_in);
     assert_eq!(status.plan, None);
+    assert!(!status.paid);
+    assert!(!status.unavailable);
     assert!(!fs::read_to_string(&path).unwrap().contains("Founders Edition"));
 }
 
@@ -760,18 +762,60 @@ fn refresh_keeps_a_cached_plan_when_the_entitlement_lookup_fails() {
     let dir = unique_attachment_temp("account-plan-kept");
     let path = dir.join("auth.json");
     write_tokens(&path, "live", "refresh-keep", 4_000_000_000);
+    let before = fs::read(&path).unwrap();
     let offline = refresh_account_at(&path, DEAD_ENTITLEMENT, DEAD_ENTITLEMENT);
+    assert!(offline.signed_in);
+    assert!(offline.unavailable);
+    assert!(offline.paid);
     assert_eq!(offline.plan.as_deref(), Some("Founders Edition"));
     // curl exits 0 on a 5xx and hands back the error body, which is why the status is checked.
     let (base, server) = serve_routes(vec![("/rest/v1/entitlements".into(), 500, "boom")]);
     let broken = refresh_account_at(&path, &base, &base);
     server.join().unwrap();
+    assert!(broken.signed_in);
+    assert!(broken.unavailable);
+    assert!(broken.paid);
     assert_eq!(broken.plan.as_deref(), Some("Founders Edition"));
-    assert!(fs::read_to_string(&path).unwrap().contains("Founders Edition"));
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn refresh_entitlement_write_failure_is_unavailable_and_keeps_the_cached_plan() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = unique_attachment_temp("account-plan-write-fail");
+    let path = dir.join("auth.json");
+    write_tokens(&path, "live", "refresh-keep", 4_000_000_000);
+    let before = fs::read(&path).unwrap();
+    let (base, server) = serve_routes(vec![("/rest/v1/entitlements".into(), 200, "[]")]);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+    let status = refresh_account_at(&path, &base, &base);
+    server.join().unwrap();
+    let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    assert!(status.signed_in);
+    assert!(status.unavailable);
+    assert!(status.paid);
+    assert_eq!(status.plan.as_deref(), Some("Founders Edition"));
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 const EXCHANGE_OK: &str =
     r#"{"ok":true,"access_token":"paired-access","refresh_token":"paired-refresh","expires_at":4000000000,"user":{"id":"u9","email":"b@example.com","providers":["google"]}}"#;
+
+#[test]
+fn refresh_after_fresh_pairing_reports_an_entitlement_outage_as_unavailable() {
+    let dir = unique_attachment_temp("account-signin-plan-unavailable");
+    let path = dir.join("auth.json");
+    let (base, server) = serve_routes(vec![("/api/desktop/exchange".into(), 200, EXCHANGE_OK), ("/rest/v1/entitlements".into(), 500, "boom")]);
+    finish_sign_in(&path, &base, "code", "nonce", &SignInAttempt::fresh()).unwrap();
+    let before = fs::read(&path).unwrap();
+    let status = refresh_account_at(&path, &base, &base);
+    server.join().unwrap();
+    assert!(status.signed_in);
+    assert!(status.unavailable);
+    assert_eq!(status.plan, None);
+    assert!(!status.paid);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
 
 #[test]
 fn sign_in_persists_the_paired_session_and_mints_a_session_id() {

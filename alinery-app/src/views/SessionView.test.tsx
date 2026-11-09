@@ -222,6 +222,34 @@ describe("SessionView artifact pane", () => {
     expect(screen.getByText("3/3")).toBeDefined();
   });
 
+  it("resolves a parent-context artifact's relative image through the parent's attachment node", async () => {
+    const parent = (id: string, kind: ArtifactTreeNode["kind"], label: string, children: ArtifactTreeNode[] = []): ArtifactTreeNode => ({
+      id,
+      kind,
+      label,
+      owner_task_slug: "parent",
+      source: "parent_context",
+      children,
+    });
+    fakeArtifacts.set("task", {
+      tree: [
+        parent("parent-context", "subtask_folder", "Parent context", [
+          parent("parent-attachments", "subtask_folder", "Attachments", [parent("parent-shot", "attachment", "shot.png")]),
+          parent("parent-ticket", "referenced", "00-parent-ticket.md"),
+        ]),
+      ],
+    });
+    fakeArtifacts.nodeTexts["parent-ticket"] = "![shot](attachments/shot.png)";
+    renderSession({ phase: "review-checks", playbook: "review" });
+    await flushPromises();
+
+    fireEvent.click(screen.getByRole("button", { name: /00-parent-ticket\.md/ }));
+    await flushPromises();
+
+    expect(fakeArtifacts.readNode).toHaveBeenCalledWith("/repo", "task", "parent-ticket");
+    expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "task", "parent-shot");
+  });
+
   it("shows a comment another client added, with no poll", async () => {
     renderSession({ phase: "review-checks", playbook: "review" });
     await flushPromises();
@@ -549,6 +577,39 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
     checkpoint: {},
   };
 }
+
+describe("exited Chat activity", () => {
+  beforeEach(() => {
+    resetDaemon();
+    fakeBoard.set({ anyRepoTasks: [task] });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("keeps a live busy turn active", async () => {
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ intent: "attach" });
+    expect(await screen.findByRole("button", { name: "Queue" })).toBeDefined();
+    expect(screen.getByPlaceholderText("Send after this turn…")).toBeDefined();
+  });
+
+  it("settles a session whose process exited with its last agent state still busy", async () => {
+    vi.useFakeTimers();
+    sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
+    renderSession({ intent: "attach" });
+    await flushPromises();
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDefined();
+
+    const live = liveObservation("rpc", { state: "busy" });
+    sessionStatus.mockResolvedValue({ ...live, lifecycle: { state: "live_exited" }, state: live.state && { ...live.state, process: { state: "exited", code: null } } });
+    await act(async () => vi.advanceTimersByTimeAsync(1500));
+    expect(screen.queryByRole("button", { name: "Queue" })).toBeNull();
+    expect(screen.queryByPlaceholderText("Send after this turn…")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDefined();
+  });
+});
 
 describe("session lifecycle polling", () => {
   beforeEach(() => {
@@ -947,6 +1008,11 @@ describe("Vinculum session chat", () => {
     renderSession({ intent: "attach", model: "stale/model" });
     expect(await screen.findByText("playbook prompt")).toBeDefined();
     expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("xai/grok-4.6");
+    // The pickers sit in the composer footer, beside the input, not in a bar above the transcript.
+    const footer = screen.getByRole("button", { name: "Change model" }).closest(".chat-composer-footer") as HTMLElement;
+    expect(footer).not.toBeNull();
+    expect(within(footer).getByRole("combobox", { name: "Thinking level" })).toBeDefined();
+    expect(document.querySelector(".chat-meta")).toBeNull();
     const picker = screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
     expect(picker.value).toBe("high");
     fireEvent.change(picker, { target: { value: "low" } });

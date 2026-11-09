@@ -423,3 +423,18 @@ it("draws a history-only state that carries neither map", () => {
   render(<TaskRunGraph sessions={[session("s1")] as SessionDisplayMeta[]} state={sparse as never} onOpenSession={() => {}} onOpenArtifact={() => {}} />);
   expect(screen.queryByText(/Cannot convert undefined or null to object/)).toBeNull();
 });
+
+it("labels a never-started held owner queued in both graph modes (issue #151)", () => {
+  // Durable state from the report: queued execution, start never requested, owner meta never stamped.
+  const owner = session("owner", { started_at: null, ended_at: null, exit_code: null });
+  const record = { ...execution("owner", { "request.md": ["input-a"] }), lifecycle: "queued" as const, start_requested: false };
+  // What `lifecycleOf` (sync/sessionObservation.ts) derives for a session entity with no startedAt.
+  const observation: SessionObservation = { lifecycle: { state: "never_started" }, state: null, checkpoint: {} };
+  render(<TaskRunGraph sessions={[owner]} state={executionReply([record]).state} observations={{ owner: observation }} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);
+  const node = () => screen.getByRole("button", { name: "Open session owner" });
+  expect(within(node()).getByText("queued")).toBeTruthy();
+  expect(within(node()).queryByText("Exited")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Artifact dependencies" }));
+  expect(within(node()).getByText("queued")).toBeTruthy();
+  expect(within(node()).queryByText("Exited")).toBeNull();
+});

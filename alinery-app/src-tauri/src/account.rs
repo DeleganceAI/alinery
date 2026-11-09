@@ -848,13 +848,13 @@ fn clear_if_still_invalid(path: &Path) -> Result<bool, String> {
 
 /// Refreshes the cached entitlement. A successful empty response clears a stale plan — that
 /// is the only path that ever clears one — while a failed lookup keeps whatever is cached,
-/// so an outage never downgrades the chip.
+/// but reports unavailable so callers cannot mistake an outage for a confirmed unpaid account.
 fn persist_plan_if_current(path: &Path, tokens: &AccountTokens, entitlement_base: &str) -> AccountStatus {
     let (plan, paid) = match fetch_account_plan_at(entitlement_base, &tokens.access_token) {
         Ok(value) => value,
         Err(e) => {
             eprintln!("fetch account plan: {e}");
-            return status_for(tokens);
+            return status_unavailable(tokens);
         }
     };
     if tokens.plan == plan && tokens.paid == paid {
@@ -873,7 +873,7 @@ fn persist_plan_if_current(path: &Path, tokens: &AccountTokens, entitlement_base
         Ok(None) => account_status_from_path(path),
         Err(e) => {
             eprintln!("persist account plan: {e}");
-            status_for(tokens)
+            status_unavailable(tokens)
         }
     }
 }

@@ -1,7 +1,9 @@
 import { act, cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmHost, confirmDanger } from "./confirm";
+import { TaskRunGraph } from "./TaskRunGraph";
 import type * as IpcFixtures from "./test/mockIpc";
+import type { SessionDisplayMeta } from "./types";
 import { type Handlers, useHotkeys } from "./useHotkeys";
 
 vi.mock("./ipc", async () => {
@@ -26,15 +28,12 @@ const handlers = (overrides: Partial<Handlers> = {}): Handlers => ({
   overlayOpen: false,
   isFullscreen: false,
   board: "list",
-  // The product default: one Grid view and classic Kanban on, so the bar reads
-  // ⌘1 Grid, ⌘2 Tasks, ⌘3 Sessions, ⌘4 Kanban.
+  // One Grid view followed by Tasks, Sessions, and optional Chat.
   gridCount: 1,
-  showKanban: true,
   showChat: true,
   toggleSearch: vi.fn(),
   openCreate: vi.fn(),
   goList: vi.fn(),
-  goKanban: vi.fn(),
   goGrid: vi.fn(),
   goChat: vi.fn(),
   goSessions: vi.fn(),
@@ -60,7 +59,6 @@ function commandCallbacks(value: Handlers) {
     value.toggleSearch,
     value.openCreate,
     value.goList,
-    value.goKanban,
     value.goChat,
     value.goGrid,
     value.goSessions,
@@ -81,6 +79,79 @@ function commandCallbacks(value: Handlers) {
 }
 
 describe("useHotkeys", () => {
+  it("leaves Enter on native controls to the focused control while keeping board shortcuts", () => {
+    const active = handlers();
+    render(
+      <>
+        <Probe handlers={active} />
+        <button type="button">
+          <span>Sort by Name</span>
+        </button>
+        <a href="#task">Task link</a>
+        <select aria-label="Sort order">
+          <option>Name</option>
+        </select>
+        <details>
+          <summary>Filters</summary>
+        </details>
+      </>,
+    );
+    for (const target of [
+      screen.getByRole("button", { name: "Sort by Name" }),
+      screen.getByText("Sort by Name"),
+      screen.getByRole("link"),
+      screen.getByRole("combobox"),
+      screen.getByText("Filters"),
+    ]) {
+      target.focus();
+      const event = createEvent.keyDown(target, { key: "Enter", cancelable: true });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(active.openSelected).not.toHaveBeenCalled();
+    }
+
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    expect(active.openSelected).toHaveBeenCalledOnce();
+    const sort = screen.getByRole("button", { name: "Sort by Name" });
+    fireEvent.keyDown(sort, { key: "Enter", metaKey: true });
+    expect(active.openSelected).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(sort, { key: "Escape" });
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the run graph open when Escape returns keyboard pan focus", () => {
+    const active = handlers({ board: null });
+    const worker: SessionDisplayMeta = {
+      id: "worker",
+      name: "worker",
+      worktree: "/work",
+      created: 1,
+      archived: false,
+      phase: "worker",
+      harness: "omp",
+      model: "",
+      playbook: "retained",
+      generic: false,
+      harness_resume_token: "",
+    };
+    render(
+      <>
+        <Probe handlers={active} />
+        <TaskRunGraph sessions={[worker]} state={null} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />
+      </>,
+    );
+    const pan = screen.getByRole("button", { name: "Pan run graph" });
+    const canvas = screen.getByRole("region", { name: "Run graph canvas" });
+    fireEvent.click(pan);
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.keyDown(canvas, { key: "ArrowRight" });
+    fireEvent.keyDown(canvas, { key: "Escape" });
+    expect(document.activeElement).toBe(pan);
+    expect(active.back).not.toHaveBeenCalled();
+    fireEvent.keyDown(pan, { key: "Escape" });
+    expect(active.back).toHaveBeenCalledOnce();
+  });
+
   it("cancels Switch to Terminal with Escape without navigating back", async () => {
     const active = handlers({ board: null });
     render(
@@ -181,7 +252,7 @@ describe("useHotkeys", () => {
   it.each([
     ["2", "goList"],
     ["3", "goSessions"],
-    ["4", "goKanban"],
+    ["4", "goChat"],
     ["8", "goNotifications"],
     ["9", "goSettings"],
     [",", "goSettings"],
@@ -192,7 +263,7 @@ describe("useHotkeys", () => {
     fireEvent.keyDown(document.body, { key, metaKey: true });
 
     expect(active[handler]).toHaveBeenCalledOnce();
-    for (const other of ["goKanban", "goList", "goSessions", "goNotifications", "goSettings", "goGrid"] as const) {
+    for (const other of ["goChat", "goList", "goSessions", "goNotifications", "goSettings", "goGrid"] as const) {
       if (other !== handler) expect(active[other]).not.toHaveBeenCalled();
     }
   });
@@ -210,11 +281,11 @@ describe("useHotkeys", () => {
     expect(active.goGrid).toHaveBeenCalledWith(1);
     expect(active.goList).toHaveBeenCalledOnce();
     expect(active.goSessions).toHaveBeenCalledOnce();
-    expect(active.goKanban).toHaveBeenCalledOnce();
+    expect(active.goChat).toHaveBeenCalledOnce();
   });
 
-  it("leaves Command-7 unassigned, and moves Chat into Kanban's digit while Kanban is hidden", () => {
-    const active = handlers({ showKanban: false });
+  it("leaves Command-7 unassigned and puts Chat after Sessions", () => {
+    const active = handlers();
     render(<Probe handlers={active} />);
 
     fireEvent.keyDown(document.body, { key: "7", metaKey: true });
@@ -223,26 +294,18 @@ describe("useHotkeys", () => {
 
     fireEvent.keyDown(document.body, { key: "4", metaKey: true });
     expect(active.goChat).toHaveBeenCalledOnce();
-    expect(active.goKanban).not.toHaveBeenCalled();
+    expect(active.goSessions).not.toHaveBeenCalled();
   });
 
-  it("leaves Chat's digit dead while the Chat tab is off, and does not shift the other shortcuts", () => {
-    const active = handlers({ showChat: false });
+  it("leaves Chat's digit unused while Chat is off, with fixed Notifications and Settings shortcuts", () => {
+    const active = handlers({ showChat: false, gridCount: 3 });
     render(<Probe handlers={active} />);
-
-    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "6", metaKey: true });
     expect(active.goChat).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "4", metaKey: true });
-    expect(active.goKanban).toHaveBeenCalledOnce();
-  });
-
-  it("puts Chat after Kanban while Kanban is shown", () => {
-    const active = handlers();
-    render(<Probe handlers={active} />);
-
-    fireEvent.keyDown(document.body, { key: "5", metaKey: true });
-    expect(active.goChat).toHaveBeenCalledOnce();
-    expect(active.goKanban).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "8", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "9", metaKey: true });
+    expect(active.goNotifications).toHaveBeenCalledOnce();
+    expect(active.goSettings).toHaveBeenCalledOnce();
   });
 
   it.each(["input", "textarea", "editable"])("toggles pinned chats from %s", (label) => {

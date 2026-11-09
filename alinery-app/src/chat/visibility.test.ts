@@ -56,9 +56,9 @@ describe("chatVisibilityFromAppearance", () => {
       showThinking: false,
       showTools: false,
       showTurnMarkers: false,
-      showActorLabels: false,
-      showAgentBubbles: false,
-      showBlockCopyButtons: false,
+      showActorLabels: true,
+      showAgentBubbles: true,
+      showBlockCopyButtons: true,
     });
     expect(
       chatVisibilityFromAppearance({
@@ -69,8 +69,9 @@ describe("chatVisibilityFromAppearance", () => {
         chat_rail_font_size: 14,
         chat_max_width: "600",
         chat_show_date: true,
-        chat_show_actor_labels: true,
-        chat_show_agent_bubbles: true,
+        chat_show_actor_labels: false,
+        chat_show_agent_bubbles: false,
+        chat_show_block_copy_buttons: false,
         chat_show_copy_buttons: false,
       }),
     ).toEqual({
@@ -81,8 +82,9 @@ describe("chatVisibilityFromAppearance", () => {
       fontSize: 18,
       railFontSize: 14,
       maxWidth: "600",
-      showActorLabels: true,
-      showAgentBubbles: true,
+      showActorLabels: false,
+      showAgentBubbles: false,
+      showBlockCopyButtons: false,
       showCopyButtons: false,
     });
   });

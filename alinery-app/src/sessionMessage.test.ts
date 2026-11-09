@@ -16,6 +16,7 @@ import {
   sessionMessageMetrics,
   shouldShowChatComposer,
 } from "./sessionMessage";
+import type { AgentState, LifecycleState, SessionObservation, SessionState } from "./types";
 
 const ready = (overrides: Partial<SessionMessageReadiness> = {}): SessionMessageReadiness => ({
   connection: "open",
@@ -163,16 +164,64 @@ describe("canInterruptSession", () => {
 });
 
 describe("isTurnActive", () => {
-  it("treats live transcript guesses and open turns as active even when the poll still says idle", () => {
-    expect(isTurnActive({ agentState: "idle" })).toBe(false);
-    expect(isTurnActive({ agentState: "unknown" })).toBe(false);
-    expect(isTurnActive({})).toBe(false);
-    expect(isTurnActive({ pendingTurn: true, agentState: "idle" })).toBe(true);
-    expect(isTurnActive({ turnOpen: true, agentState: "idle" })).toBe(true);
+  // A Vinculum session as the sync replica reports it (`observationOf`): transport rpc, process from the daemon's live row.
+  const live = (agent: AgentState = { state: "idle" }): SessionObservation & { state: SessionState } => ({
+    lifecycle: { state: "live" },
+    state: {
+      process: { state: "alive" },
+      agent,
+      playbook: { state: "in_progress" },
+      adapter: "unsupported",
+      message_adapter: "unsupported",
+    },
+    checkpoint: {},
+    transport: "rpc",
   });
 
-  it.each(["busy", "waiting_for_input", "waiting_for_approval"] as const)("treats observed agent state %s as active", (agentState) => {
-    expect(isTurnActive({ agentState })).toBe(true);
+  it("treats live transcript guesses and open turns as active even when the poll still says idle", () => {
+    expect(isTurnActive({ observation: live() })).toBe(false);
+    expect(isTurnActive({ observation: live({ state: "unknown" }) })).toBe(false);
+    expect(isTurnActive({})).toBe(false);
+    expect(isTurnActive({ pendingTurn: true, observation: live() })).toBe(true);
+    expect(isTurnActive({ turnOpen: true, observation: live() })).toBe(true);
+  });
+
+  it.each<AgentState>([{ state: "busy" }, { state: "waiting_for_input", correlation_id: "input" }, { state: "waiting_for_approval", correlation_id: "approval" }])(
+    "treats observed agent state $state as active only while its process is live",
+    (agent) => {
+      const observation = live(agent);
+      expect(isTurnActive({ observation })).toBe(true);
+      observation.state.process = { state: "exited", code: null };
+      observation.lifecycle = { state: "live_exited" };
+      expect(isTurnActive({ observation, pendingTurn: true, turnOpen: true })).toBe(false);
+    },
+  );
+
+  it.each<LifecycleState>([{ state: "live_exited" }, { state: "exited", code: 0 }, { state: "orphaned" }, { state: "interrupted" }])(
+    "settles an unclosed replay for $state history even with a completed checkpoint",
+    (lifecycle) => {
+      const observation: SessionObservation = { lifecycle, state: null, checkpoint: { phase_completed_at: 100 } };
+      expect(isTurnActive({ observation, pendingTurn: true, turnOpen: true })).toBe(false);
+    },
+  );
+
+  it("keeps live activity at a ready-to-advance or completed playbook step", () => {
+    const observation = live();
+    for (const state of ["ready_to_advance", "completed"] as const) {
+      observation.state.playbook = { state };
+      expect(isTurnActive({ observation, turnOpen: true })).toBe(true);
+    }
+  });
+
+  it("preserves optimistic activity before a live observation arrives", () => {
+    for (const observation of [
+      null,
+      { lifecycle: { state: "live" }, state: null, checkpoint: {}, transport: null },
+      { lifecycle: { state: "never_started" }, state: null, checkpoint: {}, transport: null },
+    ] satisfies (SessionObservation | null)[]) {
+      expect(isTurnActive({ observation, pendingTurn: true })).toBe(true);
+      expect(isTurnActive({ observation, turnOpen: true })).toBe(true);
+    }
   });
 });
 
