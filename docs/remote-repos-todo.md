@@ -64,6 +64,7 @@ Test procedure: `scripts/tests/remote-sshd/run.sh start`, export the line it pri
 - Runtime directory cleanup on hosts (documented non-goal for now).
 - A manual `VERIFY.md` with a logind matrix (linger, `KillUserProcesses`) on a real VM.
 - A real agent session on a real Linux host with real credentials. Never done.
+- macOS hosts: unit tested, and the arm64 runtime unpacks, verifies and runs locally. Never connected over ssh to a real Mac (needs Remote Login on); the x64 darwin runtime has never run (no Intel Mac or Rosetta here). Check that a `Launch::Direct` daemon outlives the ssh logout, and surface the TCC EPERM (repos under `~/Documents` need "Allow full disk access for remote users") as a typed refusal.
 - Real OAuth providers over ssh (device code and pasted code). Untested.
 - A prompt when a session needs a provider the host lacks.
 - ~~Daemon-owned automatic backups for a remote repo~~ Done in S4.9 (`jobs/autoBackup.ts`).

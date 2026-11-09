@@ -420,7 +420,7 @@ export type HostEntry = {
   remote: RemoteHostView | null;
 };
 /** Why a host cannot run a daemon, found by the probe before anything is installed (`Refusal` in remote.rs). */
-export type RefusalKind = "not_linux" | "unsupported_cpu" | "no_glibc" | "old_glibc" | "large_pages" | "missing_tools" | "no_runtime" | "stops_processes";
+export type RefusalKind = "unsupported_os" | "unsupported_cpu" | "no_glibc" | "old_glibc" | "old_macos" | "large_pages" | "missing_tools" | "no_runtime" | "stops_processes";
 export type HostRefusal = { kind: RefusalKind; message: string; missing_tools: string[]; fix: string | null };
 /** What "Test connection" learned about a host the probe accepts. */
 export type HostTestReport = { platform: string; glibc: string | null };

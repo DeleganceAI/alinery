@@ -55,10 +55,11 @@ describe("refusals", () => {
   });
 
   const kinds: Record<RefusalKind, Partial<HostRefusal>> = {
-    not_linux: { message: "Darwin hosts are not supported yet" },
+    unsupported_os: { message: "FreeBSD hosts are not supported" },
     unsupported_cpu: { message: "unsupported CPU architecture: riscv64" },
     no_glibc: { message: "no glibc" },
     old_glibc: { message: "the host's glibc 2.17 is older than the required 2.28" },
+    old_macos: { message: "the host's macOS 12.7 is older than the required 13.0" },
     large_pages: { message: "arm64 hosts with 64 KiB pages are not supported" },
     missing_tools: { missing_tools: ["git", "tar"] },
     no_runtime: { message: "this build of Alinery does not bundle a runtime for x" },
@@ -74,6 +75,10 @@ describe("refusals", () => {
   it("names every missing tool, and hands over the command that stops the host killing sessions", () => {
     expect(refusalAdvice(refusal({ missing_tools: ["git", "tar"] })).title).toBe("The host is missing git, tar");
     expect(refusalAdvice(refusal({ missing_tools: ["git"] })).fix).toContain("Install it");
+    expect(refusalAdvice(refusal({ missing_tools: ["git"] })).command).toBeNull();
+    // A Mac with only the /usr/bin/git stub gets the command that installs the Command Line Tools.
+    const mac = refusalAdvice(refusal({ missing_tools: ["git"], fix: "xcode-select --install" }));
+    expect([mac.command, mac.fix]).toEqual(["xcode-select --install", expect.stringContaining("Command Line Tools")]);
     expect(refusalAdvice(refusal({ kind: "stops_processes", fix: "loginctl enable-linger ada" })).command).toBe("loginctl enable-linger ada");
   });
 });

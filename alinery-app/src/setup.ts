@@ -25,10 +25,13 @@ export function refusalAdvice(refusal: HostRefusal): { title: string; fix: strin
   const tools = refusal.missing_tools.join(", ");
   switch (refusal.kind) {
     case "missing_tools":
+      // A Mac without the Command Line Tools has only the /usr/bin/git stub; the refusal carries the command that installs them.
       return {
         title: `The host is missing ${tools}`,
-        fix: `Install ${refusal.missing_tools.length === 1 ? "it" : "them"} on that host with its package manager, then test the connection again. Nothing has been installed there.`,
-        command: null,
+        fix: refusal.fix
+          ? "Run this on the host to install the Command Line Tools, which bring git, then test the connection again. Nothing has been installed there."
+          : `Install ${refusal.missing_tools.length === 1 ? "it" : "them"} on that host with its package manager, then test the connection again. Nothing has been installed there.`,
+        command: refusal.fix,
       };
     case "stops_processes":
       return {
@@ -36,14 +39,16 @@ export function refusalAdvice(refusal: HostRefusal): { title: string; fix: strin
         fix: "Run this on the host once, so sessions keep running after you disconnect, then test the connection again.",
         command: refusal.fix,
       };
-    case "not_linux":
-      return { title: "This host is not Linux", fix: "Remote repositories need a Linux machine. Pick another host.", command: null };
+    case "unsupported_os":
+      return { title: "This host's system is not supported", fix: "Remote repositories need a Linux machine or a Mac. Pick another host.", command: null };
     case "unsupported_cpu":
-      return { title: "This host's CPU is not supported", fix: "Remote hosts must be x64 or arm64 Linux machines.", command: null };
+      return { title: "This host's CPU is not supported", fix: "Remote hosts must be x64 or arm64 Linux machines, or Macs.", command: null };
     case "no_glibc":
       return { title: "This host has no glibc", fix: "Musl systems such as Alpine are not supported. Use a glibc-based distribution.", command: null };
     case "old_glibc":
       return { title: "This host's glibc is too old", fix: `${refusal.message}. Update the host's operating system, or pick another host.`, command: null };
+    case "old_macos":
+      return { title: "This Mac's macOS is too old", fix: `${refusal.message}. Update macOS on that Mac, or pick another host.`, command: null };
     case "large_pages":
       return { title: "This arm64 host uses 64 KiB pages", fix: "Hosts with a 64 KiB page size are not supported. Pick another host.", command: null };
     case "no_runtime":

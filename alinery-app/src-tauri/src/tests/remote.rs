@@ -940,7 +940,13 @@ fn manifest() -> RuntimeManifest {
     };
     RuntimeManifest {
         glibc_floor: "2.28".into(),
-        targets: BTreeMap::from([("x86_64-unknown-linux-gnu".into(), target("aaaa")), ("aarch64-unknown-linux-gnu".into(), target("bbbb"))]),
+        macos_floor: "13.0".into(),
+        targets: BTreeMap::from([
+            ("x86_64-unknown-linux-gnu".into(), target("aaaa")),
+            ("aarch64-unknown-linux-gnu".into(), target("bbbb")),
+            ("x86_64-apple-darwin".into(), target("cccc")),
+            ("aarch64-apple-darwin".into(), target("dddd")),
+        ]),
     }
 }
 
@@ -976,10 +982,10 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
     let cases: Vec<(Probe, &str)> = vec![
         (
             Probe {
-                os: "Darwin".into(),
+                os: "FreeBSD".into(),
                 ..ok.clone()
             },
-            "Darwin",
+            "FreeBSD hosts are not supported",
         ),
         (
             Probe {
@@ -1032,8 +1038,8 @@ fn refuses_hosts_the_runtime_cannot_run_on() {
         assert!(error.contains(expected), "{error}");
     }
     let empty = RuntimeManifest {
-        glibc_floor: "2.28".into(),
         targets: BTreeMap::new(),
+        ..manifest()
     };
     assert!(select_target(&ok, &empty).unwrap_err().message.contains("does not bundle"));
     // 2.10 must compare as newer than 2.9, not as a string.
@@ -1114,10 +1120,10 @@ fn every_refusal_carries_its_kind_and_reaches_the_page_as_json() {
     let kind = |probe: Probe| select_target(&probe, &manifest()).unwrap_err().kind;
     assert_eq!(
         kind(Probe {
-            os: "Darwin".into(),
+            os: "FreeBSD".into(),
             ..ok.clone()
         }),
-        RefusalKind::NotLinux
+        RefusalKind::UnsupportedOs
     );
     assert_eq!(
         kind(Probe {
@@ -1143,8 +1149,8 @@ fn every_refusal_carries_its_kind_and_reaches_the_page_as_json() {
         RefusalKind::LargePages
     );
     let empty = RuntimeManifest {
-        glibc_floor: "2.28".into(),
         targets: BTreeMap::new(),
+        ..manifest()
     };
     assert_eq!(select_target(&ok, &empty).unwrap_err().kind, RefusalKind::NoRuntime);
 
@@ -1172,6 +1178,92 @@ fn every_refusal_carries_its_kind_and_reaches_the_page_as_json() {
     assert_eq!(json["kind"], "missing_tools");
     assert_eq!(json["missing_tools"], serde_json::json!(["git", "zip"]));
     assert!(json["fix"].is_null());
+}
+
+/// A Mac over ssh: no glibc, systemd or logind; `shasum` but no `sha256sum`; Homebrew's git from the login PATH.
+const PROBE_MAC: &str = "__ALINERY_PROBE__\nuname=Darwin arm64\nhome=/Users/me\nuser=me\nglibc=\npagesize=16384\nmacos=15.1\ngit=/opt/homebrew/bin/git\nclt=0\nhas_tar=1\nhas_gzip=1\nhas_sha256sum=0\nhas_shasum=1\nhas_git=1\nhas_zip=1\nhas_unzip=1\nhas_setsid=0\nhas_systemd-run=0\nlinger=\nkilluser=\n";
+
+#[test]
+fn a_mac_host_gets_the_darwin_runtime_for_its_cpu_and_a_detached_daemon() {
+    let mac = parse_probe(PROBE_MAC).unwrap();
+    assert_eq!(
+        (mac.os.as_str(), mac.macos.as_deref(), mac.git_path.as_deref(), mac.clt),
+        ("Darwin", Some("15.1"), Some("/opt/homebrew/bin/git"), Some(false))
+    );
+    assert_eq!((mac.glibc.as_deref(), mac.linger, mac.kill_user_processes), (None, None, None));
+    // 16 KiB pages are normal on Apple silicon and are not the 64 KiB Linux refusal.
+    let bundled = manifest();
+    let (triple, target) = select_target(&mac, &bundled).unwrap();
+    assert_eq!((triple, target.runtime_hash.as_str()), ("aarch64-apple-darwin", "dddd"));
+    let intel = Probe {
+        arch: "x86_64".into(),
+        ..mac.clone()
+    };
+    assert_eq!(select_target(&intel, &manifest()).unwrap().0, "x86_64-apple-darwin");
+    assert_eq!(platform_label(&mac), "macOS 15.1 arm64");
+    assert_eq!(platform_label(&parse_probe(PROBE_OK).unwrap()), "Linux x86_64");
+    assert_eq!(choose_launcher(&mac), Ok(Launcher::Nohup));
+}
+
+#[test]
+fn a_mac_host_is_refused_for_an_old_release_the_git_stub_or_no_checksum_tool() {
+    let mac = parse_probe(PROBE_MAC).unwrap();
+    let refuse = |probe: Probe| select_target(&probe, &manifest()).unwrap_err();
+
+    let old = refuse(Probe {
+        macos: Some("12.7.6".into()),
+        ..mac.clone()
+    });
+    assert_eq!(
+        (old.kind, old.message.as_str()),
+        (RefusalKind::OldMacos, "the host's macOS 12.7.6 is older than the required 13.0")
+    );
+    assert_eq!(refuse(Probe { macos: None, ..mac.clone() }).kind, RefusalKind::OldMacos);
+    // 13.10 is newer than 13.9 by number, not by string.
+    assert!(select_target(
+        &Probe {
+            macos: Some("13.10".into()),
+            ..mac.clone()
+        },
+        &RuntimeManifest {
+            macos_floor: "13.9".into(),
+            ..manifest()
+        }
+    )
+    .is_ok());
+
+    // /usr/bin/git without the Command Line Tools only offers to install them, so it counts as missing, with the fix.
+    let stub = refuse(Probe {
+        git_path: Some("/usr/bin/git".into()),
+        ..mac.clone()
+    });
+    assert_eq!(
+        (stub.kind, stub.missing_tools.as_slice(), stub.fix.as_deref()),
+        (RefusalKind::MissingTools, ["git".to_string()].as_slice(), Some("xcode-select --install"))
+    );
+    assert!(stub.message.contains("xcode-select --install"), "{}", stub.message);
+    assert!(select_target(
+        &Probe {
+            git_path: Some("/usr/bin/git".into()),
+            clt: Some(true),
+            ..mac.clone()
+        },
+        &manifest()
+    )
+    .is_ok());
+
+    let mut tools = mac.tools.clone();
+    tools.insert("shasum".into(), false);
+    let no_sum = refuse(Probe { tools, ..mac.clone() });
+    assert_eq!((no_sum.missing_tools.as_slice(), no_sum.fix.as_deref()), (["shasum".to_string()].as_slice(), None));
+
+    // A Linux host is never judged by the Mac's git rule.
+    let linux = Probe {
+        git_path: Some("/usr/bin/git".into()),
+        clt: Some(false),
+        ..parse_probe(PROBE_OK).unwrap()
+    };
+    assert!(select_target(&linux, &manifest()).is_ok());
 }
 
 #[test]

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-build the runtime that remote (SSH) repos install on a Linux host, and bundle it as
+# Cross-build the runtime that remote (SSH) repos install on a Linux or macOS host, and bundle it as
 # app resources: alinery-app/src-tauri/resources/remote/<triple>.tar.gz plus manifest.json.
 #
 # Each archive holds one executable, `alinery-vinculum-daemon` (bun build --compile for the target), plus a MANIFEST in
@@ -17,12 +17,16 @@ TAURI="$ROOT/alinery-app/src-tauri"
 PKG="$TAURI/vinculum-daemon"
 OUT="$TAURI/resources/remote"
 GLIBC_FLOOR=2.28
+# Bun 1.4.3 darwin builds set LC_BUILD_VERSION minos 13.0; checked per binary below.
+MACOS_FLOOR=13.0
 
 # triple | bun --target. x64 uses the baseline build: the default needs AVX2 and dies with
 # "Illegal instruction" on older CPUs and many VMs.
 TARGETS=(
   "x86_64-unknown-linux-gnu|bun-linux-x64-baseline"
   "aarch64-unknown-linux-gnu|bun-linux-arm64"
+  "x86_64-apple-darwin|bun-darwin-x64"
+  "aarch64-apple-darwin|bun-darwin-arm64"
 )
 
 sha256() {
@@ -32,6 +36,22 @@ sha256() {
 # Highest GLIBC_x.y symbol version an ELF file asks for, or empty.
 max_glibc() {
   strings -a "$1" | grep -E '^GLIBC_[0-9]+(\.[0-9]+)+$' | sed 's/^GLIBC_//' | sort -uV | tail -1
+}
+
+# Apple silicon kills an unsigned executable, and Bun 1.4.3 cross-building x64 on an arm64 Mac leaves an invalid
+# signature, so every darwin binary is re-signed ad hoc here. Ad hoc is enough: a file unpacked from tar over ssh carries
+# no quarantine attribute, so Gatekeeper never asks for notarization. vtool and codesign exist only on macOS; elsewhere
+# the darwin targets are skipped, and the app then refuses Mac hosts as having no bundled runtime.
+have_darwin_tools() { command -v vtool >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; }
+darwin_checks() {
+  local minos
+  minos="$(vtool -show-build "$2" | awk '$1 == "minos" { print $2; exit }')"
+  if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$MACOS_FLOOR" | sort -V | tail -1)" != "$MACOS_FLOOR" ]; then
+    echo "ERROR: $1/alinery-vinculum-daemon needs macOS ${minos:-unknown}, above the $MACOS_FLOOR floor" >&2
+    exit 1
+  fi
+  codesign --force --sign - "$2"
+  codesign -v "$2" || { echo "ERROR: $1/alinery-vinculum-daemon is not validly signed" >&2; exit 1; }
 }
 
 missing=0
@@ -59,9 +79,14 @@ rm -f "$OUT"/*.tar.gz "$OUT/manifest.json"
 "$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && bun install --frozen-lockfile || bun install)
 
+BUILT=()
 for entry in "${TARGETS[@]}"; do
   triple="${entry%%|*}"
   bun_target="${entry##*|}"
+  if [[ "$triple" == *-apple-darwin ]] && ! have_darwin_tools; then
+    echo "warning: no vtool/codesign on this machine; skipping $triple" >&2
+    continue
+  fi
   dir="$STAGE/$triple"
   mkdir -p "$dir"
   echo "== $triple"
@@ -69,24 +94,30 @@ for entry in "${TARGETS[@]}"; do
   bun build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --target="$bun_target" --outfile "$dir/alinery-vinculum-daemon"
   chmod +x "$dir/alinery-vinculum-daemon"
 
-  # The floor is a promise to the remote probe: refuse to ship anything that asks for more.
-  need_glibc="$(max_glibc "$dir/alinery-vinculum-daemon")"
-  if [ -n "$need_glibc" ] && [ "$(printf '%s\n%s\n' "$need_glibc" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
-    echo "ERROR: $triple/alinery-vinculum-daemon needs glibc $need_glibc, above the $GLIBC_FLOOR floor" >&2
-    exit 1
-  fi
+  # The floors are a promise to the remote probe: refuse to ship anything that asks for more.
+  case "$triple" in
+    *-apple-darwin) darwin_checks "$triple" "$dir/alinery-vinculum-daemon" ;;
+    *)
+      need_glibc="$(max_glibc "$dir/alinery-vinculum-daemon")"
+      if [ -n "$need_glibc" ] && [ "$(printf '%s\n%s\n' "$need_glibc" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+        echo "ERROR: $triple/alinery-vinculum-daemon needs glibc $need_glibc, above the $GLIBC_FLOOR floor" >&2
+        exit 1
+      fi
+      ;;
+  esac
 
   (cd "$dir" && echo "$(sha256 alinery-vinculum-daemon)  alinery-vinculum-daemon" > MANIFEST)
   # --no-xattrs: keep macOS provenance attributes out of the archive (they trigger warnings on extract).
   tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon MANIFEST
   echo "archive ready: $OUT/$triple.tar.gz"
+  BUILT+=("$triple")
 done
 
 # manifest.json: the app reads it to pick the archive for a probed host, and uses runtime_hash
 # as the install directory name on the remote (a hash-named directory is never overwritten).
-STAGE="$STAGE" OUT="$OUT" GLIBC_FLOOR="$GLIBC_FLOOR" TRIPLES="$(printf '%s\n' "${TARGETS[@]}" | cut -d'|' -f1 | paste -sd' ' -)" node -e '
+STAGE="$STAGE" OUT="$OUT" GLIBC_FLOOR="$GLIBC_FLOOR" MACOS_FLOOR="$MACOS_FLOOR" TRIPLES="${BUILT[*]}" node -e '
 const fs = require("fs"), crypto = require("crypto"), path = require("path");
-const { STAGE, OUT, GLIBC_FLOOR, TRIPLES } = process.env;
+const { STAGE, OUT, GLIBC_FLOOR, MACOS_FLOOR, TRIPLES } = process.env;
 const sha = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const targets = {};
 for (const triple of TRIPLES.split(" ")) {
@@ -97,6 +128,6 @@ for (const triple of TRIPLES.split(" ")) {
     runtime_hash: crypto.createHash("sha256").update(manifest).digest("hex").slice(0, 16),
   };
 }
-fs.writeFileSync(path.join(OUT, "manifest.json"), JSON.stringify({ version: 1, glibc_floor: GLIBC_FLOOR, targets }, null, 2) + "\n");
+fs.writeFileSync(path.join(OUT, "manifest.json"), JSON.stringify({ version: 1, glibc_floor: GLIBC_FLOOR, macos_floor: MACOS_FLOOR, targets }, null, 2) + "\n");
 '
 echo "manifest ready: $OUT/manifest.json"

@@ -190,8 +190,8 @@ export function AddSshHostDialog({ onClose, onAdded }: { onClose: () => void; on
             />
           </label>
           <p className="dsc">
-            Alinery connects without prompts, so your key must be in ssh-agent or given here. The host needs Linux (x64 or arm64), git, zip, unzip, tar, gzip and sha256sum. Jump
-            hosts and other options belong in your ssh config.
+            Alinery connects without prompts, so your key must be in ssh-agent or given here. The host needs Linux (x64 or arm64) with git, zip, unzip, tar, gzip and sha256sum, or
+            macOS 13 or later with Remote Login on and git. Jump hosts and other options belong in your ssh config.
           </p>
           {test.kind === "ok" ? (
             <InlineStatus tone="success">Reachable: {test.platform}. Nothing was installed.</InlineStatus>

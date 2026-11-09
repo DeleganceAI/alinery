@@ -317,14 +317,25 @@ pub(crate) const PROBE_SENTINEL: &str = "__ALINERY_PROBE__";
 
 /// Run on the remote with `sh -s`. Everything after the sentinel is `key=value`; anything
 /// before it is shell rc noise.
+///
+/// On macOS a non-interactive ssh command gets launchd's bare PATH, so Homebrew's git would look
+/// missing; the probe takes the login shell's PATH first, as `loginShellPath` does for the daemon.
+/// `clt` and `git` let `select_target` tell the `/usr/bin/git` stub from a working git.
 pub(crate) const PROBE_SCRIPT: &str = r#"
+if [ "$(uname -s)" = Darwin ]; then
+  login_path="$("${SHELL:-/bin/zsh}" -ilc 'echo "__ALINERY_PATH__=$PATH"' </dev/null 2>/dev/null | sed -n 's/^__ALINERY_PATH__=//p' | tail -n 1)"
+  [ -n "$login_path" ] && PATH="$login_path:$PATH"
+fi
 echo __ALINERY_PROBE__
 echo "uname=$(uname -sm)"
 echo "home=$HOME"
 echo "user=$(id -un 2>/dev/null)"
 echo "glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null)"
 echo "pagesize=$(getconf PAGESIZE 2>/dev/null)"
-for tool in tar gzip sha256sum git zip unzip setsid systemd-run; do
+echo "macos=$(sw_vers -productVersion 2>/dev/null)"
+echo "git=$(command -v git 2>/dev/null)"
+if xcode-select -p >/dev/null 2>&1; then echo "clt=1"; else echo "clt=0"; fi
+for tool in tar gzip sha256sum shasum git zip unzip setsid systemd-run; do
   if command -v "$tool" >/dev/null 2>&1; then echo "has_$tool=1"; else echo "has_$tool=0"; fi
 done
 echo "linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
@@ -339,6 +350,9 @@ pub(crate) struct Probe {
     pub(crate) user: Option<String>,
     pub(crate) glibc: Option<String>,
     pub(crate) pagesize: Option<u64>,
+    pub(crate) macos: Option<String>,
+    pub(crate) git_path: Option<String>,
+    pub(crate) clt: Option<bool>,
     pub(crate) tools: BTreeMap<String, bool>,
     pub(crate) linger: Option<bool>,
     pub(crate) kill_user_processes: Option<bool>,
@@ -363,6 +377,9 @@ pub(crate) fn parse_probe(output: &str) -> Result<Probe, String> {
             "user" => probe.user = Some(value.to_string()).filter(|user| !user.is_empty()),
             "glibc" => probe.glibc = value.strip_prefix("glibc ").map(str::to_string),
             "pagesize" => probe.pagesize = value.parse().ok(),
+            "macos" => probe.macos = Some(value.to_string()).filter(|version| !version.is_empty()),
+            "git" => probe.git_path = Some(value.to_string()).filter(|path| !path.is_empty()),
+            "clt" => probe.clt = Some(value == "1"),
             "linger" => {
                 probe.linger = match value {
                     "yes" => Some(true),
@@ -405,6 +422,8 @@ pub(crate) struct RuntimeManifest {
     #[serde(default)]
     pub(crate) glibc_floor: String,
     #[serde(default)]
+    pub(crate) macos_floor: String,
+    #[serde(default)]
     pub(crate) targets: BTreeMap<String, ManifestTarget>,
 }
 
@@ -418,10 +437,11 @@ pub(crate) const HOST_REFUSED: &str = "host-refused";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RefusalKind {
-    NotLinux,
+    UnsupportedOs,
     UnsupportedCpu,
     NoGlibc,
     OldGlibc,
+    OldMacos,
     LargePages,
     MissingTools,
     NoRuntime,
@@ -435,7 +455,7 @@ pub(crate) struct Refusal {
     pub(crate) message: String,
     /// The programs the host lacks (`MissingTools` only).
     pub(crate) missing_tools: Vec<String>,
-    /// A command that fixes it, to run on the host (`StopsProcesses` only).
+    /// A command that fixes it, to run on the host (`StopsProcesses`, and `MissingTools` when a Mac lacks git).
     pub(crate) fix: Option<String>,
 }
 
@@ -458,45 +478,80 @@ impl From<Refusal> for String {
 
 /// Pick the bundled runtime for a probed host, or say plainly why none fits.
 pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) -> Result<(&'a str, &'a ManifestTarget), Refusal> {
-    if probe.os != "Linux" {
-        return Err(Refusal::new(
-            RefusalKind::NotLinux,
-            format!("{} hosts are not supported yet; remote repositories need Linux", probe.os),
-        ));
-    }
-    let triple = match probe.arch.as_str() {
-        "x86_64" => "x86_64-unknown-linux-gnu",
-        "aarch64" | "arm64" => "aarch64-unknown-linux-gnu",
-        other => return Err(Refusal::new(RefusalKind::UnsupportedCpu, format!("unsupported CPU architecture: {other}"))),
+    let darwin = probe.os == "Darwin";
+    let triple = match (probe.os.as_str(), probe.arch.as_str()) {
+        ("Linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("Linux", "aarch64" | "arm64") => "aarch64-unknown-linux-gnu",
+        ("Darwin", "x86_64") => "x86_64-apple-darwin",
+        ("Darwin", "arm64") => "aarch64-apple-darwin",
+        ("Linux" | "Darwin", other) => return Err(Refusal::new(RefusalKind::UnsupportedCpu, format!("unsupported CPU architecture: {other}"))),
+        (os, _) => {
+            return Err(Refusal::new(
+                RefusalKind::UnsupportedOs,
+                format!("{os} hosts are not supported; remote repositories need Linux or macOS"),
+            ))
+        }
     };
-    let glibc = probe
-        .glibc
-        .as_deref()
-        .ok_or_else(|| Refusal::new(RefusalKind::NoGlibc, "the host has no glibc (musl and Alpine are not supported)"))?;
-    if version_parts(glibc) < version_parts(&manifest.glibc_floor) {
-        return Err(Refusal::new(
-            RefusalKind::OldGlibc,
-            format!("the host's glibc {glibc} is older than the required {}", manifest.glibc_floor),
-        ));
+    if darwin {
+        // Bun's darwin builds set LC_BUILD_VERSION minos; the build script checks the binary against this floor.
+        let floor = &manifest.macos_floor;
+        let too_old = match probe.macos.as_deref() {
+            Some(version) if version_parts(version) >= version_parts(floor) => None,
+            Some(version) => Some(format!("the host's macOS {version} is older than the required {floor}")),
+            None => Some(format!("the host did not report its macOS version; {floor} or later is required")),
+        };
+        if let Some(message) = too_old {
+            return Err(Refusal::new(RefusalKind::OldMacos, message));
+        }
+    } else {
+        let glibc = probe
+            .glibc
+            .as_deref()
+            .ok_or_else(|| Refusal::new(RefusalKind::NoGlibc, "the host has no glibc (musl and Alpine are not supported)"))?;
+        if version_parts(glibc) < version_parts(&manifest.glibc_floor) {
+            return Err(Refusal::new(
+                RefusalKind::OldGlibc,
+                format!("the host's glibc {glibc} is older than the required {}", manifest.glibc_floor),
+            ));
+        }
+        if triple.starts_with("aarch64") && probe.pagesize == Some(65536) {
+            return Err(Refusal::new(RefusalKind::LargePages, "arm64 hosts with 64 KiB pages are not supported"));
+        }
     }
-    if triple.starts_with("aarch64") && probe.pagesize == Some(65536) {
-        return Err(Refusal::new(RefusalKind::LargePages, "arm64 hosts with 64 KiB pages are not supported"));
-    }
-    let missing: Vec<String> = ["tar", "gzip", "sha256sum", "git", "zip", "unzip"]
-        .into_iter()
-        .filter(|tool| !probe.tools.get(*tool).copied().unwrap_or(false))
-        .map(str::to_string)
-        .collect();
+    let has = |tool: &str| probe.tools.get(tool).copied().unwrap_or(false);
+    // Without the Command Line Tools, macOS's /usr/bin/git is a stub that only offers to install them.
+    let git_stub = darwin && probe.git_path.as_deref() == Some("/usr/bin/git") && probe.clt != Some(true);
+    // The install verifies MANIFEST with sha256sum, or shasum -a 256 where macOS has no sha256sum.
+    let checksum = if darwin { "shasum" } else { "sha256sum" };
+    let missing: Vec<String> = [
+        ("tar", has("tar")),
+        ("gzip", has("gzip")),
+        (checksum, has("sha256sum") || has("shasum")),
+        ("git", has("git") && !git_stub),
+        ("zip", has("zip")),
+        ("unzip", has("unzip")),
+    ]
+    .into_iter()
+    .filter(|(_, present)| !present)
+    .map(|(tool, _)| tool.to_string())
+    .collect();
     if !missing.is_empty() {
+        let mac_git = darwin && missing.iter().any(|tool| tool == "git");
         // Nothing is installed on the host yet when this is shown (D6): the user installs the tools there, then sets the host up again.
         return Err(Refusal {
             missing_tools: missing.clone(),
+            fix: mac_git.then(|| "xcode-select --install".to_string()),
             ..Refusal::new(
                 RefusalKind::MissingTools,
                 format!(
-                    "the host is missing {}; install {} on that host with its package manager, then run setup again",
+                    "the host is missing {}; install {} on that host{}, then run setup again",
                     missing.join(", "),
-                    if missing.len() == 1 { "it" } else { "them" }
+                    if missing.len() == 1 { "it" } else { "them" },
+                    if mac_git {
+                        " (the Command Line Tools bring git: `xcode-select --install`)"
+                    } else {
+                        " with its package manager"
+                    }
                 ),
             )
         });
@@ -506,6 +561,15 @@ pub(crate) fn select_target<'a>(probe: &Probe, manifest: &'a RuntimeManifest) ->
         .get_key_value(triple)
         .map(|(triple, target)| (triple.as_str(), target))
         .ok_or_else(|| Refusal::new(RefusalKind::NoRuntime, format!("this build of Alinery does not bundle a runtime for {triple}")))
+}
+
+/// How a host is shown: `Linux x86_64`, or `macOS 15.1 arm64` (uname's `Darwin` names no release a person knows).
+pub(crate) fn platform_label(probe: &Probe) -> String {
+    match (probe.os.as_str(), probe.macos.as_deref()) {
+        ("Darwin", Some(version)) => format!("macOS {version} {}", probe.arch),
+        ("Darwin", None) => format!("macOS {}", probe.arch),
+        (os, _) => format!("{os} {}", probe.arch),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,7 +582,9 @@ pub(crate) enum Launcher {
 
 /// How to start the daemon so it outlives the ssh session. A user systemd manager stops at
 /// the last logout unless lingering is on, so `systemd-run --user` is only chosen then; a
-/// plain setsid process survives unless logind kills the session's processes.
+/// plain setsid process survives unless logind kills the session's processes. macOS has neither,
+/// and sshd's logout does not reach a process in its own session, so a Mac always gets `Nohup`
+/// (`Launch::Direct`, which `spawnDetached` starts in a new session).
 pub(crate) fn choose_launcher(probe: &Probe) -> Result<Launcher, Refusal> {
     let has = |tool: &str| probe.tools.get(tool).copied().unwrap_or(false);
     if has("systemd-run") && probe.linger == Some(true) {
@@ -833,7 +899,7 @@ impl HostConn {
     pub(crate) fn install_runtime(&self, runtime: &str, archive: std::fs::File) -> Result<(), String> {
         let dir = shell_quote(runtime);
         let script = format!(
-            "set -e; rm -rf {dir}.tmp; mkdir -p {dir}.tmp; tar -xzf - -C {dir}.tmp; (cd {dir}.tmp && sha256sum -c MANIFEST >/dev/null); touch {dir}.tmp/.complete; mv {dir}.tmp {dir}"
+            "set -e; rm -rf {dir}.tmp; mkdir -p {dir}.tmp; tar -xzf - -C {dir}.tmp; (cd {dir}.tmp && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c MANIFEST; else shasum -a 256 -c MANIFEST; fi >/dev/null); touch {dir}.tmp/.complete; mv {dir}.tmp {dir}"
         );
         self.exec_ok(&script, RemoteStdin::File(archive), Duration::from_secs(600)).map(|_| ())
     }
@@ -1142,7 +1208,7 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
     let mut latest = load_app_config(app);
     if let Some(entry) = latest.remote_hosts.get_mut(host_id) {
         entry.home = Some(probe.home.clone());
-        entry.platform = Some(format!("{} {}", probe.os, probe.arch));
+        entry.platform = Some(platform_label(&probe));
         entry.glibc = probe.glibc.clone();
         write_app_config(app, &latest)?;
     }
@@ -1699,7 +1765,7 @@ pub(crate) fn test_ssh_args(ssh_args: &[String], manifest: &RuntimeManifest, tru
         select_target(&probe, manifest)?;
         choose_launcher(&probe)?;
         Ok(HostTestReport {
-            platform: format!("{} {}", probe.os, probe.arch),
+            platform: platform_label(&probe),
             glibc: probe.glibc,
         })
     })();
