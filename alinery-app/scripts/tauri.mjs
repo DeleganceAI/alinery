@@ -47,8 +47,8 @@ export function piDaemonCompile(args) {
   return { release: args.includes("--release") || (subcommand === "build" && !args.includes("--debug")) };
 }
 
-// Remote (SSH) repos install the Linux and macOS runtimes bundled by scripts/build-remote-runtimes.sh.
-// A build without them still serves local repos, so a missing set only warns; release sets
+// Remote (SSH) repos install the Linux and macOS runtimes bundled by scripts/build-remote-runtimes.sh,
+// which dev and build run first. A build without them still serves local repos, so a missing set only warns; release sets
 // ALINERY_REQUIRE_REMOTE_RUNTIMES=1 to make it fatal.
 export function remoteRuntimesProblem(manifestText) {
   let targets = {};
@@ -235,6 +235,23 @@ async function compilePiDaemon(sourceRoot, release) {
   }
 }
 
+// Remote (SSH) repos need the bundled Linux and macOS runtimes, so dev and build refresh them
+// first. A failure (no Bun, offline before Bun's cross targets are cached) only warns here; build
+// then checks the manifest, which ALINERY_REQUIRE_REMOTE_RUNTIMES=1 makes fatal.
+async function buildRemoteRuntimes(sourceRoot) {
+  const code = await new Promise((resolve) => {
+    const child = spawn("bash", [join(sourceRoot, "scripts", "build-remote-runtimes.sh")], { stdio: "inherit" });
+    child.on("error", (error) => {
+      console.error(error.message);
+      resolve(1);
+    });
+    child.on("exit", (exit) => resolve(exit ?? 1));
+  });
+  if (code !== 0) {
+    console.warn(`build-remote-runtimes.sh failed (exit ${code}); remote repositories may be unavailable in this build`);
+  }
+}
+
 async function run(args) {
   let reservation;
   try {
@@ -243,7 +260,11 @@ async function run(args) {
     }
     const launch = selectTauriLaunch(args, import.meta.url, reservation?.port);
     const compile = piDaemonCompile(args);
-    if (args.find((arg) => TAURI_SUBCOMMANDS.has(arg)) === "build") {
+    const subcommand = args.find((arg) => TAURI_SUBCOMMANDS.has(arg));
+    if (subcommand === "dev" || subcommand === "build") {
+      await buildRemoteRuntimes(launch.sourceRoot);
+    }
+    if (subcommand === "build") {
       const manifest = await readFile(join(launch.packageRoot, "src-tauri", "resources", "remote", "manifest.json"), "utf8").catch(() => undefined);
       const problem = remoteRuntimesProblem(manifest);
       if (problem && process.env.ALINERY_REQUIRE_REMOTE_RUNTIMES === "1") {

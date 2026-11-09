@@ -6,8 +6,8 @@
 # `sha256sum -c` format that the remote verifies after unpacking. The daemon, the MCP server and the host service
 # (`--host-service`, plan S5.2) are modes of that one binary, so the build needs Bun and nothing else.
 #
-# Explicit and skippable: the Bun cross targets download from the network, which
-# `dev-fetch-bun.sh --no-download` forbids, so tauri dev/build never run this. Release sets
+# `npm run tauri dev|build` (scripts/tauri.mjs) runs this first. The Bun cross targets download from the
+# network the first time, then come from Bun's cache; a failure only warns there, and release sets
 # ALINERY_REQUIRE_REMOTE_RUNTIMES=1 so a missing manifest fails the build.
 #
 # Prerequisite (--check prints it when missing): bun, https://bun.sh
