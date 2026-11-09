@@ -1307,7 +1307,8 @@ export default function App() {
               />
             )}
             <div className={drawerOpen ? "app-main-column" : undefined} style={drawerOpen ? undefined : { display: "contents" }}>
-              <HostGuardWarning visible={daemon.host_guard_warning} />
+              {/* A remote daemon is started without the app's executable by design (peers are `ssh`, the token is the proof), so there is nothing to warn about. */}
+              <HostGuardWarning visible={daemon.host_guard_warning && !isRemoteRepo(appConfig?.active_repo ?? "")} />
               {repoErr && appConfig?.active_repo && (
                 <div className="daemon-conflict" role="alert">
                   <strong>{repoErr}</strong>

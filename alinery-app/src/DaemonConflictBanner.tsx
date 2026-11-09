@@ -9,7 +9,7 @@ import { toast } from "./toast";
 import type { DaemonConflict, DaemonOwnerConflict } from "./types";
 
 const HOST_GUARD_WARNING =
-  "OMP sessions are unavailable because Alinery could not validate its executable path. Use the confirmed Restart daemon / Stop all sessions action in Settings → Chat to restore OMP host protection. Terminal sessions remain available.";
+  "Alinery could not identify its own executable, so this daemon cannot tell the app from other local processes. Use the confirmed Restart daemon / Stop all sessions action in Settings → Chat to restore that check. Sessions are not affected.";
 
 export function HostGuardWarning({ visible }: { visible: boolean }) {
   if (!visible) return null;
