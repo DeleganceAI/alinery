@@ -25,7 +25,6 @@ import {
   normalizeCompactionBasis,
   normalizeCompactionPercent,
   normalizeCompactionTokens,
-  normalizeSessionDefaultView,
   TERMINAL_FONT_MAX,
   TERMINAL_FONT_MIN,
   UI_SCALE_STEPS,
@@ -61,7 +60,6 @@ import type {
   PurgeFailure,
   RepoBackupOverrides,
   RepoOverrides,
-  SessionDefaultView,
   SettingSource,
   SettingsSectionKey,
   StorageInfo,
@@ -1262,30 +1260,6 @@ export function Settings({
               </div>
             }
           />
-          <div className="field" style={{ marginTop: 16 }}>
-            <label id="session-default-view-label">Default session view</label>
-            {!isGlobal && globalOnly("Default session view")}
-            <div className="theme-cards" role="group" aria-labelledby="session-default-view-label">
-              {(["chat", "terminal"] as const satisfies readonly SessionDefaultView[]).map((view) => {
-                const active = normalizeSessionDefaultView(appearance.session_default_view) === view;
-                return (
-                  <button
-                    key={view}
-                    type="button"
-                    className={`theme-card ${active ? "active" : ""}`}
-                    disabled={!isGlobal}
-                    aria-pressed={active}
-                    onClick={() => {
-                      if (isGlobal) saveAppearance({ ...appearance, session_default_view: view });
-                    }}
-                  >
-                    <span>{view === "chat" ? "Chat" : "Terminal"}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <span className="dsc">Preferred hatch when starting an OMP session. Chat is the default.</span>
-          </div>
           {!isGlobal && globalOnly("Auto-compaction")}
           <Checkbox
             checked={appearance.chat_auto_compaction !== false}
