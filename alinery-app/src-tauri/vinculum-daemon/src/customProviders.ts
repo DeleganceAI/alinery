@@ -45,13 +45,14 @@ export function openCustomProviders(path: string) {
       for (const row of rows) models.setProvider(providerFor(row));
     },
     save(input: CustomProvider & { clearKey?: boolean }, taken: ReadonlySet<string>): CustomProvider {
+      rows = readRows(path); // another repository's daemon may have saved since this one started
       const next = validateCustom(input, taken, rows);
       rows = [...rows.filter((row) => row.id !== next.id), next];
       persist();
       return { ...next, models: [...next.models] };
     },
     remove(id: string, models: Models) {
-      rows = rows.filter((row) => row.id !== id);
+      rows = readRows(path).filter((row) => row.id !== id);
       models.deleteProvider(id);
       persist();
     },

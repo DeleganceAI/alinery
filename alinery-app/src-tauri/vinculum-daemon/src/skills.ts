@@ -105,7 +105,7 @@ function frontmatter(text: string): { values: Record<string, string>; disabled: 
     index += 1;
   }
   const flag = values["disable-model-invocation"];
-  return { values, disabled: flag === "true" };
+  return { values, disabled: flag?.replace(/\s+#.*$/, "") === "true" };
 }
 
 function unquote(value: string): string {

@@ -89,6 +89,8 @@ export interface Execution {
   /** Immutable publication set. Set once on acceptance; later files never join it. */
   receipt: Occurrence[] | null;
   failure: string | null;
+  /** Failed, but the harness could not confirm the process stopped: it still holds capacity and the worktree until exit is confirmed. */
+  unconfirmed?: boolean;
   /** Set when the execution first starts, extended when it is accepted. Absent before then and on a state converted from an old log. */
   manifest?: Manifest;
 }
@@ -118,7 +120,7 @@ export type Event =
   | { t: 'permitted'; execId: string }
   | { t: 'accepted'; execId: string; published: Occurrence[]; files?: FileRecord[]; worktree?: { ref: string; tree: string } }
   | { t: 'exited'; execId: string }
-  | { t: 'failed'; execId: string; reason: string }
+  | { t: 'failed'; execId: string; reason: string; unconfirmed?: boolean }
   | { t: 'ambiguity'; ambiguity: Ambiguity };
 
 export function emptyState(): State {
@@ -142,6 +144,7 @@ export function apply(state: State, ev: Event): void {
       if (ev.consumed && !e.manifest) e.manifest = { consumed: ev.consumed, published: [] };
       e.status = 'live';
       e.failure = null;
+      delete e.unconfirmed;
       if (ev.t === 'resumed') e.permitted = false; // permission belonged to the previous owner
       return;
     case 'permitted':
@@ -159,6 +162,7 @@ export function apply(state: State, ev: Event): void {
       return;
     case 'exited':
       if (!e || e.status === 'done') return;
+      delete e.unconfirmed;
       if (e.receipt) {
         e.status = 'done';
         e.failure = null;
@@ -171,6 +175,8 @@ export function apply(state: State, ev: Event): void {
       if (!e || e.status === 'done') return;
       e.status = 'failed';
       e.failure = ev.reason;
+      if (ev.unconfirmed) e.unconfirmed = true;
+      else delete e.unconfirmed;
       return;
     case 'ambiguity': {
       const a = ev.ambiguity;

@@ -100,6 +100,8 @@ export class Engine {
   #saving: Promise<void> | null = null;
   #dirty = false;
   #saveError: unknown;
+  /** Tick and resume run one at a time: a launch awaits the harness while its execution is still `reserved`, so an overlapping pass would start it twice. */
+  #turn: Promise<unknown> = Promise.resolve();
   /** Derived ancestry, kept across ticks. Purely an optimisation; see schedule.ts. */
   readonly #cache = new SchedulerCache();
 
@@ -134,12 +136,20 @@ export class Engine {
   }
 
   /** One scheduling round. Safe to call as often as you like. Ends with every change saved, or throws the save's error. */
-  async tick(): Promise<void> {
-    await this.#observe();
-    this.#requestShutdowns();
-    this.#reserve();
-    await this.#launch();
-    await this.flush();
+  tick(): Promise<void> {
+    return this.#exclusive(async () => {
+      await this.#observe();
+      this.#requestShutdowns();
+      this.#reserve();
+      await this.#launch();
+      await this.flush();
+    });
+  }
+
+  #exclusive<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.#turn.then(run);
+    this.#turn = next.catch(() => undefined);
+    return next;
   }
 
   /** Save the State as it is, though no event changed it. Used once, to store a State converted from an old log. */
@@ -202,12 +212,16 @@ export class Engine {
   }
 
   /** Explicit recovery: continue a failed execution. Never called by the engine itself. Capacity and coding rules still apply. */
-  async resume(execId: string): Promise<void> {
+  resume(execId: string): Promise<void> {
+    return this.#exclusive(() => this.#resume(execId));
+  }
+
+  async #resume(execId: string): Promise<void> {
     const e = this.#must(execId);
     if (e.status !== 'failed') throw new Error(`${execId} is ${e.status}; only a failed execution can be resumed`);
     if (e.receipt) throw new Error(`${execId} already published; use confirmExited once its process has stopped`);
     const step = this.#step(e.step);
-    if (this.#live().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
+    if (this.#occupying().length >= this.#liveCap()) throw new Error('task is at its live-session cap');
     if (step.isCodingStep && this.#codingHeld()) throw new Error('another coding execution holds the worktree');
     const launch = this.#launchFor(e, step);
     const consumed = this.#consumedFor(e);
@@ -231,11 +245,15 @@ export class Engine {
   // ---- tick phases ---------------------------------------------------------
 
   async #observe(): Promise<void> {
-    for (const e of this.#live()) {
+    for (const e of this.#occupying()) {
       const s = await this.#opts.harness.status(e.sessionId!);
       if (s.kind === 'exited') this.#append({ t: 'exited', execId: e.id });
-      else if (s.kind === 'failed') this.#append({ t: 'failed', execId: e.id, reason: s.reason });
-      else if (s.kind === 'unknown') this.#append({ t: 'failed', execId: e.id, reason: 'harness has no record of the session' });
+      else if (s.kind === 'failed') {
+        if (e.status !== 'failed' || e.unconfirmed) this.#append({ t: 'failed', execId: e.id, reason: s.reason });
+      } else if (s.kind === 'unknown' && e.status !== 'failed') {
+        // Not proof the process stopped: it keeps its capacity and worktree until a person confirms.
+        this.#append({ t: 'failed', execId: e.id, reason: 'harness has no record of the session', unconfirmed: true });
+      }
     }
   }
 
@@ -245,7 +263,7 @@ export class Engine {
       this.#stopping.add(e.id);
       this.#opts.harness.stop(e.sessionId).then(
         () => this.#append({ t: 'exited', execId: e.id }),
-        (err: unknown) => this.#append({ t: 'failed', execId: e.id, reason: `shutdown failed: ${message(err)}` }),
+        (err: unknown) => this.#append({ t: 'failed', execId: e.id, reason: `shutdown failed: ${message(err)}`, unconfirmed: true }),
       );
     }
   }
@@ -265,7 +283,7 @@ export class Engine {
   async #launch(): Promise<void> {
     for (const e of [...this.#state.executions.values()]) {
       if (e.status !== 'reserved') continue;
-      if (this.#live().length >= this.#liveCap()) break;
+      if (this.#occupying().length >= this.#liveCap()) break;
       const step = this.#step(e.step);
       if (step.isCodingStep && this.#codingHeld()) continue;
       mkdirSync(e.outDir, { recursive: true });
@@ -349,9 +367,14 @@ export class Engine {
     return [...this.#state.executions.values()].filter((e) => e.status === 'live' || e.status === 'finishing');
   }
 
+  /** Live sessions plus failed ones whose process has not been confirmed gone. Both hold capacity and the worktree. */
+  #occupying(): Execution[] {
+    return [...this.#state.executions.values()].filter((e) => e.sessionId && (e.status === 'live' || e.status === 'finishing' || (e.status === 'failed' && e.unconfirmed)));
+  }
+
   /** A coding execution keeps the worktree through acceptance until confirmed exit. */
   #codingHeld(): boolean {
-    return this.#live().some((e) => this.#step(e.step).isCodingStep);
+    return this.#occupying().some((e) => this.#step(e.step).isCodingStep);
   }
 
   #step(key: string): Step {

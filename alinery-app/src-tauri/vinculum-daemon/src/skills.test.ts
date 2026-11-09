@@ -15,7 +15,7 @@ describe("skill catalog", () => {
     const agent = mkdtempSync(join(tmpdir(), "alinery-skills-"));
     skill(agent, "b-valid", "---\nname: valid-skill\ndescription: Use this one\n---\nSECRET BODY\n");
     skill(agent, "a-blank", "---\nname: missing-description\n---\nSECRET BODY\n");
-    skill(agent, "c-hidden", "---\nname: hidden-skill\ndescription: Do not offer\ndisable-model-invocation: true\n---\nSECRET BODY\n");
+    skill(agent, "c-hidden", "---\nname: hidden-skill\ndescription: Do not offer\ndisable-model-invocation: true # manual only\n---\nSECRET BODY\n");
     skill(agent, "d-collision", "---\nname: valid-skill\ndescription: Later copy\n---\nSECRET BODY\n");
     const catalog = skillCatalog(agent) ?? "";
     expect(catalog).toContain("valid-skill");

@@ -109,7 +109,13 @@ export function ProviderAccessPanel({ access }: { access: Access }) {
             </div>
           </div>
         ) : (
-          <PromptForm prompt={prompt} secret={prompt.type === "secret"} onSubmit={(value) => void access.reply(value)} onCancel={() => void access.cancel()} />
+          <PromptForm
+            key={`${prompt.type}:${prompt.message}`}
+            prompt={prompt}
+            secret={prompt.type === "secret"}
+            onSubmit={(value) => void access.reply(value)}
+            onCancel={() => void access.cancel()}
+          />
         )
       ) : null}
     </div>

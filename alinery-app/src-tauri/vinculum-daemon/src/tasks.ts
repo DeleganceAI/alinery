@@ -305,10 +305,13 @@ export async function startSession(
     if (!resumed) {
       const existing = engineExecutions(slug).find((item) => item.sessionId === id);
       if (existing && (existing.status === "done" || existing.status === "finishing")) return { error: "this execution already completed" };
-      try {
-        await runTask(slug);
-      } catch {
-        /* a terminal still starts when the playbook has no model */
+      // An auxiliary session belongs to no execution, so starting it must not release a held graph.
+      if (existing) {
+        try {
+          await runTask(slug);
+        } catch {
+          /* a terminal still starts when the playbook has no model */
+        }
       }
     }
   }

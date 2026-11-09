@@ -181,12 +181,13 @@ function stringMap(value: unknown): Record<string, string> {
 }
 
 async function startServer(_name: string, spec: StdioSpec | HttpSpec): Promise<{ endpoint: Endpoint; tools: { name: string; description: string; inputSchema: unknown }[] } | { error: string }> {
-  const endpoint = spec.kind === "stdio" ? spawnStdio(spec) : openHttp(spec);
+  let endpoint: Endpoint | undefined;
   try {
+    endpoint = spec.kind === "stdio" ? spawnStdio(spec) : openHttp(spec);
     const tools = await endpoint.list();
     return { endpoint, tools };
   } catch (error) {
-    endpoint.close();
+    endpoint?.close();
     const message = error instanceof Error ? error.message : "";
     if (message === OAUTH || message === COULD_NOT_LIST) return { error: message };
     return { error: COULD_NOT_START };

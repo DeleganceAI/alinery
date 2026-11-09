@@ -470,3 +470,42 @@ test('step tokens replace the extra and the handoff for that launch only', async
   assert.doesNotMatch(build.prompt, /review-handoff-001/);
   assert.match(build.prompt, /\/task\/sessions/);
 });
+
+test('overlapping ticks launch an execution once', async () => {
+  const one = playbook([step('s', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] })]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  const start = harness.start.bind(harness);
+  harness.start = async (launch) => {
+    await held;
+    return start(launch);
+  };
+  const engine = openEngine(one, harness, dir, { maxLiveSessions: 1 });
+  engine.seed(seedTicket(dir));
+  const both = Promise.all([engine.tick(), engine.tick()]);
+  release();
+  await both;
+  assert.equal(harness.launches.length, 1);
+});
+
+test('a session the harness no longer knows keeps its capacity until a person confirms it stopped', async () => {
+  const pair = playbook([
+    step('a', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'a.md' }] }),
+    step('b', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'b.md' }] }),
+  ]);
+  const dir = taskDir();
+  const harness = new FakeHarness(async () => {});
+  const engine = openEngine(pair, harness, dir, { maxLiveSessions: 1 });
+  engine.seed(seedTicket(dir));
+  await engine.tick();
+  const first = [...engine.state.executions.values()].find((e) => e.status === 'live')!;
+  harness.sessions.delete(first.sessionId!);
+  await engine.tick();
+  assert.equal(engine.state.executions.get(first.id)?.status, 'failed');
+  assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'live').length, 0);
+  engine.confirmExited(first.id);
+  await engine.tick();
+  assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'live').length, 1);
+});
