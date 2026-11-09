@@ -286,7 +286,7 @@ describe("spawnDaemon", () => {
   test("launches detached with the shared recipe and logs the child's output", async () => {
     const root = scratch("spawn");
     writeFileSync(join(root, "app.toml"), '[global.experiments]\ngrok_api_key = "xai-test"\n');
-    writeFileSync(join(root, "fake-daemon"), '#!/bin/sh\necho "args: $*"\necho "xai=$XAI_API_KEY host=$ALINERY_HOST_EXECUTABLE"\n');
+    writeFileSync(join(root, "fake-daemon"), '#!/bin/sh\necho "args: $*"\necho "xai=$XAI_API_KEY host=$ALINERY_HOST_EXECUTABLE remote=$ALINERY_REMOTE_LAUNCH"\n');
     chmodSync(join(root, "fake-daemon"), 0o755);
     await spawnDaemon(params(root), { ...process.env, ALINERY_HOST_EXECUTABLE: "/leak", SHELL: "/bin/sh" });
     const text = await logged(join(root, "logs/d.log"), "xai=");
@@ -295,7 +295,7 @@ describe("spawnDaemon", () => {
     expect(text).toContain("--app-version 9.9.9");
     expect(text).toContain("--socket-namespace ns");
     expect(text).toContain(`--rpc-secret-file ${join(root, "rpc.secret")}`);
-    expect(text).toContain("xai=xai-test host=\n");
+    expect(text).toContain("xai=xai-test host= remote=1\n");
   });
 
   test("the arguments leave out what was not given", () => {

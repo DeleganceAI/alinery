@@ -146,8 +146,8 @@ const publisher = new SessionPublisher(store, feed, () => [...live.values()].map
   protocol: PROTOCOL,
   buildId,
   watchExhausted: () => watcher.status.enospc,
-  // Peers of the shell role are screened against the app's executable; a daemon started without one cannot, and the shell says so.
-  hostGuardWarning: process.env.ALINERY_HOST_EXECUTABLE ? undefined : "no canonical executable for dynamic host screening",
+  // Peers of the shell role are screened against the app's executable; a local daemon started without one cannot, and the shell says so (a remote one is started without by design).
+  hostGuardWarning: process.env.ALINERY_HOST_EXECUTABLE || process.env.ALINERY_REMOTE_LAUNCH ? undefined : "no canonical executable for dynamic host screening",
 });
 // One owner per repository (S4.11): a second daemon, of any lane, is refused here and exits, and this one's sessions are not touched.
 try {

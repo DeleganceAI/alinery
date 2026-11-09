@@ -337,6 +337,8 @@ export async function spawnDaemon(p: SpawnDaemonParams, env: Record<string, stri
     for (const [key, value] of Object.entries(env)) if (value !== undefined) childEnv[key] = value;
     childEnv.PATH = await loginShellPath(env);
     delete childEnv.ALINERY_HOST_EXECUTABLE;
+    // A daemon started here has no app executable to screen peers against by design (they are `ssh`), so it must not warn about that.
+    childEnv.ALINERY_REMOTE_LAUNCH = "1";
     const grok = grokKey(p.appConfig);
     if (grok !== "") childEnv.XAI_API_KEY = grok;
     const args = daemonArguments(p);
@@ -353,7 +355,7 @@ export async function spawnDaemon(p: SpawnDaemonParams, env: Record<string, stri
     }
     if (p.unit === "") throw new Error("systemd_run needs a unit name");
     // Only what the recipe sets travels to the unit; the unit's own environment is the user manager's, not this ssh session's.
-    const setenv = Object.entries({ PATH: childEnv.PATH, ...(grok !== "" ? { XAI_API_KEY: grok } : {}) }).map(([key, value]) => `--setenv=${key}=${value}`);
+    const setenv = Object.entries({ PATH: childEnv.PATH, ALINERY_REMOTE_LAUNCH: "1", ...(grok !== "" ? { XAI_API_KEY: grok } : {}) }).map(([key, value]) => `--setenv=${key}=${value}`);
     const run = Bun.spawn(["systemd-run", "--user", "--collect", "--quiet", `--unit=${p.unit}`, `--working-directory=${p.repo}`, ...setenv, "--", p.binary, ...args], {
       stdin: "ignore",
       stdout: "pipe",
