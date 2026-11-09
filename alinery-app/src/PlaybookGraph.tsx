@@ -44,6 +44,7 @@ export function PlaybookGraph({
   minScale,
   simulationPlaying = false,
   onPauseSimulation,
+  direction = "vertical",
 }: {
   title: string;
   steps: NormalizedStep[];
@@ -63,6 +64,7 @@ export function PlaybookGraph({
   onPauseSimulation?: () => void;
   /** Lower zoom bound; also floors auto-fit so compact embeds stay legible and pan instead. */
   minScale?: number;
+  direction?: "vertical" | "horizontal";
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const activeKey = selectedStepKey !== undefined ? selectedStepKey : selectedKey;
@@ -77,6 +79,8 @@ export function PlaybookGraph({
   const zoomLabelRef = useRef<HTMLOutputElement>(null);
   const panButtonRef = useRef<HTMLButtonElement>(null);
   const initializedViewRef = useRef(false);
+  const fittedViewRef = useRef<PanZoomView | null>(null);
+  const viewportSizeRef = useRef<{ width: number; height: number } | null>(null);
   const isSimulation = simulatedStatuses !== undefined;
   const animateCameraRef = useRef(false);
   const previousSimulationKey = useRef<string | null>(null);
@@ -102,9 +106,13 @@ export function PlaybookGraph({
   });
   const fitGraph = () => {
     const canvas = canvasRef.current;
-    if (canvas) fit(canvas.offsetWidth, canvas.offsetHeight);
+    if (canvas) {
+      fit(canvas.offsetWidth, canvas.offsetHeight);
+      fittedViewRef.current = viewRef.current;
+    }
   };
   const resetZoom = () => {
+    fittedViewRef.current = null;
     const canvas = canvasRef.current;
     if (canvas) center(canvas.offsetWidth, canvas.offsetHeight, 1);
   };
@@ -144,9 +152,13 @@ export function PlaybookGraph({
             steps.map((step) => step.key),
             displayMode === "flow" ? flowConnections : connections,
             new Set(steps.filter((step) => step.inputs.some((input) => input.mode === "each")).map((step) => step.key)),
+            undefined,
+            undefined,
+            direction === "horizontal",
+            direction,
           )
         : null,
-    [variant, steps, displayMode, flowConnections, connections],
+    [variant, steps, displayMode, flowConnections, connections, direction],
   );
 
   const revealSimulationNode = useCallback(
@@ -160,20 +172,33 @@ export function PlaybookGraph({
       const scale = viewRef.current.scale;
       const width = GRAPH_NODE_WIDTH * unit * scale;
       const height = GRAPH_NODE_HEIGHT * unit * scale;
+      simulationTargetRef.current = { key, id: instanceId };
+      // Keep the horizontal overview still until a running or focused step leaves it.
+      const x = viewRef.current.tx + node.x * unit * scale;
+      const y = viewRef.current.ty + node.y * unit * scale;
+      if (
+        direction === "horizontal" &&
+        x >= FIT_PADDING &&
+        y >= FIT_PADDING &&
+        x + width <= viewport.clientWidth - FIT_PADDING &&
+        y + height <= viewport.clientHeight - FIT_PADDING
+      )
+        return;
       const left = Math.max(32, (viewport.clientWidth - width) / 2);
       const top = Math.max(32, (viewport.clientHeight - height) / 2);
-      simulationTargetRef.current = { key, id: instanceId };
       animateCameraRef.current = animate;
       setView({ scale, tx: left - node.x * unit * scale, ty: top - node.y * unit * scale });
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
     },
-    [layout, setView, viewRef],
+    [layout, setView, viewRef, direction],
   );
 
   useLayoutEffect(() => {
     if (!canvasEnabled) {
       initializedViewRef.current = false;
+      fittedViewRef.current = null;
+      viewportSizeRef.current = null;
       return;
     }
     const split = splitRef.current;
@@ -192,10 +217,20 @@ export function PlaybookGraph({
       // Skip transient collapsed layouts: fitting into a sliver would pin the camera at the
       // min scale; the observer retries once the viewport has real room.
       const viewportReady = viewport.clientWidth > 2 * FIT_PADDING && viewport.clientHeight > 2 * FIT_PADDING;
-      if (!initializedViewRef.current && viewportReady && canvas.offsetWidth > 0 && canvas.offsetHeight > 0) {
+      if (!viewportReady || canvas.offsetWidth <= 0 || canvas.offsetHeight <= 0) return;
+      const previousSize = viewportSizeRef.current;
+      const view = viewRef.current;
+      // A manual camera update replaces the last fitted view. Keep its zoom and focal
+      // point through resizes; Fit graph explicitly restores automatic fitting.
+      if (!initializedViewRef.current || view === fittedViewRef.current || (isSimulation && direction === "horizontal")) {
+        animateCameraRef.current = false;
         fit(canvas.offsetWidth, canvas.offsetHeight);
+        fittedViewRef.current = viewRef.current;
         initializedViewRef.current = true;
+      } else if (previousSize && !isSimulation) {
+        setView({ ...view, tx: view.tx + (viewport.clientWidth - previousSize.width) / 2, ty: view.ty + (viewport.clientHeight - previousSize.height) / 2 });
       }
+      viewportSizeRef.current = { width: viewport.clientWidth, height: viewport.clientHeight };
       if (isSimulation) {
         const target = simulationTargetRef.current ?? (simulationKeyRef.current ? { key: simulationKeyRef.current } : null);
         if (target) revealSimulationNode(target.key, false, target.id);
@@ -208,7 +243,7 @@ export function PlaybookGraph({
     observer.observe(viewport);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef, isSimulation, revealSimulationNode]);
+  }, [canvasEnabled, layout, showInspector, fit, paintView, viewRef, isSimulation, revealSimulationNode, setView, direction]);
 
   useLayoutEffect(() => {
     if (!isSimulation || !activeKey) return;

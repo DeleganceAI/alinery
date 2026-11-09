@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlaybookGraph } from "./PlaybookGraph";
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutDefinitionGraph } from "./playbookGraphLayout";
@@ -37,6 +37,83 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it("renders horizontal flow when requested", () => {
+  render(<PlaybookGraph variant="definition" title="Dense" steps={denseSteps} direction="horizontal" />);
+  const nodes = within(screen.getByRole("group", { name: "Graph steps" }));
+  const seed = nodes.getByRole("button", { name: "Inspect seed" });
+  const plan = nodes.getByRole("button", { name: "Inspect plan" });
+  expect(Number.parseFloat(plan.style.left.replace(/[^0-9.]/g, ""))).toBeGreaterThan(Number.parseFloat(seed.style.left.replace(/[^0-9.]/g, "")));
+});
+
+it("reveals offscreen horizontal simulation steps without moving an already visible overview", () => {
+  const layout = layoutDefinitionGraph(
+    denseSteps.map((step) => step.key),
+    [
+      { from: "seed", to: "plan" },
+      { from: "plan", to: "build" },
+      { from: "build", to: "review" },
+    ],
+    new Set(),
+    undefined,
+    undefined,
+    true,
+    "horizontal",
+  );
+  mockCanvasDimensions();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(320);
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("playbook-definition-canvas") ? layout.width : 0;
+  });
+  const props = {
+    variant: "definition" as const,
+    title: "Horizontal",
+    steps: denseSteps,
+    direction: "horizontal" as const,
+    minScale: 0.6,
+    showInspector: false,
+    hideToolbar: true,
+    simulatedStatuses: {},
+    simulationPlaying: true,
+  };
+  const { rerender } = render(<PlaybookGraph {...props} selectedStepKey="seed" />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const initial = camera(viewport);
+  const last = layout.nodes.find((node) => node.key === "review");
+  if (!last) throw new Error("Review node is missing");
+  expect(initial.tx + (last.x + GRAPH_NODE_WIDTH) * initial.scale).toBeGreaterThan(320);
+  rerender(<PlaybookGraph {...props} selectedStepKey="review" />);
+  const revealed = camera(viewport);
+  expect(revealed.tx + last.x * revealed.scale).toBeGreaterThanOrEqual(16);
+  expect(revealed.tx + (last.x + GRAPH_NODE_WIDTH) * revealed.scale).toBeLessThanOrEqual(304);
+  expect(revealed.scale).toBe(initial.scale);
+  rerender(<PlaybookGraph {...props} selectedStepKey="review" simulationPlaying={false} />);
+  expect(camera(viewport)).toEqual(revealed);
+  fireEvent.focus(screen.getByRole("button", { name: "Highlight seed" }));
+  const first = layout.nodes[0];
+  const focused = camera(viewport);
+  expect(focused.tx + first.x * focused.scale).toBeGreaterThanOrEqual(16);
+  expect(focused.tx + (first.x + GRAPH_NODE_WIDTH) * focused.scale).toBeLessThanOrEqual(304);
+});
+
+it("keeps the horizontal overview still when the active node is already visible", () => {
+  mockCanvasDimensions();
+  const props = {
+    variant: "definition" as const,
+    title: "Horizontal",
+    steps: denseSteps,
+    direction: "horizontal" as const,
+    showInspector: false,
+    hideToolbar: true,
+    simulatedStatuses: {},
+    simulationPlaying: true,
+  };
+  const { rerender } = render(<PlaybookGraph {...props} selectedStepKey="seed" />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  const initial = camera(viewport);
+  rerender(<PlaybookGraph {...props} selectedStepKey="review" />);
+  expect(camera(viewport)).toEqual(initial);
 });
 
 it("defaults to reduced Flow without losing any authored inspector dependencies", () => {
@@ -498,6 +575,53 @@ function camera(viewport: HTMLElement) {
   const [tx, ty] = stage.style.transform.slice("translate(".length, -1).split(",").map(Number.parseFloat);
   return { tx, ty, scale: Number(canvas.style.transform.slice("scale(".length, -1)) };
 }
+
+it.each(["fit", "zoom", "pan", "wheel", "reset"])("adapts to viewport shrink while respecting the %s camera", (intent) => {
+  mockCanvasDimensions();
+  let width = 600;
+  let height = 400;
+  let notify = () => {};
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(() => height);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        notify = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  render(<PlaybookGraph variant="definition" title="Resize" steps={denseSteps} showInspector={false} />);
+  const viewport = screen.getByRole("region", { name: "Dependency graph canvas" });
+  if (intent === "zoom") fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+  if (intent === "pan") fireEvent.keyDown(viewport, { key: "ArrowRight" });
+  if (intent === "wheel") fireEvent.wheel(viewport, { deltaY: -120, clientX: 180, clientY: 120 });
+  if (intent === "reset") fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+  const before = camera(viewport);
+  width = 320;
+  height = 220;
+  act(() => notify());
+  const after = camera(viewport);
+  if (intent === "fit") {
+    expect(after.scale).toBeLessThan(before.scale);
+    expect(after.tx).toBeGreaterThanOrEqual(16);
+    expect(after.tx + 1000 * after.scale).toBeLessThanOrEqual(304);
+    expect(after.ty + 500 * after.scale).toBeLessThanOrEqual(204);
+  } else {
+    expect(after.scale).toBe(before.scale);
+    expect((160 - after.tx) / after.scale).toBeCloseTo((300 - before.tx) / before.scale);
+    expect((110 - after.ty) / after.scale).toBeCloseTo((200 - before.ty) / before.scale);
+  }
+  act(() => notify());
+  expect(camera(viewport)).toEqual(after);
+  // Fit explicitly opts back into responsive fitting after any manual camera choice.
+  fireEvent.click(screen.getByRole("button", { name: "Fit graph" }));
+  width = 240;
+  act(() => notify());
+  expect(camera(viewport).tx + 1000 * camera(viewport).scale).toBeLessThanOrEqual(224);
+});
 
 it("keeps compact controls inside the canvas frame without starting pan gestures", () => {
   mockCanvasDimensions();
