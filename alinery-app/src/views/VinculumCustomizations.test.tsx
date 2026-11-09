@@ -145,16 +145,26 @@ describe("Vinculum customizations", () => {
   it("copies generated instructions and does not mention OMP when that fails", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const view = render(
+      <>
+        <Toast />
+        <VinculumCustomizations />
+      </>,
+    );
+    await waitFor(() => expect(mocks.customizationPrompt).toHaveBeenCalled());
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
+    // The text was fetched when the panel loaded, so the click writes it without waiting on the daemon.
+    expect(writeText).toHaveBeenCalledWith("Inspect this Vinculum installation; append your requested change.");
+    expect(await screen.findByText("Instructions copied")).toBeTruthy();
+    view.unmount();
+    mocks.customizationPrompt.mockRejectedValue(new Error("private stderr"));
     render(
       <>
         <Toast />
         <VinculumCustomizations />
       </>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Inspect this Vinculum installation; append your requested change."));
-    expect(await screen.findByText("Instructions copied")).toBeTruthy();
-    mocks.customizationPrompt.mockRejectedValue(new Error("private stderr"));
     fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
     expect(await screen.findByText(/Couldn't copy the customization instructions/)).toBeTruthy();
     expect(screen.queryByText(/OMP/)).toBeNull();

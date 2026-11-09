@@ -20,6 +20,8 @@ export function VinculumCustomizations() {
   const [local, setLocal] = useState(true);
   const [uploading, setUploading] = useState(false);
   const request = useRef(0);
+  // Fetched ahead: WebKit refuses a clipboard write once the click has waited on a daemon round trip.
+  const prompt = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const current = ++request.current;
@@ -27,6 +29,12 @@ export function VinculumCustomizations() {
     setError(false);
     try {
       const host = await agent.agentHost();
+      void agent.customizationPrompt().then(
+        (text) => {
+          prompt.current = text;
+        },
+        () => undefined,
+      );
       const [files, status] = await Promise.all([
         agent.readCustomizations(),
         agent.readMcpStatus().then(
@@ -112,7 +120,7 @@ export function VinculumCustomizations() {
           onClick={async () => {
             setCopying(true);
             try {
-              await copyTextToClipboard(await agent.customizationPrompt());
+              await copyTextToClipboard(prompt.current ?? (await agent.customizationPrompt()));
               toast.success("Instructions copied", "short");
             } catch {
               toast.error("Couldn't copy the customization instructions. Try again.");
