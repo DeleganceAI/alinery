@@ -321,11 +321,25 @@ pub(crate) const PROBE_SENTINEL: &str = "__ALINERY_PROBE__";
 /// On macOS a non-interactive ssh command gets launchd's bare PATH, so Homebrew's git would look
 /// missing; the probe takes the login shell's PATH first, as `loginShellPath` does for the daemon.
 /// `clt` and `git` let `select_target` tell the `/usr/bin/git` stub from a working git.
+///
+/// Elsewhere the bare PATH is tried first, and only a tool it lacks is looked up again on the
+/// login shell's PATH (read once, lazily), so a per-user install such as `~/.local/bin` counts.
 pub(crate) const PROBE_SCRIPT: &str = r#"
+login_path=
+login_probed=
+read_login_path() {
+  "${SHELL:-/bin/sh}" -ilc 'echo "__ALINERY_PATH__=$PATH"' </dev/null 2>/dev/null | sed -n 's/^__ALINERY_PATH__=//p' | tail -n 1
+}
 if [ "$(uname -s)" = Darwin ]; then
-  login_path="$("${SHELL:-/bin/zsh}" -ilc 'echo "__ALINERY_PATH__=$PATH"' </dev/null 2>/dev/null | sed -n 's/^__ALINERY_PATH__=//p' | tail -n 1)"
+  login_path="$(read_login_path)"
+  login_probed=1
   [ -n "$login_path" ] && PATH="$login_path:$PATH"
 fi
+found() {
+  command -v "$1" 2>/dev/null && return 0
+  if [ -z "$login_probed" ]; then login_probed=1; login_path="$(read_login_path)"; fi
+  [ -n "$login_path" ] && ( PATH="$login_path"; command -v "$1" 2>/dev/null )
+}
 echo __ALINERY_PROBE__
 echo "uname=$(uname -sm)"
 echo "home=$HOME"
@@ -333,10 +347,10 @@ echo "user=$(id -un 2>/dev/null)"
 echo "glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null)"
 echo "pagesize=$(getconf PAGESIZE 2>/dev/null)"
 echo "macos=$(sw_vers -productVersion 2>/dev/null)"
-echo "git=$(command -v git 2>/dev/null)"
+echo "git=$(found git)"
 if xcode-select -p >/dev/null 2>&1; then echo "clt=1"; else echo "clt=0"; fi
 for tool in tar gzip sha256sum shasum git zip unzip setsid systemd-run; do
-  if command -v "$tool" >/dev/null 2>&1; then echo "has_$tool=1"; else echo "has_$tool=0"; fi
+  if found "$tool" >/dev/null; then echo "has_$tool=1"; else echo "has_$tool=0"; fi
 done
 echo "linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)"
 echo "killuser=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager KillUserProcesses 2>/dev/null)"
