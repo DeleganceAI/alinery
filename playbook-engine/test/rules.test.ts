@@ -509,3 +509,50 @@ test('a session the harness no longer knows keeps its capacity until a person co
   await engine.tick();
   assert.equal([...engine.state.executions.values()].filter((e) => e.status === 'live').length, 1);
 });
+
+/** split publishes two groups, each group's worker publishes items, each item's reader publishes a leaf. */
+const nestedPlaybook = (...tail: ReturnType<typeof step>[]) =>
+  playbook([
+    step('split', { inputs: [{ path: 'ticket.md', mode: 'single' }], outputs: [{ path: 'group-*.md' }] }),
+    step('expand', { inputs: [{ path: 'group-*.md', mode: 'each' }], outputs: [{ path: 'item-*.md' }] }),
+    step('read', { inputs: [{ path: 'item-*.md', mode: 'each' }], outputs: [{ path: 'leaf.md' }] }),
+    step('merge', { inputs: [{ path: 'leaf*.md', mode: 'complete' }], outputs: [{ path: 'merged.md' }] }),
+    ...tail,
+  ]);
+
+const nestedAgent = async (launch: Launch, session: FakeSession) => {
+  if (launch.step === 'split') for (const n of ['1', '2']) writeText(launch.outputs['group-*.md'].replace('*', n), n);
+  else if (launch.step === 'expand') for (const n of ['1', '2']) writeText(launch.outputs['item-*.md'].replace('*', n), n);
+  else writeText(Object.values(launch.outputs)[0], 'x');
+  await complete(launch, session);
+};
+
+test('nested fan-out: a complete input gathers one inner family, not every family', async () => {
+  const dir = taskDir();
+  const engine = openEngine(nestedPlaybook(), new FakeHarness(nestedAgent), dir);
+  engine.seed(seedTicket(dir));
+  await settle(engine);
+  const merges = byStep(engine, 'merge');
+  assert.equal(merges.length, 2);
+  const leaves = merges.map((m) => m.inputs['leaf*.md']);
+  assert.deepEqual(leaves.map((l) => l.length), [2, 2]);
+  assert.equal(new Set(leaves.flat()).size, 4);
+  // Both leaves of one merge were read from items its own group's worker published.
+  for (const ids of leaves) {
+    const workers = new Set(ids.map((id) => engine.state.executions.get(id.split('/')[0])!.inputs['item-*.md'][0].split('/')[0]));
+    assert.equal(workers.size, 1);
+  }
+});
+
+test('nested fan-out: the merges of the inner families can themselves be merged once', async () => {
+  const dir = taskDir();
+  const pb = nestedPlaybook(step('final', { inputs: [{ path: 'merged*.md', mode: 'complete' }], outputs: [{ path: 'final.md' }] }));
+  const engine = openEngine(pb, new FakeHarness(nestedAgent), dir);
+  engine.seed(seedTicket(dir));
+  await settle(engine);
+  assert.equal(byStep(engine, 'merge').length, 2);
+  const finals = byStep(engine, 'final');
+  assert.equal(finals.length, 1);
+  assert.equal(finals[0].inputs['merged*.md'].length, 2);
+  assert.deepEqual(engine.diagnose().blocked, []);
+});

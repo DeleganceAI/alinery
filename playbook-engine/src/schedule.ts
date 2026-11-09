@@ -86,6 +86,8 @@ interface Cand {
   seed: boolean;
   /** Lazily built union of the producers' ancestor bitsets. */
   anc?: Uint32Array;
+  /** A `complete` collection only: the fan-out it gathers. */
+  group?: string;
 }
 
 type Pick = { kind: 'one'; cand: Cand } | { kind: 'none' } | { kind: 'many'; cands: Cand[] };
@@ -137,6 +139,12 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
   const shadows = (newer: Cand, older: Cand) =>
     newer !== older && (older.seed ? !newer.seed : older.pidx.some((p) => !newer.pidx.includes(p) && bit(ancOf(newer), p)));
 
+  /** Is `e` inside the fan-out rooted at `origin`, however deeply nested? Each root's own origin is the fan-out around it. */
+  const inside = (e: { origin: string | null }, origin: string): boolean => {
+    for (let o = e.origin; o; o = exec(o)?.origin ?? null) if (o === origin) return true;
+    return false;
+  };
+
   // Occurrences an execution read, transitively, without leaving its fan-out.
   // Used only for source coverage of a closing collection; the sources are the
   // fan-out root's own outputs, so nothing upstream of the root can matter.
@@ -150,7 +158,7 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
     for (const id of Object.values(state.executions.get(execId)!.inputs).flat()) {
       set.add(id);
       const producer = exec(byId.get(id)?.producer ?? null);
-      if (producer?.origin === origin) for (const x of readWithin(producer.id, origin)) set.add(x);
+      if (producer && inside(producer, origin)) for (const x of readWithin(producer.id, origin)) set.add(x);
     }
     return set;
   };
@@ -250,13 +258,14 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
   }
   return out;
 
-  /** Which fan-out the new execution belongs to. See Execution.origin. */
+  /** Which fan-out the new execution belongs to: the innermost one. See Execution.origin. */
   function originFor(slot: Input, trigger: Cand): string | null {
-    if (slot.mode === 'complete') return null; // a merge stands outside the fan-out it consumed
+    // A merge stands one level out from the fan-out it consumed: outside it, inside the one around it (none for a top-level root).
+    if (slot.mode === 'complete') return trigger.group === undefined || trigger.group === 'seed' ? null : (exec(trigger.group)?.origin ?? null);
     const producer = [...trigger.producers][0]; // single and each triggers have exactly one
-    const parent = exec(producer);
-    if (parent?.origin) return parent.origin; // already inside a fan-out: inherit it
-    return slot.mode === 'each' ? (producer ?? 'seed') : null; // a family's publisher roots a new fan-out
+    // Every family roots its own fan-out, even inside another one: that is what keeps nested collections apart.
+    if (slot.mode === 'each') return producer ?? 'seed';
+    return exec(producer)?.origin ?? null; // a single input stays in its producer's fan-out
   }
 
   /**
@@ -273,6 +282,7 @@ export function schedule(pb: Playbook, state: State, cache = new SchedulerCache(
     const result: Cand[] = [];
     for (const [origin, members] of groups) {
       const cand = mk(collectionKey(slot, origin), members.map((m) => m.id));
+      cand.group = origin;
       // Closure is final: a collection bound once stays closed, and its membership cannot grow.
       if (isBoundTrigger(step, slot, cand.key)) {
         result.push(cand);

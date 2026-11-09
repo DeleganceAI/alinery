@@ -71,9 +71,10 @@ export interface Execution {
   /** Directory assigned for this execution's outputs. */
   outDir: string;
   /**
-   * Fan-out root this execution belongs to: the execution that published the
+   * The innermost fan-out this execution belongs to: the execution that published the
    * wildcard family whose members started the `each` workers. Null outside any
-   * fan-out. Groups collection members for `complete` inputs.
+   * fan-out. A nested fan-out's root has its own origin, so the outer ones are found by
+   * following it. Groups collection members for `complete` inputs.
    */
   origin: string | null;
   status: ExecutionStatus;
