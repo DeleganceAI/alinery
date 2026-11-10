@@ -1065,6 +1065,12 @@ fn bundled_runtime_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf,
         .ok_or_else(|| "this build of Alinery has no bundled remote runtimes".to_string())
 }
 
+/// Whether the runtime this app bundles for the host differs from the one the host's session runs: the app was rebuilt, or its
+/// bundle replaced, since the host connected. A restart from the session's runtime would then start the same old code.
+pub(crate) fn runtime_is_stale(probe: &Probe, manifest: &RuntimeManifest, running_hash: &str) -> Result<bool, Refusal> {
+    select_target(probe, manifest).map(|(_, target)| target.runtime_hash != running_hash)
+}
+
 fn load_manifest(dir: &Path) -> Result<RuntimeManifest, String> {
     let text = std::fs::read_to_string(dir.join("manifest.json")).map_err(|error| format!("read the runtime manifest: {error}"))?;
     serde_json::from_str(&text).map_err(|error| format!("the runtime manifest is invalid: {error}"))
@@ -1416,7 +1422,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 // DELIBERATE TEARDOWN ORIGIN (fifth, the remote counterpart of `stop_daemon`). Ends EVERY live
 // session of one remote repo, waits until the host's daemon has let go of its socket and lock, runs
 // `while_down` (a restore's extraction; a plain stop passes nothing), then starts the daemon from
-// the runtime this app installed there, even when `while_down` failed. Reached only from the
+// the runtime this app bundles now, even when `while_down` failed: a session still on an older
+// bundle is reconnected first, which installs the new runtime and brings the host's repos back. Reached only from the
 // confirmed Settings stop, the conflict banner's Restart daemon, and a confirmed `restore_backup`;
 // nothing here runs on its own.
 pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
@@ -1450,6 +1457,29 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
         state.clear_daemon(Path::new(&key));
     }
     let done = while_down(&state, &session);
+    // A failed look is not a reason to refuse the restart: it falls back to the runtime the session already has.
+    let stale = bundled_runtime_dir(app)
+        .and_then(|bundle| load_manifest(&bundle))
+        .and_then(|manifest| {
+            session
+                .conn
+                .probe()
+                .and_then(|probe| runtime_is_stale(&probe, &manifest, &session.runtime_hash).map_err(|refusal| refusal.message))
+        })
+        .unwrap_or_else(|error| {
+            alinery_core::append_exception(
+                &app_config_path(app).unwrap_or_default(),
+                &format!("app.remote-runtime-check-failed host={host_id} err={}", alinery_core::quote_log_value(&error)),
+            );
+            false
+        });
+    if stale {
+        // The reconnect installs the new runtime, opens a repo service from it and attaches every repo on the host (daemons
+        // that are still running are reused, never stopped). It takes the host's connect lock and replaces this session, so both are released first.
+        drop(_guard);
+        drop(session);
+        return done.and_then(|value| connect_and_attach(app, host_id, false).map(|()| value));
+    }
     let attached = attach_remote_repo(&state, &session, &app_config_path(app)?, &key, path);
     // The caller's own failure is the one worth reading; a failed attach still shows on the banner.
     done.and_then(|value| attached.map(|()| value))

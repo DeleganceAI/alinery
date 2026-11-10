@@ -977,6 +977,19 @@ fn selects_the_bundle_for_the_probed_architecture() {
 }
 
 #[test]
+fn a_session_is_stale_when_the_bundle_now_carries_another_runtime() {
+    let probe = parse_probe(PROBE_OK).unwrap();
+    assert!(!runtime_is_stale(&probe, &manifest(), "aaaa").unwrap());
+    assert!(runtime_is_stale(&probe, &manifest(), "old").unwrap());
+    let empty = RuntimeManifest {
+        glibc_floor: String::new(),
+        macos_floor: String::new(),
+        targets: BTreeMap::new(),
+    };
+    assert!(runtime_is_stale(&probe, &empty, "aaaa").is_err(), "no bundled runtime for the host cannot be refreshed");
+}
+
+#[test]
 fn refuses_hosts_the_runtime_cannot_run_on() {
     let ok = parse_probe(PROBE_OK).unwrap();
     let cases: Vec<(Probe, &str)> = vec![
