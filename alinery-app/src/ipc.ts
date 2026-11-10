@@ -48,6 +48,7 @@ import type {
   RemoteHostView,
   RemoteSharingView,
   RemoteStatusRow,
+  RuntimeStatus,
   ShellDaemonStatus,
   SshTarget,
   StagedUpdate,
@@ -90,6 +91,7 @@ export const writeAppearance = (appearance: AppearancePrefs) => invoke<AppConfig
 export const listHosts = () => invoke<HostEntry[]>("list_hosts");
 export const setHostOnboarded = (hostId: string, onboarded: boolean) => invoke<void>("set_host_onboarded", { hostId, onboarded });
 export const remoteHosts = () => invoke<RemoteHostView[]>("remote_hosts");
+export const runtimeStatus = () => invoke<RuntimeStatus>("runtime_status");
 export const remoteAddHost = (destination: string, label?: string) => invoke<RemoteHostView>("remote_add_host", { destination, label: label ?? null });
 export const remoteSshAliases = () => invoke<string[]>("remote_ssh_aliases");
 export const remoteDescribeDestination = (destination: string) => invoke<SshTarget>("remote_describe_destination", { destination });

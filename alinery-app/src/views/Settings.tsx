@@ -86,6 +86,7 @@ import type {
 import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
+import { RuntimePanel } from "./RuntimePanel";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
 const NO_REPOS: string[] = [];
@@ -2238,6 +2239,7 @@ export function Settings({
               <div className="field" style={{ marginTop: 16 }}>
                 {updatesCheck("Check for updates")}
               </div>
+              <RuntimePanel mcp={mcp} />
             </div>
             <div className="settings-subsection">
               <h2>Misc</h2>

@@ -152,6 +152,7 @@ pub fn run() {
             set_active_repo,
             remove_repo,
             remote_hosts,
+            runtime_status,
             list_hosts,
             set_host_onboarded,
             remote_add_host,

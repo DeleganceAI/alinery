@@ -132,7 +132,7 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 
 ## Commands (Rust Tauri)
 
-The shell keeps 79 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
+The shell keeps 80 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
 
 - Bridge: `daemon_rpc`, `daemon_rpc_cancel` (the webview's only path to a daemon), `daemon_status`, `ping`
 - App config and repos: `read_app_config`, `write_appearance`, `list_hosts`, `set_host_onboarded`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `classify_picked_folder`, `init_picked_folder`, `pick_attachment_files_dialog`, `read_local_file`, `chat_file_stat`
@@ -145,7 +145,7 @@ The shell keeps 79 commands, all of them local-machine work or provisioning. Eve
 - Connections and import: `connection_statuses`, `connect_github`, `connect_linear`, `disconnect_linear`, `import_linear_for_repo`, `import_github_for_repo`, `lookup_task_pull_request`
 - Account and hosted models: `account_status`, `account_refresh`, `account_sign_in`, `account_cancel_sign_in`, `account_sign_out`, `account_open`, `account_open_plans`, `account_credits`, `hosted_catalog`
 - MCP child: `mcp_status`, `start_mcp_server`, `stop_mcp_server`
-- Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only
+- Update: `check_update` (never Err; silent no-offer), `download_update`, `apply_update` — prod-only; `runtime_status` (the Settings Runtime panel: each ssh host's runtime against the bundle and each known repo's daemon, from memory, never ssh)
 
 MCP is the daemon binary's `--mcp` mode (`alinery-app/src-tauri/vinculum-daemon/src/mcpServer/`): every tool is a call on the repository's daemon over its RPC socket with a minted AGENT token (`AdminService.MintToken`; `AGENT_RPCS` in `rpc/auth.ts` is exactly the RPCs behind the tools), and it writes nothing in `.alinery/` itself. A harness's MCP gets `ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN` from its daemon; the shell's managed MCP (`--mcp --serve --managed`, `src/mcp.rs`) and a host's stdio config read the app's owner-only `mcp-endpoints.json`, and only the managed one offers `alinery_send_review_handoff`. MCP session tools: `alinery_create_session` / `alinery_start_session` / `alinery_session_status` / `alinery_read_session_history`. MCP never exposes attach/write/resize/detach/kill/resume/takeover/bulk operations, and a mismatch never triggers teardown.
 

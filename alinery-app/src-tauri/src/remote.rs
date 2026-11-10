@@ -1067,8 +1067,13 @@ fn bundled_runtime_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf,
 
 /// Whether the runtime this app bundles for the host differs from the one the host's session runs: the app was rebuilt, or its
 /// bundle replaced, since the host connected. A restart from the session's runtime would then start the same old code.
-pub(crate) fn runtime_is_stale(probe: &Probe, manifest: &RuntimeManifest, running_hash: &str) -> Result<bool, Refusal> {
-    select_target(probe, manifest).map(|(_, target)| target.runtime_hash != running_hash)
+/// Decided from the triple chosen at connect, so it costs no ssh round trip.
+pub(crate) fn runtime_is_stale(manifest: &RuntimeManifest, triple: &str, running_hash: &str) -> Result<bool, String> {
+    manifest
+        .targets
+        .get(triple)
+        .map(|target| target.runtime_hash != running_hash)
+        .ok_or_else(|| format!("this build has no runtime for {triple}"))
 }
 
 fn load_manifest(dir: &Path) -> Result<RuntimeManifest, String> {
@@ -1207,7 +1212,7 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
     let probe = conn.probe()?;
     let bundle = bundled_runtime_dir(app)?;
     let manifest = load_manifest(&bundle)?;
-    let (_, target) = select_target(&probe, &manifest)?;
+    let (triple, target) = select_target(&probe, &manifest)?;
     let launcher = choose_launcher(&probe)?;
     let root = remote_root(&probe.home);
     let runtime = runtime_dir(&root, &target.runtime_hash);
@@ -1239,6 +1244,7 @@ fn connect_inner<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState, host_i
             channel,
             launcher,
             root,
+            triple: triple.to_string(),
             runtime_hash: target.runtime_hash.clone(),
             config_dir,
             secrets_dir: remote_secrets_dir(&app_config, host_id)?,
@@ -1460,12 +1466,7 @@ pub(crate) fn stop_remote_daemon<R: tauri::Runtime, T>(
     // A failed look is not a reason to refuse the restart: it falls back to the runtime the session already has.
     let stale = bundled_runtime_dir(app)
         .and_then(|bundle| load_manifest(&bundle))
-        .and_then(|manifest| {
-            session
-                .conn
-                .probe()
-                .and_then(|probe| runtime_is_stale(&probe, &manifest, &session.runtime_hash).map_err(|refusal| refusal.message))
-        })
+        .and_then(|manifest| runtime_is_stale(&manifest, &session.triple, &session.runtime_hash))
         .unwrap_or_else(|error| {
             alinery_core::append_exception(
                 &app_config_path(app).unwrap_or_default(),
@@ -1638,6 +1639,69 @@ pub(crate) fn host_views<R: tauri::Runtime>(app: &AppHandle<R>, state: &AppState
 #[tauri::command]
 pub(crate) fn remote_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<RemoteHostView> {
     host_views(&app, &state)
+}
+
+/// The Runtime panel's rows: each ssh host's runtime against the bundle, and each known repo's daemon as the app last saw it.
+/// Read from memory and the bundle's manifest only, never ssh or `Hello`, so opening the panel never waits on a host.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RuntimeStatus {
+    pub(crate) hosts: Vec<HostRuntime>,
+    pub(crate) repos: Vec<RepoRuntime>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct HostRuntime {
+    pub(crate) host_id: String,
+    pub(crate) label: String,
+    pub(crate) state: String,
+    /// The runtime the host's session runs; `None` while not connected.
+    pub(crate) running: Option<String>,
+    /// What this app's bundle carries for that host; `None` while not connected or when the bundle lacks it.
+    pub(crate) bundled: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RepoRuntime {
+    pub(crate) repo: String,
+    /// `current`, `build_drift` (usable, informational), `conflict` (restart from the banner), or `not_attached`.
+    pub(crate) state: &'static str,
+    pub(crate) issues: Vec<String>,
+}
+
+pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>) -> RepoRuntime {
+    let (state, issues) = match daemon {
+        Some(RepoDaemon::Connected { compat: DaemonCompat::Current }) => ("current", vec![]),
+        Some(RepoDaemon::Connected { .. }) => ("build_drift", vec![]),
+        Some(RepoDaemon::Conflicted(conflict)) => ("conflict", conflict.issues),
+        None => ("not_attached", vec![]),
+    };
+    RepoRuntime {
+        repo: repo.to_string(),
+        state,
+        issues,
+    }
+}
+
+#[tauri::command]
+pub(crate) fn runtime_status(app: AppHandle, state: State<'_, AppState>) -> RuntimeStatus {
+    let config = load_app_config(&app);
+    let manifest = bundled_runtime_dir(&app).and_then(|bundle| load_manifest(&bundle)).ok();
+    let hosts = config
+        .remote_hosts
+        .iter()
+        .map(|(id, host)| {
+            let session = state.remotes.session(id);
+            HostRuntime {
+                host_id: id.clone(),
+                label: host.label.clone(),
+                state: state.remotes.status(id).state,
+                running: session.as_ref().map(|session| session.runtime_hash.clone()),
+                bundled: session.and_then(|session| Some(manifest.as_ref()?.targets.get(&session.triple)?.runtime_hash.clone())),
+            }
+        })
+        .collect();
+    let repos = config.known_repos.iter().map(|repo| repo_runtime(repo, state.repo_daemon(Path::new(repo)))).collect();
+    RuntimeStatus { hosts, repos }
 }
 
 /// Validate and remember a destination. Nothing connects yet. `label` names a new host; an
@@ -2040,6 +2104,8 @@ pub(crate) struct RemoteSession {
     pub(crate) channel: HostChannel,
     pub(crate) launcher: Launcher,
     pub(crate) root: String,
+    /// The bundle target chosen at connect, so staleness needs no new probe.
+    pub(crate) triple: String,
     pub(crate) runtime_hash: String,
     pub(crate) config_dir: String,
     /// Where this Mac keeps the approval secrets of the daemons it started on this host.

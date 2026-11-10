@@ -413,6 +413,11 @@ export type RemoteHostView = {
   /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
   erased_sign_ins: string[];
 };
+/** The Settings Runtime panel's rows (`runtime_status`), read from the shell's memory and the bundled manifest. */
+export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[] };
+/** `running` is the host's runtime while connected; `bundled` is what this app carries for it. They differ when the host is stale. */
+export type HostRuntime = { host_id: string; label: string; state: RemoteHostView["state"]; running: string | null; bundled: string | null };
+export type RepoRuntime = { repo: string; state: "current" | "build_drift" | "conflict" | "not_attached"; issues: string[] };
 /** One row of the host list: this computer first (`host_id` "local"), then each remote host. */
 export type HostEntry = {
   host_id: string;

@@ -107,7 +107,7 @@ fn live_session(args: &[String], id: &str) -> RemoteSession {
     let probe = conn.probe().unwrap();
     let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/remote");
     let manifest: RuntimeManifest = serde_json::from_str(&std::fs::read_to_string(bundle.join("manifest.json")).unwrap()).unwrap();
-    let (_, target) = select_target(&probe, &manifest).unwrap();
+    let (triple, target) = select_target(&probe, &manifest).unwrap();
     let root = remote_root(&probe.home);
     let runtime = runtime_dir(&root, &target.runtime_hash);
     if !conn.runtime_installed(&runtime).unwrap() {
@@ -121,6 +121,7 @@ fn live_session(args: &[String], id: &str) -> RemoteSession {
         channel,
         launcher,
         root,
+        triple: triple.to_string(),
         runtime_hash: target.runtime_hash.clone(),
         config_dir,
         secrets_dir: std::env::temp_dir().join(format!("alinery-live-secrets-{id}")),
@@ -978,15 +979,24 @@ fn selects_the_bundle_for_the_probed_architecture() {
 
 #[test]
 fn a_session_is_stale_when_the_bundle_now_carries_another_runtime() {
-    let probe = parse_probe(PROBE_OK).unwrap();
-    assert!(!runtime_is_stale(&probe, &manifest(), "aaaa").unwrap());
-    assert!(runtime_is_stale(&probe, &manifest(), "old").unwrap());
+    let triple = "x86_64-unknown-linux-gnu";
+    assert!(!runtime_is_stale(&manifest(), triple, "aaaa").unwrap());
+    assert!(runtime_is_stale(&manifest(), triple, "old").unwrap());
     let empty = RuntimeManifest {
         glibc_floor: String::new(),
         macos_floor: String::new(),
         targets: BTreeMap::new(),
     };
-    assert!(runtime_is_stale(&probe, &empty, "aaaa").is_err(), "no bundled runtime for the host cannot be refreshed");
+    assert!(runtime_is_stale(&empty, triple, "aaaa").is_err(), "no bundled runtime for the host cannot be refreshed");
+}
+
+#[test]
+fn the_runtime_panel_names_each_daemon_state_without_asking_the_daemon() {
+    use crate::{state::RepoDaemon, DaemonCompat};
+    let row = |daemon| repo_runtime("/r", daemon).state;
+    assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::Current })), "current");
+    assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::BuildDrift })), "build_drift");
+    assert_eq!(row(None), "not_attached");
 }
 
 #[test]
