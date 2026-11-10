@@ -146,41 +146,53 @@ export function DaemonConflictBanner({ conflict, onRefresh }: { conflict: Daemon
   return <Conflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} />;
 }
 
+/**
+ * Asks, then restarts a remote repo's daemon that another Alinery version started, from this app's runtime. That ends its
+ * sessions, so it is always confirmed with their count. Returns whether it ran. The banner and the end of connecting a
+ * host both offer it.
+ */
+export async function restartRemoteDaemon(conflict: DaemonConflict): Promise<boolean> {
+  const name = repoName(conflict.repo);
+  const impact = conflict.owners[0]?.impact;
+  const live = impact?.status === "known" ? impact.sessions.length : null;
+  const accepted = await confirmDanger(
+    `Restart the daemon for ${name}?`,
+    <>
+      <p>
+        Another Alinery version started it, so this app can't use it until it restarts on this version.{" "}
+        {live === null
+          ? "Its sessions could not be counted. Restarting stops all of them."
+          : live === 0
+            ? "No live sessions."
+            : `Restarting stops ${live} live session${live === 1 ? "" : "s"}.`}
+      </p>
+      <details className="takeover-details">
+        <summary>Details</summary>
+        <EvidenceBlock text={evidenceText(conflict)} />
+      </details>
+    </>,
+    live === null ? "Stop all sessions and restart" : live === 0 ? "Restart daemon" : `Stop ${live} session${live === 1 ? "" : "s"} and restart`,
+  );
+  if (!accepted) return false;
+  try {
+    await ipc.stopDaemon(conflict.repo);
+    toast.success(`Restarted the daemon for ${name}`);
+  } catch (cause) {
+    toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
+  }
+  return true;
+}
+
 /** A remote repo's daemon that this app cannot use (another Alinery version started it). There is
  *  no other window to take over from; only restarting it replaces it, and that ends its sessions. */
 function RemoteDaemonConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
   const [pending, setPending] = useState(false);
-  const name = repoName(conflict.repo);
-  const impact = conflict.owners[0]?.impact;
-  const live = impact?.status === "known" ? impact.sessions.length : null;
   const restart = async () => {
-    const accepted = await confirmDanger(
-      `Restart the daemon for ${name}?`,
-      <>
-        <p>
-          {live === null
-            ? "Its sessions could not be counted. Restarting stops all of them."
-            : live === 0
-              ? "No live sessions. The daemon is replaced with this app's version."
-              : `Restarting stops ${live} live session${live === 1 ? "" : "s"}.`}
-        </p>
-        <details className="takeover-details">
-          <summary>Details</summary>
-          <EvidenceBlock text={evidenceText(conflict)} />
-        </details>
-      </>,
-      live === null ? "Stop all sessions and restart" : live === 0 ? "Restart daemon" : `Stop ${live} session${live === 1 ? "" : "s"} and restart`,
-    );
-    if (!accepted) return;
     setPending(true);
     try {
-      await ipc.stopDaemon(conflict.repo);
-      toast.success(`Restarted the daemon for ${name}`);
-    } catch (cause) {
-      toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
+      if (await restartRemoteDaemon(conflict)) onRefresh();
     } finally {
       setPending(false);
-      onRefresh();
     }
   };
   return (
@@ -193,7 +205,7 @@ function RemoteDaemonConflict({ conflict, onRefresh }: { conflict: DaemonConflic
         </button>
       }
     >
-      {name}'s daemon on the host was started by another Alinery version · showing saved progress
+      {repoName(conflict.repo)}'s daemon on the host was started by another Alinery version · showing saved progress
     </RepoStatusStrip>
   );
 }

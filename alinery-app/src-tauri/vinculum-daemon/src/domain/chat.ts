@@ -27,6 +27,8 @@ export type ChatSessions = {
   open(header: Json): Promise<void>;
   isRunning(id: string): boolean;
   stop(id: string): void;
+  /** The thread's canvas was just enabled: a live thread's agent gets the canvas tools now, not on its next start. */
+  canvasEnabled?(id: string): Promise<void>;
 };
 
 const readMeta = (repo: string, id: string): Json | undefined => {

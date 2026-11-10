@@ -371,6 +371,7 @@ fn log_global_diff(app_config: &Path, prev: &GlobalSettings, next: &GlobalSettin
         next.experiments.show_original_kanban,
     );
     push_changed_bool(&mut fields, "experiments.show_chat", prev.experiments.show_chat, next.experiments.show_chat);
+    push_changed_bool(&mut fields, "experiments.chat_canvas", prev.experiments.chat_canvas, next.experiments.chat_canvas);
     push_changed_bool(&mut fields, "experiments.vinculum", prev.experiments.vinculum, next.experiments.vinculum);
     push_opt_secret(
         &mut fields,

@@ -23,7 +23,24 @@ service ChatService {
   rpc AbortChatThread(AbortChatThreadRequest) returns (AbortChatThreadResponse);     // ACT
   rpc SetChatModel(SetChatModelRequest) returns (SetChatModelResponse);              // ACT
   rpc SetChatThinkingLevel(SetChatThinkingLevelRequest) returns (SetChatThinkingLevelResponse);  // ACT
+  // Turns a thread's canvas on for good: the `canvas/_/<id>` row appears and the thread's agent gets the canvas tools.
+  // APPROVE, so an agent's token can never call it.
+  rpc EnableCanvas(EnableCanvasRequest) returns (EnableCanvasResponse);  // APPROVE
+  // The user closed a panel. The agent is told on its next canvas read.
+  rpc CloseCanvasPanel(CloseCanvasPanelRequest) returns (CloseCanvasPanelResponse);  // ACT
 }
+
+message EnableCanvasRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+}
+message EnableCanvasResponse { Applied applied = 1; }
+message CloseCanvasPanelRequest {
+  MutationMeta meta = 1;
+  string thread_id = 2;
+  string panel = 3;
+}
+message CloseCanvasPanelResponse { Applied applied = 1; }
 
 message PromptChatThreadRequest {
   MutationMeta meta = 1;

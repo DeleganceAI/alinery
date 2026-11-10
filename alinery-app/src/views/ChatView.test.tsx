@@ -49,6 +49,10 @@ const mocks = vi.hoisted(() => ({
   writeChatThreadAttachmentBytes: vi.fn(),
   readChatThreadImage: vi.fn(),
   getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
+  enableCanvas: vi.fn(async () => undefined),
+  closeCanvasPanel: vi.fn(async () => undefined),
+  useCanvas: vi.fn((): unknown => undefined),
+  readCanvasPanel: vi.fn(async (_repo: string, _id: string, panel: string) => (panel === "p1" ? "# Plan heading" : "<p>page</p>")),
 }));
 
 vi.mock("../sync/chat", async (actual) => ({
@@ -65,6 +69,10 @@ vi.mock("../sync/chat", async (actual) => ({
   setChatThinkingLevel: mocks.chatSetThinkingLevel,
   promptChatThread: mocks.chatPrompt,
   abortChatThread: mocks.chatAbort,
+  enableCanvas: mocks.enableCanvas,
+  closeCanvasPanel: mocks.closeCanvasPanel,
+  useCanvas: mocks.useCanvas,
+  readCanvasPanel: mocks.readCanvasPanel,
 }));
 vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), renameSession: mocks.renameSession }));
 vi.mock("../ipc", () =>
@@ -516,6 +524,16 @@ describe("ChatView", () => {
     }
   });
 
+  it("reads the open repos again when the active repo's daemon attaches after the view opened", async () => {
+    fakeChat.set([]);
+    mocks.listChatRepos.mockResolvedValueOnce([]).mockResolvedValue(["/repo"]);
+    const view = (linkKey: string) => <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} linkKey={linkKey} />;
+    const { rerender } = render(view("false"));
+    expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
+    rerender(view("true"));
+    expect(await within(rail()).findByRole("button", { name: "New thread in repo" })).toBeTruthy();
+  });
+
   it("keeps the last list read when a refresh fails, and says it is stale", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -661,5 +679,57 @@ describe("repoLabel", () => {
     expect(repoLabel("/a/work/alinery", ["/a/work/alinery", "/b/notes"])).toBe("alinery");
     expect(repoLabel("/a/work/alinery", ["/a/work/alinery", "/a/oss/alinery"])).toBe("work/alinery");
     expect(repoLabel("/x/work/alinery", ["/x/work/alinery", "/y/work/alinery"])).toBe("x/work/alinery");
+  });
+});
+
+describe("ChatView canvas", () => {
+  const CANVAS = {
+    threadId: "s-live",
+    focus: "",
+    enabledAtMs: 1n,
+    panels: [
+      { id: "p1", kind: "markdown", title: "Plan", rev: 1n, updatedAtMs: 1n },
+      { id: "p2", kind: "html", title: "Demo", rev: 1n, updatedAtMs: 1n },
+    ],
+  };
+  const open = async (canvasAllowed: boolean) => {
+    fakeChat.set([thread("s-live")]);
+    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} canvasAllowed={canvasAllowed} />);
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
+  };
+
+  it("shows neither the switch nor a canvas while Settings has it off", async () => {
+    mocks.useCanvas.mockReturnValue(CANVAS);
+    await open(false);
+    expect(screen.queryByRole("button", { name: "Turn on the canvas" })).toBeNull();
+    expect(screen.queryByTestId("chat-canvas")).toBeNull();
+  });
+
+  it("turns a thread's canvas on only after the user confirms it is for good", async () => {
+    mocks.useCanvas.mockReturnValue(undefined);
+    vi.mocked(confirmDanger).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await open(true);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on the canvas" }));
+    await waitFor(() => expect(confirmDanger).toHaveBeenCalledWith(expect.any(String), expect.stringContaining("cannot be turned off"), "Turn on"));
+    expect(mocks.enableCanvas).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on the canvas" }));
+    await waitFor(() => expect(mocks.enableCanvas).toHaveBeenCalledWith("/repo", "s-live"));
+  });
+
+  it("lays the panels out beside the chat, sandboxes a page, and closes a panel for the user", async () => {
+    mocks.useCanvas.mockReturnValue(CANVAS);
+    await open(true);
+    const canvas = screen.getByTestId("chat-canvas");
+    expect(canvas.dataset.count).toBe("2");
+    expect(screen.getByTestId("chat-view").dataset.canvas).toBe("on");
+    expect(screen.queryByRole("button", { name: "Turn on the canvas" })).toBeNull();
+    expect(await within(canvas).findByRole("heading", { name: "Plan heading" })).toBeTruthy();
+    const frame = await waitFor(() => canvas.querySelector("iframe") as HTMLIFrameElement);
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("srcdoc")).toMatch(/^<!doctype html><meta http-equiv="Content-Security-Policy"/);
+    fireEvent.click(screen.getByRole("button", { name: "Maximise Plan" }));
+    expect(canvas.dataset.count).toBe("1");
+    fireEvent.click(screen.getByRole("button", { name: "Close Plan" }));
+    await waitFor(() => expect(mocks.closeCanvasPanel).toHaveBeenCalledWith("/repo", "s-live", "p1"));
   });
 });

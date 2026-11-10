@@ -49,12 +49,14 @@ import { hasPty, isPty, killPty, startShell } from "./terminal.ts";
 import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinking, seedLevel, seedUnsetThinking, setModelRefusal, turnControls } from "./sessionControls.ts";
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
+import { canvasTools } from "./canvasTools.ts";
+import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 39;
+const PROTOCOL = 40;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -265,6 +267,9 @@ keepAwake.start();
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
+// Chat threads only: the thread is the calling conversation's own row, so the agent never names it.
+const canvas = canvasTools({ repo, threadOf: (env, conversationId) => { const row = sessionForCall(env, conversationId); return row && !row.taskSlug ? row.id : undefined; }, refresh: (rel) => feed.refresh(rel) });
+registry.install(canvas.extension);
 const agentDir = vinculumAgentDir(appConfig);
 registry.install(
   defineExtension({
@@ -451,16 +456,20 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
     await tx.doc(Attention, root.id);
     await tx.doc(PhaseRequest, root.id);
   }, context);
-  if (!taskSlug) {
-    await root.configure({ tools: { remove: [sessionNameTool] } }, context);
-    row.titledBucket = chatTitleBucket(await userMessageCount(root));
-  }
+  await root.configure({ tools: { remove: removedTools(taskSlug, id) } }, context);
+  if (!taskSlug) row.titledBucket = chatTitleBucket(await userMessageCount(root));
   watch(row, harness, root.id);
   if (exists) harness.resume();
   await seedPrompt(root, prompt);
   row.process = "alive";
   commitSession(taskSlug, id);
   return row;
+}
+
+/** The registry's tools a session does not get: a chat thread names itself another way, and only a thread whose canvas the user enabled has the canvas tools. */
+function removedTools(taskSlug: string, id: string) {
+  if (taskSlug) return canvas.tools;
+  return canvasEnabled(repo, id) ? [sessionNameTool] : [sessionNameTool, ...canvas.tools];
 }
 
 async function seedPrompt(conversation: Conversation, prompt: string) {
@@ -978,6 +987,11 @@ const runner: ChatSessions = {
     return row !== undefined && row.process !== "exited";
   },
   stop: killSession,
+  async canvasEnabled(id) {
+    const row = live.get(id);
+    const conversation = row ? await conversationFor(row) : null;
+    if (row && conversation) await conversation.configure({ tools: { remove: removedTools(row.taskSlug, id) } }, context);
+  },
 };
 const sessionControl: SessionControl = {
   repo,

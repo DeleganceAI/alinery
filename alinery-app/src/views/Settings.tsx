@@ -723,6 +723,11 @@ export function Settings({
     saveGlobal({ ...global, experiments: { ...global.experiments, show_chat: value } }, value ? "Chat tab shown" : "Chat tab hidden");
   };
 
+  const setChatCanvas = (value: boolean) => {
+    if (!global) return;
+    saveGlobal({ ...global, experiments: { ...global.experiments, chat_canvas: value } }, value ? "Thread canvas available" : "Thread canvas hidden");
+  };
+
   const saveGrokKey = (value: string) => {
     if (!global || !isGlobal) return;
     saveGlobal({ ...global, experiments: { ...global.experiments, grok_api_key: value } }, value.trim() ? "Grok key saved" : "Grok key cleared");
@@ -2263,6 +2268,20 @@ export function Settings({
                     <div>
                       <div>Chat</div>
                       <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Sessions.</div>
+                    </div>
+                  }
+                />
+                <Checkbox
+                  checked={global.experiments?.chat_canvas ?? false}
+                  disabled={!isGlobal || !(global.experiments?.show_chat ?? false)}
+                  onChange={setChatCanvas}
+                  label={
+                    <div>
+                      <div>Thread canvas</div>
+                      <div className="hint">
+                        Lets you turn on a canvas for a chat thread: up to four panels (charts, tables, documents, small web pages) the thread's agent fills beside the
+                        conversation. Once on for a thread it stays on. Turning this off hides every canvas.
+                      </div>
                     </div>
                   }
                 />

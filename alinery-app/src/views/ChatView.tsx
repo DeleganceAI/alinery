@@ -1,4 +1,21 @@
-import { Archive, Brain, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
+import {
+  Archive,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  FolderGit2,
+  GitBranch,
+  LayoutGrid,
+  MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Pin,
+  PinOff,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
@@ -12,11 +29,23 @@ import { repoDisplayPath } from "../remoteRepo";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
-import { archiveChatThread, createChatThread, removeChatWorktree, resumeChatThread, setChatPinned, setChatThinkingLevel, useChatThreads, useOpenChatRepos } from "../sync/chat";
+import {
+  archiveChatThread,
+  createChatThread,
+  enableCanvas,
+  removeChatWorktree,
+  resumeChatThread,
+  setChatPinned,
+  setChatThinkingLevel,
+  useCanvas,
+  useChatThreads,
+  useOpenChatRepos,
+} from "../sync/chat";
 import { useSessionObservations } from "../sync/sessionObservation";
 import { renameSession } from "../sync/sessions";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
+import { ChatCanvas } from "./ChatCanvas";
 import { ChatPane } from "./ChatPane";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 import { ThinkingSelect } from "./ThinkingSelect";
@@ -88,18 +117,24 @@ function ChatViewBody({
   terminalFontSize,
   visibility,
   knownRepos = [],
+  canvasAllowed = false,
+  linkKey = "",
 }: {
   active?: boolean;
   terminalFontSize: number;
   visibility: ChatPrefs;
   knownRepos?: string[];
+  /** Settings' Thread canvas: off hides every canvas here (the files and the agent's tools stay). */
+  canvasAllowed?: boolean;
+  /** Changes when the active repo's daemon link does: a daemon that attaches after the view opened makes its repo usable here. */
+  linkKey?: string;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 900);
   const [creating, setCreating] = useState(false);
   // null until the first read: the thread list waits for it rather than loading twice.
-  const { repos: openRepos, error: reposError } = useOpenChatRepos(active, knownRepos.join("\n"));
+  const { repos: openRepos, error: reposError } = useOpenChatRepos(active, `${knownRepos.join("\n")}\n${linkKey}`);
   const dirs = openRepos ?? [];
   const threads = useChatThreads(openRepos ?? undefined, showArchived);
   const [pickedRepo, setRepoPath] = useState("");
@@ -126,6 +161,7 @@ function ChatViewBody({
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
+  const canvas = useCanvas(canvasAllowed && selected ? selected.repo_path : "", selected?.session.id ?? "");
   const registry = useChatRegistry();
   useEffect(() => {
     const take = () => {
@@ -159,6 +195,7 @@ function ChatViewBody({
   const statusKind = activity.kind;
   const processLive = chat.processLive;
   const inTerminal = chat.inTerminal;
+  const showCanvas = Boolean(canvasAllowed && canvas && selected && !inTerminal);
   const terminalIo = chat.terminalIo;
   const contextUsage = chat.contextUsage;
   const modelLabel = chat.modelLabel;
@@ -299,6 +336,20 @@ function ChatViewBody({
     );
   }
 
+  async function turnOnCanvas(thread: ChatThread) {
+    const ok = await confirmDanger(
+      "Turn on the canvas for this thread?",
+      "Ava gets up to four panels beside the chat for charts, tables, documents and small pages. Once on, the canvas cannot be turned off for this thread.",
+      "Turn on",
+    );
+    if (!ok) return;
+    try {
+      await enableCanvas(thread.repo_path, thread.session.id);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
+
   function startThreadIn(path: string) {
     setRepoPath(path);
     setCreating(true);
@@ -319,6 +370,7 @@ function ChatViewBody({
       data-testid="chat-view"
       data-rail={collapsed ? "closed" : "open"}
       data-link={selected ? connection.state : undefined}
+      data-canvas={showCanvas ? "on" : undefined}
       style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px` }}
     >
       {collapsed ? null : (
@@ -431,6 +483,7 @@ function ChatViewBody({
           </div>
         </aside>
       )}
+      {showCanvas && selected && canvas ? <ChatCanvas repo={selected.repo_path} threadId={selected.session.id} canvas={canvas} /> : null}
       <section className="chat-main">
         <header className="chat-titlebar">
           {collapsed ? (
@@ -531,6 +584,11 @@ function ChatViewBody({
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
                 )}
+                {canvasAllowed && !canvas && !inTerminal ? (
+                  <button type="button" className="chat-icon-btn" aria-label="Turn on the canvas" title="Turn on the canvas" onClick={() => void turnOnCanvas(selected)}>
+                    <LayoutGrid size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
                 <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={() => void archiveThread(selected)}>
                   <Archive size={16} aria-hidden="true" />
                 </button>
@@ -668,7 +726,7 @@ function ChatViewBody({
   );
 }
 
-export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs; knownRepos?: string[] }) {
+export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs; knownRepos?: string[]; canvasAllowed?: boolean; linkKey?: string }) {
   const existing = useContext(ChatSessionContext);
   if (!existing) {
     return (

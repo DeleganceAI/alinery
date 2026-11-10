@@ -664,6 +664,9 @@ pub struct ExperimentalFeatures {
     pub show_original_kanban: bool,
     /// Chat tab (threads under repositories). Off until opted in.
     pub show_chat: bool,
+    /// Lets the user turn on a chat thread's canvas (panels its agent fills). Off until opted in. Turning it off hides
+    /// every canvas; a thread's own switch, once on, stays on.
+    pub chat_canvas: bool,
     /// Retained Vinculum opt-in. The old key `pi_durable` still loads. This branch starts Vinculum either way.
     #[serde(alias = "pi_durable")]
     pub vinculum: bool,
@@ -676,6 +679,7 @@ impl Default for ExperimentalFeatures {
         Self {
             show_original_kanban: true,
             show_chat: false,
+            chat_canvas: false,
             vinculum: false,
             grok_api_key: String::new(),
         }

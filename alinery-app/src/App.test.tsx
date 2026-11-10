@@ -796,6 +796,44 @@ describe("onboarding gate", () => {
     expect(screen.queryByTestId("onboarding-flow")).toBeNull();
   });
 
+  it("asks to restart a just-connected host's daemon that another version started, and restarts it on yes", async () => {
+    const remoteKey = "alinery+ssh://box-a1b2c3/srv/app";
+    const remoteHost: RemoteHostView = {
+      host_id: "box-a1b2c3",
+      label: "box",
+      destination: "me@box",
+      state: "connected",
+      gave_up: false,
+      phase: "",
+      error: null,
+      home: "/home/me",
+      platform: "Linux x86_64",
+      sharing_reviewed: true,
+      erased_sign_ins: [],
+    };
+    const conflict = { repo: remoteKey, app_protocol: 40, app_config_identity: "x", owners: [], issues: ["protocol 39, this app speaks 40"] };
+    const extra = ipcMocks as Record<string, unknown>;
+    extra.daemonStatus = vi.fn(async () => ({ mode: "local", extra_lanes: 0, stale_lanes: 0, repo: remoteKey, build_drift: false, conflict, repo_busy: false }));
+    extra.stopDaemon = vi.fn(async () => undefined);
+    try {
+      ipcMocks.remoteHosts.mockResolvedValue([remoteHost]);
+      ipcMocks.readAppConfig.mockResolvedValue({ ...appConfig, active_repo: "", known_repos: [remoteKey] });
+      ipcMocks.setActiveRepo.mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path, known_repos: [remoteKey] }));
+      ipcMocks.listHosts.mockResolvedValue([localHost(true), { host_id: "box-a1b2c3", label: "box", local: false, onboarded: true, remote: remoteHost }]);
+      render(<App />);
+      await screen.findByTestId("setup-screen");
+      fireEvent.click(screen.getByRole("tab", { name: /SSH/ }));
+      fireEvent.change(screen.getByLabelText("SSH host"), { target: { value: "box-a1b2c3" } });
+      fireEvent.click(await screen.findByTitle("box-a1b2c3:/srv/app"));
+      // Uncounted sessions: the button says it stops all of them.
+      fireEvent.click(await screen.findByRole("button", { name: "Stop all sessions and restart" }));
+      await waitFor(() => expect(extra.stopDaemon).toHaveBeenCalledWith(remoteKey));
+    } finally {
+      delete extra.daemonStatus;
+      delete extra.stopDaemon;
+    }
+  });
+
   it("offers a configured install the guide once at Models, then lands on the task list after Skip", async () => {
     notOnboarded();
     render(<App />);

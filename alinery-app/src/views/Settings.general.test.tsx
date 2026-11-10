@@ -156,10 +156,12 @@ describe("Settings General", () => {
     const misc = subsection("Misc");
     expect(misc.getByRole("heading", { level: 3, name: "Experimental options" })).toBeTruthy();
     const boxes = misc.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(3);
+    expect(boxes).toHaveLength(4);
     expect(boxes[0]).toBe(await keepAwake());
     expect(boxes[1]).toBe(telemetry());
     expect(boxes[2]).toBe(misc.getByRole("checkbox", { name: /^Chat/ }));
+    // The canvas needs Chat on, so it sits under it and is off until Chat is.
+    expect(boxes[3]).toBe(misc.getByRole("checkbox", { name: /^Thread canvas/ }));
   });
 
   it("shows Keep awake off and editable, with the note under it", async () => {

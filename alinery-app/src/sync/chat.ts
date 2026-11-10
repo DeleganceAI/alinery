@@ -6,7 +6,7 @@ import { createClient } from "@connectrpc/connect";
 import { BlobRefSchema } from "alinery-proto/alinery/v1/blobs_pb";
 import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
-import type { Entity } from "alinery-proto/alinery/v1/entities_pb";
+import type { Canvas, Entity } from "alinery-proto/alinery/v1/entities_pb";
 import { type Scope, ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionControls } from "../chatTranscript";
@@ -15,7 +15,7 @@ import * as ipc from "../ipc";
 import { type ChatImage, type CopyChatAttachmentsResult, onRemoteHostConnected } from "../ipc";
 import type { ChatThread, CreateExecutionSessionReply, SessionMeta } from "../types";
 import { sessionDisplayOf } from "./board";
-import { acquireScope } from "./hooks";
+import { acquireScope, useEntity, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
 import { call, controlsOf, startedOf } from "./sessions";
@@ -224,3 +224,31 @@ export const readChatThreadImage = (repo: string, threadId: string, name: string
 /** An image attached to a message in a task's session. */
 export const readChatImage = (repo: string, taskSlug: string, name: string) =>
   readImage(repo, create(BlobRefSchema, { target: { case: "attachment", value: { taskSlug, name } } }), name);
+
+// ---- the thread canvas -------------------------------------------------------------------------------------
+
+/** Turns the thread's canvas on for good (the daemon refuses an agent: APPROVE). */
+export async function enableCanvas(repo: string, threadId: string): Promise<void> {
+  const reply = await call(() => chatApi.chat(repo).enableCanvas({ meta: newMutationMeta(), threadId }));
+  await settled(repo, reply.applied?.cursor);
+}
+
+/** The user closing a panel: recorded, so the agent reads that it was the user. */
+export async function closeCanvasPanel(repo: string, threadId: string, panel: string): Promise<void> {
+  const reply = await call(() => chatApi.chat(repo).closeCanvasPanel({ meta: newMutationMeta(), threadId, panel }));
+  await settled(repo, reply.applied?.cursor);
+}
+
+/** The thread's canvas row, or undefined while it has none (not enabled). */
+export function useCanvas(repo: string, threadId: string): Canvas | undefined {
+  const entity = useEntity(useScope(repo, CHAT_SCOPE), `canvas/_/${threadId}`);
+  return entity?.value.case === "canvas" ? entity.value.value : undefined;
+}
+
+const MAX_PANEL_BYTES = 1024 * 1024;
+
+/** One panel's body as text (the daemon caps a write at 1 MB). */
+export async function readCanvasPanel(repo: string, threadId: string, panel: string): Promise<string> {
+  const bytes = await readBlob(repo, create(BlobRefSchema, { target: { case: "canvasPanel", value: { threadId, panel } } }), MAX_PANEL_BYTES);
+  return new TextDecoder().decode(bytes.subarray(0, MAX_PANEL_BYTES));
+}

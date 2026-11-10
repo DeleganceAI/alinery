@@ -26,6 +26,9 @@ test("a minted token holds AGENT plus the capability of an allowed call, and AGE
   expect(caps(token, "alinery.v1.AdminService/Shutdown", tokens)).toEqual(["AGENT"]);
   expect(caps(token, "alinery.v1.AdminService/MintToken", tokens)).toEqual(["AGENT"]);
   expect(caps(token, "alinery.v1.AdminService/Hello", tokens)).toEqual(["AGENT"]);
+  // Only the user turns a thread's canvas on: an agent's token never holds what EnableCanvas checks.
+  expect(caps(token, "alinery.v1.ChatService/EnableCanvas", tokens)).toEqual(["AGENT"]);
+  expect(caps(token, "alinery.v1.ChatService/CloseCanvasPanel", tokens)).toEqual(["AGENT"]);
 });
 
 test("the daemon's own secret keeps its full set, and no token or a wrong one is UNAUTHENTICATED", () => {

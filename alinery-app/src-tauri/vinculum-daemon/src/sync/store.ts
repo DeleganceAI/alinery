@@ -51,7 +51,7 @@ export function matcher(scope: Scope): (key: string) => boolean {
     case "chat":
       return (key) => {
         const [k, slug] = key.split("/", 2);
-        return k === "chat" || (k === "session" && slug === "_");
+        return k === "chat" || k === "canvas" || (k === "session" && slug === "_");
       };
     default:
       return () => false;

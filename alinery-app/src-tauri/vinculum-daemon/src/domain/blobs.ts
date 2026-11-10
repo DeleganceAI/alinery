@@ -7,6 +7,7 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, open
 import { extname, join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
+import { panelFile } from "./canvas.ts";
 import { chatAttachmentsDir, loadChat } from "./chat.ts";
 import { artifactFilePath, resolveArtifactEntry } from "./artifactFiles.ts";
 import { resolveNode } from "./artifactTree.ts";
@@ -211,6 +212,13 @@ export function chatAttachmentBlob(repo: string, threadId: string, name: string)
   loadChat(repo, threadId);
   if (safeComponent(name) !== name) throw new DomainError("invalid_argument", `invalid attachment name: ${name}`);
   return regularFileBlob(join(chatAttachmentsDir(repo, threadId), name), name);
+}
+
+/** The body of one canvas panel: the thread must be a chat thread with that panel. */
+export function canvasPanelBlob(repo: string, threadId: string, panel: string): BlobBytes {
+  loadChat(repo, threadId);
+  const file = panelFile(repo, threadId, panel);
+  return regularFileBlob(file.path, file.path.slice(file.path.lastIndexOf("/") + 1), "canvas panel");
 }
 
 /** A pasted image a draft keeps in `draft-attachments.json` (base64 inside the file). */

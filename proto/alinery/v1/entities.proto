@@ -573,5 +573,22 @@ message Entity {
     PlaybookPicker playbook_picker = 25;
     PlaybookLibrary playbook_library = 26;
     PlaybookCommunity playbook_community = 27;
+    Canvas canvas = 28;
   }
+}
+// A chat thread's canvas (`canvas/_/<thread id>`, in the chat scope): the panels its agent wrote beside the conversation,
+// from `sessions/<id>.canvas.json`. A thread has the row once the user enabled the canvas, and keeps it. Bodies are not
+// here: a client reads one through BlobService (`CanvasPanelBlob`) when its `rev` moves.
+message CanvasPanel {
+  string id = 1;     // p1 to p4
+  string kind = 2;   // html, table, chart or markdown
+  string title = 3;
+  uint64 rev = 4;    // moves on every write of the body
+  int64 updated_at_ms = 5;
+}
+message Canvas {
+  string thread_id = 1;
+  repeated CanvasPanel panels = 2;  // in display order
+  string focus = 3;                 // a panel id, or ""
+  int64 enabled_at_ms = 4;
 }

@@ -25,7 +25,7 @@ import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
-import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner } from "./DaemonConflictBanner";
+import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner, restartRemoteDaemon } from "./DaemonConflictBanner";
 import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
@@ -266,6 +266,7 @@ export default function App() {
   appConfigRef.current = appConfig;
   const gridViews = useMemo(() => normalizeGridViews(appConfig?.global?.grid_views), [appConfig?.global?.grid_views]);
   const showChat = appConfig?.global?.experiments?.show_chat ?? false;
+  const chatCanvas = appConfig?.global?.experiments?.chat_canvas ?? false;
   useEffect(() => {
     if (view.kind === "chat") setChatVisited(true);
     if (view.kind === "playbooks") setPlaybooksVisited(true);
@@ -549,11 +550,19 @@ export default function App() {
       setAppConfig(cfg);
       setScope("active");
       setView(viewAfterScopeChange);
+      // A host just connected (set up or reconnected) whose daemon another version started: offer the restart now, not only
+      // as the banner it would otherwise wait behind.
+      if (remote && connected) void offerRemoteRestart(p);
       return true;
     } catch (e) {
       setRepoErr(String(e));
       return false;
     }
+  };
+
+  const offerRemoteRestart = async (key: string) => {
+    const conflict = (await ipc.daemonStatus().catch(() => null))?.conflict;
+    if (conflict?.repo === key && (await restartRemoteDaemon(conflict))) daemon.refresh();
   };
 
   const selectRepoValue = (value: string) => {
@@ -1337,6 +1346,9 @@ export default function App() {
                       terminalFontSize={appearance.terminal_font_size}
                       visibility={chatViewVisibility}
                       knownRepos={appConfig?.known_repos}
+                      canvasAllowed={chatCanvas}
+                      // ponytail: the active repo's link only; another open repo's late attach shows on the next window focus.
+                      linkKey={String(daemon.reachable)}
                     />
                   </div>
                 )}

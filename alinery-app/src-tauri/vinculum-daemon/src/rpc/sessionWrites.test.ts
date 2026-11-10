@@ -7,6 +7,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { ChatService } from "alinery-proto/alinery/v1/chat_pb";
 import { SessionService } from "alinery-proto/alinery/v1/sessions_pb";
 import { BoardProjector } from "../domain/board.ts";
+import { canvasKey, putPanel } from "../domain/canvas.ts";
 import { ChatPublisher, chatKey, type ChatSessions } from "../domain/chat.ts";
 import { SessionPublisher } from "../domain/sessions.ts";
 import { metaPathOf } from "../domain/sessionOps.ts";
@@ -50,7 +51,9 @@ async function start() {
   const running = new Set<string>();
   const metaAtKill: Record<string, Record<string, unknown>> = {};
   const storeAtKill: Record<string, unknown> = {};
+  const canvasCalls: string[] = [];
   const runner: ChatSessions = {
+    canvasEnabled: async (id) => void canvasCalls.push(id),
     create: (request) => createExecutionSession(repo, request, async () => {}),
     start: (request) => startSession(repo, request, async (id) => void running.add(id)),
     open: async (header) => void running.add(String(header.id)),
@@ -106,7 +109,7 @@ async function start() {
     nodeOptions: { createConnection: () => connect(socketPath) } as never,
     interceptors: [(next) => (req) => (req.header.set("authorization", `Bearer ${SECRET}`), next(req))],
   });
-  return { turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
+  return { canvasCalls, turnCalls, repo, alinery, task, store, feed: f, events, running, metaAtKill, storeAtKill, session: createClient(SessionService, transport), chat: createClient(ChatService, transport) };
 }
 type Ctx = Awaited<ReturnType<typeof start>>;
 
@@ -256,4 +259,22 @@ test("a chat thread's turn controls refuse an id that is not a chat thread", asy
   expect(await code(c.chat.promptChatThread({ meta: meta(), threadId: "task-session", text: "x" }))).toBe(Code.NotFound);
   expect(await code(c.chat.abortChatThread({ threadId: "../x" }))).toBe(Code.InvalidArgument);
   expect(c.turnCalls).toHaveLength(4);
+});
+
+test("the user enables a thread's canvas once, its row appears in the chat scope, and a user close reaches the file", async () => {
+  const c = await start();
+  sessionMeta(c, "", "chat1", { harness: "vinculum", generic: true });
+  sessionMeta(c, "t", "task-session");
+  expect(c.store.get(canvasKey("chat1"))).toBeUndefined();
+  await c.chat.enableCanvas({ meta: meta(), threadId: "chat1" });
+  await c.chat.enableCanvas({ meta: meta(), threadId: "chat1" });
+  expect(c.canvasCalls).toEqual(["chat1"]);
+  expect(c.store.get(canvasKey("chat1"))?.value).toMatchObject({ case: "canvas", value: { threadId: "chat1", panels: [] } });
+  await putPanel(c.repo, "chat1", { kind: "markdown", title: "Plan", body: "# p" });
+  await c.feed.refresh("sessions/chat1.canvas.json");
+  expect(c.store.get(canvasKey("chat1"))?.value).toMatchObject({ value: { panels: [{ id: "p1", kind: "markdown", title: "Plan", rev: 1n }] } });
+  await c.chat.closeCanvasPanel({ meta: meta(), threadId: "chat1", panel: "p1" });
+  expect(c.store.get(canvasKey("chat1"))?.value).toMatchObject({ value: { panels: [] } });
+  expect(await code(c.chat.enableCanvas({ meta: meta(), threadId: "task-session" }))).toBe(Code.NotFound);
+  expect(c.canvasCalls).toEqual(["chat1"]);
 });

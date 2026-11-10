@@ -3,6 +3,7 @@
 import type { ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { ChatService } from "alinery-proto/alinery/v1/chat_pb";
+import { canvasRel, closePanelByUser, enableCanvas } from "../domain/canvas.ts";
 import { archiveChatThread, createChatThread, loadChat, removeChatWorktree, resumeChatThread, setChatPinned } from "../domain/chat.ts";
 import type { Json } from "../domain/sessionOps.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
@@ -95,6 +96,22 @@ export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): Se
       return once(req.meta, async () => {
         loadChat(c.repo, req.threadId);
         return controlsOf(await c.turns.setModel(req.threadId, req.model));
+      });
+    },
+    enableCanvas: (req, ctx) => {
+      requireCapability(ctx, Capability.APPROVE);
+      return once(req.meta, async () => {
+        if (await enableCanvas(c.repo, req.threadId)) await c.runner.canvasEnabled?.(req.threadId);
+        await c.refresh(canvasRel(req.threadId));
+        return { applied: applied() };
+      });
+    },
+    closeCanvasPanel: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return once(req.meta, async () => {
+        await closePanelByUser(c.repo, req.threadId, req.panel);
+        await c.refresh(canvasRel(req.threadId));
+        return { applied: applied() };
       });
     },
     setChatThinkingLevel: (req, ctx) => {

@@ -36,6 +36,12 @@ message ChatAttachmentBlob {
   string name = 2;
 }
 
+// The body of one panel of a chat thread's canvas (read only).
+message CanvasPanelBlob {
+  string thread_id = 1;
+  string panel = 2;  // p1 to p4
+}
+
 // A file in the task's `artifacts/` (not `attachments/` or `subtasks/`). The daemon refuses a link on the way.
 message ArtifactBlob {
   string task_slug = 1;
@@ -64,6 +70,7 @@ message BlobRef {
     ArtifactBlob artifact = 7;
     ArtifactNodeBlob artifact_node = 8;
     StepObjectBlob step_object = 9;
+    CanvasPanelBlob canvas_panel = 10;
   }
 }
 
