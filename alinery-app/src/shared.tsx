@@ -1322,6 +1322,24 @@ export function useBoardTaskActivity(tasks: BoardTask[], active = true): TaskAct
   return last.current;
 }
 
+/** Brings a repo's daemon back on demand: a remote repo reconnects its host (which reinstalls a stale runtime and reattaches every repo on
+ *  it), a local one reattaches its daemon the way opening it does. The notice clears by itself when the daemon answers again. */
+function RepoReconnectButton({ repo }: { repo: string }) {
+  const [busy, setBusy] = useState(false);
+  const remote = parseRemoteRepo(repo);
+  const reconnect = () => {
+    setBusy(true);
+    (remote ? ipc.remoteConnect(remote.hostId, false) : ipc.setActiveRepo(repo))
+      .catch((error) => toast(String(error), "error"))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <button type="button" className="btn ghost small" disabled={busy} onClick={reconnect}>
+      {busy ? "Reconnecting…" : "Reconnect"}
+    </button>
+  );
+}
+
 /** One warning per repo whose daemon is not answering: stale rows are the last known state, and a repo that never answered has none. */
 export function RepoLinkNotices({ repos }: { repos: Record<string, { loaded: boolean; reachable: boolean; stale: boolean }> }) {
   const down = Object.entries(repos).filter(([, state]) => !state.reachable);
@@ -1329,7 +1347,7 @@ export function RepoLinkNotices({ repos }: { repos: Record<string, { loaded: boo
   return (
     <>
       {down.map(([repo, state]) => (
-        <InlineStatus key={repo} tone="warning">
+        <InlineStatus key={repo} tone="warning" action={<RepoReconnectButton repo={repo} />}>
           {repoName(repo)}: {state.stale ? "daemon not connected, showing the last known tasks" : "no daemon connection"}
         </InlineStatus>
       ))}
