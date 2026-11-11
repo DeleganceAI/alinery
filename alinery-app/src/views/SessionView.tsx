@@ -237,6 +237,22 @@ export function SessionView({
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const [artifactComments, setArtifactComments] = useState<ArtifactComment[]>([]);
   const [artifactCommentCountByArtifact, setArtifactCommentCountByArtifact] = useState<Record<string, number>>({});
+  const artifactContext = JSON.stringify([repoPath, taskSlug]);
+  const [previousArtifactContext, setPreviousArtifactContext] = useState(artifactContext);
+  if (previousArtifactContext !== artifactContext) {
+    // Reset before effects can resolve the old selection against the new task.
+    setPreviousArtifactContext(artifactContext);
+    setArtifactItems([]);
+    setArtifactTree([]);
+    setSelectedArtifact("");
+    setSelectedArtifactNode(null);
+    setArtifactText("");
+    setArtifactErr("");
+    setArtifactComments([]);
+    setArtifactCommentCountByArtifact({});
+    setArtifactTab("playbook");
+  }
+
   const [commentAnchor, setCommentAnchor] = useState<ArtifactCommentAnchor | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
@@ -913,7 +929,7 @@ export function SessionView({
       window.clearTimeout(itemsTimer);
       window.clearTimeout(treeTimer);
     };
-  }, [hasTask, taskSlug, selectedArtifact]);
+  }, [hasTask, repoPath, taskSlug, selectedArtifact]);
 
   useEffect(() => {
     let alive = true;
@@ -972,7 +988,7 @@ export function SessionView({
     return () => {
       alive = false;
     };
-  }, [hasTask, taskSlug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
+  }, [hasTask, repoPath, taskSlug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
 
   const trimmedCommentDraft = commentDraft.trim();
   const canSaveArtifactComment = Boolean(commentAnchor && selectedArtifact && trimmedCommentDraft && !commentBusy);
