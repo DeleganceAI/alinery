@@ -56,6 +56,7 @@ const pickAttachmentFilesDialog = vi.hoisted(() => vi.fn(async (): Promise<strin
 const chatFileStat = vi.hoisted(() => vi.fn(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 12 })));
 const copyChatAttachments = vi.hoisted(() => vi.fn(async () => ({ copied: [] as string[], failures: [] as string[] })));
 const writeChatAttachmentBytes = vi.hoisted(() => vi.fn(async (_slug: string, fileName: string) => fileName));
+const readArtifact = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ""));
 const readTaskArtifactNode = vi.hoisted(() => vi.fn(async (_taskSlug: string, _nodeId: string) => ""));
 const readAttachmentImage = vi.hoisted(() => vi.fn((_taskSlug: string, _name: string, _nodeId?: string) => new Promise<ArrayBuffer>(() => {})));
 const readChatImage = vi.hoisted(() => vi.fn(async (_taskSlug: string, _name: string) => ({ mime_type: "image/png", data: "aa" })));
@@ -145,6 +146,7 @@ vi.mock("../ipc", () =>
     listArtifactCommentDrafts: async () => [],
     listArtifactCommentDraftsForRepo: async () => [],
     listArtifactComments: async () => [],
+    readArtifact,
     readTaskArtifactNode,
     readAttachmentImage,
     sessionStatus,
@@ -195,6 +197,29 @@ describe("SessionView artifact pane", () => {
     cleanup();
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+
+  it.each([
+    { taskSlug: "other-task", repoPath: "/repo" },
+    { taskSlug: "task", repoPath: "/other-repo" },
+  ])("clears the artifact selection before reading in a new task context ($repoPath/$taskSlug)", async (next) => {
+    const read = readArtifact.mockResolvedValue("Original task artifact");
+    const view = renderSession();
+    await flushPromises();
+    fireEvent.click(screen.getByRole("button", { name: /01-review-context\.md/ }));
+    await flushPromises();
+    expect(screen.getByText("Original task artifact")).toBeDefined();
+    read.mockClear();
+    read.mockRejectedValue(new Error("No such file or directory"));
+
+    view.rerender(sessionView({ id: "other-session", ...next }));
+    await flushPromises();
+
+    expect(read).not.toHaveBeenCalled();
+    expect(screen.queryByText("Original task artifact")).toBeNull();
+    expect(screen.queryByText(/No such file or directory/)).toBeNull();
+    expect(screen.getByRole("button", { name: /01-review-context\.md/ })).toBeDefined();
+    read.mockReset().mockResolvedValue("");
   });
 
   it("keeps category tabs and flat artifact polling live when the context tree stalls", async () => {
