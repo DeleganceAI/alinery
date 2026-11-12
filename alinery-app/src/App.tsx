@@ -1589,7 +1589,7 @@ export default function App() {
             </div>
           )}
           {view.kind === "task" && (
-            <div className="view">
+            <div className="view nopad">
               <Suspense
                 fallback={
                   <div className="view">

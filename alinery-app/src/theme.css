@@ -3871,7 +3871,7 @@ dialog.modal::backdrop {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  padding-left: 12px;
+  padding: 12px 12px 8px;
 }
 .detail h2 {
   margin: 6px 0;
@@ -3949,9 +3949,23 @@ dialog.modal::backdrop {
   overflow-wrap: anywhere;
 }
 /* Compact header: one line of title, branch, worktree and actions; long values shorten with an ellipsis. */
+/* The task header reads as the lower half of the top bar: same background, edge to edge (the task view has no
+   padding), no seam between them, and an edge with a soft shadow where the work area begins. */
+.task-panel.task-info-panel {
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--canvas);
+  box-shadow: 0 6px 12px -8px rgb(0 0 0 / 0.35);
+  position: relative;
+  z-index: 2;
+}
 .task-info-panel.compact {
-  padding: 4px 10px;
-  margin-bottom: 8px;
+  padding: 4px 12px;
+}
+header:has(~ main .task-info-panel) {
+  border-bottom-color: transparent;
 }
 .task-info-panel.compact .task-info-head {
   flex-wrap: nowrap;
@@ -3974,6 +3988,9 @@ dialog.modal::backdrop {
   min-width: 0;
   display: flex;
   gap: 16px;
+}
+.task-info-compact .kv .k {
+  width: auto;
 }
 .task-info-compact .kv {
   flex: 0 1 auto;
