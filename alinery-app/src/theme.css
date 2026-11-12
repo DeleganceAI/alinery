@@ -3962,7 +3962,7 @@ dialog.modal::backdrop {
   z-index: 2;
 }
 .task-info-panel.compact {
-  padding: 4px 12px;
+  padding: 4px 12px 8px;
 }
 header:has(~ main .task-info-panel) {
   border-bottom-color: transparent;
@@ -4010,7 +4010,28 @@ header:has(~ main .task-info-panel) {
 .task-info-panel.compact .task-info-head-actions {
   flex: none;
   flex-wrap: nowrap;
-  gap: 4px;
+}
+/* The header's buttons read as one segmented group: shared outer corners, a divider between each. */
+.task-info-head-actions {
+  gap: 0;
+}
+.task-info-head-actions > .btn {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.task-info-head-actions > .btn:first-of-type {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+  margin-left: 0;
+}
+.task-info-head-actions > .btn:last-of-type {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.task-info-head-actions > .btn:hover,
+.task-info-head-actions > .btn:focus-visible {
+  position: relative;
+  z-index: 1;
 }
 .task-info-head-actions {
   display: flex;
