@@ -70,7 +70,7 @@ The daemon owns the filesystem, and a repo may be remote over SSH, so this is a 
 - The Files panel gets three sections in this order: **Artifacts**, **Attachments**, **Repository**. Repository is a collapsible tree built from the flat path list on the client. It has a filter box but no lazy per-directory fetch, because the full list is one call.
 - Opening a repo file uses the Phase 3 tabs with the tab key `repo:<path>`.
 
-## Phase 5: viewer for repo files (M, can share a PR with Phase 4)
+## Phase 5: viewer for repo files (M, can share a PR with Phase 4) — done
 
 - **Markdown (any `.md`)** renders through `ArtifactMarkdown` with the full commenter. See the comments-storage section below.
 - **Code** uses `highlight.js/lib/core` (a new dependency, roughly 40 KB with these languages) with ts, tsx, js, json, rust, toml, yaml, bash, python, go, css, html, sql, markdown and diff. The language comes from the file extension, with plain text as the fallback. Line numbers come from CSS counters.

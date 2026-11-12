@@ -8043,6 +8043,72 @@ dialog.modal::backdrop {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* A source file: the gutter and the code scroll together, never wrap, so line numbers stay aligned. */
+.codeview {
+  display: flex;
+  align-items: flex-start;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+}
+.codeview pre {
+  margin: 0;
+  padding: 14px 0;
+  font: inherit;
+  white-space: pre;
+}
+.codeview .codeview-gutter {
+  position: sticky;
+  left: 0;
+  flex: none;
+  padding: 14px 10px 14px 14px;
+  text-align: right;
+  color: var(--text-faint);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.codeview .codeview-code {
+  flex: 1 0 auto;
+  padding-left: 12px;
+  padding-right: 14px;
+  color: var(--text);
+}
+.codeview .hljs-keyword,
+.codeview .hljs-selector-tag,
+.codeview .hljs-built_in,
+.codeview .hljs-meta {
+  color: var(--accent);
+}
+.codeview .hljs-string,
+.codeview .hljs-regexp,
+.codeview .hljs-addition {
+  color: var(--success);
+}
+.codeview .hljs-number,
+.codeview .hljs-literal,
+.codeview .hljs-type,
+.codeview .hljs-attr,
+.codeview .hljs-attribute {
+  color: var(--warning);
+}
+.codeview .hljs-title,
+.codeview .hljs-section,
+.codeview .hljs-name {
+  color: var(--pr-merged);
+}
+.codeview .hljs-comment,
+.codeview .hljs-quote {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.codeview .hljs-deletion {
+  color: var(--danger);
+}
 .artifactmd {
   height: 100%;
   min-height: 0;

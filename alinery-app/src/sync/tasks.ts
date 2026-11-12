@@ -157,11 +157,18 @@ export async function readAttachmentBytes(repo: string, taskSlug: string, name: 
 
 /** The bytes of a blob, whole; `max` stops the read one byte past it, so a caller can refuse a file without pulling all of it. */
 export async function readBlob(repo: string, ref: ReturnType<typeof create<typeof BlobRefSchema>>, max = 0): Promise<Uint8Array> {
+  return (await readBlobSized(repo, ref, max)).bytes;
+}
+
+/** `readBlob` plus the blob's whole size, which the daemon sends even when `max` cut the read short. */
+export async function readBlobSized(repo: string, ref: ReturnType<typeof create<typeof BlobRefSchema>>, max = 0): Promise<{ bytes: Uint8Array; total: number }> {
   const parts: Uint8Array[] = [];
   let length = 0;
+  let total = 0;
   for await (const chunk of taskApi.blobs(repo).readBlob({ ref, offset: 0n, length: max > 0 ? BigInt(max + 1) : 0n })) {
     parts.push(chunk.data);
     length += chunk.data.length;
+    if (chunk.total) total = Number(chunk.total);
   }
   const out = new Uint8Array(length);
   let at = 0;
@@ -169,7 +176,7 @@ export async function readBlob(repo: string, ref: ReturnType<typeof create<typeo
     out.set(p, at);
     at += p.length;
   }
-  return out;
+  return { bytes: out, total: Math.max(total, length) };
 }
 
 // ---- create, duplicate --------------------------------------------------------------------------------

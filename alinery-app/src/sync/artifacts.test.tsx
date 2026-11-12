@@ -6,7 +6,17 @@ import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb"
 import { afterEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness, put, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
-import { ArtifactConflict, addComment, readArtifactText, saveCommentDraft, sendReviewHandoff, useTaskArtifacts } from "./artifacts";
+import {
+  ArtifactConflict,
+  addComment,
+  FileNotShown,
+  readArtifactText,
+  readWorktreeText,
+  saveCommentDraft,
+  sendReviewHandoff,
+  useTaskArtifacts,
+  WORKTREE_FILE_MAX_BYTES,
+} from "./artifacts";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 afterEach(() => {
@@ -134,6 +144,25 @@ it("reads an artifact's text through the blob stream", async () => {
     }),
   );
   expect(await readArtifactText("/e", "task", "00-ticket.md")).toBe("# Ticket");
+});
+
+it("reads a worktree file, and declines a large or binary one naming its size", async () => {
+  const reply = (data: Uint8Array, total: number) =>
+    serve([], undefined, undefined, {
+      readBlob: async function* (req) {
+        expect(req.ref?.target?.case).toBe("worktreeFile");
+        expect(req.length).toBe(BigInt(WORKTREE_FILE_MAX_BYTES + 1));
+        yield { data, total: BigInt(total) } as never;
+      },
+    });
+  vi.mocked(daemonTransport).mockReturnValue(reply(new TextEncoder().encode("ok"), 2));
+  expect(await readWorktreeText("/e", "task", "a.ts")).toBe("ok");
+  vi.mocked(daemonTransport).mockReturnValue(reply(new Uint8Array(4), 3 * 1024 * 1024));
+  const big = await readWorktreeText("/e", "task", "big.log").catch((e) => e);
+  expect(big).toBeInstanceOf(FileNotShown);
+  expect(big.message).toBe("Too large to show (3.0 MB).");
+  vi.mocked(daemonTransport).mockReturnValue(reply(new Uint8Array([1, 0, 2]), 2048));
+  expect((await readWorktreeText("/e", "task", "x.png").catch((e) => e)).message).toBe("Binary file, not shown (2.0 KB).");
 });
 
 const handoffArgs = {

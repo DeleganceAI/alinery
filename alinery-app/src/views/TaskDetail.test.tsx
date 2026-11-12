@@ -2206,7 +2206,8 @@ describe("repository files", () => {
 
     fireEvent.click(repo.getByText("src/"));
     fireEvent.click(await repo.findByRole("button", { name: "main.ts" }));
-    expect(await screen.findByText("export const x = 1;")).toBeDefined();
+    expect((await screen.findByText("const")).className).toBe("hljs-keyword");
+    expect(document.querySelector(".codeview-code")?.textContent).toBe("export const x = 1;");
     expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
 
     const tabs = within(screen.getByRole("group", { name: "Open files" }));
@@ -2229,8 +2230,18 @@ describe("repository files", () => {
     await waitFor(() => expect(fakeArtifacts.addComment).toHaveBeenCalledWith(expect.objectContaining({ artifact: "repo:docs/plan.md", body: "Which release?" })));
 
     fireEvent.click(repo.getByRole("button", { name: "main.ts" }));
-    fireEvent.click(await screen.findByText("export {};"));
+    fireEvent.click(await screen.findByText("export"));
     expect(screen.queryByPlaceholderText("Add a comment for the next phase...")).toBeNull();
+  });
+
+  it("names the size of a file it won't show", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["big.log"], truncated: false });
+    const { FileNotShown } = await import("../sync/artifacts");
+    fakeArtifacts.readWorktree.mockRejectedValueOnce(new FileNotShown("Too large to show (3.0 MB)."));
+    await renderDetail();
+    fireEvent.click(await within(await screen.findByRole("region", { name: "Repository files" })).findByRole("button", { name: "big.log" }));
+    expect(await screen.findByText("Too large to show (3.0 MB).")).toBeDefined();
+    expect(screen.queryByText("Couldn't show the file.")).toBeNull();
   });
 
   it("filters the tree by name", async () => {

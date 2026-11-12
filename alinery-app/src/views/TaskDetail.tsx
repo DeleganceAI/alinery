@@ -9,6 +9,7 @@ import { AttachmentPreview } from "../AttachmentPreview";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
+import { CodeView } from "../CodeView";
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
@@ -55,7 +56,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { addComment, attachmentFilePath, clearReviewPending, readArtifactText, readNodeText, readWorktreeText, useTaskArtifacts } from "../sync/artifacts";
+import { addComment, attachmentFilePath, clearReviewPending, FileNotShown, readArtifactText, readNodeText, readWorktreeText, useTaskArtifacts } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { pushAndCompareUrlForRepo } from "../sync/git";
@@ -111,7 +112,7 @@ function subtaskOutcomeLabel(task: Pick<Task, "archived" | "subtask_outcome">): 
 function subtaskOutcomeClass(task: Pick<Task, "subtask_outcome">): string {
   return task.subtask_outcome ? `subtask-outcome-${task.subtask_outcome}` : "session-archived";
 }
-type ErrState = { msg: string; detail: string } | null;
+type ErrState = { msg: string; detail: string; tone?: "info" } | null;
 
 const TASK_SESSION_VIEW_KEY = "alinery.taskSessionView";
 
@@ -560,7 +561,9 @@ export function TaskDetail({
         if (alive) setArtifactText(text);
       })
       .catch((e) => {
-        if (alive) setArtifactErr({ msg: selectedIsRepo ? "Couldn't show the file." : "Couldn't load the artifact.", detail: String(e) });
+        if (!alive) return;
+        if (e instanceof FileNotShown) setArtifactErr({ msg: e.message, detail: "", tone: "info" });
+        else setArtifactErr({ msg: selectedIsRepo ? "Couldn't show the file." : "Couldn't load the artifact.", detail: String(e) });
       });
     return () => {
       alive = false;
@@ -1235,7 +1238,7 @@ export function TaskDetail({
             </div>
           ) : (
             <>
-              {artifactErr && (
+              {artifactErr && !artifactErr.tone && (
                 <InlineStatus tone="error" detail={artifactErr.detail}>
                   {artifactErr.msg}
                 </InlineStatus>
@@ -1377,7 +1380,7 @@ export function TaskDetail({
                 )}
               </div>
               {artifactErr && (
-                <InlineStatus tone="error" detail={artifactErr.detail}>
+                <InlineStatus tone={artifactErr.tone ?? "error"} detail={artifactErr.detail || undefined}>
                   {artifactErr.msg}
                 </InlineStatus>
               )}
@@ -1397,7 +1400,9 @@ export function TaskDetail({
                 </div>
               )}
               <div className="artifactviewer">
-                {artifactMode === "raw" || !selectedPreviewable ? (
+                {!selectedPreviewable ? (
+                  <CodeView path={selectedArtifact} text={artifactText} />
+                ) : artifactMode === "raw" ? (
                   <pre className="artifactraw">{artifactText}</pre>
                 ) : (
                   <article className="md artifactmd">

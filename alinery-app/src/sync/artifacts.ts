@@ -28,7 +28,7 @@ import type {
 import { whenReaches } from "./execution";
 import { acquireScope, useEntities, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
-import { readBlob } from "./tasks";
+import { readBlob, readBlobSized } from "./tasks";
 
 /** The client, replaceable by a test (a fake transport stands in for the daemon). */
 export const artifactApi = {
@@ -201,11 +201,16 @@ export const WORKTREE_FILE_MAX_BYTES = 1024 * 1024;
 
 /** A worktree file's text for the viewer; a file past the cap or with a NUL byte (binary) is an error that says so. */
 export async function readWorktreeText(repo: string, taskSlug: string, path: string): Promise<string> {
-  const bytes = await call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "worktreeFile", value: { taskSlug, path } } }), WORKTREE_FILE_MAX_BYTES));
-  if (bytes.length > WORKTREE_FILE_MAX_BYTES) throw new Error("larger than 1 MB, not shown");
-  if (bytes.subarray(0, 8192).includes(0)) throw new Error("binary file, not shown");
+  const { bytes, total } = await call(() => readBlobSized(repo, create(BlobRefSchema, { target: { case: "worktreeFile", value: { taskSlug, path } } }), WORKTREE_FILE_MAX_BYTES));
+  if (total > WORKTREE_FILE_MAX_BYTES) throw new FileNotShown(`Too large to show (${formatSize(total)}).`);
+  if (bytes.subarray(0, 8192).includes(0)) throw new FileNotShown(`Binary file, not shown (${formatSize(total)}).`);
   return decode(bytes);
 }
+
+/** A worktree file the viewer declines to show (too large or binary); its message names the size. */
+export class FileNotShown extends Error {}
+
+export const formatSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
 
 /** A tree node's bytes, for an attachment image shown in the tree. */
 export async function readNodeBytes(repo: string, taskSlug: string, nodeId: string): Promise<Uint8Array> {
