@@ -54,6 +54,7 @@ vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("..
 vi.mock("../ipc", () => mockIpc({}));
 
 beforeEach(() => {
+  localStorage.setItem("alinery.taskHeaderOpen", "1");
   fakeBoard.reset();
   fakeArtifacts.reset();
   mocks.setRelatedTasksForRepo.mockReset().mockImplementation(async (_repo: string, _slug: string, related: Task["related_tasks"]) => task({ related_tasks: related }));

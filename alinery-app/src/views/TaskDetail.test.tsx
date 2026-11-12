@@ -25,7 +25,7 @@ import type {
   TaskActivitySummary,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
-import { TaskDetail } from "./TaskDetail";
+import { shortWorktreePath, TaskDetail } from "./TaskDetail";
 
 let daemon = sessionDaemon();
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -294,7 +294,8 @@ beforeEach(() => {
   scenario.managerObservation = null;
   explicitStatuses.clear();
   vi.stubGlobal("localStorage", {
-    getItem: vi.fn(() => null),
+    // Most cases assert on the expanded header; the compact header has its own case.
+    getItem: vi.fn((key: string) => (key === "alinery.taskHeaderOpen" ? "1" : null)),
     setItem: vi.fn(),
   });
   // Starting and recovering are one call; `recover` binds the new manager to the active child.
@@ -927,6 +928,34 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   fireEvent.click(screen.getByRole("button", { name: "List" }));
   expect(screen.getByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
   expect(screen.getByText("Automatic")).toBeTruthy();
+});
+
+describe("compact task header", () => {
+  it("shows branch, worktree and Archive until expanded, then remembers the choice", async () => {
+    const stored = new Map<string, string>();
+    vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      stored.set(key, value);
+    });
+    await renderDetail();
+    const info = within(screen.getByRole("region", { name: "Task information" }));
+    expect(info.getByText("Branch")).toBeDefined();
+    expect(info.getByText("Worktree")).toBeDefined();
+    expect(info.getByRole("button", { name: "Archive task" })).toBeDefined();
+    expect(info.queryByRole("button", { name: "Auto Approval All" })).toBeNull();
+    expect(info.queryByText("PR URL")).toBeNull();
+
+    fireEvent.click(info.getByRole("button", { name: "Show task details" }));
+    expect(info.getByRole("button", { name: "Auto Approval All" })).toBeDefined();
+    expect(info.getByText("PR URL")).toBeDefined();
+    expect(info.getAllByRole("button", { name: "Archive task" })).toHaveLength(1);
+    expect(stored.get("alinery.taskHeaderOpen")).toBe("1");
+  });
+
+  it("shortens a worktree path to its .alinery part", () => {
+    expect(shortWorktreePath("/Users/me/repo/.alinery/worktrees/fix")).toBe(".alinery/worktrees/fix");
+    expect(shortWorktreePath("/elsewhere/fix")).toBe("/elsewhere/fix");
+  });
 });
 
 describe("removed distill surfaces", () => {

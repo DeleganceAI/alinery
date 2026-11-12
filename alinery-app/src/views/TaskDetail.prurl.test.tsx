@@ -39,6 +39,7 @@ vi.mock("../sync/git", () => ({ listTaskPullRequests: mocks.listTaskPullRequests
 vi.mock("../ipc", () => mockIpc({ openUrl: mocks.openUrl }));
 
 beforeEach(() => {
+  localStorage.setItem("alinery.taskHeaderOpen", "1");
   fakeBoard.reset();
 
   fakeArtifacts.reset();

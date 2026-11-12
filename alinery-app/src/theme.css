@@ -3948,6 +3948,23 @@ dialog.modal::backdrop {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* Compact header: branch and worktree share one row, each on one line. */
+.task-info-compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  column-gap: 24px;
+}
+.task-info-compact .kv .v {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-info-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .task-related,
 .task-actions-row {
   margin-top: 14px;

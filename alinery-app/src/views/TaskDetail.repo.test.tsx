@@ -62,6 +62,7 @@ vi.mock("../sync/git", () => ({ pushAndCompareUrlForRepo: mocks.pushAndCompareUr
 vi.mock("../ipc", () => mockIpc());
 
 beforeEach(() => {
+  localStorage.setItem("alinery.taskHeaderOpen", "1");
   localStorage.removeItem("alinery.taskSessionView");
   fakeBoard.reset();
 

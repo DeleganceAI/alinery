@@ -1,4 +1,4 @@
-import { ArrowLeft, List, Network, Pencil, Square } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -123,6 +123,22 @@ function readStoredTaskSessionView(): "graph" | "list" {
 }
 
 // ---- task detail --------------------------------------------------------------
+/** One choice for every task: the header opens compact until the user expands it. */
+const HEADER_OPEN_KEY = "alinery.taskHeaderOpen";
+function readHeaderOpen(): boolean {
+  try {
+    return localStorage.getItem(HEADER_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** The compact header shows a worktree from `.alinery/` down; the full path stays in the tooltip and the copy button. */
+export function shortWorktreePath(path: string): string {
+  const at = path.indexOf("/.alinery/");
+  return at < 0 ? path : path.slice(at + 1);
+}
+
 export function TaskDetail({
   slug,
   repoPath,
@@ -307,6 +323,15 @@ export function TaskDetail({
   const [artifactText, setArtifactText] = useState("");
   const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
+  const [headerOpen, setHeaderOpen] = useState(readHeaderOpen);
+  const toggleHeader = (open: boolean) => {
+    setHeaderOpen(open);
+    try {
+      localStorage.setItem(HEADER_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      // Storage can be blocked; the toggle still works for this view.
+    }
+  };
   const [sideTab, setSideTab] = useState<"playbook" | "artifacts" | "history">("artifacts");
   const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
@@ -826,6 +851,16 @@ export function TaskDetail({
   };
 
   const finalizedNotice = task ? finalizedSubtaskNotice(task, subtaskState?.parent_task) : "";
+  const worktreeValue = (path: string) =>
+    !task?.has_worktree ? (
+      <span className="dim">none — using main repo</span>
+    ) : !task?.worktree ? (
+      <span className="danger-text">removed</span>
+    ) : worktreeMissing ? (
+      <span className="danger-text">{path} — missing on disk</span>
+    ) : (
+      path
+    );
 
   return (
     <div className="detail taskdetail" style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
@@ -836,9 +871,38 @@ export function TaskDetail({
             {task?.parent_task && renameControl("task", task.slug, task.name)}
             <h2>{task?.name ?? slug}</h2>
           </div>
-          <button type="button" className="btn ghost small" onClick={onBack}>
-            <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" /> Back
-          </button>
+          <div className="crow task-info-head-actions">
+            {task?.archived ? (
+              task.parent_task ? (
+                <>
+                  <button type="button" className="btn ghost small" disabled title="Sub-tasks cannot be restored.">
+                    Restore task
+                  </button>
+                  <span className="dim">Sub-tasks cannot be restored.</span>
+                </>
+              ) : (
+                <button type="button" className="btn ghost small" disabled={busy === "restore"} onClick={() => void restoreTask()}>
+                  {busy === "restore" ? "Restoring…" : "Restore task"}
+                </button>
+              )
+            ) : (
+              <button type="button" className="btn ghost small" title="Archive task (⌘E)" onClick={() => task && setPendingArchive(task)}>
+                Archive task
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn ghost small"
+              aria-expanded={headerOpen}
+              aria-label={headerOpen ? "Hide task details" : "Show task details"}
+              onClick={() => toggleHeader(!headerOpen)}
+            >
+              {headerOpen ? <ChevronUp size={16} strokeWidth={1.5} aria-hidden="true" /> : <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />} Details
+            </button>
+            <button type="button" className="btn ghost small" onClick={onBack}>
+              <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" /> Back
+            </button>
+          </div>
         </div>
 
         {subtaskState?.parent_task && (
@@ -857,172 +921,167 @@ export function TaskDetail({
           </InlineStatus>
         )}
 
-        <div className="task-info-grid">
-          {task?.linear_id && (
+        {!headerOpen && (
+          <div className="task-info-grid task-info-compact">
             <div className="kv">
-              <span className="k">Linear</span>
-              <span className="v">{task.linear_id}</span>
+              <span className="k">Branch</span>
+              <span className="v mono">{task?.branch}</span>
+              <CopyTextButton text={task?.branch ?? ""} label="branch" />
             </div>
-          )}
-          {task?.github_issue && (
             <div className="kv">
-              <span className="k">GitHub</span>
-              <span className="v">{task.github_issue}</span>
-              <CopyTextButton text={task.github_issue} label="GitHub issue" />
+              <span className="k">Worktree</span>
+              <span className="v mono" title={task?.worktree || undefined}>
+                {worktreeValue(shortWorktreePath(task?.worktree ?? ""))}
+              </span>
+              {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
             </div>
-          )}
-          <div className="kv">
-            <span className="k">Branch</span>
-            <span className="v mono">{task?.branch}</span>
-            <CopyTextButton text={task?.branch ?? ""} label="branch" />
           </div>
-          <div className="kv">
-            <span className="k">Worktree</span>
-            <span className="v mono">
-              {!task?.has_worktree ? (
-                <span className="dim">none — using main repo</span>
-              ) : !task?.worktree ? (
-                <span className="danger-text">removed</span>
-              ) : worktreeMissing ? (
-                <span className="danger-text">{task.worktree} — missing on disk</span>
-              ) : (
-                task.worktree
+        )}
+        {headerOpen && (
+          <>
+            <div className="task-info-grid">
+              {task?.linear_id && (
+                <div className="kv">
+                  <span className="k">Linear</span>
+                  <span className="v">{task.linear_id}</span>
+                </div>
               )}
-            </span>
-            {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
-          </div>
-          <div className="kv">
-            <span className="k">PR URL</span>
-            <span className="v mono">
-              <PullRequestIndicator snapshot={pullRequest} />
-              {!pullRequest?.pr && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
-            </span>
-            <CopyTextButton text={pullRequest?.pr?.url ?? task?.pr_url ?? ""} label="PR URL" />
-            <button
-              type="button"
-              className="btn ghost small"
-              disabled={!task?.worktree || worktreeMissing || !!task?.archived || !!busy}
-              title={
-                task?.archived
-                  ? "Task is archived — read-only"
-                  : !task?.worktree
-                    ? "Worktree removed — action unavailable"
-                    : worktreeMissing
-                      ? "Worktree missing on disk"
-                      : "Push the branch and copy the compare URL"
-              }
-              onClick={() => {
-                setBusy("push");
-                setErr(null);
-                pushAndCompareUrlForRepo(repoPath, slug)
-                  .then(async (url) => {
-                    setTask((current) => (current ? { ...current, pr_url: url } : current));
-                    await copyTextToClipboard(url).catch(() => undefined);
-                  })
-                  .catch((e) => setErr({ msg: "Push failed.", detail: String(e) }))
-                  .finally(() => setBusy(""));
-              }}
-            >
-              {busy === "push" ? "Pushing…" : "Push + copy compare URL"}
-            </button>
-          </div>
-        </div>
-
-        <div className="task-related">
-          <div className="task-related-head">
-            <span className="k">Related</span>
-            <select
-              className="field-input"
-              aria-label="Tag a related task"
-              value=""
-              disabled={!!task?.archived || !!busy || relatedCandidates.length === 0}
-              onChange={(event) => {
-                const key = event.target.value;
-                const candidate = relatedCandidates.find((item) => taskKey(item) === key);
-                if (!candidate) return;
-                saveRelated([...relatedTags, { repo_path: relatedStoredPath(repoPath, candidate.repo_path) ?? candidate.repo_path, slug: candidate.slug, name: candidate.name }]);
-              }}
-            >
-              <option value="">{relatedCandidates.length ? "Tag a related task…" : "No other open tasks"}</option>
-              {relatedCandidates.map((candidate) => (
-                <option key={taskKey(candidate)} value={taskKey(candidate)}>
-                  {candidate.name}
-                  {candidate.repo_path !== repoPath ? ` — ${repoName(candidate.repo_path)}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          {relatedTags.length > 0 && (
-            <div className="task-related-tags">
-              {relatedTags.map((tag) => {
-                const tagRepo = relatedRepoKey(repoPath, tag.repo_path);
-                const open = !knownRepos || knownRepos.includes(tagRepo);
-                const label = boardTasks.find((candidate) => candidate.repo_path === tagRepo && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
-                return (
-                  <span key={`${tag.repo_path}:${tag.slug}`} className={`task-related-tag${open ? "" : " closed"}`}>
-                    <button
-                      type="button"
-                      className="task-related-tag-open"
-                      aria-label={open ? `Open ${label}` : `${label} (repository closed)`}
-                      disabled={!open}
-                      title={open ? `Open ${label}` : "Repository is closed"}
-                      onClick={() => open && onOpenRelatedTask(tag.slug, tagRepo)}
-                    >
-                      {label}
-                      {tagRepo !== repoPath ? <span className="dim"> · {repoName(tagRepo)}</span> : null}
-                    </button>
-                    <button
-                      type="button"
-                      className="task-related-tag-remove"
-                      disabled={!!task?.archived || !!busy}
-                      aria-label={`Remove related task ${label}`}
-                      onClick={() => saveRelated(relatedTags.filter((item) => item.repo_path !== tag.repo_path || item.slug !== tag.slug))}
-                    >
-                      ×
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div className="crow task-actions-row">
-          <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
-            {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
-          </button>
-          <button
-            type="button"
-            className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
-            aria-pressed={autoApproveAll}
-            disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
-            title={
-              autoApproveAll
-                ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
-                : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
-            }
-            onClick={() => setAutoApproveAll(!autoApproveAll)}
-          >
-            Auto Approval All
-          </button>
-          {task?.archived ? (
-            task.parent_task ? (
-              <>
-                <button type="button" className="btn ghost small" disabled title="Sub-tasks cannot be restored.">
-                  Restore task
+              {task?.github_issue && (
+                <div className="kv">
+                  <span className="k">GitHub</span>
+                  <span className="v">{task.github_issue}</span>
+                  <CopyTextButton text={task.github_issue} label="GitHub issue" />
+                </div>
+              )}
+              <div className="kv">
+                <span className="k">Branch</span>
+                <span className="v mono">{task?.branch}</span>
+                <CopyTextButton text={task?.branch ?? ""} label="branch" />
+              </div>
+              <div className="kv">
+                <span className="k">Worktree</span>
+                <span className="v mono">{worktreeValue(task?.worktree ?? "")}</span>
+                {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
+              </div>
+              <div className="kv">
+                <span className="k">PR URL</span>
+                <span className="v mono">
+                  <PullRequestIndicator snapshot={pullRequest} />
+                  {!pullRequest?.pr && (task?.pr_url ? task.pr_url : <span className="dim">not available</span>)}
+                </span>
+                <CopyTextButton text={pullRequest?.pr?.url ?? task?.pr_url ?? ""} label="PR URL" />
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  disabled={!task?.worktree || worktreeMissing || !!task?.archived || !!busy}
+                  title={
+                    task?.archived
+                      ? "Task is archived — read-only"
+                      : !task?.worktree
+                        ? "Worktree removed — action unavailable"
+                        : worktreeMissing
+                          ? "Worktree missing on disk"
+                          : "Push the branch and copy the compare URL"
+                  }
+                  onClick={() => {
+                    setBusy("push");
+                    setErr(null);
+                    pushAndCompareUrlForRepo(repoPath, slug)
+                      .then(async (url) => {
+                        setTask((current) => (current ? { ...current, pr_url: url } : current));
+                        await copyTextToClipboard(url).catch(() => undefined);
+                      })
+                      .catch((e) => setErr({ msg: "Push failed.", detail: String(e) }))
+                      .finally(() => setBusy(""));
+                  }}
+                >
+                  {busy === "push" ? "Pushing…" : "Push + copy compare URL"}
                 </button>
-                <span className="dim">Sub-tasks cannot be restored.</span>
-              </>
-            ) : (
-              <button type="button" className="btn ghost small" disabled={busy === "restore"} onClick={() => void restoreTask()}>
-                {busy === "restore" ? "Restoring…" : "Restore task"}
+              </div>
+            </div>
+
+            <div className="task-related">
+              <div className="task-related-head">
+                <span className="k">Related</span>
+                <select
+                  className="field-input"
+                  aria-label="Tag a related task"
+                  value=""
+                  disabled={!!task?.archived || !!busy || relatedCandidates.length === 0}
+                  onChange={(event) => {
+                    const key = event.target.value;
+                    const candidate = relatedCandidates.find((item) => taskKey(item) === key);
+                    if (!candidate) return;
+                    saveRelated([
+                      ...relatedTags,
+                      { repo_path: relatedStoredPath(repoPath, candidate.repo_path) ?? candidate.repo_path, slug: candidate.slug, name: candidate.name },
+                    ]);
+                  }}
+                >
+                  <option value="">{relatedCandidates.length ? "Tag a related task…" : "No other open tasks"}</option>
+                  {relatedCandidates.map((candidate) => (
+                    <option key={taskKey(candidate)} value={taskKey(candidate)}>
+                      {candidate.name}
+                      {candidate.repo_path !== repoPath ? ` — ${repoName(candidate.repo_path)}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {relatedTags.length > 0 && (
+                <div className="task-related-tags">
+                  {relatedTags.map((tag) => {
+                    const tagRepo = relatedRepoKey(repoPath, tag.repo_path);
+                    const open = !knownRepos || knownRepos.includes(tagRepo);
+                    const label = boardTasks.find((candidate) => candidate.repo_path === tagRepo && candidate.slug === tag.slug)?.name || tag.name || tag.slug;
+                    return (
+                      <span key={`${tag.repo_path}:${tag.slug}`} className={`task-related-tag${open ? "" : " closed"}`}>
+                        <button
+                          type="button"
+                          className="task-related-tag-open"
+                          aria-label={open ? `Open ${label}` : `${label} (repository closed)`}
+                          disabled={!open}
+                          title={open ? `Open ${label}` : "Repository is closed"}
+                          onClick={() => open && onOpenRelatedTask(tag.slug, tagRepo)}
+                        >
+                          {label}
+                          {tagRepo !== repoPath ? <span className="dim"> · {repoName(tagRepo)}</span> : null}
+                        </button>
+                        <button
+                          type="button"
+                          className="task-related-tag-remove"
+                          disabled={!!task?.archived || !!busy}
+                          aria-label={`Remove related task ${label}`}
+                          onClick={() => saveRelated(relatedTags.filter((item) => item.repo_path !== tag.repo_path || item.slug !== tag.slug))}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="crow task-actions-row">
+              <button type="button" className="btn ghost small" disabled={!task || duplicating} title="Duplicate task (⌘D)" onClick={() => task && onDuplicate(task)}>
+                {duplicating ? "Duplicating…" : "Duplicate Task · ⌘D"}
               </button>
-            )
-          ) : (
-            <button type="button" className="btn ghost small" title="Archive task (⌘E)" onClick={() => task && setPendingArchive(task)}>
-              Archive task
-            </button>
-          )}
-        </div>
+              <button
+                type="button"
+                className={`btn ghost small auto-approve${autoApproveAll ? " on" : ""}`}
+                aria-pressed={autoApproveAll}
+                disabled={!task || task.archived || task.draft || (task.engine_version ?? 2) < 2 || busy === "auto-approve"}
+                title={
+                  autoApproveAll
+                    ? "Auto Approval All is on. Every playbook step may complete without an approval card. Turn off to restore the steps chosen at creation."
+                    : "Auto Approval All is off. This task keeps the automatic-completion steps chosen at creation."
+                }
+                onClick={() => setAutoApproveAll(!autoApproveAll)}
+              >
+                Auto Approval All
+              </button>
+            </div>
+          </>
+        )}
       </section>
       <div className="taskdetail-body">
         <aside className="artifactpane">
