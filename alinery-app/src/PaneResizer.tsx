@@ -1,4 +1,4 @@
-import { ChevronLeft } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type { ArtifactPaneCollapse, useArtifactPaneWidth } from "./useArtifactPaneWidth";
 
 /**
@@ -17,7 +17,7 @@ export function PaneResizer({ props, collapse }: { props: ReturnType<typeof useA
           onPointerDown={(ev) => ev.stopPropagation()}
           onClick={() => collapse.setCollapsed(false)}
         >
-          <ChevronLeft size={12} strokeWidth={2} aria-hidden="true" />
+          <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
         </button>
       )}
     </div>

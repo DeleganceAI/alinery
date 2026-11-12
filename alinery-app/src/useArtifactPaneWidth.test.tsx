@@ -38,7 +38,7 @@ function Probe({ appearance, onAppearanceChange, side }: { appearance: Appearanc
 const appearanceAt = (artifact_viewer_width: number): AppearancePrefs => ({ ...DEFAULT_APPEARANCE, artifact_viewer_width });
 
 function CollapsibleProbe() {
-  const [width, props, collapse] = useArtifactPaneWidth(appearanceAt(480), vi.fn());
+  const [width, props, collapse] = useArtifactPaneWidth(appearanceAt(480), vi.fn(), "left");
   return (
     <div>
       <div data-testid="width">{width}</div>
@@ -52,16 +52,16 @@ describe("useArtifactPaneWidth", () => {
   it("snaps shut when dragged well past the minimum and reopens at the width it had", () => {
     render(<CollapsibleProbe />);
     const resizer = screen.getByRole("separator", { name: "Resize artifact pane" });
-    // A right-side pane shrinks as the divider moves right: 480 - 300 is past the minimum, but not far enough to snap.
+    // A left-side pane shrinks as the divider moves left: 480 - 220 reaches the minimum, but not far enough to snap.
     fireEvent.pointerDown(resizer, { clientX: 500 });
-    fireEvent.pointerMove(window, { clientX: 720 });
+    fireEvent.pointerMove(window, { clientX: 280 });
     expect(screen.getByTestId("collapsed").textContent).toBe("false");
-    fireEvent.pointerUp(window, { clientX: 720 });
+    fireEvent.pointerUp(window, { clientX: 280 });
     expect(screen.getByTestId("collapsed").textContent).toBe("false");
 
     fireEvent.pointerDown(resizer, { clientX: 500 });
-    fireEvent.pointerMove(window, { clientX: 900 });
-    fireEvent.pointerUp(window, { clientX: 900 });
+    fireEvent.pointerMove(window, { clientX: 100 });
+    fireEvent.pointerUp(window, { clientX: 100 });
     expect(screen.getByTestId("collapsed").textContent).toBe("true");
     expect(ipc.writeAppearance).toHaveBeenCalledTimes(1);
 

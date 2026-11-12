@@ -196,7 +196,7 @@ export function SessionView({
     [commentsEnabled, liveArtifacts.comments, selectedArtifact],
   );
   const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === selectedArtifact)) || null;
-  const [artifactWidth, artifactResizerProps, artifactCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange);
+  const [artifactWidth, artifactResizerProps, artifactCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange, "left");
   const termhostRef = useRef<HTMLDivElement>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const chatAutoCompaction = appearance.chat_auto_compaction !== false;
@@ -1250,229 +1250,8 @@ export function SessionView({
         className={`sessionbody${hasTask ? (artifactCollapse.collapsed ? " pane-collapsed" : "") : " no-artifacts"}`}
         style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}
       >
-        <div className="termhost" ref={termhostRef}>
-          {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
-            <div className="session-view-loading" role="status" aria-live="polite">
-              <LoadingState label="Opening session…" state="connecting" />
-            </div>
-          )}
-          {navHistory && (
-            <div className="terminal-frame">
-              {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
-                  chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
-                  journal does not need the session to be alive. */}
-              {liveRpc || vinculum ? (
-                <>
-                  <ChatPane
-                    entries={chatEntries}
-                    status={chatStatus}
-                    visibility={chatVisibility}
-                    onApprove={onApproveChat}
-                    onLoadOlder={loadOlder}
-                    loadingOlder={loadingOlder}
-                    atStart={chat.fileStart === 0}
-                  />
-                  {/* The history view is the live pane with the input switched off, so a finished
-                      session reads the same way as a running one. */}
-                  {liveRpc ? null : (
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
-                  )}
-                </>
-              ) : (
-                <SessionTerminal
-                  sessionId={id}
-                  cwd={cwd}
-                  taskSlug={taskSlug}
-                  phase={phase}
-                  harness={harness}
-                  model={model}
-                  intent="attach"
-                  readOnly
-                  terminalFontSize={appearance.terminal_font_size}
-                />
-              )}
-            </div>
-          )}
-          {!navHistory && termIntent && (
-            <>
-              {showChat ? (
-                <>
-                  {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
-                  <div className="terminal-frame">
-                    <ChatPane
-                      entries={chatEntries}
-                      status={chatStatus}
-                      visibility={chatVisibility}
-                      onApprove={onApproveChat}
-                      onLoadOlder={loadOlder}
-                      loadingOlder={loadingOlder}
-                      atStart={chat.fileStart === 0}
-                    />
-                  </div>
-                  {showChatComposer ? (
-                    <>
-                      <ChatComposer
-                        actions={sessionControls}
-                        body={messageDraft.body}
-                        status={chatStatus}
-                        catalog={chat.commands}
-                        sending={messageSending}
-                        showHints={chatVisibility.showComposerHints}
-                        attachments={messageDraft.attachments ?? []}
-                        dropping={dropping}
-                        onAttach={() => {
-                          void ipc
-                            .pickAttachmentFilesDialog()
-                            .then((paths) => void stagePaths(paths))
-                            .catch((error) => toast.error(String(error)));
-                        }}
-                        onRemoveAttachment={(id) => {
-                          const current = messageDraftRef.current;
-                          const removed = current.attachments.find((item) => item.id === id);
-                          if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-                          updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
-                        }}
-                        onClear={() => {
-                          revokeDraftPreviewUrls(messageDraftRef.current.attachments);
-                          updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
-                        }}
-                        onPasteFiles={stageBlobs}
-                        onBodyChange={(next) => {
-                          updateMessageDraft({ ...messageDraftRef.current, body: next });
-                          setMessageError("");
-                        }}
-                        onCompositionChange={setMessageComposing}
-                        onSend={(text) => void sendCurrentMessage(text)}
-                        onAbort={() => void interruptCurrentSession()}
-                        onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
-                        sendNowEnabled={sendNowEnabled}
-                        canAbort={composerCanAbort}
-                        queuedCount={queuedMeta}
-                      />
-                      {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                showPtyTerminal && (
-                  <div className="terminal-frame">
-                    <SessionTerminal
-                      sessionId={id}
-                      cwd={cwd}
-                      taskSlug={taskSlug}
-                      phase={phase}
-                      harness={harness}
-                      model={model}
-                      intent={termIntent}
-                      resumeToken={resumeToken}
-                      terminalFontSize={appearance.terminal_font_size}
-                      onConnectionStateChange={handleTerminalConnectionState}
-                    />
-                  </div>
-                )
-              )}
-              {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
-            </>
-          )}
-          {!navHistory && showPanel && effectiveLifecycle && (
-            <>
-              <SessionActionPanel
-                id={id}
-                phase={phase}
-                harness={harness}
-                model={model}
-                state={effectiveLifecycle}
-                artifactReady={artifactReady}
-                repoPath={repoPath}
-                taskSlug={taskSlug}
-                onStartFresh={leftover ? () => undefined : onStartFresh}
-                onArchive={handleArchive}
-                archiveBusy={archiveBusy}
-                onViewHistory={() => setShowHistory(true)}
-                onKilled={() => setReclassifyTick((n) => n + 1)}
-                onRecover={canRecoverSession ? () => void recoverSession() : undefined}
-                recoverBusy={completionBusy}
-              />
-              {showHistory &&
-                (vinculum ? (
-                  <div className="terminal-frame">
-                    <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
-                  </div>
-                ) : (
-                  <div className="terminal-frame">
-                    <SessionTerminal
-                      sessionId={id}
-                      cwd={cwd}
-                      taskSlug={taskSlug}
-                      phase={phase}
-                      harness={harness}
-                      model={model}
-                      intent="attach"
-                      readOnly
-                      terminalFontSize={appearance.terminal_font_size}
-                    />
-                  </div>
-                ))}
-            </>
-          )}
-          {modelDialog && (
-            <ChatModelDialog
-              tab={modelDialog.tab}
-              setup={modelDialog.setup}
-              models={providerAccess.models}
-              current={chat.sessionMeta.model}
-              preselect={modelDialog.preselect}
-              loginProviders={providerAccess.loginProviders}
-              livePromotedIds={[]}
-              configuredIds={providerAccess.custom.map((row) => row.id)}
-              modelRoles={modelRoles}
-              hosted={hosted}
-              grok={grokReady}
-              error={modelError || providerAccess.error}
-              loginBusy={providerAccess.busy}
-              onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
-              onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
-              onLogin={(providerId) => void startChatLogin(providerId)}
-              onLogout={(providerId) => void providerAccess.logout(providerId)}
-              onAssignRole={(role, model) => void assignModelRole(role, model)}
-              onSignIn={() => {
-                void ipc
-                  .accountSignIn()
-                  .then(() => ipc.accountRefresh().catch(() => undefined))
-                  .then(() =>
-                    ipc
-                      .hostedCatalog()
-                      .then(setHosted)
-                      .catch(() => setHosted(null)),
-                  )
-                  .catch((error) => setModelError(String(error)));
-              }}
-              onSubscribe={() => {
-                void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
-              }}
-              onBuyCredits={() => {
-                void ipc.accountOpen().catch((error) => setModelError(String(error)));
-              }}
-              onClose={() => {
-                void providerAccess.cancel();
-                setModelDialog(null);
-                setModelError(null);
-              }}
-              footer={<CustomEndpointForm access={providerAccess} />}
-            >
-              <ProviderAccessPanel access={providerAccess} />
-            </ChatModelDialog>
-          )}
-          {!navHistory && !termIntent && !showPanel && (
-            <div className="sap-loading">
-              <LoadingState label="Checking session" state="connecting" />
-            </div>
-          )}
-        </div>
         {hasTask && (
           <>
-            <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
             <aside className="artifactpane">
               {selectedArtifact ? (
                 <>
@@ -1697,8 +1476,229 @@ export function SessionView({
                 </>
               )}
             </aside>
+            <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
           </>
         )}
+        <div className="termhost" ref={termhostRef}>
+          {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
+            <div className="session-view-loading" role="status" aria-live="polite">
+              <LoadingState label="Opening session…" state="connecting" />
+            </div>
+          )}
+          {navHistory && (
+            <div className="terminal-frame">
+              {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
+                  chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
+                  journal does not need the session to be alive. */}
+              {liveRpc || vinculum ? (
+                <>
+                  <ChatPane
+                    entries={chatEntries}
+                    status={chatStatus}
+                    visibility={chatVisibility}
+                    onApprove={onApproveChat}
+                    onLoadOlder={loadOlder}
+                    loadingOlder={loadingOlder}
+                    atStart={chat.fileStart === 0}
+                  />
+                  {/* The history view is the live pane with the input switched off, so a finished
+                      session reads the same way as a running one. */}
+                  {liveRpc ? null : (
+                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
+                  )}
+                </>
+              ) : (
+                <SessionTerminal
+                  sessionId={id}
+                  cwd={cwd}
+                  taskSlug={taskSlug}
+                  phase={phase}
+                  harness={harness}
+                  model={model}
+                  intent="attach"
+                  readOnly
+                  terminalFontSize={appearance.terminal_font_size}
+                />
+              )}
+            </div>
+          )}
+          {!navHistory && termIntent && (
+            <>
+              {showChat ? (
+                <>
+                  {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
+                  <div className="terminal-frame">
+                    <ChatPane
+                      entries={chatEntries}
+                      status={chatStatus}
+                      visibility={chatVisibility}
+                      onApprove={onApproveChat}
+                      onLoadOlder={loadOlder}
+                      loadingOlder={loadingOlder}
+                      atStart={chat.fileStart === 0}
+                    />
+                  </div>
+                  {showChatComposer ? (
+                    <>
+                      <ChatComposer
+                        actions={sessionControls}
+                        body={messageDraft.body}
+                        status={chatStatus}
+                        catalog={chat.commands}
+                        sending={messageSending}
+                        showHints={chatVisibility.showComposerHints}
+                        attachments={messageDraft.attachments ?? []}
+                        dropping={dropping}
+                        onAttach={() => {
+                          void ipc
+                            .pickAttachmentFilesDialog()
+                            .then((paths) => void stagePaths(paths))
+                            .catch((error) => toast.error(String(error)));
+                        }}
+                        onRemoveAttachment={(id) => {
+                          const current = messageDraftRef.current;
+                          const removed = current.attachments.find((item) => item.id === id);
+                          if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+                          updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
+                        }}
+                        onClear={() => {
+                          revokeDraftPreviewUrls(messageDraftRef.current.attachments);
+                          updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+                        }}
+                        onPasteFiles={stageBlobs}
+                        onBodyChange={(next) => {
+                          updateMessageDraft({ ...messageDraftRef.current, body: next });
+                          setMessageError("");
+                        }}
+                        onCompositionChange={setMessageComposing}
+                        onSend={(text) => void sendCurrentMessage(text)}
+                        onAbort={() => void interruptCurrentSession()}
+                        onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+                        sendNowEnabled={sendNowEnabled}
+                        canAbort={composerCanAbort}
+                        queuedCount={queuedMeta}
+                      />
+                      {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                showPtyTerminal && (
+                  <div className="terminal-frame">
+                    <SessionTerminal
+                      sessionId={id}
+                      cwd={cwd}
+                      taskSlug={taskSlug}
+                      phase={phase}
+                      harness={harness}
+                      model={model}
+                      intent={termIntent}
+                      resumeToken={resumeToken}
+                      terminalFontSize={appearance.terminal_font_size}
+                      onConnectionStateChange={handleTerminalConnectionState}
+                    />
+                  </div>
+                )
+              )}
+              {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
+            </>
+          )}
+          {!navHistory && showPanel && effectiveLifecycle && (
+            <>
+              <SessionActionPanel
+                id={id}
+                phase={phase}
+                harness={harness}
+                model={model}
+                state={effectiveLifecycle}
+                artifactReady={artifactReady}
+                repoPath={repoPath}
+                taskSlug={taskSlug}
+                onStartFresh={leftover ? () => undefined : onStartFresh}
+                onArchive={handleArchive}
+                archiveBusy={archiveBusy}
+                onViewHistory={() => setShowHistory(true)}
+                onKilled={() => setReclassifyTick((n) => n + 1)}
+                onRecover={canRecoverSession ? () => void recoverSession() : undefined}
+                recoverBusy={completionBusy}
+              />
+              {showHistory &&
+                (vinculum ? (
+                  <div className="terminal-frame">
+                    <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
+                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
+                  </div>
+                ) : (
+                  <div className="terminal-frame">
+                    <SessionTerminal
+                      sessionId={id}
+                      cwd={cwd}
+                      taskSlug={taskSlug}
+                      phase={phase}
+                      harness={harness}
+                      model={model}
+                      intent="attach"
+                      readOnly
+                      terminalFontSize={appearance.terminal_font_size}
+                    />
+                  </div>
+                ))}
+            </>
+          )}
+          {modelDialog && (
+            <ChatModelDialog
+              tab={modelDialog.tab}
+              setup={modelDialog.setup}
+              models={providerAccess.models}
+              current={chat.sessionMeta.model}
+              preselect={modelDialog.preselect}
+              loginProviders={providerAccess.loginProviders}
+              livePromotedIds={[]}
+              configuredIds={providerAccess.custom.map((row) => row.id)}
+              modelRoles={modelRoles}
+              hosted={hosted}
+              grok={grokReady}
+              error={modelError || providerAccess.error}
+              loginBusy={providerAccess.busy}
+              onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
+              onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
+              onLogin={(providerId) => void startChatLogin(providerId)}
+              onLogout={(providerId) => void providerAccess.logout(providerId)}
+              onAssignRole={(role, model) => void assignModelRole(role, model)}
+              onSignIn={() => {
+                void ipc
+                  .accountSignIn()
+                  .then(() => ipc.accountRefresh().catch(() => undefined))
+                  .then(() =>
+                    ipc
+                      .hostedCatalog()
+                      .then(setHosted)
+                      .catch(() => setHosted(null)),
+                  )
+                  .catch((error) => setModelError(String(error)));
+              }}
+              onSubscribe={() => {
+                void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
+              }}
+              onBuyCredits={() => {
+                void ipc.accountOpen().catch((error) => setModelError(String(error)));
+              }}
+              onClose={() => {
+                void providerAccess.cancel();
+                setModelDialog(null);
+                setModelError(null);
+              }}
+              footer={<CustomEndpointForm access={providerAccess} />}
+            >
+              <ProviderAccessPanel access={providerAccess} />
+            </ChatModelDialog>
+          )}
+          {!navHistory && !termIntent && !showPanel && (
+            <div className="sap-loading">
+              <LoadingState label="Checking session" state="connecting" />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

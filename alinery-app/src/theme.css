@@ -533,7 +533,7 @@ nav.tabs .tab-indicator {
   height: 100%;
   border-radius: 0;
   background: var(--surface);
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 4px 0 var(--accent);
 }
 .tab-indicator {
   position: absolute;
@@ -3959,12 +3959,12 @@ dialog.modal::backdrop {
   flex-direction: column;
   overflow: hidden;
 }
-/* The header spans the full width; the side panel sits right of the sessions pane, as in a session. */
+/* The header spans the full width; the side panel sits left of the sessions pane, as in a session. */
 .taskdetail-body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
+  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
 }
 /* The metadata and session table are the only vertical scroll owners. Making
    this parent scroll recreates DEL-541's competing scrollbar and dead space. */
@@ -4069,6 +4069,10 @@ dialog.modal::backdrop {
 }
 header:has(~ main .task-info-panel) {
   border-bottom-color: transparent;
+}
+/* That line still closes off the view tabs, so they read as tabs over the task header. */
+header:has(~ main .task-info-panel) nav.tabs {
+  border-bottom: 1px solid var(--border);
 }
 .task-info-panel.compact .task-info-head {
   flex-wrap: nowrap;
@@ -6861,7 +6865,8 @@ header:has(~ main .task-info-panel) {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
+  /* The artifact pane sits left of the conversation, as in the task view. */
+  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
   overflow: hidden;
 }
 .sessionbody.no-artifacts {
@@ -7240,13 +7245,13 @@ header:has(~ main .task-info-panel) {
 /* A pane dragged shut leaves only its divider, widened a little to hold the reopen arrow. */
 .taskdetail-body.pane-collapsed,
 .sessionbody.pane-collapsed {
-  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-columns: 16px minmax(0, 1fr);
 }
 .pane-collapsed > .artifactpane {
   display: none;
 }
 .artifact-resizer.collapsed {
-  border-right: 0;
+  border-left: 0;
 }
 .pane-reopen {
   position: absolute;
@@ -7323,7 +7328,7 @@ header:has(~ main .task-info-panel) {
 .artifacttab.on {
   color: var(--text-strong);
   background: var(--surface);
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 4px 0 var(--accent);
 }
 .artifacttab:focus-visible {
   outline: 2px solid var(--accent);
@@ -7342,7 +7347,7 @@ header:has(~ main .task-info-panel) {
 .artifacthead:not(:first-child) .artifacttab.on,
 :not(.artifactpane) > .artifacthead .artifacttab.on {
   background: transparent;
-  box-shadow: inset 0 -2px 0 var(--accent);
+  box-shadow: inset 0 -4px 0 var(--accent);
 }
 :not(.artifacthead) > .artifacttabs {
   flex: 0 0 auto;
@@ -7388,7 +7393,7 @@ header:has(~ main .task-info-panel) {
 .task-main-tab.on {
   color: var(--text-strong);
   background: var(--surface);
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 4px 0 var(--accent);
 }
 .task-main-tab-label {
   flex: 1 1 auto;

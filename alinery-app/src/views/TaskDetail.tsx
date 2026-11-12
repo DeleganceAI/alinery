@@ -374,7 +374,7 @@ export function TaskDetail({
   const [commentAnchor, setCommentAnchor] = useState<ArtifactCommentAnchor | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
-  const [artifactWidth, artifactResizerProps, artifactCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange);
+  const [artifactWidth, artifactResizerProps, artifactCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange, "left");
   const [worktreeMissing, setWorktreeMissing] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<Task | null>(null);
   const taskRef = useRef<Task | null>(null);
@@ -1127,6 +1127,210 @@ export function TaskDetail({
         )}
       </section>
       <div className={`taskdetail-body${artifactCollapse.collapsed ? " pane-collapsed" : ""}`}>
+        <aside className="artifactpane">
+          <div className="artifacthead">
+            <div className="artifacttabs" role="group" aria-label="Task side panel">
+              <button type="button" aria-pressed={sideTab === "playbook"} className={`artifacttab${sideTab === "playbook" ? " on" : ""}`} onClick={() => setSideTab("playbook")}>
+                Playbook
+              </button>
+              <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
+                History
+              </button>
+              <button type="button" aria-pressed={sideTab === "artifacts"} className={`artifacttab${sideTab === "artifacts" ? " on" : ""}`} onClick={() => setSideTab("artifacts")}>
+                Files
+              </button>
+            </div>
+            {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
+          </div>
+          {sideTab === "playbook" ? (
+            <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
+              <div className="task-playbook-toolbar">
+                <div className="artifacttabs" role="group" aria-label="Task playbook view">
+                  <button
+                    type="button"
+                    className={`artifacttab${playbookView === "list" ? " on" : ""}`}
+                    aria-pressed={playbookView === "list"}
+                    onClick={() => setPlaybookView("list")}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
+                    aria-pressed={playbookView === "graph"}
+                    onClick={() => setPlaybookView("graph")}
+                  >
+                    Graph
+                  </button>
+                </div>
+                {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+              </div>
+              <PlaybookGraph
+                variant={playbookView === "graph" ? "definition" : "execution"}
+                showInspector={false}
+                title={executionView?.definition.title ?? "Retained task playbook"}
+                steps={steps}
+                countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
+                selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
+              />
+            </div>
+          ) : sideTab === "history" ? (
+            <div className="task-history-pane">
+              {executionView && (
+                <section aria-label="Task executions">
+                  <h3 className="task-history-title">{executionView.definition.title}</h3>
+                  <p className="task-history-summary">
+                    {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
+                  </p>
+                  {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
+                  {executions.map((execution) => (
+                    <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
+                      <div className="task-history-entry-heading">
+                        <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
+                        <span className="pill">{execution.lifecycle}</span>
+                      </div>
+                      <dl className="task-history-metadata">
+                        <dt>Execution</dt>
+                        <dd>
+                          <code>{execution.id}</code>
+                        </dd>
+                        <dt>Owner</dt>
+                        <dd>
+                          <code>{execution.owner_session_id}</code>
+                        </dd>
+                      </dl>
+                      {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
+                      {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
+                      {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
+                      {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                      <details>
+                        <summary>Inputs and outputs</summary>
+                        <ul aria-label="Execution inputs">
+                          {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                            ids.map((occurrenceId) => {
+                              const occurrence = executionView.state.occurrences?.[occurrenceId];
+                              return (
+                                <li key={`${selector}:${occurrenceId}`}>
+                                  <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                                  {occurrence?.producer_execution_id ?? "seed"}
+                                </li>
+                              );
+                            }),
+                          )}
+                        </ul>
+                        <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
+                      </details>
+                      <p className="task-history-permission">
+                        Completion permission: {execution.permission.kind}
+                        {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+                      </p>
+                      {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
+                          onClick={() => void allowCompletion(execution.id)}
+                        >
+                          Allow this session to complete · {execution.owner_session_id}
+                        </button>
+                      )}
+                    </article>
+                  ))}
+                </section>
+              )}
+            </div>
+          ) : (
+            <>
+              {artifactErr && !artifactErr.tone && (
+                <InlineStatus tone="error" detail={artifactErr.detail}>
+                  {artifactErr.msg}
+                </InlineStatus>
+              )}
+              <div className="artifacthead">
+                <div className="artifacttabs" role="group" aria-label="Artifact category">
+                  <button
+                    type="button"
+                    aria-pressed={artifactTab === "playbook"}
+                    className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
+                    onClick={() => setArtifactTab("playbook")}
+                  >
+                    Playbook
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={artifactTab === "attachments"}
+                    className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
+                    onClick={() => setArtifactTab("attachments")}
+                  >
+                    Attachments
+                  </button>
+                </div>
+                <span className="pill">
+                  {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                </span>
+              </div>
+              <div className="artifactlist">
+                {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
+                  <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
+                )}
+                {displayedArtifactItems.map((item) => {
+                  if (item.attachment && classifyAttachment(item) === "image") {
+                    return (
+                      <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
+                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                      </AttachmentPreview>
+                    );
+                  }
+                  const node = findOwnedArtifactNode(artifactTree, item.name);
+                  const available = Boolean(item.attachment || node);
+                  return (
+                    // div, not <button>: the provenance badges inside are buttons themselves,
+                    // and button-in-button is invalid HTML (same pattern as SessionView).
+                    <div
+                      key={item.name}
+                      className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                      title={item.name}
+                      role="button"
+                      tabIndex={available ? 0 : -1}
+                      aria-disabled={!available}
+                      onKeyDown={(e) => {
+                        if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                        e.preventDefault();
+                        e.currentTarget.click();
+                      }}
+                      onClick={() => {
+                        if (item.attachment) {
+                          revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
+                          return;
+                        }
+                        if (!node) return;
+                        openArtifactTab(item.name, node);
+                      }}
+                    >
+                      <span className="artifactitem-name">{item.name}</span>
+                      {!available && <span className="pill">Not yet readable</span>}
+                      <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                    </div>
+                  );
+                })}
+                {contextualArtifactTree.length > 0 && (
+                  <ArtifactTree
+                    taskSlug={slug}
+                    repoPath={repoPath}
+                    nodes={contextualArtifactTree}
+                    selectedId={selectedArtifactTreeId}
+                    onSelect={(node) => {
+                      openArtifactTab(node.label, node);
+                    }}
+                    onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
+                  />
+                )}
+                <RepoFileTree repoPath={repoPath} taskSlug={slug} selected={selectedIsRepo ? selectedArtifact : ""} onOpen={(path) => openArtifactTab(path, null, "repo")} />
+              </div>
+            </>
+          )}
+        </aside>
+        <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main className="detailmain">
           <div className="task-main-tabs" role="group" aria-label="Open files">
             <div className={`task-main-tab${activeArtifactTab ? "" : " on"}`}>
@@ -1741,210 +1945,6 @@ export function TaskDetail({
             </section>
           </div>
         </main>
-        <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
-        <aside className="artifactpane">
-          <div className="artifacthead">
-            <div className="artifacttabs" role="group" aria-label="Task side panel">
-              <button type="button" aria-pressed={sideTab === "playbook"} className={`artifacttab${sideTab === "playbook" ? " on" : ""}`} onClick={() => setSideTab("playbook")}>
-                Playbook
-              </button>
-              <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
-                History
-              </button>
-              <button type="button" aria-pressed={sideTab === "artifacts"} className={`artifacttab${sideTab === "artifacts" ? " on" : ""}`} onClick={() => setSideTab("artifacts")}>
-                Files
-              </button>
-            </div>
-            {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
-          </div>
-          {sideTab === "playbook" ? (
-            <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
-              <div className="task-playbook-toolbar">
-                <div className="artifacttabs" role="group" aria-label="Task playbook view">
-                  <button
-                    type="button"
-                    className={`artifacttab${playbookView === "list" ? " on" : ""}`}
-                    aria-pressed={playbookView === "list"}
-                    onClick={() => setPlaybookView("list")}
-                  >
-                    List
-                  </button>
-                  <button
-                    type="button"
-                    className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
-                    aria-pressed={playbookView === "graph"}
-                    onClick={() => setPlaybookView("graph")}
-                  >
-                    Graph
-                  </button>
-                </div>
-                {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
-              </div>
-              <PlaybookGraph
-                variant={playbookView === "graph" ? "definition" : "execution"}
-                showInspector={false}
-                title={executionView?.definition.title ?? "Retained task playbook"}
-                steps={steps}
-                countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
-                selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
-              />
-            </div>
-          ) : sideTab === "history" ? (
-            <div className="task-history-pane">
-              {executionView && (
-                <section aria-label="Task executions">
-                  <h3 className="task-history-title">{executionView.definition.title}</h3>
-                  <p className="task-history-summary">
-                    {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
-                  </p>
-                  {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
-                  {executions.map((execution) => (
-                    <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
-                      <div className="task-history-entry-heading">
-                        <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
-                        <span className="pill">{execution.lifecycle}</span>
-                      </div>
-                      <dl className="task-history-metadata">
-                        <dt>Execution</dt>
-                        <dd>
-                          <code>{execution.id}</code>
-                        </dd>
-                        <dt>Owner</dt>
-                        <dd>
-                          <code>{execution.owner_session_id}</code>
-                        </dd>
-                      </dl>
-                      {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
-                      {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
-                      {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
-                      {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-                      <details>
-                        <summary>Inputs and outputs</summary>
-                        <ul aria-label="Execution inputs">
-                          {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
-                            ids.map((occurrenceId) => {
-                              const occurrence = executionView.state.occurrences?.[occurrenceId];
-                              return (
-                                <li key={`${selector}:${occurrenceId}`}>
-                                  <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
-                                  {occurrence?.producer_execution_id ?? "seed"}
-                                </li>
-                              );
-                            }),
-                          )}
-                        </ul>
-                        <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
-                      </details>
-                      <p className="task-history-permission">
-                        Completion permission: {execution.permission.kind}
-                        {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-                      </p>
-                      {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
-                        <button
-                          type="button"
-                          className="btn small"
-                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                          onClick={() => void allowCompletion(execution.id)}
-                        >
-                          Allow this session to complete · {execution.owner_session_id}
-                        </button>
-                      )}
-                    </article>
-                  ))}
-                </section>
-              )}
-            </div>
-          ) : (
-            <>
-              {artifactErr && !artifactErr.tone && (
-                <InlineStatus tone="error" detail={artifactErr.detail}>
-                  {artifactErr.msg}
-                </InlineStatus>
-              )}
-              <div className="artifacthead">
-                <div className="artifacttabs" role="group" aria-label="Artifact category">
-                  <button
-                    type="button"
-                    aria-pressed={artifactTab === "playbook"}
-                    className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
-                    onClick={() => setArtifactTab("playbook")}
-                  >
-                    Playbook
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={artifactTab === "attachments"}
-                    className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
-                    onClick={() => setArtifactTab("attachments")}
-                  >
-                    Attachments
-                  </button>
-                </div>
-                <span className="pill">
-                  {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                </span>
-              </div>
-              <div className="artifactlist">
-                {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
-                  <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
-                )}
-                {displayedArtifactItems.map((item) => {
-                  if (item.attachment && classifyAttachment(item) === "image") {
-                    return (
-                      <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
-                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                      </AttachmentPreview>
-                    );
-                  }
-                  const node = findOwnedArtifactNode(artifactTree, item.name);
-                  const available = Boolean(item.attachment || node);
-                  return (
-                    // div, not <button>: the provenance badges inside are buttons themselves,
-                    // and button-in-button is invalid HTML (same pattern as SessionView).
-                    <div
-                      key={item.name}
-                      className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                      title={item.name}
-                      role="button"
-                      tabIndex={available ? 0 : -1}
-                      aria-disabled={!available}
-                      onKeyDown={(e) => {
-                        if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                        e.preventDefault();
-                        e.currentTarget.click();
-                      }}
-                      onClick={() => {
-                        if (item.attachment) {
-                          revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
-                          return;
-                        }
-                        if (!node) return;
-                        openArtifactTab(item.name, node);
-                      }}
-                    >
-                      <span className="artifactitem-name">{item.name}</span>
-                      {!available && <span className="pill">Not yet readable</span>}
-                      <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                    </div>
-                  );
-                })}
-                {contextualArtifactTree.length > 0 && (
-                  <ArtifactTree
-                    taskSlug={slug}
-                    repoPath={repoPath}
-                    nodes={contextualArtifactTree}
-                    selectedId={selectedArtifactTreeId}
-                    onSelect={(node) => {
-                      openArtifactTab(node.label, node);
-                    }}
-                    onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
-                  />
-                )}
-                <RepoFileTree repoPath={repoPath} taskSlug={slug} selected={selectedIsRepo ? selectedArtifact : ""} onOpen={(path) => openArtifactTab(path, null, "repo")} />
-              </div>
-            </>
-          )}
-        </aside>
       </div>
       <ArchiveTaskModal task={pendingArchive} onCancel={() => setPendingArchive(null)} onConfirm={confirmArchive} />
     </div>
