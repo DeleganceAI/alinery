@@ -7256,9 +7256,9 @@ header:has(~ main .task-info-panel) nav.tabs {
 .pane-reopen {
   position: absolute;
   z-index: 1;
-  top: 6px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   display: grid;
   place-items: center;
   width: 14px;
