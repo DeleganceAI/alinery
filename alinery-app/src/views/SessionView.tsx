@@ -1368,23 +1368,25 @@ export function SessionView({
                     {selectedArtifact}
                   </div>
                   <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                  <CopyArtifactButton text={artifactText} />
-                  <button
-                    type="button"
-                    className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
-                    aria-pressed={artifactMode === "preview"}
-                    onClick={() => setArtifactMode("preview")}
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
-                    aria-pressed={artifactMode === "raw"}
-                    onClick={() => setArtifactMode("raw")}
-                  >
-                    Raw
-                  </button>
+                  <div className="btn-group">
+                    <CopyArtifactButton text={artifactText} />
+                    <button
+                      type="button"
+                      className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
+                      aria-pressed={artifactMode === "preview"}
+                      onClick={() => setArtifactMode("preview")}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
+                      aria-pressed={artifactMode === "raw"}
+                      onClick={() => setArtifactMode("raw")}
+                    >
+                      Raw
+                    </button>
+                  </div>
                 </div>
                 {artifactErr && (
                   <InlineStatus tone="error" detail={artifactErr}>
