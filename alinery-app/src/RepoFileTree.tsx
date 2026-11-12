@@ -87,17 +87,19 @@ export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPat
     <section className="repo-tree" aria-label="Repository files">
       <div className="repo-tree-head">
         <span className="repo-tree-title">Repository</span>
-        <input
-          className="field-input repo-tree-filter"
-          type="search"
-          placeholder="Filter files…"
-          aria-label="Filter repository files"
-          value={filter}
-          onChange={(ev) => setFilter(ev.target.value)}
-        />
-        <button type="button" className="btn ghost small" onClick={() => setReload((n) => n + 1)}>
-          Refresh
-        </button>
+        <div className="btn-group repo-tree-search">
+          <input
+            className="field-input repo-tree-filter"
+            type="search"
+            placeholder="Filter files…"
+            aria-label="Filter repository files"
+            value={filter}
+            onChange={(ev) => setFilter(ev.target.value)}
+          />
+          <button type="button" className="btn ghost small" onClick={() => setReload((n) => n + 1)}>
+            Refresh
+          </button>
+        </div>
       </div>
       {error && <div className="danger-text">Couldn't list the worktree: {error}</div>}
       {!error && !listing && <div className="dim">Loading…</div>}

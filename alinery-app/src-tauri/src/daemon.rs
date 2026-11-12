@@ -1000,6 +1000,7 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
             // `Hello` is the probe: it says whether the daemon answers and what it is. A socket that accepts a connection
             // but does not answer (a daemon this app holds no token for, one still starting) is not a dead daemon.
             let compat = hello_current(&repo, &app_config, HELLO_OBSERVE).ok().map(|hello| {
+                state.set_daemon_version(&repo, &hello.version);
                 let build = app_build.get_or_insert_with(alineryd_build_id);
                 classify_hello(&hello, build, &alinery_core::app_config_identity(&app_config))
             });

@@ -1405,6 +1405,7 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Pa
     }
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
     let (hello, compat) = ensure_remote_daemon(session, path, &identity)?;
+    state.set_daemon_version(Path::new(key), &hello.version);
     if compat.usable() {
         state.set_daemon(Path::new(key), compat);
         // The repository half of readying a repo, which a remote one never had (plan S4.1). A failure leaves the repo as it was.
@@ -1648,6 +1649,8 @@ pub(crate) fn remote_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Re
 pub(crate) struct RuntimeStatus {
     pub(crate) hosts: Vec<HostRuntime>,
     pub(crate) repos: Vec<RepoRuntime>,
+    /// What the bridge has carried to and from this computer's daemons.
+    pub(crate) local_link: crate::daemon_rpc::LinkTraffic,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1659,6 +1662,8 @@ pub(crate) struct HostRuntime {
     pub(crate) running: Option<String>,
     /// What this app's bundle carries for that host; `None` while not connected or when the bundle lacks it.
     pub(crate) bundled: Option<String>,
+    /// What the bridge has carried to and from this host's daemons.
+    pub(crate) link: crate::daemon_rpc::LinkTraffic,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1667,9 +1672,13 @@ pub(crate) struct RepoRuntime {
     /// `current`, `build_drift` (usable, informational), `conflict` (restart from the banner), or `not_attached`.
     pub(crate) state: &'static str,
     pub(crate) issues: Vec<String>,
+    /// `local`, or the ssh host id the repo lives on.
+    pub(crate) host: String,
+    /// The app release its daemon reported in `Hello`; empty from a daemon too old to say, `None` before any answer.
+    pub(crate) version: Option<String>,
 }
 
-pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>) -> RepoRuntime {
+pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, version: Option<String>) -> RepoRuntime {
     let (state, issues) = match daemon {
         Some(RepoDaemon::Connected { compat: DaemonCompat::Current }) => ("current", vec![]),
         Some(RepoDaemon::Connected { .. }) => ("build_drift", vec![]),
@@ -1680,6 +1689,8 @@ pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>) -> RepoRuntim
         repo: repo.to_string(),
         state,
         issues,
+        host: crate::daemon_rpc::link_host(repo),
+        version,
     }
 }
 
@@ -1698,11 +1709,20 @@ pub(crate) fn runtime_status(app: AppHandle, state: State<'_, AppState>) -> Runt
                 state: state.remotes.status(id).state,
                 running: session.as_ref().map(|session| session.runtime_hash.clone()),
                 bundled: session.and_then(|session| Some(manifest.as_ref()?.targets.get(&session.triple)?.runtime_hash.clone())),
+                link: crate::daemon_rpc::link_traffic(id),
             }
         })
         .collect();
-    let repos = config.known_repos.iter().map(|repo| repo_runtime(repo, state.repo_daemon(Path::new(repo)))).collect();
-    RuntimeStatus { hosts, repos }
+    let repos = config
+        .known_repos
+        .iter()
+        .map(|repo| repo_runtime(repo, state.repo_daemon(Path::new(repo)), state.daemon_version(Path::new(repo))))
+        .collect();
+    RuntimeStatus {
+        hosts,
+        repos,
+        local_link: crate::daemon_rpc::link_traffic("local"),
+    }
 }
 
 /// Validate and remember a destination. Nothing connects yet. `label` names a new host; an

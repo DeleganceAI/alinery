@@ -167,12 +167,14 @@ export function TaskRunGraph({
     <section className="task-run-graph" aria-label="Task run graph">
       {sessions.length === 0 && <p className="dim">No sessions yet.</p>}
       <div className="task-run-modes" role="group" aria-label="Run graph display mode">
-        <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
-          Flow
-        </button>
-        <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
-          Artifact dependencies
-        </button>
+        <div className="btn-group">
+          <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
+            Flow
+          </button>
+          <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
+            Artifact dependencies
+          </button>
+        </div>
         {displayMode === "flow" && <p className="dim task-run-flow-hint">Session ordering · dashed links indicate resumed sessions.</p>}
       </div>
       {displayMode === "flow" && externalArtifacts.length > 0 && (

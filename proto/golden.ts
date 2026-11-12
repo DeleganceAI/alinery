@@ -50,6 +50,7 @@ const golden = {
     capabilities: [Capability.VIEW, Capability.ACT, Capability.ADMIN],
     repoRoot: "/repo",
     appConfigIdentity: "identity-1",
+    version: "1.2.3",
   }),
   MintTokenRequest: hex(MintTokenRequestSchema, { capability: Capability.AGENT, label: "managed-mcp" }),
   MintTokenResponse: hex(MintTokenResponseSchema, { token: "ab12cd34" }),

@@ -7,14 +7,15 @@ vi.mock("../ipc", () =>
   mockIpc({
     runtimeStatus: async () => ({
       hosts: [
-        { host_id: "h1", label: "aagent", state: "connected", running: "aaaaaaaa1111", bundled: "bbbbbbbb2222" },
-        { host_id: "h2", label: "box", state: "connected", running: "cccccccc", bundled: "cccccccc" },
-        { host_id: "h3", label: "offline", state: "idle", running: null, bundled: null },
+        { host_id: "h1", label: "aagent", state: "connected", running: "aaaaaaaa1111", bundled: "bbbbbbbb2222", link: { calls: 0, bytes_up: 0, bytes_down: 0 } },
+        { host_id: "h2", label: "box", state: "connected", running: "cccccccc", bundled: "cccccccc", link: { calls: 0, bytes_up: 0, bytes_down: 0 } },
+        { host_id: "h3", label: "offline", state: "idle", running: null, bundled: null, link: { calls: 0, bytes_up: 0, bytes_down: 0 } },
       ],
       repos: [
-        { repo: "/Users/me/app", state: "build_drift", issues: [] },
-        { repo: "alinery+ssh://h1/home/me/svc", state: "conflict", issues: ["The daemon on the host speaks protocol 40; this app speaks 41."] },
+        { repo: "/Users/me/app", state: "build_drift", issues: [], host: "local", version: "0.25.0" },
+        { repo: "alinery+ssh://h1/home/me/svc", state: "conflict", issues: ["The daemon on the host speaks protocol 40; this app speaks 41."], host: "h1", version: null },
       ],
+      local_link: { calls: 0, bytes_up: 0, bytes_down: 0 },
     }),
   }),
 );

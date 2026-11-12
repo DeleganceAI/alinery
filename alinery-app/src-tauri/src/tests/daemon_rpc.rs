@@ -543,6 +543,7 @@ async fn hello_decodes_the_fields_the_shell_reads() {
             capabilities: vec![Capability::View as i32, Capability::Act as i32],
             repo_root: "/r".into(),
             app_config_identity: String::new(),
+            version: String::new(),
         }
     );
     let gone = hello(&server.socket.with_file_name("none.sock"), "tok").await.unwrap_err();
@@ -613,6 +614,7 @@ fn golden_hello_response_decodes_field_by_field_and_encodes_back_to_the_same_byt
     );
     assert_eq!(response.repo_root, "/repo", "HelloResponse.repo_root");
     assert_eq!(response.app_config_identity, "identity-1", "HelloResponse.app_config_identity");
+    assert_eq!(response.version, "1.2.3", "HelloResponse.version");
     assert_eq!(response.encode_to_vec(), bytes);
 }
 

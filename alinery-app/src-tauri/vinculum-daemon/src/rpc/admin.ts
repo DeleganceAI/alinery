@@ -2,7 +2,8 @@ import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { Capability, ShutdownOrigin, type AdminService } from "alinery-proto/alinery/v1/admin_pb";
 import { capabilitiesOf, requireCapability, type TokenRegistry } from "./auth.ts";
 
-export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string };
+/** `version` is the app release the daemon was built from; Hello reports it for display only. */
+export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string; version?: string };
 
 /** What the daemon does for `Shutdown`: `stop` ends every session and removes the sockets and returns how many sessions it
  * ended; `exit` ends the process. `live` names the sessions whose process is running (`LiveSessions`). */
@@ -22,6 +23,7 @@ export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: stri
       capabilities: [...capabilitiesOf(ctx)].sort((a, b) => a - b),
       repoRoot: info.repoRoot,
       appConfigIdentity: info.appConfigIdentity,
+      version: info.version ?? "",
     }),
     // O20 (c): the shell asks for the token its managed MCP runs with. Only AGENT can be minted, so no credential can be made that
     // holds more than the RPCs behind MCP's tools.

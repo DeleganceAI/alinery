@@ -14,7 +14,7 @@ import { serveRpc } from "./server.ts";
 
 const storageScan = { repo: "/repo", appConfig: "/app", namespace: "" };
 const SECRET = "ab".repeat(32);
-const info = { protocol: 25, buildId: "build-1", repoRoot: "/repo", appConfigIdentity: "identity-1" };
+const info = { protocol: 25, buildId: "build-1", repoRoot: "/repo", appConfigIdentity: "identity-1", version: "9.8.7" };
 const cleanup: Array<() => void> = [];
 // What the daemon would do on Shutdown, recorded instead of done.
 const events: string[] = [];
@@ -105,7 +105,7 @@ test("the right token from the expected executable holds VIEW, ACT, APPROVE and 
   const c = client(socketPath, `Bearer ${SECRET}`);
   const hello = await c.hello({ clientId: "t", clientKind: "desktop", protocol: 25 });
   expect(hello.capabilities).toEqual([Capability.VIEW, Capability.ACT, Capability.APPROVE, Capability.ADMIN]);
-  expect(hello).toMatchObject({ protocol: 25, buildId: "build-1", repoRoot: "/repo", appConfigIdentity: "identity-1" });
+  expect(hello).toMatchObject({ protocol: 25, buildId: "build-1", repoRoot: "/repo", appConfigIdentity: "identity-1", version: "9.8.7" });
   expect(hello.epoch).toMatch(/^[0-9a-f-]{36}$/);
   expect(hello.epoch).toBe(store.epoch);
   expect((await client(socketPath, `Bearer ${SECRET}`).hello({})).epoch).toBe(hello.epoch);

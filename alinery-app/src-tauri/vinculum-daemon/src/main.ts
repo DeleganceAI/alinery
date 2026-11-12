@@ -54,6 +54,8 @@ import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
 import { formatTranscript, transcriptSource, transcriptToolSlots, type TranscriptSource, type TranscriptToolSlot } from "./transcript.ts";
+// Bundled at compile time, so the daemon reports the app release it was built with.
+import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
 const PROTOCOL = 41;
@@ -1032,7 +1034,7 @@ await serveRpc({
   secret: rpcSecret,
   tokens: agentTokens,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
-  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity },
+  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity, version: appPackage.version },
   lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__omp-setup__").map((row) => row.id) },
   store,
   jobs,

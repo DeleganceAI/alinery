@@ -364,8 +364,45 @@ pub(crate) async fn daemon_rpc(request: Request<'_>, webview: Webview) -> Result
     // A closed window ends its calls too; a reload does not announce itself, and a failed send covers that.
     let label = webview.label().to_string();
     watch_window(&webview, &label);
-    BRIDGE.run(&socket, &token, call, |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok()).await;
+    let host = link_host(&repo);
+    count_traffic(&host, |t| {
+        t.calls += 1;
+        t.bytes_up += call.body.len() as u64;
+    });
+    BRIDGE
+        .run(&socket, &token, call, |bytes| {
+            count_traffic(&host, |t| t.bytes_down += bytes.len() as u64);
+            channel.send(InvokeResponseBody::Raw(bytes)).is_ok()
+        })
+        .await;
     Ok(())
+}
+
+/// Calls and bytes the bridge carried for one host's sync link since the app started. The footer
+/// samples these twice and shows the difference as a rate; nothing else reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct LinkTraffic {
+    pub(crate) calls: u64,
+    pub(crate) bytes_up: u64,
+    pub(crate) bytes_down: u64,
+}
+
+static TRAFFIC: LazyLock<Mutex<HashMap<String, LinkTraffic>>> = LazyLock::new(Mutex::default);
+
+/// The host a repo key's calls travel to: its ssh host id, or `local` for this computer.
+pub(crate) fn link_host(repo: &str) -> String {
+    match RepoRef::parse(repo) {
+        Ok(RepoRef::Remote { host_id, .. }) => host_id,
+        _ => "local".to_string(),
+    }
+}
+
+pub(crate) fn count_traffic(host: &str, update: impl FnOnce(&mut LinkTraffic)) {
+    update(TRAFFIC.lock().unwrap_or_else(|e| e.into_inner()).entry(host.to_string()).or_default());
+}
+
+pub(crate) fn link_traffic(host: &str) -> LinkTraffic {
+    TRAFFIC.lock().unwrap_or_else(|e| e.into_inner()).get(host).copied().unwrap_or_default()
 }
 
 fn watch_window(webview: &Webview, label: &str) {
@@ -439,6 +476,8 @@ pub(crate) struct HelloResponse {
     pub repo_root: String,
     #[prost(string, tag = "6")]
     pub app_config_identity: String,
+    #[prost(string, tag = "7")]
+    pub version: String,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]

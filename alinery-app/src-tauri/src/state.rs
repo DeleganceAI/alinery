@@ -29,6 +29,8 @@ pub(crate) struct AppState {
     // remote daemons reuse this map instead of redoing it. The active repo is a
     // *selection* over this map, no longer the only slot that can hold a client.
     pub(crate) daemons: Mutex<HashMap<PathBuf, RepoDaemon>>,
+    /// The app release each attached daemon reports in `Hello` (empty from a daemon too old to say), for the footer.
+    pub(crate) daemon_versions: Mutex<HashMap<PathBuf, String>>,
     // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
     pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
     pub(crate) mcp_spawn_error: Mutex<Option<String>>,
@@ -115,6 +117,15 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(repo.to_path_buf(), RepoDaemon::Connected { compat });
+    }
+    pub(crate) fn set_daemon_version(&self, repo: &Path, version: &str) {
+        self.daemon_versions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(repo.to_path_buf(), version.to_string());
+    }
+    pub(crate) fn daemon_version(&self, repo: &Path) -> Option<String> {
+        self.daemon_versions.lock().unwrap_or_else(|e| e.into_inner()).get(repo).cloned()
     }
     pub(crate) fn set_daemon_conflict(&self, repo: &Path, c: DaemonConflict) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(repo.to_path_buf(), RepoDaemon::Conflicted(c));

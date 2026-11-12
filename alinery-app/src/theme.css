@@ -3280,8 +3280,8 @@ textarea.field-input {
   display: grid;
   gap: 7px;
   width: max-content;
-  min-width: 210px;
-  max-width: min(300px, calc(100vw - 24px));
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 24px));
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3307,6 +3307,91 @@ textarea.field-input {
 .fstat:hover .footer-status-tooltip {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
+}
+/* Bridges the gap above the footer, so the pointer can reach the popover's buttons without closing it. */
+.footer-status-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+}
+/* Sync links: one block per daemon host, its traffic, then each repository's daemon version. */
+.footer-status-tooltip .sync-links {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.footer-status-tooltip .sync-links span {
+  display: inline;
+}
+.sync-link {
+  display: grid;
+  gap: 4px;
+}
+.sync-link-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sync-link-head .live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.sync-link-head .live.down {
+  background: var(--danger);
+}
+.sync-link-state {
+  margin-left: auto;
+}
+.footer-status-tooltip .sync-link-rate {
+  display: flex;
+  gap: 10px;
+  padding-left: 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.sync-link-note {
+  padding-left: 14px;
+  color: var(--warning);
+}
+.footer-status-tooltip .sync-link-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+}
+.sync-link-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-link-version {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+.sync-link-update {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--warning);
+  cursor: pointer;
+}
+.sync-link-update:hover {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
 }
 .fstat .fmeta {
   display: inline-flex;
@@ -4011,32 +4096,9 @@ header:has(~ main .task-info-panel) {
   flex: none;
   flex-wrap: nowrap;
 }
-/* The header's buttons read as one segmented group: shared outer corners, a divider between each. */
-.task-info-head-actions {
-  gap: 0;
-}
-.task-info-head-actions > .btn {
-  border-radius: 0;
-  margin-left: -1px;
-}
-.task-info-head-actions > .btn:first-of-type {
-  border-top-left-radius: var(--radius-sm);
-  border-bottom-left-radius: var(--radius-sm);
-  margin-left: 0;
-}
-.task-info-head-actions > .btn:last-of-type {
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-}
-.task-info-head-actions > .btn:hover,
-.task-info-head-actions > .btn:focus-visible {
-  position: relative;
-  z-index: 1;
-}
 .task-info-head-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
 }
 .task-related,
@@ -8103,6 +8165,17 @@ header:has(~ main .task-info-panel) {
   margin-bottom: 6px;
   font-family: var(--font-ui);
 }
+/* The filter takes the row's free width; it matches the small Refresh button's height. */
+.repo-tree-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.repo-tree-search .repo-tree-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding-block: 0;
+}
 .repo-tree-title {
   font-weight: 600;
   color: var(--text-muted);
@@ -10333,4 +10406,36 @@ header:has(~ main .task-info-panel) {
 }
 .canvas-error {
   color: var(--danger, var(--text-muted));
+}
+
+/* A row of controls that read as one: touching, shared outer corners, a single line between each. A pressed toggle
+   stays highlighted while the view it opens is showing. Last in the file so it wins over row gaps such as .crow. */
+.btn-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.btn-group > :is(.btn, .field-input) {
+  margin: 0 0 0 -1px;
+  border-radius: 0;
+}
+.btn-group > :is(.btn, .field-input):first-child {
+  margin-left: 0;
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+.btn-group > :is(.btn, .field-input):last-child {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.btn-group > :is(.btn, .field-input):is(:hover, :focus-visible, :focus) {
+  position: relative;
+  z-index: 1;
+}
+.btn-group > .btn[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text-strong);
 }

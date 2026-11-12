@@ -993,10 +993,29 @@ fn a_session_is_stale_when_the_bundle_now_carries_another_runtime() {
 #[test]
 fn the_runtime_panel_names_each_daemon_state_without_asking_the_daemon() {
     use crate::{state::RepoDaemon, DaemonCompat};
-    let row = |daemon| repo_runtime("/r", daemon).state;
+    let row = |daemon| repo_runtime("/r", daemon, None).state;
     assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::Current })), "current");
     assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::BuildDrift })), "build_drift");
     assert_eq!(row(None), "not_attached");
+}
+
+#[test]
+fn a_repo_row_names_its_host_and_daemon_version_and_traffic_is_counted_per_host() {
+    use crate::daemon_rpc::{count_traffic, link_traffic};
+    let remote = repo_runtime("alinery+ssh://box-1/srv/r", None, Some("0.600.0".into()));
+    assert_eq!((remote.host.as_str(), remote.version.as_deref()), ("box-1", Some("0.600.0")));
+    assert_eq!(repo_runtime("/r", None, None).host, "local");
+    let before = link_traffic("box-count-test");
+    count_traffic("box-count-test", |t| {
+        t.calls += 1;
+        t.bytes_up += 10;
+    });
+    count_traffic("box-count-test", |t| t.bytes_down += 7);
+    let after = link_traffic("box-count-test");
+    assert_eq!(
+        (after.calls - before.calls, after.bytes_up - before.bytes_up, after.bytes_down - before.bytes_down),
+        (1, 10, 7)
+    );
 }
 
 #[test]

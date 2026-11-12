@@ -35,6 +35,7 @@ message HelloResponse {
   repeated Capability capabilities = 4;
   string repo_root = 5;
   string app_config_identity = 6;  // ensure_daemon reuses only on protocol and identity match
+  string version = 7;              // the app release the daemon was built from, for display only
 }
 
 enum Capability {

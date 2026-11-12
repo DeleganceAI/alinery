@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-app"
-version = "0.25.0"
+version = "0.600.0"
 dependencies = [
  "alinery-core",
  "bytes",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "alinery-core"
-version = "0.25.0"
+version = "0.600.0"
 dependencies = [
  "dirs 5.0.1",
  "libc",

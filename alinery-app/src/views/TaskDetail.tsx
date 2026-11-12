@@ -929,7 +929,7 @@ export function TaskDetail({
               </div>
             </div>
           )}
-          <div className="crow task-info-head-actions">
+          <div className="task-info-head-actions btn-group">
             {task?.archived ? (
               task.parent_task ? (
                 <>
@@ -1516,17 +1516,24 @@ export function TaskDetail({
                       {busy === "acknowledge-exits" ? "Acknowledging…" : "Acknowledge exited sessions"}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="btn ghost small"
-                    disabled={!subtaskState?.can_start || !!busy}
-                    title={subtaskState?.disabled_reason || undefined}
-                    aria-describedby={subtaskState && !subtaskState.can_start ? "task-session-disabled" : undefined}
-                    onClick={startManager}
-                  >
-                    {busy === "subtask-manager" ? "Starting…" : "Start sub-task"}
-                  </button>
-                  {task && (task.archived || !task.worktree || worktreeMissing) ? (
+                  <div className="btn-group">
+                    <button
+                      type="button"
+                      className="btn ghost small"
+                      disabled={!subtaskState?.can_start || !!busy}
+                      title={subtaskState?.disabled_reason || undefined}
+                      aria-describedby={subtaskState && !subtaskState.can_start ? "task-session-disabled" : undefined}
+                      onClick={startManager}
+                    >
+                      {busy === "subtask-manager" ? "Starting…" : "Start sub-task"}
+                    </button>
+                    {!(task && (task.archived || !task.worktree || worktreeMissing)) && (
+                      <button type="button" className="btn small" disabled={!!busy} onClick={onNewSession}>
+                        New session
+                      </button>
+                    )}
+                  </div>
+                  {task && (task.archived || !task.worktree || worktreeMissing) && (
                     <span id="task-session-disabled" className="dim task-session-disabled">
                       {task.archived
                         ? task.worktree
@@ -1536,10 +1543,6 @@ export function TaskDetail({
                           ? "worktree missing on disk"
                           : "Worktree removed — new sessions are disabled. Create a new task, tag this one as related, and continue the work there."}
                     </span>
-                  ) : (
-                    <button type="button" className="btn small" disabled={!!busy} onClick={onNewSession}>
-                      New session
-                    </button>
                   )}
                 </div>
               </div>

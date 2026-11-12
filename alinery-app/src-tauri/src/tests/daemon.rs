@@ -563,6 +563,7 @@ fn current_hello(config: &Path, build: &str) -> HelloResponse {
         capabilities: Vec::new(),
         repo_root: String::new(),
         app_config_identity: alinery_core::app_config_identity(config),
+        version: String::new(),
     }
 }
 
