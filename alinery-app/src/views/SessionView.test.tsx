@@ -250,6 +250,29 @@ describe("SessionView artifact pane", () => {
     expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "task", "parent-shot");
   });
 
+  it("opens an artifact as a tab beside the pinned conversation and keeps the list in the side panel", async () => {
+    fakeArtifacts.set("task", {
+      tree: [{ id: "ticket", kind: "referenced", label: "07-notes.md", owner_task_slug: "parent", source: "parent_context", children: [] }],
+    });
+    fakeArtifacts.nodeTexts.ticket = "# Ticket";
+    renderSession({ phase: "review-checks", playbook: "review" });
+    await flushPromises();
+
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /07-notes\.md/ }));
+    await flushPromises();
+
+    expect(tabs.getByRole("button", { name: "07-notes.md" }).getAttribute("aria-pressed")).toBe("true");
+    expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("heading", { name: "Ticket" })).toBeDefined();
+    expect(screen.getByRole("group", { name: "Artifact category" })).toBeDefined();
+
+    fireEvent.click(tabs.getByRole("button", { name: "Close 07-notes.md" }));
+    expect(tabs.queryByRole("button", { name: "07-notes.md" })).toBeNull();
+    expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows a comment another client added, with no poll", async () => {
     renderSession({ phase: "review-checks", playbook: "review" });
     await flushPromises();

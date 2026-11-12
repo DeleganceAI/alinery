@@ -33,11 +33,12 @@ export function useArtifactPaneWidth(
   appearance: AppearancePrefs,
   onAppearanceChange: (next: AppearancePrefs) => void,
   side: "left" | "right" = "right",
+  initiallyCollapsed = false,
 ): [number, ArtifactPaneResizerProps, ArtifactPaneCollapse] {
   const grow = side === "right" ? -1 : 1;
   const [width, setWidth] = useState(() => normalizeArtifactViewerWidth(appearance.artifact_viewer_width));
   // ponytail: collapse is per view and not saved; add it to AppearancePrefs if it should survive a relaunch.
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(initiallyCollapsed);
   const accessibleMax = clampArtifactViewerWidth(ARTIFACT_VIEWER_WIDTH_MAX);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;

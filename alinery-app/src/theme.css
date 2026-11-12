@@ -4805,7 +4805,6 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-view {
   --chat-col-min: 420px;
   --chat-col-max: 860px;
-  --chat-rail-w: 272px;
   position: absolute;
   inset: 0;
   display: flex;
@@ -5270,13 +5269,22 @@ header:has(~ main .task-info-panel) nav.tabs {
 
 /* Left rail */
 /* A share of the view, not a fixed width: beside the terminal drawer the view can be ~650px. */
+/* The side panel width and divider the task and session views use. */
 .chat-rail {
-  flex: 0 0 clamp(200px, 30%, var(--chat-rail-w));
+  flex: 0 0 clamp(var(--artifact-pane-min), var(--artifact-width), var(--artifact-pane-max-fraction));
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--surface);
+}
+.chat-view > .artifact-resizer {
+  flex: 0 0 8px;
+}
+.chat-view > .artifact-resizer.collapsed {
+  flex-basis: 16px;
+}
+.chat-main > .task-main-tabs {
+  margin: 0;
 }
 .chat-rail-head {
   display: flex;
@@ -5411,6 +5419,11 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-thread-btn:hover {
   color: var(--text-strong);
   background: var(--surface-subtle);
+}
+/* Open as a tab but not the one showing. */
+.chat-thread-btn[data-open="true"] {
+  border-left-color: var(--border-strong);
+  color: var(--text);
 }
 .chat-thread-btn[aria-current="true"] {
   border-left-color: var(--accent);
@@ -7443,6 +7456,30 @@ header:has(~ main .task-info-panel) nav.tabs {
   flex: 1 1 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+/* The session view's main pane: its tabs over the conversation. An open artifact covers the conversation rather than
+   replacing it, so the chat keeps its scroll and the terminal its size. */
+.session-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.session-main > .task-main-tabs {
+  margin: 0;
+}
+.session-main-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.session-artifact-view {
+  position: absolute;
+  inset: 12px;
+  z-index: 3;
+  background: var(--surface);
 }
 .task-sessions-tab {
   display: flex;

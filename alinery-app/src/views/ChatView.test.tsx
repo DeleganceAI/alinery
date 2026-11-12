@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE } from "../appearance";
 // Chat on this branch talks to Vinculum (transcript, prompt, abort) and does not attach or open a terminal.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,7 +86,7 @@ vi.mock("../ipc", () =>
   }),
 );
 function chat(visibility: ChatPrefs = DEFAULT_CHAT_VISIBILITY) {
-  return <ChatView terminalFontSize={13} visibility={visibility} />;
+  return <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={visibility} />;
 }
 
 function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
@@ -218,6 +219,27 @@ describe("ChatView", () => {
     expect(mocks.archiveChatThread).not.toHaveBeenCalled();
   });
 
+  it("opens each picked thread as a tab, marks open threads in the rail, and closing a tab shows its neighbour", async () => {
+    fakeChat.set([thread("s-one"), thread("s-two")]);
+    render(chat());
+    fireEvent.click(await within(rail()).findByRole("button", { name: threadRow("s-one") }));
+    fireEvent.click(within(rail()).getByRole("button", { name: threadRow("s-two") }));
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "Chat s-one" }).getAttribute("aria-pressed")).toBe("false");
+    expect(tabs.getByRole("button", { name: "Chat s-two" }).getAttribute("aria-pressed")).toBe("true");
+    const one = within(rail()).getByRole("button", { name: threadRow("s-one") });
+    expect(one.dataset.open).toBe("true");
+    expect(one.getAttribute("aria-current")).toBeNull();
+    fireEvent.click(tabs.getByRole("button", { name: "Close Chat s-two" }));
+    expect(tabs.queryByRole("button", { name: "Chat s-two" })).toBeNull();
+    expect(
+      within(rail())
+        .getByRole("button", { name: threadRow("s-one") })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    expect(within(rail()).getByRole("button", { name: threadRow("s-two") }).dataset.open).toBeUndefined();
+  });
+
   it("starts the rail collapsed at 900 and still offers a new chat", () => {
     fakeChat.set([]);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
@@ -229,7 +251,7 @@ describe("ChatView", () => {
   it("hides the composer until a thread is picked and starts a new chat in the first repo", async () => {
     fakeChat.set([]);
     mocks.listChatRepos.mockResolvedValue(["/first", "/second"]);
-    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    render(<ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     expect(screen.queryByLabelText("Message or /command")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
     const dialog = await screen.findByRole("dialog", { name: "New thread" });
@@ -527,7 +549,9 @@ describe("ChatView", () => {
   it("reads the open repos again when the active repo's daemon attaches after the view opened", async () => {
     fakeChat.set([]);
     mocks.listChatRepos.mockResolvedValueOnce([]).mockResolvedValue(["/repo"]);
-    const view = (linkKey: string) => <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} linkKey={linkKey} />;
+    const view = (linkKey: string) => (
+      <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} linkKey={linkKey} />
+    );
     const { rerender } = render(view("false"));
     expect(await within(rail()).findByText(NONE_OPEN)).toBeTruthy();
     rerender(view("true"));
@@ -557,7 +581,7 @@ describe("ChatView", () => {
 
   it("tells same-named repositories apart in the new-thread dialog and shows the full path", async () => {
     mocks.listChatRepos.mockResolvedValue(["/a/work/alinery", "/a/oss/alinery"]);
-    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
+    render(<ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />);
     fireEvent.click(screen.getByRole("button", { name: "New thread" }));
     const select = screen.getByRole("combobox") as HTMLSelectElement;
     await waitFor(() => expect(Array.from(select.options).map((option) => option.textContent)).toEqual(["work/alinery", "oss/alinery"]));
@@ -694,7 +718,7 @@ describe("ChatView canvas", () => {
   };
   const open = async (canvasAllowed: boolean) => {
     fakeChat.set([thread("s-live")]);
-    render(<ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} canvasAllowed={canvasAllowed} />);
+    render(<ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} canvasAllowed={canvasAllowed} />);
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-live") }));
   };
 

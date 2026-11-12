@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE } from "../appearance";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
@@ -334,7 +335,7 @@ describe("QuickChat", () => {
     fakeChat.set([row]);
     render(
       <ChatSessionProvider>
-        <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
+        <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
         <QuickChat open visibility={DEFAULT_CHAT_VISIBILITY} onOpenInChat={() => {}} onHide={() => {}} />
       </ChatSessionProvider>,
     );

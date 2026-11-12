@@ -1,21 +1,4 @@
-import {
-  Archive,
-  Brain,
-  ChevronDown,
-  ChevronRight,
-  FolderGit2,
-  GitBranch,
-  LayoutGrid,
-  MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Archive, Brain, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, MessageSquare, PanelLeftClose, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
@@ -24,7 +7,9 @@ import { emptyTranscript, NEXT_TURN_MODEL_TITLE, NEXT_TURN_THINKING_TITLE } from
 import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { MainTabs } from "../MainTabs";
 import { NameEditor } from "../NameEditor";
+import { PaneResizer } from "../PaneResizer";
 import { repoDisplayPath } from "../remoteRepo";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
@@ -44,7 +29,8 @@ import {
 import { useSessionObservations } from "../sync/sessionObservation";
 import { renameSession } from "../sync/sessions";
 import { toast } from "../toast";
-import type { ChatThread, SessionObservation } from "../types";
+import type { AppearancePrefs, ChatThread, SessionObservation } from "../types";
+import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { ChatCanvas } from "./ChatCanvas";
 import { ChatPane } from "./ChatPane";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
@@ -119,6 +105,8 @@ function ChatViewBody({
   knownRepos = [],
   canvasAllowed = false,
   linkKey = "",
+  appearance,
+  onAppearanceChange,
 }: {
   active?: boolean;
   terminalFontSize: number;
@@ -128,10 +116,20 @@ function ChatViewBody({
   canvasAllowed?: boolean;
   /** Changes when the active repo's daemon link does: a daemon that attaches after the view opened makes its repo usable here. */
   linkKey?: string;
+  /** The thread list's width is the side panel width the task and session views use. */
+  appearance: AppearancePrefs;
+  onAppearanceChange: (next: AppearancePrefs) => void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 900);
+  const [railWidth, railResizerProps, railCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange, "left", window.innerWidth <= 900);
+  const collapsed = railCollapse.collapsed;
+  const setCollapsed = railCollapse.setCollapsed;
+  // The threads open as tabs, in the order they were opened; the selected thread is the active tab.
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (selectedKey) setOpenKeys((keys) => (keys.includes(selectedKey) ? keys : [...keys, selectedKey]));
+  }, [selectedKey]);
   const [creating, setCreating] = useState(false);
   // null until the first read: the thread list waits for it rather than loading twice.
   const { repos: openRepos, error: reposError } = useOpenChatRepos(active, `${knownRepos.join("\n")}\n${linkKey}`);
@@ -161,6 +159,15 @@ function ChatViewBody({
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
+  const threadTabs = openKeys.flatMap((key) => {
+    const thread = threads.find((t) => threadKey(t) === key);
+    return thread ? [{ key, name: threadLabel(thread), mode: "preview" as const }] : [];
+  });
+  const closeThreadTab = (key: string) => {
+    const at = threadTabs.findIndex((tab) => tab.key === key);
+    setOpenKeys((keys) => keys.filter((k) => k !== key));
+    if (key === selectedKey) setSelectedKey(threadTabs[at - 1]?.key ?? threadTabs[at + 1]?.key ?? null);
+  };
   const canvas = useCanvas(canvasAllowed && selected ? selected.repo_path : "", selected?.session.id ?? "");
   const registry = useChatRegistry();
   useEffect(() => {
@@ -371,7 +378,7 @@ function ChatViewBody({
       data-rail={collapsed ? "closed" : "open"}
       data-link={selected ? connection.state : undefined}
       data-canvas={showCanvas ? "on" : undefined}
-      style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px` }}
+      style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px`, ["--artifact-width" as string]: `${railWidth}px` }}
     >
       {collapsed ? null : (
         <aside className="chat-rail" data-testid="chat-rail" aria-label="Threads">
@@ -424,6 +431,7 @@ function ChatViewBody({
                               type="button"
                               className="chat-thread-btn"
                               aria-current={key === selectedKey ? "true" : undefined}
+                              data-open={openKeys.includes(key) ? "true" : undefined}
                               data-archived={archived ? "true" : undefined}
                               aria-label={archived ? threadLabel(thread) : `${threadLabel(thread)}, ${obsLabel(kind)}`}
                               onClick={() => setSelectedKey(key)}
@@ -483,14 +491,11 @@ function ChatViewBody({
           </div>
         </aside>
       )}
+      <PaneResizer props={railResizerProps} collapse={railCollapse} />
       {showCanvas && selected && canvas ? <ChatCanvas repo={selected.repo_path} threadId={selected.session.id} canvas={canvas} /> : null}
       <section className="chat-main">
+        {threadTabs.length > 0 && <MainTabs tabs={threadTabs} active={selectedKey ?? ""} onSelect={setSelectedKey} onClose={closeThreadTab} />}
         <header className="chat-titlebar">
-          {collapsed ? (
-            <button type="button" className="chat-icon-btn" aria-label="Show threads" title="Show threads" onClick={() => setCollapsed(false)}>
-              <PanelLeftOpen size={16} aria-hidden="true" />
-            </button>
-          ) : null}
           <div className="chat-titlebar-identity">
             {selected && renaming ? (
               <NameEditor
@@ -726,7 +731,7 @@ function ChatViewBody({
   );
 }
 
-export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs; knownRepos?: string[]; canvasAllowed?: boolean; linkKey?: string }) {
+export function ChatView(props: Parameters<typeof ChatViewBody>[0]) {
   const existing = useContext(ChatSessionContext);
   if (!existing) {
     return (

@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -14,6 +14,7 @@ import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { MainTabs, useOpenTabs } from "../MainTabs";
 import { PaneResizer } from "../PaneResizer";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
@@ -321,24 +322,17 @@ export function TaskDetail({
   }
   projectedRows.push(...managerlessFinishedRows);
   const taskPanelRows = orderTaskPanelRows(projectedRows, observationsById, hasExpectedArtifact, sessionSort);
-  // The main pane's tabs: Sessions is always first (activeTab ""), then each opened artifact.
-  const [openTabs, setOpenTabs] = useState<OpenArtifactTab[]>([]);
-  const [activeTab, setActiveTab] = useState("");
-  const activeArtifactTab = openTabs.find((tab) => tab.key === activeTab);
+  // The main pane's tabs: Sessions is always first, then each opened artifact; a different task (or the same slug in
+  // another repo) starts on Sessions.
+  const fileTabs = useOpenTabs<OpenArtifactTab>(`${repoPath}\0${slug}`);
+  const activeArtifactTab = fileTabs.current;
   const selectedArtifact = activeArtifactTab?.name ?? "";
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
-  const setArtifactMode = (mode: OpenArtifactTab["mode"]) => setOpenTabs((tabs) => tabs.map((tab) => (tab.key === activeTab ? { ...tab, mode } : tab)));
+  const setArtifactMode = fileTabs.setMode;
   const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact") => {
-    const key = kind === "repo" ? `repo:${name}` : (node?.id ?? name);
-    setOpenTabs((tabs) => (tabs.some((tab) => tab.key === key) ? tabs : [...tabs, { key, kind, name, node, mode: "preview" }]));
-    setActiveTab(key);
+    fileTabs.open({ key: kind === "repo" ? `repo:${name}` : (node?.id ?? name), kind, name, node, mode: "preview" });
     setArtifactErr(null);
-  };
-  const closeArtifactTab = (key: string) => {
-    const at = openTabs.findIndex((tab) => tab.key === key);
-    setOpenTabs((tabs) => tabs.filter((tab) => tab.key !== key));
-    if (key === activeTab) setActiveTab(openTabs[at - 1]?.key ?? "");
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
   const selectedIsRepo = activeArtifactTab?.kind === "repo";
@@ -533,13 +527,6 @@ export function TaskDetail({
     });
     return () => registerNav(null);
   });
-
-  // Open tabs belong to one task; a different task (or the same slug in another repo) starts on Sessions.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on the task's identity only
-  useEffect(() => {
-    setOpenTabs([]);
-    setActiveTab("");
-  }, [repoPath, slug]);
 
   useEffect(() => {
     let alive = true;
@@ -1332,30 +1319,7 @@ export function TaskDetail({
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main className="detailmain">
-          <div className="task-main-tabs" role="group" aria-label="Open files">
-            <div className={`task-main-tab${activeArtifactTab ? "" : " on"}`}>
-              <button type="button" className="task-main-tab-label" aria-pressed={!activeArtifactTab} onClick={() => setActiveTab("")}>
-                Sessions
-              </button>
-            </div>
-            {openTabs.map((tab) => (
-              <div key={tab.key} className={`task-main-tab${tab.key === activeTab ? " on" : ""}`}>
-                <button
-                  type="button"
-                  className="task-main-tab-label"
-                  aria-pressed={tab.key === activeTab}
-                  title={tab.name}
-                  onClick={() => setActiveTab(tab.key)}
-                  onAuxClick={(ev) => ev.button === 1 && closeArtifactTab(tab.key)}
-                >
-                  {tab.name.slice(tab.name.lastIndexOf("/") + 1)}
-                </button>
-                <button type="button" className="task-main-tab-close" aria-label={`Close ${tab.name}`} title="Close" onClick={() => closeArtifactTab(tab.key)}>
-                  <X size={12} strokeWidth={1.75} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
-          </div>
+          <MainTabs pinned="Sessions" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.setActive} onClose={fileTabs.close} />
           {activeArtifactTab && (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">

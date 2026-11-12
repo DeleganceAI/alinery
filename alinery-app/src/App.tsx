@@ -1350,6 +1350,8 @@ export default function App() {
                       canvasAllowed={chatCanvas}
                       // ponytail: the active repo's link only; another open repo's late attach shows on the next window focus.
                       linkKey={String(daemon.reachable)}
+                      appearance={appearance}
+                      onAppearanceChange={onAppearanceChange}
                     />
                   </div>
                 )}

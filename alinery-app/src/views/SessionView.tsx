@@ -35,6 +35,7 @@ import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
 import { PaneResizer } from "../PaneResizer";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
@@ -170,14 +171,21 @@ export function SessionView({
   const artifactItems = liveArtifacts.items;
   const artifactTree = liveArtifacts.tree;
   const artifactNames = artifactItems.map((a) => a.name);
-  const [selectedArtifact, setSelectedArtifact] = useState("");
-  const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
+  // The main pane's tabs: the conversation is pinned first, then each opened artifact; another session starts on the conversation.
+  const fileTabs = useOpenTabs<OpenTab & { node: ArtifactTreeNode | null }>(`${id}\0${taskSlug}`);
+  const selectedArtifact = fileTabs.current?.name ?? "";
+  const selectedArtifactNode = fileTabs.current?.node ?? null;
+  const openArtifact = (name: string, node: ArtifactTreeNode | null) => {
+    fileTabs.open({ key: node?.id ?? name, name, node, mode: "preview" });
+    setArtifactErr("");
+  };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
   const selectedArtifactTreeId = selectedArtifactNode?.id;
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifactItem && !selectedArtifactItem.attachment);
   const [artifactText, setArtifactText] = useState("");
-  const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
+  const artifactMode = fileTabs.current?.mode ?? "preview";
+  const setArtifactMode = fileTabs.setMode;
   const [artifactErr, setArtifactErr] = useState("");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const artifactCommentCountByArtifact = useMemo(() => {
@@ -483,13 +491,10 @@ export function SessionView({
 
   useEffect(() => {
     setArtifactTab("playbook");
-    setSelectedArtifactNode(null);
   }, [id, taskSlug]);
 
   useEffect(() => {
     if (hasTask) return;
-    setSelectedArtifact("");
-    setSelectedArtifactNode(null);
     setArtifactErr("");
   }, [hasTask]);
 
@@ -1253,383 +1258,253 @@ export function SessionView({
         {hasTask && (
           <>
             <aside className="artifactpane">
-              {selectedArtifact ? (
-                <>
-                  <div className="artifacthead">
+              <>
+                <div className="artifacthead">
+                  <div className="artifacttabs" role="group" aria-label="Artifact category">
                     <button
                       type="button"
-                      className="btn ghost small"
-                      aria-label="Back to artifact list"
-                      title="Back to artifact list"
-                      onClick={() => {
-                        setSelectedArtifact("");
-                        setSelectedArtifactNode(null);
-                        setArtifactErr("");
-                      }}
+                      aria-pressed={artifactTab === "playbook"}
+                      className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
+                      onClick={() => setArtifactTab("playbook")}
                     >
-                      <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" />
-                    </button>
-                    <div className="artifacttitle mono" title={selectedArtifact}>
-                      {selectedArtifact}
-                    </div>
-                    <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                    <CopyArtifactButton text={artifactText} />
-                    <button
-                      type="button"
-                      className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
-                      aria-pressed={artifactMode === "preview"}
-                      onClick={() => setArtifactMode("preview")}
-                    >
-                      Preview
+                      Playbook
                     </button>
                     <button
                       type="button"
-                      className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
-                      aria-pressed={artifactMode === "raw"}
-                      onClick={() => setArtifactMode("raw")}
+                      aria-pressed={artifactTab === "attachments"}
+                      className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
+                      onClick={() => setArtifactTab("attachments")}
                     >
-                      Raw
+                      Attachments
                     </button>
                   </div>
-                  {artifactErr && (
-                    <InlineStatus tone="error" detail={artifactErr}>
-                      The last artifact action did not complete.
-                    </InlineStatus>
+                  <span className="pill">
+                    {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                  </span>
+                </div>
+                {artifactErr && (
+                  <InlineStatus tone="error" detail={artifactErr}>
+                    The last artifact action did not complete.
+                  </InlineStatus>
+                )}
+                <div className="artifactlist">
+                  {displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
+                    <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
                   )}
-                  {artifactCommentDraftError && (
-                    <InlineStatus tone="error" detail={artifactCommentDraftError}>
-                      Saving the comment draft failed.
-                    </InlineStatus>
-                  )}
-                  {reviewPending && (
-                    <InlineStatus
-                      tone="info"
-                      action={
-                        <button type="button" className="btn ghost small" onClick={clearPendingReview}>
-                          Clear waiting
-                        </button>
-                      }
-                    >
-                      {reviewPending.review} sent. {selectedArtifact} has not changed yet.
-                    </InlineStatus>
-                  )}
-                  <div className="artifactviewer">
-                    {artifactMode === "raw" ? (
-                      <pre className="artifactraw">{artifactText}</pre>
-                    ) : (
-                      <article className="md artifactmd">
-                        <ArtifactMarkdown
-                          text={artifactText}
-                          repoPath={repoPath}
-                          taskSlug={taskSlug}
-                          artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
-                          attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
-                          comments={artifactComments}
-                          draftAnchorIds={recoverableArtifactDraftAnchorIds}
-                          onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}
-                          onDiagramZoomOpenChange={onDiagramZoomOpenChange}
-                        />
-                      </article>
-                    )}
-                  </div>
-                  {recoverableArtifactDrafts.length > 0 && (
-                    <div className="artifact-comment-drafts">
-                      <div className="artifact-comment-drafts-title">Unsaved drafts</div>
-                      {recoverableArtifactDrafts.map((draft) => (
-                        <div className="artifact-comment-draft-row" key={draft.anchor_id}>
-                          <button type="button" className="artifact-comment-draft-resume" title={draft.body} onClick={() => openArtifactComment(draft)}>
-                            <span>{formatArtifactCommentTarget(draft)}</span>
-                            {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
-                          </button>
-                          <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(selectedArtifact, draft.anchor_id).catch(() => {})}>
-                            Discard
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {commentAnchor && (
-                    <div className="artifact-comment-composer">
-                      <div className="artifact-comment-title">{formatArtifactCommentTarget(commentAnchor)}</div>
-                      <textarea
-                        ref={commentInputRef}
-                        className="field-input artifact-comment-input"
-                        value={commentDraft}
-                        rows={2}
-                        placeholder="Add a comment for the next phase..."
-                        onChange={(ev) => handleCommentDraftChange(ev.target.value)}
-                        onKeyDown={handleCommentKeyDown}
-                      />
-                      <div className="artifact-comment-actions">
-                        <button type="button" className="btn small" disabled={!canSaveArtifactComment} onClick={saveArtifactComment}>
-                          Save comment
-                        </button>
-                        <button type="button" className="btn ghost small" onClick={discardOpenCommentDraft}>
-                          Discard draft
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="artifacthead">
-                    <div className="artifacttabs" role="group" aria-label="Artifact category">
-                      <button
-                        type="button"
-                        aria-pressed={artifactTab === "playbook"}
-                        className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
-                        onClick={() => setArtifactTab("playbook")}
-                      >
-                        Playbook
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={artifactTab === "attachments"}
-                        className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
-                        onClick={() => setArtifactTab("attachments")}
-                      >
-                        Attachments
-                      </button>
-                    </div>
-                    <span className="pill">
-                      {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                    </span>
-                  </div>
-                  {artifactErr && (
-                    <InlineStatus tone="error" detail={artifactErr}>
-                      The last artifact action did not complete.
-                    </InlineStatus>
-                  )}
-                  <div className="artifactlist">
-                    {displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
-                      <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
-                    )}
-                    {displayedArtifactItems.map((item) => {
-                      if (item.attachment && classifyAttachment(item) === "image") {
-                        return (
-                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name} repoPath={repoPath}>
-                            <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                          </AttachmentPreview>
-                        );
-                      }
-                      const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
-                      const node = findOwnedArtifactNode(artifactTree, item.name);
-                      const available = Boolean(item.attachment || node);
+                  {displayedArtifactItems.map((item) => {
+                    if (item.attachment && classifyAttachment(item) === "image") {
                       return (
-                        <div
-                          key={item.name}
-                          className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                          title={item.name}
-                          role="button"
-                          tabIndex={available ? 0 : -1}
-                          aria-disabled={!available}
-                          onKeyDown={(e) => {
-                            if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                            e.preventDefault();
-                            e.currentTarget.click();
-                          }}
-                          onClick={() => {
-                            if (item.attachment) {
-                              revealPath(attachmentFilePath(repoPath, taskSlug, item.name)).catch((error) => setArtifactErr(String(error)));
-                              return;
-                            }
-                            if (!node) return;
-                            setSelectedArtifactNode(node);
-                            setSelectedArtifact(item.name);
-                            setArtifactMode("preview");
-                            setArtifactErr("");
-                          }}
-                        >
-                          <span className="artifactitem-name">{item.name}</span>
-                          {!available && <span className="pill">Not yet readable</span>}
-                          {commentCount > 0 && (
-                            <span
-                              className="artifact-comment-count"
-                              title={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
-                              aria-label={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
-                            >
-                              <MessageSquare size={12} strokeWidth={2} aria-hidden="true" />
-                              <span>{commentCount}</span>
-                            </span>
-                          )}
+                        <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name} repoPath={repoPath}>
                           <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                        </div>
+                        </AttachmentPreview>
                       );
-                    })}
-                    {contextualArtifactTree.length > 0 && (
-                      <ArtifactTree
-                        taskSlug={taskSlug}
-                        repoPath={repoPath}
-                        nodes={contextualArtifactTree}
-                        selectedId={selectedArtifactTreeId}
-                        onSelect={(node) => {
-                          setSelectedArtifactNode(node);
-                          setSelectedArtifact(node.label);
-                          setArtifactMode("preview");
-                          setArtifactErr("");
+                    }
+                    const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
+                    const node = findOwnedArtifactNode(artifactTree, item.name);
+                    const available = Boolean(item.attachment || node);
+                    return (
+                      <div
+                        key={item.name}
+                        className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                        title={item.name}
+                        role="button"
+                        tabIndex={available ? 0 : -1}
+                        aria-disabled={!available}
+                        onKeyDown={(e) => {
+                          if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                          e.preventDefault();
+                          e.currentTarget.click();
                         }}
-                        onError={setArtifactErr}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
+                        onClick={() => {
+                          if (item.attachment) {
+                            revealPath(attachmentFilePath(repoPath, taskSlug, item.name)).catch((error) => setArtifactErr(String(error)));
+                            return;
+                          }
+                          if (!node) return;
+                          openArtifact(item.name, node);
+                        }}
+                      >
+                        <span className="artifactitem-name">{item.name}</span>
+                        {!available && <span className="pill">Not yet readable</span>}
+                        {commentCount > 0 && (
+                          <span
+                            className="artifact-comment-count"
+                            title={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
+                            aria-label={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
+                          >
+                            <MessageSquare size={12} strokeWidth={2} aria-hidden="true" />
+                            <span>{commentCount}</span>
+                          </span>
+                        )}
+                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                      </div>
+                    );
+                  })}
+                  {contextualArtifactTree.length > 0 && (
+                    <ArtifactTree
+                      taskSlug={taskSlug}
+                      repoPath={repoPath}
+                      nodes={contextualArtifactTree}
+                      selectedId={selectedArtifactTreeId}
+                      onSelect={(node) => {
+                        openArtifact(node.label, node);
+                      }}
+                      onError={setArtifactErr}
+                    />
+                  )}
+                </div>
+              </>
             </aside>
             <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
           </>
         )}
-        <div className="termhost" ref={termhostRef}>
-          {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
-            <div className="session-view-loading" role="status" aria-live="polite">
-              <LoadingState label="Opening session…" state="connecting" />
-            </div>
-          )}
-          {navHistory && (
-            <div className="terminal-frame">
-              {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
+        <main className="session-main">
+          <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.setActive} onClose={fileTabs.close} />
+          <div className="session-main-body">
+            {fileTabs.current && (
+              <div className="artifactpane task-artifact-view session-artifact-view">
+                <div className="artifacthead">
+                  <div className="artifacttitle mono" title={selectedArtifact}>
+                    {selectedArtifact}
+                  </div>
+                  <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                  <CopyArtifactButton text={artifactText} />
+                  <button
+                    type="button"
+                    className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
+                    aria-pressed={artifactMode === "preview"}
+                    onClick={() => setArtifactMode("preview")}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
+                    aria-pressed={artifactMode === "raw"}
+                    onClick={() => setArtifactMode("raw")}
+                  >
+                    Raw
+                  </button>
+                </div>
+                {artifactErr && (
+                  <InlineStatus tone="error" detail={artifactErr}>
+                    The last artifact action did not complete.
+                  </InlineStatus>
+                )}
+                {artifactCommentDraftError && (
+                  <InlineStatus tone="error" detail={artifactCommentDraftError}>
+                    Saving the comment draft failed.
+                  </InlineStatus>
+                )}
+                {reviewPending && (
+                  <InlineStatus
+                    tone="info"
+                    action={
+                      <button type="button" className="btn ghost small" onClick={clearPendingReview}>
+                        Clear waiting
+                      </button>
+                    }
+                  >
+                    {reviewPending.review} sent. {selectedArtifact} has not changed yet.
+                  </InlineStatus>
+                )}
+                <div className="artifactviewer">
+                  {artifactMode === "raw" ? (
+                    <pre className="artifactraw">{artifactText}</pre>
+                  ) : (
+                    <article className="md artifactmd">
+                      <ArtifactMarkdown
+                        text={artifactText}
+                        repoPath={repoPath}
+                        taskSlug={taskSlug}
+                        artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                        attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
+                        comments={artifactComments}
+                        draftAnchorIds={recoverableArtifactDraftAnchorIds}
+                        onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}
+                        onDiagramZoomOpenChange={onDiagramZoomOpenChange}
+                      />
+                    </article>
+                  )}
+                </div>
+                {recoverableArtifactDrafts.length > 0 && (
+                  <div className="artifact-comment-drafts">
+                    <div className="artifact-comment-drafts-title">Unsaved drafts</div>
+                    {recoverableArtifactDrafts.map((draft) => (
+                      <div className="artifact-comment-draft-row" key={draft.anchor_id}>
+                        <button type="button" className="artifact-comment-draft-resume" title={draft.body} onClick={() => openArtifactComment(draft)}>
+                          <span>{formatArtifactCommentTarget(draft)}</span>
+                          {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
+                        </button>
+                        <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(selectedArtifact, draft.anchor_id).catch(() => {})}>
+                          Discard
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {commentAnchor && (
+                  <div className="artifact-comment-composer">
+                    <div className="artifact-comment-title">{formatArtifactCommentTarget(commentAnchor)}</div>
+                    <textarea
+                      ref={commentInputRef}
+                      className="field-input artifact-comment-input"
+                      value={commentDraft}
+                      rows={2}
+                      placeholder="Add a comment for the next phase..."
+                      onChange={(ev) => handleCommentDraftChange(ev.target.value)}
+                      onKeyDown={handleCommentKeyDown}
+                    />
+                    <div className="artifact-comment-actions">
+                      <button type="button" className="btn small" disabled={!canSaveArtifactComment} onClick={saveArtifactComment}>
+                        Save comment
+                      </button>
+                      <button type="button" className="btn ghost small" onClick={discardOpenCommentDraft}>
+                        Discard draft
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="termhost" ref={termhostRef}>
+              {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
+                <div className="session-view-loading" role="status" aria-live="polite">
+                  <LoadingState label="Opening session…" state="connecting" />
+                </div>
+              )}
+              {navHistory && (
+                <div className="terminal-frame">
+                  {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
-              {liveRpc || vinculum ? (
-                <>
-                  <ChatPane
-                    entries={chatEntries}
-                    status={chatStatus}
-                    visibility={chatVisibility}
-                    onApprove={onApproveChat}
-                    onLoadOlder={loadOlder}
-                    loadingOlder={loadingOlder}
-                    atStart={chat.fileStart === 0}
-                  />
-                  {/* The history view is the live pane with the input switched off, so a finished
-                      session reads the same way as a running one. */}
-                  {liveRpc ? null : (
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
-                  )}
-                </>
-              ) : (
-                <SessionTerminal
-                  sessionId={id}
-                  cwd={cwd}
-                  taskSlug={taskSlug}
-                  phase={phase}
-                  harness={harness}
-                  model={model}
-                  intent="attach"
-                  readOnly
-                  terminalFontSize={appearance.terminal_font_size}
-                />
-              )}
-            </div>
-          )}
-          {!navHistory && termIntent && (
-            <>
-              {showChat ? (
-                <>
-                  {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
-                  <div className="terminal-frame">
-                    <ChatPane
-                      entries={chatEntries}
-                      status={chatStatus}
-                      visibility={chatVisibility}
-                      onApprove={onApproveChat}
-                      onLoadOlder={loadOlder}
-                      loadingOlder={loadingOlder}
-                      atStart={chat.fileStart === 0}
-                    />
-                  </div>
-                  {showChatComposer ? (
+                  {liveRpc || vinculum ? (
                     <>
-                      <ChatComposer
-                        actions={sessionControls}
-                        body={messageDraft.body}
+                      <ChatPane
+                        entries={chatEntries}
                         status={chatStatus}
-                        catalog={chat.commands}
-                        sending={messageSending}
-                        showHints={chatVisibility.showComposerHints}
-                        attachments={messageDraft.attachments ?? []}
-                        dropping={dropping}
-                        onAttach={() => {
-                          void ipc
-                            .pickAttachmentFilesDialog()
-                            .then((paths) => void stagePaths(paths))
-                            .catch((error) => toast.error(String(error)));
-                        }}
-                        onRemoveAttachment={(id) => {
-                          const current = messageDraftRef.current;
-                          const removed = current.attachments.find((item) => item.id === id);
-                          if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-                          updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
-                        }}
-                        onClear={() => {
-                          revokeDraftPreviewUrls(messageDraftRef.current.attachments);
-                          updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
-                        }}
-                        onPasteFiles={stageBlobs}
-                        onBodyChange={(next) => {
-                          updateMessageDraft({ ...messageDraftRef.current, body: next });
-                          setMessageError("");
-                        }}
-                        onCompositionChange={setMessageComposing}
-                        onSend={(text) => void sendCurrentMessage(text)}
-                        onAbort={() => void interruptCurrentSession()}
-                        onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
-                        sendNowEnabled={sendNowEnabled}
-                        canAbort={composerCanAbort}
-                        queuedCount={queuedMeta}
+                        visibility={chatVisibility}
+                        onApprove={onApproveChat}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        atStart={chat.fileStart === 0}
                       />
-                      {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
+                      {/* The history view is the live pane with the input switched off, so a finished
+                      session reads the same way as a running one. */}
+                      {liveRpc ? null : (
+                        <ChatComposer
+                          body=""
+                          status="idle"
+                          catalog={[]}
+                          showHints={false}
+                          readOnly
+                          onBodyChange={() => undefined}
+                          onSend={() => undefined}
+                          onAbort={() => undefined}
+                        />
+                      )}
                     </>
-                  ) : null}
-                </>
-              ) : (
-                showPtyTerminal && (
-                  <div className="terminal-frame">
-                    <SessionTerminal
-                      sessionId={id}
-                      cwd={cwd}
-                      taskSlug={taskSlug}
-                      phase={phase}
-                      harness={harness}
-                      model={model}
-                      intent={termIntent}
-                      resumeToken={resumeToken}
-                      terminalFontSize={appearance.terminal_font_size}
-                      onConnectionStateChange={handleTerminalConnectionState}
-                    />
-                  </div>
-                )
-              )}
-              {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
-            </>
-          )}
-          {!navHistory && showPanel && effectiveLifecycle && (
-            <>
-              <SessionActionPanel
-                id={id}
-                phase={phase}
-                harness={harness}
-                model={model}
-                state={effectiveLifecycle}
-                artifactReady={artifactReady}
-                repoPath={repoPath}
-                taskSlug={taskSlug}
-                onStartFresh={leftover ? () => undefined : onStartFresh}
-                onArchive={handleArchive}
-                archiveBusy={archiveBusy}
-                onViewHistory={() => setShowHistory(true)}
-                onKilled={() => setReclassifyTick((n) => n + 1)}
-                onRecover={canRecoverSession ? () => void recoverSession() : undefined}
-                recoverBusy={completionBusy}
-              />
-              {showHistory &&
-                (vinculum ? (
-                  <div className="terminal-frame">
-                    <ChatPane entries={chat.entries} status="idle" visibility={chatVisibility} onLoadOlder={loadOlder} loadingOlder={loadingOlder} atStart={chat.fileStart === 0} />
-                    <ChatComposer body="" status="idle" catalog={[]} showHints={false} readOnly onBodyChange={() => undefined} onSend={() => undefined} onAbort={() => undefined} />
-                  </div>
-                ) : (
-                  <div className="terminal-frame">
+                  ) : (
                     <SessionTerminal
                       sessionId={id}
                       cwd={cwd}
@@ -1641,64 +1516,204 @@ export function SessionView({
                       readOnly
                       terminalFontSize={appearance.terminal_font_size}
                     />
-                  </div>
-                ))}
-            </>
-          )}
-          {modelDialog && (
-            <ChatModelDialog
-              tab={modelDialog.tab}
-              setup={modelDialog.setup}
-              models={providerAccess.models}
-              current={chat.sessionMeta.model}
-              preselect={modelDialog.preselect}
-              loginProviders={providerAccess.loginProviders}
-              livePromotedIds={[]}
-              configuredIds={providerAccess.custom.map((row) => row.id)}
-              modelRoles={modelRoles}
-              hosted={hosted}
-              grok={grokReady}
-              error={modelError || providerAccess.error}
-              loginBusy={providerAccess.busy}
-              onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
-              onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
-              onLogin={(providerId) => void startChatLogin(providerId)}
-              onLogout={(providerId) => void providerAccess.logout(providerId)}
-              onAssignRole={(role, model) => void assignModelRole(role, model)}
-              onSignIn={() => {
-                void ipc
-                  .accountSignIn()
-                  .then(() => ipc.accountRefresh().catch(() => undefined))
-                  .then(() =>
-                    ipc
-                      .hostedCatalog()
-                      .then(setHosted)
-                      .catch(() => setHosted(null)),
-                  )
-                  .catch((error) => setModelError(String(error)));
-              }}
-              onSubscribe={() => {
-                void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
-              }}
-              onBuyCredits={() => {
-                void ipc.accountOpen().catch((error) => setModelError(String(error)));
-              }}
-              onClose={() => {
-                void providerAccess.cancel();
-                setModelDialog(null);
-                setModelError(null);
-              }}
-              footer={<CustomEndpointForm access={providerAccess} />}
-            >
-              <ProviderAccessPanel access={providerAccess} />
-            </ChatModelDialog>
-          )}
-          {!navHistory && !termIntent && !showPanel && (
-            <div className="sap-loading">
-              <LoadingState label="Checking session" state="connecting" />
+                  )}
+                </div>
+              )}
+              {!navHistory && termIntent && (
+                <>
+                  {showChat ? (
+                    <>
+                      {sessionControls && !showChatComposer ? <div className="chat-meta">{sessionControls}</div> : null}
+                      <div className="terminal-frame">
+                        <ChatPane
+                          entries={chatEntries}
+                          status={chatStatus}
+                          visibility={chatVisibility}
+                          onApprove={onApproveChat}
+                          onLoadOlder={loadOlder}
+                          loadingOlder={loadingOlder}
+                          atStart={chat.fileStart === 0}
+                        />
+                      </div>
+                      {showChatComposer ? (
+                        <>
+                          <ChatComposer
+                            actions={sessionControls}
+                            body={messageDraft.body}
+                            status={chatStatus}
+                            catalog={chat.commands}
+                            sending={messageSending}
+                            showHints={chatVisibility.showComposerHints}
+                            attachments={messageDraft.attachments ?? []}
+                            dropping={dropping}
+                            onAttach={() => {
+                              void ipc
+                                .pickAttachmentFilesDialog()
+                                .then((paths) => void stagePaths(paths))
+                                .catch((error) => toast.error(String(error)));
+                            }}
+                            onRemoveAttachment={(id) => {
+                              const current = messageDraftRef.current;
+                              const removed = current.attachments.find((item) => item.id === id);
+                              if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+                              updateMessageDraft({ ...current, attachments: current.attachments.filter((item) => item.id !== id) });
+                            }}
+                            onClear={() => {
+                              revokeDraftPreviewUrls(messageDraftRef.current.attachments);
+                              updateMessageDraft({ body: "", pendingActions: messageDraftRef.current.pendingActions, attachments: [] });
+                            }}
+                            onPasteFiles={stageBlobs}
+                            onBodyChange={(next) => {
+                              updateMessageDraft({ ...messageDraftRef.current, body: next });
+                              setMessageError("");
+                            }}
+                            onCompositionChange={setMessageComposing}
+                            onSend={(text) => void sendCurrentMessage(text)}
+                            onAbort={() => void interruptCurrentSession()}
+                            onSendNow={sendNowEnabled ? () => void sendNow() : undefined}
+                            sendNowEnabled={sendNowEnabled}
+                            canAbort={composerCanAbort}
+                            queuedCount={queuedMeta}
+                          />
+                          {messageError ? <InlineStatus tone="error">{messageError}</InlineStatus> : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    showPtyTerminal && (
+                      <div className="terminal-frame">
+                        <SessionTerminal
+                          sessionId={id}
+                          cwd={cwd}
+                          taskSlug={taskSlug}
+                          phase={phase}
+                          harness={harness}
+                          model={model}
+                          intent={termIntent}
+                          resumeToken={resumeToken}
+                          terminalFontSize={appearance.terminal_font_size}
+                          onConnectionStateChange={handleTerminalConnectionState}
+                        />
+                      </div>
+                    )
+                  )}
+                  {contextActions.length > 0 && <ContextActionBar actions={contextActions} />}
+                </>
+              )}
+              {!navHistory && showPanel && effectiveLifecycle && (
+                <>
+                  <SessionActionPanel
+                    id={id}
+                    phase={phase}
+                    harness={harness}
+                    model={model}
+                    state={effectiveLifecycle}
+                    artifactReady={artifactReady}
+                    repoPath={repoPath}
+                    taskSlug={taskSlug}
+                    onStartFresh={leftover ? () => undefined : onStartFresh}
+                    onArchive={handleArchive}
+                    archiveBusy={archiveBusy}
+                    onViewHistory={() => setShowHistory(true)}
+                    onKilled={() => setReclassifyTick((n) => n + 1)}
+                    onRecover={canRecoverSession ? () => void recoverSession() : undefined}
+                    recoverBusy={completionBusy}
+                  />
+                  {showHistory &&
+                    (vinculum ? (
+                      <div className="terminal-frame">
+                        <ChatPane
+                          entries={chat.entries}
+                          status="idle"
+                          visibility={chatVisibility}
+                          onLoadOlder={loadOlder}
+                          loadingOlder={loadingOlder}
+                          atStart={chat.fileStart === 0}
+                        />
+                        <ChatComposer
+                          body=""
+                          status="idle"
+                          catalog={[]}
+                          showHints={false}
+                          readOnly
+                          onBodyChange={() => undefined}
+                          onSend={() => undefined}
+                          onAbort={() => undefined}
+                        />
+                      </div>
+                    ) : (
+                      <div className="terminal-frame">
+                        <SessionTerminal
+                          sessionId={id}
+                          cwd={cwd}
+                          taskSlug={taskSlug}
+                          phase={phase}
+                          harness={harness}
+                          model={model}
+                          intent="attach"
+                          readOnly
+                          terminalFontSize={appearance.terminal_font_size}
+                        />
+                      </div>
+                    ))}
+                </>
+              )}
+              {modelDialog && (
+                <ChatModelDialog
+                  tab={modelDialog.tab}
+                  setup={modelDialog.setup}
+                  models={providerAccess.models}
+                  current={chat.sessionMeta.model}
+                  preselect={modelDialog.preselect}
+                  loginProviders={providerAccess.loginProviders}
+                  livePromotedIds={[]}
+                  configuredIds={providerAccess.custom.map((row) => row.id)}
+                  modelRoles={modelRoles}
+                  hosted={hosted}
+                  grok={grokReady}
+                  error={modelError || providerAccess.error}
+                  loginBusy={providerAccess.busy}
+                  onTabChange={(tab) => setModelDialog((current) => (current ? { ...current, tab, setup: false } : current))}
+                  onApplyModel={(provider, modelId) => void applyChatModel(provider, modelId)}
+                  onLogin={(providerId) => void startChatLogin(providerId)}
+                  onLogout={(providerId) => void providerAccess.logout(providerId)}
+                  onAssignRole={(role, model) => void assignModelRole(role, model)}
+                  onSignIn={() => {
+                    void ipc
+                      .accountSignIn()
+                      .then(() => ipc.accountRefresh().catch(() => undefined))
+                      .then(() =>
+                        ipc
+                          .hostedCatalog()
+                          .then(setHosted)
+                          .catch(() => setHosted(null)),
+                      )
+                      .catch((error) => setModelError(String(error)));
+                  }}
+                  onSubscribe={() => {
+                    void ipc.accountOpenPlans().catch((error) => setModelError(String(error)));
+                  }}
+                  onBuyCredits={() => {
+                    void ipc.accountOpen().catch((error) => setModelError(String(error)));
+                  }}
+                  onClose={() => {
+                    void providerAccess.cancel();
+                    setModelDialog(null);
+                    setModelError(null);
+                  }}
+                  footer={<CustomEndpointForm access={providerAccess} />}
+                >
+                  <ProviderAccessPanel access={providerAccess} />
+                </ChatModelDialog>
+              )}
+              {!navHistory && !termIntent && !showPanel && (
+                <div className="sap-loading">
+                  <LoadingState label="Checking session" state="connecting" />
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        </main>
       </div>
     </div>
   );
