@@ -22,6 +22,14 @@ pub(crate) enum RepoDaemon {
     Conflicted(DaemonConflict),
 }
 
+/// Who started a daemon and from which release, as its `Hello` says.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub(crate) struct DaemonOrigin {
+    pub(crate) version: String,
+    pub(crate) started_by: String,
+    pub(crate) os_user: String,
+}
+
 #[derive(Default)]
 pub(crate) struct AppState {
     // B5 substrate: one entry per repo the app has brought up, keyed by repo root.
@@ -29,8 +37,10 @@ pub(crate) struct AppState {
     // remote daemons reuse this map instead of redoing it. The active repo is a
     // *selection* over this map, no longer the only slot that can hold a client.
     pub(crate) daemons: Mutex<HashMap<PathBuf, RepoDaemon>>,
-    /// The app release each attached daemon reports in `Hello` (empty from a daemon too old to say), for the footer.
-    pub(crate) daemon_versions: Mutex<HashMap<PathBuf, String>>,
+    /// What each attached daemon says of itself in `Hello` (empty from a daemon too old to say), for the footer.
+    pub(crate) daemon_origins: Mutex<HashMap<PathBuf, DaemonOrigin>>,
+    /// Every daemon on each ssh host (by host id), read from the host's records at connect and attach, for the footer.
+    pub(crate) box_daemons: Mutex<HashMap<String, Vec<crate::host_wire::HostDaemon>>>,
     // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
     pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
     pub(crate) mcp_spawn_error: Mutex<Option<String>>,
@@ -118,14 +128,19 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .insert(repo.to_path_buf(), RepoDaemon::Connected { compat });
     }
-    pub(crate) fn set_daemon_version(&self, repo: &Path, version: &str) {
-        self.daemon_versions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(repo.to_path_buf(), version.to_string());
+    pub(crate) fn set_daemon_hello(&self, repo: &Path, hello: &crate::daemon_rpc::HelloResponse) {
+        let origin = DaemonOrigin {
+            version: hello.version.clone(),
+            started_by: hello.started_by.clone(),
+            os_user: hello.os_user.clone(),
+        };
+        self.set_daemon_origin(repo, origin);
     }
-    pub(crate) fn daemon_version(&self, repo: &Path) -> Option<String> {
-        self.daemon_versions.lock().unwrap_or_else(|e| e.into_inner()).get(repo).cloned()
+    pub(crate) fn set_daemon_origin(&self, repo: &Path, origin: DaemonOrigin) {
+        self.daemon_origins.lock().unwrap_or_else(|e| e.into_inner()).insert(repo.to_path_buf(), origin);
+    }
+    pub(crate) fn daemon_origin(&self, repo: &Path) -> Option<DaemonOrigin> {
+        self.daemon_origins.lock().unwrap_or_else(|e| e.into_inner()).get(repo).cloned()
     }
     pub(crate) fn set_daemon_conflict(&self, repo: &Path, c: DaemonConflict) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).insert(repo.to_path_buf(), RepoDaemon::Conflicted(c));

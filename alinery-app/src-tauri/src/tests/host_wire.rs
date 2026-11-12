@@ -22,6 +22,8 @@ fn assert_request(name: &str, id: u64, op: HostOp) {
     if let host_request::Call::SpawnDaemon(spawn) = &mut call {
         assert_eq!(spawn.app_version, env!("CARGO_PKG_VERSION"), "{name}: the app version travels with the spawn");
         spawn.app_version = "0.26.0".into();
+        assert_eq!(spawn.started_by, alinery_core::started_by_label(), "{name}: this app's label travels with the spawn");
+        spawn.started_by = "nyx on MacBook".into();
     }
     let ours = HostRequest { id, call: Some(call) };
     assert_eq!(ours.encode_to_vec(), bytes, "{name}: our bytes differ from protobuf-es");
@@ -95,6 +97,7 @@ fn every_request_matches_the_bytes_protobuf_es_wrote() {
             rpc_secret_file: Some(p("/srv/c/rpc-secrets/a.rpc")),
         },
     );
+    assert_request("request.list_daemons", 14, HostOp::ListDaemons);
 }
 
 #[test]
@@ -131,6 +134,7 @@ fn every_reply_decodes_field_by_field_and_encodes_back_to_the_same_bytes() {
         "reply.init",
         "reply.listing",
         "reply.erased",
+        "reply.daemons",
     ] {
         assert_eq!(reply(name).encode_to_vec(), golden(name), "{name}");
     }
@@ -187,6 +191,12 @@ fn replies_become_the_json_the_page_and_the_callers_read() {
     assert_eq!(reply_value(reply("reply.folder")), Ok(json!({"kind": "refused", "message": "not a work tree"})));
     assert_eq!(reply_value(reply("reply.init")), Ok(json!({"kind": "already_checkout", "root": "/srv/root"})));
     assert_eq!(reply_value(reply("reply.erased")), Ok(json!(["codex", "openai"])));
+    assert_eq!(
+        reply_value(reply("reply.daemons")),
+        Ok(
+            json!([{"repo": "/srv/app", "lane": "dev", "pid": 4243, "os_user": "dev", "started_by": "jon on Strix", "started_at_ms": 1_700_000_000_456_i64, "version": "0.600.0", "protocol": 42}])
+        )
+    );
     assert_eq!(
         reply_value(reply("reply.listing")),
         Ok(json!({

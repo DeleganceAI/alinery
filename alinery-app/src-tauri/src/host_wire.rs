@@ -27,7 +27,7 @@ pub(crate) const HELLO_ID: u64 = 0;
 pub(crate) struct HostRequest {
     #[prost(uint64, tag = "1")]
     pub id: u64,
-    #[prost(oneof = "host_request::Call", tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14")]
+    #[prost(oneof = "host_request::Call", tags = "2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15")]
     pub call: Option<host_request::Call>,
 }
 
@@ -60,6 +60,8 @@ pub(crate) mod host_request {
         WaitDaemonGone(super::HostWaitDaemonGone),
         #[prost(message, tag = "14")]
         SpawnDaemon(super::HostSpawnDaemon),
+        #[prost(message, tag = "15")]
+        ListDaemons(super::HostListDaemons),
     }
 }
 
@@ -67,7 +69,7 @@ pub(crate) mod host_request {
 pub(crate) struct HostReply {
     #[prost(uint64, tag = "1")]
     pub id: u64,
-    #[prost(oneof = "host_reply::Body", tags = "2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "host_reply::Body", tags = "2, 3, 4, 5, 6, 7, 8, 9, 10")]
     pub body: Option<host_reply::Body>,
 }
 
@@ -90,6 +92,8 @@ pub(crate) mod host_reply {
         Listing(super::HostListing),
         #[prost(message, tag = "9")]
         Erased(super::HostErased),
+        #[prost(message, tag = "10")]
+        Daemons(super::HostDaemons),
     }
 }
 
@@ -277,6 +281,37 @@ pub(crate) struct HostSpawnDaemon {
     pub rpc_secret_file: String,
     #[prost(string, tag = "11")]
     pub app_version: String,
+    #[prost(string, tag = "12")]
+    pub started_by: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub(crate) struct HostListDaemons {}
+
+#[derive(Clone, PartialEq, Message, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HostDaemon {
+    #[prost(string, tag = "1")]
+    pub repo: String,
+    #[prost(string, tag = "2")]
+    pub lane: String,
+    #[prost(uint32, tag = "3")]
+    pub pid: u32,
+    #[prost(string, tag = "4")]
+    pub os_user: String,
+    #[prost(string, tag = "5")]
+    pub started_by: String,
+    #[prost(int64, tag = "6")]
+    pub started_at_ms: i64,
+    #[prost(string, tag = "7")]
+    pub version: String,
+    #[prost(uint32, tag = "8")]
+    pub protocol: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub(crate) struct HostDaemons {
+    #[prost(message, repeated, tag = "1")]
+    pub daemons: Vec<HostDaemon>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
@@ -358,6 +393,8 @@ pub(crate) enum HostOp {
         /// A file holding the RPC socket's bearer token (`--rpc-secret-file`). The daemon reads it and deletes it before it listens.
         rpc_secret_file: Option<PathBuf>,
     },
+    /// Every daemon running on the host, from the records anyone there can read: whose daemon holds a repo this app has no token for.
+    ListDaemons,
 }
 
 fn text(path: &std::path::Path) -> String {
@@ -414,7 +451,9 @@ impl HostOp {
                 rpc_secret_file: rpc_secret_file.map(|file| text(&file)).unwrap_or_default(),
                 // The version a telemetry event carries (`--app-version`). All three crates moved together; this is the app's.
                 app_version: env!("CARGO_PKG_VERSION").to_string(),
+                started_by: alinery_core::started_by_label(),
             }),
+            Self::ListDaemons => Call::ListDaemons(HostListDaemons {}),
         }
     }
 }
@@ -458,6 +497,7 @@ pub(crate) fn reply_value(reply: HostReply) -> Result<Value, String> {
             "truncated": listing.truncated,
         })),
         Some(Body::Erased(erased)) => Ok(json!(erased.providers)),
+        Some(Body::Daemons(daemons)) => Ok(json!(daemons.daemons)),
     }
 }
 

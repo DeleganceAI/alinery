@@ -478,6 +478,51 @@ pub(crate) struct HelloResponse {
     pub app_config_identity: String,
     #[prost(string, tag = "7")]
     pub version: String,
+    #[prost(string, tag = "8")]
+    pub started_by: String,
+    #[prost(string, tag = "9")]
+    pub os_user: String,
+    #[prost(int64, tag = "10")]
+    pub started_at_ms: i64,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct RequestJoinRequest {
+    #[prost(string, tag = "1")]
+    pub label: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct RequestJoinResponse {
+    #[prost(string, tag = "1")]
+    pub request_id: String,
+    #[prost(string, tag = "2")]
+    pub request_secret: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct CollectJoinRequest {
+    #[prost(string, tag = "1")]
+    pub request_id: String,
+    #[prost(string, tag = "2")]
+    pub request_secret: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct CollectJoinResponse {
+    #[prost(enumeration = "JoinState", tag = "1")]
+    pub state: i32,
+    #[prost(string, tag = "2")]
+    pub token: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
+#[repr(i32)]
+pub(crate) enum JoinState {
+    Unspecified = 0,
+    Pending = 1,
+    Approved = 2,
+    Denied = 3,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -585,6 +630,42 @@ pub(crate) fn hello_at(socket: &Path, committed_token: &Path, within: Duration) 
     tauri::async_runtime::block_on(async {
         let token = rpc_token(socket, committed_token).await?;
         hello_within(socket, &token, within).await
+    })
+}
+
+/// Whether a daemon answers on `socket` but refuses this app's token: someone else started it (a coworker on a shared box).
+/// Distinct from no answer at all, where starting a daemon is right.
+pub(crate) fn refuses_our_token(socket: &Path) -> bool {
+    tauri::async_runtime::block_on(hello_within(socket, "", Duration::from_secs(3))).is_err_and(|error| error.starts_with(&format!("{STATUS_PREFIX}16")))
+}
+
+/// Ask the daemon on `socket` to let this app in (no token needed), then wait for a member's answer: the token on approval,
+/// `Err` on a denial, an expiry or `budget` running out. `AdminService.RequestJoin` says why the poll is plain.
+pub(crate) fn join_daemon(socket: &Path, label: &str, budget: Duration) -> Result<String, String> {
+    tauri::async_runtime::block_on(async {
+        let timeout = Duration::from_secs(5);
+        let asked: RequestJoinResponse = tokio::time::timeout(
+            timeout,
+            unary(socket, "", "/alinery.v1.AdminService/RequestJoin", &RequestJoinRequest { label: label.into() }),
+        )
+        .await
+        .map_err(|_| "RequestJoin timed out".to_string())??;
+        let request = CollectJoinRequest {
+            request_id: asked.request_id,
+            request_secret: asked.request_secret,
+        };
+        let deadline = tokio::time::Instant::now() + budget;
+        loop {
+            let answer: CollectJoinResponse = tokio::time::timeout(timeout, unary(socket, "", "/alinery.v1.AdminService/CollectJoin", &request))
+                .await
+                .map_err(|_| "CollectJoin timed out".to_string())??;
+            match JoinState::try_from(answer.state) {
+                Ok(JoinState::Approved) => return Ok(answer.token),
+                Ok(JoinState::Pending) if tokio::time::Instant::now() < deadline => tokio::time::sleep(Duration::from_secs(2)).await,
+                Ok(JoinState::Pending) => return Err("no member answered in time".into()),
+                _ => return Err("a member declined, or the request expired".into()),
+            }
+        }
     })
 }
 

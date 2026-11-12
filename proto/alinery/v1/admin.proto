@@ -7,7 +7,39 @@ service AdminService {
   rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN (S5.1, O20 c)
   // The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
   rpc LiveSessions(LiveSessionsRequest) returns (LiveSessionsResponse);  // ADMIN
+  // Joining a daemon someone else started (a coworker on a shared box). RequestJoin and CollectJoin need no token: they are how a
+  // client without one asks for one. A member (any holder of the daemon's own or a member token) decides with DecideJoin, and the
+  // pending requests are the `daemon/_/join-requests` entity. A member token is the daemon's own token's equal and dies with the daemon.
+  rpc RequestJoin(RequestJoinRequest) returns (RequestJoinResponse);  // no token
+  rpc CollectJoin(CollectJoinRequest) returns (CollectJoinResponse);  // no token; the request's secret
+  rpc DecideJoin(DecideJoinRequest) returns (DecideJoinResponse);     // APPROVE
 }
+
+// `label` is how the asking app describes its person and machine, e.g. "jon on Strix"; shown to the members who decide.
+message RequestJoinRequest { string label = 1; }
+message RequestJoinResponse {
+  string request_id = 1;
+  string request_secret = 2;  // CollectJoin needs it, so only the asker collects the token
+}
+message CollectJoinRequest {
+  string request_id = 1;
+  string request_secret = 2;
+}
+enum JoinState {
+  JOIN_STATE_UNSPECIFIED = 0;
+  JOIN_STATE_PENDING = 1;
+  JOIN_STATE_APPROVED = 2;  // `token` is set
+  JOIN_STATE_DENIED = 3;    // also an expired or unknown request
+}
+message CollectJoinResponse {
+  JoinState state = 1;
+  string token = 2;
+}
+message DecideJoinRequest {
+  string request_id = 1;
+  bool approve = 2;
+}
+message DecideJoinResponse {}
 
 message LiveSessionsRequest {}
 message LiveSession { string id = 1; }
@@ -36,6 +68,9 @@ message HelloResponse {
   string repo_root = 5;
   string app_config_identity = 6;  // ensure_daemon reuses only on protocol and identity match
   string version = 7;              // the app release the daemon was built from, for display only
+  string started_by = 8;           // how the app that started it described its person and machine (--started-by), for display only
+  string os_user = 9;              // the login the daemon runs as
+  int64 started_at_ms = 10;
 }
 
 enum Capability {

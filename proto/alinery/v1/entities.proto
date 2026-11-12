@@ -574,8 +574,16 @@ message Entity {
     PlaybookLibrary playbook_library = 26;
     PlaybookCommunity playbook_community = 27;
     Canvas canvas = 28;
+    JoinRequests join_requests = 29;
   }
 }
+// The requests to join this daemon that wait for a member's answer (`daemon/_/join-requests`, in the repo scope). See AdminService.RequestJoin.
+message JoinRequest {
+  string id = 1;
+  string label = 2;
+  int64 requested_at_ms = 3;
+}
+message JoinRequests { repeated JoinRequest requests = 1; }
 // A chat thread's canvas (`canvas/_/<thread id>`, in the chat scope): the panels its agent wrote beside the conversation,
 // from `sessions/<id>.canvas.json`. A thread has the row once the user enabled the canvas, and keeps it. Bodies are not
 // here: a client reads one through BlobService (`CanvasPanelBlob`) when its `rev` moves.

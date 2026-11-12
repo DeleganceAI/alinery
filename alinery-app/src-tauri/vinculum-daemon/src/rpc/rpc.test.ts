@@ -4,7 +4,7 @@ import { connect, type Server } from "node:net";
 import { join } from "node:path";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
-import { AdminService, Capability, ShutdownOrigin } from "alinery-proto/alinery/v1/admin_pb";
+import { AdminService, Capability, JoinState, ShutdownOrigin } from "alinery-proto/alinery/v1/admin_pb";
 import { ErrorDetailSchema } from "alinery-proto/alinery/v1/common_pb";
 import { type Job, JobKind, JobState } from "alinery-proto/alinery/v1/entities_pb";
 import { takeSecretFile, TokenRegistry } from "./auth.ts";
@@ -251,4 +251,28 @@ test("LiveSessions names the running sessions and needs ADMIN", async () => {
   expect((await client(shell.socketPath, `Bearer ${SECRET}`).liveSessions({})).sessions.map((s) => s.id)).toEqual(["s1", "s2"]);
   const other = await start("/bin/sh");
   expect(await code(client(other.socketPath, `Bearer ${SECRET}`).liveSessions({}))).toBe(Code.PermissionDenied);
+});
+
+test("a client with no token asks to join, a member approves, and the collected token is the daemon's own equal, once", async () => {
+  const { socketPath } = await start(undefined);
+  const stranger = client(socketPath);
+  const { requestId, requestSecret } = await stranger.requestJoin({ label: "jon on Strix" });
+  expect((await stranger.collectJoin({ requestId, requestSecret })).state).toBe(JoinState.PENDING);
+  // The secret is the asker's alone, and no stranger may decide.
+  expect((await stranger.collectJoin({ requestId, requestSecret: "x".repeat(64) })).state).toBe(JoinState.DENIED);
+  expect(await code(stranger.decideJoin({ requestId, approve: true }))).toBe(Code.Unauthenticated);
+  await client(socketPath, `Bearer ${SECRET}`).decideJoin({ requestId, approve: true });
+  const approved = await stranger.collectJoin({ requestId, requestSecret });
+  expect(approved.state).toBe(JoinState.APPROVED);
+  expect((await client(socketPath, `Bearer ${approved.token}`).hello({})).capabilities).toEqual([Capability.VIEW, Capability.ACT, Capability.APPROVE, Capability.ADMIN]);
+  expect((await stranger.collectJoin({ requestId, requestSecret })).state).toBe(JoinState.DENIED);
+  // A denied request gives nothing.
+  const other = await stranger.requestJoin({ label: "pat" });
+  await client(socketPath, `Bearer ${approved.token}`).decideJoin({ requestId: other.requestId, approve: false });
+  expect(await stranger.collectJoin(other)).toMatchObject({ state: JoinState.DENIED, token: "" });
+});
+
+test("a daemon on this machine refuses join requests: only an ssh host's daemon is shared", async () => {
+  const { socketPath } = await start(process.execPath);
+  expect(await code(client(socketPath).requestJoin({ label: "agent" }))).toBe(Code.PermissionDenied);
 });

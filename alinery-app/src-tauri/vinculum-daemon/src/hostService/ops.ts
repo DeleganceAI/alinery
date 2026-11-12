@@ -284,6 +284,7 @@ export type SpawnDaemonParams = {
   unit: string;
   rpcSecretFile: string;
   appVersion: string;
+  startedBy?: string;
 };
 
 /** `login_shell_path`: a full $PATH from the user's `$SHELL -ilc`, the process's own PATH when the shell will not say. */
@@ -315,6 +316,7 @@ export function daemonArguments(p: SpawnDaemonParams): string[] {
   const args = ["--repo", p.repo, "--app-config", p.appConfig, "--build-id", p.buildId, "--app-version", p.appVersion];
   if (p.namespace !== "") args.push("--socket-namespace", p.namespace);
   if (p.rpcSecretFile !== "") args.push("--rpc-secret-file", p.rpcSecretFile);
+  if (p.startedBy) args.push("--started-by", p.startedBy);
   return args;
 }
 

@@ -40,6 +40,29 @@ pub(crate) struct DaemonConflict {
     pub(crate) issues: Vec<String>,
     /// Tasks whose saved progress will not read and that `repair_task_state` can fix.
     pub(crate) repairable_tasks: Vec<String>,
+    /// Who started a remote repo's daemon, when it says; `None` for a local repo.
+    pub(crate) starter: Option<DaemonStarter>,
+    /// Someone else's daemon of this protocol that refuses this app's token: a member can let this app in (`remote_join_daemon`).
+    pub(crate) joinable: bool,
+}
+
+/// Who started a daemon: what the banner names when it offers to join it or warns that a restart takes it from them.
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct DaemonStarter {
+    pub(crate) started_by: String,
+    pub(crate) os_user: String,
+    /// This person on this machine started it (possibly from another Alinery build).
+    pub(crate) mine: bool,
+}
+
+impl DaemonStarter {
+    pub(crate) fn new(started_by: &str, os_user: &str) -> Self {
+        Self {
+            started_by: started_by.to_string(),
+            os_user: os_user.to_string(),
+            mine: !started_by.is_empty() && started_by == alinery_core::started_by_label(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -240,6 +263,8 @@ fn daemon_conflicts(repo: &Path, app_config: &Path) -> DaemonConflict {
         owners: Vec::new(),
         issues: Vec::new(),
         repairable_tasks: Vec::new(),
+        starter: None,
+        joinable: false,
     };
     match alinery_core::repo_ownership::inspect_owners(repo) {
         Err(error) => conflict.issues.push(error),
@@ -1000,7 +1025,7 @@ pub(crate) fn spawn_daemon_poller(app: AppHandle) {
             // `Hello` is the probe: it says whether the daemon answers and what it is. A socket that accepts a connection
             // but does not answer (a daemon this app holds no token for, one still starting) is not a dead daemon.
             let compat = hello_current(&repo, &app_config, HELLO_OBSERVE).ok().map(|hello| {
-                state.set_daemon_version(&repo, &hello.version);
+                state.set_daemon_hello(&repo, &hello);
                 let build = app_build.get_or_insert_with(alineryd_build_id);
                 classify_hello(&hello, build, &alinery_core::app_config_identity(&app_config))
             });

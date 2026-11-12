@@ -564,6 +564,9 @@ fn current_hello(config: &Path, build: &str) -> HelloResponse {
         repo_root: String::new(),
         app_config_identity: alinery_core::app_config_identity(config),
         version: String::new(),
+        started_by: String::new(),
+        os_user: String::new(),
+        started_at_ms: 0,
     }
 }
 
@@ -741,6 +744,8 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             owners: Vec::new(),
             issues: vec!["unavailable".into()],
             repairable_tasks: Vec::new(),
+            starter: None,
+            joinable: false,
         },
     );
     assert!(state.daemon_attached(&a) && state.daemon_attached(&b));
@@ -760,6 +765,8 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             owners: Vec::new(),
             issues: vec!["now refused".into()],
             repairable_tasks: Vec::new(),
+            starter: None,
+            joinable: false,
         },
     );
     assert!(!state.daemon_attached(&a) && state.daemon_conflict(&a).is_some(), "a conflict replaces the connection");

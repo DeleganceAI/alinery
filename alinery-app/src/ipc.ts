@@ -99,6 +99,8 @@ export const remoteTestHost = (destination: string, trust: boolean) => invoke<Ho
 export const remoteDiscardHost = (hostId: string) => invoke<void>("remote_discard_host", { hostId });
 export const remoteConnect = (hostId: string, trust: boolean) => invoke<void>("remote_connect", { hostId, trust });
 export const remoteDisconnect = (hostId: string) => invoke<void>("remote_disconnect", { hostId });
+/** Ask the people using a remote repo's daemon, which someone else started, to let this app in; resolves once one does (up to ten minutes). */
+export const remoteJoinDaemon = (repo: string) => invoke<void>("remote_join_daemon", { repo });
 export const remoteSharing = (hostId: string) => invoke<RemoteSharingView>("remote_sharing", { hostId });
 export const remoteSetSharing = (hostId: string, shared: string[]) => invoke<RemoteSharingView>("remote_set_sharing", { hostId, shared });
 export const remoteListDir = (hostId: string, path: string, showHidden: boolean) => invoke<RemoteDirListing>("remote_list_dir", { hostId, path, showHidden });

@@ -5,6 +5,8 @@ import { confirmDanger } from "./confirm";
 import * as ipc from "./ipc";
 import { isRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
+import { REPO_SCOPE, useEntity, useScope } from "./sync/hooks";
+import { decideJoin, JOIN_REQUESTS_KEY } from "./sync/members";
 import { toast } from "./toast";
 import type { DaemonConflict, DaemonOwnerConflict } from "./types";
 
@@ -142,8 +144,27 @@ export function resetTakeoverPrompts() {
 
 export function DaemonConflictBanner({ conflict, onRefresh }: { conflict: DaemonConflict | null; onRefresh: () => void }) {
   if (!conflict) return null;
-  const Conflict = isRemoteRepo(conflict.repo) ? RemoteDaemonConflict : SelectedRepoConflict;
+  // No owner to restart: a daemon someone else started, which refuses this app's token.
+  const Conflict = !isRemoteRepo(conflict.repo) ? SelectedRepoConflict : conflict.owners.length === 0 ? SomeoneElsesDaemon : RemoteDaemonConflict;
   return <Conflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} />;
+}
+
+/** Who a restart would take a daemon from, or null when this person started it (or nobody says). */
+export function otherStarter(starter: { started_by: string; mine: boolean } | null | undefined): string | null {
+  if (!starter || starter.mine || !starter.started_by) return null;
+  return starter.started_by;
+}
+
+/** A restart of a daemon someone else started stops their sessions and drops everyone they let in: one more yes, naming them. */
+export async function confirmRestartingOthers(who: string | null, name: string): Promise<boolean> {
+  if (!who) return true;
+  return confirmDanger(
+    `Restart the daemon ${who} started?`,
+    <p>
+      {who} started the daemon for {name}. Restarting it stops their sessions, and everyone using it has to ask to join again. Check with them first.
+    </p>,
+    "Restart it anyway",
+  );
 }
 
 /**
@@ -155,11 +176,12 @@ export async function restartRemoteDaemon(conflict: DaemonConflict): Promise<boo
   const name = repoName(conflict.repo);
   const impact = conflict.owners[0]?.impact;
   const live = impact?.status === "known" ? impact.sessions.length : null;
+  const who = otherStarter(conflict.starter);
   const accepted = await confirmDanger(
     `Restart the daemon for ${name}?`,
     <>
       <p>
-        Another Alinery version started it, so this app can't use it until it restarts on this version.{" "}
+        {who ? `${who} started it with another Alinery version` : "Another Alinery version started it"}, so this app can't use it until it restarts on this version.{" "}
         {live === null
           ? "Its sessions could not be counted. Restarting stops all of them."
           : live === 0
@@ -173,7 +195,7 @@ export async function restartRemoteDaemon(conflict: DaemonConflict): Promise<boo
     </>,
     live === null ? "Stop all sessions and restart" : live === 0 ? "Restart daemon" : `Stop ${live} session${live === 1 ? "" : "s"} and restart`,
   );
-  if (!accepted) return false;
+  if (!accepted || !(await confirmRestartingOthers(who, name))) return false;
   try {
     await ipc.stopDaemon(conflict.repo);
     toast.success(`Restarted the daemon for ${name}`);
@@ -206,6 +228,94 @@ function RemoteDaemonConflict({ conflict, onRefresh }: { conflict: DaemonConflic
       }
     >
       {repoName(conflict.repo)}'s daemon on the host was started by another Alinery version · showing saved progress
+    </RepoStatusStrip>
+  );
+}
+
+/** A remote repo's daemon someone else started (a coworker on a shared box, or another Alinery build): it refuses this app's token,
+ *  so this app can neither use nor stop it. Its members can let this app in, without a restart. */
+function SomeoneElsesDaemon({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
+  const [waiting, setWaiting] = useState(false);
+  const name = repoName(conflict.repo);
+  const starter = conflict.starter;
+  const who = starter?.mine ? "another Alinery on this computer" : starter?.started_by || "someone else";
+  const join = async () => {
+    setWaiting(true);
+    toast.info(`Asked to join ${name}'s daemon. Anyone using it can let you in.`);
+    try {
+      await ipc.remoteJoinDaemon(conflict.repo);
+      toast.success(`Joined ${name}'s daemon`);
+      onRefresh();
+    } catch (cause) {
+      toast.error(`Couldn't join ${name}'s daemon: ${String(cause)}`);
+    } finally {
+      setWaiting(false);
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      details={<pre className="repo-evidence">{conflict.issues.join("\n")}</pre>}
+      action={
+        conflict.joinable && (
+          <button type="button" className="btn small" disabled={waiting} onClick={() => void join()}>
+            {waiting ? "Waiting for a yes…" : "Ask to join"}
+          </button>
+        )
+      }
+    >
+      {name}'s daemon was started by {who}
+      {starter?.os_user ? ` (as ${starter.os_user})` : ""} · showing saved progress
+    </RepoStatusStrip>
+  );
+}
+
+/** Requests to join the open repo's daemon, for anyone using it to answer. A yes gives the asker everything this app can do here. */
+export function JoinRequestsBanner({ repo }: { repo: string }) {
+  const replica = useScope(repo, REPO_SCOPE);
+  const entity = useEntity(replica, JOIN_REQUESTS_KEY);
+  const [busy, setBusy] = useState(false);
+  const requests = entity?.value.case === "joinRequests" ? entity.value.value.requests : [];
+  const first = requests[0];
+  if (!first) return null;
+  const name = repoName(repo);
+  const decide = async (approve: boolean) => {
+    if (
+      approve &&
+      !(await confirmDanger(
+        `Let ${first.label} use ${name}'s daemon?`,
+        <p>
+          They can see and do everything here that you can, including terminals and agents, which run as this daemon's login with its sign-ins. Only say yes to a request you
+          expect.
+        </p>,
+        "Let them in",
+      ))
+    )
+      return;
+    setBusy(true);
+    try {
+      await decideJoin(repo, first.id, approve);
+    } catch (cause) {
+      toast.error(`Couldn't answer ${first.label}: ${String(cause)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      action={
+        <>
+          <button type="button" className="btn small" disabled={busy} onClick={() => void decide(true)}>
+            Let in…
+          </button>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={() => void decide(false)}>
+            Decline
+          </button>
+        </>
+      }
+    >
+      {first.label} asks to use {name}'s daemon{requests.length > 1 ? ` (${requests.length - 1} more waiting)` : ""}
     </RepoStatusStrip>
   );
 }

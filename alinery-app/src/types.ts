@@ -418,9 +418,29 @@ export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; local_
 /** Calls and bytes the shell's bridge has carried to one host's daemons since the app started. */
 export type LinkTraffic = { calls: number; bytes_up: number; bytes_down: number };
 /** `running` is the host's runtime while connected; `bundled` is what this app carries for it. They differ when the host is stale. */
-export type HostRuntime = { host_id: string; label: string; state: RemoteHostView["state"]; running: string | null; bundled: string | null; link: LinkTraffic };
-/** `host` is `local` or the ssh host id; `version` is the app release the daemon reported (empty from an older daemon, null before it answered). */
-export type RepoRuntime = { repo: string; state: "current" | "build_drift" | "conflict" | "not_attached"; issues: string[]; host: string; version: string | null };
+export type HostRuntime = {
+  host_id: string;
+  label: string;
+  state: RemoteHostView["state"];
+  running: string | null;
+  bundled: string | null;
+  link: LinkTraffic;
+  daemons: BoxDaemon[];
+};
+/**
+ * `host` is `local` or the ssh host id; `version` is the app release the daemon reported (empty from an older daemon, null before it
+ * answered). `joined`: someone else started it and let this app in. `started_by` is empty when the daemon does not say.
+ */
+export type RepoRuntime = {
+  repo: string;
+  state: "current" | "build_drift" | "joined" | "conflict" | "not_attached";
+  issues: string[];
+  host: string;
+  version: string | null;
+  started_by: string;
+  os_user: string;
+  mine: boolean;
+};
 /** One row of the host list: this computer first (`host_id` "local"), then each remote host. */
 export type HostEntry = {
   host_id: string;
@@ -1142,7 +1162,17 @@ export type DaemonConflict = {
   owners: DaemonOwnerConflict[];
   issues: string[];
   repairable_tasks: string[];
+  /** Who started a remote repo's daemon, when it says; null for a local repo. */
+  starter: DaemonStarter | null;
+  /** Someone else's daemon of this protocol that refuses this app's token: its members can let this app in. */
+  joinable: boolean;
 };
+
+/** `mine`: this person on this machine started it (possibly from another Alinery build). */
+export type DaemonStarter = { started_by: string; os_user: string; mine: boolean };
+
+/** One daemon running on an ssh host, whoever started it, from the record it leaves there. */
+export type BoxDaemon = { repo: string; lane: string; pid: number; os_user: string; started_by: string; started_at_ms: number; version: string; protocol: number };
 
 export type TakeoverPreview = {
   confirmation_id: string;

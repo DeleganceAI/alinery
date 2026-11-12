@@ -996,14 +996,26 @@ fn the_runtime_panel_names_each_daemon_state_without_asking_the_daemon() {
     let row = |daemon| repo_runtime("/r", daemon, None).state;
     assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::Current })), "current");
     assert_eq!(row(Some(RepoDaemon::Connected { compat: DaemonCompat::BuildDrift })), "build_drift");
+    assert_eq!(
+        row(Some(RepoDaemon::Connected {
+            compat: DaemonCompat::AppConfigMismatch
+        })),
+        "joined"
+    );
     assert_eq!(row(None), "not_attached");
 }
 
 #[test]
 fn a_repo_row_names_its_host_and_daemon_version_and_traffic_is_counted_per_host() {
     use crate::daemon_rpc::{count_traffic, link_traffic};
-    let remote = repo_runtime("alinery+ssh://box-1/srv/r", None, Some("0.600.0".into()));
+    let origin = crate::state::DaemonOrigin {
+        version: "0.600.0".into(),
+        started_by: "jon on Strix".into(),
+        os_user: "dev".into(),
+    };
+    let remote = repo_runtime("alinery+ssh://box-1/srv/r", None, Some(origin));
     assert_eq!((remote.host.as_str(), remote.version.as_deref()), ("box-1", Some("0.600.0")));
+    assert_eq!((remote.started_by.as_str(), remote.os_user.as_str(), remote.mine), ("jon on Strix", "dev", false));
     assert_eq!(repo_runtime("/r", None, None).host, "local");
     let before = link_traffic("box-count-test");
     count_traffic("box-count-test", |t| {
@@ -1857,4 +1869,26 @@ fn a_host_that_is_mid_connect_is_not_started_again() {
     remotes.want("box");
     remotes.set("box", "connecting", "Probing", None);
     assert!(remotes.due_reconnects(Instant::now() + Duration::from_secs(1000)).is_empty());
+}
+
+#[test]
+fn someone_elses_daemon_names_its_starter_and_is_joinable_only_on_this_protocol() {
+    let record = |protocol, started_by: &str| crate::host_wire::HostDaemon {
+        repo: "/srv/r".into(),
+        os_user: "dev".into(),
+        started_by: started_by.into(),
+        protocol,
+        ..Default::default()
+    };
+    let same = record(alinery_core::PROTOCOL_VERSION, "jon on Strix");
+    let conflict = foreign_conflict("alinery+ssh://box/srv/r", Some(&same), "id");
+    assert!(conflict.joinable && conflict.owners.is_empty());
+    assert_eq!(conflict.issues, ["jon on Strix started this daemon. Anyone already using it can let you in."]);
+    assert_eq!(conflict.starter.as_ref().map(|s| (s.os_user.as_str(), s.mine)), Some(("dev", false)));
+    let older = record(alinery_core::PROTOCOL_VERSION - 1, "jon on Strix");
+    let conflict = foreign_conflict("alinery+ssh://box/srv/r", Some(&older), "id");
+    assert!(!conflict.joinable && conflict.issues[0].contains("Ask them to update or restart it"));
+    let mine = record(alinery_core::PROTOCOL_VERSION, &alinery_core::started_by_label());
+    assert!(foreign_conflict("k", Some(&mine), "id").issues[0].starts_with("Another Alinery on this computer"));
+    assert!(foreign_conflict("k", None, "id").joinable, "with no record the members decide");
 }

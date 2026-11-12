@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/host.proto.
  */
 export const file_alinery_v1_host: GenFile = /*@__PURE__*/
-  fileDesc("ChVhbGluZXJ5L3YxL2hvc3QucHJvdG8SCmFsaW5lcnkudjEisAUKC0hvc3RSZXF1ZXN0EgoKAmlkGAEgASgEEiQKBHBpbmcYAiABKAsyFC5hbGluZXJ5LnYxLkhvc3RQaW5nSAASLwoKY2xhaW1fcmVwbxgDIAEoCzIZLmFsaW5lcnkudjEuSG9zdENsYWltUmVwb0gAEjMKDHJlbGVhc2VfcmVwbxgEIAEoCzIbLmFsaW5lcnkudjEuSG9zdFJlbGVhc2VSZXBvSAASLAoIY2xhc3NpZnkYBSABKAsyGC5hbGluZXJ5LnYxLkhvc3RDbGFzc2lmeUgAEiQKBGluaXQYBiABKAsyFC5hbGluZXJ5LnYxLkhvc3RJbml0SAASKwoIbGlzdF9kaXIYByABKAsyFy5hbGluZXJ5LnYxLkhvc3RMaXN0RGlySAASLwoKd3JpdGVfZmlsZRgIIAEoCzIZLmFsaW5lcnkudjEuSG9zdFdyaXRlRmlsZUgAEjsKEHN5bmNfY3JlZGVudGlhbHMYCSABKAsyHy5hbGluZXJ5LnYxLkhvc3RTeW5jQ3JlZGVudGlhbHNIABIxCgtyZW1vdmVfZmlsZRgKIAEoCzIaLmFsaW5lcnkudjEuSG9zdFJlbW92ZUZpbGVIABI1Cg1iYWNrdXBfdmVyaWZ5GAsgASgLMhwuYWxpbmVyeS52MS5Ib3N0QmFja3VwVmVyaWZ5SAASNwoOYmFja3VwX3Jlc3RvcmUYDCABKAsyHS5hbGluZXJ5LnYxLkhvc3RCYWNrdXBSZXN0b3JlSAASOgoQd2FpdF9kYWVtb25fZ29uZRgNIAEoCzIeLmFsaW5lcnkudjEuSG9zdFdhaXREYWVtb25Hb25lSAASMwoMc3Bhd25fZGFlbW9uGA4gASgLMhsuYWxpbmVyeS52MS5Ib3N0U3Bhd25EYWVtb25IAEIGCgRjYWxsItsCCglIb3N0UmVwbHkSCgoCaWQYASABKAQSDwoFZXJyb3IYAiABKAlIABImCgVoZWxsbxgDIAEoCzIVLmFsaW5lcnkudjEuSG9zdEhlbGxvSAASJAoEZG9uZRgEIAEoCzIULmFsaW5lcnkudjEuSG9zdERvbmVIABIrCgVjbGFpbRgFIAEoCzIaLmFsaW5lcnkudjEuSG9zdENsYWltUmVwbHlIABItCgZmb2xkZXIYBiABKAsyGy5hbGluZXJ5LnYxLkhvc3RGb2xkZXJSZXBseUgAEikKBGluaXQYByABKAsyGS5hbGluZXJ5LnYxLkhvc3RJbml0UmVwbHlIABIqCgdsaXN0aW5nGAggASgLMhcuYWxpbmVyeS52MS5Ib3N0TGlzdGluZ0gAEigKBmVyYXNlZBgJIAEoCzIWLmFsaW5lcnkudjEuSG9zdEVyYXNlZEgAQgYKBGJvZHkiCgoISG9zdERvbmUiKQoJSG9zdEhlbGxvEg8KB3J1bnRpbWUYASABKAkSCwoDcGlkGAIgASgNIgoKCEhvc3RQaW5nIh0KDUhvc3RDbGFpbVJlcG8SDAoEcmVwbxgBIAEoCSIhCg5Ib3N0Q2xhaW1SZXBseRIPCgdjbGFpbWVkGAEgASgIIh8KD0hvc3RSZWxlYXNlUmVwbxIMCgRyZXBvGAEgASgJIhwKDEhvc3RDbGFzc2lmeRIMCgRwYXRoGAEgASgJIrQBCg9Ib3N0Rm9sZGVyUmVwbHkSLgoEa2luZBgBIAEoDjIgLmFsaW5lcnkudjEuSG9zdEZvbGRlclJlcGx5LktpbmQSDAoEcGF0aBgCIAEoCRIPCgdtZXNzYWdlGAMgASgJIlIKBEtpbmQSFAoQS0lORF9VTlNQRUNJRklFRBAAEhEKDUtJTkRfQ0hFQ0tPVVQQARIPCgtLSU5EX0FCU0VOVBACEhAKDEtJTkRfUkVGVVNFRBADIhgKCEhvc3RJbml0EgwKBHBhdGgYASABKAkimgEKDUhvc3RJbml0UmVwbHkSLAoEa2luZBgBIAEoDjIeLmFsaW5lcnkudjEuSG9zdEluaXRSZXBseS5LaW5kEgwKBHJvb3QYAiABKAkiTQoES2luZBIUChBLSU5EX1VOU1BFQ0lGSUVEEAASFAoQS0lORF9JTklUSUFMSVpFRBABEhkKFUtJTkRfQUxSRUFEWV9DSEVDS09VVBACIjAKC0hvc3RMaXN0RGlyEgwKBHBhdGgYASABKAkSEwoLc2hvd19oaWRkZW4YAiABKAgikwEKC0hvc3RMaXN0aW5nEgwKBHBhdGgYASABKAkSLgoHZW50cmllcxgCIAMoCzIdLmFsaW5lcnkudjEuSG9zdExpc3RpbmcuRW50cnkSEQoJdHJ1bmNhdGVkGAMgASgIGjMKBUVudHJ5EgwKBG5hbWUYASABKAkSCwoDZ2l0GAIgASgIEg8KB3N5bWxpbmsYAyABKAgiLwoNSG9zdFdyaXRlRmlsZRIMCgRwYXRoGAEgASgJEhAKCGNvbnRlbnRzGAIgASgJIqsBChNIb3N0U3luY0NyZWRlbnRpYWxzEgwKBHBhdGgYASABKAkSNQoDc2V0GAIgAygLMiguYWxpbmVyeS52MS5Ib3N0U3luY0NyZWRlbnRpYWxzLlNldEVudHJ5Eg4KBnJlbW92ZRgDIAMoCRITCgtlcmFzZV9vYXV0aBgEIAEoCBoqCghTZXRFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIh8KCkhvc3RFcmFzZWQSEQoJcHJvdmlkZXJzGAEgAygJIh4KDkhvc3RSZW1vdmVGaWxlEgwKBHBhdGgYASABKAkiNQoQSG9zdEJhY2t1cFZlcmlmeRIMCgRyZXBvGAEgASgJEhMKC2JhY2t1cF9wYXRoGAIgASgJIjYKEUhvc3RCYWNrdXBSZXN0b3JlEgwKBHJlcG8YASABKAkSEwoLYmFja3VwX3BhdGgYAiABKAkiIgoSSG9zdFdhaXREYWVtb25Hb25lEgwKBHJlcG8YASABKAkiuAIKD0hvc3RTcGF3bkRhZW1vbhIMCgRyZXBvGAEgASgJEhIKCmFwcF9jb25maWcYAiABKAkSDgoGYmluYXJ5GAMgASgJEhAKCGJ1aWxkX2lkGAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRILCgNsb2cYBiABKAkSMgoGbGF1bmNoGAcgASgOMiIuYWxpbmVyeS52MS5Ib3N0U3Bhd25EYWVtb24uTGF1bmNoEgwKBHVuaXQYCCABKAkSFwoPcnBjX3NlY3JldF9maWxlGAogASgJEhMKC2FwcF92ZXJzaW9uGAsgASgJIksKBkxhdW5jaBIWChJMQVVOQ0hfVU5TUEVDSUZJRUQQABIRCg1MQVVOQ0hfRElSRUNUEAESFgoSTEFVTkNIX1NZU1RFTURfUlVOEAJKBAgJEApiBnByb3RvMw");
+  fileDesc("ChVhbGluZXJ5L3YxL2hvc3QucHJvdG8SCmFsaW5lcnkudjEi5QUKC0hvc3RSZXF1ZXN0EgoKAmlkGAEgASgEEiQKBHBpbmcYAiABKAsyFC5hbGluZXJ5LnYxLkhvc3RQaW5nSAASLwoKY2xhaW1fcmVwbxgDIAEoCzIZLmFsaW5lcnkudjEuSG9zdENsYWltUmVwb0gAEjMKDHJlbGVhc2VfcmVwbxgEIAEoCzIbLmFsaW5lcnkudjEuSG9zdFJlbGVhc2VSZXBvSAASLAoIY2xhc3NpZnkYBSABKAsyGC5hbGluZXJ5LnYxLkhvc3RDbGFzc2lmeUgAEiQKBGluaXQYBiABKAsyFC5hbGluZXJ5LnYxLkhvc3RJbml0SAASKwoIbGlzdF9kaXIYByABKAsyFy5hbGluZXJ5LnYxLkhvc3RMaXN0RGlySAASLwoKd3JpdGVfZmlsZRgIIAEoCzIZLmFsaW5lcnkudjEuSG9zdFdyaXRlRmlsZUgAEjsKEHN5bmNfY3JlZGVudGlhbHMYCSABKAsyHy5hbGluZXJ5LnYxLkhvc3RTeW5jQ3JlZGVudGlhbHNIABIxCgtyZW1vdmVfZmlsZRgKIAEoCzIaLmFsaW5lcnkudjEuSG9zdFJlbW92ZUZpbGVIABI1Cg1iYWNrdXBfdmVyaWZ5GAsgASgLMhwuYWxpbmVyeS52MS5Ib3N0QmFja3VwVmVyaWZ5SAASNwoOYmFja3VwX3Jlc3RvcmUYDCABKAsyHS5hbGluZXJ5LnYxLkhvc3RCYWNrdXBSZXN0b3JlSAASOgoQd2FpdF9kYWVtb25fZ29uZRgNIAEoCzIeLmFsaW5lcnkudjEuSG9zdFdhaXREYWVtb25Hb25lSAASMwoMc3Bhd25fZGFlbW9uGA4gASgLMhsuYWxpbmVyeS52MS5Ib3N0U3Bhd25EYWVtb25IABIzCgxsaXN0X2RhZW1vbnMYDyABKAsyGy5hbGluZXJ5LnYxLkhvc3RMaXN0RGFlbW9uc0gAQgYKBGNhbGwihwMKCUhvc3RSZXBseRIKCgJpZBgBIAEoBBIPCgVlcnJvchgCIAEoCUgAEiYKBWhlbGxvGAMgASgLMhUuYWxpbmVyeS52MS5Ib3N0SGVsbG9IABIkCgRkb25lGAQgASgLMhQuYWxpbmVyeS52MS5Ib3N0RG9uZUgAEisKBWNsYWltGAUgASgLMhouYWxpbmVyeS52MS5Ib3N0Q2xhaW1SZXBseUgAEi0KBmZvbGRlchgGIAEoCzIbLmFsaW5lcnkudjEuSG9zdEZvbGRlclJlcGx5SAASKQoEaW5pdBgHIAEoCzIZLmFsaW5lcnkudjEuSG9zdEluaXRSZXBseUgAEioKB2xpc3RpbmcYCCABKAsyFy5hbGluZXJ5LnYxLkhvc3RMaXN0aW5nSAASKAoGZXJhc2VkGAkgASgLMhYuYWxpbmVyeS52MS5Ib3N0RXJhc2VkSAASKgoHZGFlbW9ucxgKIAEoCzIXLmFsaW5lcnkudjEuSG9zdERhZW1vbnNIAEIGCgRib2R5IgoKCEhvc3REb25lIikKCUhvc3RIZWxsbxIPCgdydW50aW1lGAEgASgJEgsKA3BpZBgCIAEoDSIKCghIb3N0UGluZyIdCg1Ib3N0Q2xhaW1SZXBvEgwKBHJlcG8YASABKAkiIQoOSG9zdENsYWltUmVwbHkSDwoHY2xhaW1lZBgBIAEoCCIfCg9Ib3N0UmVsZWFzZVJlcG8SDAoEcmVwbxgBIAEoCSIcCgxIb3N0Q2xhc3NpZnkSDAoEcGF0aBgBIAEoCSK0AQoPSG9zdEZvbGRlclJlcGx5Ei4KBGtpbmQYASABKA4yIC5hbGluZXJ5LnYxLkhvc3RGb2xkZXJSZXBseS5LaW5kEgwKBHBhdGgYAiABKAkSDwoHbWVzc2FnZRgDIAEoCSJSCgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIRCg1LSU5EX0NIRUNLT1VUEAESDwoLS0lORF9BQlNFTlQQAhIQCgxLSU5EX1JFRlVTRUQQAyIYCghIb3N0SW5pdBIMCgRwYXRoGAEgASgJIpoBCg1Ib3N0SW5pdFJlcGx5EiwKBGtpbmQYASABKA4yHi5hbGluZXJ5LnYxLkhvc3RJbml0UmVwbHkuS2luZBIMCgRyb290GAIgASgJIk0KBEtpbmQSFAoQS0lORF9VTlNQRUNJRklFRBAAEhQKEEtJTkRfSU5JVElBTElaRUQQARIZChVLSU5EX0FMUkVBRFlfQ0hFQ0tPVVQQAiIwCgtIb3N0TGlzdERpchIMCgRwYXRoGAEgASgJEhMKC3Nob3dfaGlkZGVuGAIgASgIIpMBCgtIb3N0TGlzdGluZxIMCgRwYXRoGAEgASgJEi4KB2VudHJpZXMYAiADKAsyHS5hbGluZXJ5LnYxLkhvc3RMaXN0aW5nLkVudHJ5EhEKCXRydW5jYXRlZBgDIAEoCBozCgVFbnRyeRIMCgRuYW1lGAEgASgJEgsKA2dpdBgCIAEoCBIPCgdzeW1saW5rGAMgASgIIi8KDUhvc3RXcml0ZUZpbGUSDAoEcGF0aBgBIAEoCRIQCghjb250ZW50cxgCIAEoCSKrAQoTSG9zdFN5bmNDcmVkZW50aWFscxIMCgRwYXRoGAEgASgJEjUKA3NldBgCIAMoCzIoLmFsaW5lcnkudjEuSG9zdFN5bmNDcmVkZW50aWFscy5TZXRFbnRyeRIOCgZyZW1vdmUYAyADKAkSEwoLZXJhc2Vfb2F1dGgYBCABKAgaKgoIU2V0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIfCgpIb3N0RXJhc2VkEhEKCXByb3ZpZGVycxgBIAMoCSIeCg5Ib3N0UmVtb3ZlRmlsZRIMCgRwYXRoGAEgASgJIjUKEEhvc3RCYWNrdXBWZXJpZnkSDAoEcmVwbxgBIAEoCRITCgtiYWNrdXBfcGF0aBgCIAEoCSI2ChFIb3N0QmFja3VwUmVzdG9yZRIMCgRyZXBvGAEgASgJEhMKC2JhY2t1cF9wYXRoGAIgASgJIiIKEkhvc3RXYWl0RGFlbW9uR29uZRIMCgRyZXBvGAEgASgJIswCCg9Ib3N0U3Bhd25EYWVtb24SDAoEcmVwbxgBIAEoCRISCgphcHBfY29uZmlnGAIgASgJEg4KBmJpbmFyeRgDIAEoCRIQCghidWlsZF9pZBgEIAEoCRIRCgluYW1lc3BhY2UYBSABKAkSCwoDbG9nGAYgASgJEjIKBmxhdW5jaBgHIAEoDjIiLmFsaW5lcnkudjEuSG9zdFNwYXduRGFlbW9uLkxhdW5jaBIMCgR1bml0GAggASgJEhcKD3JwY19zZWNyZXRfZmlsZRgKIAEoCRITCgthcHBfdmVyc2lvbhgLIAEoCRISCgpzdGFydGVkX2J5GAwgASgJIksKBkxhdW5jaBIWChJMQVVOQ0hfVU5TUEVDSUZJRUQQABIRCg1MQVVOQ0hfRElSRUNUEAESFgoSTEFVTkNIX1NZU1RFTURfUlVOEAJKBAgJEAoiEQoPSG9zdExpc3REYWVtb25zIpQBCgpIb3N0RGFlbW9uEgwKBHJlcG8YASABKAkSDAoEbGFuZRgCIAEoCRILCgNwaWQYAyABKA0SDwoHb3NfdXNlchgEIAEoCRISCgpzdGFydGVkX2J5GAUgASgJEhUKDXN0YXJ0ZWRfYXRfbXMYBiABKAMSDwoHdmVyc2lvbhgHIAEoCRIQCghwcm90b2NvbBgIIAEoDSI2CgtIb3N0RGFlbW9ucxInCgdkYWVtb25zGAEgAygLMhYuYWxpbmVyeS52MS5Ib3N0RGFlbW9uYgZwcm90bzM");
 
 /**
  * The host service (S5.2, O15 b): `alinery-vinculum-daemon --host-service`, the work a host needs while no daemon runs. The
@@ -117,6 +117,12 @@ export type HostRequest = Message<"alinery.v1.HostRequest"> & {
      */
     value: HostSpawnDaemon;
     case: "spawnDaemon";
+  } | {
+    /**
+     * @generated from field: alinery.v1.HostListDaemons list_daemons = 15;
+     */
+    value: HostListDaemons;
+    case: "listDaemons";
   } | { case: undefined; value?: undefined };
 };
 
@@ -191,6 +197,12 @@ export type HostReply = Message<"alinery.v1.HostReply"> & {
      */
     value: HostErased;
     case: "erased";
+  } | {
+    /**
+     * @generated from field: alinery.v1.HostDaemons daemons = 10;
+     */
+    value: HostDaemons;
+    case: "daemons";
   } | { case: undefined; value?: undefined };
 };
 
@@ -754,6 +766,13 @@ export type HostSpawnDaemon = Message<"alinery.v1.HostSpawnDaemon"> & {
    * @generated from field: string app_version = 11;
    */
   appVersion: string;
+
+  /**
+   * how this app describes its person and machine (--started-by), for whoever else sees the daemon
+   *
+   * @generated from field: string started_by = 12;
+   */
+  startedBy: string;
 };
 
 /**
@@ -792,4 +811,89 @@ export enum HostSpawnDaemon_Launch {
  */
 export const HostSpawnDaemon_LaunchSchema: GenEnum<HostSpawnDaemon_Launch> = /*@__PURE__*/
   enumDesc(file_alinery_v1_host, 21, 0);
+
+/**
+ * Every daemon running on the host, from the records each writes where anyone on the host can read them, so an app can say whose
+ * daemon holds a repo it has no token for.
+ *
+ * @generated from message alinery.v1.HostListDaemons
+ */
+export type HostListDaemons = Message<"alinery.v1.HostListDaemons"> & {
+};
+
+/**
+ * Describes the message alinery.v1.HostListDaemons.
+ * Use `create(HostListDaemonsSchema)` to create a new message.
+ */
+export const HostListDaemonsSchema: GenMessage<HostListDaemons> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_host, 22);
+
+/**
+ * @generated from message alinery.v1.HostDaemon
+ */
+export type HostDaemon = Message<"alinery.v1.HostDaemon"> & {
+  /**
+   * @generated from field: string repo = 1;
+   */
+  repo: string;
+
+  /**
+   * @generated from field: string lane = 2;
+   */
+  lane: string;
+
+  /**
+   * @generated from field: uint32 pid = 3;
+   */
+  pid: number;
+
+  /**
+   * @generated from field: string os_user = 4;
+   */
+  osUser: string;
+
+  /**
+   * @generated from field: string started_by = 5;
+   */
+  startedBy: string;
+
+  /**
+   * @generated from field: int64 started_at_ms = 6;
+   */
+  startedAtMs: bigint;
+
+  /**
+   * @generated from field: string version = 7;
+   */
+  version: string;
+
+  /**
+   * @generated from field: uint32 protocol = 8;
+   */
+  protocol: number;
+};
+
+/**
+ * Describes the message alinery.v1.HostDaemon.
+ * Use `create(HostDaemonSchema)` to create a new message.
+ */
+export const HostDaemonSchema: GenMessage<HostDaemon> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_host, 23);
+
+/**
+ * @generated from message alinery.v1.HostDaemons
+ */
+export type HostDaemons = Message<"alinery.v1.HostDaemons"> & {
+  /**
+   * @generated from field: repeated alinery.v1.HostDaemon daemons = 1;
+   */
+  daemons: HostDaemon[];
+};
+
+/**
+ * Describes the message alinery.v1.HostDaemons.
+ * Use `create(HostDaemonsSchema)` to create a new message.
+ */
+export const HostDaemonsSchema: GenMessage<HostDaemons> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_host, 24);
 

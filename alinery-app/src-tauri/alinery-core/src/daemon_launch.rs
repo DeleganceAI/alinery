@@ -77,6 +77,25 @@ pub fn configure_host_guard_environment(command: &mut Command, host_executable: 
     }
 }
 
+/// How this app describes its person and machine to whoever else sees a daemon it starts (`--started-by`), e.g. "nyx on MacBook".
+/// Coworkers on a shared box read it there, so it says no more than a login name and a short host name.
+pub fn started_by_label() -> String {
+    let user = std::env::var("USER").ok().filter(|user| !user.is_empty()).unwrap_or_else(|| "someone".into());
+    let mut buf = [0u8; 256];
+    // SAFETY: gethostname writes at most `len` bytes into the buffer it is given.
+    let host = if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..end]).split('.').next().unwrap_or_default().to_string()
+    } else {
+        String::new()
+    };
+    if host.is_empty() {
+        user
+    } else {
+        format!("{user} on {host}")
+    }
+}
+
 /// The one recipe for launching the daemon, locally or (through the repo service) on a remote
 /// host: arguments, login-shell PATH, the Grok key, detachment and null stdio. Callers add
 /// anything host-specific (such as the ownership library) and spawn it.
@@ -103,6 +122,8 @@ pub fn daemon_command(
         // The version a telemetry event carries (plan S4.1). All three crates move together, so this is the app's.
         .arg("--app-version")
         .arg(env!("CARGO_PKG_VERSION"))
+        .arg("--started-by")
+        .arg(started_by_label())
         .env("PATH", login_shell_path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -145,6 +166,8 @@ mod tests {
                 "b",
                 "--app-version",
                 env!("CARGO_PKG_VERSION"),
+                "--started-by",
+                started_by_label().as_str(),
                 "--socket-namespace",
                 "ns",
                 "--rpc-secret-file",

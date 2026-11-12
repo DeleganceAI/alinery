@@ -9,6 +9,7 @@ import { type McpStatusHandle, mcpStatusLabel } from "../useMcpStatus";
 const REPO_STATE: Record<RepoRuntime["state"], string> = {
   current: "Current",
   build_drift: "Other build (usable)",
+  joined: "Joined (started by someone else)",
   conflict: "Needs a restart",
   not_attached: "Not running",
 };

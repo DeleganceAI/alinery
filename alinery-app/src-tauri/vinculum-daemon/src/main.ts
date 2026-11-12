@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { userInfo } from "node:os";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
@@ -16,6 +17,8 @@ import { writeAtomic } from "./platform/fs.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
+import { removeBoxRecord, writeBoxRecord } from "./domain/boxRegistry.ts";
+import { commitJoinRequests, Members } from "./domain/members.ts";
 import type { TaskDeps } from "./rpc/tasks.ts";
 import { Feed } from "./sync/feed.ts";
 import { Reconciler } from "./sync/reconcile.ts";
@@ -58,7 +61,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 41;
+const PROTOCOL = 42;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -125,6 +128,9 @@ const rpcSecretFile = flag("--rpc-secret-file");
 const rpcSecret = rpcSecretFile ? takeSecretFile(rpcSecretFile) : Buffer.alloc(0);
 
 const namespace = flag("--socket-namespace");
+// How the starting app describes its person and machine; shown to whoever else sees this daemon (a coworker on a shared box).
+const startedBy = flag("--started-by");
+const startedAtMs = Date.now();
 const buildId = flag("--build-id") || "alinery-vinculum-daemon";
 if (!repo || !appConfig) {
   console.error("alinery-vinculum-daemon: missing --repo or --app-config");
@@ -919,6 +925,11 @@ function stopEverything(): number {
       /* already gone */
     }
   }
+  try {
+    removeBoxRecord(repo, lane);
+  } catch {
+    /* the reader's pid check hides it */
+  }
   return stopped;
 }
 
@@ -1028,13 +1039,17 @@ await artifactProjector.pass();
 playbookProjector.refresh();
 setInterval(() => void artifactProjector.pass().catch((e) => console.error(`artifact pass: ${(e as Error).message}`)), 30_000).unref();
 setInterval(() => playbookProjector.refresh(), 30_000).unref();
+// Who may use this daemon besides its starter; pending requests reach the members' apps as an entity.
+const members = new Members((pending) => commitJoinRequests(store, pending));
+setInterval(() => members.prune(), 60_000).unref();
 // Before sessions resume: a client that finds the daemon through `rpc.sock` can already call Hello.
 await serveRpc({
   socketPath: rpcSocket,
   secret: rpcSecret,
   tokens: agentTokens,
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
-  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity, version: appPackage.version },
+  info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity, version: appPackage.version, startedBy, osUser: userInfo().username, startedAtMs },
+  members,
   lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__omp-setup__").map((row) => row.id) },
   store,
   jobs,
@@ -1062,6 +1077,7 @@ await serveRpc({
     };
   },
 });
+writeBoxRecord({ repo, lane, pid: process.pid, osUser: userInfo().username, startedBy, startedAtMs, version: appPackage.version, protocol: PROTOCOL });
 // The installer and the updater hold no token for the wire, so a user's yes to "stop everything and install" reaches the daemon as
 // SIGTERM (scripts/lib/preflight.sh). It runs the teardown `Shutdown` runs, so sessions are recorded ended rather than interrupted.
 process.once("SIGTERM", () => {

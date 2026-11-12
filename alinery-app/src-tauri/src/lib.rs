@@ -164,6 +164,7 @@ pub fn run() {
             remote_set_sharing,
             remote_connect,
             remote_disconnect,
+            remote_join_daemon,
             remote_list_dir,
             remote_classify,
             remote_init,

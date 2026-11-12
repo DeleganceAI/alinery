@@ -14,6 +14,7 @@ import {
   HostClaimReplySchema,
   HostClaimRepoSchema,
   HostClassifySchema,
+  HostDaemonsSchema,
   HostDoneSchema,
   HostErasedSchema,
   HostFolderReply_Kind,
@@ -22,6 +23,7 @@ import {
   HostInitReply_Kind,
   HostInitReplySchema,
   HostInitSchema,
+  HostListDaemonsSchema,
   HostListDirSchema,
   HostListingSchema,
   HostPingSchema,
@@ -35,7 +37,7 @@ import {
   HostWaitDaemonGoneSchema,
   HostWriteFileSchema,
 } from "./gen/alinery/v1/host_pb";
-import { Capability, HelloRequestSchema, HelloResponseSchema, MintTokenRequestSchema, MintTokenResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
+import { Capability, CollectJoinRequestSchema, CollectJoinResponseSchema, HelloRequestSchema, JoinState, RequestJoinRequestSchema, RequestJoinResponseSchema, HelloResponseSchema, MintTokenRequestSchema, MintTokenResponseSchema, ShutdownOrigin, ShutdownRequestSchema, ShutdownResponseSchema } from "./gen/alinery/v1/admin_pb";
 
 const hex = <D extends DescMessage>(schema: D, init: MessageInitShape<D>) => Buffer.from(toBinary(schema, create(schema, init))).toString("hex");
 
@@ -51,7 +53,14 @@ const golden = {
     repoRoot: "/repo",
     appConfigIdentity: "identity-1",
     version: "1.2.3",
+    startedBy: "nyx on MacBook",
+    osUser: "dev",
+    startedAtMs: 1700000000123n,
   }),
+  RequestJoinRequest: hex(RequestJoinRequestSchema, { label: "jon on Strix" }),
+  RequestJoinResponse: hex(RequestJoinResponseSchema, { requestId: "req-1", requestSecret: "sec-1" }),
+  CollectJoinRequest: hex(CollectJoinRequestSchema, { requestId: "req-2", requestSecret: "sec-2" }),
+  CollectJoinResponse: hex(CollectJoinResponseSchema, { state: JoinState.APPROVED, token: "tok-1" }),
   MintTokenRequest: hex(MintTokenRequestSchema, { capability: Capability.AGENT, label: "managed-mcp" }),
   MintTokenResponse: hex(MintTokenResponseSchema, { token: "ab12cd34" }),
   EnsureReadyRequest: hex(EnsureReadyRequestSchema, { meta: { clientId: "client-1", mutationId: "mutation-1" } }),
@@ -94,8 +103,10 @@ const host = {
       unit: "alinery-daemon-abc",
       rpcSecretFile: "/srv/c/rpc-secrets/a.rpc",
       appVersion: "0.26.0",
+      startedBy: "nyx on MacBook",
     }),
   }),
+  "request.list_daemons": request(14, { case: "listDaemons", value: create(HostListDaemonsSchema) }),
   "reply.error": reply(21, { case: "error", value: "no such folder" }),
   "reply.hello": reply(0, { case: "hello", value: create(HostHelloSchema, { runtime: "0.26.0", pid: 4242 }) }),
   "reply.done": reply(22, { case: "done", value: create(HostDoneSchema) }),
@@ -114,6 +125,12 @@ const host = {
     }),
   }),
   "reply.erased": reply(27, { case: "erased", value: create(HostErasedSchema, { providers: ["codex", "openai"] }) }),
+  "reply.daemons": reply(28, {
+    case: "daemons",
+    value: create(HostDaemonsSchema, {
+      daemons: [{ repo: "/srv/app", lane: "dev", pid: 4243, osUser: "dev", startedBy: "jon on Strix", startedAtMs: 1700000000456n, version: "0.600.0", protocol: 42 }],
+    }),
+  }),
 };
 
 writeFileSync(new URL("./golden/host.json", import.meta.url), `${JSON.stringify(host, null, 2)}\n`);

@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::daemon_rpc::{
-    hello, resolve, shutdown_daemon, Bridge, Call, Capability, EnsureReadyRequest, HelloRequest, HelloResponse, MintTokenRequest, MintTokenResponse, ShutdownOrigin,
-    ShutdownRequest, ShutdownResponse, WriteHostedInferenceRequest, WriteHostedInferenceResponse,
+    hello, resolve, shutdown_daemon, Bridge, Call, Capability, CollectJoinRequest, CollectJoinResponse, EnsureReadyRequest, HelloRequest, HelloResponse, JoinState,
+    MintTokenRequest, MintTokenResponse, RequestJoinRequest, RequestJoinResponse, ShutdownOrigin, ShutdownRequest, ShutdownResponse, WriteHostedInferenceRequest,
+    WriteHostedInferenceResponse,
 };
 use bytes::Bytes;
 use http::HeaderMap;
@@ -544,6 +545,9 @@ async fn hello_decodes_the_fields_the_shell_reads() {
             repo_root: "/r".into(),
             app_config_identity: String::new(),
             version: String::new(),
+            started_by: String::new(),
+            os_user: String::new(),
+            started_at_ms: 0,
         }
     );
     let gone = hello(&server.socket.with_file_name("none.sock"), "tok").await.unwrap_err();
@@ -615,7 +619,31 @@ fn golden_hello_response_decodes_field_by_field_and_encodes_back_to_the_same_byt
     assert_eq!(response.repo_root, "/repo", "HelloResponse.repo_root");
     assert_eq!(response.app_config_identity, "identity-1", "HelloResponse.app_config_identity");
     assert_eq!(response.version, "1.2.3", "HelloResponse.version");
+    assert_eq!(response.started_by, "nyx on MacBook", "HelloResponse.started_by");
+    assert_eq!(response.os_user, "dev", "HelloResponse.os_user");
+    assert_eq!(response.started_at_ms, 1_700_000_000_123, "HelloResponse.started_at_ms");
     assert_eq!(response.encode_to_vec(), bytes);
+}
+
+#[test]
+fn golden_join_messages_decode_field_by_field_and_encode_back_to_the_same_bytes() {
+    let bytes = golden("RequestJoinRequest");
+    let message = RequestJoinRequest::decode(bytes.as_slice()).unwrap();
+    assert_eq!(message.label, "jon on Strix", "RequestJoinRequest.label");
+    assert_eq!(message.encode_to_vec(), bytes);
+    let bytes = golden("RequestJoinResponse");
+    let message = RequestJoinResponse::decode(bytes.as_slice()).unwrap();
+    assert_eq!((message.request_id.as_str(), message.request_secret.as_str()), ("req-1", "sec-1"), "RequestJoinResponse");
+    assert_eq!(message.encode_to_vec(), bytes);
+    let bytes = golden("CollectJoinRequest");
+    let message = CollectJoinRequest::decode(bytes.as_slice()).unwrap();
+    assert_eq!((message.request_id.as_str(), message.request_secret.as_str()), ("req-2", "sec-2"), "CollectJoinRequest");
+    assert_eq!(message.encode_to_vec(), bytes);
+    let bytes = golden("CollectJoinResponse");
+    let message = CollectJoinResponse::decode(bytes.as_slice()).unwrap();
+    assert_eq!(message.state, JoinState::Approved as i32, "CollectJoinResponse.state");
+    assert_eq!(message.token, "tok-1", "CollectJoinResponse.token");
+    assert_eq!(message.encode_to_vec(), bytes);
 }
 
 #[test]

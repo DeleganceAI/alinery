@@ -44,7 +44,7 @@ const LANE_LOCK = "/repo/.alinery/.alineryd-old-dev.lock";
 const held = (path: string) => `project owner is still running (${path}); stop it before opening this project here`;
 // The three near-identical sentences Rust reports for two held leases.
 const issues = [held(REPO_LOCK), held(LANE_LOCK), `${held(LANE_LOCK)}; cannot establish owner socket stopped (/repo/.alinery/alineryd-old-dev.sock): timed out`];
-const conflict: DaemonConflict = { repo: "/repo", app_protocol: 15, app_config_identity: "current", owners: [owner], issues, repairable_tasks: [] };
+const conflict: DaemonConflict = { repo: "/repo", app_protocol: 15, app_config_identity: "current", owners: [owner], issues, repairable_tasks: [], starter: null, joinable: false };
 const preview: TakeoverPreview = { confirmation_id: "consent-a", repo: "/repo", owner };
 const strip = () => screen.getByRole("button", { name: /repo is open elsewhere · showing saved progress/ });
 function tree(value: DaemonConflict | null, refresh: () => void) {
@@ -395,6 +395,8 @@ describe("repository status without a takeover", () => {
 
 describe("a remote repository's daemon", () => {
   const remote: DaemonConflict = {
+    starter: null,
+    joinable: false,
     repo: "alinery+ssh://box-1/srv/app",
     app_protocol: 24,
     app_config_identity: "current",
@@ -424,6 +426,39 @@ describe("a remote repository's daemon", () => {
     accept(confirm, "Stop 1 session and restart");
     await waitFor(() => expect(ipc.stopDaemon).toHaveBeenCalledWith("alinery+ssh://box-1/srv/app"));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("asks once more, naming them, before restarting a daemon someone else started", async () => {
+    vi.mocked(ipc.stopDaemon).mockResolvedValue();
+    mount({ ...remote, starter: { started_by: "jon on Strix", os_user: "dev", mine: false } });
+    fireEvent.click(screen.getByRole("button", { name: "Restart daemon…" }));
+    const first = await screen.findByRole("alertdialog", { name: "Restart the daemon for app?" });
+    expect(first.textContent).toContain("jon on Strix started it with another Alinery version");
+    accept(first, "Stop 1 session and restart");
+    const second = await screen.findByRole("alertdialog", { name: "Restart the daemon jon on Strix started?" });
+    expect(ipc.stopDaemon).not.toHaveBeenCalled();
+    accept(second, "Restart it anyway");
+    await waitFor(() => expect(ipc.stopDaemon).toHaveBeenCalledWith("alinery+ssh://box-1/srv/app"));
+  });
+
+  it("names who started a daemon this app has no token for, and asks to join it instead of restarting", async () => {
+    vi.mocked(ipc.remoteJoinDaemon).mockResolvedValue();
+    const theirs: DaemonConflict = {
+      ...remote,
+      owners: [],
+      issues: ["jon on Strix started this daemon. Anyone already using it can let you in."],
+      starter: { started_by: "jon on Strix", os_user: "dev", mine: false },
+      joinable: true,
+    };
+    const { refresh } = mount(theirs);
+    expect(screen.getByText(/app's daemon was started by jon on Strix \(as dev\)/)).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Restart daemon…" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ask to join" }));
+    await waitFor(() => expect(ipc.remoteJoinDaemon).toHaveBeenCalledWith("alinery+ssh://box-1/srv/app"));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    cleanup();
+    mount({ ...theirs, joinable: false });
+    expect(screen.queryByRole("button", { name: "Ask to join" })).toBeNull();
   });
 
   it("does nothing when the dialog is cancelled", async () => {

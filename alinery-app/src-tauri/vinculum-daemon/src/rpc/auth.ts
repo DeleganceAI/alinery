@@ -4,6 +4,7 @@ import { readFileSync, unlinkSync } from "node:fs";
 import { Code, ConnectError, createContextKey, createContextValues, type ContextValues, type HandlerContext } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import { ErrorDetailSchema } from "alinery-proto/alinery/v1/common_pb";
+import type { Members } from "../domain/members.ts";
 
 /** What the accept-time check made of the connection's peer.
  * - shell: the peer is the app's executable (`ALINERY_HOST_EXECUTABLE`).
@@ -103,14 +104,24 @@ export const AGENT_RPCS: ReadonlyMap<string, Capability> = new Map([
   [rpc("JobService", "StartPurge"), Capability.ADMIN],
 ]);
 
+/** The only RPCs that need no token (`AdminService.RequestJoin`): see `domain/members.ts`. */
+export const JOIN_RPCS: ReadonlySet<string> = new Set([rpc("AdminService", "RequestJoin"), rpc("AdminService", "CollectJoin")]);
+
 /** Every request carries a token. A header that is not the daemon's own or a minted one, including an empty or malformed one, is
  * never treated as no header, and no header is UNAUTHENTICATED too (R8). `method` is `<service>/<method>`: a minted token holds AGENT, and
  * for a method in `AGENT_RPCS` also the capability that method checks. */
-export function credentials(header: Headers, peer: PeerClass, secret: Buffer, minted: TokenRegistry, method: string): ContextValues {
+export function credentials(header: Headers, peer: PeerClass, secret: Buffer, minted: TokenRegistry, method: string, members?: Members): ContextValues {
+  // How a client without a token asks for one; the handlers hold no capability and answer only for the request itself. Only a
+  // daemon started over ssh (a shared box) takes them: on this machine there is no one else to join, only local processes.
+  if (JOIN_RPCS.has(method)) {
+    if (peer !== "ssh") throw new ConnectError("only a daemon on an ssh host can be joined", Code.PermissionDenied);
+    return createContextValues().set(CAPS, new Set());
+  }
   const given = bearer(header);
   if (given === null) throw new ConnectError("a token is required", Code.Unauthenticated);
   let caps: Capability[];
-  if (matches(given, secret)) caps = peer === "other" ? LOCAL_OTHER : FULL;
+  // A member token is the daemon's own token's equal, held to the same peer rule.
+  if (matches(given, secret) || members?.has(given)) caps = peer === "other" ? LOCAL_OTHER : FULL;
   else if (minted.has(given)) {
     const need = AGENT_RPCS.get(method);
     caps = need === undefined ? [Capability.AGENT] : [Capability.AGENT, need];

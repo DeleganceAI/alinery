@@ -30,6 +30,7 @@ message HostRequest {
     HostBackupRestore backup_restore = 12;
     HostWaitDaemonGone wait_daemon_gone = 13;
     HostSpawnDaemon spawn_daemon = 14;
+    HostListDaemons list_daemons = 15;
   }
 }
 
@@ -44,6 +45,7 @@ message HostReply {
     HostInitReply init = 7;
     HostListing listing = 8;
     HostErased erased = 9;
+    HostDaemons daemons = 10;
   }
 }
 
@@ -159,4 +161,20 @@ message HostSpawnDaemon {
   reserved 9;                    // the secret file of the retired control wire: the RPC token replaced it (S5.3)
   string rpc_secret_file = 10;   // the same for the RPC socket's bearer token
   string app_version = 11;       // the version a telemetry event carries (--app-version)
+  string started_by = 12;        // how this app describes its person and machine (--started-by), for whoever else sees the daemon
 }
+
+// Every daemon running on the host, from the records each writes where anyone on the host can read them, so an app can say whose
+// daemon holds a repo it has no token for.
+message HostListDaemons {}
+message HostDaemon {
+  string repo = 1;
+  string lane = 2;
+  uint32 pid = 3;
+  string os_user = 4;
+  string started_by = 5;
+  int64 started_at_ms = 6;
+  string version = 7;
+  uint32 protocol = 8;
+}
+message HostDaemons { repeated HostDaemon daemons = 1; }

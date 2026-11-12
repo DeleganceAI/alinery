@@ -1,9 +1,12 @@
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
-import { Capability, ShutdownOrigin, type AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import { Capability, JoinState, ShutdownOrigin, type AdminService } from "alinery-proto/alinery/v1/admin_pb";
+import type { Members } from "../domain/members.ts";
 import { capabilitiesOf, requireCapability, type TokenRegistry } from "./auth.ts";
 
-/** `version` is the app release the daemon was built from; Hello reports it for display only. */
-export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string; version?: string };
+/** `version` is the app release the daemon was built from; it and who started the daemon are for display only. */
+export type DaemonInfo = { protocol: number; buildId: string; repoRoot: string; appConfigIdentity: string; version?: string; startedBy?: string; osUser?: string; startedAtMs?: number };
+
+const JOIN_STATES = { pending: JoinState.PENDING, approved: JoinState.APPROVED, denied: JoinState.DENIED } as const;
 
 /** What the daemon does for `Shutdown`: `stop` ends every session and removes the sockets and returns how many sessions it
  * ended; `exit` ends the process. `live` names the sessions whose process is running (`LiveSessions`). */
@@ -12,7 +15,7 @@ export type Lifecycle = { stop: () => number; exit: () => void; live?: () => str
 // Time for the reply to leave the socket before the process goes.
 const EXIT_DELAY_MS = 100;
 
-export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: string, tokens: TokenRegistry): ServiceImpl<typeof AdminService> {
+export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: string, tokens: TokenRegistry, members: Members): ServiceImpl<typeof AdminService> {
   return {
     // Needs any one capability, which every credential that passes auth holds, so it is also the
     // liveness probe.
@@ -24,7 +27,29 @@ export function adminService(info: DaemonInfo, lifecycle: Lifecycle, epoch: stri
       repoRoot: info.repoRoot,
       appConfigIdentity: info.appConfigIdentity,
       version: info.version ?? "",
+      startedBy: info.startedBy ?? "",
+      osUser: info.osUser ?? "",
+      startedAtMs: BigInt(info.startedAtMs ?? 0),
     }),
+    requestJoin: (req) => {
+      try {
+        const { id, secret } = members.request(req.label);
+        console.error(`join requested: id=${id} label=${JSON.stringify(req.label)}`);
+        return { requestId: id, requestSecret: secret };
+      } catch (error) {
+        throw new ConnectError((error as Error).message, Code.ResourceExhausted);
+      }
+    },
+    collectJoin: (req) => {
+      const answer = members.collect(req.requestId, req.requestSecret);
+      return { state: JOIN_STATES[answer.state], token: answer.token };
+    },
+    decideJoin: (req, ctx) => {
+      requireCapability(ctx, Capability.APPROVE);
+      if (!members.decide(req.requestId, req.approve)) throw new ConnectError("that join request is no longer waiting", Code.FailedPrecondition);
+      console.error(`join ${req.approve ? "approved" : "denied"}: id=${req.requestId}`);
+      return {};
+    },
     // O20 (c): the shell asks for the token its managed MCP runs with. Only AGENT can be minted, so no credential can be made that
     // holds more than the RPCs behind MCP's tools.
     mintToken: (req, ctx) => {

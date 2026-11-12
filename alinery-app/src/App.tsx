@@ -25,7 +25,7 @@ import { applyAppearance, DEFAULT_APPEARANCE } from "./appearance";
 import { GlobalSearch, type SearchItem } from "./CommandPalette";
 import { chatVisibilityFromAppearance } from "./chat/visibility";
 import { askConfirm, ConfirmHost, confirmDanger } from "./confirm";
-import { DaemonConflictBanner, HostGuardWarning, RepoBusyBanner, restartRemoteDaemon } from "./DaemonConflictBanner";
+import { DaemonConflictBanner, HostGuardWarning, JoinRequestsBanner, RepoBusyBanner, restartRemoteDaemon } from "./DaemonConflictBanner";
 import { DEFAULT_GRID_VIEW_ID, gridViewShortcut, normalizeGridViews, resolveGridTopLevelRoute, trailingTabDigit } from "./gridViews";
 import { HotkeyBar } from "./HotkeyBar";
 import { ORB_SPEED } from "./Indicators";
@@ -1328,6 +1328,7 @@ export default function App() {
               {header}
               {daemon.repo_busy && appConfig?.active_repo && <RepoBusyBanner repo={appConfig.active_repo} onPickRepo={() => openSetup()} />}
               <DaemonConflictBanner conflict={daemon.conflict} onRefresh={daemon.refresh} />
+              {appConfig?.active_repo && isRemoteRepo(appConfig.active_repo) && <JoinRequestsBanner repo={appConfig.active_repo} />}
               {/* Backend ownership gate is the source of truth; blank main so the busy
               strip is the only actionable surface (defense-in-depth). */}
               <main>

@@ -12,6 +12,7 @@ import {
   HostSpawnDaemon_Launch,
 } from "alinery-proto/alinery/v1/host_pb";
 import { backupRestore, backupVerify, classifyFolder, Claims, initFolder, listDir, removeFile, spawnDaemon, syncCredentials, waitDaemonGone, writeFile } from "./ops.ts";
+import { listBoxRecords } from "../domain/boxRegistry.ts";
 
 /** Printed once, before the first frame: the client skips whatever a login shell printed ahead of it. */
 export const MARKER = "alinery-host-service/1\n";
@@ -110,9 +111,15 @@ export async function handle(call: HostRequest["call"], claims: Claims): Promise
         unit: v.unit,
         rpcSecretFile: v.rpcSecretFile,
         appVersion: v.appVersion,
+        startedBy: v.startedBy,
       });
       return done;
     }
+    case "listDaemons":
+      return {
+        case: "daemons",
+        value: { daemons: listBoxRecords().map((d) => ({ repo: d.repo, lane: d.lane, pid: d.pid, osUser: d.osUser, startedBy: d.startedBy, startedAtMs: BigInt(d.startedAtMs), version: d.version, protocol: d.protocol })) },
+      };
     default:
       throw new Error("the host's runtime does not understand this request");
   }

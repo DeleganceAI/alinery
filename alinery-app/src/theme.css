@@ -10493,3 +10493,11 @@ header:has(~ main .task-info-panel) {
   background: var(--accent-subtle);
   color: var(--text-strong);
 }
+
+/* Who started a daemon someone else runs, after its repo name; and the host's daemons this app has not opened. */
+.sync-link-starter {
+  color: var(--text-faint);
+}
+.sync-link-other {
+  opacity: 0.75;
+}

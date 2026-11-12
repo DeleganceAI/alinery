@@ -1,7 +1,9 @@
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { confirmDanger } from "./confirm";
+import { confirmRestartingOthers, otherStarter } from "./DaemonConflictBanner";
 import { runtimeStatus, stopDaemon } from "./ipc";
+import { parseRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
 import { toast } from "./toast";
 import type { LinkTraffic, RepoRuntime, RuntimeStatus } from "./types";
@@ -45,13 +47,18 @@ function links(status: RuntimeStatus): Link[] {
   ];
 }
 
+/** Who started a daemon, for its row: nothing when it is this person's own or the daemon does not say. */
+export const starterNote = (repo: Pick<RepoRuntime, "started_by" | "os_user" | "mine">) =>
+  repo.mine || !repo.started_by ? "" : `${repo.started_by}${repo.os_user ? ` (as ${repo.os_user})` : ""}`;
+
 async function updateDaemon(repo: RepoRuntime) {
+  const name = repoName(repo.repo);
   const ok = await confirmDanger(
-    `Restart the daemon for ${repoName(repo.repo)}?`,
+    `Restart the daemon for ${name}?`,
     <p className="confirm-loss">It is replaced with this app's build. Any live sessions in this repository are stopped, and their in-flight work is lost.</p>,
     "Restart daemon",
   );
-  if (!ok) return;
+  if (!ok || !(await confirmRestartingOthers(otherStarter(repo), name))) return;
   await stopDaemon(repo.repo).then(
     () => toast.success(`Restarted the daemon for ${repoName(repo.repo)}`),
     (cause) => toast.error(`Couldn't restart the daemon for ${repoName(repo.repo)}: ${String(cause)}`),
@@ -95,6 +102,10 @@ export function SyncLinks({ appVersion, onOpenRepo }: { appVersion: string; onOp
       {links(status).map((link) => {
         const rate = rates[link.id];
         const repos = status.repos.filter((repo) => repo.host === link.id && repo.state !== "not_attached");
+        // The host's other daemons: repositories this app has not opened, whoever started them.
+        const others = (status.hosts.find((host) => host.host_id === link.id)?.daemons ?? []).filter(
+          (daemon) => !repos.some((repo) => parseRemoteRepo(repo.repo)?.path === daemon.repo),
+        );
         return (
           <div className="sync-link" key={link.id}>
             <div className="sync-link-head">
@@ -113,10 +124,18 @@ export function SyncLinks({ appVersion, onOpenRepo }: { appVersion: string; onOp
             {repos.map((repo) => {
               const conflict = repo.state === "conflict";
               const name = repoName(repo.repo);
+              const starter = starterNote(repo);
+              const title = [conflict && repo.issues.length ? repo.issues.join("\n") : repo.repo, starter && `Started by ${starter}`].filter(Boolean).join("\n");
               return (
-                <div className="sync-link-repo" key={repo.repo} title={conflict && repo.issues.length ? repo.issues.join("\n") : repo.repo}>
-                  <span className="sync-link-repo-name">{name}</span>
-                  <span className="sync-link-version">{conflict ? "conflict" : repo.version ? `v${repo.version}` : repo.version === "" ? "older daemon" : "…"}</span>
+                <div className="sync-link-repo" key={repo.repo} title={title}>
+                  <span className="sync-link-repo-name">
+                    {name}
+                    {starter && <span className="sync-link-starter"> · {repo.started_by}</span>}
+                  </span>
+                  <span className="sync-link-version">
+                    {conflict ? "conflict" : repo.version ? `v${repo.version}` : repo.version === "" ? "older daemon" : "…"}
+                    {repo.state === "joined" && " · joined"}
+                  </span>
                   {conflict
                     ? // The selected repo's banner holds the confirmed takeover (or a remote restart); stop_daemon cannot reach another lane's owner.
                       onOpenRepo && (
@@ -124,7 +143,7 @@ export function SyncLinks({ appVersion, onOpenRepo }: { appVersion: string; onOp
                           type="button"
                           className="sync-link-update"
                           aria-label={`Open ${name} to resolve its daemon conflict`}
-                          title="Open this repository to take over its daemon"
+                          title="Open this repository to take over or join its daemon"
                           onClick={() => onOpenRepo(repo.repo)}
                         >
                           <ArrowRight size={11} strokeWidth={2} aria-hidden="true" />
@@ -144,6 +163,15 @@ export function SyncLinks({ appVersion, onOpenRepo }: { appVersion: string; onOp
                 </div>
               );
             })}
+            {others.map((daemon) => (
+              <div className="sync-link-repo sync-link-other" key={`${daemon.repo}\0${daemon.lane}`} title={`${daemon.repo}\nPID ${daemon.pid}`}>
+                <span className="sync-link-repo-name">
+                  {repoName(daemon.repo)}
+                  <span className="sync-link-starter"> · {daemon.started_by || daemon.os_user || "someone"}</span>
+                </span>
+                <span className="sync-link-version">{daemon.version ? `v${daemon.version}` : "older daemon"}</span>
+              </div>
+            ))}
           </div>
         );
       })}

@@ -10,7 +10,129 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/admin.proto.
  */
 export const file_alinery_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIhUKE0xpdmVTZXNzaW9uc1JlcXVlc3QiGQoLTGl2ZVNlc3Npb24SCgoCaWQYASABKAkiQQoUTGl2ZVNlc3Npb25zUmVzcG9uc2USKQoIc2Vzc2lvbnMYASADKAsyFy5hbGluZXJ5LnYxLkxpdmVTZXNzaW9uIk0KEE1pbnRUb2tlblJlcXVlc3QSKgoKY2FwYWJpbGl0eRgBIAEoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRINCgVsYWJlbBgCIAEoCSIiChFNaW50VG9rZW5SZXNwb25zZRINCgV0b2tlbhgBIAEoCSJICgxIZWxsb1JlcXVlc3QSEQoJY2xpZW50X2lkGAEgASgJEhMKC2NsaWVudF9raW5kGAIgASgJEhAKCHByb3RvY29sGAMgASgNIrEBCg1IZWxsb1Jlc3BvbnNlEhAKCHByb3RvY29sGAEgASgNEhAKCGJ1aWxkX2lkGAIgASgJEg0KBWVwb2NoGAMgASgJEiwKDGNhcGFiaWxpdGllcxgEIAMoDjIWLmFsaW5lcnkudjEuQ2FwYWJpbGl0eRIRCglyZXBvX3Jvb3QYBSABKAkSGwoTYXBwX2NvbmZpZ19pZGVudGl0eRgGIAEoCRIPCgd2ZXJzaW9uGAcgASgJIlYKD1NodXRkb3duUmVxdWVzdBIqCgZvcmlnaW4YASABKA4yGi5hbGluZXJ5LnYxLlNodXRkb3duT3JpZ2luEhcKD2NvbmZpcm1hdGlvbl9pZBgCIAEoCSIsChBTaHV0ZG93blJlc3BvbnNlEhgKEHNlc3Npb25zX3N0b3BwZWQYASABKA0qlQEKCkNhcGFiaWxpdHkSGgoWQ0FQQUJJTElUWV9VTlNQRUNJRklFRBAAEhMKD0NBUEFCSUxJVFlfVklFVxABEhIKDkNBUEFCSUxJVFlfQUNUEAISFgoSQ0FQQUJJTElUWV9BUFBST1ZFEAMSFAoQQ0FQQUJJTElUWV9BRE1JThAEEhQKEENBUEFCSUxJVFlfQUdFTlQQBSrfAQoOU2h1dGRvd25PcmlnaW4SHwobU0hVVERPV05fT1JJR0lOX1VOU1BFQ0lGSUVEEAASHwobU0hVVERPV05fT1JJR0lOX1NUT1BfREFFTU9OEAESHgoaU0hVVERPV05fT1JJR0lOX0NMT1NFX1JFUE8QAhIiCh5TSFVURE9XTl9PUklHSU5fUkVTVE9SRV9CQUNLVVAQAxImCiJTSFVURE9XTl9PUklHSU5fQ09ORklSTUVEX1RBS0VPVkVSEAQSHwobU0hVVERPV05fT1JJR0lOX1NUT1BfUkVNT1RFEAUysAIKDEFkbWluU2VydmljZRI8CgVIZWxsbxIYLmFsaW5lcnkudjEuSGVsbG9SZXF1ZXN0GhkuYWxpbmVyeS52MS5IZWxsb1Jlc3BvbnNlEkUKCFNodXRkb3duEhsuYWxpbmVyeS52MS5TaHV0ZG93blJlcXVlc3QaHC5hbGluZXJ5LnYxLlNodXRkb3duUmVzcG9uc2USSAoJTWludFRva2VuEhwuYWxpbmVyeS52MS5NaW50VG9rZW5SZXF1ZXN0Gh0uYWxpbmVyeS52MS5NaW50VG9rZW5SZXNwb25zZRJRCgxMaXZlU2Vzc2lvbnMSHy5hbGluZXJ5LnYxLkxpdmVTZXNzaW9uc1JlcXVlc3QaIC5hbGluZXJ5LnYxLkxpdmVTZXNzaW9uc1Jlc3BvbnNlYgZwcm90bzM");
+  fileDesc("ChZhbGluZXJ5L3YxL2FkbWluLnByb3RvEgphbGluZXJ5LnYxIiMKElJlcXVlc3RKb2luUmVxdWVzdBINCgVsYWJlbBgBIAEoCSJBChNSZXF1ZXN0Sm9pblJlc3BvbnNlEhIKCnJlcXVlc3RfaWQYASABKAkSFgoOcmVxdWVzdF9zZWNyZXQYAiABKAkiQAoSQ29sbGVjdEpvaW5SZXF1ZXN0EhIKCnJlcXVlc3RfaWQYASABKAkSFgoOcmVxdWVzdF9zZWNyZXQYAiABKAkiSgoTQ29sbGVjdEpvaW5SZXNwb25zZRIkCgVzdGF0ZRgBIAEoDjIVLmFsaW5lcnkudjEuSm9pblN0YXRlEg0KBXRva2VuGAIgASgJIjgKEURlY2lkZUpvaW5SZXF1ZXN0EhIKCnJlcXVlc3RfaWQYASABKAkSDwoHYXBwcm92ZRgCIAEoCCIUChJEZWNpZGVKb2luUmVzcG9uc2UiFQoTTGl2ZVNlc3Npb25zUmVxdWVzdCIZCgtMaXZlU2Vzc2lvbhIKCgJpZBgBIAEoCSJBChRMaXZlU2Vzc2lvbnNSZXNwb25zZRIpCghzZXNzaW9ucxgBIAMoCzIXLmFsaW5lcnkudjEuTGl2ZVNlc3Npb24iTQoQTWludFRva2VuUmVxdWVzdBIqCgpjYXBhYmlsaXR5GAEgASgOMhYuYWxpbmVyeS52MS5DYXBhYmlsaXR5Eg0KBWxhYmVsGAIgASgJIiIKEU1pbnRUb2tlblJlc3BvbnNlEg0KBXRva2VuGAEgASgJIkgKDEhlbGxvUmVxdWVzdBIRCgljbGllbnRfaWQYASABKAkSEwoLY2xpZW50X2tpbmQYAiABKAkSEAoIcHJvdG9jb2wYAyABKA0i7QEKDUhlbGxvUmVzcG9uc2USEAoIcHJvdG9jb2wYASABKA0SEAoIYnVpbGRfaWQYAiABKAkSDQoFZXBvY2gYAyABKAkSLAoMY2FwYWJpbGl0aWVzGAQgAygOMhYuYWxpbmVyeS52MS5DYXBhYmlsaXR5EhEKCXJlcG9fcm9vdBgFIAEoCRIbChNhcHBfY29uZmlnX2lkZW50aXR5GAYgASgJEg8KB3ZlcnNpb24YByABKAkSEgoKc3RhcnRlZF9ieRgIIAEoCRIPCgdvc191c2VyGAkgASgJEhUKDXN0YXJ0ZWRfYXRfbXMYCiABKAMiVgoPU2h1dGRvd25SZXF1ZXN0EioKBm9yaWdpbhgBIAEoDjIaLmFsaW5lcnkudjEuU2h1dGRvd25PcmlnaW4SFwoPY29uZmlybWF0aW9uX2lkGAIgASgJIiwKEFNodXRkb3duUmVzcG9uc2USGAoQc2Vzc2lvbnNfc3RvcHBlZBgBIAEoDSpvCglKb2luU3RhdGUSGgoWSk9JTl9TVEFURV9VTlNQRUNJRklFRBAAEhYKEkpPSU5fU1RBVEVfUEVORElORxABEhcKE0pPSU5fU1RBVEVfQVBQUk9WRUQQAhIVChFKT0lOX1NUQVRFX0RFTklFRBADKpUBCgpDYXBhYmlsaXR5EhoKFkNBUEFCSUxJVFlfVU5TUEVDSUZJRUQQABITCg9DQVBBQklMSVRZX1ZJRVcQARISCg5DQVBBQklMSVRZX0FDVBACEhYKEkNBUEFCSUxJVFlfQVBQUk9WRRADEhQKEENBUEFCSUxJVFlfQURNSU4QBBIUChBDQVBBQklMSVRZX0FHRU5UEAUq3wEKDlNodXRkb3duT3JpZ2luEh8KG1NIVVRET1dOX09SSUdJTl9VTlNQRUNJRklFRBAAEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX0RBRU1PThABEh4KGlNIVVRET1dOX09SSUdJTl9DTE9TRV9SRVBPEAISIgoeU0hVVERPV05fT1JJR0lOX1JFU1RPUkVfQkFDS1VQEAMSJgoiU0hVVERPV05fT1JJR0lOX0NPTkZJUk1FRF9UQUtFT1ZFUhAEEh8KG1NIVVRET1dOX09SSUdJTl9TVE9QX1JFTU9URRAFMp0ECgxBZG1pblNlcnZpY2USPAoFSGVsbG8SGC5hbGluZXJ5LnYxLkhlbGxvUmVxdWVzdBoZLmFsaW5lcnkudjEuSGVsbG9SZXNwb25zZRJFCghTaHV0ZG93bhIbLmFsaW5lcnkudjEuU2h1dGRvd25SZXF1ZXN0GhwuYWxpbmVyeS52MS5TaHV0ZG93blJlc3BvbnNlEkgKCU1pbnRUb2tlbhIcLmFsaW5lcnkudjEuTWludFRva2VuUmVxdWVzdBodLmFsaW5lcnkudjEuTWludFRva2VuUmVzcG9uc2USUQoMTGl2ZVNlc3Npb25zEh8uYWxpbmVyeS52MS5MaXZlU2Vzc2lvbnNSZXF1ZXN0GiAuYWxpbmVyeS52MS5MaXZlU2Vzc2lvbnNSZXNwb25zZRJOCgtSZXF1ZXN0Sm9pbhIeLmFsaW5lcnkudjEuUmVxdWVzdEpvaW5SZXF1ZXN0Gh8uYWxpbmVyeS52MS5SZXF1ZXN0Sm9pblJlc3BvbnNlEk4KC0NvbGxlY3RKb2luEh4uYWxpbmVyeS52MS5Db2xsZWN0Sm9pblJlcXVlc3QaHy5hbGluZXJ5LnYxLkNvbGxlY3RKb2luUmVzcG9uc2USSwoKRGVjaWRlSm9pbhIdLmFsaW5lcnkudjEuRGVjaWRlSm9pblJlcXVlc3QaHi5hbGluZXJ5LnYxLkRlY2lkZUpvaW5SZXNwb25zZWIGcHJvdG8z");
+
+/**
+ * `label` is how the asking app describes its person and machine, e.g. "jon on Strix"; shown to the members who decide.
+ *
+ * @generated from message alinery.v1.RequestJoinRequest
+ */
+export type RequestJoinRequest = Message<"alinery.v1.RequestJoinRequest"> & {
+  /**
+   * @generated from field: string label = 1;
+   */
+  label: string;
+};
+
+/**
+ * Describes the message alinery.v1.RequestJoinRequest.
+ * Use `create(RequestJoinRequestSchema)` to create a new message.
+ */
+export const RequestJoinRequestSchema: GenMessage<RequestJoinRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 0);
+
+/**
+ * @generated from message alinery.v1.RequestJoinResponse
+ */
+export type RequestJoinResponse = Message<"alinery.v1.RequestJoinResponse"> & {
+  /**
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+
+  /**
+   * CollectJoin needs it, so only the asker collects the token
+   *
+   * @generated from field: string request_secret = 2;
+   */
+  requestSecret: string;
+};
+
+/**
+ * Describes the message alinery.v1.RequestJoinResponse.
+ * Use `create(RequestJoinResponseSchema)` to create a new message.
+ */
+export const RequestJoinResponseSchema: GenMessage<RequestJoinResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 1);
+
+/**
+ * @generated from message alinery.v1.CollectJoinRequest
+ */
+export type CollectJoinRequest = Message<"alinery.v1.CollectJoinRequest"> & {
+  /**
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+
+  /**
+   * @generated from field: string request_secret = 2;
+   */
+  requestSecret: string;
+};
+
+/**
+ * Describes the message alinery.v1.CollectJoinRequest.
+ * Use `create(CollectJoinRequestSchema)` to create a new message.
+ */
+export const CollectJoinRequestSchema: GenMessage<CollectJoinRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 2);
+
+/**
+ * @generated from message alinery.v1.CollectJoinResponse
+ */
+export type CollectJoinResponse = Message<"alinery.v1.CollectJoinResponse"> & {
+  /**
+   * @generated from field: alinery.v1.JoinState state = 1;
+   */
+  state: JoinState;
+
+  /**
+   * @generated from field: string token = 2;
+   */
+  token: string;
+};
+
+/**
+ * Describes the message alinery.v1.CollectJoinResponse.
+ * Use `create(CollectJoinResponseSchema)` to create a new message.
+ */
+export const CollectJoinResponseSchema: GenMessage<CollectJoinResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 3);
+
+/**
+ * @generated from message alinery.v1.DecideJoinRequest
+ */
+export type DecideJoinRequest = Message<"alinery.v1.DecideJoinRequest"> & {
+  /**
+   * @generated from field: string request_id = 1;
+   */
+  requestId: string;
+
+  /**
+   * @generated from field: bool approve = 2;
+   */
+  approve: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.DecideJoinRequest.
+ * Use `create(DecideJoinRequestSchema)` to create a new message.
+ */
+export const DecideJoinRequestSchema: GenMessage<DecideJoinRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 4);
+
+/**
+ * @generated from message alinery.v1.DecideJoinResponse
+ */
+export type DecideJoinResponse = Message<"alinery.v1.DecideJoinResponse"> & {
+};
+
+/**
+ * Describes the message alinery.v1.DecideJoinResponse.
+ * Use `create(DecideJoinResponseSchema)` to create a new message.
+ */
+export const DecideJoinResponseSchema: GenMessage<DecideJoinResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_admin, 5);
 
 /**
  * @generated from message alinery.v1.LiveSessionsRequest
@@ -23,7 +145,7 @@ export type LiveSessionsRequest = Message<"alinery.v1.LiveSessionsRequest"> & {
  * Use `create(LiveSessionsRequestSchema)` to create a new message.
  */
 export const LiveSessionsRequestSchema: GenMessage<LiveSessionsRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 0);
+  messageDesc(file_alinery_v1_admin, 6);
 
 /**
  * @generated from message alinery.v1.LiveSession
@@ -40,7 +162,7 @@ export type LiveSession = Message<"alinery.v1.LiveSession"> & {
  * Use `create(LiveSessionSchema)` to create a new message.
  */
 export const LiveSessionSchema: GenMessage<LiveSession> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 1);
+  messageDesc(file_alinery_v1_admin, 7);
 
 /**
  * @generated from message alinery.v1.LiveSessionsResponse
@@ -57,7 +179,7 @@ export type LiveSessionsResponse = Message<"alinery.v1.LiveSessionsResponse"> & 
  * Use `create(LiveSessionsResponseSchema)` to create a new message.
  */
 export const LiveSessionsResponseSchema: GenMessage<LiveSessionsResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 2);
+  messageDesc(file_alinery_v1_admin, 8);
 
 /**
  * Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
@@ -83,7 +205,7 @@ export type MintTokenRequest = Message<"alinery.v1.MintTokenRequest"> & {
  * Use `create(MintTokenRequestSchema)` to create a new message.
  */
 export const MintTokenRequestSchema: GenMessage<MintTokenRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 3);
+  messageDesc(file_alinery_v1_admin, 9);
 
 /**
  * @generated from message alinery.v1.MintTokenResponse
@@ -100,7 +222,7 @@ export type MintTokenResponse = Message<"alinery.v1.MintTokenResponse"> & {
  * Use `create(MintTokenResponseSchema)` to create a new message.
  */
 export const MintTokenResponseSchema: GenMessage<MintTokenResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 4);
+  messageDesc(file_alinery_v1_admin, 10);
 
 /**
  * @generated from message alinery.v1.HelloRequest
@@ -129,7 +251,7 @@ export type HelloRequest = Message<"alinery.v1.HelloRequest"> & {
  * Use `create(HelloRequestSchema)` to create a new message.
  */
 export const HelloRequestSchema: GenMessage<HelloRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 5);
+  messageDesc(file_alinery_v1_admin, 11);
 
 /**
  * @generated from message alinery.v1.HelloResponse
@@ -173,6 +295,25 @@ export type HelloResponse = Message<"alinery.v1.HelloResponse"> & {
    * @generated from field: string version = 7;
    */
   version: string;
+
+  /**
+   * how the app that started it described its person and machine (--started-by), for display only
+   *
+   * @generated from field: string started_by = 8;
+   */
+  startedBy: string;
+
+  /**
+   * the login the daemon runs as
+   *
+   * @generated from field: string os_user = 9;
+   */
+  osUser: string;
+
+  /**
+   * @generated from field: int64 started_at_ms = 10;
+   */
+  startedAtMs: bigint;
 };
 
 /**
@@ -180,7 +321,7 @@ export type HelloResponse = Message<"alinery.v1.HelloResponse"> & {
  * Use `create(HelloResponseSchema)` to create a new message.
  */
 export const HelloResponseSchema: GenMessage<HelloResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 6);
+  messageDesc(file_alinery_v1_admin, 12);
 
 /**
  * @generated from message alinery.v1.ShutdownRequest
@@ -202,7 +343,7 @@ export type ShutdownRequest = Message<"alinery.v1.ShutdownRequest"> & {
  * Use `create(ShutdownRequestSchema)` to create a new message.
  */
 export const ShutdownRequestSchema: GenMessage<ShutdownRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 7);
+  messageDesc(file_alinery_v1_admin, 13);
 
 /**
  * @generated from message alinery.v1.ShutdownResponse
@@ -219,7 +360,42 @@ export type ShutdownResponse = Message<"alinery.v1.ShutdownResponse"> & {
  * Use `create(ShutdownResponseSchema)` to create a new message.
  */
 export const ShutdownResponseSchema: GenMessage<ShutdownResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_admin, 8);
+  messageDesc(file_alinery_v1_admin, 14);
+
+/**
+ * @generated from enum alinery.v1.JoinState
+ */
+export enum JoinState {
+  /**
+   * @generated from enum value: JOIN_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: JOIN_STATE_PENDING = 1;
+   */
+  PENDING = 1,
+
+  /**
+   * `token` is set
+   *
+   * @generated from enum value: JOIN_STATE_APPROVED = 2;
+   */
+  APPROVED = 2,
+
+  /**
+   * also an expired or unknown request
+   *
+   * @generated from enum value: JOIN_STATE_DENIED = 3;
+   */
+  DENIED = 3,
+}
+
+/**
+ * Describes the enum alinery.v1.JoinState.
+ */
+export const JoinStateSchema: GenEnum<JoinState> = /*@__PURE__*/
+  enumDesc(file_alinery_v1_admin, 0);
 
 /**
  * @generated from enum alinery.v1.Capability
@@ -270,7 +446,7 @@ export enum Capability {
  * Describes the enum alinery.v1.Capability.
  */
 export const CapabilitySchema: GenEnum<Capability> = /*@__PURE__*/
-  enumDesc(file_alinery_v1_admin, 0);
+  enumDesc(file_alinery_v1_admin, 1);
 
 /**
  * Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
@@ -313,7 +489,7 @@ export enum ShutdownOrigin {
  * Describes the enum alinery.v1.ShutdownOrigin.
  */
 export const ShutdownOriginSchema: GenEnum<ShutdownOrigin> = /*@__PURE__*/
-  enumDesc(file_alinery_v1_admin, 1);
+  enumDesc(file_alinery_v1_admin, 2);
 
 /**
  * @generated from service alinery.v1.AdminService
@@ -356,6 +532,40 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof LiveSessionsRequestSchema;
     output: typeof LiveSessionsResponseSchema;
+  },
+  /**
+   * Joining a daemon someone else started (a coworker on a shared box). RequestJoin and CollectJoin need no token: they are how a
+   * client without one asks for one. A member (any holder of the daemon's own or a member token) decides with DecideJoin, and the
+   * pending requests are the `daemon/_/join-requests` entity. A member token is the daemon's own token's equal and dies with the daemon.
+   *
+   * no token
+   *
+   * @generated from rpc alinery.v1.AdminService.RequestJoin
+   */
+  requestJoin: {
+    methodKind: "unary";
+    input: typeof RequestJoinRequestSchema;
+    output: typeof RequestJoinResponseSchema;
+  },
+  /**
+   * no token; the request's secret
+   *
+   * @generated from rpc alinery.v1.AdminService.CollectJoin
+   */
+  collectJoin: {
+    methodKind: "unary";
+    input: typeof CollectJoinRequestSchema;
+    output: typeof CollectJoinResponseSchema;
+  },
+  /**
+   * APPROVE
+   *
+   * @generated from rpc alinery.v1.AdminService.DecideJoin
+   */
+  decideJoin: {
+    methodKind: "unary";
+    input: typeof DecideJoinRequestSchema;
+    output: typeof DecideJoinResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_admin, 0);

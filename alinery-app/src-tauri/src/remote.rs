@@ -1352,6 +1352,8 @@ fn remote_conflict(session: &RemoteSession, key: &str, path: &str, hello: &crate
         _ => format!("The daemon on the host speaks protocol {}; this app speaks {PROTOCOL_VERSION}.", hello.protocol),
     };
     DaemonConflict {
+        starter: Some(crate::daemon::DaemonStarter::new(&hello.started_by, &hello.os_user)),
+        joinable: false,
         repo: key.to_string(),
         app_protocol: PROTOCOL_VERSION,
         app_config_identity: app_config_identity.to_string(),
@@ -1400,13 +1402,42 @@ pub(crate) fn remote_call_within<T: serde::de::DeserializeOwned>(state: &AppStat
 /// banner (no board is read through the repo service), and the banner offers to restart the daemon.
 fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Path, key: &str, path: &str) -> Result<(), String> {
     let claim = session.channel.call(HostOp::ClaimRepo { repo: path.into() }, SERVICE_TIMEOUT)?;
-    if claim["claimed"] != true {
-        return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
-    }
+    let claimed = claim["claimed"] == true;
+    let daemons = refresh_box_daemons(state, session);
     let identity = alinery_core::app_config_identity(Path::new(&format!("{}/app.toml", session.config_dir)));
-    let (hello, compat) = ensure_remote_daemon(session, path, &identity)?;
-    state.set_daemon_version(Path::new(key), &hello.version);
-    if compat.usable() {
+    let ours = rpc_hello(session, path, Duration::ZERO);
+    if ours.is_err() {
+        // A daemon that answers but refuses this app's token is someone else's (a coworker on a shared box, or another Alinery
+        // build). Never start a second one beside it: its owner lock would refuse it anyway, after a long wait.
+        let (local, _) = rpc_forward(&session.conn.host_id, path)?;
+        if crate::daemon_rpc::refuses_our_token(&local) {
+            let record = daemons.iter().find(|daemon| daemon.repo == path && daemon.lane.is_empty());
+            if let Some(record) = record {
+                let origin = DaemonOrigin {
+                    version: record.version.clone(),
+                    started_by: record.started_by.clone(),
+                    os_user: record.os_user.clone(),
+                };
+                state.set_daemon_origin(Path::new(key), origin);
+            }
+            state.set_daemon_conflict(Path::new(key), foreign_conflict(key, record, &identity));
+            return Ok(());
+        }
+        if !claimed {
+            return Err("repo-busy: another Alinery window holds this repository on the host".to_string());
+        }
+    }
+    let (hello, compat) = match ours {
+        Ok(hello) => {
+            let compat = crate::daemon::classify_hello(&hello, &session.runtime_hash, &identity);
+            (hello, compat)
+        }
+        Err(_) => ensure_remote_daemon(session, path, &identity)?,
+    };
+    state.set_daemon_hello(Path::new(key), &hello);
+    // Other settings than this app's, yet it takes this app's token: someone else started it and let this app in. It runs on its
+    // starter's settings and sign-ins; the footer says whose.
+    if compat.usable() || compat == DaemonCompat::AppConfigMismatch {
         state.set_daemon(Path::new(key), compat);
         // The repository half of readying a repo, which a remote one never had (plan S4.1). A failure leaves the repo as it was.
         if let Err(error) = ensure_remote_repo_ready(session, path) {
@@ -1416,6 +1447,81 @@ fn attach_remote_repo(state: &AppState, session: &RemoteSession, app_config: &Pa
         state.set_daemon_conflict(Path::new(key), remote_conflict(session, key, path, &hello, compat, &identity));
     }
     Ok(())
+}
+
+/// The host's daemons, whoever started them, kept for the footer. A runtime too old to list them reads as none.
+fn refresh_box_daemons(state: &AppState, session: &RemoteSession) -> Vec<crate::host_wire::HostDaemon> {
+    let daemons: Vec<crate::host_wire::HostDaemon> = session
+        .channel
+        .call(HostOp::ListDaemons, SERVICE_TIMEOUT)
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    state
+        .box_daemons
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(session.conn.host_id.clone(), daemons.clone());
+    daemons
+}
+
+/// A daemon on the host that refuses this app's token. This app cannot stop it (it holds no token to ask with), so the banner
+/// names who started it and, when the protocols match, offers to ask its members to let this app in.
+pub(crate) fn foreign_conflict(key: &str, record: Option<&crate::host_wire::HostDaemon>, app_config_identity: &str) -> DaemonConflict {
+    let starter = record.map(|record| crate::daemon::DaemonStarter::new(&record.started_by, &record.os_user));
+    let who = match &starter {
+        Some(starter) if starter.mine => "Another Alinery on this computer".to_string(),
+        Some(starter) if !starter.started_by.is_empty() => starter.started_by.clone(),
+        _ => "Someone else".to_string(),
+    };
+    // No record (a daemon from before records, or a host where they cannot be written): let the members decide.
+    let joinable = record.is_none_or(|record| record.protocol == PROTOCOL_VERSION);
+    let issue = match record {
+        Some(record) if !joinable => format!(
+            "{who} started this daemon with another Alinery version (protocol {}; this app speaks {PROTOCOL_VERSION}). Ask them to update or restart it.",
+            record.protocol
+        ),
+        _ => format!("{who} started this daemon. Anyone already using it can let you in."),
+    };
+    DaemonConflict {
+        repo: key.to_string(),
+        app_protocol: PROTOCOL_VERSION,
+        app_config_identity: app_config_identity.to_string(),
+        owners: Vec::new(),
+        issues: vec![issue],
+        repairable_tasks: Vec::new(),
+        starter,
+        joinable,
+    }
+}
+
+/// How long a join request waits for a member's answer; the daemon forgets it after the same ten minutes.
+const JOIN_BUDGET: Duration = Duration::from_secs(10 * 60);
+
+/// Ask the people using a remote repo's daemon, which someone else started, to let this app in, then attach once one does. The
+/// daemon keeps running as it is: nothing is restarted, and it stays on its starter's settings and sign-ins.
+#[tauri::command]
+pub(crate) async fn remote_join_daemon(app: AppHandle, repo: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let RepoRef::Remote { host_id, path } = RepoRef::parse(&repo)? else {
+            return Err("only a remote repository's daemon can be joined".to_string());
+        };
+        if !load_app_config(&app).known_repos.contains(&repo) {
+            return Err(format!("unknown repository: {repo}"));
+        }
+        let session = connected_session(&state, &host_id)?;
+        let (local, remote_socket) = rpc_forward(&host_id, &path)?;
+        let _ = session.conn.forward(&local, &remote_socket);
+        let token = crate::daemon_rpc::join_daemon(&local, &alinery_core::started_by_label(), JOIN_BUDGET)?;
+        // Kept as the pending token, as for a daemon this app starts: the first Hello it passes commits it (`rpc_token`).
+        crate::daemon::store_pending_rpc_secret(&session.secrets_dir, &path, "", &token)?;
+        let lifecycle = state.repo_lifecycle(Path::new(&repo));
+        let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        attach_remote_repo(&state, &session, &app_config_path(&app)?, &repo, &path)
+    })
+    .await
+    .map_err(|error| format!("join task: {error}"))?
 }
 
 fn ensure_remote_repo_ready(session: &RemoteSession, repo_path: &str) -> Result<(), String> {
@@ -1664,23 +1770,35 @@ pub(crate) struct HostRuntime {
     pub(crate) bundled: Option<String>,
     /// What the bridge has carried to and from this host's daemons.
     pub(crate) link: crate::daemon_rpc::LinkTraffic,
+    /// Every daemon running on the host, whoever started it, as of the last connect or attach.
+    pub(crate) daemons: Vec<crate::host_wire::HostDaemon>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RepoRuntime {
     pub(crate) repo: String,
-    /// `current`, `build_drift` (usable, informational), `conflict` (restart from the banner), or `not_attached`.
+    /// `current`, `build_drift` (usable, informational), `joined` (usable: someone else started it and let this app in),
+    /// `conflict` (resolve from the banner), or `not_attached`.
     pub(crate) state: &'static str,
     pub(crate) issues: Vec<String>,
     /// `local`, or the ssh host id the repo lives on.
     pub(crate) host: String,
     /// The app release its daemon reported in `Hello`; empty from a daemon too old to say, `None` before any answer.
     pub(crate) version: Option<String>,
+    /// How the app that started it described its person and machine; empty when the daemon does not say.
+    pub(crate) started_by: String,
+    /// The login it runs as.
+    pub(crate) os_user: String,
+    /// Whether this app (this person on this machine) started it.
+    pub(crate) mine: bool,
 }
 
-pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, version: Option<String>) -> RepoRuntime {
+pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, origin: Option<DaemonOrigin>) -> RepoRuntime {
     let (state, issues) = match daemon {
         Some(RepoDaemon::Connected { compat: DaemonCompat::Current }) => ("current", vec![]),
+        Some(RepoDaemon::Connected {
+            compat: DaemonCompat::AppConfigMismatch,
+        }) => ("joined", vec![]),
         Some(RepoDaemon::Connected { .. }) => ("build_drift", vec![]),
         Some(RepoDaemon::Conflicted(conflict)) => ("conflict", conflict.issues),
         None => ("not_attached", vec![]),
@@ -1690,7 +1808,10 @@ pub(crate) fn repo_runtime(repo: &str, daemon: Option<RepoDaemon>, version: Opti
         state,
         issues,
         host: crate::daemon_rpc::link_host(repo),
-        version,
+        mine: origin.as_ref().is_some_and(|origin| origin.started_by == alinery_core::started_by_label()),
+        started_by: origin.as_ref().map(|origin| origin.started_by.clone()).unwrap_or_default(),
+        os_user: origin.as_ref().map(|origin| origin.os_user.clone()).unwrap_or_default(),
+        version: origin.map(|origin| origin.version),
     }
 }
 
@@ -1710,13 +1831,14 @@ pub(crate) fn runtime_status(app: AppHandle, state: State<'_, AppState>) -> Runt
                 running: session.as_ref().map(|session| session.runtime_hash.clone()),
                 bundled: session.and_then(|session| Some(manifest.as_ref()?.targets.get(&session.triple)?.runtime_hash.clone())),
                 link: crate::daemon_rpc::link_traffic(id),
+                daemons: state.box_daemons.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned().unwrap_or_default(),
             }
         })
         .collect();
     let repos = config
         .known_repos
         .iter()
-        .map(|repo| repo_runtime(repo, state.repo_daemon(Path::new(repo)), state.daemon_version(Path::new(repo))))
+        .map(|repo| repo_runtime(repo, state.repo_daemon(Path::new(repo)), state.daemon_origin(Path::new(repo))))
         .collect();
     RuntimeStatus {
         hosts,

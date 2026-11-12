@@ -10,14 +10,26 @@ vi.mock("./ipc", () =>
       const n = status.calls;
       return {
         hosts: [
-          { host_id: "h1", label: "devbox", state: "connected", running: "a", bundled: "b", link: { calls: n * 4, bytes_up: n * 2048, bytes_down: n * 4096 } },
-          { host_id: "h2", label: "laptop", state: "reconnecting", running: null, bundled: null, link: { calls: 0, bytes_up: 0, bytes_down: 0 } },
+          {
+            host_id: "h1",
+            label: "devbox",
+            state: "connected",
+            running: "a",
+            bundled: "b",
+            link: { calls: n * 4, bytes_up: n * 2048, bytes_down: n * 4096 },
+            daemons: [
+              { repo: "/srv/shared", lane: "", pid: 1, os_user: "dev", started_by: "jon on Strix", started_at_ms: 0, version: "0.600.0", protocol: 42 },
+              { repo: "/srv/other", lane: "", pid: 2, os_user: "pat", started_by: "", started_at_ms: 0, version: "0.600.0", protocol: 42 },
+            ],
+          },
+          { host_id: "h2", label: "laptop", state: "reconnecting", running: null, bundled: null, link: { calls: 0, bytes_up: 0, bytes_down: 0 }, daemons: [] },
         ],
         repos: [
-          { repo: "/me/app", state: "current", issues: [], host: "local", version: "0.600.0" },
-          { repo: "alinery+ssh://h1/srv/api", state: "current", issues: [], host: "h1", version: "0.25.0" },
-          { repo: "/me/idle", state: "not_attached", issues: [], host: "local", version: null },
-          { repo: "/me/clash", state: "conflict", issues: ["another lane owns it"], host: "local", version: null },
+          { repo: "/me/app", state: "current", issues: [], host: "local", version: "0.600.0", started_by: "", os_user: "", mine: true },
+          { repo: "alinery+ssh://h1/srv/api", state: "current", issues: [], host: "h1", version: "0.25.0", started_by: "", os_user: "", mine: true },
+          { repo: "/me/idle", state: "not_attached", issues: [], host: "local", version: null, started_by: "", os_user: "", mine: true },
+          { repo: "alinery+ssh://h1/srv/shared", state: "joined", issues: [], host: "h1", version: "0.600.0", started_by: "jon on Strix", os_user: "dev", mine: false },
+          { repo: "/me/clash", state: "conflict", issues: ["another lane owns it"], host: "local", version: null, started_by: "", os_user: "", mine: true },
         ],
         local_link: { calls: n, bytes_up: n * 100, bytes_down: n * 200 },
       };
@@ -36,7 +48,7 @@ it("computes rates between samples and formats them", () => {
 });
 
 it("offers an update only for a daemon from another release, a drifted build, or one too old to say", () => {
-  const repo = { repo: "/r", state: "current" as const, issues: [], host: "local" };
+  const repo = { repo: "/r", state: "current" as const, issues: [], host: "local", started_by: "", os_user: "", mine: true };
   expect(daemonIsOld({ ...repo, version: "0.600.0" }, "0.600.0")).toBe(false);
   expect(daemonIsOld({ ...repo, version: null }, "0.600.0")).toBe(false);
   expect(daemonIsOld({ ...repo, version: "0.25.0" }, "0.600.0")).toBe(true);
@@ -49,7 +61,7 @@ it("lists each host's link, its traffic, and each attached daemon's version with
   expect(await screen.findByText("This computer")).toBeDefined();
   expect(screen.getByText("devbox")).toBeDefined();
   expect(screen.getByText("reconnecting")).toBeDefined();
-  expect(screen.getByText("v0.600.0")).toBeDefined();
+  expect(screen.getAllByText("v0.600.0").length).toBeGreaterThan(0);
   expect(screen.getByText("v0.25.0")).toBeDefined();
   expect(screen.queryByText("idle")).toBeNull();
   expect(screen.getByRole("button", { name: "Update the daemon for api" })).toBeDefined();
@@ -66,4 +78,15 @@ it("sends a conflicted daemon to its repository's takeover banner, with the reas
   expect(screen.getByTitle("another lane owns it")).toBeDefined();
   fireEvent.click(open);
   expect(onOpenRepo).toHaveBeenCalledWith("/me/clash");
+});
+
+it("names who started a daemon someone else runs, and lists the host's daemons this app has not opened", async () => {
+  render(<SyncLinks appVersion="0.600.0" />);
+  const shared = (await screen.findByText("shared")).closest(".sync-link-repo") as HTMLElement;
+  expect(shared.textContent).toContain(" · jon on Strix");
+  expect(shared.textContent).toContain("v0.600.0 · joined");
+  expect(shared.getAttribute("title")).toContain("Started by jon on Strix (as dev)");
+  const other = screen.getByText("other").closest(".sync-link-repo") as HTMLElement;
+  expect(other.textContent).toContain(" · pat");
+  expect(screen.getAllByText("shared")).toHaveLength(1); // the opened repo is not listed twice
 });
