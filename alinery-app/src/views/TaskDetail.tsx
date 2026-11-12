@@ -904,13 +904,31 @@ export function TaskDetail({
 
   return (
     <div className="detail taskdetail" style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
-      <section className="task-panel task-info-panel" aria-label="Task information">
+      <section className={`task-panel task-info-panel${headerOpen ? "" : " compact"}`} aria-label="Task information">
         <div className="task-panel-head task-info-head">
-          <div>
-            <div className="task-panel-label">Task</div>
+          <div className="task-info-title">
+            {headerOpen && <div className="task-panel-label">Task</div>}
             {task?.parent_task && renameControl("task", task.slug, task.name)}
-            <h2>{task?.name ?? slug}</h2>
+            <h2 title={task?.name ?? slug}>{task?.name ?? slug}</h2>
           </div>
+          {!headerOpen && (
+            <div className="task-info-compact">
+              <div className="kv">
+                <span className="k">Branch</span>
+                <span className="v mono" title={task?.branch || undefined}>
+                  {task?.branch}
+                </span>
+                <CopyTextButton text={task?.branch ?? ""} label="branch" />
+              </div>
+              <div className="kv">
+                <span className="k">Worktree</span>
+                <span className="v mono" title={task?.worktree || undefined}>
+                  {worktreeValue(shortWorktreePath(task?.worktree ?? ""))}
+                </span>
+                {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
+              </div>
+            </div>
+          )}
           <div className="crow task-info-head-actions">
             {task?.archived ? (
               task.parent_task ? (
@@ -961,22 +979,6 @@ export function TaskDetail({
           </InlineStatus>
         )}
 
-        {!headerOpen && (
-          <div className="task-info-grid task-info-compact">
-            <div className="kv">
-              <span className="k">Branch</span>
-              <span className="v mono">{task?.branch}</span>
-              <CopyTextButton text={task?.branch ?? ""} label="branch" />
-            </div>
-            <div className="kv">
-              <span className="k">Worktree</span>
-              <span className="v mono" title={task?.worktree || undefined}>
-                {worktreeValue(shortWorktreePath(task?.worktree ?? ""))}
-              </span>
-              {task?.worktree && <CopyTextButton text={task.worktree} label="worktree path" />}
-            </div>
-          </div>
-        )}
         {headerOpen && (
           <>
             <div className="task-info-grid">

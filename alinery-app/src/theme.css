@@ -3948,16 +3948,52 @@ dialog.modal::backdrop {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* Compact header: branch and worktree share one row, each on one line. */
-.task-info-compact {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  column-gap: 24px;
+/* Compact header: one line of title, branch, worktree and actions; long values shorten with an ellipsis. */
+.task-info-panel.compact {
+  padding: 4px 10px;
+  margin-bottom: 8px;
 }
-.task-info-compact .kv .v {
+.task-info-panel.compact .task-info-head {
+  flex-wrap: nowrap;
+  gap: 16px;
+  margin-bottom: 0;
+}
+.task-info-panel.compact .task-info-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+}
+.task-info-panel.compact h2 {
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.task-info-compact {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+}
+.task-info-compact .kv {
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border-bottom: none;
+  font-size: calc(12px * var(--ui-scale));
+}
+.task-info-compact .kv .v {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-info-panel.compact .task-info-head-actions {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 .task-info-head-actions {
   display: flex;
