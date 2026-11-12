@@ -7187,34 +7187,82 @@ header:has(~ main .task-info-panel) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* Main pane tabs: Sessions, then one per opened artifact. */
+/* Main pane tabs: Sessions, then one per opened file. A strip of fixed-width cells across the top of the pane,
+   divided by lines; the active cell takes the content background and an accent edge. Overflow scrolls sideways. */
 .task-main-tabs {
   flex: 0 0 auto;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  display: flex;
+  margin: -12px -12px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .task-main-tab {
-  display: inline-flex;
+  position: relative;
+  flex: 0 0 180px;
+  display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0;
-  max-width: 240px;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
 }
-.task-main-tab > button {
+.task-main-tab:first-child {
+  flex-basis: 120px;
+}
+.task-main-tab:hover {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+.task-main-tab.on {
+  color: var(--text-strong);
+  background: var(--surface);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.task-main-tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+  text-align: left;
   cursor: pointer;
-  padding: 4px 4px 4px 9px;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-main-tab > .task-main-tab-close {
-  padding: 4px 8px 4px 2px;
-  flex-shrink: 0;
+.task-main-tab-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  visibility: hidden;
+}
+.task-main-tab.on .task-main-tab-close,
+.task-main-tab:hover .task-main-tab-close,
+.task-main-tab-close:focus-visible {
+  visibility: visible;
+}
+.task-main-tab-close:hover {
+  color: var(--text-strong);
+  background: var(--border);
+}
+.task-main-tab-label:focus-visible,
+.task-main-tab-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .task-artifact-view {
   flex: 1 1 0;

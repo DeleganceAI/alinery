@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -1331,14 +1331,17 @@ export function TaskDetail({
         </aside>
         <div className="artifact-resizer" {...artifactResizerProps} />
         <main className="detailmain">
-          <div className="artifacttabs task-main-tabs" role="group" aria-label="Open files">
-            <button type="button" aria-pressed={!activeArtifactTab} className={`artifacttab${activeArtifactTab ? "" : " on"}`} onClick={() => setActiveTab("")}>
-              Sessions
-            </button>
+          <div className="task-main-tabs" role="group" aria-label="Open files">
+            <div className={`task-main-tab${activeArtifactTab ? "" : " on"}`}>
+              <button type="button" className="task-main-tab-label" aria-pressed={!activeArtifactTab} onClick={() => setActiveTab("")}>
+                Sessions
+              </button>
+            </div>
             {openTabs.map((tab) => (
-              <span key={tab.key} className={`artifacttab task-main-tab${tab.key === activeTab ? " on" : ""}`}>
+              <div key={tab.key} className={`task-main-tab${tab.key === activeTab ? " on" : ""}`}>
                 <button
                   type="button"
+                  className="task-main-tab-label"
                   aria-pressed={tab.key === activeTab}
                   title={tab.name}
                   onClick={() => setActiveTab(tab.key)}
@@ -1346,10 +1349,10 @@ export function TaskDetail({
                 >
                   {tab.name.slice(tab.name.lastIndexOf("/") + 1)}
                 </button>
-                <button type="button" className="task-main-tab-close" aria-label={`Close ${tab.name}`} onClick={() => closeArtifactTab(tab.key)}>
-                  ×
+                <button type="button" className="task-main-tab-close" aria-label={`Close ${tab.name}`} title="Close" onClick={() => closeArtifactTab(tab.key)}>
+                  <X size={12} strokeWidth={1.75} aria-hidden="true" />
                 </button>
-              </span>
+              </div>
             ))}
           </div>
           {activeArtifactTab && (
