@@ -42,8 +42,12 @@ export const fakeArtifacts = {
   texts: {} as Record<string, string>,
   /** Tree node bodies by id. */
   nodeTexts: {} as Record<string, string>,
+  worktreeTexts: {} as Record<string, string>,
   nodeBytes: {} as Record<string, Uint8Array>,
   readArtifact: vi.fn(async (_repo: string, _slug: string, name: string) => (name in fakeArtifacts.texts ? fakeArtifacts.texts[name] : missing(`artifact ${name}`))),
+  readWorktree: vi.fn(async (_repo: string, _slug: string, path: string) =>
+    path in fakeArtifacts.worktreeTexts ? fakeArtifacts.worktreeTexts[path] : missing(`worktree file ${path}`),
+  ),
   readNode: vi.fn(async (_repo: string, _slug: string, id: string) => (id in fakeArtifacts.nodeTexts ? fakeArtifacts.nodeTexts[id] : missing(`node ${id}`))),
   readBytes: vi.fn(async (_repo: string, _slug: string, id: string) => fakeArtifacts.nodeBytes[id] ?? missing(`node bytes ${id}`)),
   addComment: vi.fn(async (a: Parameters<typeof Artifacts.addComment>[0]) => {
@@ -114,10 +118,12 @@ export const fakeArtifacts = {
     rows.clear();
     fakeArtifacts.texts = {};
     fakeArtifacts.nodeTexts = {};
+    fakeArtifacts.worktreeTexts = {};
     fakeArtifacts.nodeBytes = {};
     for (const spy of [
       fakeArtifacts.readArtifact,
       fakeArtifacts.readNode,
+      fakeArtifacts.readWorktree,
       fakeArtifacts.readBytes,
       fakeArtifacts.addComment,
       fakeArtifacts.saveDraft,
@@ -151,6 +157,7 @@ export function artifactHooks(actual: typeof Artifacts): typeof Artifacts {
     },
     readArtifactText: (repo, slug, name) => fakeArtifacts.readArtifact(repo, slug, name),
     readNodeText: (repo, slug, id) => fakeArtifacts.readNode(repo, slug, id),
+    readWorktreeText: (repo, slug, path) => fakeArtifacts.readWorktree(repo, slug, path),
     readNodeBytes: (repo, slug, id) => fakeArtifacts.readBytes(repo, slug, id),
     addComment: (a) => fakeArtifacts.addComment(a),
     saveCommentDraft: (a) => fakeArtifacts.saveDraft(a),

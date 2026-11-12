@@ -196,6 +196,17 @@ export async function readNodeText(repo: string, taskSlug: string, nodeId: strin
   return call(async () => decode(await readBlob(repo, create(BlobRefSchema, { target: { case: "artifactNode", value: { taskSlug, nodeId } } }))));
 }
 
+/** The viewer shows at most this much of a worktree file. */
+export const WORKTREE_FILE_MAX_BYTES = 1024 * 1024;
+
+/** A worktree file's text for the viewer; a file past the cap or with a NUL byte (binary) is an error that says so. */
+export async function readWorktreeText(repo: string, taskSlug: string, path: string): Promise<string> {
+  const bytes = await call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "worktreeFile", value: { taskSlug, path } } }), WORKTREE_FILE_MAX_BYTES));
+  if (bytes.length > WORKTREE_FILE_MAX_BYTES) throw new Error("larger than 1 MB, not shown");
+  if (bytes.subarray(0, 8192).includes(0)) throw new Error("binary file, not shown");
+  return decode(bytes);
+}
+
 /** A tree node's bytes, for an attachment image shown in the tree. */
 export async function readNodeBytes(repo: string, taskSlug: string, nodeId: string): Promise<Uint8Array> {
   return call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "artifactNode", value: { taskSlug, nodeId } } })));

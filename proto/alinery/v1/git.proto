@@ -17,6 +17,7 @@ service GitService {
   rpc TaskPullRequestInputs(TaskPullRequestInputsRequest) returns (TaskPullRequestInputsResponse);  // VIEW
   rpc RecordDiscoveredPullRequest(RecordDiscoveredPullRequestRequest) returns (RecordDiscoveredPullRequestResponse);  // ACT
   rpc GitOriginUrl(GitOriginUrlRequest) returns (GitOriginUrlResponse);                    // VIEW
+  rpc ListWorktreeFiles(ListWorktreeFilesRequest) returns (ListWorktreeFilesResponse);     // VIEW
 }
 
 message TaskSourceBranch {
@@ -104,6 +105,16 @@ message RecordDiscoveredPullRequestRequest {
 }
 message RecordDiscoveredPullRequestResponse {
   Applied applied = 1;
+}
+
+// The files of a task's worktree (or the repository for a task without one) that git would show: tracked plus untracked,
+// without ignored ones, sorted. `truncated` says the list stopped at the daemon's cap.
+message ListWorktreeFilesRequest {
+  string slug = 1;
+}
+message ListWorktreeFilesResponse {
+  repeated string paths = 1;
+  bool truncated = 2;
 }
 
 message GitOriginUrlRequest {}

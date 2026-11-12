@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
-vi.mock("../sync/git", () => ({ listTaskPullRequests: mocks.listTaskPullRequests }));
+vi.mock("../sync/git", () => ({ listTaskPullRequests: mocks.listTaskPullRequests, listWorktreeFilesForRepo: async () => ({ paths: [], truncated: false }) }));
 vi.mock("../ipc", () => mockIpc({ openUrl: mocks.openUrl }));
 
 beforeEach(() => {

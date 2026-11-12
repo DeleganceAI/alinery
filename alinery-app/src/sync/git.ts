@@ -38,6 +38,12 @@ export async function taskSourceBranchesForRepo(repo: string, selectedBaseRef?: 
   };
 }
 
+/** The files git shows in a task's worktree (tracked plus untracked, no ignored ones), sorted; `truncated` past the daemon's cap. */
+export async function listWorktreeFilesForRepo(repo: string, slug: string): Promise<{ paths: string[]; truncated: boolean }> {
+  const reply = await call(() => git(repo).listWorktreeFiles({ slug }));
+  return { paths: reply.paths, truncated: reply.truncated };
+}
+
 /** The URL of the repository's `origin` remote, or null when it has none. A bare `#123` in an issue import resolves against it. */
 export async function originUrlForRepo(repo: string): Promise<string | null> {
   const reply = await call(() => git(repo).gitOriginUrl({}));

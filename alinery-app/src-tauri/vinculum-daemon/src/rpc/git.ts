@@ -5,6 +5,7 @@ import type { ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { GitService } from "alinery-proto/alinery/v1/git_pb";
 import { commitWorktree, originUrl, pullRequestInputs, pushAndCompareUrl, recordDiscoveredPullRequest, removeWorktree, setPrUrl, taskSourceBranches } from "../domain/gitActions.ts";
+import { listWorktreeFiles } from "../domain/worktreeFiles.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
@@ -94,6 +95,10 @@ export function gitService(d: GitDeps, dedupe: Dedupe, store: Store): ServiceImp
           return { applied: await applied(req.slug) };
         }),
       );
+    },
+    listWorktreeFiles: (req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(() => listWorktreeFiles(d.repo, req.slug));
     },
     gitOriginUrl: (_req, ctx) => {
       requireCapability(ctx, Capability.VIEW);

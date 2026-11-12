@@ -58,7 +58,11 @@ vi.mock("../sync/sessions", async (actual) => ({
   killSession: mocks.killSessionForRepo,
   renameSession: mocks.renameSession,
 }));
-vi.mock("../sync/git", () => ({ pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo, listTaskPullRequests: async () => ({}) }));
+vi.mock("../sync/git", () => ({
+  pushAndCompareUrlForRepo: mocks.pushAndCompareUrlForRepo,
+  listTaskPullRequests: async () => ({}),
+  listWorktreeFilesForRepo: async () => ({ paths: [], truncated: false }),
+}));
 vi.mock("../ipc", () => mockIpc());
 
 beforeEach(() => {

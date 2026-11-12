@@ -61,6 +61,13 @@ message StepObjectBlob {
   string sha256 = 3;  // 64 lowercase hex digits
 }
 
+// A file in the task's worktree (or the repository itself for a task without one), read only. `path` is relative to that
+// root with forward slashes; the daemon refuses `..`, `.git`, absolute paths and any link on the way.
+message WorktreeFileBlob {
+  string task_slug = 1;
+  string path = 2;
+}
+
 message BlobRef {
   oneof target {
     AttachmentBlob attachment = 2;
@@ -71,6 +78,7 @@ message BlobRef {
     ArtifactNodeBlob artifact_node = 8;
     StepObjectBlob step_object = 9;
     CanvasPanelBlob canvas_panel = 10;
+    WorktreeFileBlob worktree_file = 11;
   }
 }
 

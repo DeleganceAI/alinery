@@ -66,6 +66,7 @@ const ipcSpies = vi.hoisted(() => ({
 }));
 
 const mocks = vi.hoisted(() => ({
+  listWorktreeFiles: vi.fn(async () => ({ paths: [] as string[], truncated: false })),
   subtaskState: vi.fn(),
   getTaskExecution: vi.fn(),
   worktreeExists: vi.fn(),
@@ -89,6 +90,7 @@ vi.mock("../sync/tasks", async (actual) => ({
   renameTask: ipcSpies.renameTask,
   setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
 }));
+vi.mock("../sync/git", async (actual) => ({ ...(await actual<typeof import("../sync/git")>()), listWorktreeFilesForRepo: mocks.listWorktreeFiles }));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
@@ -2186,6 +2188,40 @@ describe("main pane file tabs", () => {
     expect(screen.getByRole("heading", { name: "Sessions" })).toBeDefined();
     fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
     expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
+  });
+});
+
+describe("repository files", () => {
+  it("lists the worktree under the artifacts and opens files as tabs: markdown previews, code shows as text", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["README.md", "src/main.ts"], truncated: false });
+    fakeArtifacts.worktreeTexts = { "README.md": "# Read me", "src/main.ts": "export const x = 1;" };
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    expect(mocks.listWorktreeFiles).toHaveBeenCalledWith("/repo", "parent");
+
+    fireEvent.click(await repo.findByRole("button", { name: "README.md" }));
+    expect(await screen.findByRole("heading", { name: "Read me" })).toBeDefined();
+    expect(fakeArtifacts.readWorktree).toHaveBeenCalledWith("/repo", "parent", "README.md");
+    expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "README.md");
+
+    fireEvent.click(repo.getByText("src/"));
+    fireEvent.click(await repo.findByRole("button", { name: "main.ts" }));
+    expect(await screen.findByText("export const x = 1;")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
+
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "README.md" })).toBeDefined();
+    expect(tabs.getByRole("button", { name: "main.ts" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("filters the tree by name", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/guide.md", "src/main.ts"], truncated: false });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    await repo.findByText("docs/");
+    fireEvent.change(repo.getByRole("searchbox", { name: "Filter repository files" }), { target: { value: "guide" } });
+    expect(repo.getByRole("button", { name: "docs/guide.md" })).toBeDefined();
+    expect(repo.queryByText("src/")).toBeNull();
   });
 });
 

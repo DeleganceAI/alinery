@@ -15,6 +15,7 @@ import { confirmDanger } from "../confirm";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
+import { RepoFileTree } from "../RepoFileTree";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
 import {
@@ -54,7 +55,7 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { addComment, attachmentFilePath, clearReviewPending, readArtifactText, readNodeText, useTaskArtifacts } from "../sync/artifacts";
+import { addComment, attachmentFilePath, clearReviewPending, readArtifactText, readNodeText, readWorktreeText, useTaskArtifacts } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { pushAndCompareUrlForRepo } from "../sync/git";
@@ -123,7 +124,8 @@ function readStoredTaskSessionView(): "graph" | "list" {
 }
 
 // ---- task detail --------------------------------------------------------------
-type OpenArtifactTab = { key: string; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw" };
+/** An open tab of the main pane: a task artifact, or a file of the task's worktree (`repo`). */
+type OpenArtifactTab = { key: string; kind: "artifact" | "repo"; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw" };
 
 /** One choice for every task: the header opens compact until the user expands it. */
 const HEADER_OPEN_KEY = "alinery.taskHeaderOpen";
@@ -325,9 +327,9 @@ export function TaskDetail({
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
   const setArtifactMode = (mode: OpenArtifactTab["mode"]) => setOpenTabs((tabs) => tabs.map((tab) => (tab.key === activeTab ? { ...tab, mode } : tab)));
-  const openArtifactTab = (name: string, node: ArtifactTreeNode | null) => {
-    const key = node?.id ?? name;
-    setOpenTabs((tabs) => (tabs.some((tab) => tab.key === key) ? tabs : [...tabs, { key, name, node, mode: "preview" }]));
+  const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact") => {
+    const key = kind === "repo" ? `repo:${name}` : (node?.id ?? name);
+    setOpenTabs((tabs) => (tabs.some((tab) => tab.key === key) ? tabs : [...tabs, { key, kind, name, node, mode: "preview" }]));
     setActiveTab(key);
     setArtifactErr(null);
   };
@@ -337,7 +339,10 @@ export function TaskDetail({
     if (key === activeTab) setActiveTab(openTabs[at - 1]?.key ?? "");
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
-  const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact);
+  const selectedIsRepo = activeArtifactTab?.kind === "repo";
+  // Only markdown previews; any other worktree file shows as text.
+  const selectedPreviewable = !selectedIsRepo || /\.(md|markdown)$/i.test(selectedArtifact);
+  const selectedArtifactIsDirect = !selectedIsRepo && (selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact));
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const [artifactText, setArtifactText] = useState("");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
@@ -536,24 +541,28 @@ export function TaskDetail({
     setArtifactText("");
     setCommentAnchor(null);
     setCommentDraft("");
-    if (!selectedArtifact || (!selectedArtifactIsDirect && !selectedArtifactTreeId)) {
+    if (!selectedArtifact || (!selectedIsRepo && !selectedArtifactIsDirect && !selectedArtifactTreeId)) {
       return () => {
         alive = false;
       };
     }
     setArtifactErr(null);
-    const read = selectedArtifactTreeId && !selectedArtifactIsDirect ? readNodeText(repoPath, slug, selectedArtifactTreeId) : readArtifactText(repoPath, slug, selectedArtifact);
+    const read = selectedIsRepo
+      ? readWorktreeText(repoPath, slug, selectedArtifact)
+      : selectedArtifactTreeId && !selectedArtifactIsDirect
+        ? readNodeText(repoPath, slug, selectedArtifactTreeId)
+        : readArtifactText(repoPath, slug, selectedArtifact);
     read
       .then((text) => {
         if (alive) setArtifactText(text);
       })
       .catch((e) => {
-        if (alive) setArtifactErr({ msg: "Couldn't load the artifact.", detail: String(e) });
+        if (alive) setArtifactErr({ msg: selectedIsRepo ? "Couldn't show the file." : "Couldn't load the artifact.", detail: String(e) });
       });
     return () => {
       alive = false;
     };
-  }, [repoPath, slug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect]);
+  }, [repoPath, slug, selectedArtifact, selectedArtifactTreeId, selectedArtifactIsDirect, selectedIsRepo]);
 
   const trimmedCommentDraft = commentDraft.trim();
   const canSaveArtifactComment = Boolean(commentAnchor && selectedArtifact && trimmedCommentDraft && !commentBusy);
@@ -1307,6 +1316,7 @@ export function TaskDetail({
                     onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
                   />
                 )}
+                <RepoFileTree repoPath={repoPath} taskSlug={slug} selected={selectedIsRepo ? selectedArtifact : ""} onOpen={(path) => openArtifactTab(path, null, "repo")} />
               </div>
             </>
           )}
@@ -1342,22 +1352,26 @@ export function TaskDetail({
                 </div>
                 <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                 <CopyArtifactButton text={artifactText} />
-                <button
-                  type="button"
-                  className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
-                  aria-pressed={artifactMode === "preview"}
-                  onClick={() => setArtifactMode("preview")}
-                >
-                  Preview
-                </button>
-                <button
-                  type="button"
-                  className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
-                  aria-pressed={artifactMode === "raw"}
-                  onClick={() => setArtifactMode("raw")}
-                >
-                  Raw
-                </button>
+                {selectedPreviewable && (
+                  <>
+                    <button
+                      type="button"
+                      className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
+                      aria-pressed={artifactMode === "preview"}
+                      onClick={() => setArtifactMode("preview")}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
+                      aria-pressed={artifactMode === "raw"}
+                      onClick={() => setArtifactMode("raw")}
+                    >
+                      Raw
+                    </button>
+                  </>
+                )}
               </div>
               {artifactErr && (
                 <InlineStatus tone="error" detail={artifactErr.detail}>
@@ -1380,7 +1394,7 @@ export function TaskDetail({
                 </div>
               )}
               <div className="artifactviewer">
-                {artifactMode === "raw" ? (
+                {artifactMode === "raw" || !selectedPreviewable ? (
                   <pre className="artifactraw">{artifactText}</pre>
                 ) : (
                   <article className="md artifactmd">

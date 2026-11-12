@@ -7902,6 +7902,64 @@ dialog.modal::backdrop {
   gap: 8px;
   padding: 6px 10px;
 }
+/* Files panel: the task worktree under the artifacts. */
+.repo-tree {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+}
+.repo-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-family: var(--font-ui);
+}
+.repo-tree-title {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.repo-tree-filter {
+  flex: 1;
+  min-width: 0;
+}
+.repo-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+}
+.repo-tree > .repo-tree-children {
+  padding-left: 0;
+}
+.repo-tree-dir > summary {
+  cursor: pointer;
+  padding: 2px 4px;
+  color: var(--text);
+}
+.repo-tree-file {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 2px 4px 2px 18px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-tree-file:hover,
+.repo-tree-file.selected {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
 .artifact-tree {
   display: flex;
   flex-direction: column;

@@ -208,6 +208,7 @@ const gitMocks = vi.hoisted(() => ({
   listTaskPullRequests: vi.fn(async () => ({})),
   removeWorktreeForRepo: vi.fn(async () => {}),
   pushAndCompareUrlForRepo: vi.fn(async () => ""),
+  listWorktreeFilesForRepo: vi.fn(async () => ({ paths: [], truncated: false })),
 }));
 vi.mock("./sync/git", () => gitMocks);
 

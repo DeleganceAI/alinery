@@ -12,6 +12,7 @@ import { chatAttachmentsDir, loadChat } from "./chat.ts";
 import { artifactFilePath, resolveArtifactEntry } from "./artifactFiles.ts";
 import { resolveNode } from "./artifactTree.ts";
 import { alineryDir, attachmentsDir, safeComponent, taskDir } from "./taskFiles.ts";
+import { worktreeFilePath } from "./worktreeFiles.ts";
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENT_SET_BYTES = 100 * 1024 * 1024;
@@ -185,6 +186,11 @@ function regularFileBlob(path: string, name: string, what = "attachment", frame?
 /** A file in a task's `artifacts/` (not the two reserved namespaces). A link on the way is PERMISSION_DENIED, a missing file NOT_FOUND. */
 export function artifactBlob(repo: string, taskSlug: string, name: string): BlobBytes {
   return regularFileBlob(artifactFilePath(repo, taskSlug, name), name, "artifact", ARTIFACT_FRAME_BYTES);
+}
+
+/** A file in a task's worktree, checked by `worktreeFilePath`; read only. */
+export function worktreeFileBlob(repo: string, taskSlug: string, path: string): BlobBytes {
+  return regularFileBlob(worktreeFilePath(repo, taskSlug, path), path, "file", ARTIFACT_FRAME_BYTES);
 }
 
 /** A file node of a task's artifact tree, named by the id its tree row carries; attachments of the tree are readable here too. */
