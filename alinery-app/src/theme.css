@@ -526,6 +526,8 @@ nav.tabs {
 }
 nav.tabs .tab {
   height: 100%;
+  /* The selected cell's top 4px is its accent bar: every label sits centered in the fill below it, level with the others. */
+  padding-top: 4px;
   border-radius: 0;
   border-right: 1px solid var(--border);
 }
