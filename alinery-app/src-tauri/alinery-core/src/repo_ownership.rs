@@ -14,6 +14,8 @@ use crate::lockfile::{try_lock_exclusive, LockFile};
 pub struct RepoOwnerReport {
     pub lanes: Vec<RepoOwnerObservation>,
     pub issues: Vec<String>,
+    /// Tasks whose saved progress will not read but `execution::repair_execution_state` can fix.
+    pub repairable: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -75,6 +77,7 @@ fn entries(path: &Path, issues: &mut Vec<String>) -> Vec<fs::DirEntry> {
 struct Evidence {
     lanes: BTreeSet<String>,
     issues: Vec<String>,
+    repairable: Vec<String>,
 }
 
 fn regular_file(path: &Path) -> Result<(), String> {
@@ -155,6 +158,9 @@ fn enumerate(repo: &Path) -> Evidence {
             Ok(state) => state,
             Err(error) => {
                 evidence.issues.push(error);
+                if crate::execution::execution_state_repairable(repo, &slug) {
+                    evidence.repairable.push(slug);
+                }
                 continue;
             }
         };
@@ -204,6 +210,7 @@ pub fn inspect_owners(repo: &Path) -> Result<RepoOwnerReport, String> {
     let mut report = RepoOwnerReport {
         lanes: Vec::new(),
         issues: evidence.issues,
+        repairable: evidence.repairable,
     };
     if let Err(error) = lease(&crate::alinery_dir(repo).join(".repo-owner.lock")) {
         report.issues.push(error);

@@ -38,6 +38,8 @@ pub(crate) struct DaemonConflict {
     pub(crate) app_config_identity: String,
     pub(crate) owners: Vec<DaemonOwnerConflict>,
     pub(crate) issues: Vec<String>,
+    /// Tasks whose saved progress will not read and that `repair_task_state` can fix.
+    pub(crate) repairable_tasks: Vec<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -237,11 +239,13 @@ fn daemon_conflicts(repo: &Path, app_config: &Path) -> DaemonConflict {
         app_config_identity,
         owners: Vec::new(),
         issues: Vec::new(),
+        repairable_tasks: Vec::new(),
     };
     match alinery_core::repo_ownership::inspect_owners(repo) {
         Err(error) => conflict.issues.push(error),
         Ok(report) => {
             conflict.issues = report.issues;
+            conflict.repairable_tasks = report.repairable;
             for observation in report.lanes {
                 if let Some(issue) = observation.issue {
                     conflict.issues.push(issue);
@@ -276,6 +280,15 @@ pub(crate) enum EnsureDaemonError {
 impl std::fmt::Display for EnsureDaemonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Mismatch(conflict) if !conflict.repairable_tasks.is_empty() => write!(
+                f,
+                "{} can't open because {} of its tasks {} damaged saved progress. Use Repair in the banner at the top of the window.",
+                Path::new(&conflict.repo)
+                    .file_name()
+                    .map_or(conflict.repo.clone(), |name| name.to_string_lossy().into_owned()),
+                conflict.repairable_tasks.len(),
+                if conflict.repairable_tasks.len() == 1 { "has" } else { "have" },
+            ),
             Self::Mismatch(conflict) => write!(
                 f,
                 "project ownership unavailable for {}: {} owner(s); {}",
@@ -461,6 +474,45 @@ pub(crate) async fn prepare_repo_takeover(app: AppHandle, repo_path: String, own
     })
     .await
     .map_err(|error| format!("prepare takeover task: {error}"))?
+}
+
+/// The user's "Repair" on a task whose saved progress will not read. It touches one task file, keeps the
+/// original beside it, and refuses while any daemon answers for the project. Then it reconnects.
+#[tauri::command]
+pub(crate) async fn repair_task_state(app: AppHandle, repo: String, slug: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let repo = match RepoRef::parse(&repo)? {
+            RepoRef::Local(repo) => repo,
+            RepoRef::Remote { .. } => return Err("Repair is only available for projects on this computer".into()),
+        };
+        takeover_allowed(&state, &repo)?;
+        let lifecycle = state.repo_lifecycle(&repo);
+        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+        takeover_allowed(&state, &repo)?;
+        validate_known_target_repo(&load_app_config(&app).known_repos, &repo.display().to_string())?;
+        let report = alinery_core::repo_ownership::inspect_owners(&repo)?;
+        if report.lanes.iter().any(|lane| lane.reachable || lane.issue.is_some()) {
+            return Err("Another Alinery window has this project open. Close it, then try again.".into());
+        }
+        if !report.repairable.contains(&slug) {
+            return Err("This task no longer needs repair.".into());
+        }
+        let records = alinery_core::repair_execution_state(&repo, &slug)?;
+        let app_config = app_config_path(&app)?;
+        alinery_core::append_exception(
+            &app_config,
+            &format!(
+                "app.task-state-repaired repo={} task={} records={records}",
+                alinery_core::quote_log_value(&repo.display().to_string()),
+                alinery_core::quote_log_value(&slug),
+            ),
+        );
+        attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("repair task state: {error}"))?
 }
 
 #[tauri::command]

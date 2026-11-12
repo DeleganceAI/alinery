@@ -133,6 +133,7 @@ export const daemonStatus = () => invoke<ShellDaemonStatus>("daemon_status");
 export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", { path });
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
+export const repairTaskState = (repo: string, slug: string) => invoke<void>("repair_task_state", { repo, slug });
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────

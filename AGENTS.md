@@ -132,11 +132,11 @@ A new command goes in the module that owns its data; `lib.rs` only gains a name 
 
 ## Commands (Rust Tauri)
 
-The shell keeps 80 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
+The shell keeps 81 commands, all of them local-machine work or provisioning. Everything about a repository's tasks, sessions, artifacts, playbooks, git, backups, settings and providers is a daemon RPC. `lib.rs` `generate_handler!` is the list; `check-ipc-commands.sh` ties it to `src/ipc.ts`.
 
 - Bridge: `daemon_rpc`, `daemon_rpc_cancel` (the webview's only path to a daemon), `daemon_status`, `ping`
 - App config and repos: `read_app_config`, `write_appearance`, `list_hosts`, `set_host_onboarded`, `set_active_repo`, `remove_repo`, `pick_repo_dialog`, `classify_picked_folder`, `init_picked_folder`, `pick_attachment_files_dialog`, `read_local_file`, `chat_file_stat`
-- Daemon lifecycle (the five teardown origins and their prerequisites): `prepare_repo_takeover`, `confirm_repo_takeover`, `cancel_repo_takeover`, `stop_daemon`, `close_all_repos`, `cancel_quit`, `restore_backup`, `pick_backup_destination_dialog`
+- Daemon lifecycle (the five teardown origins and their prerequisites): `prepare_repo_takeover`, `confirm_repo_takeover`, `cancel_repo_takeover`, `stop_daemon`, `repair_task_state` (the banner's Repair: fills the `permission` field older `execution.json` files lack, keeps the original beside it, refuses while any daemon answers), `close_all_repos`, `cancel_quit`, `restore_backup`, `pick_backup_destination_dialog`
 - Remote: `remote_hosts`, `remote_add_host`, `remote_ssh_aliases`, `remote_describe_destination`, `remote_test_host`, `remote_discard_host`, `remote_sharing`, `remote_set_sharing`, `remote_connect`, `remote_disconnect`, `remote_list_dir`, `remote_classify`, `remote_init`, `remote_add_repo`, `remove_remote_repo_keep_running`
 - Settings that are this machine's: `read_global_settings`, `write_global_settings`, `read_model_favorites`, `set_model_favorite`, `grok_key_ready`
 - Sessions on this machine: `list_chat_repos`, `prepare_hosted_inference`, `notify_session_attention`, `notify_test`, `set_dock_badge_count`

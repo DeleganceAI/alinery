@@ -9,7 +9,7 @@ import type { DaemonConflict, DaemonOwnerConflict, TakeoverOutcome, TakeoverPrev
 
 vi.mock("./ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("./test/mockIpc");
-  return mockIpc({ prepareRepoTakeover: vi.fn(), confirmRepoTakeover: vi.fn(), cancelRepoTakeover: vi.fn() });
+  return mockIpc({ prepareRepoTakeover: vi.fn(), confirmRepoTakeover: vi.fn(), cancelRepoTakeover: vi.fn(), repairTaskState: vi.fn() });
 });
 afterEach(() => {
   cleanup();
@@ -44,7 +44,7 @@ const LANE_LOCK = "/repo/.alinery/.alineryd-old-dev.lock";
 const held = (path: string) => `project owner is still running (${path}); stop it before opening this project here`;
 // The three near-identical sentences Rust reports for two held leases.
 const issues = [held(REPO_LOCK), held(LANE_LOCK), `${held(LANE_LOCK)}; cannot establish owner socket stopped (/repo/.alinery/alineryd-old-dev.sock): timed out`];
-const conflict: DaemonConflict = { repo: "/repo", app_protocol: 15, app_config_identity: "current", owners: [owner], issues };
+const conflict: DaemonConflict = { repo: "/repo", app_protocol: 15, app_config_identity: "current", owners: [owner], issues, repairable_tasks: [] };
 const preview: TakeoverPreview = { confirmation_id: "consent-a", repo: "/repo", owner };
 const strip = () => screen.getByRole("button", { name: /repo is open elsewhere · showing saved progress/ });
 function tree(value: DaemonConflict | null, refresh: () => void) {
@@ -349,6 +349,25 @@ describe("repository status without a takeover", () => {
     expect(status.classList.contains("error")).toBe(true);
   });
 
+  it("says plainly that a task's saved progress is damaged and repairs it only after a confirmation", async () => {
+    vi.mocked(ipc.repairTaskState).mockResolvedValue();
+    const { refresh } = mount({
+      ...conflict,
+      owners: [],
+      issues: ["invalid task execution state: missing field `permission` at line 88 column 5"],
+      repairable_tasks: ["fix-login"],
+    });
+    const status = document.querySelector(".repo-strip") as HTMLElement;
+    expect(status.textContent).toContain("repo can't be opened because one task's saved progress is damaged");
+    expect(status.textContent).not.toContain("permission");
+    fireEvent.click(within(status).getByRole("button", { name: "Repair…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Repair repo?" });
+    expect(ipc.repairTaskState).not.toHaveBeenCalled();
+    accept(confirm, "Repair");
+    await waitFor(() => expect(ipc.repairTaskState).toHaveBeenCalledWith("/repo", "fix-login"));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
   it("keeps a second window separate: no takeover, one recovery action", () => {
     const pick = vi.fn();
     render(<RepoBusyBanner repo="/repo" onPickRepo={pick} />);
@@ -391,6 +410,7 @@ describe("a remote repository's daemon", () => {
       },
     ],
     issues: ["The daemon on the host speaks protocol 22; this app speaks 24."],
+    repairable_tasks: [],
   };
 
   it("offers a confirmed restart that names the sessions it ends, and stops nothing before the answer", async () => {

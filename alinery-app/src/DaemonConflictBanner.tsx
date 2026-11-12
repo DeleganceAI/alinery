@@ -307,6 +307,33 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     }
   };
 
+  const repair = async (slugs: string[]) => {
+    const accepted = await confirmDanger(
+      `Repair ${name}?`,
+      <>
+        <p>
+          {slugs.length === 1 ? "One task's" : "Some tasks'"} saved progress is missing a setting that this version of Alinery needs. Repair adds it. Your tasks, files and
+          artifacts aren't changed, and a copy of the original file stays next to it.
+        </p>
+        <p>
+          {slugs.length === 1 ? "Task" : "Tasks"}: {slugs.join(", ")}
+        </p>
+      </>,
+      "Repair",
+    );
+    if (!accepted) return;
+    setPending(true);
+    try {
+      for (const slug of slugs) await ipc.repairTaskState(conflict.repo, slug);
+      toast.success(`Repaired ${name}`);
+    } catch (cause) {
+      toast.error(`Couldn't repair ${name}: ${String(cause)}`);
+    } finally {
+      setPending(false);
+      onRefresh();
+    }
+  };
+
   // Auto-open once per conflict: the first takeable owner this mount sees, and never an owner
   // that already prompted. A partial takeover's next owner waits for an explicit click.
   const autoPrompted = useRef(false);
@@ -337,6 +364,23 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     );
   }
   const blockingIssues = displayed.owners.length === 0 && conflictEvidence(displayed).issues.length > 0;
+  const repairable = displayed.owners.length === 0 ? displayed.repairable_tasks : [];
+  if (repairable.length > 0) {
+    const count = repairable.length;
+    return (
+      <RepoStatusStrip
+        tone="error"
+        details={<EvidenceBlock text={evidenceText(displayed)} />}
+        action={
+          <button type="button" className="btn small" disabled={pending} onClick={() => void repair(repairable)}>
+            Repair…
+          </button>
+        }
+      >
+        {name} can't be opened because {count === 1 ? "one task's" : `${count} tasks'`} saved progress is damaged
+      </RepoStatusStrip>
+    );
+  }
   return (
     <RepoStatusStrip tone={blockingIssues ? "error" : "warning"} details={<EvidenceBlock text={evidenceText(displayed)} />}>
       {blockingIssues ? `${name} can't be opened here · showing saved progress` : `${name} is open elsewhere · showing saved progress · quit the other window to work here`}

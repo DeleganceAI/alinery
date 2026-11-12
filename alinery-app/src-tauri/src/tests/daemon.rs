@@ -739,6 +739,7 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             app_config_identity: "config".into(),
             owners: Vec::new(),
             issues: vec!["unavailable".into()],
+            repairable_tasks: Vec::new(),
         },
     );
     assert!(state.daemon_attached(&a) && state.daemon_attached(&b));
@@ -757,6 +758,7 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             app_config_identity: "config".into(),
             owners: Vec::new(),
             issues: vec!["now refused".into()],
+            repairable_tasks: Vec::new(),
         },
     );
     assert!(!state.daemon_attached(&a) && state.daemon_conflict(&a).is_some(), "a conflict replaces the connection");

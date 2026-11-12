@@ -197,6 +197,7 @@ pub fn run() {
             notify_session_attention,
             prepare_hosted_inference,
             stop_daemon,
+            repair_task_state,
             close_all_repos,
             cancel_quit,
             mcp_status,

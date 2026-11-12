@@ -1365,6 +1365,7 @@ fn remote_conflict(session: &RemoteSession, key: &str, path: &str, hello: &crate
             takeover_unavailable: Some("Restart the daemon on the host to replace it.".to_string()),
         }],
         issues: vec![issue],
+        repairable_tasks: Vec::new(),
     }
 }
 

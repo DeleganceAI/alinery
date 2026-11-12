@@ -1138,6 +1138,7 @@ export type DaemonConflict = {
   app_config_identity: string;
   owners: DaemonOwnerConflict[];
   issues: string[];
+  repairable_tasks: string[];
 };
 
 export type TakeoverPreview = {

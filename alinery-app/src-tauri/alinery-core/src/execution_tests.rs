@@ -170,3 +170,36 @@ fn a_state_the_daemon_wrote_reads_in_rust_and_a_rust_write_keeps_the_engine_bloc
     assert_eq!(after["executions"], fixture["executions"]);
     assert_eq!(after["owning_lane"], "next");
 }
+
+#[test]
+fn repair_fills_a_missing_permission_keeps_the_original_and_reads_afterwards() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    json["executions"]["e1"] = serde_json::json!({
+        "id": "e1", "binding_key": "k",
+        "candidate": {"step_key": "work", "context_id": "root", "inputs": {}, "complete_collection_id": null, "each_collection_id": null, "each_member_id": null, "manual": false},
+        "outputs": [], "parent_execution_ids": [], "depth": 0, "owner_session_id": "s", "previous_session_ids": [],
+        "launch": {"harness": "", "model": ""}, "is_coding_step": false, "start_requested": false,
+        "lifecycle": "completed", "receipt_id": null, "exit_code": 0, "shutdown_confirmed": true, "error": null
+    });
+    let damaged = serde_json::to_vec_pretty(&json).unwrap();
+    fs::write(&path, &damaged).unwrap();
+
+    assert!(read_execution_state(&f.repo, "task").unwrap_err().contains("missing field `permission`"));
+    assert!(execution_state_repairable(&f.repo, "task"));
+    assert_eq!(repair_execution_state(&f.repo, "task").unwrap(), 1);
+
+    let state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(state.executions["e1"].permission, CompletionPermission::Locked);
+    let backups: Vec<_> = fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("execution.json.before-repair-"))
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(fs::read(backups[0].path()).unwrap(), damaged, "the original bytes survive");
+    assert!(!execution_state_repairable(&f.repo, "task"), "a readable file is not offered a repair");
+    assert!(repair_execution_state(&f.repo, "task").is_err());
+}
