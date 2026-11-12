@@ -132,8 +132,8 @@ describe("an unreadable saved execution state", () => {
     // Sessions still render with historical metadata when execution state is unavailable.
     await waitFor(() => expect(screen.getByRole("row", { name: "Open session superdevelop · research" })).toBeDefined());
 
-    // Artifacts still render — switch to the Artifacts tab to observe them.
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
+    // Artifacts render in the Files tab, which is open by default.
+    expect(screen.getByRole("button", { name: "Files" }).getAttribute("aria-pressed")).toBe("true");
     await waitFor(() => expect(screen.getByText("00-ticket.md")).toBeDefined());
     expect(screen.getByRole("alert").textContent).toContain("Invalid execution.json");
 
@@ -160,7 +160,7 @@ describe("saved execution state without live access", () => {
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("article", { name: "Execution execution-a" })).toBeDefined();
     expect((screen.getByRole("button", { name: "Allow this session to complete · s1" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts", pressed: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Files", pressed: false }));
     expect(await screen.findByText("00-ticket.md")).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -198,7 +198,7 @@ describe("artifacts arriving on the task's stream", () => {
     fakeBoard.set({ anyRepoTasks: [fixture] as never });
 
     renderDetail({ initialTask: fixture });
-    fireEvent.click(await screen.findByRole("button", { name: "Artifacts", pressed: false }));
+    expect(screen.getByRole("button", { name: "Files" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText("00-ticket.md")).toBeNull();
 
     act(() => fakeArtifacts.set("a-task", { items: [artifactItem({ name: "00-ticket.md" })] }));

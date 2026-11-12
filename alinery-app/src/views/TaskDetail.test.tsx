@@ -905,6 +905,7 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   retained.state.enabled_steps = ["worker"];
   mocks.getTaskExecution.mockResolvedValue(retained);
   await renderDetail();
+  fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
   const modes = within(screen.getByRole("group", { name: "Task playbook view" }));
   expect(modes.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
   expect(await screen.findByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
@@ -919,7 +920,7 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   expect(screen.queryByLabelText("Retained worker: 1 active sessions")).toBeNull();
 
   const sideTabs = within(screen.getByRole("group", { name: "Task side panel" }));
-  fireEvent.click(sideTabs.getByRole("button", { name: "Artifacts" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Files" }));
   fireEvent.click(sideTabs.getByRole("button", { name: "Playbook" }));
   expect(screen.getByRole("button", { name: "Graph" }).getAttribute("aria-pressed")).toBe("true");
 
@@ -932,10 +933,7 @@ describe("removed distill surfaces", () => {
   it("keeps a historical session visible without offering Distill or a Wiki tab", async () => {
     scenario.sessions = [session({ id: "historical", phase: "distill-to-wiki" })];
     await renderDetail();
-    const artifacts = screen.getByRole("button", { name: "Artifacts" });
-    expect(artifacts.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(artifacts);
-    expect(artifacts.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Files" }).getAttribute("aria-pressed")).toBe("true");
 
     expect(screen.getByText(/distill-to-wiki/)).toBeDefined();
     expect(screen.queryByRole("button", { name: "Distill" })).toBeNull();
@@ -1633,6 +1631,7 @@ describe("authoritative task execution", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
     expect(screen.getByRole("group", { name: "Task playbook view" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
     const completion = () => screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement;
@@ -1723,6 +1722,7 @@ describe("Task Detail auto approval", () => {
     retained.state.enabled_steps = [];
     mocks.getTaskExecution.mockResolvedValue(retained);
     await renderDetail();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
     const toggle = screen.getByRole("button", { name: "Auto Approval All" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(toggle.classList.contains("ghost")).toBe(true);
@@ -2142,7 +2142,6 @@ describe("artifact preview images", () => {
     fakeArtifacts.nodeTexts["snapshot-findings"] = "![shot](../attachments/shot.png)";
     await renderDetail();
 
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
     fireEvent.click(await screen.findByRole("button", { name: /findings\.md/ }));
 
     await waitFor(() => expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "parent", "snapshot-shot"));

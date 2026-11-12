@@ -24,8 +24,16 @@ beforeEach(() => {
   vi.mocked(ipc.writeAppearance).mockClear();
 });
 
-function Probe({ appearance, onAppearanceChange }: { appearance: AppearancePrefs; onAppearanceChange: (next: AppearancePrefs) => void }) {
-  const [width, resizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
+function Probe({
+  appearance,
+  onAppearanceChange,
+  side,
+}: {
+  appearance: AppearancePrefs;
+  onAppearanceChange: (next: AppearancePrefs) => void;
+  side?: "left" | "right";
+}) {
+  const [width, resizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange, side);
   return (
     <div>
       <div data-testid="width">{width}</div>
@@ -64,6 +72,21 @@ describe("useArtifactPaneWidth", () => {
     expect(screen.getByTestId("width").textContent).toBe("580");
     expect(onAppearanceChange).toHaveBeenCalledOnce();
     expect(vi.mocked(ipc.writeAppearance).mock.calls[0][0]).toEqual(appearanceAt(580));
+  });
+
+  it("grows a left-side pane when dragged or arrowed to the right", () => {
+    render(<Probe appearance={appearanceAt(480)} onAppearanceChange={vi.fn()} side="left" />);
+    const resizer = screen.getByRole("separator", { name: "Resize artifact pane" });
+
+    fireEvent.pointerDown(resizer, { clientX: 500 });
+    fireEvent.pointerMove(window, { clientX: 600 });
+    fireEvent.pointerUp(window, { clientX: 600 });
+    expect(screen.getByTestId("width").textContent).toBe("580");
+
+    fireEvent.keyDown(resizer, { key: "ArrowRight" });
+    expect(screen.getByTestId("width").textContent).toBe("600");
+    fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(screen.getByTestId("width").textContent).toBe("580");
   });
 
   it("persists keyboard width changes through the appearance path", () => {

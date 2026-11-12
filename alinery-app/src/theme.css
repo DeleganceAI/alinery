@@ -3852,9 +3852,16 @@ dialog.modal::backdrop {
   overflow: auto;
 }
 .detail.taskdetail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+/* The header spans the full width; the side panel sits left of the sessions pane. */
+.taskdetail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
 }
 /* The metadata and session table are the only vertical scroll owners. Making
    this parent scroll recreates DEL-541's competing scrollbar and dead space. */
@@ -3864,7 +3871,7 @@ dialog.modal::backdrop {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  padding-right: 12px;
+  padding-left: 12px;
 }
 .detail h2 {
   margin: 6px 0;

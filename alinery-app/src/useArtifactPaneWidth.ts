@@ -20,7 +20,13 @@ type ArtifactPaneResizerProps = {
   onKeyDown: (ev: ReactKeyboardEvent<HTMLElement>) => void;
 };
 
-export function useArtifactPaneWidth(appearance: AppearancePrefs, onAppearanceChange: (next: AppearancePrefs) => void): [number, ArtifactPaneResizerProps] {
+/** `side` is where the pane sits: dragging or arrowing away from it grows it. */
+export function useArtifactPaneWidth(
+  appearance: AppearancePrefs,
+  onAppearanceChange: (next: AppearancePrefs) => void,
+  side: "left" | "right" = "right",
+): [number, ArtifactPaneResizerProps] {
+  const grow = side === "right" ? -1 : 1;
   const [width, setWidth] = useState(() => normalizeArtifactViewerWidth(appearance.artifact_viewer_width));
   const accessibleMax = clampArtifactViewerWidth(ARTIFACT_VIEWER_WIDTH_MAX);
   const appearanceRef = useRef(appearance);
@@ -40,7 +46,7 @@ export function useArtifactPaneWidth(appearance: AppearancePrefs, onAppearanceCh
   const onPointerDown = (ev: ReactPointerEvent<HTMLElement>) => {
     const startX = ev.clientX;
     const startWidth = clampArtifactViewerWidth(width);
-    const apply = (clientX: number) => clampArtifactViewerWidth(startWidth + startX - clientX);
+    const apply = (clientX: number) => clampArtifactViewerWidth(startWidth + grow * (clientX - startX));
     startPointerDrag(ev, {
       onMove: (moveEv) => {
         setWidth(apply(moveEv.clientX));
@@ -57,9 +63,9 @@ export function useArtifactPaneWidth(appearance: AppearancePrefs, onAppearanceCh
     const current = clampArtifactViewerWidth(width);
     const next =
       ev.key === "ArrowLeft"
-        ? current + KEYBOARD_STEP
+        ? current - grow * KEYBOARD_STEP
         : ev.key === "ArrowRight"
-          ? current - KEYBOARD_STEP
+          ? current + grow * KEYBOARD_STEP
           : ev.key === "Home"
             ? ARTIFACT_VIEWER_WIDTH_MIN
             : ev.key === "End"
