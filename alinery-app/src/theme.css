@@ -7159,33 +7159,70 @@ header:has(~ main .task-info-panel) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Panel tabs share the main pane's tab look: cells divided by lines, no button chrome. A head row holding tabs is
+   a full-width strip; the side panel's first row matches the main pane's strip (same height and background) and a
+   second-level row marks its choice with an accent underline instead. A tab group elsewhere is a framed segment. */
 .artifacttabs {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-self: stretch;
 }
 .artifacttab {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  min-width: 72px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  padding: 4px 9px;
   font: inherit;
   font-size: calc(12px * var(--ui-scale));
   cursor: pointer;
-  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
-.artifacttab:hover,
+.artifacttab:hover {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
 .artifacttab.on {
-  border-color: var(--accent);
   color: var(--text-strong);
-  background: var(--accent-subtle);
+  background: var(--surface);
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 .artifacttab:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+.artifacthead:has(> .artifacttabs) {
+  padding: 0 10px 0 0;
+  background: var(--surface);
+}
+.artifactpane > .artifacthead:first-child:has(> .artifacttabs) {
+  background: var(--canvas);
+}
+.artifactpane > .artifacthead:first-child .artifacttab.on {
+  background: var(--surface);
+}
+.artifacthead:not(:first-child) .artifacttab.on,
+:not(.artifactpane) > .artifacthead .artifacttab.on {
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+:not(.artifacthead) > .artifacttabs {
+  flex: 0 0 auto;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+:not(.artifacthead) > .artifacttabs .artifacttab {
+  height: 28px;
+}
+:not(.artifacthead) > .artifacttabs .artifacttab:last-child {
+  border-right: 0;
 }
 /* Main pane tabs: Sessions, then one per opened file. A strip of fixed-width cells across the top of the pane,
    divided by lines; the active cell takes the content background and an accent edge. Overflow scrolls sideways. */
@@ -7283,12 +7320,36 @@ header:has(~ main .task-info-panel) {
   min-height: 0;
   overflow: auto;
 }
+/* In the side panel the step list is rows divided by full-width lines, not boxed cards. */
+.playbook-side-scroll .playbook-graph-view {
+  padding: 12px 0 0;
+}
+.playbook-side-scroll .playbook-graph-title {
+  padding-inline: 12px;
+}
+.playbook-side-scroll .playbook-node {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 12px;
+}
+.playbook-side-scroll .playbook-node:first-child {
+  border-top: 1px solid var(--border);
+}
+.playbook-side-scroll .playbook-node.solid {
+  border-color: var(--border);
+}
+/* Entries are divided by full-width lines; everything else keeps the panel's 12px inset. */
 .task-history-pane {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overflow-wrap: anywhere;
-  padding: 12px;
+  padding: 12px 0;
+}
+.task-history-pane > :not(section),
+.task-history-pane > section > :not(.task-history-entry) {
+  margin-inline: 12px;
 }
 .task-history-title {
   margin: 4px 0 8px;
@@ -7304,7 +7365,7 @@ header:has(~ main .task-info-panel) {
 }
 .task-history-entry {
   border-top: 1px solid var(--border);
-  padding: 16px 0;
+  padding: 16px 12px;
 }
 .task-history-entry-heading {
   display: flex;
