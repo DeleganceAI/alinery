@@ -359,13 +359,16 @@ export function TaskDetail({
   const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const selectedArtifactTreeId = selectedArtifactNode?.id;
-  const commentsEnabled = selectedArtifactIsDirect && Boolean(selectedArtifact) && !selectedArtifact.endsWith(".comments.md");
+  // A worktree file's comments target `repo:<path>`; the daemon keeps them under the task, never in the worktree.
+  const commentTarget = selectedIsRepo ? `repo:${selectedArtifact}` : selectedArtifact;
+  const canComment = selectedIsRepo ? selectedPreviewable : selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md");
+  const commentsEnabled = canComment && Boolean(selectedArtifact);
   // Comments and the waiting-for-review mark of the open artifact are rows of the task's stream: another window's change shows here with no poll.
   const artifactComments = useMemo(
-    () => (commentsEnabled ? liveArtifacts.comments.filter((comment) => comment.artifact === selectedArtifact) : []),
-    [commentsEnabled, liveArtifacts.comments, selectedArtifact],
+    () => (commentsEnabled ? liveArtifacts.comments.filter((comment) => comment.artifact === commentTarget) : []),
+    [commentsEnabled, liveArtifacts.comments, commentTarget],
   );
-  const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === selectedArtifact)) || null;
+  const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === commentTarget)) || null;
   const [commentAnchor, setCommentAnchor] = useState<ArtifactCommentAnchor | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
@@ -381,7 +384,7 @@ export function TaskDetail({
     discardDraft: discardCommentDraft,
     getDraft: getCommentDraft,
   } = useArtifactCommentDrafts(repoPath, slug);
-  const selectedArtifactDrafts = selectedArtifactIsDirect ? artifactCommentDrafts.filter((draft) => draft.artifact === selectedArtifact) : [];
+  const selectedArtifactDrafts = commentsEnabled ? artifactCommentDrafts.filter((draft) => draft.artifact === commentTarget) : [];
   const recoverableArtifactDrafts = selectedArtifactDrafts.filter((draft) => draft.anchor_id !== commentAnchor?.anchor_id);
   const recoverableArtifactDraftAnchorIds = recoverableArtifactDrafts.map((draft) => draft.anchor_id);
   taskRef.current = task;
@@ -569,7 +572,7 @@ export function TaskDetail({
 
   const handleCommentDraftChange = (body: string) => {
     setCommentDraft(body);
-    if (commentAnchor && selectedArtifact) persistCommentDraft(selectedArtifact, commentAnchor, body);
+    if (commentAnchor && selectedArtifact) persistCommentDraft(commentTarget, commentAnchor, body);
   };
 
   const saveArtifactComment = () => {
@@ -578,7 +581,7 @@ export function TaskDetail({
     addComment({
       repoPath,
       taskSlug: slug,
-      artifact: selectedArtifact,
+      artifact: commentTarget,
       anchorId: commentAnchor.anchor_id,
       anchorKind: commentAnchor.anchor_kind,
       anchorLabel: commentAnchor.anchor_label,
@@ -588,7 +591,7 @@ export function TaskDetail({
       body: trimmedCommentDraft,
     })
       .then(() => {
-        void discardCommentDraft(selectedArtifact, commentAnchor.anchor_id).catch(() => {});
+        void discardCommentDraft(commentTarget, commentAnchor.anchor_id).catch(() => {});
         setCommentAnchor(null);
         setCommentDraft("");
       })
@@ -609,19 +612,19 @@ export function TaskDetail({
 
   const openArtifactComment = useCallback(
     (anchor: ArtifactCommentAnchor) => {
-      const storedDraft = getCommentDraft(selectedArtifact, anchor.anchor_id);
+      const storedDraft = getCommentDraft(commentTarget, anchor.anchor_id);
       flushSync(() => {
         setCommentAnchor(anchor);
         setCommentDraft(storedDraft?.body ?? "");
       });
       commentInputRef.current?.focus();
     },
-    [getCommentDraft, selectedArtifact],
+    [getCommentDraft, commentTarget],
   );
 
   const discardOpenCommentDraft = () => {
     if (commentAnchor && selectedArtifact) {
-      void discardCommentDraft(selectedArtifact, commentAnchor.anchor_id).catch(() => {});
+      void discardCommentDraft(commentTarget, commentAnchor.anchor_id).catch(() => {});
     }
     setCommentAnchor(null);
     setCommentDraft("");
@@ -629,7 +632,7 @@ export function TaskDetail({
 
   const clearPendingReview = () => {
     if (!selectedArtifact) return;
-    clearReviewPending(repoPath, slug, selectedArtifact).catch((e) => setArtifactErr({ msg: "Couldn't clear the waiting state.", detail: String(e) }));
+    clearReviewPending(repoPath, slug, commentTarget).catch((e) => setArtifactErr({ msg: "Couldn't clear the waiting state.", detail: String(e) }));
   };
 
   const restoreTask = async () => {
@@ -1406,7 +1409,7 @@ export function TaskDetail({
                       attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
                       comments={artifactComments}
                       draftAnchorIds={recoverableArtifactDraftAnchorIds}
-                      onAddComment={selectedArtifactIsDirect && !selectedArtifact.endsWith(".comments.md") ? openArtifactComment : undefined}
+                      onAddComment={canComment ? openArtifactComment : undefined}
                       onDiagramZoomOpenChange={onDiagramZoomOpenChange}
                     />
                   </article>
@@ -1421,7 +1424,7 @@ export function TaskDetail({
                         <span>{formatArtifactCommentTarget(draft)}</span>
                         {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
                       </button>
-                      <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(selectedArtifact, draft.anchor_id).catch(() => {})}>
+                      <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(commentTarget, draft.anchor_id).catch(() => {})}>
                         Discard
                       </button>
                     </div>

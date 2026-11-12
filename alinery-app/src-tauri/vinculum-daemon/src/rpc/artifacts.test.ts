@@ -122,6 +122,23 @@ test("a comment is in the task scope before AddComment replies, the review reach
   expect(c.events.map((e) => e.event)).toEqual(["artifact.comment_add", "artifact.review_send"]);
 });
 
+test("a comment on a worktree file reaches the task scope and its review goes pending under repo-comments/", async () => {
+  const c = await start();
+  const slug = await makeTask(c);
+  const task = readFileSync(join(c.alinery, "tasks", slug, "task.md"), "utf8");
+  const worktree = /worktree = "([^"]+)"/.exec(task)?.[1] ?? "";
+  writeFileSync(join(worktree, "notes.md"), "# notes\n");
+  const target = "repo:notes.md";
+  const added = await c.artifacts.addComment({ meta: meta(), taskSlug: slug, artifact: target, comment: input() });
+  expect(c.store.get(`comment/${slug}/${target}/${added.commentId}`)?.value.case).toBe("comment");
+  expect(existsSync(join(worktree, "notes.comments.json"))).toBe(false);
+  const sent = await c.artifacts.sendReview({ meta: meta(), taskSlug: slug, artifact: target });
+  expect(sent.review).toBe("repo:notes.review-001.md");
+  expect(existsSync(join(c.alinery, "tasks", slug, "repo-comments", "notes.review-001.md"))).toBe(true);
+  expect(c.store.get(`review_pending/${slug}/${target}`)?.value).toMatchObject({ case: "reviewPending", value: { review: sent.review } });
+  expect(await code(c.artifacts.addComment({ meta: meta(), taskSlug: slug, artifact: "repo:../x.md", comment: input() }))).toBe(Code.InvalidArgument);
+});
+
 test("a retried mutation id adds one comment; an empty body and a link are refused", async () => {
   const c = await start();
   const slug = await makeTask(c);

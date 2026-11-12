@@ -76,7 +76,7 @@ The daemon owns the filesystem, and a repo may be remote over SSH, so this is a 
 - **Code** uses `highlight.js/lib/core` (a new dependency, roughly 40 KB with these languages) with ts, tsx, js, json, rust, toml, yaml, bash, python, go, css, html, sql, markdown and diff. The language comes from the file extension, with plain text as the fallback. Line numbers come from CSS counters.
 - **Guards:** above 1 MB, or for binary content (a NUL byte in the first 8 KB), show "too large / binary" with the size instead of the content. Images go through the existing attachment image path.
 
-## Phase 4b: comments on repo markdown (M, one PR)
+## Phase 4b: comments on repo markdown (M, one PR) — done
 
 Split out of Phase 4: the artifact projector builds comment rows by walking a task's artifact list and watches only
 `tasks/<slug>/artifacts/`, so repo-file comments also need their own scan in `artifactProjector.ts`, a wider `WATCHED`

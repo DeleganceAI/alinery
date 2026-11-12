@@ -42,15 +42,21 @@ export async function listWorktreeFiles(repo: string, slug: string, cap = WORKTR
   return { paths: all.slice(0, cap), truncated: all.length > cap };
 }
 
+/** The string checks of a worktree path, without touching the disk; answers its segments. */
+export function checkWorktreeRelPath(path: string): string[] {
+  const parts = path.split("/");
+  if (path === "" || path.includes("\0") || parts.some((p) => p === "" || p === "." || p === ".." || p === ".git")) {
+    throw new DomainError("invalid_argument", `invalid worktree path: ${path}`);
+  }
+  return parts;
+}
+
 /**
  * The absolute path of one file under the task's root. Refused: an empty or absolute path, `.` or `..` segments, anything
  * inside `.git`, and any link on the way (the real path must be exactly the joined one). A missing file is NOT_FOUND.
  */
 export function worktreeFilePath(repo: string, slug: string, path: string): string {
-  const parts = path.split("/");
-  if (path === "" || path.includes("\0") || parts.some((p) => p === "" || p === "." || p === ".." || p === ".git")) {
-    throw new DomainError("invalid_argument", `invalid worktree path: ${path}`);
-  }
+  const parts = checkWorktreeRelPath(path);
   const root = worktreeRoot(repo, slug);
   const full = join(root, ...parts);
   if (real(full, `file ${path}`) !== full) throw new DomainError("permission_denied", `a link is on the way to ${path}`);

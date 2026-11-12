@@ -10,7 +10,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DomainError } from "../platform/lock.ts";
 import type { Store } from "../sync/store.ts";
-import { loadComments, listDrafts, pendingStatus } from "./artifactComments.ts";
+import { listDrafts, loadComments, pendingStatus, repoCommentsDir, repoCommentTargets, repoTargetFile } from "./artifactComments.ts";
 import { type ArtifactItem, type ExecutionRecords, listArtifacts } from "./artifactList.ts";
 import { buildTree, loadRelationships, type ResolvedNode, readTaskRelationships } from "./artifactTree.ts";
 import { alineryDir, artifactsDir, readTaskChecked, safeComponent, sessionsDir, taskDir, tasksDir } from "./taskFiles.ts";
@@ -20,7 +20,7 @@ const KINDS = ["artifact", "attachment", "comment", "comment_draft", "review_pen
 const own = (slug: string) => (key: string) => KINDS.some((k) => key.startsWith(`${k}/${slug}/`));
 
 /** The paths under a task whose change can change one of its rows (or its neighbours' trees). */
-const WATCHED = /^tasks\/([^/]+)\/(?:artifacts(?:\/.*)?|artifact-comment-drafts\.json|execution\.json|playbook\.md|task\.md|sessions\/[^/]+\.meta\.json)$/;
+const WATCHED = /^tasks\/([^/]+)\/(?:artifacts(?:\/.*)?|artifact-comment-drafts\.json|repo-comments(?:\/.*)?|execution\.json|playbook\.md|task\.md|sessions\/[^/]+\.meta\.json)$/;
 export const projectedSlug = (rel: string): string | undefined => WATCHED.exec(rel)?.[1];
 
 const millis = (n: number | null) => (n === null ? undefined : BigInt(n));
@@ -143,7 +143,14 @@ export class ArtifactProjector {
           add(create(EntitySchema, { key: `attachment/${slug}/${item.name}`, value: { case: "attachment", value: { slug, name: item.name, modifiedAtMs: millis(item.modified_at_ms), position: t++ } } }));
         } else add(artifactRow(slug, item, a++));
       }
-      for (const item of items.filter((i) => !i.attachment)) {
+      // Comments on worktree files (`repo:<path>`) are rows like an artifact's; their targets come from repo-comments/.
+      let repoTargets: string[] = [];
+      try {
+        repoTargets = repoCommentTargets(this.repo, slug);
+      } catch (e) {
+        this.log(`repo comments ${slug}: ${(e as Error).message}`);
+      }
+      for (const item of [...items.filter((i) => !i.attachment), ...repoTargets.map((name) => ({ name }))]) {
         try {
           for (const c of loadComments(this.repo, slug, item.name)) {
             add(create(EntitySchema, { key: `comment/${slug}/${item.name}/${c.id}`, value: { case: "comment", value: { slug, id: c.id, artifact: c.artifact, anchorId: c.anchor_id, anchorKind: c.anchor_kind, anchorLabel: c.anchor_label, anchorExcerpt: c.anchor_excerpt, lineStart: c.line_start, lineEnd: c.line_end, body: c.body, createdAtMs: BigInt(c.created_at_ms) } } }));
@@ -244,6 +251,16 @@ export class ArtifactProjector {
     };
     walk(artifactsDir(this.repo, slug), "a/");
     walk(sessionsDir(this.repo, slug), "s/");
+    walk(repoCommentsDir(this.repo, slug), "r/");
+    // A worktree file is outside every watch: its stamp here lets the 30 s pass clear a pending review the agent answered.
+    for (const target of repoCommentTargets(this.repo, slug)) {
+      try {
+        const st = statSync(repoTargetFile(this.repo, slug, target) as string);
+        parts.push(`w/${target}:${st.mtimeMs}:${st.size}`);
+      } catch {
+        parts.push(`w/${target}:-`);
+      }
+    }
     for (const f of ["artifact-comment-drafts.json", "execution.json", "playbook.md", "task.md"]) {
       try {
         const st = statSync(join(taskDir(this.repo, slug), f));

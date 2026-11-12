@@ -2,13 +2,14 @@
 // "address these comments" prompt. Ports alinery-core `artifact_comments.rs` byte for byte where a file is written: the
 // comments markdown is what an agent reads, and its hash is what proves the prompt a person sent is the one on disk.
 // Everything here is synchronous, so two calls cannot interleave; the files are written atomically.
-import { existsSync, readFileSync, realpathSync, rmSync, statSync, mkdirSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeAtomic } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import { parseSessionMeta } from "../sync/parsers/sessionMeta.ts";
 import { artifactFilePath, artifactTextHash, resolveArtifactPath } from "./artifactFiles.ts";
-import { artifactsDir, readTaskChecked, safeComponent, sessionsDir } from "./taskFiles.ts";
+import { artifactsDir, readTaskChecked, safeComponent, sessionsDir, taskDir } from "./taskFiles.ts";
+import { checkWorktreeRelPath, worktreeFilePath } from "./worktreeFiles.ts";
 
 export type Comment = {
   id: string;
@@ -31,6 +32,71 @@ export type Provenance = { type: "artifact_comments"; items: Snapshot[] } | { ty
 export type PreparedAction = { text: string; provenance: Provenance };
 
 const refuse = (message: string) => new DomainError("invalid_argument", message);
+
+// A comment target is an artifact name, or `repo:<path>` for a file of the task's worktree. A colon is never valid in an
+// artifact name, so the two cannot collide. A worktree file keeps its comment, review and pending files under the task's
+// `repo-comments/`, mirroring its path, so commenting never writes into the worktree.
+const REPO_TARGET = "repo:";
+const repoPathOf = (target: string) => (target.startsWith(REPO_TARGET) ? target.slice(REPO_TARGET.length) : undefined);
+/** How a target is named to a person or an agent: the artifact name, or the worktree-relative path. */
+export const targetDisplayName = (target: string) => repoPathOf(target) ?? target;
+
+/** The file a target's text is read from. */
+function sourcePath(repo: string, slug: string, target: string): string {
+  const path = repoPathOf(target);
+  return path === undefined ? artifactFilePath(repo, slug, target) : worktreeFilePath(repo, slug, path);
+}
+
+/** Where one of a target's comment files lives (its name is the target's stem plus a suffix). */
+function sidecarPath(repo: string, slug: string, name: string): string {
+  const path = repoPathOf(name);
+  if (path === undefined) return artifactFilePath(repo, slug, name);
+  if (safeComponent(slug) !== slug) throw refuse(`invalid task slug: ${slug}`);
+  return resolveArtifactPath(repo, `.alinery/tasks/${slug}/repo-comments/${path}`);
+}
+
+/** The worktree file a `repo:` target stands for, checked; undefined for an artifact target. */
+export function repoTargetFile(repo: string, slug: string, target: string): string | undefined {
+  const path = repoPathOf(target);
+  return path === undefined ? undefined : worktreeFilePath(repo, slug, path);
+}
+
+/** The task's `repo-comments/` directory. */
+export const repoCommentsDir = (repo: string, slug: string) => join(taskDir(repo, slug), "repo-comments");
+
+/** Every `repo:` target with comments or a pending review, read from the files themselves (links are not followed). */
+export function repoCommentTargets(repo: string, slug: string): string[] {
+  const found = new Set<string>();
+  const walk = (dir: string) => {
+    let entries: ReturnType<typeof readdirSync<Dirent>>;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true }) as never;
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && (entry.name.endsWith(".comments.json") || entry.name.endsWith(".review-pending.json"))) {
+        try {
+          const target = JSON.parse(readFileSync(path, "utf8"))?.artifact;
+          if (typeof target === "string" && repoPathOf(target) !== undefined) found.add(target);
+        } catch {
+          /* an unreadable file names no target; the next write replaces it */
+        }
+      }
+    }
+  };
+  walk(repoCommentsDir(repo, slug));
+  return [...found].sort(byBytes);
+}
+
+/** Checks a target's name without requiring its file to exist. */
+function checkTarget(repo: string, slug: string, target: string): void {
+  const path = repoPathOf(target);
+  if (path === undefined) artifactFilePath(repo, slug, target);
+  else checkWorktreeRelPath(path);
+}
 const COMMENT_LIMITS = { label: 120, excerpt: 500 };
 const now = () => Date.now();
 
@@ -50,6 +116,8 @@ export const escapeCommentMarkdown = (value: string) => value.replaceAll("&", "&
 
 /** `artifact_comment_stem`: the name without its extension (a directory part stays). */
 export function artifactCommentStem(name: string): string {
+  const repoPath = repoPathOf(name);
+  if (repoPath !== undefined) return REPO_TARGET + artifactCommentStem(repoPath);
   const slash = name.lastIndexOf("/");
   const file = name.slice(slash + 1);
   const dot = file.lastIndexOf(".");
@@ -58,11 +126,11 @@ export function artifactCommentStem(name: string): string {
 
 const sidecarName = (artifact: string, suffix: string) => `${artifactCommentStem(artifact)}${suffix}`;
 export function commentsJsonName(repo: string, slug: string, artifact: string): string {
-  artifactFilePath(repo, slug, artifact);
+  checkTarget(repo, slug, artifact);
   return sidecarName(artifact, ".comments.json");
 }
-export const commentsMarkdownName = (repo: string, slug: string, artifact: string) => (artifactFilePath(repo, slug, artifact), sidecarName(artifact, ".comments.md"));
-export const reviewPendingName = (repo: string, slug: string, artifact: string) => (artifactFilePath(repo, slug, artifact), sidecarName(artifact, ".review-pending.json"));
+export const commentsMarkdownName = (repo: string, slug: string, artifact: string) => (checkTarget(repo, slug, artifact), sidecarName(artifact, ".comments.md"));
+export const reviewPendingName = (repo: string, slug: string, artifact: string) => (checkTarget(repo, slug, artifact), sidecarName(artifact, ".review-pending.json"));
 
 export function draftsPath(repo: string, slug: string): string {
   if (!safeComponent(slug)) throw refuse("invalid task slug");
@@ -120,7 +188,7 @@ function parseDraft(v: unknown): Draft {
 
 /** The comments of one artifact; an unreadable file is an error, a missing one is none. */
 export function loadComments(repo: string, slug: string, artifact: string): Comment[] {
-  const path = artifactFilePath(repo, slug, commentsJsonName(repo, slug, artifact));
+  const path = sidecarPath(repo, slug, commentsJsonName(repo, slug, artifact));
   if (!existsSync(path)) return [];
   try {
     const file = JSON.parse(readFileSync(path, "utf8"));
@@ -150,7 +218,7 @@ export function loadDrafts(repo: string, slug: string): Draft[] {
 
 /** The hash of an artifact's text now (`artifact_hash_for`); throws when the file cannot be read. */
 export function artifactHashFor(repo: string, slug: string, artifact: string): string {
-  const path = artifactFilePath(repo, slug, artifact);
+  const path = sourcePath(repo, slug, artifact);
   try {
     return artifactTextHash(readFileSync(path, "utf8"));
   } catch (error) {
@@ -174,7 +242,7 @@ export function listDrafts(repo: string, slug: string): Draft[] {
 }
 
 export function readArtifactText(repo: string, slug: string, name: string): string {
-  const path = artifactFilePath(repo, slug, name);
+  const path = sourcePath(repo, slug, name);
   try {
     return readFileSync(path, "utf8");
   } catch (error) {
@@ -203,7 +271,7 @@ function writeDrafts(repo: string, slug: string, drafts: Draft[]): void {
 }
 
 export function deleteDraft(repo: string, slug: string, artifact: string, anchorId: string): void {
-  artifactFilePath(repo, slug, artifact);
+  checkTarget(repo, slug, artifact);
   writeDrafts(
     repo,
     slug,
@@ -233,7 +301,8 @@ export function saveDraft(repo: string, slug: string, artifact: string, input: C
 
 function commentsMarkdown(artifact: string, comments: Comment[]): string {
   const stem = artifactCommentStem(artifact);
-  let markdown = `# Human comments for ${artifact}\n\nGenerated by Alinery from \`${stem}.comments.json\`. Read this file alongside \`${artifact}\` before acting on the design.\n`;
+  const shown = targetDisplayName(artifact);
+  let markdown = `# Human comments for ${shown}\n\nGenerated by Alinery from \`${targetDisplayName(stem)}.comments.json\`. Read this file alongside \`${shown}\` before acting on the design.\n`;
   for (const c of comments) {
     markdown += `\n## Comment ${c.id} — ${escapeCommentMarkdown(c.anchor_label)}\n\n- Anchor: \`${c.anchor_id}\`\n- Lines: ${c.line_start}-${c.line_end}\n\nContext:\n\n`;
     for (const line of lines(escapeCommentMarkdown(c.anchor_excerpt))) markdown += `> ${line}\n`;
@@ -243,7 +312,7 @@ function commentsMarkdown(artifact: string, comments: Comment[]): string {
 }
 
 export function writeCommentsMarkdown(repo: string, slug: string, artifact: string, comments: Comment[]): void {
-  writeFile(artifactFilePath(repo, slug, commentsMarkdownName(repo, slug, artifact)), commentsMarkdown(artifact, comments));
+  writeFile(sidecarPath(repo, slug, commentsMarkdownName(repo, slug, artifact)), commentsMarkdown(artifact, comments));
 }
 
 /** Adds a comment (the body is trimmed; an empty one is refused), rewrites the comments file and its markdown, and returns every comment of the artifact. */
@@ -267,7 +336,7 @@ export function addComment(repo: string, slug: string, artifact: string, input: 
     created_at_ms: createdAt,
   });
   comments.sort((a, b) => a.line_start - b.line_start || a.created_at_ms - b.created_at_ms);
-  writeFile(artifactFilePath(repo, slug, commentsJsonName(repo, slug, artifact)), JSON.stringify({ version: 1, artifact, comments }, null, 2));
+  writeFile(sidecarPath(repo, slug, commentsJsonName(repo, slug, artifact)), JSON.stringify({ version: 1, artifact, comments }, null, 2));
   writeCommentsMarkdown(repo, slug, artifact, comments);
   return comments;
 }
@@ -278,14 +347,14 @@ function nextReviewName(repo: string, slug: string, artifact: string): string {
   const stem = artifactCommentStem(artifact);
   for (let i = 1; i <= 999; i++) {
     const name = `${stem}.review-${String(i).padStart(3, "0")}.md`;
-    if (!existsSync(artifactFilePath(repo, slug, name))) return name;
+    if (!existsSync(sidecarPath(repo, slug, name))) return name;
   }
   throw refuse(`too many review files for ${artifact}`);
 }
 
 function writeReviewPending(repo: string, slug: string, artifact: string, review: string): void {
-  const path = artifactFilePath(repo, slug, reviewPendingName(repo, slug, artifact));
-  artifactFilePath(repo, slug, review);
+  const path = sidecarPath(repo, slug, reviewPendingName(repo, slug, artifact));
+  sidecarPath(repo, slug, review);
   writeFile(path, JSON.stringify({ version: 1, artifact, review, artifact_hash_at_send: artifactHashFor(repo, slug, artifact), created_at_ms: now() }, null, 2));
 }
 
@@ -301,7 +370,7 @@ function readPendingFile(path: string): PendingFile {
  * agent answered) is removed here, as `artifact_review_pending_status_for` always did, so the answer clears the mark.
  */
 export function pendingStatus(repo: string, slug: string, artifact: string): PendingStatus | undefined {
-  const path = artifactFilePath(repo, slug, reviewPendingName(repo, slug, artifact));
+  const path = sidecarPath(repo, slug, reviewPendingName(repo, slug, artifact));
   if (!existsSync(path)) return undefined;
   let pending: PendingFile;
   try {
@@ -317,7 +386,7 @@ export function pendingStatus(repo: string, slug: string, artifact: string): Pen
 }
 
 export function clearPending(repo: string, slug: string, artifact: string): void {
-  removeIfExists(artifactFilePath(repo, slug, reviewPendingName(repo, slug, artifact)));
+  removeIfExists(sidecarPath(repo, slug, reviewPendingName(repo, slug, artifact)));
 }
 
 // ---- prepare, finalize, archive ----------------------------------------------------------------------------
@@ -328,7 +397,7 @@ function preparedReviewName(repo: string, slug: string, artifact: string, markdo
   let firstAvailable: string | undefined;
   for (let i = 1; i <= 999; i++) {
     const name = `${stem}.review-${String(i).padStart(3, "0")}.md`;
-    const path = artifactFilePath(repo, slug, name);
+    const path = sidecarPath(repo, slug, name);
     if (existsSync(path)) {
       if (readFileSync(path, "utf8") === markdown) return name;
     } else firstAvailable ??= name;
@@ -346,17 +415,17 @@ export function prepareCommentsPrompt(repo: string, slug: string, artifacts: str
     const comments = loadComments(repo, slug, artifact);
     if (comments.length === 0) throw refuse(`no comments to prepare for ${artifact}`);
     writeCommentsMarkdown(repo, slug, artifact, comments);
-    const markdown = readFileSync(artifactFilePath(repo, slug, commentsMarkdownName(repo, slug, artifact)), "utf8");
+    const markdown = readFileSync(sidecarPath(repo, slug, commentsMarkdownName(repo, slug, artifact)), "utf8");
     const review = preparedReviewName(repo, slug, artifact, markdown);
-    const reviewPath = artifactFilePath(repo, slug, review);
+    const reviewPath = sidecarPath(repo, slug, review);
     if (!existsSync(reviewPath)) writeFile(reviewPath, markdown);
     items.push({ artifact, review, comments_hash: artifactTextHash(markdown) });
-    rows.push(`- \`${artifact}\` → \`${reviewPath}\``);
+    rows.push(`- \`${targetDisplayName(artifact)}\` → \`${reviewPath}\``);
   }
   const first = items[0];
   const prompt =
     rows.length === 1
-      ? `Human review comments were added for \`${first.artifact}\`. Read \`${artifactFilePath(repo, slug, first.review)}\`, address each comment in this session, and update \`${first.artifact}\` if the design should change; otherwise explain why no change is needed.`
+      ? `Human review comments were added for \`${targetDisplayName(first.artifact)}\`. Read \`${sidecarPath(repo, slug, first.review)}\`, address each comment in this session, and update \`${targetDisplayName(first.artifact)}\` if the design should change; otherwise explain why no change is needed.`
       : [
           "Human review comments were added for multiple artifacts:",
           rows.join("\n"),
@@ -369,11 +438,11 @@ export function prepareCommentsPrompt(repo: string, slug: string, artifacts: str
 export function validateFinalization(repo: string, slug: string, items: Snapshot[]): void {
   if (items.length === 0) throw refuse("artifact comment provenance is empty");
   for (const item of items) {
-    artifactFilePath(repo, slug, item.artifact);
+    checkTarget(repo, slug, item.artifact);
     const stem = artifactCommentStem(item.artifact);
     const suffix = item.review.startsWith(`${stem}.review-`) && item.review.endsWith(".md") ? item.review.slice(`${stem}.review-`.length, -".md".length) : undefined;
     if (!(suffix !== undefined && /^[0-9]{3}$/.test(suffix))) throw refuse(`invalid prepared review for ${item.artifact}`);
-    const path = artifactFilePath(repo, slug, item.review);
+    const path = sidecarPath(repo, slug, item.review);
     let review: string;
     try {
       review = readFileSync(path, "utf8");
@@ -388,7 +457,7 @@ export function validateFinalization(repo: string, slug: string, items: Snapshot
 export function finalizeComments(repo: string, slug: string, items: Snapshot[]): void {
   validateFinalization(repo, slug, items);
   for (const item of items) {
-    const pendingPath = artifactFilePath(repo, slug, reviewPendingName(repo, slug, item.artifact));
+    const pendingPath = sidecarPath(repo, slug, reviewPendingName(repo, slug, item.artifact));
     let finalized = false;
     try {
       const pending = readPendingFile(pendingPath);
@@ -397,7 +466,7 @@ export function finalizeComments(repo: string, slug: string, items: Snapshot[]):
       /* no pending mark yet */
     }
     if (!finalized) writeReviewPending(repo, slug, item.artifact, item.review);
-    const markdownPath = artifactFilePath(repo, slug, commentsMarkdownName(repo, slug, item.artifact));
+    const markdownPath = sidecarPath(repo, slug, commentsMarkdownName(repo, slug, item.artifact));
     let matches = false;
     try {
       matches = artifactTextHash(readFileSync(markdownPath, "utf8")) === item.comments_hash;
@@ -405,7 +474,7 @@ export function finalizeComments(repo: string, slug: string, items: Snapshot[]):
       /* gone */
     }
     if (matches) {
-      removeIfExists(artifactFilePath(repo, slug, commentsJsonName(repo, slug, item.artifact)));
+      removeIfExists(sidecarPath(repo, slug, commentsJsonName(repo, slug, item.artifact)));
       removeIfExists(markdownPath);
     }
   }
@@ -416,12 +485,12 @@ export function archiveComments(repo: string, slug: string, artifact: string): s
   const comments = loadComments(repo, slug, artifact);
   if (comments.length === 0) throw refuse(`no comments to archive for ${artifact}`);
   const markdownName = commentsMarkdownName(repo, slug, artifact);
-  const markdownPath = artifactFilePath(repo, slug, markdownName);
+  const markdownPath = sidecarPath(repo, slug, markdownName);
   if (!existsSync(markdownPath)) writeCommentsMarkdown(repo, slug, artifact, comments);
   const review = nextReviewName(repo, slug, artifact);
-  writeFile(artifactFilePath(repo, slug, review), readFileSync(markdownPath, "utf8"));
+  writeFile(sidecarPath(repo, slug, review), readFileSync(markdownPath, "utf8"));
   writeReviewPending(repo, slug, artifact, review);
-  removeIfExists(artifactFilePath(repo, slug, commentsJsonName(repo, slug, artifact)));
+  removeIfExists(sidecarPath(repo, slug, commentsJsonName(repo, slug, artifact)));
   removeIfExists(markdownPath);
   return review;
 }

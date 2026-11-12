@@ -86,7 +86,8 @@ export function artifactService(d: ArtifactDeps, dedupe: Dedupe, store: Store): 
   };
   /** The files a write changed are in the store, and so are the task's rows, before the reply. */
   const settle = async (slug: string, ...names: string[]) => {
-    for (const name of names) await d.refresh(`tasks/${slug}/artifacts/${name}`);
+    // A `repo:` target's files are under repo-comments/, which `project` below reads directly.
+    for (const name of names) if (!name.startsWith("repo:")) await d.refresh(`tasks/${slug}/artifacts/${name}`);
     await d.refresh(`tasks/${slug}/artifact-comment-drafts.json`);
     d.projector.project(slug);
   };

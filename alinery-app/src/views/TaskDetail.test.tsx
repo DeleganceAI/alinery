@@ -2214,6 +2214,25 @@ describe("repository files", () => {
     expect(tabs.getByRole("button", { name: "main.ts" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("comments on a worktree markdown file under its repo: target, and not on code", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/plan.md", "main.ts"], truncated: false });
+    fakeArtifacts.worktreeTexts = { "docs/plan.md": "# Plan\n\nShip it.\n", "main.ts": "export {};" };
+    fakeArtifacts.set("parent", { pending: [{ artifact: "repo:docs/plan.md", review: "repo:docs/plan.review-001.md" }] as never });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    fireEvent.click(await repo.findByText("docs/"));
+    fireEvent.click(await repo.findByRole("button", { name: "plan.md" }));
+    expect(await screen.findByText(/plan\.review-001\.md sent\. docs\/plan\.md has not changed yet\./)).toBeDefined();
+    fireEvent.click(await screen.findByText("Ship it."));
+    fireEvent.change(await screen.findByPlaceholderText("Add a comment for the next phase..."), { target: { value: "Which release?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
+    await waitFor(() => expect(fakeArtifacts.addComment).toHaveBeenCalledWith(expect.objectContaining({ artifact: "repo:docs/plan.md", body: "Which release?" })));
+
+    fireEvent.click(repo.getByRole("button", { name: "main.ts" }));
+    fireEvent.click(await screen.findByText("export {};"));
+    expect(screen.queryByPlaceholderText("Add a comment for the next phase...")).toBeNull();
+  });
+
   it("filters the tree by name", async () => {
     mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/guide.md", "src/main.ts"], truncated: false });
     await renderDetail();
