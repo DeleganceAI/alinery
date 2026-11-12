@@ -491,7 +491,9 @@ describe("task run graph", () => {
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
     expect(fakeArtifacts.readArtifact).toHaveBeenCalledExactlyOnceWith("/repo", "parent", "research/2-result-10.md");
-    expect(screen.getByRole("button", { name: "Back to artifact list" })).toBeDefined();
+    const fileTabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(fileTabs.getByRole("button", { name: "2-result-10.md" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(fileTabs.getByRole("button", { name: "Sessions" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     const consumerRow = screen.getByText(consumer.name).closest("tr") as HTMLTableRowElement;
@@ -2147,6 +2149,43 @@ describe("the empty-sessions state", () => {
     scenario.sessions = [];
     act(() => syncBoard());
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
+  });
+});
+
+describe("main pane file tabs", () => {
+  it("opens artifacts as tabs beside Sessions, each with its own mode and review state", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });
+    fakeArtifacts.set("parent", {
+      items: [item("a.md"), item("b.md")] as never,
+      tree: [owned("a.md"), owned("b.md")],
+      pending: [{ artifact: "b.md", review: "01-review.md" }] as never,
+    });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }));
+    expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    expect(screen.queryByText(/has not changed yet/)).toBeNull();
+
+    fireEvent.click(files.getByRole("button", { name: /^b\.md/ }));
+    expect(await screen.findByRole("heading", { name: "Heading b.md" })).toBeDefined();
+    expect(screen.getByText(/01-review\.md sent\. b\.md has not changed yet\./)).toBeDefined();
+
+    fireEvent.click(tabs.getByRole("button", { name: "a.md" }));
+    expect(await screen.findByText("# Heading a.md")).toBeDefined();
+    expect(screen.queryByText(/has not changed yet/)).toBeNull();
+
+    // Closing the active first tab falls back to Sessions; the sessions pane shows again.
+    fireEvent.click(tabs.getByRole("button", { name: "Close a.md" }));
+    expect(tabs.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe("true");
+    expect(tabs.queryByRole("button", { name: "a.md" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeDefined();
+    fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
+    expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
   });
 });
 

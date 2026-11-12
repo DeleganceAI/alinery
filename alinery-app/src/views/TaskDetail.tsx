@@ -123,6 +123,8 @@ function readStoredTaskSessionView(): "graph" | "list" {
 }
 
 // ---- task detail --------------------------------------------------------------
+type OpenArtifactTab = { key: string; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw" };
+
 /** One choice for every task: the header opens compact until the user expands it. */
 const HEADER_OPEN_KEY = "alinery.taskHeaderOpen";
 function readHeaderOpen(): boolean {
@@ -315,13 +317,29 @@ export function TaskDetail({
   }
   projectedRows.push(...managerlessFinishedRows);
   const taskPanelRows = orderTaskPanelRows(projectedRows, observationsById, hasExpectedArtifact, sessionSort);
-  const [selectedArtifact, setSelectedArtifact] = useState("");
-  const [selectedArtifactNode, setSelectedArtifactNode] = useState<ArtifactTreeNode | null>(null);
+  // The main pane's tabs: Sessions is always first (activeTab ""), then each opened artifact.
+  const [openTabs, setOpenTabs] = useState<OpenArtifactTab[]>([]);
+  const [activeTab, setActiveTab] = useState("");
+  const activeArtifactTab = openTabs.find((tab) => tab.key === activeTab);
+  const selectedArtifact = activeArtifactTab?.name ?? "";
+  const selectedArtifactNode = activeArtifactTab?.node ?? null;
+  const artifactMode = activeArtifactTab?.mode ?? "preview";
+  const setArtifactMode = (mode: OpenArtifactTab["mode"]) => setOpenTabs((tabs) => tabs.map((tab) => (tab.key === activeTab ? { ...tab, mode } : tab)));
+  const openArtifactTab = (name: string, node: ArtifactTreeNode | null) => {
+    const key = node?.id ?? name;
+    setOpenTabs((tabs) => (tabs.some((tab) => tab.key === key) ? tabs : [...tabs, { key, name, node, mode: "preview" }]));
+    setActiveTab(key);
+    setArtifactErr(null);
+  };
+  const closeArtifactTab = (key: string) => {
+    const at = openTabs.findIndex((tab) => tab.key === key);
+    setOpenTabs((tabs) => tabs.filter((tab) => tab.key !== key));
+    if (key === activeTab) setActiveTab(openTabs[at - 1]?.key ?? "");
+  };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
   const selectedArtifactIsDirect = selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact);
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const [artifactText, setArtifactText] = useState("");
-  const [artifactMode, setArtifactMode] = useState<"preview" | "raw">("preview");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
   const [headerOpen, setHeaderOpen] = useState(readHeaderOpen);
   const toggleHeader = (open: boolean) => {
@@ -505,6 +523,13 @@ export function TaskDetail({
     });
     return () => registerNav(null);
   });
+
+  // Open tabs belong to one task; a different task (or the same slug in another repo) starts on Sessions.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on the task's identity only
+  useEffect(() => {
+    setOpenTabs([]);
+    setActiveTab("");
+  }, [repoPath, slug]);
 
   useEffect(() => {
     let alive = true;
@@ -1085,22 +1110,233 @@ export function TaskDetail({
       </section>
       <div className="taskdetail-body">
         <aside className="artifactpane">
-          {selectedArtifact ? (
+          <div className="artifacthead">
+            <div className="artifacttabs" role="group" aria-label="Task side panel">
+              <button type="button" aria-pressed={sideTab === "playbook"} className={`artifacttab${sideTab === "playbook" ? " on" : ""}`} onClick={() => setSideTab("playbook")}>
+                Playbook
+              </button>
+              <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
+                History
+              </button>
+              <button type="button" aria-pressed={sideTab === "artifacts"} className={`artifacttab${sideTab === "artifacts" ? " on" : ""}`} onClick={() => setSideTab("artifacts")}>
+                Files
+              </button>
+            </div>
+            {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
+          </div>
+          {sideTab === "playbook" ? (
+            <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
+              <div className="task-playbook-toolbar">
+                <div className="artifacttabs" role="group" aria-label="Task playbook view">
+                  <button
+                    type="button"
+                    className={`artifacttab${playbookView === "list" ? " on" : ""}`}
+                    aria-pressed={playbookView === "list"}
+                    onClick={() => setPlaybookView("list")}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
+                    aria-pressed={playbookView === "graph"}
+                    onClick={() => setPlaybookView("graph")}
+                  >
+                    Graph
+                  </button>
+                </div>
+                {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
+              </div>
+              <PlaybookGraph
+                variant={playbookView === "graph" ? "definition" : "execution"}
+                showInspector={false}
+                title={executionView?.definition.title ?? "Retained task playbook"}
+                steps={steps}
+                countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
+                selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
+              />
+            </div>
+          ) : sideTab === "history" ? (
+            <div className="task-history-pane">
+              {executionView && (
+                <section aria-label="Task executions">
+                  <h3 className="task-history-title">{executionView.definition.title}</h3>
+                  <p className="task-history-summary">
+                    {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
+                  </p>
+                  {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
+                  {executions.map((execution) => (
+                    <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
+                      <div className="task-history-entry-heading">
+                        <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
+                        <span className="pill">{execution.lifecycle}</span>
+                      </div>
+                      <dl className="task-history-metadata">
+                        <dt>Execution</dt>
+                        <dd>
+                          <code>{execution.id}</code>
+                        </dd>
+                        <dt>Owner</dt>
+                        <dd>
+                          <code>{execution.owner_session_id}</code>
+                        </dd>
+                      </dl>
+                      {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
+                      {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
+                      {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
+                      {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                      <details>
+                        <summary>Inputs and outputs</summary>
+                        <ul aria-label="Execution inputs">
+                          {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                            ids.map((occurrenceId) => {
+                              const occurrence = executionView.state.occurrences?.[occurrenceId];
+                              return (
+                                <li key={`${selector}:${occurrenceId}`}>
+                                  <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                                  {occurrence?.producer_execution_id ?? "seed"}
+                                </li>
+                              );
+                            }),
+                          )}
+                        </ul>
+                        <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
+                      </details>
+                      <p className="task-history-permission">
+                        Completion permission: {execution.permission.kind}
+                        {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+                      </p>
+                      {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
+                          onClick={() => void allowCompletion(execution.id)}
+                        >
+                          Allow this session to complete · {execution.owner_session_id}
+                        </button>
+                      )}
+                    </article>
+                  ))}
+                </section>
+              )}
+            </div>
+          ) : (
             <>
+              {artifactErr && (
+                <InlineStatus tone="error" detail={artifactErr.detail}>
+                  {artifactErr.msg}
+                </InlineStatus>
+              )}
               <div className="artifacthead">
+                <div className="artifacttabs" role="group" aria-label="Artifact category">
+                  <button
+                    type="button"
+                    aria-pressed={artifactTab === "playbook"}
+                    className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
+                    onClick={() => setArtifactTab("playbook")}
+                  >
+                    Playbook
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={artifactTab === "attachments"}
+                    className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
+                    onClick={() => setArtifactTab("attachments")}
+                  >
+                    Attachments
+                  </button>
+                </div>
+                <span className="pill">
+                  {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                </span>
+              </div>
+              <div className="artifactlist">
+                {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
+                  <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
+                )}
+                {displayedArtifactItems.map((item) => {
+                  if (item.attachment && classifyAttachment(item) === "image") {
+                    return (
+                      <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
+                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                      </AttachmentPreview>
+                    );
+                  }
+                  const node = findOwnedArtifactNode(artifactTree, item.name);
+                  const available = Boolean(item.attachment || node);
+                  return (
+                    // div, not <button>: the provenance badges inside are buttons themselves,
+                    // and button-in-button is invalid HTML (same pattern as SessionView).
+                    <div
+                      key={item.name}
+                      className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                      title={item.name}
+                      role="button"
+                      tabIndex={available ? 0 : -1}
+                      aria-disabled={!available}
+                      onKeyDown={(e) => {
+                        if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                        e.preventDefault();
+                        e.currentTarget.click();
+                      }}
+                      onClick={() => {
+                        if (item.attachment) {
+                          revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
+                          return;
+                        }
+                        if (!node) return;
+                        openArtifactTab(item.name, node);
+                      }}
+                    >
+                      <span className="artifactitem-name">{item.name}</span>
+                      {!available && <span className="pill">Not yet readable</span>}
+                      <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                    </div>
+                  );
+                })}
+                {contextualArtifactTree.length > 0 && (
+                  <ArtifactTree
+                    taskSlug={slug}
+                    repoPath={repoPath}
+                    nodes={contextualArtifactTree}
+                    selectedId={selectedArtifactTreeId}
+                    onSelect={(node) => {
+                      openArtifactTab(node.label, node);
+                    }}
+                    onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
+                  />
+                )}
+              </div>
+            </>
+          )}
+        </aside>
+        <div className="artifact-resizer" {...artifactResizerProps} />
+        <main className="detailmain">
+          <div className="artifacttabs task-main-tabs" role="group" aria-label="Open files">
+            <button type="button" aria-pressed={!activeArtifactTab} className={`artifacttab${activeArtifactTab ? "" : " on"}`} onClick={() => setActiveTab("")}>
+              Sessions
+            </button>
+            {openTabs.map((tab) => (
+              <span key={tab.key} className={`artifacttab task-main-tab${tab.key === activeTab ? " on" : ""}`}>
                 <button
                   type="button"
-                  className="btn ghost small"
-                  aria-label="Back to artifact list"
-                  title="Back to artifact list"
-                  onClick={() => {
-                    setSelectedArtifact("");
-                    setSelectedArtifactNode(null);
-                    setArtifactErr(null);
-                  }}
+                  aria-pressed={tab.key === activeTab}
+                  title={tab.name}
+                  onClick={() => setActiveTab(tab.key)}
+                  onAuxClick={(ev) => ev.button === 1 && closeArtifactTab(tab.key)}
                 >
-                  <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" />
+                  {tab.name.slice(tab.name.lastIndexOf("/") + 1)}
                 </button>
+                <button type="button" className="task-main-tab-close" aria-label={`Close ${tab.name}`} onClick={() => closeArtifactTab(tab.key)}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          {activeArtifactTab && (
+            <div className="artifactpane task-artifact-view">
+              <div className="artifacthead">
                 <div className="artifacttitle mono" title={selectedArtifact}>
                   {selectedArtifact}
                 </div>
@@ -1200,483 +1436,382 @@ export function TaskDetail({
                   </div>
                 </div>
               )}
-            </>
-          ) : (
-            <>
-              <div className="artifacthead">
-                <div className="artifacttabs" role="group" aria-label="Task side panel">
-                  <button
-                    type="button"
-                    aria-pressed={sideTab === "playbook"}
-                    className={`artifacttab${sideTab === "playbook" ? " on" : ""}`}
-                    onClick={() => setSideTab("playbook")}
-                  >
-                    Playbook
-                  </button>
-                  <button type="button" aria-pressed={sideTab === "history"} className={`artifacttab${sideTab === "history" ? " on" : ""}`} onClick={() => setSideTab("history")}>
-                    History
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={sideTab === "artifacts"}
-                    className={`artifacttab${sideTab === "artifacts" ? " on" : ""}`}
-                    onClick={() => setSideTab("artifacts")}
-                  >
-                    Files
-                  </button>
-                </div>
-                {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
-              </div>
-              {sideTab === "playbook" ? (
-                <div className={`playbook-side-scroll${playbookView === "graph" ? " playbook-side-graph" : ""}`}>
-                  <div className="task-playbook-toolbar">
-                    <div className="artifacttabs" role="group" aria-label="Task playbook view">
-                      <button
-                        type="button"
-                        className={`artifacttab${playbookView === "list" ? " on" : ""}`}
-                        aria-pressed={playbookView === "list"}
-                        onClick={() => setPlaybookView("list")}
-                      >
-                        List
-                      </button>
-                      <button
-                        type="button"
-                        className={`artifacttab${playbookView === "graph" ? " on" : ""}`}
-                        aria-pressed={playbookView === "graph"}
-                        onClick={() => setPlaybookView("graph")}
-                      >
-                        Graph
-                      </button>
-                    </div>
-                    {playbookView === "graph" && <p>Retained task definition · See List for active counts and automatic completion.</p>}
-                  </div>
-                  <PlaybookGraph
-                    variant={playbookView === "graph" ? "definition" : "execution"}
-                    showInspector={false}
-                    title={executionView?.definition.title ?? "Retained task playbook"}
-                    steps={steps}
-                    countsByStep={Object.fromEntries(steps.map((step) => [step.key, activeExecutions.filter((execution) => execution.candidate.step_key === step.key).length]))}
-                    selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
-                  />
-                </div>
-              ) : sideTab === "history" ? (
-                <div className="task-history-pane">
-                  {executionView && (
-                    <section aria-label="Task executions">
-                      <h3 className="task-history-title">{executionView.definition.title}</h3>
-                      <p className="task-history-summary">
-                        {activeExecutions.length} active executions / {executionView.state.max_live_sessions} slots · Creation: {executionView.state.creation}
-                      </p>
-                      {executionView.state.creation_error && <InlineStatus tone="error">{executionView.state.creation_error}</InlineStatus>}
-                      {executions.map((execution) => (
-                        <article className="task-history-entry" key={execution.id} aria-label={`Execution ${execution.id}`}>
-                          <div className="task-history-entry-heading">
-                            <h4>{steps.find((step) => step.key === execution.candidate.step_key)?.title ?? execution.candidate.step_key}</h4>
-                            <span className="pill">{execution.lifecycle}</span>
-                          </div>
-                          <dl className="task-history-metadata">
-                            <dt>Execution</dt>
-                            <dd>
-                              <code>{execution.id}</code>
-                            </dd>
-                            <dt>Owner</dt>
-                            <dd>
-                              <code>{execution.owner_session_id}</code>
-                            </dd>
-                          </dl>
-                          {execution.lifecycle === "queued" && <p>{execution.start_requested ? "Waiting for capacity or coding ownership" : "Held until explicitly started"}</p>}
-                          {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed session shutdown.</p>}
-                          {execution.lifecycle === "interrupted" && <p>Process ownership is uncertain; capacity remains reserved.</p>}
-                          {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-                          <details>
-                            <summary>Inputs and outputs</summary>
-                            <ul aria-label="Execution inputs">
-                              {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
-                                ids.map((occurrenceId) => {
-                                  const occurrence = executionView.state.occurrences?.[occurrenceId];
-                                  return (
-                                    <li key={`${selector}:${occurrenceId}`}>
-                                      <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
-                                      {occurrence?.producer_execution_id ?? "seed"}
-                                    </li>
-                                  );
-                                }),
-                              )}
-                            </ul>
-                            <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
-                          </details>
-                          <p className="task-history-permission">
-                            Completion permission: {execution.permission.kind}
-                            {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-                          </p>
-                          {execution.permission.kind === "locked" && execution.lifecycle === "running" && !executionView.state.history_only && (
-                            <button
-                              type="button"
-                              className="btn small"
-                              disabled={!!busy || !!executionError || executionView.live?.status !== "available"}
-                              onClick={() => void allowCompletion(execution.id)}
-                            >
-                              Allow this session to complete · {execution.owner_session_id}
-                            </button>
-                          )}
-                        </article>
-                      ))}
-                    </section>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {artifactErr && (
-                    <InlineStatus tone="error" detail={artifactErr.detail}>
-                      {artifactErr.msg}
-                    </InlineStatus>
-                  )}
-                  <div className="artifacthead">
-                    <div className="artifacttabs" role="group" aria-label="Artifact category">
-                      <button
-                        type="button"
-                        aria-pressed={artifactTab === "playbook"}
-                        className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
-                        onClick={() => setArtifactTab("playbook")}
-                      >
-                        Playbook
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={artifactTab === "attachments"}
-                        className={`artifacttab${artifactTab === "attachments" ? " on" : ""}`}
-                        onClick={() => setArtifactTab("attachments")}
-                      >
-                        Attachments
-                      </button>
-                    </div>
-                    <span className="pill">
-                      {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                    </span>
-                  </div>
-                  <div className="artifactlist">
-                    {!artifactErr && displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
-                      <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
-                    )}
-                    {displayedArtifactItems.map((item) => {
-                      if (item.attachment && classifyAttachment(item) === "image") {
-                        return (
-                          <AttachmentPreview key={item.name} taskSlug={slug} name={item.name} repoPath={repoPath}>
-                            <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                          </AttachmentPreview>
-                        );
-                      }
-                      const node = findOwnedArtifactNode(artifactTree, item.name);
-                      const available = Boolean(item.attachment || node);
-                      return (
-                        // div, not <button>: the provenance badges inside are buttons themselves,
-                        // and button-in-button is invalid HTML (same pattern as SessionView).
-                        <div
-                          key={item.name}
-                          className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                          title={item.name}
-                          role="button"
-                          tabIndex={available ? 0 : -1}
-                          aria-disabled={!available}
-                          onKeyDown={(e) => {
-                            if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                            e.preventDefault();
-                            e.currentTarget.click();
-                          }}
-                          onClick={() => {
-                            if (item.attachment) {
-                              revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
-                              return;
-                            }
-                            if (!node) return;
-                            setSelectedArtifactNode(node);
-                            setSelectedArtifact(item.name);
-                            setArtifactMode("preview");
-                            setArtifactErr(null);
-                          }}
-                        >
-                          <span className="artifactitem-name">{item.name}</span>
-                          {!available && <span className="pill">Not yet readable</span>}
-                          <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                        </div>
-                      );
-                    })}
-                    {contextualArtifactTree.length > 0 && (
-                      <ArtifactTree
-                        taskSlug={slug}
-                        repoPath={repoPath}
-                        nodes={contextualArtifactTree}
-                        selectedId={selectedArtifactTreeId}
-                        onSelect={(node) => {
-                          setSelectedArtifactNode(node);
-                          setSelectedArtifact(node.label);
-                          setArtifactMode("preview");
-                          setArtifactErr(null);
-                        }}
-                        onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </aside>
-        <div className="artifact-resizer" {...artifactResizerProps} />
-        <main className="detailmain">
-          <section className="task-panel task-sessions-panel">
-            <div className="task-panel-head">
-              <div className="task-sessions-heading">
-                <h3 className="task-panel-title">Sessions</h3>
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
-                  title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
-                  onClick={() => {
-                    const next = sessionView === "graph" ? "list" : "graph";
-                    setSessionView(next);
-                    try {
-                      localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
-                    } catch {
-                      // Keep switching usable when preference storage is unavailable.
-                    }
-                  }}
-                >
-                  {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
-                  {sessionView === "graph" ? "List" : "Graph"}
-                </button>
-              </div>
-              <div className="task-session-controls">
-                {executionView && (
-                  <span
-                    className="dim task-session-queue"
-                    role="status"
-                    aria-label="Queued sessions"
-                    title="Start requested; waiting for capacity or coding ownership. Held sessions are not counted."
-                  >
-                    {queuedExecutionCount} queued
-                  </span>
-                )}
-                {sessionView === "list" && (
-                  <button
-                    type="button"
-                    className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
-                    aria-pressed={sessionSort.field === "priority"}
-                    onClick={() => setSessionSort(PRIORITY_SESSION_SORT)}
-                  >
-                    Priority
-                  </button>
-                )}
-                <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
-                {unacknowledgedExitedSessions.length > 0 && (
-                  <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => void acknowledgeExitedSessions()}>
-                    {busy === "acknowledge-exits" ? "Acknowledging…" : "Acknowledge exited sessions"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  disabled={!subtaskState?.can_start || !!busy}
-                  title={subtaskState?.disabled_reason || undefined}
-                  aria-describedby={subtaskState && !subtaskState.can_start ? "task-session-disabled" : undefined}
-                  onClick={startManager}
-                >
-                  {busy === "subtask-manager" ? "Starting…" : "Start sub-task"}
-                </button>
-                {task && (task.archived || !task.worktree || worktreeMissing) ? (
-                  <span id="task-session-disabled" className="dim task-session-disabled">
-                    {task.archived
-                      ? task.worktree
-                        ? "task archived — new sessions disabled; names remain editable"
-                        : "Task archived; worktree removed. Restoring keeps it available for history and related-task links, but new sessions remain disabled."
-                      : worktreeMissing
-                        ? "worktree missing on disk"
-                        : "Worktree removed — new sessions are disabled. Create a new task, tag this one as related, and continue the work there."}
-                  </span>
-                ) : (
-                  <button type="button" className="btn small" disabled={!!busy} onClick={onNewSession}>
-                    New session
-                  </button>
-                )}
-              </div>
             </div>
-            {subtaskState && !subtaskState.can_start && !(task && (task.archived || !task.worktree || worktreeMissing)) && (
-              <p id="task-session-disabled" className="dim task-session-disabled">
-                {subtaskState.disabled_reason}
-              </p>
-            )}
-            {err && (
-              <InlineStatus tone="error" detail={err.detail}>
-                {err.msg}
-              </InlineStatus>
-            )}
-            {sessionView === "graph" ? (
-              <>
-                {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
-                {sessionsLoaded && (
-                  <TaskRunGraph
-                    sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
-                    state={executionView?.state ?? null}
-                    observations={observationsById}
-                    onOpenSession={(session) => {
-                      const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
-                      const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
-                      onOpenSession(
-                        owner,
-                        session.id,
-                        session.worktree,
-                        session.phase,
-                        session.harness,
-                        session.model,
-                        session.playbook,
-                        session.generic,
-                        session.archived || !task?.worktree || worktreeMissing ? "history" : "attach",
-                      );
-                    }}
-                    onOpenArtifact={(path) => {
-                      setSelectedArtifactNode(findOwnedArtifactNode(artifactTree, path) ?? null);
-                      setSelectedArtifact(path);
-                      setArtifactMode("preview");
-                      setArtifactErr(null);
-                    }}
-                  />
-                )}
-              </>
-            ) : (
-              <div className="task-session-table-wrap">
-                <table className="task-table task-session-table">
-                  <thead>
-                    <tr>
-                      <th className="status-col">Status</th>
-                      <th className="session-name-col">Name</th>
-                      <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
-                        <button
-                          type="button"
-                          className={`session-sort-header${sessionSort.field === "started" ? " active" : ""}`}
-                          aria-label={
-                            sessionSort.field === "started"
-                              ? `Started, sorted ${sessionSort.direction === "desc" ? "newest first" : "oldest first"}. Activate to sort ${sessionSort.direction === "desc" ? "oldest first" : "newest first"}`
-                              : "Sort by Started, newest first"
-                          }
-                          onClick={() => setSessionSort(selectSessionSort(sessionSort, "started"))}
-                        >
-                          Started {sessionSortArrow(sessionSort, "started")}
-                        </button>
-                      </th>
-                      <th className="session-time-col" aria-sort={sessionSort.field === "updated" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
-                        <button
-                          type="button"
-                          className={`session-sort-header${sessionSort.field === "updated" ? " active" : ""}`}
-                          aria-label={
-                            sessionSort.field === "updated"
-                              ? `Updated, sorted ${sessionSort.direction === "desc" ? "newest first" : "oldest first"}. Activate to sort ${sessionSort.direction === "desc" ? "oldest first" : "newest first"}`
-                              : "Sort by Updated, newest first"
-                          }
-                          onClick={() => setSessionSort(selectSessionSort(sessionSort, "updated"))}
-                        >
-                          Updated {sessionSortArrow(sessionSort, "updated")}
-                        </button>
-                      </th>
-                      <th className="session-actions-col" aria-label="Actions" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
-                      <tr className="empty-row">
-                        <td colSpan={5}>
-                          <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
-                        </td>
-                      </tr>
-                    )}
-                    {taskPanelRows.map((row) => {
-                      if (row.kind === "subtask_history") {
-                        const outcome = subtaskOutcomeLabel(row.child);
-                        return (
-                          <tr key={`subtask-history:${row.child.slug}`} className="subtask-manager-row">
-                            <td className="status-col">
-                              <span className="statusdot unknown" title="No manager session record" />
-                            </td>
-                            <td className="session-name-cell">
-                              <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(row.child.slug)}>
-                                <span title={row.child.name}>{row.child.name}</span>
-                                <span className="dim mono" title={row.child.slug}>
-                                  {row.child.slug}
-                                </span>
-                                {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
-                              </button>
-                              <span className="badge todo" title="Sub-task history">
-                                Sub-task history
-                              </span>
-                            </td>
-                            <td className="session-time-col">
-                              <span className="dim">—</span>
-                            </td>
-                            <td className="session-time-col">
-                              <span className="dim">—</span>
-                            </td>
-                            <td className="session-actions">
-                              <div className="session-actions-inner">
-                                {renameControl("task", row.child.slug, row.child.name)}
-                                <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(row.child.slug)}>
-                                  Open task
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
+          )}
+          <div className="task-sessions-tab" hidden={!!activeArtifactTab}>
+            <section className="task-panel task-sessions-panel">
+              <div className="task-panel-head">
+                <div className="task-sessions-heading">
+                  <h3 className="task-panel-title">Sessions</h3>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    aria-label={sessionView === "graph" ? "Show list view" : "Show graph view"}
+                    title={sessionView === "graph" ? "Switch to list view" : "Switch to graph view"}
+                    onClick={() => {
+                      const next = sessionView === "graph" ? "list" : "graph";
+                      setSessionView(next);
+                      try {
+                        localStorage.setItem(TASK_SESSION_VIEW_KEY, next);
+                      } catch {
+                        // Keep switching usable when preference storage is unavailable.
                       }
-                      const s = row.session;
-                      const obs = observationsById[s.id] ?? null;
-                      const isLive = obs ? obs.lifecycle.state === "live" : false;
-                      if (row.kind === "subtask_manager") {
-                        const label = row.child ? row.child.name : s.subtask_slug || "Sub-task setup";
-                        const detail = row.child?.slug;
+                    }}
+                  >
+                    {sessionView === "graph" ? <List size={14} aria-hidden="true" /> : <Network size={14} aria-hidden="true" />}
+                    {sessionView === "graph" ? "List" : "Graph"}
+                  </button>
+                </div>
+                <div className="task-session-controls">
+                  {executionView && (
+                    <span
+                      className="dim task-session-queue"
+                      role="status"
+                      aria-label="Queued sessions"
+                      title="Start requested; waiting for capacity or coding ownership. Held sessions are not counted."
+                    >
+                      {queuedExecutionCount} queued
+                    </span>
+                  )}
+                  {sessionView === "list" && (
+                    <button
+                      type="button"
+                      className={`btn ghost small session-sort-control${sessionSort.field === "priority" ? " active" : ""}`}
+                      aria-pressed={sessionSort.field === "priority"}
+                      onClick={() => setSessionSort(PRIORITY_SESSION_SORT)}
+                    >
+                      Priority
+                    </button>
+                  )}
+                  <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
+                  {unacknowledgedExitedSessions.length > 0 && (
+                    <button type="button" className="btn ghost small" disabled={!!busy} onClick={() => void acknowledgeExitedSessions()}>
+                      {busy === "acknowledge-exits" ? "Acknowledging…" : "Acknowledge exited sessions"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled={!subtaskState?.can_start || !!busy}
+                    title={subtaskState?.disabled_reason || undefined}
+                    aria-describedby={subtaskState && !subtaskState.can_start ? "task-session-disabled" : undefined}
+                    onClick={startManager}
+                  >
+                    {busy === "subtask-manager" ? "Starting…" : "Start sub-task"}
+                  </button>
+                  {task && (task.archived || !task.worktree || worktreeMissing) ? (
+                    <span id="task-session-disabled" className="dim task-session-disabled">
+                      {task.archived
+                        ? task.worktree
+                          ? "task archived — new sessions disabled; names remain editable"
+                          : "Task archived; worktree removed. Restoring keeps it available for history and related-task links, but new sessions remain disabled."
+                        : worktreeMissing
+                          ? "worktree missing on disk"
+                          : "Worktree removed — new sessions are disabled. Create a new task, tag this one as related, and continue the work there."}
+                    </span>
+                  ) : (
+                    <button type="button" className="btn small" disabled={!!busy} onClick={onNewSession}>
+                      New session
+                    </button>
+                  )}
+                </div>
+              </div>
+              {subtaskState && !subtaskState.can_start && !(task && (task.archived || !task.worktree || worktreeMissing)) && (
+                <p id="task-session-disabled" className="dim task-session-disabled">
+                  {subtaskState.disabled_reason}
+                </p>
+              )}
+              {err && (
+                <InlineStatus tone="error" detail={err.detail}>
+                  {err.msg}
+                </InlineStatus>
+              )}
+              {sessionView === "graph" ? (
+                <>
+                  {!sessionsLoaded && <p className="dim">Loading sessions…</p>}
+                  {sessionsLoaded && (
+                    <TaskRunGraph
+                      sessions={taskPanelRows.flatMap((row) => (row.kind === "subtask_history" ? [] : [row.session]))}
+                      state={executionView?.state ?? null}
+                      observations={observationsById}
+                      onOpenSession={(session) => {
+                        const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
+                        const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
+                        onOpenSession(
+                          owner,
+                          session.id,
+                          session.worktree,
+                          session.phase,
+                          session.harness,
+                          session.model,
+                          session.playbook,
+                          session.generic,
+                          session.archived || !task?.worktree || worktreeMissing ? "history" : "attach",
+                        );
+                      }}
+                      onOpenArtifact={(path) => {
+                        openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null);
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <div className="task-session-table-wrap">
+                  <table className="task-table task-session-table">
+                    <thead>
+                      <tr>
+                        <th className="status-col">Status</th>
+                        <th className="session-name-col">Name</th>
+                        <th className="session-time-col" aria-sort={sessionSort.field === "started" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
+                          <button
+                            type="button"
+                            className={`session-sort-header${sessionSort.field === "started" ? " active" : ""}`}
+                            aria-label={
+                              sessionSort.field === "started"
+                                ? `Started, sorted ${sessionSort.direction === "desc" ? "newest first" : "oldest first"}. Activate to sort ${sessionSort.direction === "desc" ? "oldest first" : "newest first"}`
+                                : "Sort by Started, newest first"
+                            }
+                            onClick={() => setSessionSort(selectSessionSort(sessionSort, "started"))}
+                          >
+                            Started {sessionSortArrow(sessionSort, "started")}
+                          </button>
+                        </th>
+                        <th className="session-time-col" aria-sort={sessionSort.field === "updated" ? (sessionSort.direction === "desc" ? "descending" : "ascending") : undefined}>
+                          <button
+                            type="button"
+                            className={`session-sort-header${sessionSort.field === "updated" ? " active" : ""}`}
+                            aria-label={
+                              sessionSort.field === "updated"
+                                ? `Updated, sorted ${sessionSort.direction === "desc" ? "newest first" : "oldest first"}. Activate to sort ${sessionSort.direction === "desc" ? "oldest first" : "newest first"}`
+                                : "Sort by Updated, newest first"
+                            }
+                            onClick={() => setSessionSort(selectSessionSort(sessionSort, "updated"))}
+                          >
+                            Updated {sessionSortArrow(sessionSort, "updated")}
+                          </button>
+                        </th>
+                        <th className="session-actions-col" aria-label="Actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sessionsLoaded && taskPanelRows.length === 0 && !subtaskState?.can_recover && (
+                        <tr className="empty-row">
+                          <td colSpan={5}>
+                            <EmptyState title="No sessions yet." hint="Start a session to run a harness in this task's worktree." />
+                          </td>
+                        </tr>
+                      )}
+                      {taskPanelRows.map((row) => {
+                        if (row.kind === "subtask_history") {
+                          const outcome = subtaskOutcomeLabel(row.child);
+                          return (
+                            <tr key={`subtask-history:${row.child.slug}`} className="subtask-manager-row">
+                              <td className="status-col">
+                                <span className="statusdot unknown" title="No manager session record" />
+                              </td>
+                              <td className="session-name-cell">
+                                <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(row.child.slug)}>
+                                  <span title={row.child.name}>{row.child.name}</span>
+                                  <span className="dim mono" title={row.child.slug}>
+                                    {row.child.slug}
+                                  </span>
+                                  {outcome && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{outcome}</span>}
+                                </button>
+                                <span className="badge todo" title="Sub-task history">
+                                  Sub-task history
+                                </span>
+                              </td>
+                              <td className="session-time-col">
+                                <span className="dim">—</span>
+                              </td>
+                              <td className="session-time-col">
+                                <span className="dim">—</span>
+                              </td>
+                              <td className="session-actions">
+                                <div className="session-actions-inner">
+                                  {renameControl("task", row.child.slug, row.child.name)}
+                                  <button type="button" className="btn ghost small" onClick={() => onOpenRelatedTask(row.child.slug)}>
+                                    Open task
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }
+                        const s = row.session;
+                        const obs = observationsById[s.id] ?? null;
+                        const isLive = obs ? obs.lifecycle.state === "live" : false;
+                        if (row.kind === "subtask_manager") {
+                          const label = row.child ? row.child.name : s.subtask_slug || "Sub-task setup";
+                          const detail = row.child?.slug;
+                          const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
+                          const canReplaceThisManager = row.active_child && subtaskState?.can_recover === true && subtaskState.manager_session?.id === s.id;
+                          const activate = () => {
+                            if (row.child) onOpenRelatedTask(row.child.slug);
+                            else openManagerSession(row.owner_task_slug, s);
+                          };
+                          return (
+                            <tr key={`manager:${row.owner_task_slug}:${s.id}`} className="subtask-manager-row">
+                              <td className="status-col">
+                                <StatusDot
+                                  id={s.id}
+                                  slug={row.owner_task_slug}
+                                  repoPath={repoPath}
+                                  observation={obs ?? undefined}
+                                  exitCode={s.exit_code}
+                                  exitAcknowledged={hasAcknowledgedExit(s)}
+                                />
+                              </td>
+                              <td className="session-name-cell editable-name">
+                                {renameControl("session", row.owner_task_slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
+                                {s.name_error && <span className="name-error">{s.name_error}</span>}
+                                <button type="button" className="manager-row-primary session-metadata" onClick={activate}>
+                                  <span title={label}>{label}</span>
+                                  {detail && (
+                                    <span className="dim mono" title={detail}>
+                                      {detail}
+                                    </span>
+                                  )}
+                                  {row.child?.archived && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{subtaskOutcomeLabel(row.child)}</span>}
+                                  {row.child && row.active_child && (
+                                    <span
+                                      className="subtask-child-progress"
+                                      title={`Child playbook: ${childPlaybookStep || row.child.playbook}. Status: ${taskActivityLabel(childActivity)}`}
+                                    >
+                                      <span className="subtask-child-step">{childPlaybookStep || row.child.playbook}</span>
+                                      <span className="subtask-child-activity">
+                                        <TaskActivityIndicators activity={childActivity} />
+                                        <span>{taskActivityLabel(childActivity)}</span>
+                                      </span>
+                                    </span>
+                                  )}
+                                </button>
+                                <span className="badge todo" title={canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}>
+                                  {canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}
+                                </span>
+                                <div className="dim session-metadata" title={harnessLabel}>
+                                  {harnessLabel}
+                                </div>
+                              </td>
+                              <td className="session-time-col">
+                                <SessionTimestamp kind="started" value={sessionStartedAt(s)} now={sessionNow} />
+                              </td>
+                              <td className="session-time-col">
+                                <SessionTimestamp kind="updated" value={sessionUpdatedAt(s)} now={sessionNow} />
+                              </td>
+                              <td className="session-actions">
+                                <div className="session-actions-inner">
+                                  {row.child && renameControl("task", row.child.slug, row.child.name, s.id)}
+                                  {!s.archived && !row.child?.archived && (!s.subtask_slug || row.child) && (
+                                    <button
+                                      type="button"
+                                      className="btn danger small"
+                                      disabled={!!busy}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void discardSubtask(s, row.child ?? undefined);
+                                      }}
+                                    >
+                                      {busy === `discard-subtask:${s.id}` ? (row.child ? "Killing…" : "Discarding…") : row.child ? "Kill sub-task" : "Discard setup"}
+                                    </button>
+                                  )}
+                                  {canReplaceThisManager && (
+                                    <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
+                                      {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn ghost small"
+                                    disabled={!!busy}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openManagerSession(row.owner_task_slug, s);
+                                    }}
+                                  >
+                                    Open manager session
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        const resumedBy = sessions.find((other) => other.resume_of === s.id);
+                        const execution = executionForSession(s);
+                        const superseded = Boolean(execution && execution.owner_session_id !== s.id);
+                        const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
+                        const sessionType = s.subtask_manager
+                          ? "Sub-task manager"
+                          : execution
+                            ? `${executionView?.definition.title} · ${stepTitle}`
+                            : s.generic
+                              ? "Auxiliary"
+                              : [s.playbook, s.phase].filter(Boolean).join(" · ") || "Historical session";
                         const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
-                        const canReplaceThisManager = row.active_child && subtaskState?.can_recover === true && subtaskState.manager_session?.id === s.id;
-                        const activate = () => {
-                          if (row.child) onOpenRelatedTask(row.child.slug);
-                          else openManagerSession(row.owner_task_slug, s);
-                        };
+                        const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
+                        const openable = Boolean(task?.worktree) && !s.archived;
+                        const canStop =
+                          !s.archived &&
+                          isVinculumHarness(s.harness) &&
+                          obs?.transport === "rpc" &&
+                          obs.state?.agent.state !== "waiting_for_approval" &&
+                          canAbortChatSession({
+                            connection: "open",
+                            lifecycle: obs.lifecycle,
+                            process: obs.state?.process ?? null,
+                            agent: obs.state?.agent ?? null,
+                            messageAdapter: obs.state?.message_adapter ?? "unsupported",
+                            body: "",
+                            composing: false,
+                            sending: false,
+                            interrupting: !!busy,
+                          });
                         return (
-                          <tr key={`manager:${row.owner_task_slug}:${s.id}`} className="subtask-manager-row">
+                          <tr
+                            key={s.id}
+                            className={s.archived ? "row-archived" : openable ? "session-row-openable" : undefined}
+                            tabIndex={openable ? 0 : undefined}
+                            aria-label={openable ? `Open session ${sessionType}` : undefined}
+                            onClick={(event) => {
+                              if (!openable || (event.target as HTMLElement).closest("button")) return;
+                              onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic);
+                            }}
+                            onKeyDown={(event) => {
+                              if (!openable || event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                              event.preventDefault();
+                              event.currentTarget.click();
+                            }}
+                          >
                             <td className="status-col">
                               <StatusDot
                                 id={s.id}
-                                slug={row.owner_task_slug}
+                                slug={slug}
                                 repoPath={repoPath}
-                                observation={obs ?? undefined}
+                                observation={obs}
+                                superseded={superseded}
+                                unreadCompletion={unreadCompletion}
                                 exitCode={s.exit_code}
                                 exitAcknowledged={hasAcknowledgedExit(s)}
+                                terminalLabel={superseded ? null : sessionTerminalLabel(s.harness, s.id, execution, s.ended_at != null || obs?.lifecycle.state === "exited")}
                               />
                             </td>
                             <td className="session-name-cell editable-name">
-                              {renameControl("session", row.owner_task_slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
+                              {renameControl("session", slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
                               {s.name_error && <span className="name-error">{s.name_error}</span>}
-                              <button type="button" className="manager-row-primary session-metadata" onClick={activate}>
-                                <span title={label}>{label}</span>
-                                {detail && (
-                                  <span className="dim mono" title={detail}>
-                                    {detail}
+                              <div className="session-step-cell session-metadata">
+                                <span className="dim" title={sessionType}>
+                                  {sessionType}
+                                </span>
+                                {execution && (
+                                  <span className="pill">
+                                    {sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ??
+                                      execution.lifecycle}
                                   </span>
                                 )}
-                                {row.child?.archived && <span className={`pill ${subtaskOutcomeClass(row.child)}`}>{subtaskOutcomeLabel(row.child)}</span>}
-                                {row.child && row.active_child && (
-                                  <span
-                                    className="subtask-child-progress"
-                                    title={`Child playbook: ${childPlaybookStep || row.child.playbook}. Status: ${taskActivityLabel(childActivity)}`}
-                                  >
-                                    <span className="subtask-child-step">{childPlaybookStep || row.child.playbook}</span>
-                                    <span className="subtask-child-activity">
-                                      <TaskActivityIndicators activity={childActivity} />
-                                      <span>{taskActivityLabel(childActivity)}</span>
-                                    </span>
-                                  </span>
-                                )}
-                              </button>
-                              <span className="badge todo" title={canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}>
-                                {canReplaceThisManager ? "Manager unavailable" : "Sub-task manager"}
-                              </span>
+                                {s.archived && <span className="pill session-archived">Archived</span>}
+                                {resumedBy && <span className="pill dim">Resumed</span>}
+                              </div>
                               <div className="dim session-metadata" title={harnessLabel}>
                                 {harnessLabel}
                               </div>
@@ -1689,217 +1824,95 @@ export function TaskDetail({
                             </td>
                             <td className="session-actions">
                               <div className="session-actions-inner">
-                                {row.child && renameControl("task", row.child.slug, row.child.name, s.id)}
-                                {!s.archived && !row.child?.archived && (!s.subtask_slug || row.child) && (
-                                  <button
-                                    type="button"
-                                    className="btn danger small"
-                                    disabled={!!busy}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void discardSubtask(s, row.child ?? undefined);
-                                    }}
-                                  >
-                                    {busy === `discard-subtask:${s.id}` ? (row.child ? "Killing…" : "Discarding…") : row.child ? "Kill sub-task" : "Discard setup"}
-                                  </button>
-                                )}
-                                {canReplaceThisManager && (
-                                  <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                                    {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
-                                  </button>
-                                )}
                                 <button
                                   type="button"
-                                  className="btn ghost small"
-                                  disabled={!!busy}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openManagerSession(row.owner_task_slug, s);
+                                  className="btn ghost small chat-composer-abort"
+                                  disabled={!canStop}
+                                  aria-label={busy === `stop-session:${s.id}` ? "Stopping…" : "Stop"}
+                                  title="Interrupt the current turn without killing the session"
+                                  onClick={async () => {
+                                    if (!canStop || sessionStopPending.current) return;
+                                    sessionStopPending.current = true;
+                                    setBusy(`stop-session:${s.id}`);
+                                    setErr(null);
+                                    try {
+                                      await abortSession(repoPath, s.id);
+                                      await load();
+                                    } catch (error) {
+                                      setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
+                                    } finally {
+                                      sessionStopPending.current = false;
+                                      setBusy("");
+                                    }
                                   }}
                                 >
-                                  Open manager session
+                                  <Square className="chat-composer-icon" fill="currentColor" />
                                 </button>
+                                <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
+                                <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSessionRow(s.id)}>
+                                  {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
+                                </button>
+                                {s.archived && (
+                                  <button
+                                    type="button"
+                                    className="btn ghost small"
+                                    title="Replay this archived session's recorded activity (read-only)"
+                                    onClick={() => onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic, "history")}
+                                  >
+                                    View history
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
                         );
-                      }
-
-                      const resumedBy = sessions.find((other) => other.resume_of === s.id);
-                      const execution = executionForSession(s);
-                      const superseded = Boolean(execution && execution.owner_session_id !== s.id);
-                      const stepTitle = steps.find((step) => step.key === execution?.candidate.step_key)?.title ?? execution?.candidate.step_key;
-                      const sessionType = s.subtask_manager
-                        ? "Sub-task manager"
-                        : execution
-                          ? `${executionView?.definition.title} · ${stepTitle}`
-                          : s.generic
-                            ? "Auxiliary"
-                            : [s.playbook, s.phase].filter(Boolean).join(" · ") || "Historical session";
-                      const harnessLabel = `${harnessDisplayName(s.harness)}${s.model ? ` · ${s.model}` : ""}`;
-                      const unreadCompletion = classifySessionNotice(s, obs ?? undefined) === "unread_completion";
-                      const openable = Boolean(task?.worktree) && !s.archived;
-                      const canStop =
-                        !s.archived &&
-                        isVinculumHarness(s.harness) &&
-                        obs?.transport === "rpc" &&
-                        obs.state?.agent.state !== "waiting_for_approval" &&
-                        canAbortChatSession({
-                          connection: "open",
-                          lifecycle: obs.lifecycle,
-                          process: obs.state?.process ?? null,
-                          agent: obs.state?.agent ?? null,
-                          messageAdapter: obs.state?.message_adapter ?? "unsupported",
-                          body: "",
-                          composing: false,
-                          sending: false,
-                          interrupting: !!busy,
-                        });
-                      return (
-                        <tr
-                          key={s.id}
-                          className={s.archived ? "row-archived" : openable ? "session-row-openable" : undefined}
-                          tabIndex={openable ? 0 : undefined}
-                          aria-label={openable ? `Open session ${sessionType}` : undefined}
-                          onClick={(event) => {
-                            if (!openable || (event.target as HTMLElement).closest("button")) return;
-                            onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic);
-                          }}
-                          onKeyDown={(event) => {
-                            if (!openable || event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-                            event.preventDefault();
-                            event.currentTarget.click();
-                          }}
-                        >
+                      })}
+                      {subtaskState?.can_recover && subtaskState.active_subtask && !currentManagerRow && (
+                        <tr className="subtask-manager-row">
                           <td className="status-col">
-                            <StatusDot
-                              id={s.id}
-                              slug={slug}
-                              repoPath={repoPath}
-                              observation={obs}
-                              superseded={superseded}
-                              unreadCompletion={unreadCompletion}
-                              exitCode={s.exit_code}
-                              exitAcknowledged={hasAcknowledgedExit(s)}
-                              terminalLabel={superseded ? null : sessionTerminalLabel(s.harness, s.id, execution, s.ended_at != null || obs?.lifecycle.state === "exited")}
-                            />
+                            <span className="statusdot unknown" />
                           </td>
-                          <td className="session-name-cell editable-name">
-                            {renameControl("session", slug, s.name ?? "", s.id, awaitingSessionName(s, obs))}
-                            {s.name_error && <span className="name-error">{s.name_error}</span>}
-                            <div className="session-step-cell session-metadata">
-                              <span className="dim" title={sessionType}>
-                                {sessionType}
+                          <td className="session-name-cell">
+                            <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(subtaskState.active_subtask?.slug ?? "")}>
+                              <span title={subtaskState.active_subtask.name}>{subtaskState.active_subtask.name}</span>
+                              <span className="dim mono" title={subtaskState.active_subtask.slug}>
+                                {subtaskState.active_subtask.slug}
                               </span>
-                              {execution && (
-                                <span className="pill">
-                                  {sessionTerminalLabel(s.harness, s.id, superseded ? undefined : execution, s.ended_at != null || obs?.lifecycle.state === "exited") ??
-                                    execution.lifecycle}
-                                </span>
-                              )}
-                              {s.archived && <span className="pill session-archived">Archived</span>}
-                              {resumedBy && <span className="pill dim">Resumed</span>}
-                            </div>
-                            <div className="dim session-metadata" title={harnessLabel}>
-                              {harnessLabel}
-                            </div>
+                            </button>
+                            <span className="badge todo" title="Manager unavailable">
+                              Manager unavailable
+                            </span>
                           </td>
                           <td className="session-time-col">
-                            <SessionTimestamp kind="started" value={sessionStartedAt(s)} now={sessionNow} />
+                            <span className="dim">—</span>
                           </td>
                           <td className="session-time-col">
-                            <SessionTimestamp kind="updated" value={sessionUpdatedAt(s)} now={sessionNow} />
+                            <span className="dim">—</span>
                           </td>
                           <td className="session-actions">
                             <div className="session-actions-inner">
+                              {renameControl("task", subtaskState.active_subtask.slug, subtaskState.active_subtask.name)}
                               <button
                                 type="button"
-                                className="btn ghost small chat-composer-abort"
-                                disabled={!canStop}
-                                aria-label={busy === `stop-session:${s.id}` ? "Stopping…" : "Stop"}
-                                title="Interrupt the current turn without killing the session"
-                                onClick={async () => {
-                                  if (!canStop || sessionStopPending.current) return;
-                                  sessionStopPending.current = true;
-                                  setBusy(`stop-session:${s.id}`);
-                                  setErr(null);
-                                  try {
-                                    await abortSession(repoPath, s.id);
-                                    await load();
-                                  } catch (error) {
-                                    setErr({ msg: "Couldn't interrupt the session.", detail: String(error) });
-                                  } finally {
-                                    sessionStopPending.current = false;
-                                    setBusy("");
-                                  }
-                                }}
+                                className="btn danger small"
+                                disabled={!!busy}
+                                onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}
                               >
-                                <Square className="chat-composer-icon" fill="currentColor" />
+                                {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
                               </button>
-                              <KillButton id={s.id} slug={slug} repoPath={repoPath} live={isLive} onKilled={load} />
-                              <button type="button" className="btn ghost small" disabled={s.archived || !!busy} onClick={() => void archiveSessionRow(s.id)}>
-                                {busy === `archive-session:${s.id}` ? "Archiving session…" : "Archive"}
+                              <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
+                                {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
                               </button>
-                              {s.archived && (
-                                <button
-                                  type="button"
-                                  className="btn ghost small"
-                                  title="Replay this archived session's recorded activity (read-only)"
-                                  onClick={() => onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic, "history")}
-                                >
-                                  View history
-                                </button>
-                              )}
                             </div>
                           </td>
                         </tr>
-                      );
-                    })}
-                    {subtaskState?.can_recover && subtaskState.active_subtask && !currentManagerRow && (
-                      <tr className="subtask-manager-row">
-                        <td className="status-col">
-                          <span className="statusdot unknown" />
-                        </td>
-                        <td className="session-name-cell">
-                          <button type="button" className="manager-row-primary" onClick={() => onOpenRelatedTask(subtaskState.active_subtask?.slug ?? "")}>
-                            <span title={subtaskState.active_subtask.name}>{subtaskState.active_subtask.name}</span>
-                            <span className="dim mono" title={subtaskState.active_subtask.slug}>
-                              {subtaskState.active_subtask.slug}
-                            </span>
-                          </button>
-                          <span className="badge todo" title="Manager unavailable">
-                            Manager unavailable
-                          </span>
-                        </td>
-                        <td className="session-time-col">
-                          <span className="dim">—</span>
-                        </td>
-                        <td className="session-time-col">
-                          <span className="dim">—</span>
-                        </td>
-                        <td className="session-actions">
-                          <div className="session-actions-inner">
-                            {renameControl("task", subtaskState.active_subtask.slug, subtaskState.active_subtask.name)}
-                            <button
-                              type="button"
-                              className="btn danger small"
-                              disabled={!!busy}
-                              onClick={() => void discardSubtask(null, subtaskState.active_subtask ?? undefined)}
-                            >
-                              {busy === "discard-subtask:active-child" ? "Killing…" : "Kill sub-task"}
-                            </button>
-                            <button type="button" className="btn ghost small" disabled={!!busy} onClick={recoverManager}>
-                              {busy === "subtask-recovery" ? "Recovering…" : "Replace manager session"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
         </main>
       </div>
       <ArchiveTaskModal task={pendingArchive} onCancel={() => setPendingArchive(null)} onConfirm={confirmArchive} />
