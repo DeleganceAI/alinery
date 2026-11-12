@@ -56,6 +56,7 @@ export function HotkeyBar({
   version = "",
   gridViewName,
   gridViewShortcut,
+  onOpenRepo,
 }: {
   view: string;
   daemon: DaemonStatus;
@@ -64,6 +65,8 @@ export function HotkeyBar({
   version?: string;
   gridViewName?: string;
   gridViewShortcut?: string;
+  /** Selects a repository, so its daemon-conflict banner can be acted on. */
+  onOpenRepo?: (repo: string) => void;
 }) {
   const baseHints = HINTS[view] ?? HINTS.list;
   const hints = view === "grid" && gridViewName && gridViewShortcut ? [...baseHints, [gridViewShortcut, gridViewName] satisfies Hint] : baseHints;
@@ -92,7 +95,7 @@ export function HotkeyBar({
               <b>MCP server</b>
               {mcpStatus}
             </span>
-            {open && <SyncLinks appVersion={version} />}
+            {open && <SyncLinks appVersion={version} onOpenRepo={onOpenRepo} />}
           </span>
         </span>
         {version && <span className="footer-version">v{version}</span>}

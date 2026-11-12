@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { mockIpc } from "./test/mockIpc";
 
@@ -17,6 +17,7 @@ vi.mock("./ipc", () =>
           { repo: "/me/app", state: "current", issues: [], host: "local", version: "0.600.0" },
           { repo: "alinery+ssh://h1/srv/api", state: "current", issues: [], host: "h1", version: "0.25.0" },
           { repo: "/me/idle", state: "not_attached", issues: [], host: "local", version: null },
+          { repo: "/me/clash", state: "conflict", issues: ["another lane owns it"], host: "local", version: null },
         ],
         local_link: { calls: n, bytes_up: n * 100, bytes_down: n * 200 },
       };
@@ -55,4 +56,14 @@ it("lists each host's link, its traffic, and each attached daemon's version with
   expect(screen.queryByRole("button", { name: "Update the daemon for app" })).toBeNull();
   expect(screen.getByText(/reconnect to install the new one/)).toBeDefined();
   await waitFor(() => expect(screen.getAllByText(/ops\/s/)[0].textContent).not.toBe("– ops/s"), { timeout: 2500 });
+});
+
+it("sends a conflicted daemon to its repository's takeover banner, with the reason on hover", async () => {
+  const onOpenRepo = vi.fn();
+  render(<SyncLinks appVersion="0.600.0" onOpenRepo={onOpenRepo} />);
+  const open = await screen.findByRole("button", { name: "Open clash to resolve its daemon conflict" });
+  expect(screen.queryByRole("button", { name: "Update the daemon for clash" })).toBeNull();
+  expect(screen.getByTitle("another lane owns it")).toBeDefined();
+  fireEvent.click(open);
+  expect(onOpenRepo).toHaveBeenCalledWith("/me/clash");
 });

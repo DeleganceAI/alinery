@@ -1359,6 +1359,7 @@ export default function App() {
                 mcp={mcp}
                 showHints={Boolean(appConfig?.active_repo)}
                 version={appVersion}
+                onOpenRepo={(repo) => void setRepo(repo)}
                 gridViewName={view.kind === "grid" ? gridViews.find((gridView) => gridView.id === view.gridViewId)?.name : undefined}
                 gridViewShortcut={
                   view.kind === "grid" && gridViews.some((gridView) => gridView.id === view.gridViewId)

@@ -1,8 +1,9 @@
-import { RefreshCw } from "lucide-react";
+import { ArrowRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { confirmDanger } from "./confirm";
 import { runtimeStatus, stopDaemon } from "./ipc";
 import { repoName } from "./shared";
+import { toast } from "./toast";
 import type { LinkTraffic, RepoRuntime, RuntimeStatus } from "./types";
 
 const SAMPLE_MS = 1000;
@@ -50,14 +51,18 @@ async function updateDaemon(repo: RepoRuntime) {
     <p className="confirm-loss">It is replaced with this app's build. Any live sessions in this repository are stopped, and their in-flight work is lost.</p>,
     "Restart daemon",
   );
-  if (ok) await stopDaemon(repo.repo).catch(() => {});
+  if (!ok) return;
+  await stopDaemon(repo.repo).then(
+    () => toast.success(`Restarted the daemon for ${repoName(repo.repo)}`),
+    (cause) => toast.error(`Couldn't restart the daemon for ${repoName(repo.repo)}: ${String(cause)}`),
+  );
 }
 
 /**
  * The footer popover's sync links: one row per daemon host (this computer, then each ssh host) with whether the link is
  * up and its traffic rate, and under it each repository's daemon with the version it reports. Samples while mounted.
  */
-export function SyncLinks({ appVersion }: { appVersion: string }) {
+export function SyncLinks({ appVersion, onOpenRepo }: { appVersion: string; onOpenRepo?: (repo: string) => void }) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [rates, setRates] = useState<Record<string, ReturnType<typeof linkRate>>>({});
   const previous = useRef<{ at: number; links: Record<string, LinkTraffic> } | null>(null);
@@ -105,23 +110,40 @@ export function SyncLinks({ appVersion }: { appVersion: string }) {
               </div>
             )}
             {link.runtimeStale && <div className="sync-link-note">Host runtime is older than this app's; reconnect to install the new one.</div>}
-            {repos.map((repo) => (
-              <div className="sync-link-repo" key={repo.repo} title={repo.repo}>
-                <span className="sync-link-repo-name">{repoName(repo.repo)}</span>
-                <span className="sync-link-version">{repo.state === "conflict" ? "conflict" : repo.version ? `v${repo.version}` : repo.version === "" ? "older daemon" : "…"}</span>
-                {daemonIsOld(repo, appVersion) && (
-                  <button
-                    type="button"
-                    className="sync-link-update"
-                    aria-label={`Update the daemon for ${repoName(repo.repo)}`}
-                    title="Restart with this app's daemon"
-                    onClick={() => void updateDaemon(repo)}
-                  >
-                    <RefreshCw size={11} strokeWidth={2} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-            ))}
+            {repos.map((repo) => {
+              const conflict = repo.state === "conflict";
+              const name = repoName(repo.repo);
+              return (
+                <div className="sync-link-repo" key={repo.repo} title={conflict && repo.issues.length ? repo.issues.join("\n") : repo.repo}>
+                  <span className="sync-link-repo-name">{name}</span>
+                  <span className="sync-link-version">{conflict ? "conflict" : repo.version ? `v${repo.version}` : repo.version === "" ? "older daemon" : "…"}</span>
+                  {conflict
+                    ? // The selected repo's banner holds the confirmed takeover (or a remote restart); stop_daemon cannot reach another lane's owner.
+                      onOpenRepo && (
+                        <button
+                          type="button"
+                          className="sync-link-update"
+                          aria-label={`Open ${name} to resolve its daemon conflict`}
+                          title="Open this repository to take over its daemon"
+                          onClick={() => onOpenRepo(repo.repo)}
+                        >
+                          <ArrowRight size={11} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      )
+                    : daemonIsOld(repo, appVersion) && (
+                        <button
+                          type="button"
+                          className="sync-link-update"
+                          aria-label={`Update the daemon for ${name}`}
+                          title="Restart with this app's daemon"
+                          onClick={() => void updateDaemon(repo)}
+                        >
+                          <RefreshCw size={11} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      )}
+                </div>
+              );
+            })}
           </div>
         );
       })}
