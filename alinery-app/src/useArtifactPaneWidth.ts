@@ -7,6 +7,8 @@ import type { AppearancePrefs } from "./types";
 import { usePointerDrag } from "./usePointerDrag";
 
 const KEYBOARD_STEP = 20;
+/** How far past the minimum width a drag goes before the pane snaps shut. */
+const SNAP_CLOSE_PAST = 60;
 
 type ArtifactPaneResizerProps = {
   role: "separator";
@@ -20,14 +22,22 @@ type ArtifactPaneResizerProps = {
   onKeyDown: (ev: ReactKeyboardEvent<HTMLElement>) => void;
 };
 
-/** `side` is where the pane sits: dragging or arrowing away from it grows it. */
+/** What a caller needs to show a collapsed pane and reopen it. */
+export type ArtifactPaneCollapse = { collapsed: boolean; setCollapsed: (collapsed: boolean) => void };
+
+/**
+ * `side` is where the pane sits: dragging or arrowing away from it grows it. Dragging it well below its minimum width
+ * snaps it shut; the caller shows a rail that reopens it at the width it had.
+ */
 export function useArtifactPaneWidth(
   appearance: AppearancePrefs,
   onAppearanceChange: (next: AppearancePrefs) => void,
   side: "left" | "right" = "right",
-): [number, ArtifactPaneResizerProps] {
+): [number, ArtifactPaneResizerProps, ArtifactPaneCollapse] {
   const grow = side === "right" ? -1 : 1;
   const [width, setWidth] = useState(() => normalizeArtifactViewerWidth(appearance.artifact_viewer_width));
+  // ponytail: collapse is per view and not saved; add it to AppearancePrefs if it should survive a relaunch.
+  const [collapsed, setCollapsed] = useState(false);
   const accessibleMax = clampArtifactViewerWidth(ARTIFACT_VIEWER_WIDTH_MAX);
   const appearanceRef = useRef(appearance);
   appearanceRef.current = appearance;
@@ -46,12 +56,21 @@ export function useArtifactPaneWidth(
   const onPointerDown = (ev: ReactPointerEvent<HTMLElement>) => {
     const startX = ev.clientX;
     const startWidth = clampArtifactViewerWidth(width);
-    const apply = (clientX: number) => clampArtifactViewerWidth(startWidth + grow * (clientX - startX));
+    const raw = (clientX: number) => startWidth + grow * (clientX - startX);
+    const apply = (clientX: number) => clampArtifactViewerWidth(raw(clientX));
+    const shut = (clientX: number) => raw(clientX) < ARTIFACT_VIEWER_WIDTH_MIN - SNAP_CLOSE_PAST;
     startPointerDrag(ev, {
       onMove: (moveEv) => {
+        setCollapsed(shut(moveEv.clientX));
         setWidth(apply(moveEv.clientX));
       },
       onComplete: (completeEv) => {
+        if (shut(completeEv.clientX)) {
+          setCollapsed(true);
+          setWidth(startWidth);
+          return;
+        }
+        setCollapsed(false);
         const nextWidth = apply(completeEv.clientX);
         if (nextWidth === startWidth) return;
         persistWidth(nextWidth);
@@ -90,5 +109,6 @@ export function useArtifactPaneWidth(
       onPointerDown,
       onKeyDown,
     },
+    { collapsed, setCollapsed },
   ];
 }

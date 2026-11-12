@@ -517,6 +517,24 @@ nav.tabs {
 nav.tabs::-webkit-scrollbar {
   display: none;
 }
+/* The top-level views read as tabs: full-height cells split by dividers, the selected one filled like the main pane's
+   open tab. The sliding indicator is that fill, so switching still animates. */
+nav.tabs {
+  align-self: stretch;
+  gap: 0;
+  border-left: 1px solid var(--border);
+}
+nav.tabs .tab {
+  height: 100%;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+}
+nav.tabs .tab-indicator {
+  height: 100%;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
 .tab-indicator {
   position: absolute;
   top: 0;
@@ -3941,12 +3959,12 @@ dialog.modal::backdrop {
   flex-direction: column;
   overflow: hidden;
 }
-/* The header spans the full width; the side panel sits left of the sessions pane. */
+/* The header spans the full width; the side panel sits right of the sessions pane, as in a session. */
 .taskdetail-body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
 }
 /* The metadata and session table are the only vertical scroll owners. Making
    this parent scroll recreates DEL-541's competing scrollbar and dead space. */
@@ -7219,6 +7237,38 @@ header:has(~ main .task-info-panel) {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* A pane dragged shut leaves only its divider, widened a little to hold the reopen arrow. */
+.taskdetail-body.pane-collapsed,
+.sessionbody.pane-collapsed {
+  grid-template-columns: minmax(0, 1fr) 16px;
+}
+.pane-collapsed > .artifactpane {
+  display: none;
+}
+.artifact-resizer.collapsed {
+  border-right: 0;
+}
+.pane-reopen {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pane-reopen:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .artifactpane {
   min-width: 0;
   min-height: 0;
@@ -8057,20 +8107,24 @@ header:has(~ main .task-info-panel) {
   flex-direction: column;
   gap: 10px;
 }
+/* Artifacts are a list divided by full-width lines, like History; the repository tree keeps the 12px inset. */
 .artifactlist {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+}
+.artifactlist > .repo-tree {
+  margin: 0 12px 12px;
+  border-top: 0;
 }
 .artifactitem {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-scale));
@@ -8084,7 +8138,7 @@ header:has(~ main .task-info-panel) {
   transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .artifactitem.attachment {
-  border-style: dashed;
+  color: var(--text-muted);
 }
 .artifactitem-name {
   flex: 1 1 auto;
@@ -8096,9 +8150,10 @@ header:has(~ main .task-info-panel) {
 .attachment-preview {
   flex-shrink: 0;
   min-width: 0;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   overflow: hidden;
 }
 .attachment-preview summary {
@@ -8219,7 +8274,6 @@ header:has(~ main .task-info-panel) {
 .artifact-tree {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 .artifact-tree-row {
   width: 100%;
@@ -8227,8 +8281,8 @@ header:has(~ main .task-info-panel) {
   text-align: left;
 }
 .artifact-tree-row.selected {
-  border-color: var(--accent);
   background: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .artifact-tree-chevron {
   width: 10px;
@@ -8275,7 +8329,7 @@ header:has(~ main .task-info-panel) {
   stroke-linejoin: round;
 }
 .artifactitem:hover {
-  border-color: var(--border-strong);
+  background: var(--surface-subtle);
   color: var(--text-strong);
 }
 .artifactviewer {

@@ -35,6 +35,7 @@ import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { PaneResizer } from "../PaneResizer";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
 import { appendGeneratedText, canAbortChatSession, isTurnActive, type SessionMessageDraft, shouldShowChatComposer } from "../sessionMessage";
@@ -195,7 +196,7 @@ export function SessionView({
     [commentsEnabled, liveArtifacts.comments, selectedArtifact],
   );
   const reviewPending = (commentsEnabled && liveArtifacts.pending.find((pending) => pending.artifact === selectedArtifact)) || null;
-  const [artifactWidth, artifactResizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
+  const [artifactWidth, artifactResizerProps, artifactCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange);
   const termhostRef = useRef<HTMLDivElement>(null);
   const backButtonRef = useRef<HTMLButtonElement>(null);
   const chatAutoCompaction = appearance.chat_auto_compaction !== false;
@@ -1245,7 +1246,10 @@ export function SessionView({
           </details>
         </div>
       )}
-      <div className={`sessionbody${hasTask ? "" : " no-artifacts"}`} style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}>
+      <div
+        className={`sessionbody${hasTask ? (artifactCollapse.collapsed ? " pane-collapsed" : "") : " no-artifacts"}`}
+        style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}
+      >
         <div className="termhost" ref={termhostRef}>
           {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
             <div className="session-view-loading" role="status" aria-live="polite">
@@ -1468,7 +1472,7 @@ export function SessionView({
         </div>
         {hasTask && (
           <>
-            <div className="artifact-resizer" {...artifactResizerProps} />
+            <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
             <aside className="artifactpane">
               {selectedArtifact ? (
                 <>
