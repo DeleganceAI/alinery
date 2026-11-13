@@ -2987,26 +2987,27 @@ export function SessionView({
             </div>
           )}
           {navHistory && (
-            <div className="terminal-frame">
+            <>
               {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
               {liveRpc || harness === "omp" ? (
                 <>
-                  <ChatPane
-                    recoveryContent={recoveryContent}
-                    activityContent={continuationStatus}
-                    activityRunning={continuationStatusRunning}
-                    entries={chatEntries}
-                    status={chatStatus}
-                    visibility={chatVisibility}
-                    onApprove={onApproveChat}
-                    onLoadOlder={loadOlder}
-                    loadingOlder={loadingOlder}
-                    atStart={chat.fileStart === 0}
-                  />
-                  {/* The history view is the live pane with the input switched off, so a finished
-                      session reads the same way as a running one. */}
+                  <div className="terminal-frame">
+                    <ChatPane
+                      recoveryContent={recoveryContent}
+                      activityContent={continuationStatus}
+                      activityRunning={continuationStatusRunning}
+                      entries={chatEntries}
+                      status={chatStatus}
+                      visibility={chatVisibility}
+                      onApprove={onApproveChat}
+                      onLoadOlder={loadOlder}
+                      loadingOlder={loadingOlder}
+                      atStart={chat.fileStart === 0}
+                    />
+                  </div>
+                  {/* Reserve composer space beside the full-height transcript, as in live Chat. */}
                   <ChatComposer
                     actions={continuationArea}
                     body=""
@@ -3020,19 +3021,21 @@ export function SessionView({
                   />
                 </>
               ) : (
-                <SessionTerminal
-                  sessionId={id}
-                  cwd={cwd}
-                  taskSlug={taskSlug}
-                  phase={phase}
-                  harness={harness}
-                  model={model}
-                  intent="attach"
-                  readOnly
-                  terminalFontSize={appearance.terminal_font_size}
-                />
+                <div className="terminal-frame">
+                  <SessionTerminal
+                    sessionId={id}
+                    cwd={cwd}
+                    taskSlug={taskSlug}
+                    phase={phase}
+                    harness={harness}
+                    model={model}
+                    intent="attach"
+                    readOnly
+                    terminalFontSize={appearance.terminal_font_size}
+                  />
+                </div>
               )}
-            </div>
+            </>
           )}
           {navHistory && harness !== "omp" && !liveRpc ? continuationArea : null}
           {!navHistory && termIntent && (
@@ -3182,18 +3185,20 @@ export function SessionView({
               />
               {showHistory &&
                 (harness === "omp" ? (
-                  <div className="terminal-frame">
-                    <ChatPane
-                      recoveryContent={recoveryContent}
-                      activityContent={continuationStatus}
-                      activityRunning={continuationStatusRunning}
-                      entries={chat.entries}
-                      status="idle"
-                      visibility={chatVisibility}
-                      onLoadOlder={loadOlder}
-                      loadingOlder={loadingOlder}
-                      atStart={chat.fileStart === 0}
-                    />
+                  <>
+                    <div className="terminal-frame">
+                      <ChatPane
+                        recoveryContent={recoveryContent}
+                        activityContent={continuationStatus}
+                        activityRunning={continuationStatusRunning}
+                        entries={chat.entries}
+                        status="idle"
+                        visibility={chatVisibility}
+                        onLoadOlder={loadOlder}
+                        loadingOlder={loadingOlder}
+                        atStart={chat.fileStart === 0}
+                      />
+                    </div>
                     <ChatComposer
                       actions={continuationArea}
                       body=""
@@ -3205,7 +3210,7 @@ export function SessionView({
                       onSend={() => undefined}
                       onAbort={() => undefined}
                     />
-                  </div>
+                  </>
                 ) : (
                   <div className="terminal-frame">
                     <SessionTerminal
