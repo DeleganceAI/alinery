@@ -33,7 +33,7 @@ import { toast } from "../toast";
 import type { AppearancePrefs, ChatThread, SessionObservation } from "../types";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { ChatCanvas } from "./ChatCanvas";
-import { ChatModelBar } from "./ChatModelBar";
+import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 import { ChatPane } from "./ChatPane";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
 
@@ -205,7 +205,6 @@ function ChatViewBody({
   const inTerminal = chat.inTerminal;
   const showCanvas = Boolean(canvasAllowed && canvas && selected && !inTerminal);
   const terminalIo = chat.terminalIo;
-  const contextUsage = chat.contextUsage;
   const modelLabel = chat.modelLabel;
   const blocked = chat.blocked;
   const disconnected = chat.disconnected;
@@ -537,11 +536,6 @@ function ChatViewBody({
                   {selected.branch_label}
                   {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
                 </span>
-                {contextUsage ? (
-                  <span className="chat-meta-item" title="Context used / available">
-                    {contextUsage}
-                  </span>
-                ) : null}
                 {disconnected !== null ? <StatusMarker kind="failed" label="Disconnected" title={disconnected} /> : <StatusMarker kind={statusKind} />}
               </div>
             ) : (
@@ -648,6 +642,7 @@ function ChatViewBody({
         )}
         {inTerminal || !selected ? null : (
           <ChatComposer
+            actions={<ComposerStats usage={transcript.sessionMeta.contextUsage} events={transcript.entries.length} />}
             body={body}
             status={activity.status}
             catalog={transcript.commands}

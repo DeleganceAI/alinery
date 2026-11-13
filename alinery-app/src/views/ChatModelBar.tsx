@@ -1,5 +1,6 @@
 import { Brain, Check, ChevronUp, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { formatContextUsage, formatTokenCount } from "../chat/format";
 import * as ipc from "../ipc";
 
 /**
@@ -126,5 +127,25 @@ export function ChatModelBar({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Under the composer, left: how much of the model's context the session has used, as a meter and `20k/120k ctx`, then the event count. */
+export function ComposerStats({ usage, events }: { usage: { tokens?: number; contextWindow?: number } | undefined; events: number }) {
+  const tokens = usage?.tokens;
+  const window = usage?.contextWindow ?? 0;
+  return (
+    <span className="chat-composer-stats">
+      {tokens == null ? null : (
+        <span className="chat-composer-ctx" title={`Context used / available: ${formatContextUsage(tokens, window)}`}>
+          {/* A provider with no known limit sends 0: the used count still shows, without a meter. */}
+          {window > 0 ? <meter min={0} max={window} value={tokens} low={window * 0.6} high={window * 0.85} optimum={0} aria-label="Context used" /> : null}
+          {formatTokenCount(tokens)}/{window > 0 ? formatTokenCount(window) : "?"} ctx
+        </span>
+      )}
+      <span>
+        {events} event{events === 1 ? "" : "s"}
+      </span>
+    </span>
   );
 }

@@ -5192,6 +5192,9 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-model-bar {
   position: relative;
   flex: 0 0 auto;
+  display: inline-flex;
+}
+.chat-main > .chat-model-bar {
   display: flex;
   justify-content: center;
   padding: 8px 24px 0;
@@ -5830,48 +5833,6 @@ header:has(~ main .task-info-panel) nav.tabs {
   font-size: calc(10px * var(--ui-scale));
   letter-spacing: 0.04em;
 }
-/* The thinking level in a status line: reads as the text around it until it is pointed at. The
-   chevron stands in for appearance:none's arrow, as in .field-select. */
-.thinking-select {
-  position: relative;
-  display: inline-block;
-}
-.thinking-select select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0 16px 0 4px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  background: transparent;
-  transition: background var(--dur-fast) ease;
-}
-.thinking-select select:hover:not(:disabled),
-.thinking-select select:focus-visible {
-  background: var(--surface-subtle);
-}
-.thinking-select select:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 0;
-}
-.thinking-select select:disabled {
-  cursor: default;
-}
-.thinking-select option {
-  color: var(--text-strong);
-  background: var(--surface);
-}
-.thinking-select svg {
-  position: absolute;
-  top: 50%;
-  right: 3px;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-
 .chat-pane {
   height: 100%;
   min-height: 0;
@@ -6387,7 +6348,7 @@ header:has(~ main .task-info-panel) nav.tabs {
   background: var(--surface);
   container-type: inline-size;
 }
-/* Keyboard hints left, character count centered, session controls right. */
+/* Session controls and stats (or keyboard hints) left, character count right. */
 .chat-composer-footer {
   display: flex;
   align-items: center;
@@ -6396,45 +6357,68 @@ header:has(~ main .task-info-panel) nav.tabs {
   font-size: 12px;
   color: var(--text-muted);
 }
-.chat-composer-footer.has-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-}
-.chat-composer-footer.has-actions > .chat-composer-context {
-  margin-left: 0;
-  justify-self: center;
-}
 .chat-composer-actions {
   min-width: 0;
-  max-width: 100%;
-  justify-self: end;
 }
 .chat-session-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 12px;
   min-width: 0;
-  overflow: hidden;
   white-space: nowrap;
+}
+/* Under the input the lists open up from the bar's left edge, not centered over it. */
+.chat-session-controls .chat-dropup {
+  left: 0;
+  transform: none;
+}
+/* Without a composer the controls sit in the bar above the transcript, so they open downward. */
+.chat-meta:has(.chat-session-controls) {
+  overflow: visible;
+}
+.chat-meta .chat-session-controls .chat-dropup {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+.chat-composer-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
   font-family: var(--font-mono);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+  white-space: nowrap;
 }
-.chat-composer-actions .chat-session-controls > .btn {
-  height: 20px;
-  min-height: 20px;
-  min-width: 0;
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 12px;
+.chat-composer-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-/* The model name and turn meta are long; below this width they take their own row rather than clip. */
-@container (max-width: 900px) {
-  .chat-composer-actions {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
+.chat-composer-ctx meter {
+  width: 40px;
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--surface-subtle);
+}
+.chat-composer-ctx meter::-webkit-meter-bar {
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--surface-subtle);
+}
+.chat-composer-ctx meter::-webkit-meter-optimum-value {
+  border-radius: 3px;
+  background: var(--accent);
+}
+.chat-composer-ctx meter::-webkit-meter-suboptimum-value {
+  border-radius: 3px;
+  background: var(--warning);
+}
+.chat-composer-ctx meter::-webkit-meter-even-less-good-value {
+  border-radius: 3px;
+  background: var(--danger);
 }
 .chat-composer-box {
   position: relative;

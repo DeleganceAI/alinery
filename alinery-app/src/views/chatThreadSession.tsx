@@ -1,6 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
-import { formatContextUsage } from "../chat/format";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { applySendPlan, planChatSend } from "../chat/send";
 import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
@@ -93,7 +92,6 @@ export type ChatThreadSnapshot = {
   inTerminal: boolean;
   terminalIo: SessionTerminalIo | undefined;
   statusKind: ObservationDisplayKind;
-  contextUsage: string | null;
   modelLabel: string;
   blocked: boolean;
   disconnected: string | null;
@@ -134,7 +132,6 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   inTerminal: false,
   terminalIo: undefined,
   statusKind: "loading",
-  contextUsage: null,
   modelLabel: "Model",
   blocked: false,
   disconnected: null,
@@ -962,7 +959,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     inTerminal,
     terminalIo,
     statusKind: activity.kind,
-    contextUsage: formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow),
     modelLabel: transcript.sessionMeta.model || thread.session.model || "Model",
     blocked: registry.error === "cannot continue",
     disconnected: connection.state === "failed" && !inTerminal ? connection.detail : null,

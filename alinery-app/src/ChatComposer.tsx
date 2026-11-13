@@ -33,7 +33,7 @@ export type ChatComposerProps = {
   onRemoveAttachment?: (id: string) => void;
   onClear?: () => void;
   onPasteFiles?: (files: File[]) => void;
-  /** Session controls shown at the right of the footer, under the input. */
+  /** Session controls and stats at the left of the footer, under the input. */
   actions?: ReactNode;
 };
 
@@ -319,7 +319,8 @@ export function ChatComposer({
         </div>
       )}
 
-      <div className={actions ? "chat-composer-footer has-actions" : "chat-composer-footer"}>
+      <div className="chat-composer-footer">
+        {actions ? <div className="chat-composer-actions">{actions}</div> : null}
         <div className="chat-composer-hints">
           {showHints ? (
             palette ? (
@@ -364,7 +365,6 @@ export function ChatComposer({
           {queuedCount != null && queuedCount > 0 ? <span className="dim">{queuedCount} queued</span> : null}
         </div>
         <span className={`chat-composer-context${metrics.overLimit ? " over" : ""}`}>{formatComposerStats(metrics.codePoints)}</span>
-        {actions ? <div className="chat-composer-actions">{actions}</div> : null}
       </div>
     </div>
   );

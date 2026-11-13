@@ -55,7 +55,7 @@ export function formatComposerStats(codePoints: number): string {
   return `${codePoints.toLocaleString()} chars`;
 }
 
-function formatTokenCount(n: number): string {
+export function formatTokenCount(n: number): string {
   if (n >= 1000) {
     const rounded = Math.round((n / 1000) * 10) / 10;
     return Number.isInteger(rounded) ? `${rounded}k` : `${rounded.toFixed(1)}k`;

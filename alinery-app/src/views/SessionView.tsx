@@ -11,7 +11,6 @@ import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassificat
 import { ChatComposer } from "../ChatComposer";
 import { canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls, taskAttachmentDir } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton } from "../chat/CopyMessage";
-import { formatContextUsage } from "../chat/format";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
@@ -103,7 +102,7 @@ import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
-import { ThinkingSelect } from "./ThinkingSelect";
+import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 
 // ---- session view -------------------------------------------------------------
 
@@ -991,54 +990,36 @@ export function SessionView({
     (messageDraft.body.trim().length > 0 || (messageDraft.attachments?.length ?? 0) > 0);
   const queuedMeta = chat.sessionMeta.queuedMessageCount ?? 0;
   const chatMetaHead = chat.sessionMeta.model || model;
-  const chatMetaTail = [
-    `${chat.entries.length} event${chat.entries.length === 1 ? "" : "s"}`,
-    formatContextUsage(chat.sessionMeta.contextUsage?.tokens, chat.sessionMeta.contextUsage?.contextWindow),
-    queuedMeta > 0 ? `${queuedMeta} queued` : "",
-  ]
-    .filter((part) => part && part.length > 0)
-    .join(" · ");
-  const pickThinking = (level: string) => {
-    void setSessionThinkingLevel(repoPath, id, level).then(
-      (controls) => {
-        setChat((current) => {
-          const next = applySessionControls(current, controls);
-          chatRef.current = next;
-          return next;
-        });
-      },
-      (error) => toast(String(error), "error"),
-    );
+  const applyControls = (controls: Parameters<typeof applySessionControls>[1]) =>
+    setChat((current) => {
+      const next = applySessionControls(current, controls);
+      chatRef.current = next;
+      return next;
+    });
+  const pickModel = (next: string) => {
+    void setSessionModel(repoPath, id, next).then(applyControls, (error) => toast(String(error), "error"));
   };
-  // Model, thinking and the turn meta sit under the input while the composer shows, else in their own bar.
+  const pickThinking = (level: string) => {
+    void setSessionThinkingLevel(repoPath, id, level).then(applyControls, (error) => toast(String(error), "error"));
+  };
+  // Model, thinking and the turn stats sit under the input while the composer shows, else in their own bar.
   const sessionControls = chatVisibility.showMeta ? (
     <div className="chat-session-controls">
-      <button
-        type="button"
-        className="btn ghost small"
-        aria-label="Change model"
-        title={turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
-        onClick={() => {
+      <ChatModelBar
+        model={chatMetaHead || "Model"}
+        title={turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
+        thinkingTitle={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+        thinking={chat.sessionMeta.thinking}
+        thinkingLevels={chat.sessionMeta.thinkingLevels}
+        disabledReason={rpcProcessLive ? null : "The session is not running, so its model and thinking level cannot change"}
+        onPickModel={pickModel}
+        onPickThinking={pickThinking}
+        onProviders={() => {
           setModelError(null);
           setModelDialog({ tab: "models", preselect: "", setup: false });
         }}
-      >
-        {chatMetaHead || "Model"}
-      </button>
-      {" · "}
-      {chat.sessionMeta.thinking ? (
-        <>
-          <ThinkingSelect
-            level={chat.sessionMeta.thinking}
-            levels={chat.sessionMeta.thinkingLevels}
-            disabledReason={rpcProcessLive ? null : "The session is not running, so its thinking level cannot change"}
-            title={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
-            onPick={pickThinking}
-          />
-          {" · "}
-        </>
-      ) : null}
-      {chatMetaTail}
+      />
+      <ComposerStats usage={chat.sessionMeta.contextUsage} events={chat.entries.length} />
     </div>
   ) : null;
 
@@ -1079,12 +1060,7 @@ export function SessionView({
   const applyChatModel = async (provider: string, modelId: string) => {
     setModelError(null);
     try {
-      const controls = await setSessionModel(repoPath, id, `${provider}/${modelId}`);
-      setChat((current) => {
-        const next = applySessionControls(current, controls);
-        chatRef.current = next;
-        return next;
-      });
+      applyControls(await setSessionModel(repoPath, id, `${provider}/${modelId}`));
       setModelDialog(null);
     } catch (error) {
       setModelError(String(error));
@@ -1545,7 +1521,7 @@ export function SessionView({
                             status={chatStatus}
                             catalog={chat.commands}
                             sending={messageSending}
-                            showHints={chatVisibility.showComposerHints}
+                            showHints={false}
                             attachments={messageDraft.attachments ?? []}
                             dropping={dropping}
                             onAttach={() => {

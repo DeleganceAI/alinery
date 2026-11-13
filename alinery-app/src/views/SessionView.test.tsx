@@ -1030,25 +1030,24 @@ describe("Vinculum session chat", () => {
     });
     renderSession({ intent: "attach", model: "stale/model" });
     expect(await screen.findByText("playbook prompt")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("xai/grok-4.6");
     // The pickers sit in the composer footer, beside the input, not in a bar above the transcript.
-    const footer = screen.getByRole("button", { name: "Change model" }).closest(".chat-composer-footer") as HTMLElement;
+    const footer = screen.getByRole("button", { name: "xai/grok-4.6" }).closest(".chat-composer-footer") as HTMLElement;
     expect(footer).not.toBeNull();
-    expect(within(footer).getByRole("combobox", { name: "Thinking level" })).toBeDefined();
+    expect(within(footer).getByText("1 event")).toBeDefined();
     expect(document.querySelector(".chat-meta")).toBeNull();
-    const picker = screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement;
-    expect(picker.value).toBe("high");
-    fireEvent.change(picker, { target: { value: "low" } });
+    fireEvent.click(within(footer).getByRole("button", { name: "Thinking level: high" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "low" }));
     await waitFor(() => expect(sessionSetThinkingLevel).toHaveBeenCalledWith("/repo", "session", "low"));
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
+    expect(await screen.findByRole("button", { name: "Thinking level: low" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Change model" }));
+    fireEvent.click(screen.getByRole("button", { name: "xai/grok-4.6" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Providers…" }));
     expect(await screen.findByText("Current model: xai/grok-4.6")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "anthropic/claude" }));
     await waitFor(() => expect(sessionSetModel).toHaveBeenCalledWith("/repo", "session", "anthropic/claude"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Change model" }).textContent).toBe("anthropic/claude"));
-    expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
-    expect(screen.getByText("off")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "anthropic/claude" })).toBeTruthy();
+    // The new model names no levels, so the stored one shows but cannot change.
+    expect((screen.getByRole("button", { name: "Thinking level: off" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows Finish step for a locked Vinculum execution and grants it without an OMP reply", async () => {
