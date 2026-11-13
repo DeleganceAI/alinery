@@ -8310,10 +8310,6 @@ header:has(~ main .task-info-panel) nav.tabs {
   height: 26px;
   padding-block: 0;
 }
-.repo-tree-title {
-  font-weight: 600;
-  color: var(--text-muted);
-}
 .repo-tree-filter {
   flex: 1;
   min-width: 0;

@@ -89,7 +89,6 @@ export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPat
   return (
     <section className="repo-tree" aria-label="Repository files">
       <div className="repo-tree-head">
-        <span className="repo-tree-title">Repository</span>
         <div className="btn-group repo-tree-search">
           <input
             className="field-input repo-tree-filter"
