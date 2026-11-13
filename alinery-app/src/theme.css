@@ -8468,6 +8468,37 @@ header:has(~ main .task-info-panel) nav.tabs {
 .artifactitem.attachment {
   color: var(--text-muted);
 }
+/* Copy path on a file row: a small icon that shows on hover or keyboard focus, so a list of files stays quiet. A tree row is a
+   button, so its copy button sits beside it in .artifact-copy-row, which takes over the row's divider. */
+.artifact-copy-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.artifact-copy-row > .artifactitem {
+  border-bottom: 0;
+}
+.artifactitem .copy-value-button,
+.artifact-copy-row > .copy-value-button {
+  width: 22px;
+  min-width: 0;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+}
+.artifactitem .copy-value-button {
+  margin-right: 0;
+}
+.artifactitem:hover .copy-value-button,
+.artifactitem:focus-within .copy-value-button,
+.artifact-copy-row:hover > .copy-value-button,
+.artifact-copy-row:focus-within > .copy-value-button {
+  opacity: 1;
+}
 .artifactitem-name {
   flex: 1 1 auto;
   min-width: 0;

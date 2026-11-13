@@ -233,7 +233,7 @@ test("a tree node reads its file by id, an attachment too, and a link planted af
   expect(plan?.kind).toBe("owned");
   expect(shot?.kind).toBe("attachment");
   expect(shot?.revealPath).toBe(`tasks/${slug}/artifacts/attachments/shot.png`);
-  expect(plan?.revealPath).toBe("");
+  expect(plan?.revealPath).toBe(`tasks/${slug}/artifacts/03-plan.md`);
   expect(Buffer.concat(await read(c, { case: "artifactNode", value: { taskSlug: slug, nodeId: plan?.id } })).toString()).toBe("# plan\n");
   expect(Buffer.concat(await read(c, { case: "artifactNode", value: { taskSlug: slug, nodeId: shot?.id } })).toString()).toBe("png-bytes");
   expect(await code(read(c, { case: "artifactNode", value: { taskSlug: slug, nodeId: "artifact-0000000000000000" } }))).toBe(Code.NotFound);

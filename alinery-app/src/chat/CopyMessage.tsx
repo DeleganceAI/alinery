@@ -117,7 +117,9 @@ export function CopyTextButton({ text, label }: { text: string; label: string })
       disabled={!text}
       title={statusLabel}
       aria-label={statusLabel}
-      onClick={async () => {
+      onClick={async (event) => {
+        // It sits inside clickable rows (an attachment row reveals the file): copying is all it does.
+        event.stopPropagation();
         try {
           await copyTextToClipboard(text);
           setState("copied");

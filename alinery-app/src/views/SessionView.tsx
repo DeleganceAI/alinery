@@ -9,6 +9,7 @@ import { AttachmentPreview } from "../AttachmentPreview";
 import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
+import { CodeView } from "../CodeView";
 import { canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls, taskAttachmentDir } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, type PathLinks, PathLinksContext } from "../chat/CopyMessage";
 import type { ModelRolesMap } from "../chat/modelRoles";
@@ -33,9 +34,8 @@ import {
 import { completionPrompt } from "../completionPrompt";
 import { confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
-import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
-import { CodeView } from "../CodeView";
 import { MainTabs, type OpenTab, useOpenTabs } from "../MainTabs";
+import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
 import { revealPath } from "../revealPath";
 import { SessionTerminal, type SessionTerminalConnectionState } from "../SessionTerminal";
@@ -61,17 +61,18 @@ import {
   attachmentFilePath,
   clearReviewPending,
   finalizeMessageActions,
+  openFilePath,
   prepareCommentsPrompt,
   prepareReviewApproval,
   readArtifactText,
-  readWorktreeText,
   readNodeText,
+  readWorktreeText,
   useTaskArtifacts,
 } from "../sync/artifacts";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
-import { listWorktreeFilesForRepo } from "../sync/git";
 import { readChatImage } from "../sync/chat";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
+import { listWorktreeFilesForRepo } from "../sync/git";
 import { observationNow, useSessionObservation } from "../sync/sessionObservation";
 import {
   abortSession,
@@ -101,11 +102,11 @@ import type {
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
+import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
 import { CustomEndpointForm, ProviderAccessPanel } from "./ProviderAccessPanel";
 import { SessionActionPanel } from "./SessionActionPanel";
-import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 
 // ---- session view -------------------------------------------------------------
 
@@ -1374,6 +1375,7 @@ export function SessionView({
                           }}
                         >
                           <span className="artifactitem-name">{item.name}</span>
+                          {item.attachment && <CopyTextButton text={attachmentFilePath(repoPath, taskSlug, item.name)} label="path" />}
                           {!available && <span className="pill">Not yet readable</span>}
                           {commentCount > 0 && (
                             <span
@@ -1420,6 +1422,7 @@ export function SessionView({
                     </div>
                     <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                     <div className="btn-group">
+                      <CopyTextButton text={openFilePath(repoPath, taskSlug, selectedArtifact, selectedArtifactNode, selectedIsRepo ? cwd : undefined)} label="path" />
                       <CopyArtifactButton text={artifactText} />
                       {selectedPreviewable && (
                         <>

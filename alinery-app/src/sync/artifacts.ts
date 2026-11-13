@@ -229,6 +229,17 @@ export const alineryFilePath = (repo: string, below: string) => `${machinePath(r
 
 export const attachmentFilePath = (repo: string, taskSlug: string, name: string) => alineryFilePath(repo, `tasks/${taskSlug}/artifacts/attachments/${name}`);
 
+/**
+ * Where an open file is on the repo's machine, for Copy path. `worktree` is set for a worktree file (`name` below it). An artifact
+ * from the tree carries its own path; one named without a node is below the task's artifacts. "" when there is no one file: a node
+ * from a daemon older than the path on every node.
+ */
+export function openFilePath(repo: string, taskSlug: string, name: string, node: ArtifactTreeNode | null, worktree?: string): string {
+  if (worktree !== undefined) return worktree && name ? `${worktree.replace(/\/$/, "")}/${name}` : "";
+  if (node) return node.reveal_path ? alineryFilePath(repo, node.reveal_path) : "";
+  return name ? alineryFilePath(repo, `tasks/${taskSlug}/artifacts/${name}`) : "";
+}
+
 // ---- writes ---------------------------------------------------------------------------------------------
 
 /** Runs a write, then waits (briefly) for this window's replica to pass the cursor it answered with, so a read right after shows the change. */

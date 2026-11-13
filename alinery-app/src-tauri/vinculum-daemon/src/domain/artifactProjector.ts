@@ -71,7 +71,7 @@ function treeNode(alinery: string, n: ResolvedNode): ArtifactTreeNode {
     ownerTaskSlug: n.node.owner_task_slug,
     source: n.node.source,
     children: n.children.map((c) => treeNode(alinery, c)),
-    revealPath: n.node.kind === "attachment" && n.path !== undefined ? relative(alinery, n.path) : "",
+    revealPath: n.path !== undefined ? relative(alinery, n.path) : "",
   };
 }
 

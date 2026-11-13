@@ -13,12 +13,12 @@ import { CodeView } from "../CodeView";
 import { classifyAttachment } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, copyTextToClipboard } from "../chat/CopyMessage";
 import { confirmDanger } from "../confirm";
-import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
+import { GitDiffView, GitPanel, gitDiffTab } from "../GitPanel";
 import { MainTabs, useOpenTabs } from "../MainTabs";
+import { awaitingSessionName, NameEditor, PendingSessionName, restoreNameFocus } from "../NameEditor";
 import { PaneResizer } from "../PaneResizer";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
-import { GitDiffView, GitPanel, gitDiffTab } from "../GitPanel";
 import { RepoFileTree } from "../RepoFileTree";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
@@ -59,7 +59,17 @@ import {
   taskKey,
   useMinuteNow,
 } from "../shared";
-import { addComment, attachmentFilePath, clearReviewPending, FileNotShown, readArtifactText, readNodeText, readWorktreeText, useTaskArtifacts } from "../sync/artifacts";
+import {
+  addComment,
+  attachmentFilePath,
+  clearReviewPending,
+  FileNotShown,
+  openFilePath,
+  readArtifactText,
+  readNodeText,
+  readWorktreeText,
+  useTaskArtifacts,
+} from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
 import { type GitDiffTarget, pushAndCompareUrlForRepo } from "../sync/git";
@@ -1308,6 +1318,7 @@ export function TaskDetail({
                       }}
                     >
                       <span className="artifactitem-name">{item.name}</span>
+                      {item.attachment && <CopyTextButton text={attachmentFilePath(repoPath, slug, item.name)} label="path" />}
                       {!available && <span className="pill">Not yet readable</span>}
                       <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                     </div>
@@ -1358,6 +1369,7 @@ export function TaskDetail({
                   </div>
                   <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                   <div className="btn-group">
+                    <CopyTextButton text={openFilePath(repoPath, slug, selectedArtifact, selectedArtifactNode, selectedIsRepo ? (task?.worktree ?? "") : undefined)} label="path" />
                     <CopyArtifactButton text={artifactText} />
                     {selectedPreviewable && (
                       <>

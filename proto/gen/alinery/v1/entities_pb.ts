@@ -2494,7 +2494,8 @@ export const AttachmentSchema: GenMessage<Attachment> = /*@__PURE__*/
 /**
  * One node of the artifact tree a task shows (S4.5). `kind`: owned, attachment, subtask_folder or referenced. `source`: owned,
  * parent_context, active_child or snapshot. `reveal_path` is the file's path below `.alinery/` on the daemon's machine, set on
- * an attachment only; a client names a file by `id` (BlobService `ArtifactNodeBlob`), never by that path.
+ * every file node (not a folder), for Reveal and Copy path; a client names a file by `id` (BlobService `ArtifactNodeBlob`),
+ * never by that path.
  *
  * @generated from message alinery.v1.ArtifactTreeNode
  */

@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { CopyTextButton } from "./chat/CopyMessage";
 import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
 import { alineryFilePath, attachmentFilePath, readNodeBytes } from "./sync/artifacts";
 import { readAttachmentBytes } from "./sync/tasks";
@@ -54,6 +55,7 @@ export function AttachmentPreview({
   children?: ReactNode;
 }) {
   const { src, error, setError } = useAttachmentImageSrc(repoPath, taskSlug, name, nodeId);
+  const path = revealBelow ? alineryFilePath(repoPath, revealBelow) : nodeId ? "" : attachmentFilePath(repoPath, taskSlug, name);
 
   return (
     <details className="attachment-preview" open>
@@ -74,18 +76,18 @@ export function AttachmentPreview({
         )}
       </div>
       <div className="attachment-preview-actions">
-        {(!nodeId || revealBelow) && (
-          <button
-            type="button"
-            className="btn ghost small"
-            aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
-            onClick={() => {
-              const path = revealBelow ? alineryFilePath(repoPath, revealBelow) : attachmentFilePath(repoPath, taskSlug, name);
-              revealPath(path).catch((reason) => setError(String(reason)));
-            }}
-          >
-            {revealActionLabel()}
-          </button>
+        {path && (
+          <>
+            <button
+              type="button"
+              className="btn ghost small"
+              aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
+              onClick={() => revealPath(path).catch((reason) => setError(String(reason)))}
+            >
+              {revealActionLabel()}
+            </button>
+            {filesAreRemote() ? null : <CopyTextButton text={path} label="path" />}
+          </>
         )}
         {children}
       </div>

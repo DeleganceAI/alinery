@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { classifyAttachment } from "./chat/attachments";
+import { CopyTextButton } from "./chat/CopyMessage";
 import { revealPath } from "./revealPath";
 import { alineryFilePath } from "./sync/artifacts";
 import type { ArtifactTreeNode } from "./types";
@@ -82,29 +83,40 @@ function ArtifactTreeRow({
       </div>
     );
   }
+  const row = (
+    <button
+      type="button"
+      className={`artifactitem artifact-tree-row${selectedId === node.id ? " selected" : ""}${node.kind === "attachment" ? " attachment" : ""}`}
+      style={{ paddingLeft: `${10 + depth * 16}px` }}
+      title={node.label}
+      onClick={(event) => {
+        if (folder) {
+          onToggle(node.id);
+        } else if (node.kind === "attachment") {
+          if (node.reveal_path) revealPath(alineryFilePath(repoPath, node.reveal_path)).catch((error) => onError(String(error)));
+        } else {
+          onSelect(node, event.detail >= 2);
+        }
+      }}
+    >
+      <span className="artifact-tree-chevron" aria-hidden="true">
+        {folder ? (isCollapsed ? "›" : "⌄") : ""}
+      </span>
+      <span className="artifactitem-name">{node.label}</span>
+      {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
+    </button>
+  );
   return (
     <>
-      <button
-        type="button"
-        className={`artifactitem artifact-tree-row${selectedId === node.id ? " selected" : ""}${node.kind === "attachment" ? " attachment" : ""}`}
-        style={{ paddingLeft: `${10 + depth * 16}px` }}
-        title={node.label}
-        onClick={(event) => {
-          if (folder) {
-            onToggle(node.id);
-          } else if (node.kind === "attachment") {
-            if (node.reveal_path) revealPath(alineryFilePath(repoPath, node.reveal_path)).catch((error) => onError(String(error)));
-          } else {
-            onSelect(node, event.detail >= 2);
-          }
-        }}
-      >
-        <span className="artifact-tree-chevron" aria-hidden="true">
-          {folder ? (isCollapsed ? "›" : "⌄") : ""}
-        </span>
-        <span className="artifactitem-name">{node.label}</span>
-        {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
-      </button>
+      {/* An attachment opens nothing here (a click reveals it), so its row carries Copy path; the button cannot nest in the row's. */}
+      {node.kind === "attachment" && node.reveal_path ? (
+        <div className="artifact-copy-row">
+          {row}
+          <CopyTextButton text={alineryFilePath(repoPath, node.reveal_path)} label="path" />
+        </div>
+      ) : (
+        row
+      )}
       {folder &&
         !isCollapsed &&
         node.children.map((child) => (
