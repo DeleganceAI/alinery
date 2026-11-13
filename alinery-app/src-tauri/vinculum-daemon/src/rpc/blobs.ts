@@ -3,7 +3,12 @@
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { BlobRef, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
-import { artifactBlob, artifactNodeBlob, attachmentBlob, type BlobBytes, canvasPanelBlob, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, stepObjectBlob, type UploadTarget, worktreeFileBlob } from "../domain/blobs.ts";
+import { artifactBlob, artifactNodeBlob, attachmentBlob, type BlobBytes, canvasFileBlob, canvasPanelBlob, chatAttachmentBlob, renderedPdfBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, stepObjectBlob, type UploadTarget, worktreeFileBlob } from "../domain/blobs.ts";
+import { artifactFilePath } from "../domain/artifactFiles.ts";
+import { resolveNode } from "../domain/artifactTree.ts";
+import { canvasFilePath } from "../domain/canvas.ts";
+import { loadChat } from "../domain/chat.ts";
+import { worktreeFilePath } from "../domain/worktreeFiles.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
@@ -19,8 +24,22 @@ function targetOf(ref: BlobRef | undefined): UploadTarget {
   throw fail(Code.InvalidArgument, "invalid_argument", "an upload target is an attachment, a chat attachment or a staged file");
 }
 
-function resolve(repo: string, ref: BlobRef | undefined): BlobBytes {
+/** The checked path of a file a client may have rendered: one it can already read as a canvas file, a worktree file or an artifact. */
+function sourcePath(repo: string, ref: BlobRef | undefined): string {
   const t = ref?.target;
+  if (t?.case === "canvasFile") {
+    loadChat(repo, t.value.threadId);
+    return canvasFilePath(repo, t.value.threadId, t.value.panel, t.value.path);
+  }
+  if (t?.case === "worktreeFile") return worktreeFilePath(repo, t.value.taskSlug, t.value.path);
+  if (t?.case === "artifactNode") return resolveNode(repo, t.value.taskSlug, t.value.nodeId).path;
+  if (t?.case === "artifact") return artifactFilePath(repo, t.value.taskSlug, t.value.name);
+  throw fail(Code.InvalidArgument, "invalid_argument", "a rendered PDF's source is a canvas file, a worktree file or an artifact");
+}
+
+function resolve(repo: string, ref: BlobRef | undefined): BlobBytes | Promise<BlobBytes> {
+  const t = ref?.target;
+  if (t?.case === "renderedPdf") return renderedPdfBlob(repo, sourcePath(repo, t.value.source));
   if (t?.case === "attachment") return attachmentBlob(repo, t.value.taskSlug, t.value.name);
   if (t?.case === "chatAttachment") return chatAttachmentBlob(repo, t.value.threadId, t.value.name);
   if (t?.case === "draftImage") return draftImageBlob(repo, t.value.draftSlug, t.value.name);
@@ -28,6 +47,7 @@ function resolve(repo: string, ref: BlobRef | undefined): BlobBytes {
   if (t?.case === "artifactNode") return artifactNodeBlob(repo, t.value.taskSlug, t.value.nodeId);
   if (t?.case === "stepObject") return stepObjectBlob(repo, t.value.taskSlug, t.value.executionId, t.value.sha256);
   if (t?.case === "canvasPanel") return canvasPanelBlob(repo, t.value.threadId, t.value.panel);
+  if (t?.case === "canvasFile") return canvasFileBlob(repo, t.value.threadId, t.value.panel, t.value.path);
   if (t?.case === "worktreeFile") return worktreeFileBlob(repo, t.value.taskSlug, t.value.path);
   throw fail(Code.InvalidArgument, "invalid_argument", "this blob cannot be read");
 }

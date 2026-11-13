@@ -50,6 +50,16 @@ test("on an enabled thread each kind lands in a panel, the row is refreshed, and
   expect([bad.isError, refreshed.length]).toEqual([true, 5]);
 });
 
+test("show_file and show_files put repository files on the canvas and refuse one outside it", async () => {
+  const { call, repo } = rig();
+  await enableCanvas(repo, "t1");
+  mkdirSync(join(repo, "out"));
+  writeFileSync(join(repo, "out", "a.xlsx"), "x");
+  expect((await call("alinery_canvas_show_file", { path: "out/a.xlsx" })).output[0]?.text).toBe("Showing out/a.xlsx in p1 (rev 1).");
+  expect((await call("alinery_canvas_show_files", { dir: "out" })).output[0]?.text).toBe("Listed 1 file in p2 (rev 1).");
+  expect((await call("alinery_canvas_show_file", { path: "/etc/hosts" })).isError).toBe(true);
+});
+
 test("the canvas instruction is in a thread's prompt only once its canvas is on", async () => {
   const { extension, repo } = rig();
   const render = (conversationId: string) => (extension.sections?.[0] as { render(input: unknown): unknown }).render({ env: undefined, conversationId });

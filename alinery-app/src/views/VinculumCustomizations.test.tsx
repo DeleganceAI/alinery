@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
 import { Toast } from "../toast";
 import type { VinculumCustomizations as Inventory, VinculumDaemonCustomizations } from "../types";
-import { VinculumCustomizations } from "./VinculumCustomizations";
+import { skillCounter, VinculumCustomizations } from "./VinculumCustomizations";
 
 const mocks = vi.hoisted(() => ({
   readCustomizations: vi.fn(),
@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   pickVinculumSkillDialog: vi.fn(),
   installSkill: vi.fn(),
   deleteSkill: vi.fn(),
+  setSkillEnabled: vi.fn(),
+  restoreIncludedSkills: vi.fn(),
   confirmDanger: vi.fn(async () => true),
   askConfirm: vi.fn(async () => "replace"),
 }));
@@ -30,6 +32,8 @@ vi.mock("../sync/agent", () => ({
   customizationPrompt: mocks.customizationPrompt,
   installSkill: mocks.installSkill,
   deleteSkill: mocks.deleteSkill,
+  setSkillEnabled: mocks.setSkillEnabled,
+  restoreIncludedSkills: mocks.restoreIncludedSkills,
 }));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger, askConfirm: mocks.askConfirm }));
 
@@ -53,6 +57,8 @@ beforeEach(() => {
   mocks.pickVinculumSkillDialog.mockResolvedValue(null);
   mocks.installSkill.mockResolvedValue({ name: "demo-skill", exists: false });
   mocks.deleteSkill.mockResolvedValue(undefined);
+  mocks.setSkillEnabled.mockResolvedValue(undefined);
+  mocks.restoreIncludedSkills.mockResolvedValue(undefined);
   mocks.confirmDanger.mockResolvedValue(true);
   mocks.askConfirm.mockResolvedValue("replace");
 });
@@ -75,6 +81,33 @@ describe("Vinculum customizations", () => {
     expect(screen.getByText(/Vinculum agent directory/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show Ponytail in file manager" }));
     await waitFor(() => expect(mocks.revealItemInDir).toHaveBeenCalledWith("/config/agent/skills/ponytail/SKILL.md"));
+  });
+
+  it("switches skills, removes and restores included ones, and blocks one more at the limit", async () => {
+    mocks.readCustomizations.mockResolvedValue({
+      items: [
+        { name: "pdf", kind: "Skill", source: "Included", path: "/rt/skills/pdf/SKILL.md", offered: true, included: true, enabled: true },
+        { name: "nda-generator", kind: "Skill", source: "Included", path: "/rt/skills/nda-generator/SKILL.md", offered: false, included: true, enabled: false },
+        { name: "Ponytail", kind: "Skill", source: "/config/agent/skills/ponytail/SKILL.md", path: "/config/agent/skills/ponytail/SKILL.md", offered: true, enabled: true },
+      ],
+      errors: [],
+      skills: { on: 64, limit: 64, catalogChars: 8000, removed: ["docx"] },
+    } satisfies Inventory);
+    render(<VinculumCustomizations />);
+    expect(await screen.findByText("64 of 64 on · about 2,000 tokens in every prompt")).toBeTruthy();
+    expect((screen.getByRole("switch", { name: "nda-generator on" }) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("switch", { name: "pdf on" }));
+    await waitFor(() => expect(mocks.setSkillEnabled).toHaveBeenCalledWith("pdf", false));
+    expect(screen.queryByRole("button", { name: "Delete pdf" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove pdf" }));
+    await waitFor(() => expect(mocks.deleteSkill).toHaveBeenCalledWith("pdf", undefined, true));
+    fireEvent.click(screen.getByRole("button", { name: "Restore 1 removed included skill" }));
+    await waitFor(() => expect(mocks.restoreIncludedSkills).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Delete Ponytail" })).toBeTruthy();
+  });
+
+  it("says when more skills are on than are offered", () => {
+    expect(skillCounter({ on: 70, limit: 64, catalogChars: 0, removed: [] })).toBe("70 of 64 on · only the first 64 are offered");
   });
 
   it("uploads a skill and deletes one after confirmation", async () => {

@@ -590,7 +590,7 @@ message JoinRequests { repeated JoinRequest requests = 1; }
 // here: a client reads one through BlobService (`CanvasPanelBlob`) when its `rev` moves.
 message CanvasPanel {
   string id = 1;     // p1 to p4
-  string kind = 2;   // html, table, chart or markdown
+  string kind = 2;   // html, table, chart, markdown, file or files
   string title = 3;
   uint64 rev = 4;    // moves on every write of the body
   int64 updated_at_ms = 5;

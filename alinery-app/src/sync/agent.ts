@@ -40,8 +40,12 @@ export async function readCustomizations(repo?: string): Promise<VinculumCustomi
       source: item.source,
       path: item.path ?? null,
       ...(item.offered === undefined ? {} : { offered: item.offered }),
+      ...(item.included === undefined ? {} : { included: item.included }),
+      ...(item.enabled === undefined ? {} : { enabled: item.enabled }),
     })),
     errors: reply.errors,
+    // A daemon from before included skills sends no limit.
+    ...(reply.skillLimit ? { skills: { on: reply.skillsOn, limit: reply.skillLimit, catalogChars: reply.skillCatalogChars, removed: reply.removedIncluded } } : {}),
   };
 }
 
@@ -57,9 +61,20 @@ export async function installSkill(path: string, replace: boolean, repo?: string
   return { name: reply.name, exists: reply.exists };
 }
 
-export async function deleteSkill(name: string, repo?: string): Promise<void> {
+/** Deletes a skill directory of the agent directory, or with `included` hides an included skill until restored. */
+export async function deleteSkill(name: string, repo?: string, included = false): Promise<void> {
   const host = await agentHost(repo);
-  await call(() => agent(host).deleteSkill({ meta: newMutationMeta(), name }));
+  await call(() => agent(host).deleteSkill({ meta: newMutationMeta(), name, included }));
+}
+
+export async function setSkillEnabled(name: string, enabled: boolean, repo?: string): Promise<void> {
+  const host = await agentHost(repo);
+  await call(() => agent(host).setSkillEnabled({ meta: newMutationMeta(), name, enabled }));
+}
+
+export async function restoreIncludedSkills(repo?: string): Promise<void> {
+  const host = await agentHost(repo);
+  await call(() => agent(host).restoreIncludedSkills({ meta: newMutationMeta() }));
 }
 
 export async function customizationPrompt(repo?: string): Promise<string> {
@@ -72,4 +87,13 @@ export async function readMcpStatus(repo?: string): Promise<VinculumDaemonCustom
   const host = await agentHost(repo);
   const reply = await call(() => agent(host).readMcpStatus({}));
   return { tools: reply.tools, servers: reply.servers.map((s) => ({ name: s.name, builtin: s.builtin, state: s.state, ...(s.error === undefined ? {} : { error: s.error }) })) };
+}
+
+export type OfficeTools = { tools: { name: string; path: string }[]; bundledPython: boolean };
+
+/** What the office skills can run on the repository's host, as its daemon finds it on the agent's PATH. */
+export async function readOfficeTools(repo?: string): Promise<OfficeTools> {
+  const host = await agentHost(repo);
+  const reply = await call(() => agent(host).readOfficeTools({}));
+  return { tools: reply.tools.map((t) => ({ name: t.name, path: t.path })), bundledPython: reply.bundledPython };
 }

@@ -10643,6 +10643,12 @@ header:has(~ main .task-info-panel) nav.tabs {
   overflow-wrap: anywhere;
   font-size: calc(13px * var(--ui-scale));
 }
+.omp-customization-details .skill-included {
+  margin-left: 8px;
+}
+.skill-counter {
+  margin: 0 0 8px;
+}
 .omp-customization-source {
   margin-top: 4px;
   font-size: calc(12px * var(--ui-scale));
@@ -10828,6 +10834,103 @@ header:has(~ main .task-info-panel) nav.tabs {
 }
 .canvas-error {
   color: var(--danger, var(--text-muted));
+}
+.canvas-slot[data-kind="file"] .canvas-slot-body,
+.canvas-slot[data-kind="files"] .canvas-slot-body {
+  display: flex;
+  flex-direction: column;
+}
+.canvas-file {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.canvas-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.canvas-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.canvas-file-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.canvas-file-preview .canvas-table-wrap {
+  margin: 0;
+}
+.canvas-file-frame {
+  flex: 1 1 auto;
+  min-height: 240px;
+}
+.canvas-image {
+  max-width: 100%;
+  height: auto;
+  align-self: flex-start;
+}
+.canvas-text {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.canvas-pdf-pages {
+  display: grid;
+  gap: 8px;
+}
+.canvas-pdf-page {
+  width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.canvas-sheet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.canvas-sheet-tabs button {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.canvas-sheet-tabs button.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.canvas-files-back {
+  align-self: flex-start;
+}
+.canvas-files-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.canvas-deck-note {
+  margin: 0 0 8px;
+}
+.canvas-files-note {
+  padding: 8px 10px;
 }
 
 /* A row of controls that read as one: touching, shared outer corners, a single line between each. A pressed toggle

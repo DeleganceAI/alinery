@@ -42,6 +42,21 @@ message CanvasPanelBlob {
   string panel = 2;  // p1 to p4
 }
 
+// A file a `file` or `files` canvas panel shows: the panel's own file (path ignored), or one row of its list (path
+// relative to the listed directory). Nothing else is reachable, and the file must still be inside the repository.
+message CanvasFileBlob {
+  string thread_id = 1;
+  string panel = 2;
+  string path = 3;
+}
+
+// A presentation drawn to PDF by LibreOffice on the repository's machine, for its preview: the source is a canvas
+// file, a worktree file or an artifact, checked as reading it would be. FAILED_PRECONDITION when LibreOffice is
+// missing or the conversion fails, with a message to show.
+message RenderedPdfBlob {
+  BlobRef source = 1;
+}
+
 // A file in the task's `artifacts/` (not `attachments/` or `subtasks/`). The daemon refuses a link on the way.
 message ArtifactBlob {
   string task_slug = 1;
@@ -79,6 +94,8 @@ message BlobRef {
     StepObjectBlob step_object = 9;
     CanvasPanelBlob canvas_panel = 10;
     WorktreeFileBlob worktree_file = 11;
+    CanvasFileBlob canvas_file = 12;
+    RenderedPdfBlob rendered_pdf = 13;
   }
 }
 

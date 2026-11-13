@@ -5,6 +5,7 @@ import { CANVAS_SANDBOX, lockedLoader, withCanvasCsp } from "../canvasSandbox";
 import { ChatMarkdown } from "../chat/CopyMessage";
 import { closeCanvasPanel, readCanvasPanel } from "../sync/chat";
 import { toast } from "../toast";
+import { FilePanel, FilesPanel, Grid } from "./CanvasFiles";
 import { errorMessage } from "./chatThreadSession";
 
 type Body = { rev: bigint; text?: string; error?: string };
@@ -28,31 +29,7 @@ function usePanelBody(repo: string, threadId: string, panel: CanvasPanel): Body 
 
 function TablePanel({ text }: { text: string }) {
   const { columns, rows } = JSON.parse(text) as { columns: string[]; rows: unknown[][] };
-  return (
-    <div className="canvas-table-wrap">
-      <table className="canvas-table">
-        <thead>
-          <tr>
-            {columns.map((c, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: columns may repeat a name
-              <th key={i}>{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, r) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity
-            <tr key={r}>
-              {columns.map((_, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: cells have no identity
-                <td key={i}>{row[i] == null ? "" : String(row[i])}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <Grid columns={columns} rows={rows} />;
 }
 
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -93,8 +70,11 @@ function ChartPanel({ text }: { text: string }) {
   return error ? <p className="canvas-error">Chart failed: {error}</p> : <div ref={host} className="canvas-chart" />;
 }
 
-function PanelBody({ kind, text, title }: { kind: string; text: string; title: string }) {
+function PanelBody({ kind, text, title, where }: { kind: string; text: string; title: string; where: { repo: string; threadId: string; panel: string } }) {
   try {
+    // Keyed by the body: showing a file again (a new size or time) reads it again.
+    if (kind === "file") return <FilePanel key={text} where={where} text={text} />;
+    if (kind === "files") return <FilesPanel key={text} where={where} text={text} />;
     if (kind === "markdown") return <ChatMarkdown text={text} />;
     if (kind === "table") return <TablePanel text={text} />;
     if (kind === "chart") return <ChartPanel text={text} />;
@@ -134,7 +114,11 @@ function CanvasSlot(props: { repo: string; threadId: string; panel: CanvasPanel;
         </button>
       </header>
       <div className="canvas-slot-body">
-        {body?.error ? <p className="canvas-error">{body.error}</p> : body?.text === undefined ? null : <PanelBody kind={panel.kind} text={body.text} title={label} />}
+        {body?.error ? (
+          <p className="canvas-error">{body.error}</p>
+        ) : body?.text === undefined ? null : (
+          <PanelBody kind={panel.kind} text={body.text} title={label} where={{ repo, threadId, panel: panel.id }} />
+        )}
       </div>
     </section>
   );
@@ -147,7 +131,7 @@ export function ChatCanvas({ repo, threadId, canvas }: { repo: string; threadId:
   if (panels.length === 0) {
     return (
       <div className="chat-canvas chat-canvas-empty" data-testid="chat-canvas">
-        <p>The canvas is empty. Ask Ava to show something here: a chart, a table, a document or a small page.</p>
+        <p>The canvas is empty. Ask Ava to show something here: a chart, a table, a document, a small page, or files to preview and save.</p>
       </div>
     );
   }

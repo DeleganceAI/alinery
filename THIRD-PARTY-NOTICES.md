@@ -1,8 +1,8 @@
 # Third-party notices
 
 Third-party components retain their respective licenses. The notices below cover
-OMP, the bundled Git fallback, the bundled SuperDevelop adaptations, and
-thinking-orbs; other dependencies retain their own license and notice requirements.
+OMP, the bundled Git fallback, the bundled Python, the bundled SuperDevelop
+adaptations, and thinking-orbs; other dependencies retain their own license and notice requirements.
 
 ## Git
 
@@ -12,6 +12,35 @@ tarball pinned in `scripts/git-pin.txt` (sha256 in `scripts/git-pin.sha256`),
 downloaded from `https://mirrors.kernel.org/pub/software/scm/git/`. Alinery does
 not link Git. The tree ships Git's `COPYING` (GPL-2.0) and a `SOURCE` file
 naming that tarball.
+
+## Python
+
+Each runtime archive (`resources/remote/<triple>.tar.gz`) carries a `python/`
+tree for the office skills: a CPython build from
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone),
+pinned by release and sha256 in `scripts/python-runtime/stage.sh`, with the
+packages locked in `scripts/python-runtime/requirements.txt` installed from
+PyPI wheels. Alinery runs it as a separate program and does not link it.
+CPython is under the PSF License (`python/lib/python3.12/LICENSE.txt`, which
+also lists the licenses of what CPython bundles). Each package, pip included,
+keeps its license in its `*.dist-info` directory under
+`python/lib/python3.12/site-packages/`; all are permissive (MIT, BSD, PSF,
+Apache-2.0 or BSD, MIT-CMU).
+
+## Included skills
+
+`alinery-app/src-tauri/vinculum-daemon/skills/` (shipped as each runtime
+archive's `skills/`) holds copies of agent skills, pinned by commit in
+`scripts/update-included-skills.sh`:
+
+- `docx`, `pdf`, `pptx`, `xlsx` and `internal-comms` from
+  [anthropics/skills](https://github.com/anthropics/skills), Apache License 2.0;
+  each directory keeps its `LICENSE.txt`.
+- The other skills from
+  [claude-office-skills/skills](https://github.com/claude-office-skills/skills),
+  MIT License, in `skills/LICENSE.claude-office-skills.txt`. Our copies change
+  each skill's frontmatter `name` to its directory name and replace six empty
+  descriptions.
 
 ## oh-my-pi / OMP
 

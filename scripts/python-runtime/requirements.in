@@ -1,0 +1,12 @@
+# The office skills import these (vinculum-daemon/skills/). Locked into requirements.txt; see stage.sh.
+lxml
+defusedxml
+pypdf
+pdfplumber
+pillow
+openpyxl
+python-pptx
+python-docx
+reportlab
+# pdfminer.six needs it; 49 and later ship no Intel macOS wheel.
+cryptography<49

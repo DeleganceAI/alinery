@@ -4,7 +4,7 @@
 // is refused by the domain.
 import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineExtension, defineTool, section } from "@earendil-works/pi-durable";
-import { canvasEnabled, canvasReport, canvasRel, layoutCanvas, type PanelKind, putPanel } from "./domain/canvas.ts";
+import { canvasEnabled, canvasReport, canvasRel, fileBody, filesBody, layoutCanvas, MAX_LISTED_FILES, type PanelKind, putPanel } from "./domain/canvas.ts";
 
 export type CanvasToolDeps = {
   repo: string;
@@ -16,6 +16,7 @@ export type CanvasToolDeps = {
 export const CANVAS_INSTRUCTION = `This thread has a canvas: up to four panels (p1 to p4) beside the conversation, which the user sees as you write them. Use it to show, not to tell: a chart, a table, a document, or a small web page, when that communicates better than text.
 - alinery_canvas_put_markdown, _put_table, _put_chart (a Vega-Lite spec with inline data.values) and _put_html each fill the first free panel, or the one you name with panel. Naming a panel replaces it.
 - alinery_canvas_layout reorders, focuses or closes panels. alinery_canvas_get shows the layout, which panels the user closed, and the exact body of one panel.
+- alinery_canvas_show_file shows a file of this repository (PDF, image, Excel, CSV, Word, PowerPoint, Markdown, text) with buttons to save a copy; alinery_canvas_show_files lists a directory's files to browse. Write the file first, then show it; show it again after you change it.
 - An html panel is one self-contained file (HTML with inline <style> and <script>). It runs sandboxed with no network: no external scripts, styles, fonts, images or fetch, and no storage. Inline everything; images as data: URLs.
 - Keep a short reply in the chat saying what you put on the canvas. Do not paste a panel's body into the conversation.`;
 
@@ -68,6 +69,32 @@ export function canvasTools(d: CanvasToolDeps) {
       (a) => a.spec,
     ),
     put("html", "alinery_canvas_put_html", "Show a self-contained web page (inline CSS and JS, no network) in a sandboxed canvas panel.", { html: Type.String() }, (a) => a.html),
+    defineTool({
+      name: "alinery_canvas_show_file",
+      description: "Show one file of this repository in a canvas panel: a preview by type (PDF, image, xlsx or csv, docx, pptx text, Markdown, text) and a Save a copy button.",
+      parameters: Type.Object({ path: Type.String({ description: "The file, relative to your working directory or absolute; it must be inside the repository." }), panel: panelParam, title: titleParam }),
+      execute: (args, api) =>
+        run(api, true, async (thread) => {
+          const out = await putPanel(d.repo, thread, { panel: args.panel, title: args.title || args.path.split("/").pop(), kind: "file", body: fileBody(d.repo, thread, args.path) });
+          return `Showing ${args.path} in ${out.panel} (rev ${out.rev}).`;
+        }),
+    }),
+    defineTool({
+      name: "alinery_canvas_show_files",
+      description: `Show a list of a directory's files in a canvas panel; the user opens each to preview or save it. At most ${MAX_LISTED_FILES} files, a snapshot: call again to refresh.`,
+      parameters: Type.Object({
+        dir: Type.String({ description: "The directory, relative to your working directory or absolute; it must be inside the repository." }),
+        glob: Type.Optional(Type.String({ description: 'Which files, relative to dir. Default "*" (its own files); "**/*.pdf" searches below it.' })),
+        panel: panelParam,
+        title: titleParam,
+      }),
+      execute: (args, api) =>
+        run(api, true, async (thread) => {
+          const body = filesBody(d.repo, thread, args.dir, args.glob || undefined);
+          const out = await putPanel(d.repo, thread, { panel: args.panel, title: args.title || args.dir, kind: "files", body });
+          return `Listed ${body.entries.length} file${body.entries.length === 1 ? "" : "s"}${body.truncated ? " (truncated)" : ""} in ${out.panel} (rev ${out.rev}).`;
+        }),
+    }),
     defineTool({
       name: "alinery_canvas_layout",
       description: "Arrange this thread's canvas: close panels, set the order of the open ones, or focus one (\"\" clears focus).",

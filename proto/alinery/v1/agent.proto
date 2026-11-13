@@ -14,9 +14,27 @@ service AgentService {
   // `upload_id` is a committed `staged` upload (BlobService) of a `.md` or `.zip` skill; `file_name` says which (its extension).
   rpc InstallSkill(InstallSkillRequest) returns (InstallSkillResponse);              // ACT
   rpc DeleteSkill(DeleteSkillRequest) returns (DeleteSkillResponse);                 // ACT
+  // Switches a skill on or off by its name: the user's own or one Alinery includes (the runtime's `skills/`, read-only).
+  // Refused when it would put more skills on than the catalog offers (`ReadCustomizationsResponse.skill_limit`).
+  rpc SetSkillEnabled(SetSkillEnabledRequest) returns (SetSkillEnabledResponse);     // ACT
+  // Brings back every included skill removed with `DeleteSkillRequest.included`.
+  rpc RestoreIncludedSkills(RestoreIncludedSkillsRequest) returns (RestoreIncludedSkillsResponse);  // ACT
   rpc CustomizationPrompt(CustomizationPromptRequest) returns (CustomizationPromptResponse);  // VIEW
   // The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
   rpc ReadMcpStatus(ReadMcpStatusRequest) returns (ReadMcpStatusResponse);            // VIEW
+  // What the office skills can run on this host: each program as the agent's shell finds it, and whether its Python is the
+  // one the runtime bundles.
+  rpc ReadOfficeTools(ReadOfficeToolsRequest) returns (ReadOfficeToolsResponse);      // VIEW
+}
+
+message ReadOfficeToolsRequest {}
+message OfficeTool {
+  string name = 1;  // python3, bun, soffice, pdftoppm or qpdf
+  string path = 2;  // "" when the agent's PATH has none
+}
+message ReadOfficeToolsResponse {
+  repeated OfficeTool tools = 1;
+  bool bundled_python = 2;
 }
 
 message ReadMcpStatusRequest {}
@@ -52,11 +70,17 @@ message Customization {
   string source = 3;
   optional string path = 4;
   optional bool offered = 5;  // skills only: false when the model is not told about the file
+  optional bool included = 6;  // skills only: one Alinery includes, not a file in the agent directory
+  optional bool enabled = 7;   // skills only: the user's on/off choice (an included skill starts at its default)
 }
 message ReadCustomizationsResponse {
   repeated Customization items = 1;
   repeated string errors = 2;
   string agent_dir = 3;
+  uint32 skills_on = 4;               // skills the model is offered now
+  uint32 skill_limit = 5;             // the most it is offered; skills past it are left out
+  uint32 skill_catalog_chars = 6;     // the length of the skill list every prompt carries
+  repeated string removed_included = 7;  // included skills the user removed
 }
 
 message InstallSkillRequest {
@@ -73,8 +97,17 @@ message InstallSkillResponse {
 
 message DeleteSkillRequest {
   MutationMeta meta = 1;
-  string name = 2;
+  string name = 2;     // the skill's directory in the agent directory, or with `included` the included skill's name
+  bool included = 3;   // remove an included skill: hidden for good, until RestoreIncludedSkills
 }
+message SetSkillEnabledRequest {
+  MutationMeta meta = 1;
+  string name = 2;
+  bool enabled = 3;
+}
+message SetSkillEnabledResponse { Applied applied = 1; }
+message RestoreIncludedSkillsRequest { MutationMeta meta = 1; }
+message RestoreIncludedSkillsResponse { Applied applied = 1; }
 message DeleteSkillResponse {
   Applied applied = 1;
 }

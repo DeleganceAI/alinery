@@ -2781,7 +2781,7 @@ export type CanvasPanel = Message<"alinery.v1.CanvasPanel"> & {
   id: string;
 
   /**
-   * html, table, chart or markdown
+   * html, table, chart, markdown, file or files
    *
    * @generated from field: string kind = 2;
    */

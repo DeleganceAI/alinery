@@ -68,6 +68,7 @@ import {
   readArtifactText,
   readNodeText,
   readWorktreeText,
+  taskFileRef,
   useTaskArtifacts,
 } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
@@ -99,6 +100,7 @@ import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { useSessionSort } from "../useSessionSort";
 import { useTaskPullRequests } from "../useTaskPullRequests";
 import { isVinculumHarness, sessionTerminalLabel } from "../vinculumHarness";
+import { FileView, richPreview } from "./CanvasFiles";
 
 function taskActivityLabel(activity: TaskActivitySummary): string {
   switch (activity.status) {
@@ -555,12 +557,21 @@ export function TaskDetail({
     return () => registerNav(null);
   });
 
+  // A PDF, office file or image previews in FileView, read as bytes; everything else is text.
+  const richRef = useMemo(
+    () =>
+      selectedArtifact && richPreview(selectedArtifact)
+        ? taskFileRef(slug, selectedArtifact, { repo: selectedIsRepo, direct: selectedArtifactIsDirect, nodeId: selectedArtifactTreeId || undefined })
+        : undefined,
+    [slug, selectedArtifact, selectedIsRepo, selectedArtifactIsDirect, selectedArtifactTreeId],
+  );
+
   useEffect(() => {
     let alive = true;
     setArtifactText("");
     setCommentAnchor(null);
     setCommentDraft("");
-    if (!selectedArtifact || (!selectedIsRepo && !selectedArtifactIsDirect && !selectedArtifactTreeId)) {
+    if (!selectedArtifact || richPreview(selectedArtifact) || (!selectedIsRepo && !selectedArtifactIsDirect && !selectedArtifactTreeId)) {
       return () => {
         alive = false;
       };
@@ -1398,7 +1409,7 @@ export function TaskDetail({
                   <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                   <div className="btn-group">
                     <CopyTextButton text={openFilePath(repoPath, slug, selectedArtifact, selectedArtifactNode, selectedIsRepo ? (task?.worktree ?? "") : undefined)} label="path" />
-                    <CopyArtifactButton text={artifactText} />
+                    {!richRef && <CopyArtifactButton text={artifactText} />}
                     {selectedPreviewable && (
                       <>
                         <button
@@ -1442,7 +1453,9 @@ export function TaskDetail({
                   </div>
                 )}
                 <div className="artifactviewer">
-                  {!selectedPreviewable ? (
+                  {richRef ? (
+                    <FileView repo={repoPath} ref={richRef} name={selectedArtifact.slice(selectedArtifact.lastIndexOf("/") + 1)} />
+                  ) : !selectedPreviewable ? (
                     <CodeView path={selectedArtifact} text={artifactText} />
                   ) : artifactMode === "raw" ? (
                     <pre className="artifactraw">{artifactText}</pre>

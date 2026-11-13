@@ -7,10 +7,11 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, open
 import { extname, join } from "node:path";
 import { writeDurable } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
-import { panelFile } from "./canvas.ts";
+import { canvasFilePath, panelFile } from "./canvas.ts";
 import { chatAttachmentsDir, loadChat } from "./chat.ts";
 import { artifactFilePath, resolveArtifactEntry } from "./artifactFiles.ts";
 import { resolveNode } from "./artifactTree.ts";
+import { renderedPdf } from "./rendered.ts";
 import { alineryDir, attachmentsDir, safeComponent, taskDir } from "./taskFiles.ts";
 import { worktreeFilePath } from "./worktreeFiles.ts";
 
@@ -49,7 +50,23 @@ export function uniqueAttachmentName(dir: string, base: string): string | undefi
   return undefined;
 }
 
-const MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".json": "application/json" };
+const MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+  ".md": "text/markdown",
+  ".txt": "text/plain",
+  ".json": "application/json",
+  ".csv": "text/csv",
+  ".html": "text/html",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
 export const contentType = (name: string) => MIME[extname(name).toLowerCase()] ?? "application/octet-stream";
 
 export class BlobStore {
@@ -225,6 +242,18 @@ export function canvasPanelBlob(repo: string, threadId: string, panel: string): 
   loadChat(repo, threadId);
   const file = panelFile(repo, threadId, panel);
   return regularFileBlob(file.path, file.path.slice(file.path.lastIndexOf("/") + 1), "canvas panel");
+}
+
+/** A file a `file` or `files` canvas panel shows (`canvasFilePath` decides which). */
+export function canvasFileBlob(repo: string, threadId: string, panel: string, path: string): BlobBytes {
+  loadChat(repo, threadId);
+  const full = canvasFilePath(repo, threadId, panel, path);
+  return regularFileBlob(full, full.slice(full.lastIndexOf("/") + 1), "file");
+}
+
+/** The PDF LibreOffice drew of a presentation (`file`, a path a source blob's resolver checked), cached by `renderedPdf`. */
+export async function renderedPdfBlob(repo: string, file: string): Promise<BlobBytes> {
+  return regularFileBlob(await renderedPdf(repo, file), "rendered.pdf", "rendered PDF", ARTIFACT_FRAME_BYTES);
 }
 
 /** A pasted image a draft keeps in `draft-attachments.json` (base64 inside the file). */

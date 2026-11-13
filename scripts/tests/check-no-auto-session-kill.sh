@@ -183,8 +183,9 @@ JS
 #   jobs/runner.ts:job-cancel  a user's cancel of a running job, or Shutdown ending it (SIGTERM, then SIGKILL after a
 #                      grace, to its child, never a session)
 #   platform/keepawake.ts:keepawake-release  ending the idle-sleep hold (caffeinate or systemd-inhibit), never a session
+#   platform/office.ts:convert-timeout  a LibreOffice conversion past its time limit (the preview asked for), never a session
 DAEMON_SRC="$ROOT/alinery-app/src-tauri/vinculum-daemon/src"
-SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart jobs/runner.ts:job-cancel platform/keepawake.ts:keepawake-release"
+SIGNAL_ALLOWED="terminal.ts:session-kill mcp.ts:mcp-restart jobs/runner.ts:job-cancel platform/keepawake.ts:keepawake-release platform/office.ts:convert-timeout"
 if [ ! -f "$DAEMON_SRC/platform/process.ts" ]; then
   echo "ERROR: $DAEMON_SRC/platform/process.ts is missing — the daemon scan has drifted from the code." >&2
   exit 1

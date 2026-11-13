@@ -4,7 +4,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { customizationPrompt, customizationsFromDir, deleteSkill, installSkill, parseModelRoles, readModelRoles, renderModelRoles, writeModelRoles } from "./agentDir.ts";
+import { skillCatalog } from "../skills.ts";
+import {
+  customizationPrompt,
+  customizationsFromDir,
+  deleteSkill,
+  installSkill,
+  parseModelRoles,
+  readModelRoles,
+  removeIncludedSkill,
+  renderModelRoles,
+  restoreIncludedSkills,
+  setSkillEnabled,
+  writeModelRoles,
+} from "./agentDir.ts";
 
 let root: string;
 let agent: string;
@@ -78,7 +91,7 @@ describe("the inventory", () => {
   });
   test("a missing directory is an empty install", () => {
     rmSync(agent, { recursive: true });
-    expect(customizationsFromDir(agent)).toEqual({ items: [], errors: [] });
+    expect(customizationsFromDir(agent)).toEqual({ items: [], errors: [], skills: { on: 0, limit: 64, catalogChars: 0, removed: [] } });
   });
   test("malformed metadata keeps filename fallbacks and never echoes the file", () => {
     file("skills/broken/SKILL.md", "---\nname: [secret-frontmatter\n---\nBody");
@@ -227,5 +240,69 @@ describe("the prompt", () => {
     expect(out).toContain("mcp.json");
     expect(out).not.toContain("private-content");
     expect(existsSync(join(root, "INJECTED"))).toBe(false);
+  });
+});
+
+describe("included skills", () => {
+  let included: string;
+  const includedSkill = (name: string) => {
+    mkdirSync(join(included, name), { recursive: true });
+    writeFileSync(join(included, name, "SKILL.md"), skillMd(name, `Included ${name}`, "Body"));
+  };
+  beforeEach(() => {
+    included = join(root, "runtime", "skills");
+    for (const name of ["docx", "pdf", "invoice-generator"]) includedSkill(name);
+    writeFileSync(join(included, "included.json"), JSON.stringify({ off_by_default: ["invoice-generator"] }));
+  });
+  const skill = (name: string) => customizationsFromDir(agent, included).items.find((i) => i.kind === "Skill" && i.name === name);
+
+  test("start at their defaults, and only the ones on reach the catalog", () => {
+    expect([skill("docx")?.enabled, skill("invoice-generator")?.enabled, skill("docx")?.included]).toEqual([true, false, true]);
+    const catalog = skillCatalog(agent, included) ?? "";
+    expect(catalog).toContain("Included docx");
+    expect(catalog).not.toContain("invoice-generator");
+    expect(customizationsFromDir(agent, included).skills?.on).toBe(2);
+  });
+
+  test("switch on and off, the user's own skills too", () => {
+    file("skills/mine/SKILL.md", skillMd("mine", "My skill", "Body"));
+    setSkillEnabled(agent, included, "invoice-generator", true);
+    setSkillEnabled(agent, included, "docx", false);
+    setSkillEnabled(agent, included, "mine", false);
+    const catalog = skillCatalog(agent, included) ?? "";
+    expect(catalog).toContain("Included invoice-generator");
+    expect(catalog).not.toContain("Included docx");
+    expect(catalog).not.toContain("My skill");
+    expect(() => setSkillEnabled(agent, included, "nope", true)).toThrow("not installed");
+  });
+
+  test("a user's skill of the same name replaces the included one", () => {
+    file("skills/pdf/SKILL.md", skillMd("pdf", "My own pdf", "Body"));
+    const catalog = skillCatalog(agent, included) ?? "";
+    expect(catalog).toContain("My own pdf");
+    expect(catalog).not.toContain("Included pdf");
+    expect(customizationsFromDir(agent, included).items.find((i) => i.included && i.name === "pdf")?.offered).toBe(false);
+  });
+
+  test("removed stay removed until restored, at their default again", () => {
+    setSkillEnabled(agent, included, "pdf", false);
+    removeIncludedSkill(agent, included, "pdf");
+    expect(skill("pdf")).toBeUndefined();
+    expect(customizationsFromDir(agent, included).skills?.removed).toEqual(["pdf"]);
+    expect(existsSync(join(included, "pdf", "SKILL.md"))).toBe(true);
+    expect(() => removeIncludedSkill(agent, included, "mine")).toThrow("not an included skill");
+    restoreIncludedSkills(agent);
+    expect(skill("pdf")?.enabled).toBe(true);
+  });
+
+  test("turning one on past the limit is refused", () => {
+    for (let n = 0; n < 63; n++) file(`skills/s${n}/SKILL.md`, skillMd(`s${n}`, "Mine", "Body"));
+    expect(customizationsFromDir(agent, included).skills?.on).toBe(65);
+    setSkillEnabled(agent, included, "s0", false);
+    expect(() => setSkillEnabled(agent, included, "invoice-generator", true)).toThrow("At most 64");
+    setSkillEnabled(agent, included, "docx", true);
+    setSkillEnabled(agent, included, "s1", false);
+    setSkillEnabled(agent, included, "invoice-generator", true);
+    expect(customizationsFromDir(agent, included).skills?.on).toBe(64);
   });
 });

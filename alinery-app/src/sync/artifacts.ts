@@ -6,7 +6,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { ArtifactService, type Provenance as WireProvenance } from "alinery-proto/alinery/v1/artifacts_pb";
-import { BlobRefSchema } from "alinery-proto/alinery/v1/blobs_pb";
+import { type BlobRef, BlobRefSchema } from "alinery-proto/alinery/v1/blobs_pb";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Artifact, Attachment, Comment, CommentDraft, Entity, HandoffRecord, ArtifactTreeNode as TreeNodeProto } from "alinery-proto/alinery/v1/entities_pb";
 import { type Scope, ScopeSchema } from "alinery-proto/alinery/v1/sync_pb";
@@ -211,6 +211,14 @@ export async function readWorktreeText(repo: string, taskSlug: string, path: str
 export class FileNotShown extends Error {}
 
 export const formatSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`);
+
+/** The blob an open file tab reads: a worktree file, a top-level artifact, or a node of the artifact tree. */
+export function taskFileRef(taskSlug: string, path: string, from: { repo: boolean; direct: boolean; nodeId?: string }): BlobRef | undefined {
+  if (from.repo) return create(BlobRefSchema, { target: { case: "worktreeFile", value: { taskSlug, path } } });
+  if (from.direct) return create(BlobRefSchema, { target: { case: "artifact", value: { taskSlug, name: path } } });
+  if (from.nodeId) return create(BlobRefSchema, { target: { case: "artifactNode", value: { taskSlug, nodeId: from.nodeId } } });
+  return undefined;
+}
 
 /** A tree node's bytes, for an attachment image shown in the tree. */
 export async function readNodeBytes(repo: string, taskSlug: string, nodeId: string): Promise<Uint8Array> {

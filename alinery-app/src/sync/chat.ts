@@ -248,6 +248,9 @@ export function useCanvas(repo: string, threadId: string): Canvas | undefined {
 
 const MAX_PANEL_BYTES = 1024 * 1024;
 
+/** A file a `file` panel shows (`path` ignored) or a row of a `files` panel (`path` relative to its directory). */
+export const canvasFileRef = (threadId: string, panel: string, path: string) => create(BlobRefSchema, { target: { case: "canvasFile", value: { threadId, panel, path } } });
+
 /** One panel's body as text (the daemon caps a write at 1 MB). */
 export async function readCanvasPanel(repo: string, threadId: string, panel: string): Promise<string> {
   const bytes = await readBlob(repo, create(BlobRefSchema, { target: { case: "canvasPanel", value: { threadId, panel } } }), MAX_PANEL_BYTES);

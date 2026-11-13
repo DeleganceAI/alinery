@@ -29,6 +29,18 @@ vi.mock("../ipc", () =>
   }),
 );
 vi.mock("../sync/hooks", () => ({ useLiveSessionsByRepo: () => ({ "/Users/me/app": 2 }) }));
+vi.mock("../sync/agent", () => ({
+  readOfficeTools: async () => ({
+    bundledPython: true,
+    tools: [
+      { name: "python3", path: "/rt/python/bin/python3" },
+      { name: "bun", path: "/v/bin/bun" },
+      { name: "soffice", path: "" },
+      { name: "pdftoppm", path: "" },
+      { name: "qpdf", path: "/opt/homebrew/bin/qpdf" },
+    ],
+  }),
+}));
 
 import { RuntimePanel } from "./RuntimePanel";
 
@@ -57,4 +69,11 @@ it("marks only the host whose bundled runtime differs as stale, and names each d
   expect(screen.getByText("2 live")).toBeTruthy();
   expect(screen.getByText("Needs a restart").getAttribute("title")).toContain("protocol 40");
   expect(screen.getByText("daemon · h1")).toBeTruthy();
+});
+
+it("says what the office skills will find on each running daemon, and links LibreOffice when it is missing", async () => {
+  render(<RuntimePanel mcp={mcp} />);
+  expect(await screen.findByText(/Python bundled · missing LibreOffice, pdftoppm/)).toBeTruthy();
+  expect(screen.getAllByText("office tools")).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Get LibreOffice" })).toBeTruthy();
 });

@@ -7,7 +7,7 @@ import { signalChild, spawnDetached } from "./platform/process.ts";
 /** Must match `OMP_ENV_ALLOWLIST` in alinery-core. A stdio MCP child gets only these, then its own env. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
-export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "alinery_phase_complete", "alinery_set_session_name"];
+export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "alinery_phase_complete", "alinery_set_session_name", "alinery_render_page"];
 const COULD_NOT_START = "could not start";
 const OAUTH = "OAuth is not supported";
 const COULD_NOT_LIST = "could not list tools";

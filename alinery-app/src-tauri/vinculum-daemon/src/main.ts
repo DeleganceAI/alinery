@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { userInfo } from "node:os";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -15,6 +15,7 @@ import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChat
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
+import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -54,6 +55,7 @@ import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinkin
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
 import { canvasTools } from "./canvasTools.ts";
+import { renderPage } from "./domain/rendered.ts";
 import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
@@ -245,6 +247,40 @@ const sessionNameTool = defineTool({
   },
 });
 
+// Lets the agent look at what it made: one page of a PDF or a deck (LibreOffice first) as an image. Chat and task sessions.
+function renderExtension() {
+  return defineExtension({
+    name: "alinery-render",
+    tools: [
+      defineTool({
+        name: "alinery_render_page",
+        description:
+          "Look at one page of a PDF, or one slide of a presentation (pptx, ppt, odp, key), as an image: check a document or deck you made, then fix what you see. " +
+          "A presentation is drawn through LibreOffice first. Read an image file with the read tool instead.",
+        parameters: Type.Object({
+          path: Type.String({ description: "The file, relative to your working directory or absolute." }),
+          page: Type.Optional(Type.Integer({ minimum: 1, description: "The page or slide, from 1. Default 1." })),
+        }),
+        execute: async (args, api) => {
+          const cwd = (api.env as { cwd?: string } | undefined)?.cwd ?? repo;
+          const page = args.page ?? 1;
+          try {
+            const out = await renderPage(repo, resolve(cwd, args.path), page, python && join(python, "bin", "python3"));
+            return {
+              output: [
+                { type: "text", text: `Page ${page} of ${out.pages} of ${args.path}.` },
+                { type: "image", data: Buffer.from(out.png).toString("base64"), mimeType: "image/png" },
+              ],
+            };
+          } catch (error) {
+            return { output: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+          }
+        },
+      }),
+    ],
+  });
+}
+
 function namingExtension() {
   return defineExtension({
     name: "alinery-session-name",
@@ -276,16 +312,33 @@ keepAwake.start();
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
+registry.install(renderExtension());
 // Chat threads only: the thread is the calling conversation's own row, so the agent never names it.
 const canvas = canvasTools({ repo, threadOf: (env, conversationId) => { const row = sessionForCall(env, conversationId); return row && !row.taskSlug ? row.id : undefined; }, refresh: (rel) => feed.refresh(rel) });
 registry.install(canvas.extension);
 const agentDir = vinculumAgentDir(appConfig);
+const includedSkillsDir = runtimePart("skills", process.execPath, process.env);
 registry.install(
   defineExtension({
     name: "alinery-skills",
-    sections: [section("skills", () => skillCatalog(agentDir))],
+    sections: [section("skills", () => skillCatalog(agentDir, includedSkillsDir))],
   }),
 );
+const python = runtimePart("python", process.execPath, process.env);
+const agentEnv = agentShellEnv({
+  python,
+  // agentDir is <vinculum>/config/agent.
+  shims: (() => {
+    try {
+      return writeShims(dirname(dirname(agentDir)), process.execPath);
+    } catch {
+      return undefined;
+    }
+  })(),
+  repo,
+  path: process.env.PATH,
+  libreOffice: libreOfficeDir(),
+});
 // The AGENT tokens this daemon mints (O20 c): one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
 const agentTokens = new TokenRegistry();
 const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
@@ -437,7 +490,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
       registry,
       settings: () => readCompactionSettings(appConfig, models),
       env: () => {
-        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id) });
+        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id), shellEnv: agentEnv });
         rememberSessionEnv(env, id);
         return env;
       },
@@ -1069,7 +1122,7 @@ await serveRpc({
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
-  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub },
+  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
   providers: { providers, repo, appConfig },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
