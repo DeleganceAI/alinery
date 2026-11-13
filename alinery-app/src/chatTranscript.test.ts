@@ -1633,3 +1633,12 @@ describe("applyVinculumTranscript", () => {
     expect(quiet.sessionMeta.thinkingLevels).toEqual([]);
   });
 });
+
+describe("applyVinculumTranscript context usage", () => {
+  it("takes the daemon's context tokens and limit, and leaves both-zero (a daemon that does not report it) unset", () => {
+    const reported = applyVinculumTranscript({ messages: [], model: "p/m", context_tokens: 20_000, context_window: 120_000 });
+    expect(reported.sessionMeta.contextUsage).toEqual({ tokens: 20_000, contextWindow: 120_000 });
+    const silent = applyVinculumTranscript({ messages: [], model: "p/m", context_tokens: 0, context_window: 0 });
+    expect(silent.sessionMeta.contextUsage).toBeUndefined();
+  });
+});

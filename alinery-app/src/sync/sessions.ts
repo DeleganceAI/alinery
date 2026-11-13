@@ -153,6 +153,8 @@ export const controlsOf = (c: SessionControlsMessage | undefined): SessionContro
   model: c?.model ?? "",
   thinking: c?.thinking ?? "",
   thinking_levels: c?.thinkingLevels ?? [],
+  context_tokens: c?.contextTokens ?? 0,
+  context_window: c?.contextWindow ?? 0,
 });
 
 /** A message to the harness of a live session. */

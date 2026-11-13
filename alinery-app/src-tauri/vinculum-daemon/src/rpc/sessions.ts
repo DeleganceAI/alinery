@@ -58,7 +58,7 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
     items: frame.items.map(toItem),
     nextItem: BigInt(frame.nextItem),
     replace: frame.replace,
-    ...(frame.controls ? { controls: { model: frame.controls.model, thinking: frame.controls.thinking, thinkingLevels: frame.controls.thinking_levels } } : {}),
+    ...(frame.controls ? controlsOf(frame.controls) : {}),
   };
 }
 
@@ -69,8 +69,10 @@ export type TurnControl = {
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
 };
-export type Controls = { model: string; thinking: string; thinking_levels: string[] };
-export const controlsOf = (c: Controls) => ({ controls: { model: c.model, thinking: c.thinking, thinkingLevels: c.thinking_levels } });
+export type Controls = { model: string; thinking: string; thinking_levels: string[]; context_tokens?: number; context_window?: number };
+export const controlsOf = (c: Controls) => ({
+  controls: { model: c.model, thinking: c.thinking, thinkingLevels: c.thinking_levels, contextTokens: c.context_tokens ?? 0, contextWindow: c.context_window ?? 0 },
+});
 
 /** What the session writes need from the daemon: the files, the store, and the runner that owns the processes. */
 export type SessionControl = {

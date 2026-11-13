@@ -21,6 +21,9 @@ export type SessionControls = {
   model: string;
   thinking: string;
   thinking_levels: string[];
+  /** What the next request carries and the model's limit (0 when unknown); the daemon adds these from the conversation. */
+  context_tokens?: number;
+  context_window?: number;
 };
 
 export function thinkingLaunchLevel(raw: string | undefined): ThinkingLevel {

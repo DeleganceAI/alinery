@@ -878,8 +878,10 @@ describe("session-scoped completion permission", () => {
     getTaskExecution.mockResolvedValue(partiallyPublishedExecution("session"));
     renderSession();
     await flushPromises();
+    // The execution's details are the side panel's Info tab.
+    fireEvent.click(screen.getByRole("button", { name: "Info" }));
     const execution = screen.getByLabelText("Session execution");
-    fireEvent.click(within(execution).getByText(/Retained worker · finishing/));
+    expect(execution.textContent).toContain("Retained worker · finishing");
     const outputs = within(within(execution).getByRole("list", { name: "Execution outputs" }));
     expect(outputs.getByText("resolution-options.md").closest("li")?.textContent).toContain("· accepted");
     expect(outputs.getByText("selected-fix.md").closest("li")?.textContent).toContain("· not published");
@@ -958,7 +960,8 @@ describe("held task sessions", () => {
     getTaskExecution.mockResolvedValue({ ...saved, live: status ? { status, detail: "Owner cannot be queried" } : undefined });
     renderSession({ intent: undefined });
 
-    await screen.findByText(/Retained worker · queued · Owner session/);
+    fireEvent.click(await screen.findByRole("button", { name: "Info" }));
+    expect(screen.getByLabelText("Session execution").textContent).toMatch(/Retained worker · queued.*Owner session/);
     const start = screen.getByRole("button", { name: "Start this queued session" });
     expect((start as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(start);

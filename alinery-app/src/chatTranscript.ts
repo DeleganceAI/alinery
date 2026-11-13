@@ -554,19 +554,17 @@ export type VinculumMessage = {
   runningToolIds?: string[];
 };
 
-/** Model and thinking level for the next turn. Empty `thinking_levels` means no menu. */
+/** Model and thinking level for the next turn, and the context it carries. Empty `thinking_levels` means no menu. */
 export type SessionControls = {
   model: string;
   thinking: string;
   thinking_levels: string[];
+  context_tokens?: number;
+  /** 0 when the model's limit is unknown. */
+  context_window?: number;
 };
 
-export type VinculumTranscript = {
-  messages: VinculumMessage[];
-  model?: string;
-  thinking?: string;
-  thinking_levels?: string[];
-};
+export type VinculumTranscript = { messages: VinculumMessage[] } & Partial<SessionControls>;
 
 export const NEXT_TURN_MODEL_TITLE = "This turn keeps the model it started with. The next message uses the new one.";
 export const NEXT_TURN_THINKING_TITLE = "This turn keeps the thinking level it started with. The next message uses the new one.";
@@ -587,7 +585,7 @@ function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessa
 }
 
 /** The reply's model and thinking level. A poll is the source of truth and replaces whatever a set just wrote. */
-export function applySessionControls(state: ChatTranscriptState, controls: { model?: string; thinking?: string; thinking_levels?: string[] }): ChatTranscriptState {
+export function applySessionControls(state: ChatTranscriptState, controls: Partial<SessionControls>): ChatTranscriptState {
   const sessionMeta: SessionChatMeta = { ...state.sessionMeta };
   if (controls.model) sessionMeta.model = controls.model;
   if (typeof controls.thinking === "string") {
@@ -595,6 +593,10 @@ export function applySessionControls(state: ChatTranscriptState, controls: { mod
     else delete sessionMeta.thinking;
   }
   if (Array.isArray(controls.thinking_levels)) sessionMeta.thinkingLevels = controls.thinking_levels;
+  // Both 0 is the proto default from a daemon that does not report it, not an empty context.
+  if (controls.context_tokens || controls.context_window) {
+    sessionMeta.contextUsage = { tokens: controls.context_tokens ?? 0, contextWindow: controls.context_window ?? 0 };
+  }
   return { ...state, sessionMeta };
 }
 

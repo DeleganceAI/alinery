@@ -4,8 +4,9 @@ import { toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { createClient } from "@connectrpc/connect";
 import { SessionService, type TranscriptItem, type WatchTranscriptResponse } from "alinery-proto/alinery/v1/sessions_pb";
-import type { VinculumMessage, VinculumTranscript } from "../chatTranscript";
+import type { SessionControls, VinculumMessage, VinculumTranscript } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
+import { controlsOf } from "./sessions";
 
 export const RECONNECT_MS = 1000;
 
@@ -62,7 +63,7 @@ export function watchSessionTranscript(
   const ac = new AbortController();
   void (async () => {
     let items: VinculumMessage[] = [];
-    let controls: Pick<VinculumTranscript, "model" | "thinking" | "thinking_levels"> = {};
+    let controls: Partial<SessionControls> = {};
     while (!ac.signal.aborted) {
       try {
         const client = createClient(SessionService, daemonTransport(repo));
@@ -73,7 +74,7 @@ export function watchSessionTranscript(
             break;
           }
           items = next;
-          if (frame.controls) controls = { model: frame.controls.model, thinking: frame.controls.thinking, thinking_levels: frame.controls.thinkingLevels };
+          if (frame.controls) controls = controlsOf(frame.controls);
           if (!ac.signal.aborted) apply({ messages: items, ...controls });
         }
       } catch {

@@ -12,6 +12,7 @@ import {
   type ChatTranscriptState,
   emptyTranscript,
   needsUiReply,
+  type SessionControls,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
 import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
@@ -114,7 +115,7 @@ type ChatThreadApi = {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
+  applyControls: (controls: Partial<SessionControls>) => void;
 };
 
 const IDLE_ACTIVITY = chatActivity(null, NO_TRANSCRIPT);
@@ -423,7 +424,7 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  applyControls: (controls: { model?: string; thinking?: string; thinking_levels?: string[] }) => void;
+  applyControls: (controls: Partial<SessionControls>) => void;
 };
 
 /**

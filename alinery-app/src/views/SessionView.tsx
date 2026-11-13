@@ -186,7 +186,7 @@ export function SessionView({
   const artifactMode = fileTabs.current?.mode ?? "preview";
   const setArtifactMode = fileTabs.setMode;
   const [artifactErr, setArtifactErr] = useState("");
-  const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
+  const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab | "info">("playbook");
   const artifactCommentCountByArtifact = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const comment of liveArtifacts.comments) counts[comment.artifact] = (counts[comment.artifact] ?? 0) + 1;
@@ -541,10 +541,14 @@ export function SessionView({
     .sort((a, b) => (b.modified_at_ms ?? 0) - (a.modified_at_ms ?? 0))[0];
   const playbookArtifactItems = artifactPaneItems(artifactItems, "playbook");
   const attachmentItems = artifactPaneItems(artifactItems, "attachments");
-  const displayedArtifactItems = artifactPaneItems(artifactItems, artifactTab);
+  // Info lists the playbook execution, so it is only a tab while the session has one.
+  const infoAvailable = Boolean(execution && executionView);
+  const showInfo = artifactTab === "info" && infoAvailable;
+  const listTab: ArtifactPaneTab = artifactTab === "attachments" ? "attachments" : "playbook";
+  const displayedArtifactItems = artifactPaneItems(artifactItems, listTab);
   const contextualArtifactTree = artifactPaneTreeNodes(
     artifactTree.filter((node) => node.source !== "owned"),
-    artifactTab,
+    listTab,
   );
   const reviewFindingsComments = useMemo(
     () => (hasTask && latestReviewFindings ? liveArtifacts.comments.filter((comment) => comment.artifact === latestReviewFindings.name) : []),
@@ -1002,24 +1006,28 @@ export function SessionView({
   const pickThinking = (level: string) => {
     void setSessionThinkingLevel(repoPath, id, level).then(applyControls, (error) => toast(String(error), "error"));
   };
-  // Model, thinking and the turn stats sit under the input while the composer shows, else in their own bar.
+  const modelBar = (
+    <ChatModelBar
+      model={chatMetaHead || "Model"}
+      title={turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
+      thinkingTitle={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+      thinking={chat.sessionMeta.thinking}
+      thinkingLevels={chat.sessionMeta.thinkingLevels}
+      disabledReason={rpcProcessLive ? null : "The session is not running, so its model and thinking level cannot change"}
+      onPickModel={pickModel}
+      onPickThinking={pickThinking}
+      onProviders={() => {
+        setModelError(null);
+        setModelDialog({ tab: "models", preselect: "", setup: false });
+      }}
+    />
+  );
+  const sessionStats = <ComposerStats usage={chat.sessionMeta.contextUsage} events={chat.entries.length} />;
+  // Under the input: stats left, model and thinking centered. Without a composer, both sit in their own bar above the transcript.
   const sessionControls = chatVisibility.showMeta ? (
     <div className="chat-session-controls">
-      <ChatModelBar
-        model={chatMetaHead || "Model"}
-        title={turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
-        thinkingTitle={turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
-        thinking={chat.sessionMeta.thinking}
-        thinkingLevels={chat.sessionMeta.thinkingLevels}
-        disabledReason={rpcProcessLive ? null : "The session is not running, so its model and thinking level cannot change"}
-        onPickModel={pickModel}
-        onPickThinking={pickThinking}
-        onProviders={() => {
-          setModelError(null);
-          setModelDialog({ tab: "models", preselect: "", setup: false });
-        }}
-      />
-      <ComposerStats usage={chat.sessionMeta.contextUsage} events={chat.entries.length} />
+      {modelBar}
+      {sessionStats}
     </div>
   ) : null;
 
@@ -1195,38 +1203,6 @@ export function SessionView({
           Execution state unavailable; queued starts and completion grants are disabled.
         </InlineStatus>
       )}
-      {execution && executionView && (
-        <div className="session-execution-bar">
-          <details className="session-execution" aria-label="Session execution">
-            <summary>
-              {executionStep?.title ?? execution.candidate.step_key} · {execution.lifecycle} · Owner {execution.owner_session_id}
-            </summary>
-            <p className="mono">Execution {execution.id}</p>
-            {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
-            {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
-            {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
-            {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
-            <ul aria-label="Execution inputs">
-              {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
-                ids.map((occurrenceId) => {
-                  const occurrence = executionView.state.occurrences?.[occurrenceId];
-                  return (
-                    <li key={`${selector}:${occurrenceId}`}>
-                      <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
-                      {occurrence?.producer_execution_id ?? "seed"}
-                    </li>
-                  );
-                }),
-              )}
-            </ul>
-            <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
-            <p>
-              Completion permission: {execution.permission.kind}
-              {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
-            </p>
-          </details>
-        </div>
-      )}
       <div
         className={`sessionbody${hasTask ? (artifactCollapse.collapsed ? " pane-collapsed" : "") : " no-artifacts"}`}
         style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}
@@ -1239,8 +1215,8 @@ export function SessionView({
                   <div className="artifacttabs" role="group" aria-label="Artifact category">
                     <button
                       type="button"
-                      aria-pressed={artifactTab === "playbook"}
-                      className={`artifacttab${artifactTab === "playbook" ? " on" : ""}`}
+                      aria-pressed={!showInfo && listTab === "playbook"}
+                      className={`artifacttab${!showInfo && listTab === "playbook" ? " on" : ""}`}
                       onClick={() => setArtifactTab("playbook")}
                     >
                       Playbook
@@ -1253,82 +1229,123 @@ export function SessionView({
                     >
                       Attachments
                     </button>
+                    {infoAvailable && (
+                      <button type="button" aria-pressed={showInfo} className={`artifacttab${showInfo ? " on" : ""}`} onClick={() => setArtifactTab("info")}>
+                        Info
+                      </button>
+                    )}
                   </div>
-                  <span className="pill">
-                    {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
-                  </span>
+                  {showInfo ? null : (
+                    <span className="pill">
+                      {artifactTab === "attachments" ? attachmentItems.length : playbookArtifactItems.length}/{artifactNames.length}
+                    </span>
+                  )}
                 </div>
                 {artifactErr && (
                   <InlineStatus tone="error" detail={artifactErr}>
                     The last artifact action did not complete.
                   </InlineStatus>
                 )}
-                <div className="artifactlist">
-                  {displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
-                    <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
-                  )}
-                  {displayedArtifactItems.map((item) => {
-                    if (item.attachment && classifyAttachment(item) === "image") {
+                {showInfo && execution && executionView ? (
+                  <section className="session-info" aria-label="Session execution">
+                    <p>
+                      <strong>{executionStep?.title ?? execution.candidate.step_key}</strong> · {execution.lifecycle}
+                    </p>
+                    <p>
+                      Owner <code>{execution.owner_session_id}</code>
+                    </p>
+                    <p className="mono">Execution {execution.id}</p>
+                    {execution.owner_session_id !== id && <p>This is a previous owner. Current owner: {execution.owner_session_id}.</p>}
+                    {execution.lifecycle === "finishing" && <p>Outputs accepted; waiting for confirmed shutdown. The session remains interactive until it exits.</p>}
+                    {execution.lifecycle === "interrupted" && <p>Ownership is uncertain; no replacement can start until shutdown is confirmed.</p>}
+                    {execution.error && <InlineStatus tone="error">{execution.error}</InlineStatus>}
+                    <ul aria-label="Execution inputs">
+                      {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
+                        ids.map((occurrenceId) => {
+                          const occurrence = executionView.state.occurrences?.[occurrenceId];
+                          return (
+                            <li key={`${selector}:${occurrenceId}`}>
+                              <code>{selector}</code> ← <code>{occurrence?.relative_path ?? occurrenceId}</code> · occurrence {occurrenceId} · producer{" "}
+                              {occurrence?.producer_execution_id ?? "seed"}
+                            </li>
+                          );
+                        }),
+                      )}
+                    </ul>
+                    <ExecutionOutputs execution={execution} occurrences={executionView.state.occurrences} />
+                    <p>
+                      Completion permission: {execution.permission.kind}
+                      {execution.permission.kind === "human_granted" ? ` · ${execution.permission.session_id}` : ""}
+                    </p>
+                  </section>
+                ) : (
+                  <div className="artifactlist">
+                    {displayedArtifactItems.length === 0 && contextualArtifactTree.length === 0 && (
+                      <div className="dim">{artifactTab === "attachments" ? "No attachments." : "No playbook artifacts yet."}</div>
+                    )}
+                    {displayedArtifactItems.map((item) => {
+                      if (item.attachment && classifyAttachment(item) === "image") {
+                        return (
+                          <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name} repoPath={repoPath}>
+                            <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                          </AttachmentPreview>
+                        );
+                      }
+                      const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
+                      const node = findOwnedArtifactNode(artifactTree, item.name);
+                      const available = Boolean(item.attachment || node);
                       return (
-                        <AttachmentPreview key={item.name} taskSlug={taskSlug} name={item.name} repoPath={repoPath}>
+                        <div
+                          key={item.name}
+                          className={`artifactitem${item.attachment ? " attachment" : ""}`}
+                          title={item.name}
+                          role="button"
+                          tabIndex={available ? 0 : -1}
+                          aria-disabled={!available}
+                          onKeyDown={(e) => {
+                            if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                            e.preventDefault();
+                            e.currentTarget.click();
+                          }}
+                          onClick={() => {
+                            if (item.attachment) {
+                              revealPath(attachmentFilePath(repoPath, taskSlug, item.name)).catch((error) => setArtifactErr(String(error)));
+                              return;
+                            }
+                            if (!node) return;
+                            openArtifact(item.name, node);
+                          }}
+                        >
+                          <span className="artifactitem-name">{item.name}</span>
+                          {!available && <span className="pill">Not yet readable</span>}
+                          {commentCount > 0 && (
+                            <span
+                              className="artifact-comment-count"
+                              title={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
+                              aria-label={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
+                            >
+                              <MessageSquare size={12} strokeWidth={2} aria-hidden="true" />
+                              <span>{commentCount}</span>
+                            </span>
+                          )}
                           <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                        </AttachmentPreview>
+                        </div>
                       );
-                    }
-                    const commentCount = artifactCommentCountByArtifact[item.name] ?? 0;
-                    const node = findOwnedArtifactNode(artifactTree, item.name);
-                    const available = Boolean(item.attachment || node);
-                    return (
-                      <div
-                        key={item.name}
-                        className={`artifactitem${item.attachment ? " attachment" : ""}`}
-                        title={item.name}
-                        role="button"
-                        tabIndex={available ? 0 : -1}
-                        aria-disabled={!available}
-                        onKeyDown={(e) => {
-                          if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
-                          e.preventDefault();
-                          e.currentTarget.click();
+                    })}
+                    {contextualArtifactTree.length > 0 && (
+                      <ArtifactTree
+                        taskSlug={taskSlug}
+                        repoPath={repoPath}
+                        nodes={contextualArtifactTree}
+                        selectedId={selectedArtifactTreeId}
+                        onSelect={(node) => {
+                          openArtifact(node.label, node);
                         }}
-                        onClick={() => {
-                          if (item.attachment) {
-                            revealPath(attachmentFilePath(repoPath, taskSlug, item.name)).catch((error) => setArtifactErr(String(error)));
-                            return;
-                          }
-                          if (!node) return;
-                          openArtifact(item.name, node);
-                        }}
-                      >
-                        <span className="artifactitem-name">{item.name}</span>
-                        {!available && <span className="pill">Not yet readable</span>}
-                        {commentCount > 0 && (
-                          <span
-                            className="artifact-comment-count"
-                            title={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
-                            aria-label={`${commentCount} active comment${commentCount === 1 ? "" : "s"}`}
-                          >
-                            <MessageSquare size={12} strokeWidth={2} aria-hidden="true" />
-                            <span>{commentCount}</span>
-                          </span>
-                        )}
-                        <ArtifactProvenanceBadges handoffs={item.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                      </div>
-                    );
-                  })}
-                  {contextualArtifactTree.length > 0 && (
-                    <ArtifactTree
-                      taskSlug={taskSlug}
-                      repoPath={repoPath}
-                      nodes={contextualArtifactTree}
-                      selectedId={selectedArtifactTreeId}
-                      onSelect={(node) => {
-                        openArtifact(node.label, node);
-                      }}
-                      onError={setArtifactErr}
-                    />
-                  )}
-                </div>
+                        onError={setArtifactErr}
+                      />
+                    )}
+                  </div>
+                )}
               </>
             </aside>
             <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
@@ -1516,7 +1533,8 @@ export function SessionView({
                       {showChatComposer ? (
                         <>
                           <ChatComposer
-                            actions={sessionControls}
+                            actions={chatVisibility.showMeta ? sessionStats : undefined}
+                            center={chatVisibility.showMeta ? modelBar : undefined}
                             body={messageDraft.body}
                             status={chatStatus}
                             catalog={chat.commands}

@@ -136,8 +136,20 @@ describe("the turn controls and the process (S5.3)", () => {
   it("a model or thinking change answers with the controls in the shape the views read", async () => {
     impl.setSessionModel = () => ({ controls: { model: "anthropic/claude", thinking: "off", thinkingLevels: [] } });
     impl.setSessionThinkingLevel = () => ({ controls: { model: "xai/grok", thinking: "low", thinkingLevels: ["off", "low", "high"] } });
-    expect(await setSessionModel("/r", "s1", "anthropic/claude")).toEqual({ model: "anthropic/claude", thinking: "off", thinking_levels: [] });
-    expect(await setSessionThinkingLevel("/r", "s1", "low")).toEqual({ model: "xai/grok", thinking: "low", thinking_levels: ["off", "low", "high"] });
+    expect(await setSessionModel("/r", "s1", "anthropic/claude")).toEqual({
+      model: "anthropic/claude",
+      thinking: "off",
+      thinking_levels: [],
+      context_tokens: 0,
+      context_window: 0,
+    });
+    expect(await setSessionThinkingLevel("/r", "s1", "low")).toEqual({
+      model: "xai/grok",
+      thinking: "low",
+      thinking_levels: ["off", "low", "high"],
+      context_tokens: 0,
+      context_window: 0,
+    });
     expect(seen[0].req).toMatchObject({ sessionId: "s1", model: "anthropic/claude" });
     expect(seen[1].req).toMatchObject({ sessionId: "s1", level: "low" });
   });

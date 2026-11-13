@@ -4,6 +4,7 @@ import { userInfo } from "node:os";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { AgentDoc, Harness, LiveDoc, createRegistry, defineDoc, defineExtension, defineTool, section, type Conversation, type Harness as OpenedHarness } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -61,7 +62,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 42;
+const PROTOCOL = 43;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -573,7 +574,13 @@ async function sessionControls(conversation: Conversation) {
   const current = agent.model;
   const id = current ? `${current.provider}/${current.modelId}` : "";
   const catalog = current ? models.getModel(current.provider, current.modelId) : undefined;
-  return turnControls(id, agent.thinkingLevel, catalog);
+  // Pi's own estimate: the newest assistant's reported usage plus estimates of what came after it.
+  const view = await conversation.context(context);
+  return {
+    ...turnControls(id, agent.thinkingLevel, catalog),
+    context_tokens: Math.round(estimateContextTokens(view.messages).tokens),
+    context_window: catalog?.contextWindow ?? 0,
+  };
 }
 
 function watch(row: Live, harness: OpenedHarness, conversationId: string) {

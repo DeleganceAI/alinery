@@ -204,6 +204,8 @@ message SessionControls {
   string model = 1;
   string thinking = 2;
   repeated string thinking_levels = 3;
+  uint32 context_tokens = 4;  // what the next request carries, estimated as Pi's compaction does
+  uint32 context_window = 5;  // the model's limit; 0 when unknown
 }
 
 // One message of the pane, as `formatTranscript` builds it (transcript.ts). Pi stores thinking, text and

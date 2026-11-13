@@ -41,8 +41,8 @@ it("a thread's turn controls go to the daemon of the repo the thread is in, by t
 });
 
 it("a model or thinking change answers with the controls in the shape the views read", async () => {
-  expect(await setChatModel("/a", "t1", "anthropic/claude")).toEqual({ model: "anthropic/claude", thinking: "off", thinking_levels: [] });
-  expect(await setChatThinkingLevel("/a", "t1", "low")).toEqual({ model: "xai/grok", thinking: "low", thinking_levels: ["off", "low"] });
+  expect(await setChatModel("/a", "t1", "anthropic/claude")).toEqual({ model: "anthropic/claude", thinking: "off", thinking_levels: [], context_tokens: 0, context_window: 0 });
+  expect(await setChatThinkingLevel("/a", "t1", "low")).toEqual({ model: "xai/grok", thinking: "low", thinking_levels: ["off", "low"], context_tokens: 0, context_window: 0 });
   expect(seen[0].req).toMatchObject({ threadId: "t1", model: "anthropic/claude" });
   expect(seen[1].req).toMatchObject({ threadId: "t1", level: "low" });
 });
