@@ -1,3 +1,4 @@
+import { ChevronsDownUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { listWorktreeFilesForRepo } from "./sync/git";
 
@@ -66,6 +67,8 @@ export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPat
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
   const [reload, setReload] = useState(0);
+  // ponytail: each folder keeps its own open state, so collapsing all is a remount of the rows.
+  const [collapsed, setCollapsed] = useState(0);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` is the Refresh button's trigger
   useEffect(() => {
@@ -99,6 +102,9 @@ export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPat
           <button type="button" className="btn ghost small" onClick={() => setReload((n) => n + 1)}>
             Refresh
           </button>
+          <button type="button" className="btn ghost small" aria-label="Collapse all folders" title="Collapse all folders" onClick={() => setCollapsed((n) => n + 1)}>
+            <ChevronsDownUp size={14} aria-hidden="true" />
+          </button>
         </div>
       </div>
       {error && <div className="danger-text">Couldn't list the worktree: {error}</div>}
@@ -113,7 +119,7 @@ export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPat
           {matches.length === 0 && <div className="dim">No matching files.</div>}
         </div>
       ) : (
-        listing && <DirRows dir={tree} selected={selected} onOpen={onOpen} />
+        listing && <DirRows key={collapsed} dir={tree} selected={selected} onOpen={onOpen} />
       )}
     </section>
   );

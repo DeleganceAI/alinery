@@ -2238,6 +2238,20 @@ describe("repository files", () => {
     expect(tabs.getByRole("button", { name: "main.ts" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("collapses every open folder at once", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["src/lib/a.ts", "src/main.ts"], truncated: false });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    fireEvent.click(await repo.findByText("src/"));
+    fireEvent.click(await repo.findByText("lib/"));
+    expect(await repo.findByRole("button", { name: "a.ts" })).toBeDefined();
+    fireEvent.click(repo.getByRole("button", { name: "Collapse all folders" }));
+    expect(repo.queryByRole("button", { name: "main.ts" })).toBeNull();
+    fireEvent.click(repo.getByText("src/"));
+    expect(await repo.findByRole("button", { name: "main.ts" })).toBeDefined();
+    expect(repo.queryByRole("button", { name: "a.ts" })).toBeNull();
+  });
+
   it("comments on a worktree markdown file under its repo: target, and not on code", async () => {
     mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/plan.md", "main.ts"], truncated: false });
     fakeArtifacts.worktreeTexts = { "docs/plan.md": "# Plan\n\nShip it.\n", "main.ts": "export {};" };
