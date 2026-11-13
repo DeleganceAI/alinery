@@ -501,43 +501,62 @@ pub(crate) async fn prepare_repo_takeover(app: AppHandle, repo_path: String, own
     .map_err(|error| format!("prepare takeover task: {error}"))?
 }
 
+/// Runs a fix of a project's saved state that only works with nothing else touching it: a local project this app knows,
+/// no daemon answering for any of its lanes, under its lifecycle lock. `fix` gets the owner report and returns the log line;
+/// then the project reconnects.
+fn fix_project_while_down(app: &AppHandle, repo: &str, fix: impl FnOnce(&Path, &alinery_core::repo_ownership::RepoOwnerReport) -> Result<String, String>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let repo = match RepoRef::parse(repo)? {
+        RepoRef::Local(repo) => repo,
+        RepoRef::Remote { .. } => return Err("This is only available for projects on this computer".into()),
+    };
+    takeover_allowed(&state, &repo)?;
+    let lifecycle = state.repo_lifecycle(&repo);
+    let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
+    takeover_allowed(&state, &repo)?;
+    validate_known_target_repo(&load_app_config(app).known_repos, &repo.display().to_string())?;
+    let report = alinery_core::repo_ownership::inspect_owners(&repo)?;
+    if report.lanes.iter().any(|lane| lane.reachable || lane.issue.is_some()) {
+        return Err("Another Alinery window has this project open. Close it, then try again.".into());
+    }
+    let line = fix(&repo, &report)?;
+    let app_config = app_config_path(app)?;
+    alinery_core::append_exception(&app_config, &format!("{line} repo={}", alinery_core::quote_log_value(&repo.display().to_string())));
+    attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
+    Ok(())
+}
+
 /// The user's "Repair" on a task whose saved progress will not read. It touches one task file, keeps the
 /// original beside it, and refuses while any daemon answers for the project. Then it reconnects.
 #[tauri::command]
 pub(crate) async fn repair_task_state(app: AppHandle, repo: String, slug: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let repo = match RepoRef::parse(&repo)? {
-            RepoRef::Local(repo) => repo,
-            RepoRef::Remote { .. } => return Err("Repair is only available for projects on this computer".into()),
-        };
-        takeover_allowed(&state, &repo)?;
-        let lifecycle = state.repo_lifecycle(&repo);
-        let guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
-        takeover_allowed(&state, &repo)?;
-        validate_known_target_repo(&load_app_config(&app).known_repos, &repo.display().to_string())?;
-        let report = alinery_core::repo_ownership::inspect_owners(&repo)?;
-        if report.lanes.iter().any(|lane| lane.reachable || lane.issue.is_some()) {
-            return Err("Another Alinery window has this project open. Close it, then try again.".into());
-        }
-        if !report.repairable.contains(&slug) {
-            return Err("This task no longer needs repair.".into());
-        }
-        let records = alinery_core::repair_execution_state(&repo, &slug)?;
-        let app_config = app_config_path(&app)?;
-        alinery_core::append_exception(
-            &app_config,
-            &format!(
-                "app.task-state-repaired repo={} task={} records={records}",
-                alinery_core::quote_log_value(&repo.display().to_string()),
-                alinery_core::quote_log_value(&slug),
-            ),
-        );
-        attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
-        Ok(())
+        fix_project_while_down(&app, &repo, |repo, report| {
+            if !report.repairable.contains(&slug) {
+                return Err("This task no longer needs repair.".into());
+            }
+            let records = alinery_core::repair_execution_state(repo, &slug)?;
+            Ok(format!("app.task-state-repaired task={} records={records}", alinery_core::quote_log_value(&slug)))
+        })
     })
     .await
     .map_err(|error| format!("repair task state: {error}"))?
+}
+
+/// The user's "Back up and reset" on a project whose saved state will not open: every task and the root sessions go into a
+/// zip next to the repository, then are cleared (`alinery_core::reset_alinery_state`). Returns the zip's path.
+#[tauri::command]
+pub(crate) async fn reset_repo_state(app: AppHandle, repo: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut archive = String::new();
+        fix_project_while_down(&app, &repo, |repo, _| {
+            archive = alinery_core::reset_alinery_state(repo, env!("CARGO_PKG_VERSION"))?.display().to_string();
+            Ok(format!("app.project-state-reset archive={}", alinery_core::quote_log_value(&archive)))
+        })?;
+        Ok(archive)
+    })
+    .await
+    .map_err(|error| format!("reset project state: {error}"))?
 }
 
 #[tauri::command]

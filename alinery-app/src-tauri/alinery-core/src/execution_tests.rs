@@ -203,3 +203,39 @@ fn repair_fills_a_missing_permission_keeps_the_original_and_reads_afterwards() {
     assert!(!execution_state_repairable(&f.repo, "task"), "a readable file is not offered a repair");
     assert!(repair_execution_state(&f.repo, "task").is_err());
 }
+
+#[test]
+fn repair_reads_main_branch_version_2_progress_as_version_1() {
+    let mut f = Fixture::new("{path=\"result.md\"}", false, false, 1);
+    persist_owner_fixture(&mut f);
+    let path = execution_state_path(&f.repo, "task").unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    // The shape main's build writes: version 2, top-level creation fields, and records with a continuation mode instead of a permission.
+    json["version"] = serde_json::json!(2);
+    json["creation"] = serde_json::json!("ready");
+    json["initial_start_requested"] = serde_json::json!(true);
+    json["executions"]["e1"] = serde_json::json!({
+        "id": "e1", "binding_key": "k",
+        "candidate": {"step_key": "work", "context_id": "root", "inputs": {}, "complete_collection_id": null, "each_collection_id": null, "each_member_id": null, "manual": false},
+        "outputs": [], "parent_execution_ids": [], "depth": 0, "owner_session_id": "s", "previous_session_ids": [],
+        "launch": {"harness": "", "model": ""}, "is_coding_step": false, "start_requested": false,
+        "lifecycle": "completed", "continuation_mode": "manual", "work_revision": 3, "last_admission_sequence": 1,
+        "receipt_id": null, "exit_code": 0, "shutdown_confirmed": true, "error": null
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    assert!(read_execution_state(&f.repo, "task").is_err());
+    assert!(execution_state_repairable(&f.repo, "task"));
+    assert_eq!(repair_execution_state(&f.repo, "task").unwrap(), 2, "the version and the one record's permission");
+    let state = read_execution_state(&f.repo, "task").unwrap();
+    assert_eq!(state.executions["e1"].permission, CompletionPermission::Locked);
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        after["executions"]["e1"]["continuation_mode"], "manual",
+        "fields this build does not read are carried along"
+    );
+
+    // A version this build knows nothing about is not guessed at.
+    json["version"] = serde_json::json!(3);
+    fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    assert!(!execution_state_repairable(&f.repo, "task"));
+}

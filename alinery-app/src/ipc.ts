@@ -136,6 +136,8 @@ export const stopDaemon = (path: string | null) => invoke<void>("stop_daemon", {
 export const prepareRepoTakeover = (repoPath: string, ownerLane: string) => invoke<TakeoverPreview>("prepare_repo_takeover", { repoPath, ownerLane });
 export const confirmRepoTakeover = (confirmationId: string) => invoke<TakeoverOutcome>("confirm_repo_takeover", { confirmationId });
 export const repairTaskState = (repo: string, slug: string) => invoke<void>("repair_task_state", { repo, slug });
+/** Zips every task and root session next to the repository, clears them, and returns the zip's path. */
+export const resetRepoState = (repo: string) => invoke<string>("reset_repo_state", { repo });
 export const cancelRepoTakeover = (confirmationId: string) => invoke<void>("cancel_repo_takeover", { confirmationId });
 
 // ── git_ops.rs ────────────────────────────────────────────────────────

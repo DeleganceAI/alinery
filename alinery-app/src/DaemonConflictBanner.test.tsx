@@ -9,7 +9,7 @@ import type { DaemonConflict, DaemonOwnerConflict, TakeoverOutcome, TakeoverPrev
 
 vi.mock("./ipc", async () => {
   const { mockIpc } = await vi.importActual<typeof IpcFixtures>("./test/mockIpc");
-  return mockIpc({ prepareRepoTakeover: vi.fn(), confirmRepoTakeover: vi.fn(), cancelRepoTakeover: vi.fn(), repairTaskState: vi.fn() });
+  return mockIpc({ prepareRepoTakeover: vi.fn(), confirmRepoTakeover: vi.fn(), cancelRepoTakeover: vi.fn(), repairTaskState: vi.fn(), resetRepoState: vi.fn() });
 });
 afterEach(() => {
   cleanup();
@@ -365,6 +365,18 @@ describe("repository status without a takeover", () => {
     expect(ipc.repairTaskState).not.toHaveBeenCalled();
     accept(confirm, "Repair");
     await waitFor(() => expect(ipc.repairTaskState).toHaveBeenCalledWith("/repo", "fix-login"));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("offers a backed-up reset when nothing can repair the saved state, and resets only after a confirmation", async () => {
+    vi.mocked(ipc.resetRepoState).mockResolvedValue("/repo-alinery-reset-1.zip");
+    const { refresh } = mount({ ...conflict, owners: [], issues: ["unsupported or invalid task execution state"] });
+    const status = document.querySelector(".repo-strip") as HTMLElement;
+    fireEvent.click(within(status).getByRole("button", { name: "Back up and reset…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Back up and reset repo?" });
+    expect(ipc.resetRepoState).not.toHaveBeenCalled();
+    accept(confirm, "Back up and reset");
+    await waitFor(() => expect(ipc.resetRepoState).toHaveBeenCalledWith("/repo"));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 

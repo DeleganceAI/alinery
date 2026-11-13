@@ -182,27 +182,40 @@ pub fn task_playbook_path(repo: &Path, slug: &str) -> Result<PathBuf, String> {
 pub fn read_execution_state(repo: &Path, slug: &str) -> Result<TaskExecutionState, String> {
     let path = execution_state_path(repo, slug)?;
     let bytes = fs::read(&path).map_err(|e| format!("task execution state unavailable (pre-v2 tasks cannot launch): {}: {e}", path.display()))?;
-    let state: TaskExecutionState = serde_json::from_slice(&bytes).map_err(|e| format!("invalid task execution state: {e}"))?;
+    parse_execution_state(&bytes)
+}
+
+fn parse_execution_state(bytes: &[u8]) -> Result<TaskExecutionState, String> {
+    let state: TaskExecutionState = serde_json::from_slice(bytes).map_err(|e| format!("invalid task execution state: {e}"))?;
     if state.version != 1 || state.max_live_sessions == 0 {
         return Err("unsupported or invalid task execution state".into());
     }
     Ok(state)
 }
 
-/// Execution files from before `permission` was a required field lack it on their records. `locked`
-/// grants nothing, so filling it in cannot approve anything. Returns the fixed bytes and how many
-/// records changed, or `None` when the bytes are not that case or the fix would not make them readable.
-fn with_missing_permission(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
+/// Saved progress this build cannot read, made readable. Two cases, both safe to fill in:
+/// - records from before `permission` was required lack it. `locked` grants nothing, so it cannot approve anything.
+/// - the `version: 2` format of another branch (main), whose records carry a continuation mode instead. It is read
+///   as version 1: the extra fields are carried along unread, and with no engine state the daemon shows the task's
+///   runs as history only (O21), so nothing is launched from records it does not understand.
+///
+/// Returns the fixed bytes and how many changes were made, or `None` when nothing applies or the result would still
+/// not read.
+fn repaired_execution_state(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
     let mut value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    let mut filled = 0;
+    let mut changes = 0;
+    if value.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+        value["version"] = serde_json::json!(1);
+        changes += 1;
+    }
     for record in value.get_mut("executions")?.as_object_mut()?.values_mut().filter_map(|record| record.as_object_mut()) {
         if !record.contains_key("permission") {
             record.insert("permission".into(), serde_json::json!({ "kind": "locked" }));
-            filled += 1;
+            changes += 1;
         }
     }
     let fixed = serde_json::to_vec_pretty(&value).ok()?;
-    (filled > 0 && serde_json::from_slice::<TaskExecutionState>(&fixed).is_ok()).then_some((fixed, filled))
+    (changes > 0 && parse_execution_state(&fixed).is_ok()).then_some((fixed, changes))
 }
 
 /// Whether [`repair_execution_state`] can make this task's saved progress readable.
@@ -210,7 +223,7 @@ pub fn execution_state_repairable(repo: &Path, slug: &str) -> bool {
     execution_state_path(repo, slug)
         .ok()
         .and_then(|path| fs::read(path).ok())
-        .is_some_and(|bytes| with_missing_permission(&bytes).is_some())
+        .is_some_and(|bytes| repaired_execution_state(&bytes).is_some())
 }
 
 /// User-triggered repair of a task whose saved progress will not read. The original is kept beside it as
@@ -219,7 +232,7 @@ pub fn repair_execution_state(repo: &Path, slug: &str) -> Result<usize, String> 
     crate::with_task_mutation_lock(repo, "repair task state", || {
         let path = execution_state_path(repo, slug)?;
         let original = fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        let (fixed, filled) = with_missing_permission(&original).ok_or("nothing in this task's saved progress can be repaired automatically")?;
+        let (fixed, filled) = repaired_execution_state(&original).ok_or("nothing in this task's saved progress can be repaired automatically")?;
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         crate::fs_atomic::write_bytes_durable(&path.with_file_name(format!("execution.json.before-repair-{stamp}")), &original)?;
         crate::fs_atomic::write_bytes_durable(&path, &fixed)?;

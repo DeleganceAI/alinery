@@ -422,8 +422,8 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
       `Repair ${name}?`,
       <>
         <p>
-          {slugs.length === 1 ? "One task's" : "Some tasks'"} saved progress is missing a setting that this version of Alinery needs. Repair adds it. Your tasks, files and
-          artifacts aren't changed, and a copy of the original file stays next to it.
+          {slugs.length === 1 ? "One task's" : "Some tasks'"} saved progress was written by another version of Alinery, or is missing a setting this version needs. Repair converts
+          it so the task opens; runs this version can't continue show as history. Your tasks, files and artifacts aren't changed, and a copy of each original file stays next to it.
         </p>
         <p>
           {slugs.length === 1 ? "Task" : "Tasks"}: {slugs.join(", ")}
@@ -443,6 +443,36 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
       onRefresh();
     }
   };
+
+  const reset = async () => {
+    const accepted = await confirmDanger(
+      `Back up and reset ${name}?`,
+      <>
+        <p>
+          Every task and its sessions are saved to a zip next to the repository folder, then cleared, so {name} opens with no tasks. Settings and playbooks stay, and so do
+          worktrees and their branches, with any uncommitted work.
+        </p>
+        <p>The zip is a regular Alinery backup of this repository. Nothing is cleared unless it is written and reads back whole.</p>
+      </>,
+      "Back up and reset",
+    );
+    if (!accepted) return;
+    setPending(true);
+    try {
+      const archive = await ipc.resetRepoState(conflict.repo);
+      toast.success(`Reset ${name}. Backup saved to ${archive}`);
+    } catch (cause) {
+      toast.error(`Couldn't reset ${name}: ${String(cause)}`);
+    } finally {
+      setPending(false);
+      onRefresh();
+    }
+  };
+  const resetButton = isRemoteRepo(conflict.repo) ? null : (
+    <button type="button" className="btn ghost small" disabled={pending} onClick={() => void reset()}>
+      Back up and reset…
+    </button>
+  );
 
   // Auto-open once per conflict: the first takeable owner this mount sees, and never an owner
   // that already prompted. A partial takeover's next owner waits for an explicit click.
@@ -482,9 +512,12 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
         tone="error"
         details={<EvidenceBlock text={evidenceText(displayed)} />}
         action={
-          <button type="button" className="btn small" disabled={pending} onClick={() => void repair(repairable)}>
-            Repair…
-          </button>
+          <>
+            <button type="button" className="btn small" disabled={pending} onClick={() => void repair(repairable)}>
+              Repair…
+            </button>
+            {resetButton}
+          </>
         }
       >
         {name} can't be opened because {count === 1 ? "one task's" : `${count} tasks'`} saved progress is damaged
@@ -492,7 +525,7 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     );
   }
   return (
-    <RepoStatusStrip tone={blockingIssues ? "error" : "warning"} details={<EvidenceBlock text={evidenceText(displayed)} />}>
+    <RepoStatusStrip tone={blockingIssues ? "error" : "warning"} details={<EvidenceBlock text={evidenceText(displayed)} />} action={blockingIssues ? resetButton : undefined}>
       {blockingIssues ? `${name} can't be opened here · showing saved progress` : `${name} is open elsewhere · showing saved progress · quit the other window to work here`}
     </RepoStatusStrip>
   );

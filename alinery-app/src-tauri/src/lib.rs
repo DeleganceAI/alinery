@@ -199,6 +199,7 @@ pub fn run() {
             prepare_hosted_inference,
             stop_daemon,
             repair_task_state,
+            reset_repo_state,
             close_all_repos,
             cancel_quit,
             mcp_status,

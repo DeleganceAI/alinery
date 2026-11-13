@@ -1,17 +1,19 @@
 // Backup types and the checks the shell still makes locally: destination validation and reading an archive's metadata.
 // Creating, listing, pruning and restoring archives is the daemon's (`vinculum-daemon/src/domain/backup.ts`), and a remote
-// repo's restore runs in the host service.
+// repo's restore runs in the host service. The one archive written here is a reset's (`reset_alinery_state`): a project
+// that needs one is one no daemon can open.
 //
 // `meta.repo_path` — not the filename — decides which backups belong to a repo. Two repos with the same basename may share
 // one destination directory.
 
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use zip::ZipArchive;
+use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, ZipWriter};
 
 use crate::paths::alinery_dir;
 
@@ -111,6 +113,105 @@ pub fn require_backup_matches_repo(repo: &Path, backup_path: &Path) -> Result<()
         return Err(format!("this backup belongs to {}, not {expected}", meta.repo_path));
     }
     Ok(())
+}
+
+/// What a backup holds, as in `backup.ts` `CURATED`: the durable data under `.alinery/`. Worktrees (uncommitted work), sockets,
+/// locks and `tmp/` are runtime or git's, never archived.
+const CURATED: [&str; 6] = ["tasks", "sessions", "config.toml", "harnesses.toml", "playbooks.toml", "playbooks"];
+
+/// What a reset clears once the archive is safe: every task and the root session store. Settings and playbooks stay, worktrees
+/// stay (they hold uncommitted work, and their branches with them), and lock files stay (permanent markers, never unlinked).
+pub const RESET_CLEARED: [&str; 2] = ["tasks", "sessions"];
+
+fn collect_files(root: &Path, name: &str, out: &mut Vec<String>) -> Result<(), String> {
+    let path = root.join(name);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    // A symlink is skipped, not followed: it could reach outside the tree the archive describes.
+    if metadata.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            collect_files(root, &format!("{name}/{}", entry.to_string_lossy()), out)?;
+        }
+    } else if metadata.is_file() {
+        out.push(name.to_string());
+    }
+    Ok(())
+}
+
+/// The user's reset of a project whose saved state will not open: archive everything a backup holds to a zip next to the
+/// repository (outside `.alinery/`, which is being cleared, and outside the working tree), check the archive reads back, then
+/// clear [`RESET_CLEARED`]. The archive is a normal backup (`backup-meta.json`), so it restores into this repository. Callers
+/// make sure no daemon is running. Returns the archive's path.
+pub fn reset_alinery_state(repo: &Path, alinery_version: &str) -> Result<PathBuf, String> {
+    crate::with_task_mutation_lock(repo, "reset project state", || {
+        let alinery = alinery_dir(repo);
+        let repo_path = canonical_string(repo)?;
+        let canonical = PathBuf::from(&repo_path);
+        let repo_name = canonical.file_name().map_or_else(|| "repo".to_string(), |name| name.to_string_lossy().into_owned());
+        let dest = canonical.parent().ok_or("the repository has no parent folder to hold the backup")?;
+        let mut files = Vec::new();
+        for name in CURATED {
+            collect_files(&alinery, name, &mut files)?;
+        }
+        let meta = BackupMeta {
+            repo_name: repo_name.clone(),
+            repo_path,
+            created_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+            schema_version: 1,
+            alinery_version: alinery_version.to_string(),
+            trigger: BackupTrigger::Manual,
+            included_dirs: CURATED
+                .iter()
+                .filter(|name| fs::symlink_metadata(alinery.join(name)).is_ok())
+                .map(|name| name.to_string())
+                .collect(),
+        };
+        let safe: String = repo_name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
+        let stem = format!("{safe}-alinery-reset-{}", meta.created_at);
+        let final_path = (1..1000)
+            .map(|n| dest.join(if n == 1 { format!("{stem}.zip") } else { format!("{stem}-{n}.zip") }))
+            .find(|path| fs::symlink_metadata(path).is_err())
+            .ok_or("no free name for the backup")?;
+        let tmp = dest.join(format!(".{stem}.{}.tmp.zip", std::process::id()));
+        let written = (|| -> Result<(), String> {
+            let mut zip = ZipWriter::new(File::create(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?);
+            let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file(BACKUP_META_NAME, options).map_err(|e| e.to_string())?;
+            zip.write_all(&serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            for name in &files {
+                zip.start_file(name.as_str(), options).map_err(|e| e.to_string())?;
+                zip.write_all(&fs::read(alinery.join(name)).map_err(|e| format!("{name}: {e}"))?)
+                    .map_err(|e| e.to_string())?;
+            }
+            zip.finish().map_err(|e| e.to_string())?.sync_all().map_err(|e| e.to_string())?;
+            // Nothing is cleared on the strength of an archive that does not read back whole.
+            let entries = ZipArchive::new(File::open(&tmp).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?.len();
+            if entries != files.len() + 1 || read_backup_meta(&tmp)? != meta {
+                return Err("the backup did not read back whole".into());
+            }
+            fs::rename(&tmp, &final_path).map_err(|e| format!("{}: {e}", final_path.display()))
+        })();
+        if let Err(error) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("backup failed, nothing was cleared: {error}"));
+        }
+        for name in RESET_CLEARED {
+            let path = alinery.join(name);
+            if fs::symlink_metadata(&path).is_ok() {
+                fs::remove_dir_all(&path).map_err(|e| format!("the backup is at {}, but clearing {} failed: {e}", final_path.display(), path.display()))?;
+            }
+        }
+        Ok(final_path)
+    })
 }
 
 #[cfg(test)]
@@ -290,4 +391,38 @@ mod tests {
     // 2.27 — deleting a user's unrelated files from their own folder is the worst outcome here.
 
     // 2.28 — 0 must not mean "delete everything"; 200 must not mean "unbounded".
+
+    #[test]
+    fn reset_archives_everything_a_backup_holds_then_clears_tasks_and_sessions_only() {
+        let parent = unique_temp("reset");
+        let repo = parent.join("my repo");
+        let alinery = alinery_dir(&repo);
+        plant(alinery.join("tasks/t/task.md"), b"task");
+        plant(alinery.join("tasks/t/execution.json"), b"{\"version\":2}");
+        plant(alinery.join("sessions/s.meta.json"), b"{}");
+        plant(alinery.join("config.toml"), b"[backup]");
+        plant(alinery.join("worktrees/t/uncommitted.rs"), b"work");
+        plant(alinery.join(".repo-owner.lock"), b"");
+
+        let zip = reset_alinery_state(&repo, "9.9.9").unwrap();
+        assert_eq!(zip.parent().unwrap(), fs::canonicalize(&parent).unwrap(), "next to the repository, not inside it");
+        assert!(zip.file_name().unwrap().to_string_lossy().starts_with("my-repo-alinery-reset-"));
+        require_backup_matches_repo(&repo, &zip).unwrap();
+        let mut archive = ZipArchive::new(File::open(&zip).unwrap()).unwrap();
+        let mut names: Vec<String> = (0..archive.len()).map(|i| archive.by_index(i).unwrap().name().to_string()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["backup-meta.json", "config.toml", "sessions/s.meta.json", "tasks/t/execution.json", "tasks/t/task.md"]
+        );
+        let mut body = String::new();
+        archive.by_name("tasks/t/execution.json").unwrap().read_to_string(&mut body).unwrap();
+        assert_eq!(body, "{\"version\":2}");
+
+        assert!(!alinery.join("tasks").exists() && !alinery.join("sessions").exists());
+        assert!(alinery.join("config.toml").exists(), "settings stay");
+        assert!(alinery.join("worktrees/t/uncommitted.rs").exists(), "uncommitted work stays");
+        assert!(alinery.join(".repo-owner.lock").exists(), "lock markers are never unlinked");
+        let _ = fs::remove_dir_all(&parent);
+    }
 }
