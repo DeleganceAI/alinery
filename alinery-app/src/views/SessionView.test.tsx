@@ -1006,7 +1006,7 @@ describe("Vinculum session chat", () => {
     const onMessageDraftChange = vi.fn();
     renderSession({ intent: "attach", messageDraft: { body: "hello", pendingActions: [], attachments: [] }, onMessageDraftChange });
     fireEvent.click(await screen.findByRole("button", { name: "Send" }));
-    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello"));
+    await waitFor(() => expect(sessionPrompt).toHaveBeenCalledWith("/repo", "session", "hello", undefined));
   });
 
   it("stops a session stuck waiting for completion permission", async () => {

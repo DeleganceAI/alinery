@@ -772,8 +772,8 @@ export function SessionView({
     setMessageError("");
     try {
       if (transport === "rpc") {
-        const message = attachments.length > 0 ? (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message : caption;
-        await promptSession(repoPath, id, message);
+        const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
+        await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
         const next = appendOptimisticUser(chatRef.current, caption, busy ? "follow_up" : "prompt");
         chatRef.current = next;
         setChat(next);
@@ -805,12 +805,9 @@ export function SessionView({
     setMessageSending(true);
     setMessageError("");
     try {
-      let message = caption;
-      if (attachments.length > 0) {
-        message = (await prepareChatSend(taskSlug, repoPath, caption, attachments)).message;
-      }
+      const prepared = attachments.length > 0 ? await prepareChatSend(taskSlug, repoPath, caption, attachments) : null;
       await abortSession(repoPath, id);
-      await promptSession(repoPath, id, message);
+      await promptSession(repoPath, id, prepared?.message ?? caption, prepared?.images);
       const rowAttachments = draftToRowAttachments(attachments);
       updateMessageDraft({ body: "", pendingActions: [], attachments: [] });
       const next = appendOptimisticUser(chatRef.current, caption, "prompt", undefined, rowAttachments.length > 0 ? rowAttachments : undefined);

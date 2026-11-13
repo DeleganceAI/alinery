@@ -9,6 +9,7 @@ import { type SessionControls as SessionControlsMessage, SessionService, type Se
 import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
+import type { ImageContent } from "../ompRpc";
 import type { CreateExecutionSessionReply, CreateExecutionSessionRequest, SessionMeta, SessionName, SessionNameSource, SessionNotificationClearRef } from "../types";
 import { newMutationMeta } from "./mutation";
 
@@ -158,8 +159,13 @@ export const controlsOf = (c: SessionControlsMessage | undefined): SessionContro
 });
 
 /** A message to the harness of a live session. */
-export async function promptSession(repo: string, id: string, text: string): Promise<void> {
-  await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text }));
+/** A prompt's images as the wire carries them: bytes, not the base64 the composer holds. */
+export const promptImages = (images: ImageContent[] = []) =>
+  images.map((image) => ({ name: "", mimeType: image.mimeType, bytes: Uint8Array.from(atob(image.data), (c) => c.charCodeAt(0)) }));
+
+/** `images` go to the model with the text, in the same user message. */
+export async function promptSession(repo: string, id: string, text: string, images?: ImageContent[]): Promise<void> {
+  await call(() => sessionApi.sessions(repo).promptSession({ meta: newMutationMeta(), sessionId: id, text, images: promptImages(images) }));
 }
 
 export async function abortSession(repo: string, id: string): Promise<void> {

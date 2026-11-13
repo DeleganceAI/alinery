@@ -4,6 +4,7 @@ package alinery.v1;
 
 import "alinery/v1/common.proto";
 import "alinery/v1/sessions.proto";
+import "alinery/v1/tasks.proto";
 
 // Taskless chat threads (S4.4). The read side is the chat scope: `chat/_/<id>` (ChatThread) beside `session/_/<id>`.
 // These are the writes. A thread's attachments go through BlobService (`ChatAttachmentBlob`), never as a path.
@@ -46,6 +47,7 @@ message PromptChatThreadRequest {
   MutationMeta meta = 1;
   string thread_id = 2;
   string text = 3;
+  repeated DraftImage images = 4;  // as PromptSessionRequest.images
 }
 message PromptChatThreadResponse {}
 message AbortChatThreadRequest { string thread_id = 1; }

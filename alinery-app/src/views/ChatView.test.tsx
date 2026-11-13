@@ -1,7 +1,7 @@
-import { DEFAULT_APPEARANCE } from "../appearance";
 // Chat on this branch talks to Vinculum (transcript, prompt, abort) and does not attach or open a terminal.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearance";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import type { VinculumTranscript } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
@@ -316,7 +316,32 @@ describe("ChatView", () => {
     expect(screen.queryByRole("button", { name: "Open in Terminal" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repo", "s-new", "hello"));
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repo", "s-new", "hello", undefined));
+  });
+
+  it("sends a pasted image to the model with the prompt, not only as a file the prompt names", async () => {
+    const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
+    fakeChat.set([row]);
+    for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))),
+    );
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shot");
+    try {
+      render(chat());
+      fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
+      const input = await screen.findByLabelText("Message or /command");
+      const file = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+      fireEvent.paste(input, { clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }], files: [file] } });
+      fireEvent.change(input, { target: { value: "what is this" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalled());
+      expect(mocks.chatPrompt.mock.lastCall?.[3]).toEqual([{ type: "image", data: "aa", mimeType: "image/png" }]);
+    } finally {
+      createObjectURL.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows the model and thinking level from the transcript and applies a set from the reply", async () => {

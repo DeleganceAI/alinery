@@ -13,12 +13,13 @@ import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { type ChatImage, type CopyChatAttachmentsResult, onRemoteHostConnected } from "../ipc";
+import type { ImageContent } from "../ompRpc";
 import type { ChatThread, CreateExecutionSessionReply, SessionMeta } from "../types";
 import { sessionDisplayOf } from "./board";
 import { acquireScope, useEntity, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
-import { call, controlsOf, startedOf } from "./sessions";
+import { call, controlsOf, promptImages, startedOf } from "./sessions";
 import { MAX_FILE_BYTES, readBlob, upload } from "./tasks";
 
 export const chatApi = {
@@ -160,8 +161,8 @@ export async function resumeChatThread(repo: string, threadId: string): Promise<
 
 // ---- the turn controls ---------------------------------------------------------------------------------------
 
-export async function promptChatThread(repo: string, threadId: string, text: string): Promise<void> {
-  await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text }));
+export async function promptChatThread(repo: string, threadId: string, text: string, images?: ImageContent[]): Promise<void> {
+  await call(() => chatApi.chat(repo).promptChatThread({ meta: newMutationMeta(), threadId, text, images: promptImages(images) }));
 }
 
 export async function abortChatThread(repo: string, threadId: string): Promise<void> {

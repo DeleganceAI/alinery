@@ -326,7 +326,7 @@ describe("QuickChat", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repos/one", "s-a", ["/tmp/notes.pdf"]));
-    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repos/one", "s-a", expect.stringContaining("Attached file:")));
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repos/one", "s-a", expect.stringContaining("Attached file:"), undefined));
     expect(mocks.getCurrentWebview).not.toHaveBeenCalled();
   });
 

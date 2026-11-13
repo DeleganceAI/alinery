@@ -62,7 +62,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 44;
+const PROTOCOL = 45;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -816,13 +816,15 @@ async function harnessSession(id: string): Promise<{ row: Live; conversation: Co
 /** The turn controls of a live harness session: SessionService and ChatService call these (they were the `prompt`, `abort`, `set_model`
  * and `set_thinking_level` ops of the JSON-lines wire). */
 const rawTurns: TurnControl = {
-  async prompt(id, text) {
+  async prompt(id, text, images = []) {
     const { row, conversation } = await harnessSession(id);
     if (!text.trim()) throw new DomainError("invalid_argument", "empty-prompt");
     const resolved = resolveModel(appConfig, String(readMeta(row.taskSlug, row.id).model ?? ""));
     if (!resolved) throw new DomainError("failed_precondition", "no model is configured");
     await ensureModel(conversation, resolved, context);
-    await conversation.submit({ type: "input", content: text, whenBusy: "followUp" }, context);
+    // Images ride in the same user message; a model that reads none gets Pi's placeholder in their place.
+    const content = images.length > 0 ? [{ type: "text" as const, text }, ...images] : text;
+    await conversation.submit({ type: "input", content, whenBusy: "followUp" }, context);
   },
   async abort(id) {
     const { row, conversation } = await harnessSession(id);
@@ -865,7 +867,7 @@ const refused = async <T>(run: () => Promise<T>): Promise<T> => {
   }
 };
 const turns: TurnControl = {
-  prompt: (id, text) => refused(() => rawTurns.prompt(id, text)),
+  prompt: (id, text, images) => refused(() => rawTurns.prompt(id, text, images)),
   abort: (id) => refused(() => rawTurns.abort(id)),
   setModel: (id, model) => refused(() => rawTurns.setModel(id, model)),
   setThinkingLevel: (id, level) => refused(() => rawTurns.setThinkingLevel(id, level)),

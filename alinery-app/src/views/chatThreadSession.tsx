@@ -654,7 +654,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
 
   async function writeSend(
     text: string,
-    command: { id: string; type: string },
+    command: { id: string; type: string; images?: ImageContent[] },
     addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
     attachments: DraftAttachment[] = [],
   ) {
@@ -662,7 +662,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      await promptChatThread(repo, id, text);
+      await promptChatThread(repo, id, text, command.images);
     } catch (cause) {
       entry.verdicts.delete(command.id);
       throw cause;

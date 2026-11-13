@@ -3,6 +3,7 @@ import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { CreateSessionRequest, SessionStartedSchema } from "alinery-proto/alinery/v1/sessions_pb";
+import type { DraftImage } from "alinery-proto/alinery/v1/tasks_pb";
 import { type SessionService, type TranscriptItemSchema, type WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { ChatPublisher, ChatSessions } from "../domain/chat.ts";
 import { readHistory, readOmpWindow, sessionArtifactReady } from "../domain/history.ts";
@@ -62,9 +63,27 @@ export function toResponse(frame: TranscriptFrame): MessageInitShape<typeof Watc
   };
 }
 
+/** An image part of a user message, as Pi takes it. */
+export type PromptImage = { type: "image"; data: string; mimeType: string };
+
+const PROMPT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+// The composer's own limits (MAX_CHAT_IMAGES, MAX_CHAT_IMAGE_BYTES); an image past them never left a composer.
+const MAX_PROMPT_IMAGES = 4;
+const MAX_PROMPT_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** A prompt's images, checked: the four web image types, at most 4, each at most 5 MB. */
+export function promptImages(images: readonly DraftImage[]): PromptImage[] {
+  if (images.length > MAX_PROMPT_IMAGES) throw new DomainError("invalid_argument", `at most ${MAX_PROMPT_IMAGES} images`);
+  return images.map((image) => {
+    if (!PROMPT_IMAGE_TYPES.has(image.mimeType)) throw new DomainError("invalid_argument", `${image.name || "image"}: not a png, jpeg, gif or webp image`);
+    if (image.bytes.length === 0 || image.bytes.length > MAX_PROMPT_IMAGE_BYTES) throw new DomainError("invalid_argument", `${image.name || "image"}: empty or larger than 5 MB`);
+    return { type: "image", data: Buffer.from(image.bytes).toString("base64"), mimeType: image.mimeType };
+  });
+}
+
 /** The turn controls of a live harness session, the same for a task session and a chat thread. A refusal is a `DomainError`. */
 export type TurnControl = {
-  prompt(id: string, text: string): Promise<void>;
+  prompt(id: string, text: string, images?: PromptImage[]): Promise<void>;
   abort(id: string): Promise<void>;
   setModel(id: string, model: string): Promise<Controls>;
   setThinkingLevel(id: string, level: string): Promise<Controls>;
@@ -238,7 +257,7 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
     promptSession: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
-        await c().turns.prompt(req.sessionId, req.text);
+        await c().turns.prompt(req.sessionId, req.text, promptImages(req.images));
         return {};
       });
     },

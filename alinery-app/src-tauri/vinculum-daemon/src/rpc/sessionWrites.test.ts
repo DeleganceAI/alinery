@@ -66,7 +66,7 @@ async function start() {
   };
   const turnCalls: string[] = [];
   const turns: TurnControl = {
-    prompt: async (id, text) => void turnCalls.push(`prompt ${id} ${text}`),
+    prompt: async (id, text, images = []) => void turnCalls.push(`prompt ${id} ${text}${images.map((i) => ` +${i.mimeType}:${i.data}`).join("")}`),
     abort: async (id) => void turnCalls.push(`abort ${id}`),
     setModel: async (id, model) => {
       if (id === "gone") throw new DomainError("not_found", "unknown-session");
@@ -244,6 +244,19 @@ test("a session's turn controls reach the daemon's runner, and what it refuses l
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   await c.session.promptSession({ meta: m, sessionId: "s1", text: "once" });
   expect(c.turnCalls.filter((line) => line === "prompt s1 once")).toHaveLength(1);
+});
+
+test("a prompt's images reach the runner as image parts, and one the composer could not have sent is refused", async () => {
+  const c = await start();
+  sessionMeta(c, "", "chat1", { harness: "vinculum", generic: true });
+  const png = { name: "shot.png", mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) };
+  await c.session.promptSession({ meta: meta(), sessionId: "s1", text: "look", images: [png] });
+  await c.chat.promptChatThread({ meta: meta(), threadId: "chat1", text: "see", images: [png] });
+  expect(c.turnCalls).toEqual(["prompt s1 look +image/png:AQID", "prompt chat1 see +image/png:AQID"]);
+  const svg = { ...png, name: "x.svg", mimeType: "image/svg+xml" };
+  expect(await code(c.session.promptSession({ meta: meta(), sessionId: "s1", text: "x", images: [svg] }))).toBe(Code.InvalidArgument);
+  expect(await code(c.chat.promptChatThread({ meta: meta(), threadId: "chat1", text: "x", images: Array(5).fill(png) }))).toBe(Code.InvalidArgument);
+  expect(c.turnCalls).toHaveLength(2);
 });
 
 test("a chat thread's turn controls refuse an id that is not a chat thread", async () => {

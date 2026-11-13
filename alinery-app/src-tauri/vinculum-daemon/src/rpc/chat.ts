@@ -10,7 +10,7 @@ import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
 import { domain, metaOf } from "./errors.ts";
-import { controlsOf, metaRel, nameRel, ranOrFail, type SessionControl, started } from "./sessions.ts";
+import { controlsOf, metaRel, nameRel, promptImages, ranOrFail, type SessionControl, started } from "./sessions.ts";
 
 export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): ServiceImpl<typeof ChatService> {
   const applied = () => ({ cursor: store.cursor() });
@@ -79,7 +79,7 @@ export function chatService(c: SessionControl, dedupe: Dedupe, store: Store): Se
       requireCapability(ctx, Capability.ACT);
       return once(req.meta, async () => {
         loadChat(c.repo, req.threadId);
-        await c.turns.prompt(req.threadId, req.text);
+        await c.turns.prompt(req.threadId, req.text, promptImages(req.images));
         return {};
       });
     },

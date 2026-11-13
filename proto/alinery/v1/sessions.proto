@@ -36,6 +36,9 @@ message PromptSessionRequest {
   MutationMeta meta = 1;
   string session_id = 2;
   string text = 3;
+  // Images the model sees with the text, as image parts of the same user message. A model that reads no images gets
+  // Pi's placeholder instead. The files themselves are already attachments; the text names them.
+  repeated DraftImage images = 4;
 }
 message PromptSessionResponse {}
 message AbortSessionRequest { string session_id = 1; }

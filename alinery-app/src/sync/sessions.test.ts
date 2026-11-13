@@ -133,6 +133,12 @@ describe("the turn controls and the process (S5.3)", () => {
     expect(seen[1].req).toMatchObject({ sessionId: "s1" });
   });
 
+  it("a prompt's images go as bytes beside the text", async () => {
+    await promptSession("/r", "s1", "look", [{ type: "image", data: "AQID", mimeType: "image/png" }]);
+    const images = seen[0].req.images as { mimeType: string; bytes: Uint8Array }[];
+    expect(images.map((image) => [image.mimeType, Array.from(image.bytes)])).toEqual([["image/png", [1, 2, 3]]]);
+  });
+
   it("a model or thinking change answers with the controls in the shape the views read", async () => {
     impl.setSessionModel = () => ({ controls: { model: "anthropic/claude", thinking: "off", thinkingLevels: [] } });
     impl.setSessionThinkingLevel = () => ({ controls: { model: "xai/grok", thinking: "low", thinkingLevels: ["off", "low", "high"] } });
