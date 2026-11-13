@@ -1475,6 +1475,7 @@ fn credential_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
             max_tokens: 100,
             price: Some(1),
             thinking: None,
+            input: None,
         }],
     };
     alinery_core::write_inference_file(&dir.join("inference.json"), "inf_mac", 4_000_000_000, "session", 1, &catalog).unwrap();

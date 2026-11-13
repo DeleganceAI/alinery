@@ -40,6 +40,10 @@ pub struct HostedModel {
     /// Kept verbatim so a rewrite of `inference.json` does not drop it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<Value>,
+    /// What the model reads (`["text", "image"]`), from the hosted catalog; absent means text only. Kept verbatim
+    /// like `thinking`: the daemon turns it into Pi's `input`, and Pi swaps an image for a placeholder without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -667,6 +671,7 @@ mod tests {
                   "context_window": 1048576,
                   "max_tokens": 32768,
                   "price": 1,
+                  "input": ["text", "image"],
                   "thinking": {
                     "reasoning": true,
                     "levels": {"off":"none","minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}
@@ -701,6 +706,8 @@ mod tests {
         write_inference_file(&path, "inf_keep", 10, "s", 1, &catalog).unwrap();
         let loaded = load_inference_file(&path).unwrap();
         assert_eq!(loaded.catalog.models[0].thinking, catalog.models[0].thinking);
+        assert_eq!(loaded.catalog.models[0].input.as_deref(), Some(&["text".to_string(), "image".to_string()][..]));
+        assert!(loaded.catalog.models[1].input.is_none());
         assert_eq!(
             loaded.catalog.models[1].thinking.as_ref().and_then(|value| value.pointer("/levels/off")),
             Some(&Value::Null)

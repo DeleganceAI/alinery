@@ -2,6 +2,7 @@ import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, 
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
+import { DROP_WITHOUT_FILE } from "../chat/attachments";
 import type { ChatPrefs } from "../chat/visibility";
 import { emptyTranscript, NEXT_TURN_MODEL_TITLE, NEXT_TURN_THINKING_TITLE } from "../chatTranscript";
 import { askConfirm, confirmDanger } from "../confirm";
@@ -20,8 +21,8 @@ import {
   enableCanvas,
   removeChatWorktree,
   resumeChatThread,
-  setChatPinned,
   setChatModel,
+  setChatPinned,
   setChatThinkingLevel,
   useCanvas,
   useChatThreads,
@@ -236,7 +237,8 @@ function ChatViewBody({
       }
       const { paths } = event.payload;
       setDropping(false);
-      stagePathsRef.current(paths);
+      if (paths.length === 0) toast.error(DROP_WITHOUT_FILE);
+      else stagePathsRef.current(paths);
     });
     return () => {
       un.then((finish) => finish());

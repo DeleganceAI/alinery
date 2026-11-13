@@ -12,7 +12,13 @@ type CatalogModel = {
   context_window: number;
   max_tokens: number;
   thinking?: { reasoning?: boolean; levels?: Record<string, string | null> };
+  input?: unknown;
 };
+
+/** The catalog `input`, as Pi's: text always, image only when the catalog says so. Pi swaps an image for a placeholder on a text-only model. */
+export function inputForHosted(input: CatalogModel["input"]): ("text" | "image")[] {
+  return Array.isArray(input) && input.includes("image") ? ["text", "image"] : ["text"];
+}
 
 const HOSTED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -84,7 +90,7 @@ export function installAlineryProvider(models: Pick<MutableModels, "setProvider"
       provider: "alinery",
       baseUrl: inference?.catalog.base_url,
       ...thinkingForHosted(model.thinking),
-      input: ["text"],
+      input: inputForHosted(model.input),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: model.context_window,
       maxTokens: model.max_tokens,

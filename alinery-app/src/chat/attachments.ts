@@ -3,6 +3,9 @@ export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_CHAT_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_CHAT_ATTACHMENTS = 8;
 export const MAX_CHAT_IMAGES = 4;
+/** A drop the window got no file path for. The screenshot thumbnail macOS floats after a capture hands over a file
+ * promise, not a path, and the webview's drop reads paths only; a copy of the same image pastes as bytes. */
+export const DROP_WITHOUT_FILE = "That drop carried no file. Copy the screenshot and paste it with ⌘V, or save it first and drop the file.";
 
 const VISION_MIME: Record<string, true> = {
   "image/png": true,

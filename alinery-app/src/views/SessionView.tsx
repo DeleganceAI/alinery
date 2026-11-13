@@ -10,7 +10,16 @@ import type { ArtifactPaneTab } from "../artifactClassification";
 import { artifactPaneItems, artifactPaneTreeNodes } from "../artifactClassification";
 import { ChatComposer } from "../ChatComposer";
 import { CodeView } from "../CodeView";
-import { canStage, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls, taskAttachmentDir } from "../chat/attachments";
+import {
+  canStage,
+  classifyAttachment,
+  DROP_WITHOUT_FILE,
+  type DraftAttachment,
+  draftToRowAttachments,
+  isHttpUrl,
+  revokeDraftPreviewUrls,
+  taskAttachmentDir,
+} from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, type PathLinks, PathLinksContext } from "../chat/CopyMessage";
 import type { ModelRolesMap } from "../chat/modelRoles";
 import { decodeOmpPage } from "../chat/ompFile";
@@ -385,7 +394,8 @@ export function SessionView({
       }
       const { paths } = event.payload;
       setDropping(false);
-      void stagePaths(paths);
+      if (paths.length === 0) toast.error(DROP_WITHOUT_FILE);
+      else void stagePaths(paths);
     });
     return () => {
       un.then((f) => f());

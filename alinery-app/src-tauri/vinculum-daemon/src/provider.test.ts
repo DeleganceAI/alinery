@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { resolveModel, thinkingForHosted } from "./provider.ts";
+import { inputForHosted, resolveModel, thinkingForHosted } from "./provider.ts";
 import { vinculumAuthContext } from "./runtime.ts";
 
 test("an old alinery grok id is xAI and a real provider prefix is kept", () => {
@@ -53,4 +53,11 @@ test("provider auth cannot see a shell key", async () => {
     if (previousGrok === undefined) delete process.env.XAI_API_KEY;
     else process.env.XAI_API_KEY = previousGrok;
   }
+});
+
+test("a hosted model reads images only when the catalog says so", () => {
+  expect(inputForHosted(["text", "image"])).toEqual(["text", "image"]);
+  expect(inputForHosted(undefined)).toEqual(["text"]);
+  expect(inputForHosted(["text"])).toEqual(["text"]);
+  expect(inputForHosted("image")).toEqual(["text"]);
 });
