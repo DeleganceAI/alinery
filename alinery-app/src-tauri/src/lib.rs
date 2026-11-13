@@ -137,6 +137,9 @@ pub fn run() {
     register_runtime_plugins(tauri::Builder::default())
         .manage(AppState::default())
         .setup(|app| {
+            if let Ok(bundle) = crate::remote::bundled_runtime_dir(app.handle()) {
+                let _ = crate::pi_durable::RUNTIME_BUNDLE.set(bundle);
+            }
             // B5: keep a daemon alive for every open repo (spawn-only — see the fn).
             spawn_daemon_poller(app.handle().clone());
             spawn_remote_supervisor(app.handle().clone());

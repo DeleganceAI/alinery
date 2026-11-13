@@ -2,15 +2,18 @@
 # Cross-build the runtime that remote (SSH) repos install on a Linux or macOS host, and bundle it as
 # app resources: alinery-app/src-tauri/resources/remote/<triple>.tar.gz plus manifest.json.
 #
-# Each archive holds one executable, `alinery-vinculum-daemon` (bun build --compile for the target), plus a MANIFEST in
-# `sha256sum -c` format that the remote verifies after unpacking. The daemon, the MCP server and the host service
-# (`--host-service`, plan S5.2) are modes of that one binary, so the build needs Bun and nothing else.
+# Each archive holds one executable, `alinery-vinculum-daemon` (bun build --compile for the target), the Python the
+# office skills run on (`python/`, staged by scripts/python-runtime/stage.sh), and a MANIFEST in `sha256sum -c` format
+# that the remote verifies after unpacking. The daemon, the MCP server and the host service (`--host-service`, plan
+# S5.2) are modes of that one binary. The app unpacks this machine's archive too, for its local daemon's Python
+# (`pi_durable::local_python_home`).
 #
 # `npm run tauri dev|build` (scripts/tauri.mjs) runs this first. The Bun cross targets download from the
 # network the first time, then come from Bun's cache; a failure only warns there, and release sets
 # ALINERY_REQUIRE_REMOTE_RUNTIMES=1 so a missing manifest fails the build.
 #
-# Prerequisite (--check prints it when missing): bun, https://bun.sh
+# Prerequisites (--check prints them when missing): bun, https://bun.sh; curl, for the pinned Python builds (cached
+# under ~/.cache/alinery after the first run).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI="$ROOT/alinery-app/src-tauri"
@@ -29,6 +32,7 @@ TARGETS=(
   "aarch64-apple-darwin|bun-darwin-arm64"
 )
 
+if command -v sha256sum >/dev/null 2>&1; then SHA256_CMD=sha256sum; else SHA256_CMD="shasum -a 256"; fi
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
@@ -60,6 +64,7 @@ need() {
 }
 check_prerequisites() {
   need bun "command -v bun" "https://bun.sh"
+  need curl "command -v curl" "for the pinned Python builds"
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -106,9 +111,12 @@ for entry in "${TARGETS[@]}"; do
       ;;
   esac
 
-  (cd "$dir" && echo "$(sha256 alinery-vinculum-daemon)  alinery-vinculum-daemon" > MANIFEST)
+  "$ROOT/scripts/python-runtime/stage.sh" "$triple" "$dir/python"
+
+  # Every regular file, so the remote's check covers the Python too (symlinks are checked through their targets).
+  (cd "$dir" && find . -type f ! -name MANIFEST -print0 | sort -z | xargs -0 $SHA256_CMD | sed 's|  \./|  |' > MANIFEST)
   # --no-xattrs: keep macOS provenance attributes out of the archive (they trigger warnings on extract).
-  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon MANIFEST
+  tar --no-xattrs -C "$dir" -czf "$OUT/$triple.tar.gz" alinery-vinculum-daemon python MANIFEST
   echo "archive ready: $OUT/$triple.tar.gz"
   BUILT+=("$triple")
 done

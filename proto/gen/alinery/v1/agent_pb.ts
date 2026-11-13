@@ -14,7 +14,68 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/agent.proto.
  */
 export const file_alinery_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2FnZW50LnByb3RvEgphbGluZXJ5LnYxIhYKFFJlYWRNY3BTdGF0dXNSZXF1ZXN0Il0KD01jcFNlcnZlclN0YXR1cxIMCgRuYW1lGAEgASgJEg8KB2J1aWx0aW4YAiABKAgSDQoFc3RhdGUYAyABKAkSEgoFZXJyb3IYBCABKAlIAIgBAUIICgZfZXJyb3IiVAoVUmVhZE1jcFN0YXR1c1Jlc3BvbnNlEg0KBXRvb2xzGAEgAygJEiwKB3NlcnZlcnMYAiADKAsyGy5hbGluZXJ5LnYxLk1jcFNlcnZlclN0YXR1cyIXChVSZWFkTW9kZWxSb2xlc1JlcXVlc3QilwEKFlJlYWRNb2RlbFJvbGVzUmVzcG9uc2USPAoFcm9sZXMYASADKAsyLS5hbGluZXJ5LnYxLlJlYWRNb2RlbFJvbGVzUmVzcG9uc2UuUm9sZXNFbnRyeRIRCglhZ2VudF9kaXIYAiABKAkaLAoKUm9sZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIqwBChZXcml0ZU1vZGVsUm9sZXNSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRI8CgVyb2xlcxgCIAMoCzItLmFsaW5lcnkudjEuV3JpdGVNb2RlbFJvbGVzUmVxdWVzdC5Sb2xlc0VudHJ5GiwKClJvbGVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKsAQoXV3JpdGVNb2RlbFJvbGVzUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBI9CgVyb2xlcxgCIAMoCzIuLmFsaW5lcnkudjEuV3JpdGVNb2RlbFJvbGVzUmVzcG9uc2UuUm9sZXNFbnRyeRosCgpSb2xlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiGwoZUmVhZEN1c3RvbWl6YXRpb25zUmVxdWVzdCJ5Cg1DdXN0b21pemF0aW9uEgwKBG5hbWUYASABKAkSDAoEa2luZBgCIAEoCRIOCgZzb3VyY2UYAyABKAkSEQoEcGF0aBgEIAEoCUgAiAEBEhQKB29mZmVyZWQYBSABKAhIAYgBAUIHCgVfcGF0aEIKCghfb2ZmZXJlZCJpChpSZWFkQ3VzdG9taXphdGlvbnNSZXNwb25zZRIoCgVpdGVtcxgBIAMoCzIZLmFsaW5lcnkudjEuQ3VzdG9taXphdGlvbhIOCgZlcnJvcnMYAiADKAkSEQoJYWdlbnRfZGlyGAMgASgJInQKE0luc3RhbGxTa2lsbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhEKCXVwbG9hZF9pZBgCIAEoCRIRCglmaWxlX25hbWUYAyABKAkSDwoHcmVwbGFjZRgEIAEoCCJaChRJbnN0YWxsU2tpbGxSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEgwKBG5hbWUYAiABKAkSDgoGZXhpc3RzGAMgASgIIkoKEkRlbGV0ZVNraWxsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDAoEbmFtZRgCIAEoCSI7ChNEZWxldGVTa2lsbFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiHAoaQ3VzdG9taXphdGlvblByb21wdFJlcXVlc3QiLQobQ3VzdG9taXphdGlvblByb21wdFJlc3BvbnNlEg4KBnByb21wdBgBIAEoCTKJBQoMQWdlbnRTZXJ2aWNlElcKDlJlYWRNb2RlbFJvbGVzEiEuYWxpbmVyeS52MS5SZWFkTW9kZWxSb2xlc1JlcXVlc3QaIi5hbGluZXJ5LnYxLlJlYWRNb2RlbFJvbGVzUmVzcG9uc2USWgoPV3JpdGVNb2RlbFJvbGVzEiIuYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXF1ZXN0GiMuYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXNwb25zZRJjChJSZWFkQ3VzdG9taXphdGlvbnMSJS5hbGluZXJ5LnYxLlJlYWRDdXN0b21pemF0aW9uc1JlcXVlc3QaJi5hbGluZXJ5LnYxLlJlYWRDdXN0b21pemF0aW9uc1Jlc3BvbnNlElEKDEluc3RhbGxTa2lsbBIfLmFsaW5lcnkudjEuSW5zdGFsbFNraWxsUmVxdWVzdBogLmFsaW5lcnkudjEuSW5zdGFsbFNraWxsUmVzcG9uc2USTgoLRGVsZXRlU2tpbGwSHi5hbGluZXJ5LnYxLkRlbGV0ZVNraWxsUmVxdWVzdBofLmFsaW5lcnkudjEuRGVsZXRlU2tpbGxSZXNwb25zZRJmChNDdXN0b21pemF0aW9uUHJvbXB0EiYuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uUHJvbXB0UmVxdWVzdBonLmFsaW5lcnkudjEuQ3VzdG9taXphdGlvblByb21wdFJlc3BvbnNlElQKDVJlYWRNY3BTdGF0dXMSIC5hbGluZXJ5LnYxLlJlYWRNY3BTdGF0dXNSZXF1ZXN0GiEuYWxpbmVyeS52MS5SZWFkTWNwU3RhdHVzUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
+  fileDesc("ChZhbGluZXJ5L3YxL2FnZW50LnByb3RvEgphbGluZXJ5LnYxIhgKFlJlYWRPZmZpY2VUb29sc1JlcXVlc3QiKAoKT2ZmaWNlVG9vbBIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkiWAoXUmVhZE9mZmljZVRvb2xzUmVzcG9uc2USJQoFdG9vbHMYASADKAsyFi5hbGluZXJ5LnYxLk9mZmljZVRvb2wSFgoOYnVuZGxlZF9weXRob24YAiABKAgiFgoUUmVhZE1jcFN0YXR1c1JlcXVlc3QiXQoPTWNwU2VydmVyU3RhdHVzEgwKBG5hbWUYASABKAkSDwoHYnVpbHRpbhgCIAEoCBINCgVzdGF0ZRgDIAEoCRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciJUChVSZWFkTWNwU3RhdHVzUmVzcG9uc2USDQoFdG9vbHMYASADKAkSLAoHc2VydmVycxgCIAMoCzIbLmFsaW5lcnkudjEuTWNwU2VydmVyU3RhdHVzIhcKFVJlYWRNb2RlbFJvbGVzUmVxdWVzdCKXAQoWUmVhZE1vZGVsUm9sZXNSZXNwb25zZRI8CgVyb2xlcxgBIAMoCzItLmFsaW5lcnkudjEuUmVhZE1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5EhEKCWFnZW50X2RpchgCIAEoCRosCgpSb2xlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEirAEKFldyaXRlTW9kZWxSb2xlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEjwKBXJvbGVzGAIgAygLMi0uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXF1ZXN0LlJvbGVzRW50cnkaLAoKUm9sZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIqwBChdXcml0ZU1vZGVsUm9sZXNSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEj0KBXJvbGVzGAIgAygLMi4uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5GiwKClJvbGVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIbChlSZWFkQ3VzdG9taXphdGlvbnNSZXF1ZXN0InkKDUN1c3RvbWl6YXRpb24SDAoEbmFtZRgBIAEoCRIMCgRraW5kGAIgASgJEg4KBnNvdXJjZRgDIAEoCRIRCgRwYXRoGAQgASgJSACIAQESFAoHb2ZmZXJlZBgFIAEoCEgBiAEBQgcKBV9wYXRoQgoKCF9vZmZlcmVkImkKGlJlYWRDdXN0b21pemF0aW9uc1Jlc3BvbnNlEigKBWl0ZW1zGAEgAygLMhkuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uEg4KBmVycm9ycxgCIAMoCRIRCglhZ2VudF9kaXIYAyABKAkidAoTSW5zdGFsbFNraWxsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdXBsb2FkX2lkGAIgASgJEhEKCWZpbGVfbmFtZRgDIAEoCRIPCgdyZXBsYWNlGAQgASgIIloKFEluc3RhbGxTa2lsbFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSDAoEbmFtZRgCIAEoCRIOCgZleGlzdHMYAyABKAgiSgoSRGVsZXRlU2tpbGxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRuYW1lGAIgASgJIjsKE0RlbGV0ZVNraWxsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCIcChpDdXN0b21pemF0aW9uUHJvbXB0UmVxdWVzdCItChtDdXN0b21pemF0aW9uUHJvbXB0UmVzcG9uc2USDgoGcHJvbXB0GAEgASgJMuUFCgxBZ2VudFNlcnZpY2USVwoOUmVhZE1vZGVsUm9sZXMSIS5hbGluZXJ5LnYxLlJlYWRNb2RlbFJvbGVzUmVxdWVzdBoiLmFsaW5lcnkudjEuUmVhZE1vZGVsUm9sZXNSZXNwb25zZRJaCg9Xcml0ZU1vZGVsUm9sZXMSIi5hbGluZXJ5LnYxLldyaXRlTW9kZWxSb2xlc1JlcXVlc3QaIy5hbGluZXJ5LnYxLldyaXRlTW9kZWxSb2xlc1Jlc3BvbnNlEmMKElJlYWRDdXN0b21pemF0aW9ucxIlLmFsaW5lcnkudjEuUmVhZEN1c3RvbWl6YXRpb25zUmVxdWVzdBomLmFsaW5lcnkudjEuUmVhZEN1c3RvbWl6YXRpb25zUmVzcG9uc2USUQoMSW5zdGFsbFNraWxsEh8uYWxpbmVyeS52MS5JbnN0YWxsU2tpbGxSZXF1ZXN0GiAuYWxpbmVyeS52MS5JbnN0YWxsU2tpbGxSZXNwb25zZRJOCgtEZWxldGVTa2lsbBIeLmFsaW5lcnkudjEuRGVsZXRlU2tpbGxSZXF1ZXN0Gh8uYWxpbmVyeS52MS5EZWxldGVTa2lsbFJlc3BvbnNlEmYKE0N1c3RvbWl6YXRpb25Qcm9tcHQSJi5hbGluZXJ5LnYxLkN1c3RvbWl6YXRpb25Qcm9tcHRSZXF1ZXN0GicuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uUHJvbXB0UmVzcG9uc2USVAoNUmVhZE1jcFN0YXR1cxIgLmFsaW5lcnkudjEuUmVhZE1jcFN0YXR1c1JlcXVlc3QaIS5hbGluZXJ5LnYxLlJlYWRNY3BTdGF0dXNSZXNwb25zZRJaCg9SZWFkT2ZmaWNlVG9vbHMSIi5hbGluZXJ5LnYxLlJlYWRPZmZpY2VUb29sc1JlcXVlc3QaIy5hbGluZXJ5LnYxLlJlYWRPZmZpY2VUb29sc1Jlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
+
+/**
+ * @generated from message alinery.v1.ReadOfficeToolsRequest
+ */
+export type ReadOfficeToolsRequest = Message<"alinery.v1.ReadOfficeToolsRequest"> & {
+};
+
+/**
+ * Describes the message alinery.v1.ReadOfficeToolsRequest.
+ * Use `create(ReadOfficeToolsRequestSchema)` to create a new message.
+ */
+export const ReadOfficeToolsRequestSchema: GenMessage<ReadOfficeToolsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 0);
+
+/**
+ * @generated from message alinery.v1.OfficeTool
+ */
+export type OfficeTool = Message<"alinery.v1.OfficeTool"> & {
+  /**
+   * python3, bun, soffice, pdftoppm or qpdf
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * "" when the agent's PATH has none
+   *
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
+
+/**
+ * Describes the message alinery.v1.OfficeTool.
+ * Use `create(OfficeToolSchema)` to create a new message.
+ */
+export const OfficeToolSchema: GenMessage<OfficeTool> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 1);
+
+/**
+ * @generated from message alinery.v1.ReadOfficeToolsResponse
+ */
+export type ReadOfficeToolsResponse = Message<"alinery.v1.ReadOfficeToolsResponse"> & {
+  /**
+   * @generated from field: repeated alinery.v1.OfficeTool tools = 1;
+   */
+  tools: OfficeTool[];
+
+  /**
+   * @generated from field: bool bundled_python = 2;
+   */
+  bundledPython: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.ReadOfficeToolsResponse.
+ * Use `create(ReadOfficeToolsResponseSchema)` to create a new message.
+ */
+export const ReadOfficeToolsResponseSchema: GenMessage<ReadOfficeToolsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 2);
 
 /**
  * @generated from message alinery.v1.ReadMcpStatusRequest
@@ -27,7 +88,7 @@ export type ReadMcpStatusRequest = Message<"alinery.v1.ReadMcpStatusRequest"> & 
  * Use `create(ReadMcpStatusRequestSchema)` to create a new message.
  */
 export const ReadMcpStatusRequestSchema: GenMessage<ReadMcpStatusRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 0);
+  messageDesc(file_alinery_v1_agent, 3);
 
 /**
  * @generated from message alinery.v1.McpServerStatus
@@ -61,7 +122,7 @@ export type McpServerStatus = Message<"alinery.v1.McpServerStatus"> & {
  * Use `create(McpServerStatusSchema)` to create a new message.
  */
 export const McpServerStatusSchema: GenMessage<McpServerStatus> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 1);
+  messageDesc(file_alinery_v1_agent, 4);
 
 /**
  * @generated from message alinery.v1.ReadMcpStatusResponse
@@ -83,7 +144,7 @@ export type ReadMcpStatusResponse = Message<"alinery.v1.ReadMcpStatusResponse"> 
  * Use `create(ReadMcpStatusResponseSchema)` to create a new message.
  */
 export const ReadMcpStatusResponseSchema: GenMessage<ReadMcpStatusResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 2);
+  messageDesc(file_alinery_v1_agent, 5);
 
 /**
  * @generated from message alinery.v1.ReadModelRolesRequest
@@ -96,7 +157,7 @@ export type ReadModelRolesRequest = Message<"alinery.v1.ReadModelRolesRequest"> 
  * Use `create(ReadModelRolesRequestSchema)` to create a new message.
  */
 export const ReadModelRolesRequestSchema: GenMessage<ReadModelRolesRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 3);
+  messageDesc(file_alinery_v1_agent, 6);
 
 /**
  * @generated from message alinery.v1.ReadModelRolesResponse
@@ -118,7 +179,7 @@ export type ReadModelRolesResponse = Message<"alinery.v1.ReadModelRolesResponse"
  * Use `create(ReadModelRolesResponseSchema)` to create a new message.
  */
 export const ReadModelRolesResponseSchema: GenMessage<ReadModelRolesResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 4);
+  messageDesc(file_alinery_v1_agent, 7);
 
 /**
  * @generated from message alinery.v1.WriteModelRolesRequest
@@ -142,7 +203,7 @@ export type WriteModelRolesRequest = Message<"alinery.v1.WriteModelRolesRequest"
  * Use `create(WriteModelRolesRequestSchema)` to create a new message.
  */
 export const WriteModelRolesRequestSchema: GenMessage<WriteModelRolesRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 5);
+  messageDesc(file_alinery_v1_agent, 8);
 
 /**
  * @generated from message alinery.v1.WriteModelRolesResponse
@@ -164,7 +225,7 @@ export type WriteModelRolesResponse = Message<"alinery.v1.WriteModelRolesRespons
  * Use `create(WriteModelRolesResponseSchema)` to create a new message.
  */
 export const WriteModelRolesResponseSchema: GenMessage<WriteModelRolesResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 6);
+  messageDesc(file_alinery_v1_agent, 9);
 
 /**
  * @generated from message alinery.v1.ReadCustomizationsRequest
@@ -177,7 +238,7 @@ export type ReadCustomizationsRequest = Message<"alinery.v1.ReadCustomizationsRe
  * Use `create(ReadCustomizationsRequestSchema)` to create a new message.
  */
 export const ReadCustomizationsRequestSchema: GenMessage<ReadCustomizationsRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 7);
+  messageDesc(file_alinery_v1_agent, 10);
 
 /**
  * @generated from message alinery.v1.Customization
@@ -218,7 +279,7 @@ export type Customization = Message<"alinery.v1.Customization"> & {
  * Use `create(CustomizationSchema)` to create a new message.
  */
 export const CustomizationSchema: GenMessage<Customization> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 8);
+  messageDesc(file_alinery_v1_agent, 11);
 
 /**
  * @generated from message alinery.v1.ReadCustomizationsResponse
@@ -245,7 +306,7 @@ export type ReadCustomizationsResponse = Message<"alinery.v1.ReadCustomizationsR
  * Use `create(ReadCustomizationsResponseSchema)` to create a new message.
  */
 export const ReadCustomizationsResponseSchema: GenMessage<ReadCustomizationsResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 9);
+  messageDesc(file_alinery_v1_agent, 12);
 
 /**
  * @generated from message alinery.v1.InstallSkillRequest
@@ -277,7 +338,7 @@ export type InstallSkillRequest = Message<"alinery.v1.InstallSkillRequest"> & {
  * Use `create(InstallSkillRequestSchema)` to create a new message.
  */
 export const InstallSkillRequestSchema: GenMessage<InstallSkillRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 10);
+  messageDesc(file_alinery_v1_agent, 13);
 
 /**
  * @generated from message alinery.v1.InstallSkillResponse
@@ -306,7 +367,7 @@ export type InstallSkillResponse = Message<"alinery.v1.InstallSkillResponse"> & 
  * Use `create(InstallSkillResponseSchema)` to create a new message.
  */
 export const InstallSkillResponseSchema: GenMessage<InstallSkillResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 11);
+  messageDesc(file_alinery_v1_agent, 14);
 
 /**
  * @generated from message alinery.v1.DeleteSkillRequest
@@ -328,7 +389,7 @@ export type DeleteSkillRequest = Message<"alinery.v1.DeleteSkillRequest"> & {
  * Use `create(DeleteSkillRequestSchema)` to create a new message.
  */
 export const DeleteSkillRequestSchema: GenMessage<DeleteSkillRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 12);
+  messageDesc(file_alinery_v1_agent, 15);
 
 /**
  * @generated from message alinery.v1.DeleteSkillResponse
@@ -345,7 +406,7 @@ export type DeleteSkillResponse = Message<"alinery.v1.DeleteSkillResponse"> & {
  * Use `create(DeleteSkillResponseSchema)` to create a new message.
  */
 export const DeleteSkillResponseSchema: GenMessage<DeleteSkillResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 13);
+  messageDesc(file_alinery_v1_agent, 16);
 
 /**
  * @generated from message alinery.v1.CustomizationPromptRequest
@@ -358,7 +419,7 @@ export type CustomizationPromptRequest = Message<"alinery.v1.CustomizationPrompt
  * Use `create(CustomizationPromptRequestSchema)` to create a new message.
  */
 export const CustomizationPromptRequestSchema: GenMessage<CustomizationPromptRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 14);
+  messageDesc(file_alinery_v1_agent, 17);
 
 /**
  * @generated from message alinery.v1.CustomizationPromptResponse
@@ -375,7 +436,7 @@ export type CustomizationPromptResponse = Message<"alinery.v1.CustomizationPromp
  * Use `create(CustomizationPromptResponseSchema)` to create a new message.
  */
 export const CustomizationPromptResponseSchema: GenMessage<CustomizationPromptResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 15);
+  messageDesc(file_alinery_v1_agent, 18);
 
 /**
  * The host's agent directory (S4.10, O12 a): `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
@@ -458,6 +519,19 @@ export const AgentService: GenService<{
     methodKind: "unary";
     input: typeof ReadMcpStatusRequestSchema;
     output: typeof ReadMcpStatusResponseSchema;
+  },
+  /**
+   * What the office skills can run on this host: each program as the agent's shell finds it, and whether its Python is the
+   * one the runtime bundles.
+   *
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.AgentService.ReadOfficeTools
+   */
+  readOfficeTools: {
+    methodKind: "unary";
+    input: typeof ReadOfficeToolsRequestSchema;
+    output: typeof ReadOfficeToolsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_agent, 0);

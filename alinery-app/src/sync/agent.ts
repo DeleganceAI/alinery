@@ -73,3 +73,12 @@ export async function readMcpStatus(repo?: string): Promise<VinculumDaemonCustom
   const reply = await call(() => agent(host).readMcpStatus({}));
   return { tools: reply.tools, servers: reply.servers.map((s) => ({ name: s.name, builtin: s.builtin, state: s.state, ...(s.error === undefined ? {} : { error: s.error }) })) };
 }
+
+export type OfficeTools = { tools: { name: string; path: string }[]; bundledPython: boolean };
+
+/** What the office skills can run on the repository's host, as its daemon finds it on the agent's PATH. */
+export async function readOfficeTools(repo?: string): Promise<OfficeTools> {
+  const host = await agentHost(repo);
+  const reply = await call(() => agent(host).readOfficeTools({}));
+  return { tools: reply.tools.map((t) => ({ name: t.name, path: t.path })), bundledPython: reply.bundledPython };
+}

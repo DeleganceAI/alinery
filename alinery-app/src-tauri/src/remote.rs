@@ -1047,7 +1047,7 @@ impl Drop for HostChannel {
 
 /// Where the bundled runtimes live: the release resource dir, then beside the executable, then
 /// the source tree for `tauri dev`. `ALINERY_REMOTE_RUNTIME_DIR` overrides it for tests.
-fn bundled_runtime_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+pub(crate) fn bundled_runtime_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Some(dir) = std::env::var_os("ALINERY_REMOTE_RUNTIME_DIR") {
         candidates.push(PathBuf::from(dir));
@@ -1076,7 +1076,7 @@ pub(crate) fn runtime_is_stale(manifest: &RuntimeManifest, triple: &str, running
         .ok_or_else(|| format!("this build has no runtime for {triple}"))
 }
 
-fn load_manifest(dir: &Path) -> Result<RuntimeManifest, String> {
+pub(crate) fn load_manifest(dir: &Path) -> Result<RuntimeManifest, String> {
     let text = std::fs::read_to_string(dir.join("manifest.json")).map_err(|error| format!("read the runtime manifest: {error}"))?;
     serde_json::from_str(&text).map_err(|error| format!("the runtime manifest is invalid: {error}"))
 }

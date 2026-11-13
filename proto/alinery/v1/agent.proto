@@ -17,6 +17,19 @@ service AgentService {
   rpc CustomizationPrompt(CustomizationPromptRequest) returns (CustomizationPromptResponse);  // VIEW
   // The agent's built-in tools and the state of each MCP server connection (S5.3: the JSON-lines vinculum_customizations op).
   rpc ReadMcpStatus(ReadMcpStatusRequest) returns (ReadMcpStatusResponse);            // VIEW
+  // What the office skills can run on this host: each program as the agent's shell finds it, and whether its Python is the
+  // one the runtime bundles.
+  rpc ReadOfficeTools(ReadOfficeToolsRequest) returns (ReadOfficeToolsResponse);      // VIEW
+}
+
+message ReadOfficeToolsRequest {}
+message OfficeTool {
+  string name = 1;  // python3, bun, soffice, pdftoppm or qpdf
+  string path = 2;  // "" when the agent's PATH has none
+}
+message ReadOfficeToolsResponse {
+  repeated OfficeTool tools = 1;
+  bool bundled_python = 2;
 }
 
 message ReadMcpStatusRequest {}

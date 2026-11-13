@@ -15,6 +15,7 @@ import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChat
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
+import { agentShellEnv, libreOfficeDir, pythonHome, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -62,7 +63,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 44;
+const PROTOCOL = 45;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -286,6 +287,21 @@ registry.install(
     sections: [section("skills", () => skillCatalog(agentDir))],
   }),
 );
+const python = pythonHome(process.execPath, process.env);
+const agentEnv = agentShellEnv({
+  python,
+  // agentDir is <vinculum>/config/agent.
+  shims: (() => {
+    try {
+      return writeShims(dirname(dirname(agentDir)), process.execPath);
+    } catch {
+      return undefined;
+    }
+  })(),
+  repo,
+  path: process.env.PATH,
+  libreOffice: libreOfficeDir(),
+});
 // The AGENT tokens this daemon mints (O20 c): one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
 const agentTokens = new TokenRegistry();
 const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
@@ -437,7 +453,7 @@ async function openSession(id: string, taskSlug: string, model: string, prompt =
       registry,
       settings: () => readCompactionSettings(appConfig, models),
       env: () => {
-        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id) });
+        const env = new NodeExecutionEnv({ cwd: sessionCwd(taskSlug, id), shellEnv: agentEnv });
         rememberSessionEnv(env, id);
         return env;
       },
@@ -1067,7 +1083,7 @@ await serveRpc({
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
-  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub },
+  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python } },
   providers: { providers, repo, appConfig },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {
