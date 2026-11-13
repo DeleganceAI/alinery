@@ -82,6 +82,7 @@ vi.mock("../ipc", () =>
     openUrl: mocks.openUrl,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
+    readModelFavorites: async () => ["anthropic/claude", "xai/grok-4.6"],
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
@@ -340,18 +341,24 @@ describe("ChatView", () => {
     render(chat());
     fireEvent.click(await screen.findByRole("button", { name: threadRow("s-new") }));
     const modelButton = await screen.findByRole("button", { name: "xai/grok-4.6" });
-    const picker = (await screen.findByRole("combobox", { name: "Thinking level" })) as HTMLSelectElement;
-    expect(picker.value).toBe("high");
-    fireEvent.change(picker, { target: { value: "low" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Thinking level: high" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "low" }));
     await waitFor(() => expect(mocks.chatSetThinkingLevel).toHaveBeenCalledWith("/repo", "s-new", "low"));
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "Thinking level" }) as HTMLSelectElement).value).toBe("low"));
+    expect(await screen.findByRole("button", { name: "Thinking level: low" })).toBeTruthy();
 
     fireEvent.click(modelButton);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Providers…" }));
     expect((await screen.findByTestId("providers")).dataset.current).toBe("xai/grok-4.6");
     fireEvent.click(screen.getByRole("button", { name: "Apply test model" }));
     await waitFor(() => expect(mocks.chatSetModel).toHaveBeenCalledWith("/repo", "s-new", "anthropic/claude"));
-    expect(await screen.findByRole("button", { name: "anthropic/claude" })).toBeTruthy();
-    expect(screen.queryByRole("combobox", { name: "Thinking level" })).toBeNull();
+    const changed = await screen.findByRole("button", { name: "anthropic/claude" });
+    // The new model names no levels, so the stored one shows but cannot change.
+    expect((screen.getByRole("button", { name: "Thinking level: off" }) as HTMLButtonElement).disabled).toBe(true);
+
+    // A starred model is one pick from the list above the composer.
+    fireEvent.click(changed);
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "xai/grok-4.6" }));
+    await waitFor(() => expect(mocks.chatSetModel).toHaveBeenCalledWith("/repo", "s-new", "xai/grok-4.6"));
   });
 
   it("refreshes the thread status while it stays selected", async () => {

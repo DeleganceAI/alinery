@@ -4840,7 +4840,8 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-main .chat-activity {
   position: absolute;
   z-index: 1;
-  top: calc(100% + 8px);
+  /* Past the model bar (8px + a 26px button) to the composer box. */
+  top: calc(100% + 42px);
   right: calc(50% + min(var(--chat-col-max), 100% - 48px) / 2 + 12px);
   height: 44px;
   padding: 0;
@@ -5098,20 +5099,21 @@ header:has(~ main .task-info-panel) nav.tabs {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 56px;
-  padding: 10px 20px;
+  min-height: 44px;
+  padding: 6px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   /* Inherits the global `header` z-index 20; drop below the app header so
      its account/repo menus paint over this bar. */
   z-index: 10;
 }
+/* One line: the name, then repo, branch and status beside it. */
 .chat-titlebar-identity {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 16px;
 }
 .chat-titlebar > .chat-icon-btn {
   flex: 0 0 auto;
@@ -5141,8 +5143,9 @@ header:has(~ main .task-info-panel) nav.tabs {
   opacity: 1;
 }
 .chat-titlebar-meta {
+  min-width: 0;
+  overflow: hidden;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 4px 14px;
   color: var(--text-muted);
@@ -5184,6 +5187,42 @@ header:has(~ main .task-info-panel) nav.tabs {
 .chat-model-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Model and thinking level, centered just above the composer box; their lists open upward. */
+.chat-model-bar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 24px 0;
+}
+.chat-thinking-btn {
+  gap: 5px;
+}
+.chat-model-bar .chat-dropup {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.chat-dropup .account-chip-action {
+  gap: 8px;
+}
+.chat-dropup .account-chip-action > svg {
+  flex: 0 0 auto;
+}
+.chat-dropup .account-chip-action > svg:last-child:not(:first-child) {
+  margin-left: auto;
+}
+.chat-dropup-model {
+  font-family: var(--font-mono);
+}
+.chat-dropup-empty {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
 }
 
 /* Square icon button: quiet until hovered, still reads as a button. */

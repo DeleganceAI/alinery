@@ -1,4 +1,4 @@
-import { Archive, Brain, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, MessageSquare, PanelLeftClose, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, MessageSquare, PanelLeftClose, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
@@ -21,6 +21,7 @@ import {
   removeChatWorktree,
   resumeChatThread,
   setChatPinned,
+  setChatModel,
   setChatThinkingLevel,
   useCanvas,
   useChatThreads,
@@ -32,9 +33,9 @@ import { toast } from "../toast";
 import type { AppearancePrefs, ChatThread, SessionObservation } from "../types";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { ChatCanvas } from "./ChatCanvas";
+import { ChatModelBar } from "./ChatModelBar";
 import { ChatPane } from "./ChatPane";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
-import { ThinkingSelect } from "./ThinkingSelect";
 
 /** The shortest path tail that tells this repo apart from every other one shown: `alinery`, or `work/alinery` beside `oss/alinery`. */
 export function repoLabel(path: string, all: string[]): string {
@@ -335,6 +336,14 @@ function ChatViewBody({
     }
   }
 
+  function pickModel(model: string) {
+    if (!selected) return;
+    void setChatModel(selected.repo_path, selected.session.id, model).then(
+      (controls) => chat.applyControls(controls),
+      (cause: unknown) => setError(String(cause)),
+    );
+  }
+
   function pickThinking(level: string) {
     if (!selected) return;
     void setChatThinkingLevel(selected.repo_path, selected.session.id, level).then(
@@ -528,18 +537,6 @@ function ChatViewBody({
                   {selected.branch_label}
                   {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
                 </span>
-                {inTerminal || !transcript.sessionMeta.thinking ? null : (
-                  <span className="chat-meta-item">
-                    <Brain size={13} aria-hidden="true" />
-                    <ThinkingSelect
-                      level={transcript.sessionMeta.thinking}
-                      levels={transcript.sessionMeta.thinkingLevels}
-                      disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
-                      title={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
-                      onPick={pickThinking}
-                    />
-                  </span>
-                )}
                 {contextUsage ? (
                   <span className="chat-meta-item" title="Context used / available">
                     {contextUsage}
@@ -554,20 +551,6 @@ function ChatViewBody({
           <div className="chat-titlebar-actions">
             {selected ? (
               <>
-                {inTerminal ? null : (
-                  <>
-                    <button
-                      type="button"
-                      className="btn ghost small chat-model-btn"
-                      onClick={() => chat.setProvidersDialog({ tab: "models", preselect: "" })}
-                      title={activity.turnActive ? NEXT_TURN_MODEL_TITLE : "Change model"}
-                    >
-                      <span className="chat-model-label">{modelLabel}</span>
-                      <ChevronDown size={14} aria-hidden="true" />
-                    </button>
-                    <span className="chat-titlebar-sep" aria-hidden="true" />
-                  </>
-                )}
                 <button
                   type="button"
                   className={`chat-icon-btn${selected.session.pinned ? " on" : ""}`}
@@ -651,12 +634,25 @@ function ChatViewBody({
         ) : null}
         {/* No composer without a thread: drafts are per thread, so the box would swallow every keystroke. */}
         {inTerminal || !selected ? null : (
+          <ChatModelBar
+            model={modelLabel}
+            title={activity.turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
+            thinkingTitle={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+            thinking={transcript.sessionMeta.thinking}
+            thinkingLevels={transcript.sessionMeta.thinkingLevels}
+            thinkingDisabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
+            onPickModel={pickModel}
+            onPickThinking={pickThinking}
+            onProviders={() => chat.setProvidersDialog({ tab: "models", preselect: "" })}
+          />
+        )}
+        {inTerminal || !selected ? null : (
           <ChatComposer
             body={body}
             status={activity.status}
             catalog={transcript.commands}
             sending={sending}
-            showHints={visibility.showComposerHints}
+            showHints={false}
             attachments={chat.attachments}
             dropping={dropping}
             onAttach={() => {
