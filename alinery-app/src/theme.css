@@ -6141,6 +6141,9 @@ header:has(~ main .task-info-panel) nav.tabs {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  /* A button sizes to its content, and a wrapping row's content is as wide as the live step's unbroken first line: pin it to
+     the column so that line ellipsizes instead of running off the page. */
+  width: 100%;
   min-height: calc(var(--chat-node-y) * 2 + 9px);
   padding: 0;
   border: 0;
