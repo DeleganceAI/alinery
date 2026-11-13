@@ -24,15 +24,15 @@ export function buildRepoTree(paths: string[]): Dir {
 
 const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-function FileRow({ path, label, selected, onOpen }: { path: string; label: string; selected: boolean; onOpen: (path: string) => void }) {
+function FileRow({ path, label, selected, onOpen }: { path: string; label: string; selected: boolean; onOpen: (path: string, keep: boolean) => void }) {
   return (
-    <button type="button" className={`repo-tree-file${selected ? " selected" : ""}`} title={path} onClick={() => onOpen(path)}>
+    <button type="button" className={`repo-tree-file${selected ? " selected" : ""}`} title={path} onClick={(event) => onOpen(path, event.detail >= 2)}>
       {label}
     </button>
   );
 }
 
-function DirRows({ dir, selected, onOpen }: { dir: Dir; selected: string; onOpen: (path: string) => void }) {
+function DirRows({ dir, selected, onOpen }: { dir: Dir; selected: string; onOpen: (path: string, keep: boolean) => void }) {
   return (
     <>
       {[...dir.dirs.keys()].sort().map((name) => (
@@ -45,7 +45,7 @@ function DirRows({ dir, selected, onOpen }: { dir: Dir; selected: string; onOpen
   );
 }
 
-function DirRow({ name, dir, selected, onOpen }: { name: string; dir: Dir; selected: string; onOpen: (path: string) => void }) {
+function DirRow({ name, dir, selected, onOpen }: { name: string; dir: Dir; selected: string; onOpen: (path: string, keep: boolean) => void }) {
   // ponytail: children render only while open, so a large repo costs one row per visible folder.
   const [open, setOpen] = useState(false);
   return (
@@ -61,7 +61,7 @@ function DirRow({ name, dir, selected, onOpen }: { name: string; dir: Dir; selec
 }
 
 /** The Files panel's Repository section: the task's worktree as a folder tree, with a name filter. Loads on mount. */
-export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPath: string; taskSlug: string; selected: string; onOpen: (path: string) => void }) {
+export function RepoFileTree({ repoPath, taskSlug, selected, onOpen }: { repoPath: string; taskSlug: string; selected: string; onOpen: (path: string, keep: boolean) => void }) {
   const [listing, setListing] = useState<{ paths: string[]; truncated: boolean } | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");

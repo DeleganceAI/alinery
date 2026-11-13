@@ -2168,7 +2168,8 @@ describe("main pane file tabs", () => {
     const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
     const tabs = within(screen.getByRole("group", { name: "Open files" }));
 
-    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }));
+    // A double click keeps the tab; the second click of one carries detail 2.
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 2 });
     expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     expect(screen.queryByText(/has not changed yet/)).toBeNull();
@@ -2189,6 +2190,28 @@ describe("main pane file tabs", () => {
     fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
     expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
   });
+  it("a single click opens a temporary tab the next one replaces, and clicking it in the strip keeps it", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });
+    fakeArtifacts.set("parent", { items: [item("a.md"), item("b.md"), item("c.md")] as never, tree: [owned("a.md"), owned("b.md"), owned("c.md")] });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    const tab = (name: string) => tabs.queryByRole("button", { name });
+
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 1 });
+    expect(tab("a.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(true);
+    fireEvent.click(files.getByRole("button", { name: /^b\.md/ }), { detail: 1 });
+    expect(await screen.findByRole("heading", { name: "Heading b.md" })).toBeDefined();
+    expect(tab("a.md")).toBeNull();
+
+    fireEvent.click(tab("b.md") as HTMLElement);
+    expect(tab("b.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(false);
+    fireEvent.click(files.getByRole("button", { name: /^c\.md/ }), { detail: 1 });
+    expect(tab("b.md")).toBeDefined();
+    expect(tab("c.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(true);
+  });
 });
 
 describe("repository files", () => {
@@ -2199,7 +2222,7 @@ describe("repository files", () => {
     const repo = within(await screen.findByRole("region", { name: "Repository files" }));
     expect(mocks.listWorktreeFiles).toHaveBeenCalledWith("/repo", "parent");
 
-    fireEvent.click(await repo.findByRole("button", { name: "README.md" }));
+    fireEvent.click(await repo.findByRole("button", { name: "README.md" }), { detail: 2 });
     expect(await screen.findByRole("heading", { name: "Read me" })).toBeDefined();
     expect(fakeArtifacts.readWorktree).toHaveBeenCalledWith("/repo", "parent", "README.md");
     expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "README.md");

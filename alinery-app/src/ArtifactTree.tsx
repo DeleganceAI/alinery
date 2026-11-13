@@ -66,7 +66,8 @@ function ArtifactTreeRow({
   selectedId?: string;
   collapsed: Set<string>;
   onToggle: (id: string) => void;
-  onSelect: (node: ArtifactTreeNode) => void;
+  /** `keep`: the second click of a double click. */
+  onSelect: (node: ArtifactTreeNode, keep: boolean) => void;
   onError: (error: string) => void;
 }) {
   const folder = node.kind === "subtask_folder";
@@ -88,13 +89,13 @@ function ArtifactTreeRow({
         className={`artifactitem artifact-tree-row${selectedId === node.id ? " selected" : ""}${node.kind === "attachment" ? " attachment" : ""}`}
         style={{ paddingLeft: `${10 + depth * 16}px` }}
         title={node.label}
-        onClick={() => {
+        onClick={(event) => {
           if (folder) {
             onToggle(node.id);
           } else if (node.kind === "attachment") {
             if (node.reveal_path) revealPath(alineryFilePath(repoPath, node.reveal_path)).catch((error) => onError(String(error)));
           } else {
-            onSelect(node);
+            onSelect(node, event.detail >= 2);
           }
         }}
       >
@@ -136,7 +137,7 @@ export function ArtifactTree({
   repoPath: string;
   nodes: ArtifactTreeNode[];
   selectedId?: string;
-  onSelect: (node: ArtifactTreeNode) => void;
+  onSelect: (node: ArtifactTreeNode, keep: boolean) => void;
   onError: (error: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());

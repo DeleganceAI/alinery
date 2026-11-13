@@ -7456,6 +7456,10 @@ header:has(~ main .task-info-panel) nav.tabs {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A temporary tab: the next file opened with a single click replaces it. */
+.task-main-tab.temp .task-main-tab-label {
+  font-style: italic;
+}
 .task-main-tab-close {
   flex: none;
   display: grid;

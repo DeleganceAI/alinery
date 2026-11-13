@@ -330,8 +330,9 @@ export function TaskDetail({
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
   const setArtifactMode = fileTabs.setMode;
-  const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact") => {
-    fileTabs.open({ key: kind === "repo" ? `repo:${name}` : (node?.id ?? name), kind, name, node, mode: "preview" });
+  // Lists open a file temporarily on a click and keep it on a double click (the second click's `detail` is 2).
+  const openArtifactTab = (name: string, node: ArtifactTreeNode | null, kind: OpenArtifactTab["kind"] = "artifact", keep = true) => {
+    fileTabs.open({ key: kind === "repo" ? `repo:${name}` : (node?.id ?? name), kind, name, node, mode: "preview" }, keep);
     setArtifactErr(null);
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
@@ -1285,13 +1286,13 @@ export function TaskDetail({
                         e.preventDefault();
                         e.currentTarget.click();
                       }}
-                      onClick={() => {
+                      onClick={(e) => {
                         if (item.attachment) {
                           revealPath(attachmentFilePath(repoPath, slug, item.name)).catch((e) => setArtifactErr({ msg: "Couldn't reveal the attachment.", detail: String(e) }));
                           return;
                         }
                         if (!node) return;
-                        openArtifactTab(item.name, node);
+                        openArtifactTab(item.name, node, "artifact", e.detail >= 2);
                       }}
                     >
                       <span className="artifactitem-name">{item.name}</span>
@@ -1306,20 +1307,25 @@ export function TaskDetail({
                     repoPath={repoPath}
                     nodes={contextualArtifactTree}
                     selectedId={selectedArtifactTreeId}
-                    onSelect={(node) => {
-                      openArtifactTab(node.label, node);
+                    onSelect={(node, keep) => {
+                      openArtifactTab(node.label, node, "artifact", keep);
                     }}
                     onError={(detail) => setArtifactErr({ msg: "Couldn't open the artifact.", detail })}
                   />
                 )}
-                <RepoFileTree repoPath={repoPath} taskSlug={slug} selected={selectedIsRepo ? selectedArtifact : ""} onOpen={(path) => openArtifactTab(path, null, "repo")} />
+                <RepoFileTree
+                  repoPath={repoPath}
+                  taskSlug={slug}
+                  selected={selectedIsRepo ? selectedArtifact : ""}
+                  onOpen={(path, keep) => openArtifactTab(path, null, "repo", keep)}
+                />
               </div>
             </>
           )}
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main className="detailmain">
-          <MainTabs pinned="Sessions" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.setActive} onClose={fileTabs.close} />
+          <MainTabs pinned="Sessions" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
           {activeArtifactTab && (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">
