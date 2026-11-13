@@ -15,7 +15,7 @@ import { CHAT_TITLE_PROMPT, SESSION_NAME_INSTRUCTION, chatTitleBucket, cleanChat
 import { completeConfiguredText, modelSources, resolveModel } from "./provider.ts";
 import { openProviderRuntime } from "./runtime.ts";
 import { writeAtomic } from "./platform/fs.ts";
-import { agentShellEnv, libreOfficeDir, pythonHome, writeShims } from "./agentShell.ts";
+import { agentShellEnv, libreOfficeDir, runtimePart, writeShims } from "./agentShell.ts";
 import { takeSecretFile, TokenRegistry } from "./rpc/auth.ts";
 import { eventsChanges } from "./runtime/transcript.ts";
 import { serveRpc } from "./rpc/server.ts";
@@ -281,13 +281,14 @@ registry.install(namingExtension());
 const canvas = canvasTools({ repo, threadOf: (env, conversationId) => { const row = sessionForCall(env, conversationId); return row && !row.taskSlug ? row.id : undefined; }, refresh: (rel) => feed.refresh(rel) });
 registry.install(canvas.extension);
 const agentDir = vinculumAgentDir(appConfig);
+const includedSkillsDir = runtimePart("skills", process.execPath, process.env);
 registry.install(
   defineExtension({
     name: "alinery-skills",
-    sections: [section("skills", () => skillCatalog(agentDir))],
+    sections: [section("skills", () => skillCatalog(agentDir, includedSkillsDir))],
   }),
 );
-const python = pythonHome(process.execPath, process.env);
+const python = runtimePart("python", process.execPath, process.env);
 const agentEnv = agentShellEnv({
   python,
   // agentDir is <vinculum>/config/agent.
@@ -1083,7 +1084,7 @@ await serveRpc({
   tasks: taskDeps,
   sessions: sessionControl,
   playbooks: { repo, appConfig, projector: playbookProjector, blobs: taskDeps.blobs },
-  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python } },
+  agent: { appConfig, blobs: taskDeps.blobs, mcp: mcpHub, shell: { path: agentEnv.PATH ?? "", python }, includedSkills: includedSkillsDir },
   providers: { providers, repo, appConfig },
   artifacts: { repo, backups: backupHost, projector: artifactProjector, refresh: (rel) => feed.refresh(rel), telemetry, taskExecution, createSession: (request) => createExecutionSession(repo, request, openCreated) },
   transcripts: async (taskSlug, id) => {

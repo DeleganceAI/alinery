@@ -1,0 +1,16 @@
+{
+  "off_by_default": [
+    "pdf-compress",
+    "pdf-watermark",
+    "pdf-ocr",
+    "html-to-ppt",
+    "ppt-visual",
+    "batch-convert",
+    "report-generator",
+    "invoice-generator",
+    "nda-generator",
+    "contract-review",
+    "meeting-notes",
+    "proposal-writer"
+  ]
+}

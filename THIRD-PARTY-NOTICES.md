@@ -27,6 +27,21 @@ keeps its license in its `*.dist-info` directory under
 `python/lib/python3.12/site-packages/`; all are permissive (MIT, BSD, PSF,
 Apache-2.0 or BSD, MIT-CMU).
 
+## Included skills
+
+`alinery-app/src-tauri/vinculum-daemon/skills/` (shipped as each runtime
+archive's `skills/`) holds copies of agent skills, pinned by commit in
+`scripts/update-included-skills.sh`:
+
+- `docx`, `pdf`, `pptx`, `xlsx` and `internal-comms` from
+  [anthropics/skills](https://github.com/anthropics/skills), Apache License 2.0;
+  each directory keeps its `LICENSE.txt`.
+- The other skills from
+  [claude-office-skills/skills](https://github.com/claude-office-skills/skills),
+  MIT License, in `skills/LICENSE.claude-office-skills.txt`. Our copies change
+  each skill's frontmatter `name` to its directory name and replace six empty
+  descriptions.
+
 ## oh-my-pi / OMP
 
 Alinery ships a pinned official build of [oh-my-pi / OMP](https://github.com/can1357/oh-my-pi).

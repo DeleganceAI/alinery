@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/agent.proto.
  */
 export const file_alinery_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChZhbGluZXJ5L3YxL2FnZW50LnByb3RvEgphbGluZXJ5LnYxIhgKFlJlYWRPZmZpY2VUb29sc1JlcXVlc3QiKAoKT2ZmaWNlVG9vbBIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkiWAoXUmVhZE9mZmljZVRvb2xzUmVzcG9uc2USJQoFdG9vbHMYASADKAsyFi5hbGluZXJ5LnYxLk9mZmljZVRvb2wSFgoOYnVuZGxlZF9weXRob24YAiABKAgiFgoUUmVhZE1jcFN0YXR1c1JlcXVlc3QiXQoPTWNwU2VydmVyU3RhdHVzEgwKBG5hbWUYASABKAkSDwoHYnVpbHRpbhgCIAEoCBINCgVzdGF0ZRgDIAEoCRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciJUChVSZWFkTWNwU3RhdHVzUmVzcG9uc2USDQoFdG9vbHMYASADKAkSLAoHc2VydmVycxgCIAMoCzIbLmFsaW5lcnkudjEuTWNwU2VydmVyU3RhdHVzIhcKFVJlYWRNb2RlbFJvbGVzUmVxdWVzdCKXAQoWUmVhZE1vZGVsUm9sZXNSZXNwb25zZRI8CgVyb2xlcxgBIAMoCzItLmFsaW5lcnkudjEuUmVhZE1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5EhEKCWFnZW50X2RpchgCIAEoCRosCgpSb2xlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEirAEKFldyaXRlTW9kZWxSb2xlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEjwKBXJvbGVzGAIgAygLMi0uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXF1ZXN0LlJvbGVzRW50cnkaLAoKUm9sZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIqwBChdXcml0ZU1vZGVsUm9sZXNSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEj0KBXJvbGVzGAIgAygLMi4uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5GiwKClJvbGVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIbChlSZWFkQ3VzdG9taXphdGlvbnNSZXF1ZXN0InkKDUN1c3RvbWl6YXRpb24SDAoEbmFtZRgBIAEoCRIMCgRraW5kGAIgASgJEg4KBnNvdXJjZRgDIAEoCRIRCgRwYXRoGAQgASgJSACIAQESFAoHb2ZmZXJlZBgFIAEoCEgBiAEBQgcKBV9wYXRoQgoKCF9vZmZlcmVkImkKGlJlYWRDdXN0b21pemF0aW9uc1Jlc3BvbnNlEigKBWl0ZW1zGAEgAygLMhkuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uEg4KBmVycm9ycxgCIAMoCRIRCglhZ2VudF9kaXIYAyABKAkidAoTSW5zdGFsbFNraWxsUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESEQoJdXBsb2FkX2lkGAIgASgJEhEKCWZpbGVfbmFtZRgDIAEoCRIPCgdyZXBsYWNlGAQgASgIIloKFEluc3RhbGxTa2lsbFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSDAoEbmFtZRgCIAEoCRIOCgZleGlzdHMYAyABKAgiSgoSRGVsZXRlU2tpbGxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRuYW1lGAIgASgJIjsKE0RlbGV0ZVNraWxsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCIcChpDdXN0b21pemF0aW9uUHJvbXB0UmVxdWVzdCItChtDdXN0b21pemF0aW9uUHJvbXB0UmVzcG9uc2USDgoGcHJvbXB0GAEgASgJMuUFCgxBZ2VudFNlcnZpY2USVwoOUmVhZE1vZGVsUm9sZXMSIS5hbGluZXJ5LnYxLlJlYWRNb2RlbFJvbGVzUmVxdWVzdBoiLmFsaW5lcnkudjEuUmVhZE1vZGVsUm9sZXNSZXNwb25zZRJaCg9Xcml0ZU1vZGVsUm9sZXMSIi5hbGluZXJ5LnYxLldyaXRlTW9kZWxSb2xlc1JlcXVlc3QaIy5hbGluZXJ5LnYxLldyaXRlTW9kZWxSb2xlc1Jlc3BvbnNlEmMKElJlYWRDdXN0b21pemF0aW9ucxIlLmFsaW5lcnkudjEuUmVhZEN1c3RvbWl6YXRpb25zUmVxdWVzdBomLmFsaW5lcnkudjEuUmVhZEN1c3RvbWl6YXRpb25zUmVzcG9uc2USUQoMSW5zdGFsbFNraWxsEh8uYWxpbmVyeS52MS5JbnN0YWxsU2tpbGxSZXF1ZXN0GiAuYWxpbmVyeS52MS5JbnN0YWxsU2tpbGxSZXNwb25zZRJOCgtEZWxldGVTa2lsbBIeLmFsaW5lcnkudjEuRGVsZXRlU2tpbGxSZXF1ZXN0Gh8uYWxpbmVyeS52MS5EZWxldGVTa2lsbFJlc3BvbnNlEmYKE0N1c3RvbWl6YXRpb25Qcm9tcHQSJi5hbGluZXJ5LnYxLkN1c3RvbWl6YXRpb25Qcm9tcHRSZXF1ZXN0GicuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uUHJvbXB0UmVzcG9uc2USVAoNUmVhZE1jcFN0YXR1cxIgLmFsaW5lcnkudjEuUmVhZE1jcFN0YXR1c1JlcXVlc3QaIS5hbGluZXJ5LnYxLlJlYWRNY3BTdGF0dXNSZXNwb25zZRJaCg9SZWFkT2ZmaWNlVG9vbHMSIi5hbGluZXJ5LnYxLlJlYWRPZmZpY2VUb29sc1JlcXVlc3QaIy5hbGluZXJ5LnYxLlJlYWRPZmZpY2VUb29sc1Jlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
+  fileDesc("ChZhbGluZXJ5L3YxL2FnZW50LnByb3RvEgphbGluZXJ5LnYxIhgKFlJlYWRPZmZpY2VUb29sc1JlcXVlc3QiKAoKT2ZmaWNlVG9vbBIMCgRuYW1lGAEgASgJEgwKBHBhdGgYAiABKAkiWAoXUmVhZE9mZmljZVRvb2xzUmVzcG9uc2USJQoFdG9vbHMYASADKAsyFi5hbGluZXJ5LnYxLk9mZmljZVRvb2wSFgoOYnVuZGxlZF9weXRob24YAiABKAgiFgoUUmVhZE1jcFN0YXR1c1JlcXVlc3QiXQoPTWNwU2VydmVyU3RhdHVzEgwKBG5hbWUYASABKAkSDwoHYnVpbHRpbhgCIAEoCBINCgVzdGF0ZRgDIAEoCRISCgVlcnJvchgEIAEoCUgAiAEBQggKBl9lcnJvciJUChVSZWFkTWNwU3RhdHVzUmVzcG9uc2USDQoFdG9vbHMYASADKAkSLAoHc2VydmVycxgCIAMoCzIbLmFsaW5lcnkudjEuTWNwU2VydmVyU3RhdHVzIhcKFVJlYWRNb2RlbFJvbGVzUmVxdWVzdCKXAQoWUmVhZE1vZGVsUm9sZXNSZXNwb25zZRI8CgVyb2xlcxgBIAMoCzItLmFsaW5lcnkudjEuUmVhZE1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5EhEKCWFnZW50X2RpchgCIAEoCRosCgpSb2xlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEirAEKFldyaXRlTW9kZWxSb2xlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEjwKBXJvbGVzGAIgAygLMi0uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXF1ZXN0LlJvbGVzRW50cnkaLAoKUm9sZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIqwBChdXcml0ZU1vZGVsUm9sZXNSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEj0KBXJvbGVzGAIgAygLMi4uYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXNwb25zZS5Sb2xlc0VudHJ5GiwKClJvbGVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIbChlSZWFkQ3VzdG9taXphdGlvbnNSZXF1ZXN0Ir8BCg1DdXN0b21pemF0aW9uEgwKBG5hbWUYASABKAkSDAoEa2luZBgCIAEoCRIOCgZzb3VyY2UYAyABKAkSEQoEcGF0aBgEIAEoCUgAiAEBEhQKB29mZmVyZWQYBSABKAhIAYgBARIVCghpbmNsdWRlZBgGIAEoCEgCiAEBEhQKB2VuYWJsZWQYByABKAhIA4gBAUIHCgVfcGF0aEIKCghfb2ZmZXJlZEILCglfaW5jbHVkZWRCCgoIX2VuYWJsZWQiyAEKGlJlYWRDdXN0b21pemF0aW9uc1Jlc3BvbnNlEigKBWl0ZW1zGAEgAygLMhkuYWxpbmVyeS52MS5DdXN0b21pemF0aW9uEg4KBmVycm9ycxgCIAMoCRIRCglhZ2VudF9kaXIYAyABKAkSEQoJc2tpbGxzX29uGAQgASgNEhMKC3NraWxsX2xpbWl0GAUgASgNEhsKE3NraWxsX2NhdGFsb2dfY2hhcnMYBiABKA0SGAoQcmVtb3ZlZF9pbmNsdWRlZBgHIAMoCSJ0ChNJbnN0YWxsU2tpbGxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIRCgl1cGxvYWRfaWQYAiABKAkSEQoJZmlsZV9uYW1lGAMgASgJEg8KB3JlcGxhY2UYBCABKAgiWgoUSW5zdGFsbFNraWxsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIMCgRuYW1lGAIgASgJEg4KBmV4aXN0cxgDIAEoCCJcChJEZWxldGVTa2lsbFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBG5hbWUYAiABKAkSEAoIaW5jbHVkZWQYAyABKAgiXwoWU2V0U2tpbGxFbmFibGVkUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDAoEbmFtZRgCIAEoCRIPCgdlbmFibGVkGAMgASgIIj8KF1NldFNraWxsRW5hYmxlZFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiRgocUmVzdG9yZUluY2x1ZGVkU2tpbGxzUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGEiRQodUmVzdG9yZUluY2x1ZGVkU2tpbGxzUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCI7ChNEZWxldGVTa2lsbFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiHAoaQ3VzdG9taXphdGlvblByb21wdFJlcXVlc3QiLQobQ3VzdG9taXphdGlvblByb21wdFJlc3BvbnNlEg4KBnByb21wdBgBIAEoCTKvBwoMQWdlbnRTZXJ2aWNlElcKDlJlYWRNb2RlbFJvbGVzEiEuYWxpbmVyeS52MS5SZWFkTW9kZWxSb2xlc1JlcXVlc3QaIi5hbGluZXJ5LnYxLlJlYWRNb2RlbFJvbGVzUmVzcG9uc2USWgoPV3JpdGVNb2RlbFJvbGVzEiIuYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXF1ZXN0GiMuYWxpbmVyeS52MS5Xcml0ZU1vZGVsUm9sZXNSZXNwb25zZRJjChJSZWFkQ3VzdG9taXphdGlvbnMSJS5hbGluZXJ5LnYxLlJlYWRDdXN0b21pemF0aW9uc1JlcXVlc3QaJi5hbGluZXJ5LnYxLlJlYWRDdXN0b21pemF0aW9uc1Jlc3BvbnNlElEKDEluc3RhbGxTa2lsbBIfLmFsaW5lcnkudjEuSW5zdGFsbFNraWxsUmVxdWVzdBogLmFsaW5lcnkudjEuSW5zdGFsbFNraWxsUmVzcG9uc2USTgoLRGVsZXRlU2tpbGwSHi5hbGluZXJ5LnYxLkRlbGV0ZVNraWxsUmVxdWVzdBofLmFsaW5lcnkudjEuRGVsZXRlU2tpbGxSZXNwb25zZRJaCg9TZXRTa2lsbEVuYWJsZWQSIi5hbGluZXJ5LnYxLlNldFNraWxsRW5hYmxlZFJlcXVlc3QaIy5hbGluZXJ5LnYxLlNldFNraWxsRW5hYmxlZFJlc3BvbnNlEmwKFVJlc3RvcmVJbmNsdWRlZFNraWxscxIoLmFsaW5lcnkudjEuUmVzdG9yZUluY2x1ZGVkU2tpbGxzUmVxdWVzdBopLmFsaW5lcnkudjEuUmVzdG9yZUluY2x1ZGVkU2tpbGxzUmVzcG9uc2USZgoTQ3VzdG9taXphdGlvblByb21wdBImLmFsaW5lcnkudjEuQ3VzdG9taXphdGlvblByb21wdFJlcXVlc3QaJy5hbGluZXJ5LnYxLkN1c3RvbWl6YXRpb25Qcm9tcHRSZXNwb25zZRJUCg1SZWFkTWNwU3RhdHVzEiAuYWxpbmVyeS52MS5SZWFkTWNwU3RhdHVzUmVxdWVzdBohLmFsaW5lcnkudjEuUmVhZE1jcFN0YXR1c1Jlc3BvbnNlEloKD1JlYWRPZmZpY2VUb29scxIiLmFsaW5lcnkudjEuUmVhZE9mZmljZVRvb2xzUmVxdWVzdBojLmFsaW5lcnkudjEuUmVhZE9mZmljZVRvb2xzUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.ReadOfficeToolsRequest
@@ -272,6 +272,20 @@ export type Customization = Message<"alinery.v1.Customization"> & {
    * @generated from field: optional bool offered = 5;
    */
   offered?: boolean | undefined;
+
+  /**
+   * skills only: one Alinery includes, not a file in the agent directory
+   *
+   * @generated from field: optional bool included = 6;
+   */
+  included?: boolean | undefined;
+
+  /**
+   * skills only: the user's on/off choice (an included skill starts at its default)
+   *
+   * @generated from field: optional bool enabled = 7;
+   */
+  enabled?: boolean | undefined;
 };
 
 /**
@@ -299,6 +313,34 @@ export type ReadCustomizationsResponse = Message<"alinery.v1.ReadCustomizationsR
    * @generated from field: string agent_dir = 3;
    */
   agentDir: string;
+
+  /**
+   * skills the model is offered now
+   *
+   * @generated from field: uint32 skills_on = 4;
+   */
+  skillsOn: number;
+
+  /**
+   * the most it is offered; skills past it are left out
+   *
+   * @generated from field: uint32 skill_limit = 5;
+   */
+  skillLimit: number;
+
+  /**
+   * the length of the skill list every prompt carries
+   *
+   * @generated from field: uint32 skill_catalog_chars = 6;
+   */
+  skillCatalogChars: number;
+
+  /**
+   * included skills the user removed
+   *
+   * @generated from field: repeated string removed_included = 7;
+   */
+  removedIncluded: string[];
 };
 
 /**
@@ -379,9 +421,18 @@ export type DeleteSkillRequest = Message<"alinery.v1.DeleteSkillRequest"> & {
   meta?: MutationMeta | undefined;
 
   /**
+   * the skill's directory in the agent directory, or with `included` the included skill's name
+   *
    * @generated from field: string name = 2;
    */
   name: string;
+
+  /**
+   * remove an included skill: hidden for good, until RestoreIncludedSkills
+   *
+   * @generated from field: bool included = 3;
+   */
+  included: boolean;
 };
 
 /**
@@ -390,6 +441,84 @@ export type DeleteSkillRequest = Message<"alinery.v1.DeleteSkillRequest"> & {
  */
 export const DeleteSkillRequestSchema: GenMessage<DeleteSkillRequest> = /*@__PURE__*/
   messageDesc(file_alinery_v1_agent, 15);
+
+/**
+ * @generated from message alinery.v1.SetSkillEnabledRequest
+ */
+export type SetSkillEnabledRequest = Message<"alinery.v1.SetSkillEnabledRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: bool enabled = 3;
+   */
+  enabled: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.SetSkillEnabledRequest.
+ * Use `create(SetSkillEnabledRequestSchema)` to create a new message.
+ */
+export const SetSkillEnabledRequestSchema: GenMessage<SetSkillEnabledRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 16);
+
+/**
+ * @generated from message alinery.v1.SetSkillEnabledResponse
+ */
+export type SetSkillEnabledResponse = Message<"alinery.v1.SetSkillEnabledResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.SetSkillEnabledResponse.
+ * Use `create(SetSkillEnabledResponseSchema)` to create a new message.
+ */
+export const SetSkillEnabledResponseSchema: GenMessage<SetSkillEnabledResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 17);
+
+/**
+ * @generated from message alinery.v1.RestoreIncludedSkillsRequest
+ */
+export type RestoreIncludedSkillsRequest = Message<"alinery.v1.RestoreIncludedSkillsRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RestoreIncludedSkillsRequest.
+ * Use `create(RestoreIncludedSkillsRequestSchema)` to create a new message.
+ */
+export const RestoreIncludedSkillsRequestSchema: GenMessage<RestoreIncludedSkillsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 18);
+
+/**
+ * @generated from message alinery.v1.RestoreIncludedSkillsResponse
+ */
+export type RestoreIncludedSkillsResponse = Message<"alinery.v1.RestoreIncludedSkillsResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RestoreIncludedSkillsResponse.
+ * Use `create(RestoreIncludedSkillsResponseSchema)` to create a new message.
+ */
+export const RestoreIncludedSkillsResponseSchema: GenMessage<RestoreIncludedSkillsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_agent, 19);
 
 /**
  * @generated from message alinery.v1.DeleteSkillResponse
@@ -406,7 +535,7 @@ export type DeleteSkillResponse = Message<"alinery.v1.DeleteSkillResponse"> & {
  * Use `create(DeleteSkillResponseSchema)` to create a new message.
  */
 export const DeleteSkillResponseSchema: GenMessage<DeleteSkillResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 16);
+  messageDesc(file_alinery_v1_agent, 20);
 
 /**
  * @generated from message alinery.v1.CustomizationPromptRequest
@@ -419,7 +548,7 @@ export type CustomizationPromptRequest = Message<"alinery.v1.CustomizationPrompt
  * Use `create(CustomizationPromptRequestSchema)` to create a new message.
  */
 export const CustomizationPromptRequestSchema: GenMessage<CustomizationPromptRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 17);
+  messageDesc(file_alinery_v1_agent, 21);
 
 /**
  * @generated from message alinery.v1.CustomizationPromptResponse
@@ -436,7 +565,7 @@ export type CustomizationPromptResponse = Message<"alinery.v1.CustomizationPromp
  * Use `create(CustomizationPromptResponseSchema)` to create a new message.
  */
 export const CustomizationPromptResponseSchema: GenMessage<CustomizationPromptResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_agent, 18);
+  messageDesc(file_alinery_v1_agent, 22);
 
 /**
  * The host's agent directory (S4.10, O12 a): `<config>/vinculum/config/agent/` beside the app config the daemon was started with,
@@ -497,6 +626,31 @@ export const AgentService: GenService<{
     methodKind: "unary";
     input: typeof DeleteSkillRequestSchema;
     output: typeof DeleteSkillResponseSchema;
+  },
+  /**
+   * Switches a skill on or off by its name: the user's own or one Alinery includes (the runtime's `skills/`, read-only).
+   * Refused when it would put more skills on than the catalog offers (`ReadCustomizationsResponse.skill_limit`).
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.AgentService.SetSkillEnabled
+   */
+  setSkillEnabled: {
+    methodKind: "unary";
+    input: typeof SetSkillEnabledRequestSchema;
+    output: typeof SetSkillEnabledResponseSchema;
+  },
+  /**
+   * Brings back every included skill removed with `DeleteSkillRequest.included`.
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.AgentService.RestoreIncludedSkills
+   */
+  restoreIncludedSkills: {
+    methodKind: "unary";
+    input: typeof RestoreIncludedSkillsRequestSchema;
+    output: typeof RestoreIncludedSkillsResponseSchema;
   },
   /**
    * VIEW

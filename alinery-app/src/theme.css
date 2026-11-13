@@ -10629,6 +10629,12 @@ header:has(~ main .task-info-panel) nav.tabs {
   overflow-wrap: anywhere;
   font-size: calc(13px * var(--ui-scale));
 }
+.omp-customization-details .skill-included {
+  margin-left: 8px;
+}
+.skill-counter {
+  margin: 0 0 8px;
+}
 .omp-customization-source {
   margin-top: 4px;
   font-size: calc(12px * var(--ui-scale));

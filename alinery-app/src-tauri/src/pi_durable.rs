@@ -42,8 +42,8 @@ pub(crate) fn start_daemon(repo: &Path, app_config: &Path) -> Result<(), String>
         host_executable.as_deref(),
         Some(&handoff),
     );
-    if let Some(python) = local_python_home(app_config) {
-        command.env("ALINERY_PYTHON_HOME", python);
+    if let Some(runtime) = local_runtime_home(app_config) {
+        command.env("ALINERY_RUNTIME_HOME", runtime);
     }
     let spawned = command.spawn();
     match spawned {
@@ -69,22 +69,23 @@ pub(crate) fn local_triple() -> Option<&'static str> {
     }
 }
 
-/// The Python the office skills run on, for the local daemon: this machine's bundled runtime archive carries it, and it is
-/// unpacked once per runtime into `<app config dir>/runtime/<hash>/python`, the layout an ssh host gets. Unpacked rather
-/// than shipped loose in the app bundle, so the release signing never meets its thousands of files. None when this build
-/// bundles no runtime (`cargo test`, a build without remote runtimes): agents then use whatever Python the machine has.
-fn local_python_home(app_config: &Path) -> Option<PathBuf> {
+/// The Python and the included skills, for the local daemon: this machine's bundled runtime archive carries them, and they
+/// are unpacked once per runtime into `<app config dir>/runtime/<hash>/`, beside each other as on an ssh host. Unpacked
+/// rather than shipped loose in the app bundle, so the release signing never meets their thousands of files. None when this
+/// build bundles no runtime (`cargo test`, a build without remote runtimes): agents then use whatever Python the machine
+/// has, and no included skills.
+fn local_runtime_home(app_config: &Path) -> Option<PathBuf> {
     let bundle = RUNTIME_BUNDLE.get()?;
     let target = crate::remote::load_manifest(bundle).ok()?.targets.remove(local_triple()?)?;
     let root = alinery_core::app_config_dir_of(app_config)?.join("runtime");
     let dir = root.join(&target.runtime_hash);
     if !dir.join(".complete").is_file() {
-        unpack_python(&bundle.join(&target.archive), &root, &dir)?;
+        unpack_runtime(&bundle.join(&target.archive), &root, &dir)?;
     }
-    Some(dir.join("python"))
+    Some(dir)
 }
 
-pub(crate) fn unpack_python(archive: &Path, root: &Path, dir: &Path) -> Option<()> {
+pub(crate) fn unpack_runtime(archive: &Path, root: &Path, dir: &Path) -> Option<()> {
     // Two daemons can start at once: each unpacks into its own directory, and the rename that loses leaves the winner's.
     let tmp = root.join(format!(".unpack-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -94,7 +95,7 @@ pub(crate) fn unpack_python(archive: &Path, root: &Path, dir: &Path) -> Option<(
         .arg(archive)
         .arg("-C")
         .arg(&tmp)
-        .arg("python")
+        .args(["python", "skills"])
         .status()
         .is_ok_and(|status| status.success());
     if !unpacked || std::fs::write(tmp.join(".complete"), b"").is_err() || (std::fs::rename(&tmp, dir).is_err() && !dir.join(".complete").is_file()) {
@@ -107,7 +108,7 @@ pub(crate) fn unpack_python(archive: &Path, root: &Path, dir: &Path) -> Option<(
 }
 
 /// Keeps the new runtime and the newest older one. ponytail: a daemon still running from two or more updates ago loses its
-/// Python; keep more, or count live daemons, if that ever bites.
+/// Python and skills; keep more, or count live daemons, if that ever bites.
 fn prune_runtimes(root: &Path, keep: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else { return };
     let mut older: Vec<(std::time::SystemTime, PathBuf)> = entries

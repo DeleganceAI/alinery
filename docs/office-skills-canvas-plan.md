@@ -18,8 +18,8 @@ removed in Settings.
 
 ## The included skills
 
-**On by default (16)**
-- Anthropic: `docx`, `pdf`, `pptx`, `xlsx`, `internal-comms`, `doc-coauthoring`.
+**On by default (15)**
+- Anthropic: `docx`, `pdf`, `pptx`, `xlsx`, `internal-comms`.
 - Office: `md-to-office`, `office-to-md`, `pdf-converter`, `pdf-to-docx`, `pdf-merge-split`, `md-slides`, `chart-designer`, `data-analysis`, `file-organizer`, `table-extractor`.
 
 **Included but off**
@@ -29,9 +29,10 @@ removed in Settings.
 **Left out**
 - `docx-`, `xlsx-` and `pptx-manipulation` and `pdf-extraction`: they repeat Anthropic's skills, and two skills would compete for the same request.
 - The SaaS automations, because they need third-party API keys.
+- Anthropic's `doc-coauthoring`: upstream ships it with no license.
 - The `mcp-servers/office-mcp` server: it pins `xlsx@0.18.5`, which has known security holes, and it repeats what the skills do.
 
-Our copies fix the 22 office skills whose description is the YAML mistake `">"`.
+Our copies fix the six office skills whose description is the YAML mistake `">"`, and set each office skill's `name` to its directory name.
 
 ## Phase 1: bundled Python
 - **Build:** `scripts/build-python-runtimes.sh` fetches python-build-standalone for darwin arm64 and x64 and linux x64 and arm64. It pins each by sha256 and installs these wheels:
@@ -49,13 +50,13 @@ Our copies fix the 22 office skills whose description is the YAML mistake `">"`.
 - **Source:**
   - `vinculum-daemon/skills/<name>/` holds vendored copies of the skills, together with their LICENSE files.
   - `THIRD-PARTY-NOTICES.md` lists their sources.
-  - `scripts/update-office-skills.sh` refreshes them from pinned commits.
+  - `scripts/update-included-skills.sh` refreshes them from pinned commits. `skills/included.json` lists the ones that start off.
 - **The prompt's skill list:** `skillCatalog` reads the included folder and the user's `skills/` folder together. If names clash, the user's skill wins. It skips skills that are off or removed, and keeps the 64 cap.
-- **What gets saved:** `included-skills.json` in the agent directory holds the off list and the removed list. Each host keeps its own.
+- **What gets saved:** `skill-choices.json` in the agent directory holds each skill's on/off choice (the user's own skills too) and the removed list. Each host keeps its own.
 - **What changes in the daemon protocol:**
-  - `Customization` gains `bundled` and `enabled`.
-  - New calls `SetSkillEnabled` and `RemoveIncludedSkill`, plus a way to restore removed skills.
-  - A `PROTOCOL_VERSION` bump.
+  - `Customization` gains `included` and `enabled`; `ReadCustomizations` returns the counter and the removed list.
+  - New calls `SetSkillEnabled` and `RestoreIncludedSkills`; `DeleteSkill` with `included` removes an included skill.
+  - Shares protocol 45 with Phase 1 (unreleased).
 - **In Settings:**
   - Each included skill shows an "Included" badge, a switch and a remove button.
   - A counter shows "N of 64 on · ~K tokens".

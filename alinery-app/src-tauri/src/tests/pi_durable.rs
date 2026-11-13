@@ -11,11 +11,13 @@ fn nothing_on_the_socket_restarts_the_pair_and_never_spawns_release() {
 }
 
 #[test]
-fn the_local_python_unpacks_once_and_only_the_newest_older_runtime_stays() {
+fn the_local_runtime_unpacks_python_and_skills_and_only_the_newest_older_one_stays() {
     let base = std::env::temp_dir().join(format!("alinery-python-unpack-{}", uuid::Uuid::new_v4()));
     let source = base.join("source");
     std::fs::create_dir_all(source.join("python/bin")).unwrap();
     std::fs::write(source.join("python/bin/python3"), b"").unwrap();
+    std::fs::create_dir_all(source.join("skills/pdf")).unwrap();
+    std::fs::write(source.join("skills/pdf/SKILL.md"), b"---\n").unwrap();
     std::fs::write(source.join("alinery-vinculum-daemon"), b"daemon").unwrap();
     let archive = base.join("rt.tar.gz");
     let packed = std::process::Command::new("tar")
@@ -23,7 +25,7 @@ fn the_local_python_unpacks_once_and_only_the_newest_older_runtime_stays() {
         .arg(&archive)
         .arg("-C")
         .arg(&source)
-        .args(["python", "alinery-vinculum-daemon"])
+        .args(["python", "skills", "alinery-vinculum-daemon"])
         .status()
         .unwrap();
     assert!(packed.success());
@@ -35,10 +37,10 @@ fn the_local_python_unpacks_once_and_only_the_newest_older_runtime_stays() {
         std::fs::File::open(root.join(old)).unwrap().set_modified(when).unwrap();
     }
     let dir = root.join("new");
-    crate::pi_durable::unpack_python(&archive, &root, &dir).unwrap();
+    crate::pi_durable::unpack_runtime(&archive, &root, &dir).unwrap();
 
-    assert!(dir.join("python/bin/python3").is_file() && dir.join(".complete").is_file());
-    assert!(!dir.join("alinery-vinculum-daemon").exists(), "only python/ is unpacked");
+    assert!(dir.join("python/bin/python3").is_file() && dir.join("skills/pdf/SKILL.md").is_file() && dir.join(".complete").is_file());
+    assert!(!dir.join("alinery-vinculum-daemon").exists(), "only python/ and skills/ are unpacked");
     assert!(root.join("old-b").is_dir() && !root.join("old-a").exists());
     assert!(!std::fs::read_dir(&root)
         .unwrap()

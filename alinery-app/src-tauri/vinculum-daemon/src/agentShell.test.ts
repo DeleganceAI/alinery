@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentShellEnv, libreOfficeDir, pythonHome, whichOn, writeShims } from "./agentShell.ts";
+import { agentShellEnv, libreOfficeDir, runtimePart, whichOn, writeShims } from "./agentShell.ts";
 
 const temp = () => mkdtempSync(join(tmpdir(), "agent-shell-"));
 function fakePython(home: string) {
@@ -11,13 +11,17 @@ function fakePython(home: string) {
   writeFileSync(join(home, "bin", "python3"), "");
 }
 
-test("the Python beside the executable wins over the one the app passed", () => {
+test("the runtime beside the executable wins over the one the app unpacked", () => {
   const dir = temp();
   fakePython(join(dir, "python"));
-  fakePython(join(dir, "elsewhere"));
-  expect(pythonHome(join(dir, "daemon"), { ALINERY_PYTHON_HOME: join(dir, "elsewhere") })).toBe(join(dir, "python"));
-  expect(pythonHome(join(dir, "nowhere", "daemon"), { ALINERY_PYTHON_HOME: join(dir, "elsewhere") })).toBe(join(dir, "elsewhere"));
-  expect(pythonHome(join(dir, "nowhere", "daemon"), {})).toBeUndefined();
+  fakePython(join(dir, "unpacked", "python"));
+  mkdirSync(join(dir, "unpacked", "skills"));
+  writeFileSync(join(dir, "unpacked", "skills", "included.json"), "{}");
+  const env = { ALINERY_RUNTIME_HOME: join(dir, "unpacked") };
+  expect(runtimePart("python", join(dir, "daemon"), env)).toBe(join(dir, "python"));
+  expect(runtimePart("skills", join(dir, "daemon"), env)).toBe(join(dir, "unpacked", "skills"));
+  expect(runtimePart("python", join(dir, "nowhere", "daemon"), env)).toBe(join(dir, "unpacked", "python"));
+  expect(runtimePart("python", join(dir, "nowhere", "daemon"), {})).toBeUndefined();
 });
 
 test("Python goes first on PATH, the shims last, and extra packages stay in the repository", () => {

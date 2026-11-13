@@ -265,8 +265,10 @@ export type ExperimentalFeatures = {
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
-export type VinculumCustomization = { name: string; kind: string; source: string; path: string | null; offered?: boolean };
-export type VinculumCustomizations = { items: VinculumCustomization[]; errors: string[] };
+export type VinculumCustomization = { name: string; kind: string; source: string; path: string | null; offered?: boolean; included?: boolean; enabled?: boolean };
+/** `skills`: how many skills the model is offered against the limit, the length of that list, and the removed included ones. */
+export type SkillSummary = { on: number; limit: number; catalogChars: number; removed: string[] };
+export type VinculumCustomizations = { items: VinculumCustomization[]; errors: string[]; skills?: SkillSummary };
 export type VinculumMcpServer = { name: string; builtin: boolean; state: "connected" | "disabled" | "error" | string; error?: string };
 export type VinculumDaemonCustomizations = { tools: string[]; servers: VinculumMcpServer[] };
 export type SkillInstall = { name: string; exists: boolean };

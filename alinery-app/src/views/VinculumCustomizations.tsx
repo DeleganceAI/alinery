@@ -4,9 +4,9 @@ import { askConfirm, confirmDanger } from "../confirm";
 import * as ipc from "../ipc";
 import * as agent from "../sync/agent";
 import { toast } from "../toast";
-import type { VinculumCustomizations as Inventory, VinculumCustomization, VinculumDaemonCustomizations, VinculumMcpServer } from "../types";
+import type { VinculumCustomizations as Inventory, SkillSummary, VinculumCustomization, VinculumDaemonCustomizations, VinculumMcpServer } from "../types";
 
-type Row = { name: string; detail: string; path?: string | null; skillDir?: string };
+type Row = { name: string; detail: string; path?: string | null };
 
 export function VinculumCustomizations() {
   const [inventory, setInventory] = useState<Inventory | null>(null);
@@ -163,7 +163,7 @@ export function VinculumCustomizations() {
           <div className="vinculum-customization-groups">
             <Group title="Built-in tools" empty={daemonDown ? "The session daemon is not running." : "No built-in tools were reported."} rows={daemonDown ? [] : toolRows(live)} />
             <Group title="MCP servers" rows={mcpRows(inventory.items, live, daemonDown)} local={local} />
-            <Group title="Skills" rows={skillRows(inventory.items)} onDelete={refresh} local={local} />
+            <SkillsGroup inventory={inventory} onChange={refresh} local={local} />
             <Group title="Extensions" empty="No extensions. They are listed and not loaded." rows={extensionRows(inventory.items)} local={local} />
           </div>
         )}
@@ -172,7 +172,111 @@ export function VinculumCustomizations() {
   );
 }
 
-function Group({ title, rows, empty, onDelete, local = true }: { title: string; rows: Row[]; empty?: string; onDelete?: () => Promise<void>; local?: boolean }) {
+/** The counter over the skills: how many are on against the limit, and roughly what the list costs every prompt. */
+export function skillCounter(skills: SkillSummary): string {
+  const tokens = Math.round(skills.catalogChars / 4);
+  const cost = tokens > 0 ? ` · about ${tokens.toLocaleString("en-US")} tokens in every prompt` : "";
+  const over = skills.on > skills.limit ? ` · only the first ${skills.limit} are offered` : "";
+  return `${skills.on} of ${skills.limit} on${cost}${over}`;
+}
+
+function SkillsGroup({ inventory, onChange, local }: { inventory: Inventory; onChange: () => Promise<void>; local: boolean }) {
+  const skills = inventory.items.filter((item) => item.kind === "Skill");
+  const summary = inventory.skills;
+  const full = !!summary && summary.on >= summary.limit;
+  const act = (run: () => Promise<void>, failure: string) =>
+    void run().then(onChange, (cause: unknown) => toast.error(cause instanceof Error && cause.message ? cause.message : failure));
+  return (
+    <section aria-label="Skills">
+      <h5>Skills</h5>
+      {summary && <p className="dim skill-counter">{skillCounter(summary)}</p>}
+      {skills.length === 0 ? null : (
+        <ul aria-label="Skills" className="omp-customization-list">
+          {skills.map((item) => {
+            const dir = item.included ? undefined : skillDir(item.path);
+            const on = item.enabled !== false;
+            const blocked = !on && full;
+            const detail = item.included ? item.source : `Skill · ${item.source}`;
+            return (
+              <li key={`skill:${item.name}:${item.path ?? ""}`}>
+                <label className="skill-switch" title={blocked ? `At most ${summary?.limit} skills can be on at once. Turn one off first.` : undefined}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={`${item.name} on`}
+                    checked={on}
+                    aria-checked={on}
+                    disabled={blocked}
+                    onChange={() => act(() => agent.setSkillEnabled(item.name, !on), "Couldn't change that skill.")}
+                  />
+                </label>
+                <div className="omp-customization-details">
+                  <strong>{item.name}</strong>
+                  {item.included && <span className="badge skill-included">Included</span>}
+                  <div className="omp-customization-source dim">
+                    {detail}
+                    {item.offered === false && !item.included ? " · Not offered to the model" : ""}
+                  </div>
+                </div>
+                {item.path && local && <Reveal name={item.name} path={item.path} />}
+                {item.included ? (
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    aria-label={`Remove ${item.name}`}
+                    onClick={() =>
+                      void confirmDanger(`Remove ${item.name}?`, "It stays hidden, even after Alinery updates, until you restore the included skills.").then((accepted) => {
+                        if (accepted) act(() => agent.deleteSkill(item.name, undefined, true), "Couldn't remove that skill.");
+                      })
+                    }
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  dir && (
+                    <button
+                      type="button"
+                      className="btn ghost small"
+                      aria-label={`Delete ${item.name}`}
+                      onClick={() =>
+                        void confirmDanger(`Delete ${item.name}?`, "This removes that skill directory. A linked skill removes only the link.").then((accepted) => {
+                          if (accepted) act(() => agent.deleteSkill(dir), "Couldn't delete that skill.");
+                        })
+                      }
+                    >
+                      Delete
+                    </button>
+                  )
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {summary && summary.removed.length > 0 && (
+        <button type="button" className="btn ghost small" onClick={() => act(() => agent.restoreIncludedSkills(), "Couldn't restore the included skills.")}>
+          Restore {summary.removed.length} removed included skill{summary.removed.length === 1 ? "" : "s"}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function Reveal({ name, path }: { name: string; path: string }) {
+  return (
+    <button
+      type="button"
+      className="btn ghost small"
+      aria-label={`Show ${name} in file manager`}
+      title={path}
+      onClick={() => void ipc.revealItemInDir(path).catch(() => toast.error("Couldn't show the customization in the file manager."))}
+    >
+      Show in file manager
+    </button>
+  );
+}
+
+function Group({ title, rows, empty, local = true }: { title: string; rows: Row[]; empty?: string; local?: boolean }) {
   return (
     <section aria-label={title}>
       <h5>{title}</h5>
@@ -186,41 +290,7 @@ function Group({ title, rows, empty, onDelete, local = true }: { title: string; 
                 <strong>{row.name}</strong>
                 <div className="omp-customization-source dim">{row.detail}</div>
               </div>
-              {row.path && local && (
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  aria-label={`Show ${row.name} in file manager`}
-                  title={row.path}
-                  onClick={() => {
-                    if (row.path) void ipc.revealItemInDir(row.path).catch(() => toast.error("Couldn't show the customization in the file manager."));
-                  }}
-                >
-                  Show in file manager
-                </button>
-              )}
-              {row.skillDir && onDelete && (
-                <button
-                  type="button"
-                  className="btn ghost small"
-                  aria-label={`Delete ${row.name}`}
-                  onClick={() => {
-                    const dir = row.skillDir;
-                    if (!dir) return;
-                    void confirmDanger(`Delete ${row.name}?`, "This removes that skill directory. A linked skill removes only the link.").then(async (accepted) => {
-                      if (!accepted) return;
-                      try {
-                        await agent.deleteSkill(dir);
-                        await onDelete();
-                      } catch {
-                        toast.error("Couldn't delete that skill.");
-                      }
-                    });
-                  }}
-                >
-                  Delete
-                </button>
-              )}
+              {row.path && local && <Reveal name={row.name} path={row.path} />}
             </li>
           ))}
         </ul>
@@ -256,17 +326,6 @@ function mcpRows(items: VinculumCustomization[], live: VinculumDaemonCustomizati
 function mcpRow(server: VinculumMcpServer, source: string): Row {
   const state = server.state === "connected" ? "Connected" : server.state === "disabled" ? "Disabled" : `Not connected${server.error ? `: ${server.error}` : ""}`;
   return { name: server.name, detail: `${server.builtin ? "Built-in MCP server" : "MCP server"} · ${state} · ${source}` };
-}
-
-function skillRows(items: VinculumCustomization[]): Row[] {
-  return items
-    .filter((item) => item.kind === "Skill")
-    .map((item) => ({
-      name: item.name,
-      detail: `Skill · ${item.source}${item.offered === false ? " · Not offered to the model" : ""}`,
-      path: item.path,
-      skillDir: skillDir(item.path),
-    }));
 }
 
 function extensionRows(items: VinculumCustomization[]): Row[] {

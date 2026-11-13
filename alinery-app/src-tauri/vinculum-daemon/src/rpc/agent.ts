@@ -4,7 +4,17 @@
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import type { AgentService } from "alinery-proto/alinery/v1/agent_pb";
-import { customizationPrompt, customizationsFromDir, deleteSkill, installSkill, readModelRoles, writeModelRoles } from "../domain/agentDir.ts";
+import {
+  customizationPrompt,
+  customizationsFromDir,
+  deleteSkill,
+  installSkill,
+  readModelRoles,
+  removeIncludedSkill,
+  restoreIncludedSkills,
+  setSkillEnabled,
+  writeModelRoles,
+} from "../domain/agentDir.ts";
 import type { BlobStore } from "../domain/blobs.ts";
 import { OFFICE_TOOLS, whichOn } from "../agentShell.ts";
 import { vinculumAgentDir } from "../skills.ts";
@@ -20,6 +30,8 @@ export type AgentDeps = {
   mcp?: { refresh(): Promise<{ tools: string[]; servers: { name: string; builtin: boolean; state: string; error?: string }[] }> };
   /** The agent shell's PATH and its bundled Python, if any (`agentShell.ts`). */
   shell?: { path: string; python?: string };
+  /** The runtime's included skills (`agentShell.runtimePart("skills")`); undefined when this daemon has none. */
+  includedSkills?: string;
 };
 
 export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): ServiceImpl<typeof AgentService> {
@@ -50,8 +62,16 @@ export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): Servic
     readCustomizations: (_req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
       return domain(() => {
-        const inv = customizationsFromDir(agentDir());
-        return { items: inv.items.map((i) => ({ ...i, path: i.path ?? undefined })), errors: inv.errors, agentDir: agentDir() };
+        const inv = customizationsFromDir(agentDir(), d.includedSkills);
+        return {
+          items: inv.items.map((i) => ({ ...i, path: i.path ?? undefined })),
+          errors: inv.errors,
+          agentDir: agentDir(),
+          skillsOn: inv.skills?.on ?? 0,
+          skillLimit: inv.skills?.limit ?? 0,
+          skillCatalogChars: inv.skills?.catalogChars ?? 0,
+          removedIncluded: inv.skills?.removed ?? [],
+        };
       });
     },
     readMcpStatus: (_req, ctx) => {
@@ -91,7 +111,30 @@ export function agentService(d: AgentDeps, dedupe: Dedupe, store: Store): Servic
       return dedupe.once(metaOf(req.meta), () =>
         domain(() =>
           serialized(() => {
-            deleteSkill(agentDir(), req.name);
+            if (req.included) removeIncludedSkill(agentDir(), d.includedSkills, req.name);
+            else deleteSkill(agentDir(), req.name);
+            return { applied: applied() };
+          }),
+        ),
+      );
+    },
+    setSkillEnabled: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(() =>
+          serialized(() => {
+            setSkillEnabled(agentDir(), d.includedSkills, req.name, req.enabled);
+            return { applied: applied() };
+          }),
+        ),
+      );
+    },
+    restoreIncludedSkills: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(() =>
+          serialized(() => {
+            restoreIncludedSkills(agentDir());
             return { applied: applied() };
           }),
         ),

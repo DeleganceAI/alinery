@@ -7,6 +7,7 @@ import { basename, dirname, join, normalize, sep } from "node:path";
 import { DomainError } from "../platform/lock.ts";
 import { writeAtomic } from "../platform/fs.ts";
 import { unzipInto, unzipNames, unzipSizes, unzipText, unzipTypes } from "../platform/zip.ts";
+import { includedSkills, MAX_SKILLS, offeredSkills, readSkillChoices, type SkillChoices, skillCatalog, skillChoicesPath, skillOn } from "../skills.ts";
 import { appConfigDirOf } from "./playbookLibrary.ts";
 
 const MAX_METADATA_BYTES = 1024 * 1024;
@@ -130,15 +131,20 @@ export function writeModelRoles(agentDir: string, roles: Record<string, string>)
 
 // ---- the inventory -------------------------------------------------------------------------------------------------------
 
-export type Customization = { name: string; kind: string; source: string; path: string | null; offered?: boolean };
-export type Customizations = { items: Customization[]; errors: string[] };
+export type Customization = { name: string; kind: string; source: string; path: string | null; offered?: boolean; included?: boolean; enabled?: boolean };
+/** `skills` sums up the skills: how many the model is offered against the cap, how long that list is, and which included
+ * skills were removed (Settings offers to restore them). */
+export type Customizations = {
+  items: Customization[];
+  errors: string[];
+  skills?: { on: number; limit: number; catalogChars: number; removed: string[] };
+};
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
 const fileError = (inv: Customizations, path: string, reason: string) => inv.errors.push(`${path}: ${reason}`);
-const item = (inv: Customizations, name: string, kind: string, source: string, path: string | null, offered?: boolean) =>
-  inv.items.push(offered === undefined ? { name, kind, source, path } : { name, kind, source, path, offered });
+const item = (inv: Customizations, name: string, kind: string, source: string, path: string | null) => inv.items.push({ name, kind, source, path });
 const displayName = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
 
 /** The file's text, `null` when it does not exist, or the reason it cannot be used. */
@@ -223,7 +229,7 @@ function parseSkillText(text: string): SkillDoc | undefined | string {
   return { name: displayName(m.name), description: displayName(m.description), modelInvocation: !disabled };
 }
 
-function scanSkills(agentDir: string, inv: Customizations): void {
+function scanSkills(agentDir: string, inv: Customizations, choices: SkillChoices): void {
   for (const [directory, st] of directoryEntries(join(agentDir, "skills"), inv)) {
     if (!st.isDirectory()) continue;
     const path = join(directory, "SKILL.md");
@@ -240,7 +246,25 @@ function scanSkills(agentDir: string, inv: Customizations): void {
         offered = doc.name !== undefined && doc.description !== undefined && doc.modelInvocation;
       }
     }
-    item(inv, name ?? basename(directory), "Skill", path, path, offered);
+    const shown = name ?? basename(directory);
+    inv.items.push({ name: shown, kind: "Skill", source: path, path, offered, enabled: skillOn(choices, shown) });
+  }
+}
+
+/** The included skills a user has not removed. One a user's skill of the same name replaces is listed, not offered. */
+function scanIncluded(included: string | undefined, inv: Customizations, choices: SkillChoices): void {
+  const own = new Set(inv.items.filter((entry) => entry.kind === "Skill").map((entry) => entry.name));
+  for (const skill of includedSkills(included)) {
+    if (choices.removed.includes(skill.name)) continue;
+    inv.items.push({
+      name: skill.name,
+      kind: "Skill",
+      source: own.has(skill.name) ? "Included · replaced by your skill of this name" : "Included",
+      path: skill.path,
+      offered: !own.has(skill.name),
+      included: true,
+      enabled: skillOn(choices, skill.name, skill.offByDefault),
+    });
   }
 }
 
@@ -296,13 +320,19 @@ function scanMcp(agentDir: string, inv: Customizations): void {
 
 const cmp = (a: string | null | undefined, b: string | null | undefined) => ((a ?? "") < (b ?? "") ? -1 : (a ?? "") > (b ?? "") ? 1 : 0);
 
-export function customizationsFromDir(agentDir: string): Customizations {
+export function customizationsFromDir(agentDir: string, included?: string): Customizations {
   const inv: Customizations = { items: [], errors: [] };
-  scanSkills(agentDir, inv);
+  const choices = readSkillChoices(agentDir);
+  scanSkills(agentDir, inv, choices);
+  scanIncluded(included, inv, choices);
   scanExtensions(agentDir, inv);
   scanMcp(agentDir, inv);
   inv.items.sort((a, b) => cmp(a.kind, b.kind) || cmp(a.name, b.name) || cmp(a.source, b.source) || cmp(a.path, b.path));
   inv.errors = [...new Set(inv.errors)].sort();
+  const removed = includedSkills(included)
+    .map((skill) => skill.name)
+    .filter((name) => choices.removed.includes(name));
+  inv.skills = { on: offeredSkills(agentDir, included).length, limit: MAX_SKILLS, catalogChars: skillCatalog(agentDir, included)?.length ?? 0, removed };
   return inv;
 }
 
@@ -349,6 +379,41 @@ function removeSkillDir(skills: string, name: string): void {
 
 export function deleteSkill(agentDir: string, name: string): void {
   removeSkillDir(join(agentDir, "skills"), name);
+}
+
+function writeSkillChoices(agentDir: string, choices: SkillChoices): void {
+  mkdirSync(agentDir, { recursive: true });
+  writeAtomic(skillChoicesPath(agentDir), `${JSON.stringify(choices, null, 2)}\n`);
+}
+
+/** Switches a skill (the user's own or an included one, by its name) on or off. Turning one on past MAX_SKILLS is refused:
+ * the model would not be offered it. */
+export function setSkillEnabled(agentDir: string, included: string | undefined, name: string, enabled: boolean): void {
+  const known = customizationsFromDir(agentDir, included).items.some((entry) => entry.kind === "Skill" && entry.name === name);
+  if (!known) refuse("That skill is not installed.");
+  const choices = readSkillChoices(agentDir);
+  if (enabled && !offeredSkills(agentDir, included).some((skill) => skill.name === name) && offeredSkills(agentDir, included).length >= MAX_SKILLS) {
+    refuse(`At most ${MAX_SKILLS} skills can be on at once. Turn one off first.`);
+  }
+  choices.enabled[name] = enabled;
+  writeSkillChoices(agentDir, choices);
+}
+
+/** Hides an included skill for good: the runtime's copy is read-only, so removing it is a choice the agent directory keeps. */
+export function removeIncludedSkill(agentDir: string, included: string | undefined, name: string): void {
+  if (!includedSkills(included).some((skill) => skill.name === name)) refuse("That is not an included skill.");
+  const choices = readSkillChoices(agentDir);
+  if (!choices.removed.includes(name)) choices.removed.push(name);
+  delete choices.enabled[name];
+  writeSkillChoices(agentDir, choices);
+}
+
+/** Brings every removed included skill back, each at its default. */
+export function restoreIncludedSkills(agentDir: string): void {
+  const choices = readSkillChoices(agentDir);
+  if (choices.removed.length === 0) return;
+  choices.removed = [];
+  writeSkillChoices(agentDir, choices);
 }
 
 type Install = { name: string; exists: boolean };

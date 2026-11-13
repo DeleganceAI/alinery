@@ -2,18 +2,20 @@
 // Python first on PATH, extra Python packages kept per repository, and `bun` (with `node`, `npm` and `npx` as
 // fallbacks) when the machine has no such command.
 //
-// The Python is the runtime's `python/` (scripts/python-runtime/stage.sh): beside this executable on an ssh host, or the
-// directory the app unpacked for its local daemon, passed as ALINERY_PYTHON_HOME. The shims run this executable as the
-// Bun CLI (BUN_BE_BUN=1).
+// The Python is the runtime's `python/` (scripts/python-runtime/stage.sh), found by `runtimePart`. The shims run this
+// executable as the Bun CLI (BUN_BE_BUN=1).
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { writeAtomic } from "./platform/fs.ts";
 
-export function pythonHome(execPath: string, env: NodeJS.ProcessEnv): string | undefined {
-  for (const home of [join(dirname(execPath), "python"), env.ALINERY_PYTHON_HOME]) {
-    if (home && existsSync(join(home, "bin", "python3"))) return home;
+/** A directory of the runtime (`python` or `skills`): beside this executable on an ssh host, or in the runtime the app
+ * unpacked for its local daemon (ALINERY_RUNTIME_HOME, `pi_durable::local_runtime_home`). */
+export function runtimePart(part: "python" | "skills", execPath: string, env: NodeJS.ProcessEnv): string | undefined {
+  const probe = part === "python" ? join("bin", "python3") : "included.json";
+  for (const home of [dirname(execPath), env.ALINERY_RUNTIME_HOME]) {
+    if (home && existsSync(join(home, part, probe))) return join(home, part);
   }
   return undefined;
 }
