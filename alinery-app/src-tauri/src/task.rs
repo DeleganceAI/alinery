@@ -46,6 +46,30 @@ pub(crate) fn chat_file_stat(path: String) -> Result<ChatFileStat, String> {
     Ok(ChatFileStat { name, bytes: meta.len() })
 }
 
+/// Saves bytes the page read from a daemon (a canvas file's Save a copy) where the user picks. The body is the raw
+/// bytes; `x-alinery-name` (JSON) is only the name the dialog starts with. Nothing is written without that choice.
+#[tauri::command]
+pub(crate) async fn save_file_dialog(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<bool, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("save_file_dialog takes a raw body".into());
+    };
+    let header = request.headers().get("x-alinery-name").and_then(|v| v.to_str().ok()).unwrap_or("\"file\"");
+    let name: String = serde_json::from_str(header).map_err(|e| format!("bad x-alinery-name header: {e}"))?;
+    let name = Path::new(&name).file_name().and_then(|s| s.to_str()).unwrap_or("file").to_string();
+    let bytes = bytes.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let Some(target) = app.dialog().file().set_title("Save a copy").set_file_name(&name).blocking_save_file() else {
+            return Ok(false);
+        };
+        let path = target.into_path().map_err(|e| e.to_string())?;
+        fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("save file: {e}"))?
+}
+
 /// A local file's bytes, for the webview to upload through `BlobService` (the daemon never takes a path from the
 /// client). The checks are the ones attachment copying always made: a regular file, 25 MB at most, a usable name.
 #[tauri::command]

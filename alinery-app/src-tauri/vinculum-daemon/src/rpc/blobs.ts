@@ -3,7 +3,7 @@
 import { Code, type ServiceImpl } from "@connectrpc/connect";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { BlobRef, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
-import { artifactBlob, artifactNodeBlob, attachmentBlob, type BlobBytes, canvasPanelBlob, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, stepObjectBlob, type UploadTarget, worktreeFileBlob } from "../domain/blobs.ts";
+import { artifactBlob, artifactNodeBlob, attachmentBlob, type BlobBytes, canvasFileBlob, canvasPanelBlob, chatAttachmentBlob, type BlobStore, CHUNK_BYTES, draftImageBlob, stepObjectBlob, type UploadTarget, worktreeFileBlob } from "../domain/blobs.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
 import { requireCapability } from "./auth.ts";
@@ -28,6 +28,7 @@ function resolve(repo: string, ref: BlobRef | undefined): BlobBytes {
   if (t?.case === "artifactNode") return artifactNodeBlob(repo, t.value.taskSlug, t.value.nodeId);
   if (t?.case === "stepObject") return stepObjectBlob(repo, t.value.taskSlug, t.value.executionId, t.value.sha256);
   if (t?.case === "canvasPanel") return canvasPanelBlob(repo, t.value.threadId, t.value.panel);
+  if (t?.case === "canvasFile") return canvasFileBlob(repo, t.value.threadId, t.value.panel, t.value.path);
   if (t?.case === "worktreeFile") return worktreeFileBlob(repo, t.value.taskSlug, t.value.path);
   throw fail(Code.InvalidArgument, "invalid_argument", "this blob cannot be read");
 }

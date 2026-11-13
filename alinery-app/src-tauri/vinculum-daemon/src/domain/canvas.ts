@@ -2,8 +2,10 @@
 // for one thread (`enableCanvas`, behind ChatService.EnableCanvas) and it stays on; the agent can only fill it. State is
 // `sessions/<id>.canvas.json` (the `canvas/_/<id>` entity, and its existence is the switch), and each panel's body is a
 // file in `sessions/<id>.canvas/` the page reads through BlobService. Bodies never travel through the transcript.
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+// A `file` or `files` panel's body names files in the repository instead; BlobService serves exactly those bytes
+// (`canvasFileBytes`), so a client reads only what the agent put on the canvas.
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { writeAtomic } from "../platform/fs.ts";
 import { DomainError } from "../platform/lock.ts";
 import { loadChat } from "./chat.ts";
@@ -11,9 +13,11 @@ import { alineryDir } from "./taskFiles.ts";
 
 export const PANEL_IDS = ["p1", "p2", "p3", "p4"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
-export const PANEL_KINDS = ["html", "table", "chart", "markdown"] as const;
+export const PANEL_KINDS = ["html", "table", "chart", "markdown", "file", "files"] as const;
 export type PanelKind = (typeof PANEL_KINDS)[number];
-const EXT: Record<PanelKind, string> = { html: "html", table: "table.json", chart: "vega.json", markdown: "md" };
+const EXT: Record<PanelKind, string> = { html: "html", table: "table.json", chart: "vega.json", markdown: "md", file: "file.json", files: "files.json" };
+/** ponytail: one snapshot per call, never a tree walk past this; the agent narrows `glob` for more. */
+export const MAX_LISTED_FILES = 500;
 
 export const MAX_PANEL_BYTES = 1024 * 1024;
 export const MAX_TABLE_ROWS = 5000;
@@ -122,6 +126,9 @@ export function bodyText(kind: PanelKind, body: unknown): string {
     text = body;
   } else if (kind === "table") {
     text = JSON.stringify(tableOf(body));
+  } else if (kind === "file" || kind === "files") {
+    // Built by `fileBody`/`filesBody`, never taken from the agent as is.
+    text = JSON.stringify(body);
   } else {
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new DomainError("invalid_argument", "a chart panel's body is a Vega-Lite spec object");
     const url = findUrl(body);
@@ -170,6 +177,91 @@ export function panelFile(repo: string, id: string, panel: string): { path: stri
   const p = readCanvas(repo, id)?.panels[panel];
   if (!p) throw new DomainError("not_found", `no panel ${panel}`);
   return { path: join(canvasDir(repo, id), `${panel}.${EXT[p.kind]}`), kind: p.kind };
+}
+
+// ---- files on the canvas ---------------------------------------------------------------------------------------------
+
+export type FileEntry = { path: string; size: number; mtime_ms: number };
+export type FileBody = FileEntry;
+export type FilesBody = { dir: string; entries: FileEntry[]; truncated: boolean };
+
+/**
+ * The real path of what the agent named, relative to the thread's working directory, or the refusal. It must resolve,
+ * links followed, inside the repository (which holds the thread's chat worktree and the task worktrees).
+ */
+function insideRepo(repo: string, cwd: string, path: string): string {
+  if (!path || path.includes("\0")) throw new DomainError("invalid_argument", "a path is required");
+  let real: string;
+  try {
+    real = realpathSync(isAbsolute(path) ? path : resolve(cwd, path));
+  } catch {
+    throw new DomainError("not_found", `no such file or directory: ${path}`);
+  }
+  const root = realpathSync(repo);
+  if (real !== root && !real.startsWith(root + sep)) throw new DomainError("permission_denied", `${path} is outside this repository; the canvas shows files inside it`);
+  return real;
+}
+
+const entryOf = (path: string, shown: string): FileEntry => {
+  const st = statSync(path);
+  return { path: shown, size: st.size, mtime_ms: Math.round(st.mtimeMs) };
+};
+
+const threadCwd = (repo: string, id: string) => {
+  const meta = loadChat(repo, id);
+  return typeof meta.worktree === "string" && meta.worktree ? meta.worktree : repo;
+};
+
+/** A `file` panel's body: one regular file. */
+export function fileBody(repo: string, id: string, path: string): FileBody {
+  const real = insideRepo(repo, threadCwd(repo, id), path);
+  if (!statSync(real).isFile()) throw new DomainError("invalid_argument", `${path} is not a file; use alinery_canvas_show_files for a directory`);
+  return entryOf(real, real);
+}
+
+/** A `files` panel's body: the regular files of a directory matching `glob` (default `*`: its own files, no dotfiles), each inside the repository. */
+export function filesBody(repo: string, id: string, dir: string, glob = "*"): FilesBody {
+  const real = insideRepo(repo, threadCwd(repo, id), dir);
+  if (!statSync(real).isDirectory()) throw new DomainError("invalid_argument", `${dir} is not a directory; use alinery_canvas_show_file for a file`);
+  const root = realpathSync(repo);
+  const entries: FileEntry[] = [];
+  let truncated = false;
+  for (const rel of [...new Bun.Glob(glob).scanSync({ cwd: real, onlyFiles: true })].sort()) {
+    if (rel.split("/").includes(".git")) continue;
+    let target: string;
+    try {
+      target = realpathSync(join(real, rel));
+    } catch {
+      continue;
+    }
+    if (!target.startsWith(root + sep)) continue;
+    if (entries.length === MAX_LISTED_FILES) {
+      truncated = true;
+      break;
+    }
+    entries.push(entryOf(target, rel));
+  }
+  return { dir: real, entries, truncated };
+}
+
+/**
+ * The file a client may read from a `file` or `files` panel: the panel's own file, or one row of its list. Checked again
+ * at read time, links followed, because the agent keeps writing in these directories.
+ */
+export function canvasFilePath(repo: string, id: string, panel: string, path: string): string {
+  const file = panelFile(repo, id, panel);
+  if (file.kind !== "file" && file.kind !== "files") throw new DomainError("invalid_argument", `${panel} is not a file panel`);
+  const body = JSON.parse(readFileSync(file.path, "utf8")) as FileBody | FilesBody;
+  let full: string;
+  if (file.kind === "file") full = (body as FileBody).path;
+  else {
+    const list = body as FilesBody;
+    if (!list.entries.some((e) => e.path === path)) throw new DomainError("not_found", `${path} is not listed in ${panel}`);
+    full = join(list.dir, path);
+  }
+  const real = insideRepo(repo, repo, full);
+  if (file.kind === "file" && real !== full) throw new DomainError("permission_denied", "the file changed into a link since it was shown");
+  return real;
 }
 
 // ---- the agent's writes -----------------------------------------------------------------------------------------------

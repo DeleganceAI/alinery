@@ -178,6 +178,7 @@ pub fn run() {
             init_picked_folder,
             pick_attachment_files_dialog,
             read_local_file,
+            save_file_dialog,
             lookup_task_pull_request,
             list_chat_repos,
             list_community_playbooks,

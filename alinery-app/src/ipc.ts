@@ -202,6 +202,8 @@ export type CopyChatAttachmentsResult = { copied: string[]; failures: string[] }
 export type ChatImage = { mime_type: string; data: string };
 /** A local file's bytes (25 MB at most), for the webview to upload through BlobService. */
 export const readLocalFile = (path: string) => invoke<ArrayBuffer>("read_local_file", { path });
+/** Asks where to save `bytes` (named `name` to start with) and writes them there; false when the user cancelled. */
+export const saveFileDialog = (name: string, bytes: Uint8Array) => invoke<boolean>("save_file_dialog", bytes, { headers: { "x-alinery-name": asciiJson(name) } });
 /** The backup an archive waits for; rejects when it fails so the task is left as it was. */
 export const chatFileStat = (path: string) => invoke<ChatFileStat>("chat_file_stat", { path });
 

@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DomainError } from "../platform/lock.ts";
-import { canvasDir, canvasEnabled, canvasPath, canvasReport, closePanelByUser, enableCanvas, layoutCanvas, MAX_PANEL_BYTES, panelFile, putPanel, readCanvas } from "./canvas.ts";
+import { canvasDir, canvasEnabled, canvasFilePath, canvasPath, canvasReport, closePanelByUser, enableCanvas, fileBody, filesBody, layoutCanvas, MAX_PANEL_BYTES, panelFile, putPanel, readCanvas } from "./canvas.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -124,4 +124,41 @@ test("a hand-edited file for another thread, or junk, reads as no canvas", () =>
   expect(readCanvas(repo, "t1")).toBeUndefined();
   writeFileSync(canvasPath(repo, "t1"), "not json");
   expect(canvasEnabled(repo, "t1")).toBe(false);
+});
+
+test("file panels show files inside the repository only, and a client reads exactly what the agent showed", async () => {
+  const repo = rig();
+  await enableCanvas(repo, "t1");
+  mkdirSync(join(repo, "out", "deep"), { recursive: true });
+  writeFileSync(join(repo, "out", "deck.pdf"), "%PDF");
+  writeFileSync(join(repo, "out", "data.csv"), "a,b\n1,2\n");
+  writeFileSync(join(repo, "out", ".hidden"), "x");
+  writeFileSync(join(repo, "out", "deep", "x.pdf"), "%PDF");
+  writeFileSync(join(repo, "secret.txt"), "no");
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), "outside-")));
+  dirs.push(outside);
+  writeFileSync(join(outside, "passwd"), "root");
+  symlinkSync(join(outside, "passwd"), join(repo, "out", "escape.txt"));
+
+  const file = fileBody(repo, "t1", "out/deck.pdf");
+  expect(file).toMatchObject({ path: join(repo, "out", "deck.pdf"), size: 4 });
+  expect(await refusal(async () => fileBody(repo, "t1", join(outside, "passwd")))).toContain("outside this repository");
+  expect(await refusal(async () => fileBody(repo, "t1", "out/escape.txt"))).toContain("outside this repository");
+  expect(await refusal(async () => fileBody(repo, "t1", "out"))).toContain("not a file");
+
+  const list = filesBody(repo, "t1", "out");
+  expect(list.entries.map((e) => e.path)).toEqual(["data.csv", "deck.pdf"]);
+  expect(filesBody(repo, "t1", "out", "**/*.pdf").entries.map((e) => e.path)).toEqual(["deck.pdf", "deep/x.pdf"]);
+
+  await putPanel(repo, "t1", { kind: "file", body: file });
+  await putPanel(repo, "t1", { kind: "files", body: list });
+  expect(canvasFilePath(repo, "t1", "p1", "ignored")).toBe(join(repo, "out", "deck.pdf"));
+  expect(canvasFilePath(repo, "t1", "p2", "data.csv")).toBe(join(repo, "out", "data.csv"));
+  expect(await refusal(async () => canvasFilePath(repo, "t1", "p2", "../secret.txt"))).toContain("not listed");
+  // A listed file swapped for a link out of the repository is refused at read time.
+  rmSync(join(repo, "out", "data.csv"));
+  symlinkSync(join(outside, "passwd"), join(repo, "out", "data.csv"));
+  expect(await refusal(async () => canvasFilePath(repo, "t1", "p2", "data.csv"))).toContain("outside this repository");
+  await putPanel(repo, "t1", { kind: "markdown", body: "x" });
+  expect(await refusal(async () => canvasFilePath(repo, "t1", "p3", "x"))).toContain("not a file panel");
 });
