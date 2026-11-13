@@ -66,6 +66,21 @@ describe("ChatPane", () => {
     expect(pane([entry], { ...DEFAULT_CHAT_VISIBILITY, showTools: true, expandTools: true })).toContain("a.ts");
   });
 
+  it("pairs each result with the earliest call still waiting, whatever the result is named", () => {
+    const html = pane(
+      [
+        { id: "c1", at, actor: ACTOR.agent, type: "tool_call", tool: "bash", args: '{"command":"ls"}', status: "ok" },
+        { id: "c2", at, actor: ACTOR.agent, type: "tool_call", tool: "read", args: '{"path":"a.ts"}', target: "a.ts", status: "ok" },
+        { id: "r1", at, actor: ACTOR.agent, type: "tool_result", tool: "tool", text: "ls output", status: "ok" },
+        { id: "r2", at, actor: ACTOR.agent, type: "tool_result", tool: "tool", text: "file body", status: "ok" },
+      ],
+      { ...DEFAULT_CHAT_VISIBILITY, showTools: true, expandTools: true },
+    );
+    expect(html).toContain('aria-label="2 steps · bash · read"');
+    expect(html.indexOf("ls output")).toBeLessThan(html.indexOf("a.ts"));
+    expect(html.indexOf("file body")).toBeGreaterThan(html.indexOf("a.ts"));
+  });
+
   it("renders journal row kinds from the Chat mockup", () => {
     const html = pane(
       [

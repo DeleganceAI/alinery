@@ -53,8 +53,9 @@ export function journalItems(entries: ChatEntry[], running: boolean): JournalIte
     if (final && running) return;
     if (first?.kind !== "entry" || first.entry.type !== "prompt" || !answered) return;
     const steps = turn.reduce((n, item) => n + (item.kind === "work" ? item.entries.filter(countsAsStep).length : 0), 0);
-    const times = turn.flatMap((item) => (item.kind === "work" ? item.entries : item.kind === "entry" ? [item.entry] : [])).map((e) => e.at ?? Number.NaN);
-    const end = Math.max(...times.filter(Number.isFinite));
+    // A loop, not Math.max(...): spreading a long turn's timestamps overflows the call stack.
+    let end = Number.NEGATIVE_INFINITY;
+    for (const item of turn) for (const e of item.kind === "work" ? item.entries : item.kind === "entry" ? [item.entry] : []) if (e.at != null && e.at > end) end = e.at;
     const start = first.entry.at;
     items.push({ kind: "turn", key: `turn:${first.entry.id}`, steps, durationMs: start != null && Number.isFinite(end) && end > start ? end - start : undefined });
   };

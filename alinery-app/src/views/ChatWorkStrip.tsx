@@ -9,15 +9,18 @@ type Step = { entry: ChatEntry; result?: Extract<ChatEntry, { type: "tool_result
 
 function stepsOf(entries: ChatEntry[]): Step[] {
   const steps: Step[] = [];
+  // Results arrive in call order and may only be named "tool", so each answers the earliest call still waiting. A queue
+  // keeps that linear: the live strip of a long run re-renders on every token.
+  const waiting: Step[] = [];
+  let next = 0;
   for (const entry of entries) {
-    if (entry.type === "tool_result") {
-      // Results arrive in call order and may only be named "tool", so each answers the earliest call still waiting.
-      const call = steps.find((s) => s.entry.type === "tool_call" && !s.result && (entry.tool === "tool" || s.entry.tool === entry.tool));
-      if (call) call.result = entry;
-      else steps.push({ entry });
+    const step: Step = { entry };
+    if (entry.type === "tool_result" && next < waiting.length) {
+      waiting[next++].result = entry;
       continue;
     }
-    steps.push({ entry });
+    steps.push(step);
+    if (entry.type === "tool_call") waiting.push(step);
   }
   return steps;
 }
@@ -180,4 +183,14 @@ function ChatWorkStripImpl({
   );
 }
 
-export const ChatWorkStrip = memo(ChatWorkStripImpl);
+type StripProps = Parameters<typeof ChatWorkStripImpl>[0];
+
+/** `journalItems` regroups on every streaming delta, so each strip gets a fresh array holding the same entries. Compare
+ * the entries, not the array, or every strip in the journal re-renders on every token. */
+function sameStrip(a: StripProps, b: StripProps): boolean {
+  if (a.live !== b.live || a.defaultOpen !== b.defaultOpen || a.collapseWhenDone !== b.collapseWhenDone || a.stepOpen !== b.stepOpen) return false;
+  if (a.entries === b.entries) return true;
+  return a.entries.length === b.entries.length && a.entries.every((entry, i) => entry === b.entries[i]);
+}
+
+export const ChatWorkStrip = memo(ChatWorkStripImpl, sameStrip);
