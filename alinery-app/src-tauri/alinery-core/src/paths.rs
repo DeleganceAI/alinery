@@ -308,7 +308,7 @@ pub fn safe_component(s: &str) -> Option<&str> {
 /// Walk `exe` for a real install prefix. Some only for
 /// `…/<X>.app/Contents/MacOS/<exe>` or a parent directory named `Alinery`
 /// (Linux prefix). `target/debug/Alinery` and `target/debug/deps/…` return None
-/// so resolve falls through to `default_omp_alongside_dir`.
+/// so resolve falls through to `default_git_alongside_dir`.
 pub fn containing_install_root(exe: &Path) -> Option<PathBuf> {
     let macos_dir = exe.parent()?;
     if macos_dir.file_name()? == "MacOS" {
@@ -324,22 +324,6 @@ pub fn containing_install_root(exe: &Path) -> Option<PathBuf> {
         return Some(macos_dir.to_path_buf());
     }
     None
-}
-
-/// Alongside directory for a given Alinery install root. Path-shape, not cfg:
-/// `.app` → sibling `<stem>.omp`; otherwise sibling `omp`.
-pub fn omp_alongside_dir(install_root: &Path) -> PathBuf {
-    let parent = install_root.parent().unwrap_or(install_root);
-    if install_root.extension().is_some_and(|ext| ext == "app") {
-        let stem = install_root.file_stem().unwrap_or_default().to_string_lossy();
-        parent.join(format!("{stem}.omp"))
-    } else {
-        parent.join("omp")
-    }
-}
-
-pub fn omp_binary_path(omp_dir: &Path) -> PathBuf {
-    omp_dir.join("omp")
 }
 
 /// Alongside directory for the fallback Git tree. Path-shape, not cfg:
@@ -382,26 +366,12 @@ pub(crate) fn installed_git_binary() -> PathBuf {
     }
 }
 
-/// One Alinery-global alongside dir used when `containing_install_root` is None
-/// (`tauri dev`, cargo test). Matches install.sh's default dest formula.
-pub fn default_omp_alongside_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        omp_alongside_dir(Path::new("/Applications/Alinery.app"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
-        omp_alongside_dir(&home.join(".local/share/alinery/Alinery"))
-    }
-}
-
 /// Vinculum agent home under the app-config parent (not `~/.pi` and not `~/.omp`).
 /// Returns `(agent dir, config root)`: `<app.toml parent>/vinculum/config/agent` and `.../config`.
 ///
 /// On first use, if `vinculum/` is absent and `omp/` is a directory, rename `omp` to `vinculum`
 /// so an existing install keeps its skills, MCP files, and `models.yml`. If `vinculum/` already
-/// exists, `omp/` is left unread. This does not touch `omp_alongside_dir` or `/Applications/Alinery.omp`.
+/// exists, `omp/` is left unread.
 pub fn vinculum_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
     let parent = app_config.parent().unwrap_or(app_config);
     let vinculum = parent.join("vinculum");
@@ -411,65 +381,6 @@ pub fn vinculum_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
     }
     let config_root = vinculum.join("config");
     (config_root.join("agent"), config_root)
-}
-
-/// The only variables an isolated OMP child inherits from the daemon's own environment.
-///
-/// Everything outside this list is dropped, because "a fresh install starts un-authenticated" and
-/// "inherits whatever the launching shell exported" cannot both be true: OMP reads provider
-/// credentials from env vars as readily as from its credential store, so one exported key silently
-/// authenticates an instance that owns an empty store — and nothing in the UI would disagree.
-///
-/// So the list carries only what a coding agent cannot work without and what is not a credential:
-/// locale and temp so tools behave, the ssh agent socket so git over ssh keeps working, and proxy
-/// settings so a machine behind one can still reach an API. `PATH`, `TERM`, and every `ALINERY_*`
-/// / `PI_*` var are set explicitly at spawn and do not belong here.
-///
-/// A key that genuinely must be injected goes in the harness row's `env` map, which is applied
-/// after this and therefore still wins — explicit, per-install, and visible in config.
-pub const OMP_ENV_ALLOWLIST: &[&str] = &[
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "SHELL",
-    "TMPDIR",
-    "TZ",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "SSH_AUTH_SOCK",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-];
-
-/// Packaged OMP binary: `ALINERY_OMP_PATH` override → install-root sibling →
-/// default alongside dir. Fail-closed; never PATH search.
-pub fn resolve_packaged_omp_path() -> Result<PathBuf, String> {
-    let path = match std::env::var("ALINERY_OMP_PATH") {
-        Ok(value) if !value.is_empty() => PathBuf::from(value),
-        _ => match std::env::current_exe() {
-            Ok(exe) => match containing_install_root(&exe) {
-                Some(root) => omp_binary_path(&omp_alongside_dir(&root)),
-                None => omp_binary_path(&default_omp_alongside_dir()),
-            },
-            Err(_) => omp_binary_path(&default_omp_alongside_dir()),
-        },
-    };
-    if path.is_file() {
-        Ok(path)
-    } else {
-        // Naming the fix here is worth more than the doc that also describes it: this is the
-        // string a dev sees the first time a session refuses to start, and "not found" on its own
-        // does not even say where it looked.
-        Err(format!(
-            "bundled OMP not found at {} — from a checkout run scripts/dev-fetch-omp.sh; in an installed app, reinstall Alinery",
-            path.display()
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -614,24 +525,6 @@ mod tests {
     }
 
     #[test]
-    fn omp_alongside_dir_macos_app() {
-        assert_eq!(omp_alongside_dir(Path::new("/Applications/Alinery.app")), PathBuf::from("/Applications/Alinery.omp"));
-    }
-
-    #[test]
-    fn omp_alongside_dir_linux_prefix() {
-        assert_eq!(
-            omp_alongside_dir(Path::new("/home/u/.local/share/alinery/Alinery")),
-            PathBuf::from("/home/u/.local/share/alinery/omp")
-        );
-    }
-
-    #[test]
-    fn omp_binary_path_joins_omp() {
-        assert_eq!(omp_binary_path(Path::new("/Applications/Alinery.omp")), PathBuf::from("/Applications/Alinery.omp/omp"));
-    }
-
-    #[test]
     fn git_alongside_dir_macos_app() {
         assert_eq!(git_alongside_dir(Path::new("/Applications/Alinery.app")), PathBuf::from("/Applications/Alinery.git"));
     }
@@ -666,17 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn default_omp_alongside_dir_matches_install_default() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(default_omp_alongside_dir(), PathBuf::from("/Applications/Alinery.omp"));
-        #[cfg(not(target_os = "macos"))]
-        {
-            let home = dirs::home_dir().expect("HOME");
-            assert_eq!(default_omp_alongside_dir(), home.join(".local/share/alinery/omp"));
-        }
-    }
-
-    #[test]
     fn vinculum_home_dirs_rename_omp_once_and_then_leave_it() {
         let root = std::env::temp_dir().join(format!("alinery-vinculum-home-{}", uuid::Uuid::new_v4()));
         let app_config = root.join("app.toml");
@@ -693,71 +575,5 @@ mod tests {
         assert_eq!(again, agent);
         assert_eq!(fs::read_to_string(root.join("omp/config/agent/other")).unwrap(), "stay");
         let _ = fs::remove_dir_all(&root);
-    }
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct OmpPathEnvGuard {
-        prev: Option<std::ffi::OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-    impl OmpPathEnvGuard {
-        fn set(value: Option<&str>) -> Self {
-            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let prev = std::env::var_os("ALINERY_OMP_PATH");
-            match value {
-                Some(v) => std::env::set_var("ALINERY_OMP_PATH", v),
-                None => std::env::remove_var("ALINERY_OMP_PATH"),
-            }
-            Self { prev, _lock: lock }
-        }
-    }
-    impl Drop for OmpPathEnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var("ALINERY_OMP_PATH", v),
-                None => std::env::remove_var("ALINERY_OMP_PATH"),
-            }
-        }
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_env_present() {
-        let path = std::env::temp_dir().join(format!("alinery-omp-present-{}", std::process::id()));
-        std::fs::write(&path, b"omp-fixture").unwrap();
-        let _guard = OmpPathEnvGuard::set(Some(path.to_str().unwrap()));
-        let got = resolve_packaged_omp_path().expect("present override");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(got, path);
-        assert_ne!(got.as_os_str(), "omp");
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_env_absent_file() {
-        let missing = format!("/no/such/alinery-omp-{}", std::process::id());
-        let _guard = OmpPathEnvGuard::set(Some(&missing));
-        let err = resolve_packaged_omp_path().expect_err("missing override");
-        assert!(err.contains("bundled OMP not found at"), "{err}");
-        assert!(err.contains(&missing), "{err}");
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_never_path_search() {
-        let _guard = OmpPathEnvGuard::set(None);
-        // Dev machines may already have `scripts/dev-fetch-omp.sh` output; CI usually
-        // does not. Either way the resolver must not fall through to the PATH name `omp`.
-        match resolve_packaged_omp_path() {
-            Ok(path) => {
-                assert!(path.is_absolute(), "{}", path.display());
-                assert_ne!(path.as_os_str(), "omp");
-                assert!(path.is_file(), "{}", path.display());
-            }
-            Err(err) => {
-                assert!(err.contains("bundled OMP not found at"), "{err}");
-                let path = err.rsplit_once(" at ").map(|(_, p)| p).unwrap_or(&err);
-                assert!(path.starts_with('/'), "{err}");
-                assert_ne!(path, "omp");
-            }
-        }
     }
 }

@@ -1,7 +1,7 @@
 # Third-party notices
 
 Third-party components retain their respective licenses. The notices below cover
-OMP, the bundled Git fallback, the bundled Python, the bundled SuperDevelop
+the daemon's Bun runtime and pi, the bundled Git fallback, the bundled Python, the bundled SuperDevelop
 adaptations, and thinking-orbs; other dependencies retain their own license and notice requirements.
 
 ## Git
@@ -42,39 +42,17 @@ archive's `skills/`) holds copies of agent skills, pinned by commit in
   each skill's frontmatter `name` to its directory name and replace six empty
   descriptions.
 
-## oh-my-pi / OMP
+## Bun and pi
 
-Alinery ships a pinned official build of [oh-my-pi / OMP](https://github.com/can1357/oh-my-pi).
-The version is the tag in `scripts/omp-pin.txt` (do not duplicate it here).
+`alinery-vinculum-daemon` is a [Bun](https://bun.sh) executable compiled with
+`bun build --compile` (the version pinned in `scripts/bun-pin.txt`), so it
+carries the Bun runtime. Bun is MIT-licensed and links JavaScriptCore and other
+libraries under their own licenses, JavaScriptCore under the LGPL-2.0; Bun's
+`LICENSE.md` lists them all.
 
-OMP is MIT-licensed. The upstream license text follows, copied verbatim from
-`https://github.com/can1357/oh-my-pi` `LICENSE`.
-
----
-
-MIT License
-
-Copyright (c) 2025 Mario Zechner
-Copyright (c) 2025-2026 Can Bölük
-Copyright (c) 2026 Stencil Labs, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The agent runtime inside it is [pi](https://github.com/earendil-works/pi)
+(`@earendil-works/pi-durable`, `pi-ai` and their siblings, versions locked in
+`alinery-app/src-tauri/vinculum-daemon/bun.lock`), MIT-licensed.
 
 ## SuperDevelop / Superpowers
 

@@ -4,7 +4,7 @@ import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import { signalChild, spawnDetached } from "./platform/process.ts";
 
-/** Must match `OMP_ENV_ALLOWLIST` in alinery-core. A stdio MCP child gets only these, then its own env. */
+/** A stdio MCP child gets only these, then its own env: one exported key must not sign in a store the UI shows empty. */
 const ENV_ALLOWLIST = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TZ", "LANG", "LC_ALL", "LC_CTYPE", "SSH_AUTH_SOCK", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 
 export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "alinery_phase_complete", "alinery_set_session_name", "alinery_render_page"];

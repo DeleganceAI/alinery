@@ -61,9 +61,6 @@ step "frontend: typecheck (sources + tests)"
 step "frontend: vitest"
 (cd "$APP" && npm run --silent test)
 
-step "frontend: omp extension (node --test)"
-(cd "$APP" && npm run --silent test:omp-extension)
-
 # ---------- bun ----------
 step "proto: bun test"
 (cd "$ROOT/proto" && "$BUN" test)
@@ -116,12 +113,9 @@ step "source gates"
 "$ROOT/scripts/tests/check-ipc-commands.sh"
 "$ROOT/scripts/tests/check-telemetry-privacy.sh"
 "$ROOT/scripts/tests/check-connection-status-never-decrypts.sh"
-"$ROOT/scripts/tests/omp_lib_test.sh"
 "$ROOT/scripts/tests/git_lib_test.sh"
-"$ROOT/scripts/tests/dev_fetch_omp_test.sh"
 "$ROOT/scripts/tests/dev_fetch_bun_test.sh"
 "$ROOT/scripts/tests/check-experimental-daemon-names.sh"
-"$ROOT/scripts/tests/install_omp_place_test.sh"
 
 # ---------- behavioural shell suites (slow) ----------
 if [ "$QUICK" -eq 1 ]; then
