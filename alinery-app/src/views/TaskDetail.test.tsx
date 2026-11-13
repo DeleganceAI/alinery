@@ -67,6 +67,8 @@ const ipcSpies = vi.hoisted(() => ({
 
 const mocks = vi.hoisted(() => ({
   listWorktreeFiles: vi.fn(async () => ({ paths: [] as string[], truncated: false })),
+  worktreeLog: vi.fn(),
+  worktreeDiff: vi.fn(),
   subtaskState: vi.fn(),
   getTaskExecution: vi.fn(),
   worktreeExists: vi.fn(),
@@ -90,7 +92,12 @@ vi.mock("../sync/tasks", async (actual) => ({
   renameTask: ipcSpies.renameTask,
   setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
 }));
-vi.mock("../sync/git", async (actual) => ({ ...(await actual<typeof import("../sync/git")>()), listWorktreeFilesForRepo: mocks.listWorktreeFiles }));
+vi.mock("../sync/git", async (actual) => ({
+  ...(await actual<typeof import("../sync/git")>()),
+  listWorktreeFilesForRepo: mocks.listWorktreeFiles,
+  worktreeLogForRepo: mocks.worktreeLog,
+  worktreeDiffForRepo: mocks.worktreeDiff,
+}));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
@@ -2211,6 +2218,29 @@ describe("main pane file tabs", () => {
     fireEvent.click(files.getByRole("button", { name: /^c\.md/ }), { detail: 1 });
     expect(tab("b.md")).toBeDefined();
     expect(tab("c.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(true);
+  });
+});
+
+describe("git tab", () => {
+  it("lists the branch's commits and opens one as a diff tab without reading it as an artifact", async () => {
+    mocks.worktreeLog.mockResolvedValue({
+      commits: [{ oid: "b".repeat(40), subject: "Fix src/a.ts", author: "t", time_ms: 0 }],
+      base: "main",
+      truncated: false,
+      staged: 0,
+      uncommitted: 0,
+    });
+    mocks.worktreeDiff.mockResolvedValue({ patch: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n", truncated: false });
+    await renderDetail();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Git" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Fix src\/a\.ts/ }), { detail: 2 });
+
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    // The tab names the commit, not the tail of a path in its subject.
+    expect(tabs.getByRole("button", { name: "bbbbbbb Fix src/a.ts" }).getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByRole("region", { name: "src/a.ts" })).toBeDefined();
+    expect(mocks.worktreeDiff).toHaveBeenCalledWith("/repo", "parent", { kind: "commit", oid: "b".repeat(40) });
+    expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "bbbbbbb Fix src/a.ts");
   });
 });
 

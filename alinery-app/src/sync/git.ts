@@ -44,6 +44,35 @@ export async function listWorktreeFilesForRepo(repo: string, slug: string): Prom
   return { paths: reply.paths, truncated: reply.truncated };
 }
 
+export type WorktreeCommit = { oid: string; subject: string; author: string; time_ms: number };
+export type WorktreeLog = { commits: WorktreeCommit[]; base: string; truncated: boolean; staged: number; uncommitted: number };
+/** What a diff tab shows: one commit, the staged changes, or the changes not staged (new files included). */
+export type GitDiffTarget = { kind: "commit"; oid: string } | { kind: "staged" } | { kind: "uncommitted" };
+
+/** The task branch's own commits, newest first, and how many files are staged and how many changed but not staged. */
+export async function worktreeLogForRepo(repo: string, slug: string): Promise<WorktreeLog> {
+  const r = await call(() => git(repo).worktreeLog({ slug }));
+  return {
+    commits: r.commits.map((c) => ({ oid: c.oid, subject: c.subject, author: c.author, time_ms: Number(c.timeMs) })),
+    base: r.base,
+    truncated: r.truncated,
+    staged: r.staged,
+    uncommitted: r.uncommitted,
+  };
+}
+
+/** One unified diff: a commit's header and patch, or the staged or unstaged changes. */
+export async function worktreeDiffForRepo(repo: string, slug: string, target: GitDiffTarget): Promise<{ patch: string; truncated: boolean }> {
+  const t =
+    target.kind === "commit"
+      ? { case: "commit" as const, value: target.oid }
+      : target.kind === "staged"
+        ? { case: "staged" as const, value: true }
+        : { case: "uncommitted" as const, value: true };
+  const r = await call(() => git(repo).worktreeDiff({ slug, target: t }));
+  return { patch: r.patch, truncated: r.truncated };
+}
+
 /** The URL of the repository's `origin` remote, or null when it has none. A bare `#123` in an issue import resolves against it. */
 export async function originUrlForRepo(repo: string): Promise<string | null> {
   const reply = await call(() => git(repo).gitOriginUrl({}));

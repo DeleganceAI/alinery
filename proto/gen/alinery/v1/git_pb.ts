@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/git.proto.
  */
 export const file_alinery_v1_git: GenFile = /*@__PURE__*/
-  fileDesc("ChRhbGluZXJ5L3YxL2dpdC5wcm90bxIKYWxpbmVyeS52MSIyChBUYXNrU291cmNlQnJhbmNoEhAKCGZ1bGxfcmVmGAEgASgJEgwKBG5hbWUYAiABKAkiigEKDlRhc2tTb3VyY2VIZWFkEisKBmJyYW5jaBgBIAEoCzIZLmFsaW5lcnkudjEuVGFza1NvdXJjZVJlZkgAEhYKDGRldGFjaGVkX29pZBgCIAEoCUgAEisKBnVuYm9ybhgDIAEoCzIZLmFsaW5lcnkudjEuVGFza1NvdXJjZVJlZkgAQgYKBGhlYWQiLwoNVGFza1NvdXJjZVJlZhIQCghmdWxsX3JlZhgBIAEoCRIMCgRuYW1lGAIgASgJIjoKE1Rhc2tTb3VyY2VTZWxlY3Rpb24SEAoIYmFzZV9yZWYYASABKAkSEQoJYXZhaWxhYmxlGAIgASgIIlEKGVRhc2tTb3VyY2VCcmFuY2hlc1JlcXVlc3QSHgoRc2VsZWN0ZWRfYmFzZV9yZWYYASABKAlIAIgBAUIUChJfc2VsZWN0ZWRfYmFzZV9yZWYiuwEKGlRhc2tTb3VyY2VCcmFuY2hlc1Jlc3BvbnNlEi4KCGJyYW5jaGVzGAEgAygLMhwuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoEigKBGhlYWQYAiABKAsyGi5hbGluZXJ5LnYxLlRhc2tTb3VyY2VIZWFkEjYKCHNlbGVjdGVkGAMgASgLMh8uYWxpbmVyeS52MS5UYXNrU291cmNlU2VsZWN0aW9uSACIAQFCCwoJX3NlbGVjdGVkIk0KFVJlbW92ZVdvcmt0cmVlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDAoEc2x1ZxgCIAEoCSI+ChZSZW1vdmVXb3JrdHJlZVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiUAoYUHVzaEFuZENvbXBhcmVVcmxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJIlYKGVB1c2hBbmRDb21wYXJlVXJsUmVzcG9uc2USEwoLY29tcGFyZV91cmwYASABKAkSJAoHYXBwbGllZBgCIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJUCg9TZXRQclVybFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSCwoDdXJsGAMgASgJIjgKEFNldFByVXJsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJeChVDb21taXRXb3JrdHJlZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSDwoHbWVzc2FnZRgDIAEoCSI+ChZDb21taXRXb3JrdHJlZVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiLAocVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVxdWVzdBIMCgRzbHVnGAEgASgJImcKHVRhc2tQdWxsUmVxdWVzdElucHV0c1Jlc3BvbnNlEg4KBnByX3VybBgBIAEoCRIOCgZicmFuY2gYAiABKAkSFwoKb3JpZ2luX3VybBgDIAEoCUgAiAEBQg0KC19vcmlnaW5fdXJsIo0BCiJSZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJEg4KBmJyYW5jaBgDIAEoCRIUCgxwcmV2aW91c191cmwYBCABKAkSCwoDdXJsGAUgASgJIksKI1JlY29yZERpc2NvdmVyZWRQdWxsUmVxdWVzdFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiKAoYTGlzdFdvcmt0cmVlRmlsZXNSZXF1ZXN0EgwKBHNsdWcYASABKAkiPQoZTGlzdFdvcmt0cmVlRmlsZXNSZXNwb25zZRINCgVwYXRocxgBIAMoCRIRCgl0cnVuY2F0ZWQYAiABKAgiFQoTR2l0T3JpZ2luVXJsUmVxdWVzdCI+ChRHaXRPcmlnaW5VcmxSZXNwb25zZRIXCgpvcmlnaW5fdXJsGAEgASgJSACIAQFCDQoLX29yaWdpbl91cmwy7wYKCkdpdFNlcnZpY2USYwoSVGFza1NvdXJjZUJyYW5jaGVzEiUuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoZXNSZXF1ZXN0GiYuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoZXNSZXNwb25zZRJXCg5SZW1vdmVXb3JrdHJlZRIhLmFsaW5lcnkudjEuUmVtb3ZlV29ya3RyZWVSZXF1ZXN0GiIuYWxpbmVyeS52MS5SZW1vdmVXb3JrdHJlZVJlc3BvbnNlEmAKEVB1c2hBbmRDb21wYXJlVXJsEiQuYWxpbmVyeS52MS5QdXNoQW5kQ29tcGFyZVVybFJlcXVlc3QaJS5hbGluZXJ5LnYxLlB1c2hBbmRDb21wYXJlVXJsUmVzcG9uc2USRQoIU2V0UHJVcmwSGy5hbGluZXJ5LnYxLlNldFByVXJsUmVxdWVzdBocLmFsaW5lcnkudjEuU2V0UHJVcmxSZXNwb25zZRJXCg5Db21taXRXb3JrdHJlZRIhLmFsaW5lcnkudjEuQ29tbWl0V29ya3RyZWVSZXF1ZXN0GiIuYWxpbmVyeS52MS5Db21taXRXb3JrdHJlZVJlc3BvbnNlEmwKFVRhc2tQdWxsUmVxdWVzdElucHV0cxIoLmFsaW5lcnkudjEuVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVxdWVzdBopLmFsaW5lcnkudjEuVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVzcG9uc2USfgobUmVjb3JkRGlzY292ZXJlZFB1bGxSZXF1ZXN0Ei4uYWxpbmVyeS52MS5SZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXF1ZXN0Gi8uYWxpbmVyeS52MS5SZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXNwb25zZRJRCgxHaXRPcmlnaW5VcmwSHy5hbGluZXJ5LnYxLkdpdE9yaWdpblVybFJlcXVlc3QaIC5hbGluZXJ5LnYxLkdpdE9yaWdpblVybFJlc3BvbnNlEmAKEUxpc3RXb3JrdHJlZUZpbGVzEiQuYWxpbmVyeS52MS5MaXN0V29ya3RyZWVGaWxlc1JlcXVlc3QaJS5hbGluZXJ5LnYxLkxpc3RXb3JrdHJlZUZpbGVzUmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common]);
+  fileDesc("ChRhbGluZXJ5L3YxL2dpdC5wcm90bxIKYWxpbmVyeS52MSIyChBUYXNrU291cmNlQnJhbmNoEhAKCGZ1bGxfcmVmGAEgASgJEgwKBG5hbWUYAiABKAkiigEKDlRhc2tTb3VyY2VIZWFkEisKBmJyYW5jaBgBIAEoCzIZLmFsaW5lcnkudjEuVGFza1NvdXJjZVJlZkgAEhYKDGRldGFjaGVkX29pZBgCIAEoCUgAEisKBnVuYm9ybhgDIAEoCzIZLmFsaW5lcnkudjEuVGFza1NvdXJjZVJlZkgAQgYKBGhlYWQiLwoNVGFza1NvdXJjZVJlZhIQCghmdWxsX3JlZhgBIAEoCRIMCgRuYW1lGAIgASgJIjoKE1Rhc2tTb3VyY2VTZWxlY3Rpb24SEAoIYmFzZV9yZWYYASABKAkSEQoJYXZhaWxhYmxlGAIgASgIIlEKGVRhc2tTb3VyY2VCcmFuY2hlc1JlcXVlc3QSHgoRc2VsZWN0ZWRfYmFzZV9yZWYYASABKAlIAIgBAUIUChJfc2VsZWN0ZWRfYmFzZV9yZWYiuwEKGlRhc2tTb3VyY2VCcmFuY2hlc1Jlc3BvbnNlEi4KCGJyYW5jaGVzGAEgAygLMhwuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoEigKBGhlYWQYAiABKAsyGi5hbGluZXJ5LnYxLlRhc2tTb3VyY2VIZWFkEjYKCHNlbGVjdGVkGAMgASgLMh8uYWxpbmVyeS52MS5UYXNrU291cmNlU2VsZWN0aW9uSACIAQFCCwoJX3NlbGVjdGVkIk0KFVJlbW92ZVdvcmt0cmVlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDAoEc2x1ZxgCIAEoCSI+ChZSZW1vdmVXb3JrdHJlZVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiUAoYUHVzaEFuZENvbXBhcmVVcmxSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJIlYKGVB1c2hBbmRDb21wYXJlVXJsUmVzcG9uc2USEwoLY29tcGFyZV91cmwYASABKAkSJAoHYXBwbGllZBgCIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJUCg9TZXRQclVybFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSCwoDdXJsGAMgASgJIjgKEFNldFByVXJsUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJeChVDb21taXRXb3JrdHJlZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBHNsdWcYAiABKAkSDwoHbWVzc2FnZRgDIAEoCSI+ChZDb21taXRXb3JrdHJlZVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiLAocVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVxdWVzdBIMCgRzbHVnGAEgASgJImcKHVRhc2tQdWxsUmVxdWVzdElucHV0c1Jlc3BvbnNlEg4KBnByX3VybBgBIAEoCRIOCgZicmFuY2gYAiABKAkSFwoKb3JpZ2luX3VybBgDIAEoCUgAiAEBQg0KC19vcmlnaW5fdXJsIo0BCiJSZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIMCgRzbHVnGAIgASgJEg4KBmJyYW5jaBgDIAEoCRIUCgxwcmV2aW91c191cmwYBCABKAkSCwoDdXJsGAUgASgJIksKI1JlY29yZERpc2NvdmVyZWRQdWxsUmVxdWVzdFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiKAoYTGlzdFdvcmt0cmVlRmlsZXNSZXF1ZXN0EgwKBHNsdWcYASABKAkiPQoZTGlzdFdvcmt0cmVlRmlsZXNSZXNwb25zZRINCgVwYXRocxgBIAMoCRIRCgl0cnVuY2F0ZWQYAiABKAgiIgoSV29ya3RyZWVMb2dSZXF1ZXN0EgwKBHNsdWcYASABKAkiTwoOV29ya3RyZWVDb21taXQSCwoDb2lkGAEgASgJEg8KB3N1YmplY3QYAiABKAkSDgoGYXV0aG9yGAMgASgJEg8KB3RpbWVfbXMYBCABKAMiiAEKE1dvcmt0cmVlTG9nUmVzcG9uc2USKwoHY29tbWl0cxgBIAMoCzIaLmFsaW5lcnkudjEuV29ya3RyZWVDb21taXQSDAoEYmFzZRgCIAEoCRIRCgl0cnVuY2F0ZWQYAyABKAgSDgoGc3RhZ2VkGAQgASgNEhMKC3VuY29tbWl0dGVkGAUgASgNImgKE1dvcmt0cmVlRGlmZlJlcXVlc3QSDAoEc2x1ZxgBIAEoCRIQCgZjb21taXQYAiABKAlIABIQCgZzdGFnZWQYAyABKAhIABIVCgt1bmNvbW1pdHRlZBgEIAEoCEgAQggKBnRhcmdldCI4ChRXb3JrdHJlZURpZmZSZXNwb25zZRINCgVwYXRjaBgBIAEoCRIRCgl0cnVuY2F0ZWQYAiABKAgiFQoTR2l0T3JpZ2luVXJsUmVxdWVzdCI+ChRHaXRPcmlnaW5VcmxSZXNwb25zZRIXCgpvcmlnaW5fdXJsGAEgASgJSACIAQFCDQoLX29yaWdpbl91cmwykggKCkdpdFNlcnZpY2USYwoSVGFza1NvdXJjZUJyYW5jaGVzEiUuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoZXNSZXF1ZXN0GiYuYWxpbmVyeS52MS5UYXNrU291cmNlQnJhbmNoZXNSZXNwb25zZRJXCg5SZW1vdmVXb3JrdHJlZRIhLmFsaW5lcnkudjEuUmVtb3ZlV29ya3RyZWVSZXF1ZXN0GiIuYWxpbmVyeS52MS5SZW1vdmVXb3JrdHJlZVJlc3BvbnNlEmAKEVB1c2hBbmRDb21wYXJlVXJsEiQuYWxpbmVyeS52MS5QdXNoQW5kQ29tcGFyZVVybFJlcXVlc3QaJS5hbGluZXJ5LnYxLlB1c2hBbmRDb21wYXJlVXJsUmVzcG9uc2USRQoIU2V0UHJVcmwSGy5hbGluZXJ5LnYxLlNldFByVXJsUmVxdWVzdBocLmFsaW5lcnkudjEuU2V0UHJVcmxSZXNwb25zZRJXCg5Db21taXRXb3JrdHJlZRIhLmFsaW5lcnkudjEuQ29tbWl0V29ya3RyZWVSZXF1ZXN0GiIuYWxpbmVyeS52MS5Db21taXRXb3JrdHJlZVJlc3BvbnNlEmwKFVRhc2tQdWxsUmVxdWVzdElucHV0cxIoLmFsaW5lcnkudjEuVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVxdWVzdBopLmFsaW5lcnkudjEuVGFza1B1bGxSZXF1ZXN0SW5wdXRzUmVzcG9uc2USfgobUmVjb3JkRGlzY292ZXJlZFB1bGxSZXF1ZXN0Ei4uYWxpbmVyeS52MS5SZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXF1ZXN0Gi8uYWxpbmVyeS52MS5SZWNvcmREaXNjb3ZlcmVkUHVsbFJlcXVlc3RSZXNwb25zZRJRCgxHaXRPcmlnaW5VcmwSHy5hbGluZXJ5LnYxLkdpdE9yaWdpblVybFJlcXVlc3QaIC5hbGluZXJ5LnYxLkdpdE9yaWdpblVybFJlc3BvbnNlEmAKEUxpc3RXb3JrdHJlZUZpbGVzEiQuYWxpbmVyeS52MS5MaXN0V29ya3RyZWVGaWxlc1JlcXVlc3QaJS5hbGluZXJ5LnYxLkxpc3RXb3JrdHJlZUZpbGVzUmVzcG9uc2USTgoLV29ya3RyZWVMb2cSHi5hbGluZXJ5LnYxLldvcmt0cmVlTG9nUmVxdWVzdBofLmFsaW5lcnkudjEuV29ya3RyZWVMb2dSZXNwb25zZRJRCgxXb3JrdHJlZURpZmYSHy5hbGluZXJ5LnYxLldvcmt0cmVlRGlmZlJlcXVlc3QaIC5hbGluZXJ5LnYxLldvcmt0cmVlRGlmZlJlc3BvbnNlYgZwcm90bzM", [file_alinery_v1_common]);
 
 /**
  * @generated from message alinery.v1.TaskSourceBranch
@@ -491,6 +491,161 @@ export const ListWorktreeFilesResponseSchema: GenMessage<ListWorktreeFilesRespon
   messageDesc(file_alinery_v1_git, 19);
 
 /**
+ * The task branch's own commits (those its base branch lacks), newest first, and how many files are staged and how many
+ * changed but not staged (untracked included). Read only.
+ *
+ * @generated from message alinery.v1.WorktreeLogRequest
+ */
+export type WorktreeLogRequest = Message<"alinery.v1.WorktreeLogRequest"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+};
+
+/**
+ * Describes the message alinery.v1.WorktreeLogRequest.
+ * Use `create(WorktreeLogRequestSchema)` to create a new message.
+ */
+export const WorktreeLogRequestSchema: GenMessage<WorktreeLogRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_git, 20);
+
+/**
+ * @generated from message alinery.v1.WorktreeCommit
+ */
+export type WorktreeCommit = Message<"alinery.v1.WorktreeCommit"> & {
+  /**
+   * @generated from field: string oid = 1;
+   */
+  oid: string;
+
+  /**
+   * @generated from field: string subject = 2;
+   */
+  subject: string;
+
+  /**
+   * @generated from field: string author = 3;
+   */
+  author: string;
+
+  /**
+   * @generated from field: int64 time_ms = 4;
+   */
+  timeMs: bigint;
+};
+
+/**
+ * Describes the message alinery.v1.WorktreeCommit.
+ * Use `create(WorktreeCommitSchema)` to create a new message.
+ */
+export const WorktreeCommitSchema: GenMessage<WorktreeCommit> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_git, 21);
+
+/**
+ * @generated from message alinery.v1.WorktreeLogResponse
+ */
+export type WorktreeLogResponse = Message<"alinery.v1.WorktreeLogResponse"> & {
+  /**
+   * @generated from field: repeated alinery.v1.WorktreeCommit commits = 1;
+   */
+  commits: WorktreeCommit[];
+
+  /**
+   * The ref the log stops at; empty when no base resolved and the log is the branch's latest commits.
+   *
+   * @generated from field: string base = 2;
+   */
+  base: string;
+
+  /**
+   * @generated from field: bool truncated = 3;
+   */
+  truncated: boolean;
+
+  /**
+   * @generated from field: uint32 staged = 4;
+   */
+  staged: number;
+
+  /**
+   * @generated from field: uint32 uncommitted = 5;
+   */
+  uncommitted: number;
+};
+
+/**
+ * Describes the message alinery.v1.WorktreeLogResponse.
+ * Use `create(WorktreeLogResponseSchema)` to create a new message.
+ */
+export const WorktreeLogResponseSchema: GenMessage<WorktreeLogResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_git, 22);
+
+/**
+ * One commit's header and patch, or the staged or unstaged changes as one unified diff. Read only.
+ *
+ * @generated from message alinery.v1.WorktreeDiffRequest
+ */
+export type WorktreeDiffRequest = Message<"alinery.v1.WorktreeDiffRequest"> & {
+  /**
+   * @generated from field: string slug = 1;
+   */
+  slug: string;
+
+  /**
+   * @generated from oneof alinery.v1.WorktreeDiffRequest.target
+   */
+  target: {
+    /**
+     * @generated from field: string commit = 2;
+     */
+    value: string;
+    case: "commit";
+  } | {
+    /**
+     * @generated from field: bool staged = 3;
+     */
+    value: boolean;
+    case: "staged";
+  } | {
+    /**
+     * @generated from field: bool uncommitted = 4;
+     */
+    value: boolean;
+    case: "uncommitted";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message alinery.v1.WorktreeDiffRequest.
+ * Use `create(WorktreeDiffRequestSchema)` to create a new message.
+ */
+export const WorktreeDiffRequestSchema: GenMessage<WorktreeDiffRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_git, 23);
+
+/**
+ * @generated from message alinery.v1.WorktreeDiffResponse
+ */
+export type WorktreeDiffResponse = Message<"alinery.v1.WorktreeDiffResponse"> & {
+  /**
+   * @generated from field: string patch = 1;
+   */
+  patch: string;
+
+  /**
+   * @generated from field: bool truncated = 2;
+   */
+  truncated: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.WorktreeDiffResponse.
+ * Use `create(WorktreeDiffResponseSchema)` to create a new message.
+ */
+export const WorktreeDiffResponseSchema: GenMessage<WorktreeDiffResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_git, 24);
+
+/**
  * @generated from message alinery.v1.GitOriginUrlRequest
  */
 export type GitOriginUrlRequest = Message<"alinery.v1.GitOriginUrlRequest"> & {
@@ -501,7 +656,7 @@ export type GitOriginUrlRequest = Message<"alinery.v1.GitOriginUrlRequest"> & {
  * Use `create(GitOriginUrlRequestSchema)` to create a new message.
  */
 export const GitOriginUrlRequestSchema: GenMessage<GitOriginUrlRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_git, 20);
+  messageDesc(file_alinery_v1_git, 25);
 
 /**
  * @generated from message alinery.v1.GitOriginUrlResponse
@@ -518,7 +673,7 @@ export type GitOriginUrlResponse = Message<"alinery.v1.GitOriginUrlResponse"> & 
  * Use `create(GitOriginUrlResponseSchema)` to create a new message.
  */
 export const GitOriginUrlResponseSchema: GenMessage<GitOriginUrlResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_git, 21);
+  messageDesc(file_alinery_v1_git, 26);
 
 /**
  * Git work on a task's repository and worktree (S4.7). The daemon runs git (platform/git.ts is its one spawn site), so the
@@ -618,6 +773,26 @@ export const GitService: GenService<{
     methodKind: "unary";
     input: typeof ListWorktreeFilesRequestSchema;
     output: typeof ListWorktreeFilesResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.GitService.WorktreeLog
+   */
+  worktreeLog: {
+    methodKind: "unary";
+    input: typeof WorktreeLogRequestSchema;
+    output: typeof WorktreeLogResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.GitService.WorktreeDiff
+   */
+  worktreeDiff: {
+    methodKind: "unary";
+    input: typeof WorktreeDiffRequestSchema;
+    output: typeof WorktreeDiffResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_git, 0);

@@ -6,6 +6,7 @@ import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { GitService } from "alinery-proto/alinery/v1/git_pb";
 import { commitWorktree, originUrl, pullRequestInputs, pushAndCompareUrl, recordDiscoveredPullRequest, removeWorktree, setPrUrl, taskSourceBranches } from "../domain/gitActions.ts";
 import { listWorktreeFiles } from "../domain/worktreeFiles.ts";
+import { worktreeDiff, worktreeLog } from "../domain/worktreeHistory.ts";
 import type { Sender } from "../platform/telemetry.ts";
 import type { Dedupe } from "../sync/dedupe.ts";
 import type { Store } from "../sync/store.ts";
@@ -99,6 +100,14 @@ export function gitService(d: GitDeps, dedupe: Dedupe, store: Store): ServiceImp
     listWorktreeFiles: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
       return domain(() => listWorktreeFiles(d.repo, req.slug));
+    },
+    worktreeLog: (req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(() => worktreeLog(d.repo, req.slug));
+    },
+    worktreeDiff: (req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(() => worktreeDiff(d.repo, req.slug, req.target));
     },
     gitOriginUrl: (_req, ctx) => {
       requireCapability(ctx, Capability.VIEW);

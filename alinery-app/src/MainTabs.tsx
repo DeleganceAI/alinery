@@ -2,7 +2,8 @@ import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 /** `temp`: opened by a single click. The next single-click open replaces it, so browsing reuses one tab until it is kept. */
-export type OpenTab = { key: string; name: string; mode: "preview" | "raw"; temp?: boolean };
+/** `label`: shown in place of the name's last path segment, for a tab whose name is not a path (a commit). */
+export type OpenTab = { key: string; name: string; label?: string; mode: "preview" | "raw"; temp?: boolean };
 
 /** The opened files behind `MainTabs`. `active` is "" while the pinned tab shows; a change of `scope` (another task or
  * session) closes them all. */
@@ -59,7 +60,7 @@ export function MainTabs({
   onClose,
 }: {
   pinned?: string;
-  tabs: { key: string; name: string; temp?: boolean }[];
+  tabs: { key: string; name: string; label?: string; temp?: boolean }[];
   active: string;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
@@ -84,7 +85,7 @@ export function MainTabs({
             onClick={() => onSelect(tab.key)}
             onAuxClick={(ev) => ev.button === 1 && onClose(tab.key)}
           >
-            {tab.name.slice(tab.name.lastIndexOf("/") + 1)}
+            {tab.label ?? tab.name.slice(tab.name.lastIndexOf("/") + 1)}
           </button>
           <button type="button" className="task-main-tab-close" aria-label={`Close ${tab.name}`} title="Close" onClick={() => onClose(tab.key)}>
             <X size={12} strokeWidth={1.75} aria-hidden="true" />

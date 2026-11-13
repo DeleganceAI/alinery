@@ -18,6 +18,8 @@ service GitService {
   rpc RecordDiscoveredPullRequest(RecordDiscoveredPullRequestRequest) returns (RecordDiscoveredPullRequestResponse);  // ACT
   rpc GitOriginUrl(GitOriginUrlRequest) returns (GitOriginUrlResponse);                    // VIEW
   rpc ListWorktreeFiles(ListWorktreeFilesRequest) returns (ListWorktreeFilesResponse);     // VIEW
+  rpc WorktreeLog(WorktreeLogRequest) returns (WorktreeLogResponse);                       // VIEW
+  rpc WorktreeDiff(WorktreeDiffRequest) returns (WorktreeDiffResponse);                    // VIEW
 }
 
 message TaskSourceBranch {
@@ -114,6 +116,40 @@ message ListWorktreeFilesRequest {
 }
 message ListWorktreeFilesResponse {
   repeated string paths = 1;
+  bool truncated = 2;
+}
+
+// The task branch's own commits (those its base branch lacks), newest first, and how many files are staged and how many
+// changed but not staged (untracked included). Read only.
+message WorktreeLogRequest {
+  string slug = 1;
+}
+message WorktreeCommit {
+  string oid = 1;
+  string subject = 2;
+  string author = 3;
+  int64 time_ms = 4;
+}
+message WorktreeLogResponse {
+  repeated WorktreeCommit commits = 1;
+  // The ref the log stops at; empty when no base resolved and the log is the branch's latest commits.
+  string base = 2;
+  bool truncated = 3;
+  uint32 staged = 4;
+  uint32 uncommitted = 5;
+}
+
+// One commit's header and patch, or the staged or unstaged changes as one unified diff. Read only.
+message WorktreeDiffRequest {
+  string slug = 1;
+  oneof target {
+    string commit = 2;
+    bool staged = 3;
+    bool uncommitted = 4;
+  }
+}
+message WorktreeDiffResponse {
+  string patch = 1;
   bool truncated = 2;
 }
 

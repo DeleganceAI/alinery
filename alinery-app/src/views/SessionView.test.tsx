@@ -119,6 +119,10 @@ vi.mock("../sync/agent", () => ({ writeModelRoles }));
 // The provider catalog and sign-in are the host daemon's ProviderService (sync/providers), not ipc.
 vi.mock("../sync/providers", () => ({ providerCatalog, listModels: async () => [] }));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+vi.mock("../sync/git", async (actual) => ({
+  ...(await actual<typeof import("../sync/git")>()),
+  listWorktreeFilesForRepo: async () => ({ paths: ["src/app.ts", "README.md"], truncated: false }),
+}));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 // The session writes and reads are the daemon's SessionService, not ipc.
@@ -1051,6 +1055,30 @@ describe("Vinculum session chat", () => {
     expect(await screen.findByRole("button", { name: "anthropic/claude" })).toBeTruthy();
     // The new model names no levels, so the stored one shows but cannot change.
     expect((screen.getByRole("button", { name: "Thinking level: off" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("opens a worktree file or an artifact the agent names in a reply as a tab", async () => {
+    daemon.setTranscript("session", [
+      { id: "a1", role: "assistant", content: [{ type: "text", text: "Changed `/worktrees/task/src/app.ts:12`, see `artifacts/00-ticket.md`; `os.path` is not a file." }] },
+    ]);
+    fakeArtifacts.worktreeTexts["src/app.ts"] = "export const app = 1;";
+    fakeArtifacts.texts["00-ticket.md"] = "# The ticket";
+    renderSession({ intent: "attach" });
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "/worktrees/task/src/app.ts:12" }));
+    await waitFor(() => expect(tabs.getByRole("button", { name: "app.ts" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(fakeArtifacts.readWorktree).toHaveBeenCalledWith("/repo", "task", "src/app.ts");
+    await waitFor(() => expect(document.querySelector(".artifactviewer")?.textContent).toContain("export const app = 1;"));
+    // A code file has no Preview/Raw toggle.
+    expect(screen.queryByRole("button", { name: "Raw" })).toBeNull();
+
+    fireEvent.click(tabs.getByRole("button", { name: "Agent conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "artifacts/00-ticket.md" }));
+    expect(await screen.findByRole("heading", { name: "The ticket" })).toBeDefined();
+    // Each single click opened a temporary tab, so the ticket replaced the code file.
+    expect(tabs.queryByRole("button", { name: "app.ts" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "os.path" })).toBeNull();
   });
 
   it("shows Finish step for a locked Vinculum execution and grants it without an OMP reply", async () => {

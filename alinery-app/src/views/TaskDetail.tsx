@@ -18,6 +18,7 @@ import { MainTabs, useOpenTabs } from "../MainTabs";
 import { PaneResizer } from "../PaneResizer";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PullRequestIndicator } from "../PullRequestIndicator";
+import { GitDiffView, GitPanel, gitDiffTab } from "../GitPanel";
 import { RepoFileTree } from "../RepoFileTree";
 import { relatedRepoKey, relatedStoredPath, sameMachine } from "../remoteRepo";
 import { revealPath } from "../revealPath";
@@ -61,7 +62,7 @@ import {
 import { addComment, attachmentFilePath, clearReviewPending, FileNotShown, readArtifactText, readNodeText, readWorktreeText, useTaskArtifacts } from "../sync/artifacts";
 import { useBoardTask, useRepoBoard, useRepoTasks, useTaskActivityMap, useTaskSessions } from "../sync/board";
 import { allowExecutionCompletion, useTaskExecution } from "../sync/execution";
-import { pushAndCompareUrlForRepo } from "../sync/git";
+import { type GitDiffTarget, pushAndCompareUrlForRepo } from "../sync/git";
 import { sessionObservationKey, useSessionObservations } from "../sync/sessionObservation";
 import { abortSession, archiveSession, markSessionNotificationRead, renameSession } from "../sync/sessions";
 import { discardSubtask as discardSubtaskForRepo, subtaskState as fetchSubtaskState, startSubtaskManager } from "../sync/subtasks";
@@ -128,7 +129,8 @@ function readStoredTaskSessionView(): "graph" | "list" {
 
 // ---- task detail --------------------------------------------------------------
 /** An open tab of the main pane: a task artifact, or a file of the task's worktree (`repo`). */
-type OpenArtifactTab = { key: string; kind: "artifact" | "repo"; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw" };
+/** `diff`: a commit or the staged or unstaged changes, opened from the Git side tab; it reads its own patch. */
+type OpenArtifactTab = { key: string; kind: "artifact" | "repo" | "diff"; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw"; diff?: GitDiffTarget };
 
 /** One choice for every task: the header opens compact until the user expands it. */
 const HEADER_OPEN_KEY = "alinery.taskHeaderOpen";
@@ -337,9 +339,10 @@ export function TaskDetail({
   };
   const selectedArtifactImages = useMemo(() => treeArtifactImages(artifactTree, selectedArtifactNode), [artifactTree, selectedArtifactNode]);
   const selectedIsRepo = activeArtifactTab?.kind === "repo";
+  const selectedDiff = activeArtifactTab?.kind === "diff" ? activeArtifactTab.diff : undefined;
   // Only markdown previews; any other worktree file shows as text.
   const selectedPreviewable = !selectedIsRepo || /\.(md|markdown)$/i.test(selectedArtifact);
-  const selectedArtifactIsDirect = !selectedIsRepo && (selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact));
+  const selectedArtifactIsDirect = activeArtifactTab?.kind === "artifact" && (selectedArtifactNode ? isDirectOwnedArtifactNode(selectedArtifactNode) : Boolean(selectedArtifact));
   const selectedArtifactItem = artifactItems.find((item) => item.name === selectedArtifact);
   const [artifactText, setArtifactText] = useState("");
   const [artifactErr, setArtifactErr] = useState<ErrState>(null);
@@ -352,7 +355,7 @@ export function TaskDetail({
       // Storage can be blocked; the toggle still works for this view.
     }
   };
-  const [sideTab, setSideTab] = useState<"playbook" | "artifacts" | "history">("artifacts");
+  const [sideTab, setSideTab] = useState<"playbook" | "artifacts" | "history" | "git">("artifacts");
   const [playbookView, setPlaybookView] = useState<"list" | "graph">("list");
   const [artifactTab, setArtifactTab] = useState<ArtifactPaneTab>("playbook");
   const selectedArtifactTreeId = selectedArtifactNode?.id;
@@ -1127,6 +1130,9 @@ export function TaskDetail({
               <button type="button" aria-pressed={sideTab === "artifacts"} className={`artifacttab${sideTab === "artifacts" ? " on" : ""}`} onClick={() => setSideTab("artifacts")}>
                 Files
               </button>
+              <button type="button" aria-pressed={sideTab === "git"} className={`artifacttab${sideTab === "git" ? " on" : ""}`} onClick={() => setSideTab("git")}>
+                Git
+              </button>
             </div>
             {sideTab === "artifacts" && <span className="pill">{artifactNames.length}</span>}
           </div>
@@ -1162,6 +1168,12 @@ export function TaskDetail({
                 selectedAutoAdvance={autoApproveAll ? steps.map((step) => step.key) : executionView?.state.enabled_steps}
               />
             </div>
+          ) : sideTab === "git" ? (
+            <GitPanel
+              repoPath={repoPath}
+              taskSlug={slug}
+              onOpen={(diff, subject, keep) => fileTabs.open({ ...gitDiffTab(diff, subject), kind: "diff", node: null, mode: "preview", diff }, keep)}
+            />
           ) : sideTab === "history" ? (
             <div className="task-history-pane">
               {executionView && (
@@ -1326,117 +1338,130 @@ export function TaskDetail({
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main className="detailmain">
           <MainTabs pinned="Sessions" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
-          {activeArtifactTab && (
+          {selectedDiff ? (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">
                 <div className="artifacttitle mono" title={selectedArtifact}>
                   {selectedArtifact}
                 </div>
-                <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
-                <div className="btn-group">
-                  <CopyArtifactButton text={artifactText} />
-                  {selectedPreviewable && (
-                    <>
-                      <button
-                        type="button"
-                        className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
-                        aria-pressed={artifactMode === "preview"}
-                        onClick={() => setArtifactMode("preview")}
-                      >
-                        Preview
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
-                        aria-pressed={artifactMode === "raw"}
-                        onClick={() => setArtifactMode("raw")}
-                      >
-                        Raw
-                      </button>
-                    </>
-                  )}
-                </div>
               </div>
-              {artifactErr && (
-                <InlineStatus tone={artifactErr.tone ?? "error"} detail={artifactErr.detail || undefined}>
-                  {artifactErr.msg}
-                </InlineStatus>
-              )}
-              {artifactCommentDraftError && (
-                <InlineStatus tone="error" detail={artifactCommentDraftError}>
-                  Comment drafts aren't being saved.
-                </InlineStatus>
-              )}
-              {reviewPending && (
-                <div className="artifact-review-pending">
-                  <span>
-                    {reviewPending.review} sent. {selectedArtifact} has not changed yet.
-                  </span>
-                  <button type="button" className="btn ghost small" onClick={clearPendingReview}>
-                    Clear waiting
-                  </button>
-                </div>
-              )}
               <div className="artifactviewer">
-                {!selectedPreviewable ? (
-                  <CodeView path={selectedArtifact} text={artifactText} />
-                ) : artifactMode === "raw" ? (
-                  <pre className="artifactraw">{artifactText}</pre>
-                ) : (
-                  <article className="md artifactmd">
-                    <ArtifactMarkdown
-                      text={artifactText}
-                      repoPath={repoPath}
-                      taskSlug={slug}
-                      artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
-                      attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
-                      comments={artifactComments}
-                      draftAnchorIds={recoverableArtifactDraftAnchorIds}
-                      onAddComment={canComment ? openArtifactComment : undefined}
-                      onDiagramZoomOpenChange={onDiagramZoomOpenChange}
-                    />
-                  </article>
-                )}
+                <GitDiffView repoPath={repoPath} taskSlug={slug} target={selectedDiff} />
               </div>
-              {recoverableArtifactDrafts.length > 0 && (
-                <div className="artifact-comment-drafts">
-                  <div className="artifact-comment-drafts-title">Unsaved drafts</div>
-                  {recoverableArtifactDrafts.map((draft) => (
-                    <div className="artifact-comment-draft-row" key={draft.anchor_id}>
-                      <button type="button" className="artifact-comment-draft-resume" title={draft.body} onClick={() => openArtifactComment(draft)}>
-                        <span>{formatArtifactCommentTarget(draft)}</span>
-                        {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
-                      </button>
-                      <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(commentTarget, draft.anchor_id).catch(() => {})}>
-                        Discard
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {commentAnchor && (
-                <div className="artifact-comment-composer">
-                  <div className="artifact-comment-title">{formatArtifactCommentTarget(commentAnchor)}</div>
-                  <textarea
-                    ref={commentInputRef}
-                    className="field-input artifact-comment-input"
-                    value={commentDraft}
-                    rows={2}
-                    placeholder="Add a comment for the next phase..."
-                    onChange={(ev) => handleCommentDraftChange(ev.target.value)}
-                    onKeyDown={handleCommentKeyDown}
-                  />
-                  <div className="artifact-comment-actions">
-                    <button type="button" className="btn small" disabled={!canSaveArtifactComment} onClick={saveArtifactComment}>
-                      Save comment
-                    </button>
-                    <button type="button" className="btn ghost small" onClick={discardOpenCommentDraft}>
-                      Discard draft
-                    </button>
+            </div>
+          ) : (
+            activeArtifactTab && (
+              <div className="artifactpane task-artifact-view">
+                <div className="artifacthead">
+                  <div className="artifacttitle mono" title={selectedArtifact}>
+                    {selectedArtifact}
+                  </div>
+                  <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
+                  <div className="btn-group">
+                    <CopyArtifactButton text={artifactText} />
+                    {selectedPreviewable && (
+                      <>
+                        <button
+                          type="button"
+                          className={`btn ghost small${artifactMode === "preview" ? " on" : ""}`}
+                          aria-pressed={artifactMode === "preview"}
+                          onClick={() => setArtifactMode("preview")}
+                        >
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ghost small${artifactMode === "raw" ? " on" : ""}`}
+                          aria-pressed={artifactMode === "raw"}
+                          onClick={() => setArtifactMode("raw")}
+                        >
+                          Raw
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-              )}
-            </div>
+                {artifactErr && (
+                  <InlineStatus tone={artifactErr.tone ?? "error"} detail={artifactErr.detail || undefined}>
+                    {artifactErr.msg}
+                  </InlineStatus>
+                )}
+                {artifactCommentDraftError && (
+                  <InlineStatus tone="error" detail={artifactCommentDraftError}>
+                    Comment drafts aren't being saved.
+                  </InlineStatus>
+                )}
+                {reviewPending && (
+                  <div className="artifact-review-pending">
+                    <span>
+                      {reviewPending.review} sent. {selectedArtifact} has not changed yet.
+                    </span>
+                    <button type="button" className="btn ghost small" onClick={clearPendingReview}>
+                      Clear waiting
+                    </button>
+                  </div>
+                )}
+                <div className="artifactviewer">
+                  {!selectedPreviewable ? (
+                    <CodeView path={selectedArtifact} text={artifactText} />
+                  ) : artifactMode === "raw" ? (
+                    <pre className="artifactraw">{artifactText}</pre>
+                  ) : (
+                    <article className="md artifactmd">
+                      <ArtifactMarkdown
+                        text={artifactText}
+                        repoPath={repoPath}
+                        taskSlug={slug}
+                        artifactPath={selectedArtifactImages?.artifactPath ?? selectedArtifact}
+                        attachmentNodeIds={selectedArtifactImages?.attachmentNodeIds}
+                        comments={artifactComments}
+                        draftAnchorIds={recoverableArtifactDraftAnchorIds}
+                        onAddComment={canComment ? openArtifactComment : undefined}
+                        onDiagramZoomOpenChange={onDiagramZoomOpenChange}
+                      />
+                    </article>
+                  )}
+                </div>
+                {recoverableArtifactDrafts.length > 0 && (
+                  <div className="artifact-comment-drafts">
+                    <div className="artifact-comment-drafts-title">Unsaved drafts</div>
+                    {recoverableArtifactDrafts.map((draft) => (
+                      <div className="artifact-comment-draft-row" key={draft.anchor_id}>
+                        <button type="button" className="artifact-comment-draft-resume" title={draft.body} onClick={() => openArtifactComment(draft)}>
+                          <span>{formatArtifactCommentTarget(draft)}</span>
+                          {draft.stale && <span className="artifact-comment-draft-stale">Artifact changed</span>}
+                        </button>
+                        <button type="button" className="btn ghost small" onClick={() => void discardCommentDraft(commentTarget, draft.anchor_id).catch(() => {})}>
+                          Discard
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {commentAnchor && (
+                  <div className="artifact-comment-composer">
+                    <div className="artifact-comment-title">{formatArtifactCommentTarget(commentAnchor)}</div>
+                    <textarea
+                      ref={commentInputRef}
+                      className="field-input artifact-comment-input"
+                      value={commentDraft}
+                      rows={2}
+                      placeholder="Add a comment for the next phase..."
+                      onChange={(ev) => handleCommentDraftChange(ev.target.value)}
+                      onKeyDown={handleCommentKeyDown}
+                    />
+                    <div className="artifact-comment-actions">
+                      <button type="button" className="btn small" disabled={!canSaveArtifactComment} onClick={saveArtifactComment}>
+                        Save comment
+                      </button>
+                      <button type="button" className="btn ghost small" onClick={discardOpenCommentDraft}>
+                        Discard draft
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
           )}
           <div className="task-sessions-tab" hidden={!!activeArtifactTab}>
             <section className="task-panel task-sessions-panel">

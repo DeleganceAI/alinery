@@ -1,6 +1,6 @@
 import type { Element, ElementContent } from "hast";
 import { Check, Copy, TriangleAlert } from "lucide-react";
-import { useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -14,11 +14,46 @@ function markdownText(node: Element | ElementContent): string {
   return node.children.map(markdownText).join("");
 }
 
-/** Chat bubble markdown: GFM formatting, no comment anchors/diff/mermaid machinery. */
+/**
+ * What a view lets chat text open: `resolve` turns a path an agent wrote into a target the view knows exists (or null, and
+ * the text stays plain), and `open` shows it, kept on a double click. Without a provider nothing links.
+ */
+export type PathLinks = { resolve: (path: string) => string | null; open: (target: string, keep: boolean) => void };
+export const PathLinksContext = createContext<PathLinks | null>(null);
+
+const EXTERNAL_HREF = /^(?:[a-z][a-z0-9+.-]*:|#)/i;
+
+/** Chat bubble markdown: GFM formatting, no comment anchors/diff/mermaid machinery. Inline code and relative links that name a known file open it. */
 export function ChatMarkdown({ text, showBlockCopyButtons = true, preserveLineBreaks = false }: { text: string; showBlockCopyButtons?: boolean; preserveLineBreaks?: boolean }) {
+  const links = useContext(PathLinksContext);
   const components = useMemo<Components>(
     () => ({
-      a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+      a: ({ node, href, ...props }) => {
+        const target = links && href && !EXTERNAL_HREF.test(href) ? links.resolve(decodeURI(href)) : null;
+        if (!target) return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+        return (
+          <a
+            {...props}
+            href={href}
+            className="chat-path-link"
+            onClick={(event) => {
+              event.preventDefault();
+              links?.open(target, event.detail >= 2);
+            }}
+          />
+        );
+      },
+      // A fenced block's text ends in a newline, so only inline code is a candidate.
+      code: ({ node, children, ...props }) => {
+        const path = typeof children === "string" && !props.className && !children.includes("\n") ? children : "";
+        const target = links && path ? links.resolve(path) : null;
+        if (!target) return <code {...props}>{children}</code>;
+        return (
+          <button type="button" className="chat-path-link" title={`Open ${path}`} onClick={(event) => links?.open(target, event.detail >= 2)}>
+            <code {...props}>{children}</code>
+          </button>
+        );
+      },
       pre: ({ node, children, ...props }) =>
         showBlockCopyButtons ? (
           <div className="chat-copyable-block">
@@ -38,7 +73,7 @@ export function ChatMarkdown({ text, showBlockCopyButtons = true, preserveLineBr
           <blockquote {...props}>{children}</blockquote>
         ),
     }),
-    [showBlockCopyButtons],
+    [showBlockCopyButtons, links],
   );
   return (
     <div className="md chat-md">
