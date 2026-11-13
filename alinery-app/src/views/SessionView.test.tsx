@@ -391,6 +391,24 @@ describe("session work names", () => {
     expect(startSession).not.toHaveBeenCalled();
   });
 
+  it.each(["direct", "action"])("history composer reserves space outside the full-height transcript (%s)", async (entry) => {
+    sessionStatus.mockResolvedValue({ lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} });
+    const { container } = renderSession({ intent: entry === "direct" ? "history" : undefined });
+    await flushPromises();
+    if (entry === "action") {
+      fireEvent.click(screen.getByRole("button", { name: "View history" }));
+      await flushPromises();
+    }
+    const composer = container.querySelector(".chat-composer");
+    expect(composer).not.toBeNull();
+    // ChatPane fills its frame; nesting another block after it overflows into the navigator.
+    expect(composer?.closest(".terminal-frame")).toBeNull();
+    expect(composer?.parentElement?.classList.contains("termhost")).toBe(true);
+    expect(composer?.previousElementSibling?.classList.contains("terminal-frame")).toBe(true);
+    expect(container.querySelector(".terminal-frame .chat-pane")).not.toBeNull();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   it("rename_keys_do_not_submit_chat_or_change_session", async () => {
     getSessionDisplay.mockResolvedValue({ session: { id: "session", name: "Old name" }, task_name: "Task", subtask_name: null } as never);
     renameSession.mockResolvedValue({ name: "Saved name", source: "user" });
