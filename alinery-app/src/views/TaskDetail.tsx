@@ -1,5 +1,5 @@
 import { ArrowLeft, ChevronDown, ChevronUp, List, Network, Pencil, Square } from "lucide-react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactCommentAnchor } from "../ArtifactMarkdown";
@@ -140,7 +140,28 @@ function readStoredTaskSessionView(): "graph" | "list" {
 // ---- task detail --------------------------------------------------------------
 /** An open tab of the main pane: a task artifact, or a file of the task's worktree (`repo`). */
 /** `diff`: a commit or the staged or unstaged changes, opened from the Git side tab; it reads its own patch. */
-type OpenArtifactTab = { key: string; kind: "artifact" | "repo" | "diff"; name: string; node: ArtifactTreeNode | null; mode: "preview" | "raw"; diff?: GitDiffTarget };
+/** A session opened from this task: its conversation shows as a tab here. The session view proper opens from the session list only. */
+export type TaskSessionTarget = {
+  taskSlug: string;
+  id: string;
+  cwd: string;
+  phase: string;
+  harness: string;
+  model: string;
+  playbook: string;
+  generic: boolean;
+  intent?: "attach" | "spawn" | "resume" | "history";
+};
+type OpenArtifactTab = {
+  key: string;
+  kind: "artifact" | "repo" | "diff" | "session";
+  name: string;
+  label?: string;
+  node: ArtifactTreeNode | null;
+  mode: "preview" | "raw";
+  diff?: GitDiffTarget;
+  session?: TaskSessionTarget;
+};
 
 /** One choice for every task: the header opens compact until the user expands it. */
 const HEADER_OPEN_KEY = "alinery.taskHeaderOpen";
@@ -163,7 +184,7 @@ export function TaskDetail({
   repoPath,
   initialTask,
   onBack,
-  onOpenSession,
+  renderSession,
   onOpenRelatedTask,
   onNewSession,
   onDuplicate,
@@ -181,17 +202,9 @@ export function TaskDetail({
   repoPath: string;
   initialTask?: Task;
   onBack: () => void;
-  onOpenSession: (
-    ownerTaskSlug: string,
-    id: string,
-    cwd: string,
-    phase: string,
-    harness: string,
-    model: string,
-    playbook: string,
-    generic: boolean,
-    intent?: "attach" | "spawn" | "resume" | "history",
-  ) => void;
+  /** The conversation of a session opened here, for its tab. `onClose` closes the tab (the session was archived); `onOpenPath`
+   * opens a path from the conversation (`artifact:<name>` or `repo:<path>`) in this task's tabs. */
+  renderSession: (target: TaskSessionTarget, actions: { onClose: () => void; onOpenPath: (target: string, keep?: boolean) => void }) => ReactNode;
   onNewSession: () => void;
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   knownRepos?: string[];
@@ -337,7 +350,7 @@ export function TaskDetail({
   // The main pane's tabs: Sessions is always first, then each opened artifact; a different task (or the same slug in
   // another repo) starts on Sessions.
   const fileTabs = useOpenTabs<OpenArtifactTab>(`${repoPath}\0${slug}`);
-  const activeArtifactTab = fileTabs.current;
+  const activeArtifactTab = fileTabs.current?.kind === "session" ? undefined : fileTabs.current;
   const selectedArtifact = activeArtifactTab?.name ?? "";
   const selectedArtifactNode = activeArtifactTab?.node ?? null;
   const artifactMode = activeArtifactTab?.mode ?? "preview";
@@ -687,9 +700,18 @@ export function TaskDetail({
     }
   };
 
-  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => {
-    onOpenSession(ownerTaskSlug, manager.id, manager.worktree, manager.phase, manager.harness, manager.model, manager.playbook, manager.generic, "attach");
+  const openSession = (ownerTaskSlug: string, s: SessionMeta & { name?: string | null }, intent?: TaskSessionTarget["intent"]) => {
+    if (!s.worktree) return;
+    const session = { taskSlug: ownerTaskSlug, id: s.id, cwd: s.worktree, phase: s.phase, harness: s.harness, model: s.model, playbook: s.playbook, generic: s.generic, intent };
+    fileTabs.open({ key: `session:${ownerTaskSlug}:${s.id}`, kind: "session", name: s.id, label: s.name || s.phase || "Session", node: null, mode: "preview", session });
+    markSessionNotificationRead(repoPath, ownerTaskSlug, s.id).catch(() => {});
   };
+  const openSessionPath = (target: string, keep?: boolean) => {
+    const name = target.slice(target.indexOf(":") + 1);
+    if (target.startsWith("artifact:")) openArtifactTab(name, findOwnedArtifactNode(artifactTree, name) ?? null, "artifact", keep);
+    else openArtifactTab(name, null, "repo", keep);
+  };
+  const openManagerSession = (ownerTaskSlug: string, manager: SessionMeta) => openSession(ownerTaskSlug, manager, "attach");
 
   const startManager = () => {
     setBusy("subtask-manager");
@@ -1348,7 +1370,13 @@ export function TaskDetail({
         </aside>
         <PaneResizer props={artifactResizerProps} collapse={artifactCollapse} />
         <main className="detailmain">
-          <MainTabs pinned="Sessions" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
+          <MainTabs
+            pinned="Sessions"
+            tabs={fileTabs.tabs.map((tab) => (tab.session ? { ...tab, label: sessions.find((s) => s.id === tab.session?.id)?.name || tab.label } : tab))}
+            active={fileTabs.active}
+            onSelect={fileTabs.select}
+            onClose={fileTabs.close}
+          />
           {selectedDiff ? (
             <div className="artifactpane task-artifact-view">
               <div className="artifacthead">
@@ -1475,7 +1503,15 @@ export function TaskDetail({
               </div>
             )
           )}
-          <div className="task-sessions-tab" hidden={!!activeArtifactTab}>
+          {fileTabs.tabs.map(
+            (tab) =>
+              tab.session && (
+                <div key={tab.key} className="task-session-view" hidden={tab.key !== fileTabs.active}>
+                  {renderSession(tab.session, { onClose: () => fileTabs.close(tab.key), onOpenPath: openSessionPath })}
+                </div>
+              ),
+          )}
+          <div className="task-sessions-tab" hidden={!!fileTabs.current}>
             <section className="task-panel task-sessions-panel">
               <div className="task-panel-head">
                 <div className="task-sessions-heading">
@@ -1577,17 +1613,7 @@ export function TaskDetail({
                       onOpenSession={(session) => {
                         const row = taskPanelRows.find((row) => row.kind !== "subtask_history" && row.session.id === session.id);
                         const owner = row?.kind === "subtask_manager" ? row.owner_task_slug : slug;
-                        onOpenSession(
-                          owner,
-                          session.id,
-                          session.worktree,
-                          session.phase,
-                          session.harness,
-                          session.model,
-                          session.playbook,
-                          session.generic,
-                          session.archived || !task?.worktree || worktreeMissing ? "history" : "attach",
-                        );
+                        openSession(owner, session, session.archived || !task?.worktree || worktreeMissing ? "history" : "attach");
                       }}
                       onOpenArtifact={(path) => {
                         openArtifactTab(path, findOwnedArtifactNode(artifactTree, path) ?? null);
@@ -1815,7 +1841,7 @@ export function TaskDetail({
                             aria-label={openable ? `Open session ${sessionType}` : undefined}
                             onClick={(event) => {
                               if (!openable || (event.target as HTMLElement).closest("button")) return;
-                              onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic);
+                              openSession(slug, s);
                             }}
                             onKeyDown={(event) => {
                               if (!openable || event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
@@ -1897,7 +1923,7 @@ export function TaskDetail({
                                     type="button"
                                     className="btn ghost small"
                                     title="Replay this archived session's recorded activity (read-only)"
-                                    onClick={() => onOpenSession(slug, s.id, s.worktree, s.phase, s.harness, s.model, s.playbook, s.generic, "history")}
+                                    onClick={() => openSession(slug, s, "history")}
                                   >
                                     View history
                                   </button>

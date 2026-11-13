@@ -451,29 +451,36 @@ vi.mock("./views/NotificationsList", () => ({
 vi.mock("./views/TaskDetail", async (importOriginal) => {
   const real = await importOriginal<{ TaskDetail: typeof TaskDetailComponent }>();
   return {
-    TaskDetail: (props: Parameters<typeof TaskDetailComponent>[0]) =>
-      namingScenario.realTaskDetail ? (
-        <real.TaskDetail {...props} />
-      ) : (
-        <div>
-          <span>task detail:{props.initialTask?.slug}</span>
-          <span>task sort:{props.sessionSort?.field}</span>
-          <button type="button" onClick={() => props.onSessionSortChange?.({ field: "started", direction: "desc" })}>
-            choose task started
-          </button>
-          <button type="button" onClick={props.onBack}>
-            back from task
-          </button>
-          <button type="button" onClick={() => props.onOpenSession(task.slug, "detail-design", task.worktree, "design", "omp", "", "superdevelop", false)}>
-            open detail session
-          </button>
-          <button type="button" onClick={props.onNewSession}>
-            new task session
-          </button>
-        </div>
-      ),
+    TaskDetail: (props: Parameters<typeof TaskDetailComponent>[0]) => (namingScenario.realTaskDetail ? <real.TaskDetail {...props} /> : <FakeTaskDetail {...props} />),
   };
 });
+/** A session opened from the task is a tab the task renders through `renderSession`. */
+function FakeTaskDetail(props: Parameters<typeof TaskDetailComponent>[0]) {
+  const [sessionOpen, setSessionOpen] = useState(false);
+  return (
+    <div>
+      <span>task detail:{props.initialTask?.slug}</span>
+      <span>task sort:{props.sessionSort?.field}</span>
+      <button type="button" onClick={() => props.onSessionSortChange?.({ field: "started", direction: "desc" })}>
+        choose task started
+      </button>
+      <button type="button" onClick={props.onBack}>
+        back from task
+      </button>
+      <button type="button" onClick={() => setSessionOpen(true)}>
+        open detail session
+      </button>
+      {sessionOpen &&
+        props.renderSession(
+          { taskSlug: task.slug, id: "detail-design", cwd: task.worktree, phase: "design", harness: "omp", model: "", playbook: "superdevelop", generic: false },
+          { onClose: () => setSessionOpen(false), onOpenPath: () => {} },
+        )}
+      <button type="button" onClick={props.onNewSession}>
+        new task session
+      </button>
+    </div>
+  );
+}
 vi.mock("./views/CreateSessionPage", () => ({
   CreateSessionPage: ({ onCreated }: { onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void> }) => (
     <div>
@@ -1287,13 +1294,14 @@ describe("session navigation acknowledgment", () => {
     expect(ipcMocks.setActiveRepo.mock.invocationCallOrder[0]).toBeLessThan(sessionWrites.markSessionNotificationRead.mock.invocationCallOrder[0]);
   });
 
-  it("acknowledges Task Detail and newly created sessions exactly", async () => {
+  it("opens a Task Detail session inside the task and acknowledges newly created sessions exactly", async () => {
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: /Canvas/ }));
     fireEvent.click(screen.getByRole("button", { name: "open task" }));
     fireEvent.click(await screen.findByRole("button", { name: "open detail session" }));
+    // The task view acknowledges the session it opens as a tab (TaskDetail.test); the session view itself does not.
     await screen.findByText("session:detail-design");
-    expect(sessionWrites.markSessionNotificationRead).toHaveBeenLastCalledWith("/repo", "task", "detail-design");
+    expect(screen.getByText(/^task detail:/)).toBeDefined();
 
     cleanup();
     await renderApp();

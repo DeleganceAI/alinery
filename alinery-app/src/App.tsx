@@ -981,6 +981,50 @@ export default function App() {
     }
   };
 
+  /** The session view: a page of its own from the session list, or a tab of the task view (`embedded`). */
+  const sessionViewFor = (
+    repoPath: string,
+    s: Pick<Extract<View, { kind: "session" }>, "id" | "cwd" | "taskSlug" | "phase" | "harness" | "model" | "playbook" | "intent" | "resumeToken">,
+    from: View,
+    nav: { onBack: () => void; embedded?: boolean; onOpenPath?: (target: string, keep?: boolean) => void },
+  ) => {
+    const draftKey = sessionMessageDraftKey(repoPath, s.taskSlug, s.id);
+    return (
+      <SessionView
+        id={s.id}
+        cwd={s.cwd}
+        taskSlug={s.taskSlug}
+        repoPath={repoPath}
+        phase={s.phase}
+        harness={s.harness}
+        model={s.model}
+        playbook={s.playbook}
+        intent={s.intent}
+        resumeToken={s.resumeToken}
+        messageDraft={sessionMessageDrafts.get(draftKey) ?? EMPTY_SESSION_MESSAGE_DRAFT}
+        onMessageDraftChange={(draft) => {
+          setSessionMessageDrafts((current) => {
+            const next = new Map(current);
+            next.set(draftKey, draft);
+            return next;
+          });
+        }}
+        onStartReviewHandoff={(source) => setView({ kind: "reviewHandoff", from, source: { ...source, source_repo_path: repoPath } })}
+        onOpenRelatedTask={openRelatedTask}
+        appearance={appearance}
+        onAppearanceChange={onAppearanceChange}
+        onDiagramZoomOpenChange={setDiagramZoomOpen}
+        onNameCommitted={onNameCommitted}
+        onBack={nav.onBack}
+        embedded={nav.embedded}
+        onOpenPath={nav.onOpenPath}
+        onStartFresh={() => {
+          setView({ kind: "createSession", from, initialTask: { repo_path: repoPath, slug: s.taskSlug } });
+        }}
+      />
+    );
+  };
+
   const goBack = () => {
     if (searchOpen) {
       setSearchOpen(false);
@@ -1610,15 +1654,11 @@ export default function App() {
                   onSessionSortChange={onTaskSessionSortChange}
                   onNameCommitted={onNameCommitted}
                   onBack={goBack}
-                  onOpenSession={(ownerTaskSlug, id, cwd, phase, harness, model, playbook, generic, intent) => {
-                    void openTaskSession({
-                      repoPath: appConfig.active_repo,
-                      taskSlug: ownerTaskSlug,
-                      session: { id, worktree: cwd, phase, harness, model, playbook, generic },
-                      intent,
-                      from: view,
-                    });
-                  }}
+                  renderSession={(target, { onClose, onOpenPath }) => (
+                    <Suspense fallback={<LoadingState label="Opening session…" />}>
+                      {sessionViewFor(view.repoPath || appConfig.active_repo, target, view, { onBack: onClose, embedded: true, onOpenPath })}
+                    </Suspense>
+                  )}
                   onNewSession={() =>
                     setView({
                       kind: "createSession",
@@ -1675,37 +1715,7 @@ export default function App() {
                   </div>
                 }
               >
-                <SessionView
-                  id={view.id}
-                  cwd={view.cwd}
-                  taskSlug={view.taskSlug}
-                  repoPath={appConfig.active_repo}
-                  phase={view.phase}
-                  harness={view.harness}
-                  model={view.model}
-                  playbook={view.playbook}
-                  intent={view.intent}
-                  resumeToken={view.resumeToken}
-                  messageDraft={sessionMessageDrafts.get(sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id)) ?? EMPTY_SESSION_MESSAGE_DRAFT}
-                  onMessageDraftChange={(draft) => {
-                    const key = sessionMessageDraftKey(appConfig.active_repo, view.taskSlug, view.id);
-                    setSessionMessageDrafts((current) => {
-                      const next = new Map(current);
-                      next.set(key, draft);
-                      return next;
-                    });
-                  }}
-                  onStartReviewHandoff={(source) => setView({ kind: "reviewHandoff", from: view, source: { ...source, source_repo_path: appConfig.active_repo } })}
-                  onOpenRelatedTask={openRelatedTask}
-                  appearance={appearance}
-                  onAppearanceChange={onAppearanceChange}
-                  onDiagramZoomOpenChange={setDiagramZoomOpen}
-                  onNameCommitted={onNameCommitted}
-                  onBack={goBack}
-                  onStartFresh={() => {
-                    setView({ kind: "createSession", from: view, initialTask: { repo_path: appConfig.active_repo, slug: view.taskSlug } });
-                  }}
-                />
+                {sessionViewFor(appConfig.active_repo, view, view, { onBack: goBack })}
               </Suspense>
             </div>
           )}

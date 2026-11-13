@@ -48,7 +48,7 @@ describe("TaskDetail artifact pane width", () => {
         repoPath="/r"
         initialTask={task()}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}

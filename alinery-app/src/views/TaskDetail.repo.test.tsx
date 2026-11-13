@@ -99,7 +99,7 @@ describe("task identity includes the repository", () => {
         repoPath={repoA}
         initialTask={taskA}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -124,7 +124,7 @@ describe("task identity includes the repository", () => {
         repoPath={repoB}
         initialTask={taskB}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -183,7 +183,7 @@ describe("a session kill issued from task detail", () => {
         repoPath={repoB}
         initialTask={fixture}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -236,7 +236,7 @@ it.each(["commit", "reject"] as const)("late_name_commit_cannot_patch_another_re
       slug="task-x"
       repoPath={repoPath}
       onBack={noop}
-      onOpenSession={noop}
+      renderSession={() => null}
       onNewSession={noop}
       onOpenRelatedTask={noop}
       onDuplicate={noop}
@@ -304,7 +304,7 @@ it("each repository shows its own task and sessions for the same slug", async ()
   const props = {
     slug: "task-x",
     onBack: noop,
-    onOpenSession: noop,
+    renderSession: () => null,
     onNewSession: noop,
     onOpenRelatedTask: noop,
     onDuplicate: noop,

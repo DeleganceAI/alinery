@@ -74,7 +74,7 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
       initialTask={props.initialTask}
       knownRepos={props.knownRepos ?? ["/r", "/other"]}
       onBack={noop}
-      onOpenSession={noop}
+      renderSession={() => null}
       onNewSession={noop}
       onOpenRelatedTask={props.onOpenRelatedTask ?? noop}
       onDuplicate={props.onDuplicate ?? noop}

@@ -25,7 +25,7 @@ import type {
   TaskActivitySummary,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
-import { shortWorktreePath, TaskDetail } from "./TaskDetail";
+import { shortWorktreePath, TaskDetail, type TaskSessionTarget } from "./TaskDetail";
 
 let daemon = sessionDaemon();
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
@@ -380,9 +380,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** A session opens as a tab of the task: `onOpenSession` records each tab the first time it renders (an open of a tab
+ * already open only shows it); every open, repeated or not, acknowledges the session. */
+function sessionTabSpy() {
+  const onOpenSession = vi.fn();
+  const opened = new Set<string>();
+  const renderSession = (t: TaskSessionTarget) => {
+    if (!opened.has(`${t.taskSlug}:${t.id}`)) {
+      opened.add(`${t.taskSlug}:${t.id}`);
+      onOpenSession(t.taskSlug, t.id, t.cwd, t.phase, t.harness, t.model, t.playbook, t.generic, ...(t.intent ? [t.intent] : []));
+    }
+    return <section aria-label={`Conversation ${t.id}`} />;
+  };
+  return { onOpenSession, renderSession };
+}
+const lastAcknowledged = () => mocks.markSessionNotificationRead.mock.lastCall?.[2];
+
 async function renderDetail(slug = "parent", sessionView: "controls" | "graph" = "controls") {
   syncBoard();
-  const onOpenSession = vi.fn();
+  const { onOpenSession, renderSession } = sessionTabSpy();
   const onOpenRelatedTask = vi.fn();
   const onNewSession = vi.fn();
   render(
@@ -390,7 +406,7 @@ async function renderDetail(slug = "parent", sessionView: "controls" | "graph" =
       slug={slug}
       repoPath="/repo"
       onBack={() => {}}
-      onOpenSession={onOpenSession}
+      renderSession={renderSession}
       onOpenRelatedTask={onOpenRelatedTask}
       onNewSession={onNewSession}
       onDuplicate={() => {}}
@@ -496,6 +512,8 @@ describe("task run graph", () => {
       "attach",
     );
 
+    // The session opened as a tab; back on the Sessions tab, the graph opens an artifact.
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Sessions" }));
     // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
@@ -505,7 +523,7 @@ describe("task run graph", () => {
     fireEvent.click(fileTabs.getByRole("button", { name: "Sessions" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-    const consumerRow = screen.getByText(consumer.name).closest("tr") as HTMLTableRowElement;
+    const consumerRow = screen.getByText(consumer.name, { selector: "td *" }).closest("tr") as HTMLTableRowElement;
     expect(within(consumerRow).getByRole("button", { name: "Rename session" })).toBeDefined();
     expect(screen.queryByRole("region", { name: "Task run graph" })).toBeNull();
     const showGraph = screen.getByRole("button", { name: "Show graph view" });
@@ -570,8 +588,23 @@ describe("session work names", () => {
       fireEvent.click(cell);
       expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
       fireEvent.keyDown(row, { key: "Enter" });
-      expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
+      expect(lastAcknowledged()).toBe(item.id);
     }
+  });
+
+  it("opens a session as a tab of the task, in place of the session list, and closing it returns to the list", async () => {
+    scenario.sessions = [{ ...session({ id: "cache", created: 10 }), name: "Repair cache eviction", name_source: "user" as const }];
+    await renderDetail();
+    fireEvent.click((await screen.findByText("Repair cache eviction")).closest("td") as HTMLTableCellElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "Repair cache eviction", pressed: true })).toBeDefined();
+    expect(screen.getByRole("region", { name: "Conversation cache" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Sessions" })).toBeNull();
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "parent", "cache");
+
+    fireEvent.click(tabs.getByRole("button", { name: "Close cache" }));
+    expect(screen.queryByRole("region", { name: "Conversation cache" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeDefined();
   });
 
   it("keeps a manager work name distinct from its current child name when relationship metadata is raw", async () => {
@@ -1132,7 +1165,8 @@ describe("Task Detail sub-task manager projection", () => {
     fireEvent.click(sessionRow);
     expect(onOpenSession).toHaveBeenCalledWith("child", "still-live", "/worktrees/child", "research", "claude", "", "superdevelop", false);
     fireEvent.keyDown(sessionRow, { key: "Enter" });
-    expect(onOpenSession).toHaveBeenCalledTimes(2);
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledTimes(2);
+    expect(onOpenSession).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a finalized child in its manager session's existing list position", async () => {
@@ -1368,7 +1402,7 @@ function renderSeededDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {
       repoPath="/r"
       initialTask={props.initialTask}
       onBack={noop}
-      onOpenSession={noop}
+      renderSession={() => null}
       onNewSession={noop}
       onOpenRelatedTask={noop}
       onDuplicate={noop}
@@ -1559,7 +1593,7 @@ describe("keying by slug", () => {
         repoPath="/r"
         initialTask={taskA}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -1579,7 +1613,7 @@ describe("keying by slug", () => {
         repoPath="/r"
         initialTask={taskB}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -1829,7 +1863,7 @@ describe("Task Detail duplicate action", () => {
         slug={source.slug}
         repoPath="/r"
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={onDuplicate}
@@ -1858,8 +1892,8 @@ describe("session list without identifiers", () => {
     scenario.task = fixture;
     scenario.sessions = [archived, resumed, newest];
     sessionStatuses.mockResolvedValue({});
-    const onOpenSession = vi.fn();
-    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    const { onOpenSession, renderSession } = sessionTabSpy();
+    const { container } = renderSeededDetail({ initialTask: fixture, renderSession });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
@@ -1877,11 +1911,11 @@ describe("session list without identifiers", () => {
 
     const openable = within(table).getAllByRole("row", { name: "Open session superdevelop · research" });
     fireEvent.click(openable[0]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    expect(lastAcknowledged()).toBe(newest.id);
     fireEvent.keyDown(openable[1], { key: "Enter" });
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(resumed.id);
+    expect(lastAcknowledged()).toBe(resumed.id);
     fireEvent.keyDown(openable[0], { key: " " });
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    expect(lastAcknowledged()).toBe(newest.id);
     fireEvent.click(history);
     expect(onOpenSession).toHaveBeenLastCalledWith(
       "a-task",
@@ -1980,16 +2014,15 @@ describe("attention-first session order", () => {
       "current-structure": observation("idle"),
     });
 
-    const onOpenSession = vi.fn();
-    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     await screen.findByRole("img", { name: "Failed: process exited with code 143" });
     const rows = container.querySelectorAll(".task-session-table tbody tr");
-    fireEvent.click(rows[0]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(stopped.id);
+    // Opening the exited session would acknowledge it; open the idle one, then return to the list.
     fireEvent.click(rows[1]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(idle.id);
+    expect(lastAcknowledged()).toBe(idle.id);
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Sessions" }));
     const acknowledge = screen.getByRole("button", { name: "Acknowledge exited sessions" });
     const stoppedRow = screen.getByRole("img", { name: "Failed: process exited with code 143" }).closest("tr") as HTMLTableRowElement;
     expect(within(stoppedRow).getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();

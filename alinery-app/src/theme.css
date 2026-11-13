@@ -7776,6 +7776,20 @@ header:has(~ main .task-info-panel) nav.tabs {
 .task-sessions-tab[hidden] {
   display: none;
 }
+/* A session opened from the task: its conversation fills the main pane under the task's tab strip. */
+.task-session-view {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.task-session-view[hidden] {
+  display: none;
+}
+.task-session-view > .sessionview {
+  flex: 1 1 auto;
+  height: auto;
+}
 .playbook-side-scroll {
   flex: 1 1 auto;
   min-height: 0;

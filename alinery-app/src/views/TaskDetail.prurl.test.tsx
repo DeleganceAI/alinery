@@ -60,7 +60,7 @@ function renderDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
       repoPath={props.repoPath ?? "/r"}
       initialTask={props.initialTask}
       onBack={noop}
-      onOpenSession={noop}
+      renderSession={() => null}
       onNewSession={noop}
       onOpenRelatedTask={noop}
       onDuplicate={noop}

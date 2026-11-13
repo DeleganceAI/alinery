@@ -154,6 +154,8 @@ export function SessionView({
   onOpenRelatedTask,
   onDiagramZoomOpenChange,
   onNameCommitted,
+  embedded,
+  onOpenPath,
 }: {
   id: string;
   cwd: string;
@@ -177,6 +179,10 @@ export function SessionView({
   onOpenRelatedTask: (slug: string, relatedRepoPath?: string) => void;
   onDiagramZoomOpenChange?: (open: boolean) => void;
   onNameCommitted?: (change: NameCommit) => void;
+  /** A tab of the task view: the task supplies the artifact pane and the tab strip, so this view drops its own, and its Back. */
+  embedded?: boolean;
+  /** Where an embedded view opens a path from the conversation: `artifact:<name>` or `repo:<path>`, in the task's tabs. */
+  onOpenPath?: (target: string, keep?: boolean) => void;
 }) {
   // The list, the tree, the comments and the waiting-for-review marks are rows of the task's stream: nothing here polls.
   const liveArtifacts = useTaskArtifacts(repoPath, taskSlug);
@@ -280,6 +286,7 @@ export function SessionView({
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [approvalStatus, setApprovalStatus] = useState("");
   const hasTask = Boolean(taskSlug);
+  const sidePane = hasTask && !embedded;
   const observation = useSessionObservation(intent === "history" ? "" : repoPath, taskSlug, id);
   const [terminalConnection, setTerminalConnection] = useState<SessionTerminalConnectionState>("opening");
   const [messageComposing, setMessageComposing] = useState(false);
@@ -565,6 +572,8 @@ export function SessionView({
   // `open` is a fresh closure each render over stable setters; a ref keeps the links (and the rendered markdown) stable.
   const openTab = useRef(fileTabs.open);
   openTab.current = fileTabs.open;
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
   const artifactNamesKey = artifactNames.join("\0");
   const pathLinks = useMemo<PathLinks>(() => {
     const names = new Set(artifactNamesKey.split("\0").filter(Boolean));
@@ -582,6 +591,7 @@ export function SessionView({
         return null;
       },
       open: (target, keep) => {
+        if (onOpenPathRef.current) return onOpenPathRef.current(target, keep);
         const [kind, ...rest] = target.split(":");
         const name = rest.join(":");
         if (kind === "artifact") {
@@ -1188,9 +1198,11 @@ export function SessionView({
   return (
     <div className="sessionview">
       <div className="sessionhd">
-        <button ref={backButtonRef} type="button" className="btn ghost small" onClick={onBack}>
-          <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" /> Back
-        </button>
+        {!embedded && (
+          <button ref={backButtonRef} type="button" className="btn ghost small" onClick={onBack}>
+            <ArrowLeft size={16} strokeWidth={1.5} aria-hidden="true" /> Back
+          </button>
+        )}
         {hasTask && (
           <div className="session-identity">
             <div className="editable-name">
@@ -1272,10 +1284,10 @@ export function SessionView({
         </InlineStatus>
       )}
       <div
-        className={`sessionbody${hasTask ? (artifactCollapse.collapsed ? " pane-collapsed" : "") : " no-artifacts"}`}
+        className={`sessionbody${sidePane ? (artifactCollapse.collapsed ? " pane-collapsed" : "") : " no-artifacts"}`}
         style={{ ["--artifact-width" as string]: `${artifactWidth}px` }}
       >
-        {hasTask && (
+        {sidePane && (
           <>
             <aside className="artifactpane">
               <>
@@ -1422,7 +1434,7 @@ export function SessionView({
         )}
         <PathLinksContext.Provider value={pathLinks}>
           <main className="session-main">
-            <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />
+            {!embedded && <MainTabs pinned="Agent conversation" tabs={fileTabs.tabs} active={fileTabs.active} onSelect={fileTabs.select} onClose={fileTabs.close} />}
             <div className="session-main-body">
               {fileTabs.current && (
                 <div className="artifactpane task-artifact-view session-artifact-view">
