@@ -56,7 +56,7 @@ Our copies fix the six office skills whose description is the YAML mistake `">"`
 - **What changes in the daemon protocol:**
   - `Customization` gains `included` and `enabled`; `ReadCustomizations` returns the counter and the removed list.
   - New calls `SetSkillEnabled` and `RestoreIncludedSkills`; `DeleteSkill` with `included` removes an included skill.
-  - Shares protocol 45 with Phase 1 (unreleased).
+  - Shares protocol 45 with Phase 1; protocol 46 when merged into the experimental branch, whose 45 already carried prompt images.
 - **In Settings:**
   - Each included skill shows an "Included" badge, a switch and a remove button.
   - A counter shows "N of 64 on · ~K tokens".
