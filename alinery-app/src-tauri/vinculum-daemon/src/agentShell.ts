@@ -1,6 +1,6 @@
 // What an agent's shell gets beyond the daemon's own environment, so the office skills run on any machine: the bundled
 // Python first on PATH, extra Python packages kept per repository, and `bun` (with `node`, `npm` and `npx` as
-// fallbacks) when the machine has no such command.
+// fallbacks) and `pdftoppm` (drawn by the bundled Python's pypdfium2) when the machine has no such command.
 //
 // The Python is the runtime's `python/` (scripts/python-runtime/stage.sh), found by `runtimePart`. The shims run this
 // executable as the Bun CLI (BUN_BE_BUN=1).
@@ -9,6 +9,7 @@ import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { writeAtomic } from "./platform/fs.ts";
+import pdftoppm from "./shims/pdftoppm.py" with { type: "text" };
 
 /** A directory of the runtime (`python` or `skills`): beside this executable on an ssh host, or in the runtime the app
  * unpacked for its local daemon (ALINERY_RUNTIME_HOME, `pi_durable::local_runtime_home`). */
@@ -31,6 +32,9 @@ export function writeShims(vinculumDir: string, execPath: string): string {
     const script = `#!/bin/sh\nBUN_BE_BUN=1 exec '${execPath.replaceAll("'", "'\\''")}' ${sub}${sub ? " " : ""}"$@"\n`;
     writeAtomic(join(dir, name), script, 0o755);
   }
+  // python3 is the bundled one, first on the agent's PATH; -I keeps the working directory's modules out.
+  writeAtomic(join(dir, "pdftoppm.py"), pdftoppm);
+  writeAtomic(join(dir, "pdftoppm"), `#!/bin/sh\nexec python3 -I "$(dirname "$0")/pdftoppm.py" "$@"\n`, 0o755);
   return dir;
 }
 

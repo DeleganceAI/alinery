@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentShellEnv, libreOfficeDir, runtimePart, whichOn, writeShims } from "./agentShell.ts";
@@ -51,4 +51,18 @@ test("tools are found as the shell would, and LibreOffice's app folder only on m
   writeFileSync(join(app, "soffice"), "");
   expect(libreOfficeDir("darwin", dir)).toBe(app);
   expect(libreOfficeDir("linux", dir)).toBeUndefined();
+});
+
+// Needs the runtime's Python (pypdfium2): beside this executable or at ALINERY_RUNTIME_HOME, which the app sets.
+const runtimePython = runtimePart("python", process.execPath, process.env);
+test.skipIf(!runtimePython)("the pdftoppm shim draws pages under poppler's names, and refuses an option it lacks", () => {
+  const dir = temp();
+  const shims = writeShims(dir, process.execPath);
+  const env = { ...process.env, ...agentShellEnv({ python: runtimePython, shims, repo: dir, path: "/usr/bin:/bin" }) };
+  const run = (...args: string[]) => execFileSync("pdftoppm", args, { cwd: dir, env, encoding: "utf8", stdio: "pipe" });
+  execFileSync("python3", ["-I", "-c", "import pypdfium2 as p, sys\nd = p.PdfDocument.new()\nfor _ in range(12): d.new_page(200, 100)\nd.save(sys.argv[1])", "deck.pdf"], { cwd: dir, env });
+  run("-jpeg", "-r", "36", "-f", "9", "-l", "10", "deck.pdf", "slide");
+  run("-png", "-scale-to", "400", "-f", "2", "-singlefile", "deck.pdf", "one");
+  expect(readdirSync(dir).filter((n) => /\.(jpg|png)$/.test(n)).sort()).toEqual(["one.png", "slide-09.jpg", "slide-10.jpg"]);
+  expect(() => run("-cropbox", "deck.pdf", "x")).toThrow("-cropbox is not supported");
 });
