@@ -1,25 +1,7 @@
-import { Bot, Brain, Cable, CircleAlert, CircleStop, FileOutput, type LucideIcon, MessageSquare, Navigation, Reply, ShieldAlert, Terminal, Wrench } from "lucide-react";
-import { memo, type ReactNode, useEffect, useState } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { ChatMarkdown, CopyChatMessageButton } from "../chat/CopyMessage";
-import { type ChatStampParts, formatChatStamp, formatDuration, formatIso } from "../chat/format";
+import { type ChatStampParts, formatChatStamp, formatIso } from "../chat/format";
 import { type Actor, type ChatEntry, type ChatEntryType, TYPE_LABEL, whoLabel, whoLane } from "../chat/types";
-
-const KIND_ICON: Record<ChatEntryType, LucideIcon> = {
-  prompt: MessageSquare,
-  follow_up: Navigation,
-  slash: Terminal,
-  thinking: Brain,
-  redacted_thinking: Brain,
-  text: Reply,
-  tool_call: Wrench,
-  tool_result: FileOutput,
-  subagent_status: Bot,
-  approval: ShieldAlert,
-  turn_marker: Cable,
-  error: CircleAlert,
-  abort: CircleStop,
-  harness: Cable,
-};
 
 function kindFace(type: ChatEntryType): string {
   if (type === "prompt" || type === "follow_up") return "chat-face-strong";
@@ -30,104 +12,6 @@ function kindFace(type: ChatEntryType): string {
 
 function Status({ children, tone }: { children: ReactNode; tone?: "ok" | "bad" | "wait" }) {
   return <span className={`chat-status${tone ? ` chat-status-${tone}` : ""}`}>{children}</span>;
-}
-
-function isWork(entry: ChatEntry) {
-  if (entry.type === "thinking" || entry.type === "redacted_thinking" || entry.type === "tool_call" || entry.type === "tool_result" || entry.type === "subagent_status") {
-    return true;
-  }
-  return entry.actor.kind === "subagent";
-}
-
-function workIcon(entry: ChatEntry): LucideIcon {
-  if (entry.type === "tool_call") return Wrench;
-  if (entry.type === "tool_result") return FileOutput;
-  if (entry.type === "thinking" || entry.type === "redacted_thinking") return Brain;
-  if (entry.type === "subagent_status" || entry.actor.kind === "subagent") return Bot;
-  return KIND_ICON[entry.type];
-}
-
-function workLabel(entry: ChatEntry): string {
-  if (entry.type === "thinking") {
-    const who = entry.actor.kind === "subagent" ? entry.actor.name : "Agent";
-    if (entry.streaming) return `${who} thinking`;
-    if (entry.aborted) return `${who} thought · aborted`;
-    if (entry.durationMs != null) return `${who} thought · ${formatDuration(entry.durationMs)}`;
-    return `${who} thought`;
-  }
-  if (entry.type === "redacted_thinking") {
-    const who = entry.actor.kind === "subagent" ? entry.actor.name : "Agent";
-    return `${who} thought · redacted`;
-  }
-  if (entry.type === "tool_call") {
-    const who = entry.actor.kind === "subagent" ? entry.actor.name : "Agent";
-    const err = entry.status === "error" || entry.status === "denied" ? ` · ${entry.status}` : "";
-    return `${who} used ${entry.tool}${err}`;
-  }
-  if (entry.type === "tool_result") {
-    const who = entry.actor.kind === "subagent" ? entry.actor.name : "Agent";
-    return `${who} got ${entry.tool}`;
-  }
-  if (entry.type === "subagent_status") {
-    const dur = entry.durationMs != null ? ` · ${formatDuration(entry.durationMs)}` : "";
-    return `${entry.agent} ${entry.status}${dur}`;
-  }
-  if (entry.actor.kind === "subagent" && entry.type === "harness") {
-    return `${entry.actor.name} · ${entry.event}`;
-  }
-  if (entry.actor.kind === "subagent" && entry.type === "text") {
-    return `${entry.actor.name} said`;
-  }
-  return TYPE_LABEL[entry.type];
-}
-
-function workBody(entry: ChatEntry): ReactNode {
-  switch (entry.type) {
-    case "thinking":
-      return (
-        <pre className="chat-work-pre italic">
-          {entry.text}
-          {entry.streaming ? <span className="chat-caret" aria-hidden /> : null}
-        </pre>
-      );
-    case "tool_call":
-      return (
-        <div className="chat-work-meta">
-          {entry.target ? <div>{entry.target}</div> : null}
-          {entry.args ? <div>args {entry.args}</div> : null}
-          {entry.detail ? <div className="chat-work-detail">{entry.detail}</div> : null}
-          <div className="chat-work-detail">
-            {entry.status}
-            {entry.durationMs != null ? ` · ${formatDuration(entry.durationMs)}` : ""}
-          </div>
-        </div>
-      );
-    case "tool_result":
-      return <pre className="chat-work-pre chat-work-meta">{entry.text}</pre>;
-    case "subagent_status":
-      return (
-        <div>
-          {entry.role ? <p className="chat-work-meta">{entry.role}</p> : null}
-          <p>{entry.summary}</p>
-          <p className="chat-work-meta">
-            {entry.tools != null ? `${entry.tools} tools` : ""}
-            {entry.tools != null && entry.durationMs != null ? " · " : ""}
-            {entry.durationMs != null ? formatDuration(entry.durationMs) : ""}
-          </p>
-        </div>
-      );
-    case "harness":
-      return <pre className="chat-work-pre chat-work-meta">{entry.text}</pre>;
-    case "text":
-      return <p className="chat-text-body">{entry.text}</p>;
-    default:
-      return null;
-  }
-}
-
-function hasWorkBody(entry: ChatEntry) {
-  if (entry.type === "redacted_thinking") return false;
-  return workBody(entry) != null;
 }
 
 function stampFor(at: number | undefined, parts: ChatStampParts): string {
@@ -165,64 +49,6 @@ function copyTextForEntry(entry: ChatEntry): string {
   }
 }
 
-function WorkRail({
-  entry,
-  defaultExpanded = false,
-  autoCollapseThinking = false,
-  stamp,
-}: {
-  entry: ChatEntry;
-  defaultExpanded?: boolean;
-  autoCollapseThinking?: boolean;
-  stamp: ChatStampParts;
-}) {
-  const live = (entry.type === "thinking" && Boolean(entry.streaming) && !entry.aborted) || (entry.type === "tool_call" && entry.status === "running");
-  const [open, setOpen] = useState(live || defaultExpanded);
-  useEffect(() => {
-    if (live) {
-      setOpen(true);
-      return;
-    }
-    if (autoCollapseThinking && entry.type === "thinking" && !defaultExpanded) {
-      setOpen(false);
-    }
-  }, [live, autoCollapseThinking, entry.type, defaultExpanded]);
-  const Icon = workIcon(entry);
-  const expandable = hasWorkBody(entry);
-  const when = stampFor(entry.at, stamp);
-
-  return (
-    <div className="chat-rail">
-      <button
-        type="button"
-        className="chat-rail-line"
-        onClick={() => expandable && setOpen((v) => !v)}
-        aria-expanded={expandable ? open : undefined}
-        aria-label={`${when} ${workLabel(entry)}`.trim()}
-      >
-        <Icon className="chat-rail-icon" strokeWidth={1.5} aria-hidden />
-        <span className="chat-rail-copy">{workLabel(entry)}</span>
-        {when && entry.at != null ? (
-          <time className="chat-rail-time" dateTime={formatIso(entry.at)}>
-            {when}
-          </time>
-        ) : null}
-        {expandable ? <span className="chat-rail-action">{open ? "hide" : "details"}</span> : null}
-      </button>
-      {expandable ? (
-        <div className={`chat-rail-fold${open ? " open" : ""}`}>
-          <div className="chat-rail-fold-inner">
-            {/* Built only while open. The wrappers stay so the grid-template-rows transition still
-                animates, but a collapsed rail contributes no body to the DOM — and tool output is
-                the bulk of a real journal. */}
-            <div className="chat-rail-panel">{open ? workBody(entry) : null}</div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function Msg({
   at,
   actor,
@@ -231,6 +57,7 @@ function Msg({
   stamp,
   showActorLabels = false,
   reply = false,
+  narration = false,
   copyText,
   children,
 }: {
@@ -242,30 +69,29 @@ function Msg({
   showActorLabels?: boolean;
   /** Marks agent text replies so bubble CSS can target them without touching other Msg skins. */
   reply?: boolean;
+  /** Agent text the agent kept working past: read as a quiet aside, with no label. */
+  narration?: boolean;
   /** Raw message text; when set, a copy button is shown inside the bubble. */
   copyText?: string;
   children?: ReactNode;
 }) {
   const lane = whoLane(actor);
   const mine = lane === "you";
-  const Icon = KIND_ICON[type];
   const who = whoLabel(actor);
   const when = stampFor(at, stamp);
-  const showMeta = Boolean(when) || showActorLabels;
+  const showMeta = !narration && (Boolean(when) || showActorLabels);
   return (
-    <article className={`chat-msg chat-msg-${lane}${mine ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}`} aria-label={`${when} ${who} ${TYPE_LABEL[type]}`.trim()}>
+    <article
+      className={`chat-msg chat-msg-${lane}${mine ? " chat-msg-mine" : ""}${reply ? " chat-msg-reply" : ""}${narration ? " chat-msg-narration" : ""}`}
+      aria-label={`${when} ${who} ${TYPE_LABEL[type]}`.trim()}
+    >
       {showMeta ? (
         <div className="chat-msg-meta">
+          {showActorLabels ? <span className="chat-msg-who">{who}</span> : null}
           {when && at != null ? (
             <time className="chat-msg-time" dateTime={formatIso(at)} title={new Date(at).toLocaleString()}>
               {when}
             </time>
-          ) : null}
-          {showActorLabels ? (
-            <>
-              <Icon className="chat-msg-kind-icon" strokeWidth={1.5} aria-hidden />
-              <span className="chat-msg-who">{who}</span>
-            </>
           ) : null}
         </div>
       ) : null}
@@ -282,12 +108,24 @@ function Msg({
   );
 }
 
+/** A prompt longer than this folds to its first lines (a pasted brief would otherwise push the conversation off screen). */
+const FOLD_LINES = 6;
+const FOLD_CHARS = 600;
+
 function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "follow_up" }> }) {
   const images = entry.attachments?.filter((item) => item.kind === "image") ?? [];
   const files = entry.attachments?.filter((item) => item.kind === "file") ?? [];
+  const lines = entry.text.split("\n").length;
+  const long = lines > FOLD_LINES || entry.text.length > FOLD_CHARS;
+  const [folded, setFolded] = useState(true);
   return (
     <>
-      {entry.text ? <p className="chat-text-body">{entry.text}</p> : null}
+      {entry.text ? <p className={`chat-text-body${long && folded ? " folded" : ""}`}>{entry.text}</p> : null}
+      {long ? (
+        <button type="button" className="chat-fold-toggle" aria-expanded={!folded} onClick={() => setFolded((v) => !v)}>
+          {folded ? `Show all · ${lines} ${lines === 1 ? "line" : "lines"}` : "Show less"}
+        </button>
+      ) : null}
       {images.length > 0 ? (
         <div className="chat-entry-thumbs">
           {images.map((item) => (item.src ? <img key={`${item.name}:${item.src}`} alt={item.name} src={item.src} /> : <span key={item.name}>{item.name}</span>))}
@@ -307,8 +145,7 @@ function UserRowBody({ entry }: { entry: Extract<ChatEntry, { type: "prompt" | "
 function ChatEntryRowImpl({
   entry,
   onApprove,
-  defaultExpanded,
-  autoCollapseThinking,
+  narration = false,
   showDate = true,
   showTime = true,
   showActorLabels = false,
@@ -317,8 +154,8 @@ function ChatEntryRowImpl({
 }: {
   entry: ChatEntry;
   onApprove?: (id: string, allow: boolean) => void;
-  defaultExpanded?: boolean;
-  autoCollapseThinking?: boolean;
+  /** Agent text followed by more work in its turn (see `journalItems`). */
+  narration?: boolean;
   showDate?: boolean;
   showTime?: boolean;
   showActorLabels?: boolean;
@@ -327,7 +164,6 @@ function ChatEntryRowImpl({
 }) {
   const stamp: ChatStampParts = { date: showDate, time: showTime };
   const copyText = showCopyButton ? copyTextForEntry(entry) : "";
-  if (isWork(entry)) return <WorkRail entry={entry} defaultExpanded={defaultExpanded} autoCollapseThinking={autoCollapseThinking} stamp={stamp} />;
 
   switch (entry.type) {
     case "turn_marker": {
@@ -434,6 +270,7 @@ function ChatEntryRowImpl({
           showActorLabels={showActorLabels}
           copyText={showCopyButton && !entry.streaming ? entry.text : undefined}
           reply
+          narration={narration}
           kicker={entry.streaming ? <Status tone="wait">live</Status> : undefined}
         >
           {entry.streaming ? (

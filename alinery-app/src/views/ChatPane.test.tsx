@@ -104,7 +104,7 @@ describe("ChatPane", () => {
     expect(html).toContain("queued · after this turn");
     expect(html).toContain("todo");
     expect(html).toContain("Turn 3 end");
-    expect(html).toContain("redacted");
+    expect(html).toContain('aria-label="1 step · thinking"');
     expect(html).toContain("git push origin chat-pane");
     expect(html).toContain("Allow");
     expect(html).toContain("subagents · 1");
@@ -317,7 +317,7 @@ describe("DEL-722 block-local streaming", () => {
     let state = emptyTranscript();
     const view = render(<ChatPane entries={state.entries} visibility={visibility} />);
     const expanded: boolean[] = [];
-    let originalRail: Element | null = null;
+    let originalStrip: Element | null = null;
 
     try {
       for (const event of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"]) {
@@ -328,15 +328,56 @@ describe("DEL-722 block-local streaming", () => {
         expect(thinking).toBeTruthy();
         const row = view.container.querySelector(`[data-entry-id="${thinking?.id}"]`);
         expect(row).not.toBeNull();
-        const rail = row?.querySelector(".chat-rail");
-        expect(rail).toBeTruthy();
-        if (event === "thinking_start") originalRail = rail ?? null;
-        expect.soft(rail, event).toBe(originalRail);
-        expanded.push(row?.querySelector(".chat-rail-line")?.getAttribute("aria-expanded") === "true");
-        expect.soft(row?.querySelector(".chat-work-pre")?.textContent, event).toBe(thinking?.type === "thinking" ? thinking.text : undefined);
+        const strip = row?.querySelector(".chat-work");
+        expect(strip).toBeTruthy();
+        if (event === "thinking_start") originalStrip = strip ?? null;
+        expect.soft(strip, event).toBe(originalStrip);
+        expanded.push(row?.querySelector(".chat-work-line")?.getAttribute("aria-expanded") === "true");
+        expect.soft(row?.querySelector(".chat-step-out")?.textContent, event).toBe(thinking?.type === "thinking" ? thinking.text : undefined);
       }
 
       expect(expanded).toEqual([true, true, true, true, true]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("opens the work strip while thinking streams and folds it once the answer starts", () => {
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../chat/fixtures");
+    const visibility = { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, expandThinking: false, autoCollapseThinking: true };
+    let state = emptyTranscript();
+    const view = render(<ChatPane entries={state.entries} visibility={visibility} />);
+    const expanded: boolean[] = [];
+    let originalStrip: Element | null = null;
+    let originalAnswer: Element | null = null;
+
+    try {
+      for (const [index, event] of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"].entries()) {
+        const frame: unknown = JSON.parse(readFileSync(join(fixtures, `live-${event}.json`), "utf8"));
+        state = applyRpcLine(state, frame);
+        view.rerender(<ChatPane entries={state.entries} visibility={visibility} />);
+        const thinking = state.entries.find((entry) => entry.type === "thinking");
+        const row = view.container.querySelector(`[data-entry-id="${thinking?.id}"]`);
+        const strip = row?.querySelector(".chat-work");
+        expect(strip).toBeTruthy();
+        if (index === 0) originalStrip = strip ?? null;
+        expect.soft(strip, event).toBe(originalStrip);
+        expanded.push(row?.querySelector(".chat-work-line")?.getAttribute("aria-expanded") === "true");
+        // A folded strip builds no step rows at all.
+        if (index === 0) expect.soft(row?.querySelector(".chat-step-out")?.textContent, event).toBe("The user wants me to reply");
+        else expect.soft(row?.querySelector(".chat-steps"), event).toBeNull();
+
+        if (index >= 1) {
+          const answer = state.entries.find((entry) => entry.type === "text");
+          const answerRow = view.container.querySelector(`[data-entry-id="${answer?.id}"]`);
+          const message = answerRow?.querySelector(".chat-msg");
+          expect(message).toBeTruthy();
+          if (index === 1) originalAnswer = message ?? null;
+          expect.soft(message, event).toBe(originalAnswer);
+          expect.soft(answerRow?.querySelector(".chat-msg-body")?.textContent, event).toContain("323");
+        }
+      }
+      expect(expanded).toEqual([true, false, false, false, false]);
     } finally {
       view.unmount();
     }

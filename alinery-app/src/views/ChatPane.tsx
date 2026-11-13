@@ -1,10 +1,13 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
+import { formatDuration } from "../chat/format";
+import { type JournalItem, journalItems } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
 import { RunningIndicator } from "../Indicators";
 import { ChatEntryRow } from "./ChatEntryRow";
+import { ChatWorkStrip } from "./ChatWorkStrip";
 import { SubagentDrawer } from "./SubagentDrawer";
 
 function ChatPaneImpl({
@@ -31,6 +34,8 @@ function ChatPaneImpl({
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
   const activity = chatActivityLabel(status, shown);
+  const items = useMemo(() => journalItems(shown, status !== "idle"), [shown, status]);
+  const stepOpen = useCallback((entry: ChatEntry) => workRailDefaultExpanded(entry, visibility), [visibility]);
 
   useEffect(() => {
     stick.current = visibility.autoScroll;
@@ -109,19 +114,35 @@ function ChatPaneImpl({
         {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
         <ol className="chat-journal">
           {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
-          {shown.map((entry) => (
-            <li key={entry.id} data-entry-id={entry.id}>
-              <ChatEntryRow
-                entry={entry}
-                onApprove={onApprove}
-                defaultExpanded={workRailDefaultExpanded(entry, visibility)}
-                autoCollapseThinking={visibility.autoCollapseThinking && !visibility.expandThinking}
-                showDate={visibility.showDate}
-                showTime={visibility.showTime}
-                showActorLabels={visibility.showActorLabels}
-                showBlockCopyButtons={visibility.showBlockCopyButtons}
-                showCopyButton={visibility.showCopyButtons}
-              />
+          {items.map((item) => (
+            <li key={item.key} className="chat-journal-item" data-node={nodeOf(item)} data-entry-id={item.kind === "turn" ? undefined : item.key}>
+              {item.kind === "work" ? (
+                <ChatWorkStrip
+                  entries={item.entries}
+                  live={item.live}
+                  defaultOpen={item.entries.some(stepOpen)}
+                  collapseWhenDone={visibility.autoCollapseThinking && !visibility.expandThinking}
+                  stepOpen={stepOpen}
+                />
+              ) : item.kind === "turn" ? (
+                <div className="chat-turn-end">
+                  <span className="chat-turn-rule" />
+                  <span className="chat-turn-copy">
+                    {[`${item.steps} ${item.steps === 1 ? "step" : "steps"}`, item.durationMs != null ? formatDuration(item.durationMs) : ""].filter(Boolean).join(" · ")}
+                  </span>
+                </div>
+              ) : (
+                <ChatEntryRow
+                  entry={item.entry}
+                  onApprove={onApprove}
+                  narration={item.role === "narration"}
+                  showDate={visibility.showDate}
+                  showTime={visibility.showTime}
+                  showActorLabels={visibility.showActorLabels}
+                  showBlockCopyButtons={visibility.showBlockCopyButtons}
+                  showCopyButton={visibility.showCopyButtons}
+                />
+              )}
             </li>
           ))}
         </ol>
@@ -134,6 +155,13 @@ function ChatPaneImpl({
       ) : null}
     </div>
   );
+}
+
+/** The marker the row puts on the journal's spine (see `.chat-journal-item` in theme.css). */
+function nodeOf(item: JournalItem): string {
+  if (item.kind === "work") return item.live ? "live" : "work";
+  if (item.kind === "turn") return "turn";
+  return item.role;
 }
 
 export const ChatPane = memo(ChatPaneImpl);
