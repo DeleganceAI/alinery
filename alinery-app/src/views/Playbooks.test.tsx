@@ -389,11 +389,7 @@ describe("creating a task from a saved playbook", () => {
     await rowButton("repo/review");
     expect(screen.queryByRole("button", { name: "Create task from this playbook" })).toBeNull();
     const initialStored = structuredClone(stored);
-    for (const [scope, label] of [
-      ["bundled", "Bundled"],
-      ["global", "Global"],
-      ["repo", "Repository"],
-    ] as const) {
+    for (const scope of ["bundled", "global", "repo"] as const) {
       await openRow(`${scope}/review`);
       await screen.findByRole("region", { name: "Playbook details" });
       const create = screen.getByRole("button", { name: "Create task from this playbook" });

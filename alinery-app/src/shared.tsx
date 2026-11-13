@@ -1329,9 +1329,7 @@ function RepoReconnectButton({ repo }: { repo: string }) {
   const remote = parseRemoteRepo(repo);
   const reconnect = () => {
     setBusy(true);
-    (remote ? ipc.remoteConnect(remote.hostId, false) : ipc.setActiveRepo(repo))
-      .catch((error) => toast(String(error), "error"))
-      .finally(() => setBusy(false));
+    (remote ? ipc.remoteConnect(remote.hostId, false) : ipc.setActiveRepo(repo)).catch((error) => toast(String(error), "error")).finally(() => setBusy(false));
   };
   return (
     <button type="button" className="btn ghost small" disabled={busy} onClick={reconnect}>

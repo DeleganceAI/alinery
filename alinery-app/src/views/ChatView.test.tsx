@@ -40,7 +40,7 @@ const mocks = vi.hoisted(() => ({
   createChatThread: vi.fn(),
   chatSetModel: vi.fn(async () => ({ model: "anthropic/claude", thinking: "off", thinking_levels: [] as string[] })),
   chatSetThinkingLevel: vi.fn(async () => ({ model: "xai/grok-4.6", thinking: "low", thinking_levels: ["off", "low", "high"] })),
-  chatPrompt: vi.fn(async () => undefined),
+  chatPrompt: vi.fn(async (..._args: unknown[]) => undefined),
   chatAbort: vi.fn(async () => undefined),
   openUrl: vi.fn(),
   startChatThread: vi.fn(),

@@ -1,6 +1,6 @@
-import { DEFAULT_APPEARANCE } from "../appearance";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearance";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
 import { daemonTransport } from "../daemon/transport";
 import { fakeChat } from "../test/chatHooks";

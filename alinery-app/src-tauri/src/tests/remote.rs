@@ -563,11 +563,11 @@ fn live_close_all_repos_disconnects_a_host_and_leaves_its_daemon_running() {
     }
 }
 
-/// A daemon this app cannot use (here: started with other settings, so another identity) is reported as
-/// a conflict that leaves the repo usable for reads, and a confirmed stop replaces it with a daemon this
-/// app's runtime serves. The old daemon is really gone, and nothing replaced it before the stop.
+/// A daemon started with other settings that takes this app's token is one this app was let into: it attaches (no
+/// conflict) and runs on its starter's settings. A confirmed stop still replaces it with this app's own daemon, and nothing
+/// replaced it before the stop. (Someone else's token is a conflict this app cannot stop, only join: `foreign_conflict`.)
 #[test]
-fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
+fn live_a_daemon_with_other_settings_is_joined_and_replaced_by_a_confirmed_stop() {
     use std::time::Duration;
     use tauri::Manager;
     let Some(args) = live_args() else {
@@ -621,7 +621,7 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
     assert!(daemons().trim().is_empty(), "no daemon is left to confuse the count");
     let (config_dir, runtime) = (session.config_dir.clone(), runtime_dir(&session.root, &session.runtime_hash));
     sh(&format!("cp '{config_dir}/app.toml' '{config_dir}/other.toml'"));
-    // An earlier daemon of this app has the token this app kept for the repo; the replacement is given the same one.
+    // This app's own token: the app kept it for the repo, so the daemon lets this app in.
     let token = std::fs::read_to_string(crate::daemon::rpc_secret_path(&session.secrets_dir, &repo, "")).unwrap();
     let old_rpc_file = format!("{config_dir}/rpc-secrets/old.rpc");
     session
@@ -669,14 +669,10 @@ fn live_an_unusable_daemon_is_reported_and_replaced_by_a_confirmed_stop() {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Opening the repo reports the conflict instead of failing, and replaces nothing.
+    // Opening the repo joins it: attached, no conflict, and nothing replaced.
     crate::activate_remote_repo(&handle, &state, &key).unwrap();
-    assert!(!state.daemon_attached(Path::new(&key)));
-    let conflict = state.daemon_conflict(Path::new(&key)).expect("the unusable daemon is recorded as a conflict");
-    assert_eq!(conflict.repo, key);
-    assert_eq!(conflict.owners.len(), 1);
-    assert!(matches!(&conflict.owners[0].impact, crate::TakeoverImpact::Known { sessions } if sessions.is_empty()));
-    assert!(conflict.issues[0].contains("other settings"), "{:?}", conflict.issues);
+    assert!(state.daemon_attached(Path::new(&key)), "a daemon that takes this app's token is joined");
+    assert!(state.daemon_conflict(Path::new(&key)).is_none());
     assert_eq!(daemons(), old, "attaching never replaces the daemon");
 
     // The confirmed stop ends it, waits for its socket to go, and starts this app's daemon.

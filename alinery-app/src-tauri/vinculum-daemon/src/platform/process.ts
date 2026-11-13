@@ -17,3 +17,13 @@ export function signalChild(child: Bun.Subprocess, signal: NodeJS.Signals | numb
     /* already gone */
   }
 }
+
+/** Whether a process is running: signal 0 delivers nothing, it only asks. Another user's live process answers EPERM. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}

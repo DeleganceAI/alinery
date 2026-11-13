@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../platform/fs.ts";
+import { processAlive } from "../platform/process.ts";
 
 /** World-writable with the sticky bit, as /tmp is: each daemon replaces or removes only its own record. */
 export const BOX_DIR = "/var/tmp/alinery-daemons";
@@ -42,14 +43,6 @@ export function removeBoxRecord(repo: string, lane: string, dir = BOX_DIR): void
   rmSync(recordPath(dir, repo, lane), { force: true });
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM"; // another user's live process
-  }
-}
 
 /** Every record whose process is still running. A daemon that crashed leaves its record; the pid check hides it. */
 export function listBoxRecords(dir = BOX_DIR): BoxRecord[] {
@@ -63,7 +56,7 @@ export function listBoxRecords(dir = BOX_DIR): BoxRecord[] {
   for (const name of names) {
     try {
       const record = JSON.parse(readFileSync(join(dir, name), "utf8")) as BoxRecord;
-      if (typeof record.repo === "string" && Number.isInteger(record.pid) && alive(record.pid)) records.push(record);
+      if (typeof record.repo === "string" && Number.isInteger(record.pid) && processAlive(record.pid)) records.push(record);
     } catch {
       /* torn or foreign file */
     }
