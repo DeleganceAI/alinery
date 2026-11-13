@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { userInfo } from "node:os";
 import type { WatchHandle } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -55,6 +55,7 @@ import { changeSessionModel, changeThinkingLevel, ensureModel, readLaunchThinkin
 import { rememberSessionEnv, sessionByToolEnv } from "./sessionLookup.ts";
 import { McpHub } from "./mcp.ts";
 import { canvasTools } from "./canvasTools.ts";
+import { renderPage } from "./domain/rendered.ts";
 import { canvasEnabled } from "./domain/canvas.ts";
 import { runMcp } from "./mcpServer/server.ts";
 import { skillCatalog, vinculumAgentDir } from "./skills.ts";
@@ -246,6 +247,40 @@ const sessionNameTool = defineTool({
   },
 });
 
+// Lets the agent look at what it made: one page of a PDF or a deck (LibreOffice first) as an image. Chat and task sessions.
+function renderExtension() {
+  return defineExtension({
+    name: "alinery-render",
+    tools: [
+      defineTool({
+        name: "alinery_render_page",
+        description:
+          "Look at one page of a PDF, or one slide of a presentation (pptx, ppt, odp, key), as an image: check a document or deck you made, then fix what you see. " +
+          "A presentation is drawn through LibreOffice first. Read an image file with the read tool instead.",
+        parameters: Type.Object({
+          path: Type.String({ description: "The file, relative to your working directory or absolute." }),
+          page: Type.Optional(Type.Integer({ minimum: 1, description: "The page or slide, from 1. Default 1." })),
+        }),
+        execute: async (args, api) => {
+          const cwd = (api.env as { cwd?: string } | undefined)?.cwd ?? repo;
+          const page = args.page ?? 1;
+          try {
+            const out = await renderPage(repo, resolve(cwd, args.path), page, python && join(python, "bin", "python3"));
+            return {
+              output: [
+                { type: "text", text: `Page ${page} of ${out.pages} of ${args.path}.` },
+                { type: "image", data: Buffer.from(out.png).toString("base64"), mimeType: "image/png" },
+              ],
+            };
+          } catch (error) {
+            return { output: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+          }
+        },
+      }),
+    ],
+  });
+}
+
 function namingExtension() {
   return defineExtension({
     name: "alinery-session-name",
@@ -277,6 +312,7 @@ keepAwake.start();
 registry.install(codingExtension());
 registry.install(phaseExtension());
 registry.install(namingExtension());
+registry.install(renderExtension());
 // Chat threads only: the thread is the calling conversation's own row, so the agent never names it.
 const canvas = canvasTools({ repo, threadOf: (env, conversationId) => { const row = sessionForCall(env, conversationId); return row && !row.taskSlug ? row.id : undefined; }, refresh: (rel) => feed.refresh(rel) });
 registry.install(canvas.extension);

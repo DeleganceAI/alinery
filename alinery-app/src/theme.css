@@ -10912,6 +10912,9 @@ header:has(~ main .task-info-panel) nav.tabs {
   text-align: left;
   cursor: pointer;
 }
+.canvas-deck-note {
+  margin: 0 0 8px;
+}
 .canvas-files-note {
   padding: 8px 10px;
 }

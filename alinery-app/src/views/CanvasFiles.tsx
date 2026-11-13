@@ -1,15 +1,19 @@
-// The canvas's `file` and `files` panels: a preview of a repository file by its type, with Save a copy, Copy path and
-// (on this computer) Show in folder; and a list of files that opens each the same way. The daemon serves only the
-// files the agent put on the canvas (BlobService `CanvasFileBlob`); the office formats are read by officePreview.ts.
+// A preview of a file by its type, with Save a copy (and, given its path, Copy path and Show in folder): the canvas's
+// `file` and `files` panels, and a task's or session's file tab for what text cannot show. The bytes are a BlobService
+// read, so a remote repository works the same; the office formats are read by officePreview.ts, and a deck is drawn
+// to PDF by LibreOffice on the repository's machine when it has it (`readRenderedPdf`).
+import type { BlobRef } from "alinery-proto/alinery/v1/blobs_pb";
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react";
 import { CANVAS_SANDBOX, withCanvasCsp } from "../canvasSandbox";
 import { ChatMarkdown, CopyTextButton } from "../chat/CopyMessage";
 import * as ipc from "../ipc";
 import { docxMarkdown, parseCsv, pptxMarkdown, type Sheet, xlsxSheets } from "../officePreview";
 import { isRemoteRepo } from "../remoteRepo";
-import { MAX_CANVAS_FILE_BYTES, readCanvasFile } from "../sync/chat";
+import { canvasFileRef } from "../sync/chat";
+import { MAX_PREVIEW_BYTES, readPreviewBytes, readRenderedPdf } from "../sync/tasks";
 import { toast } from "../toast";
 import { errorMessage } from "./chatThreadSession";
+import { LIBREOFFICE_URL } from "./RuntimePanel";
 
 // pdf.js is about 1.5 MB with its worker: loaded the first time a PDF shows.
 const CanvasPdf = lazy(() => import("./CanvasPdf"));
@@ -130,22 +134,63 @@ function ImagePreview({ bytes, type, name }: { bytes: Uint8Array; type: string; 
 
 const looksLikeText = (bytes: Uint8Array) => !bytes.subarray(0, 8000).includes(0);
 
-/** The preview for a file's bytes, chosen by its extension. */
-export function FilePreview({ name, bytes }: { name: string; bytes: Uint8Array }) {
+const Pdf = ({ bytes }: { bytes: Uint8Array }) => (
+  <Suspense fallback={<p className="dim">Loading the PDF viewer…</p>}>
+    <CanvasPdf bytes={bytes} />
+  </Suspense>
+);
+
+/** Presentations: LibreOffice draws them (domain/rendered.ts RENDERED_TYPES); a pptx also has its text to fall back on. */
+const DECK_TYPES = ["pptx", "ppt", "odp", "key"];
+const DECKS = new Set(DECK_TYPES);
+
+/** Files text cannot show but this preview can: a file tab hands these to `FileView` instead of its text viewer. */
+const RICH = new Set(["pdf", "xlsx", "xlsm", "docx", ...DECK_TYPES, ...Object.keys(IMAGE_TYPES).filter((e) => e !== "svg")]);
+export const richPreview = (name: string) => RICH.has(extOf(name));
+
+/** The slides as LibreOffice draws them, or the deck's text and why the slides are missing. */
+async function deckPreview(ext: string, bytes: Uint8Array, render?: () => Promise<Uint8Array>): Promise<ReactNode> {
+  let why = "Slides are drawn by LibreOffice, which this preview cannot reach.";
+  if (render) {
+    try {
+      return <Pdf bytes={await render()} />;
+    } catch (e) {
+      why = errorMessage(e);
+    }
+  }
+  const text = ext === "pptx" ? await pptxMarkdown(bytes) : "";
+  return (
+    <>
+      <p className="dim canvas-deck-note">
+        {why}{" "}
+        <a
+          href={LIBREOFFICE_URL}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => {
+            event.preventDefault();
+            void ipc.openUrl(LIBREOFFICE_URL).catch((e: unknown) => toast.error(errorMessage(e)));
+          }}
+        >
+          Get LibreOffice
+        </a>
+      </p>
+      {text ? <ChatMarkdown text={text} /> : <p className="dim">Save a copy to open the deck.</p>}
+    </>
+  );
+}
+
+/** The preview for a file's bytes, chosen by its extension. `render` draws a deck to PDF. */
+export function FilePreview({ name, bytes, render }: { name: string; bytes: Uint8Array; render?: () => Promise<Uint8Array> }) {
   const ext = extOf(name);
   const [load] = useState(() => {
     if (ext === "xlsx" || ext === "xlsm") return async () => <Sheets sheets={await xlsxSheets(bytes)} />;
     if (ext === "docx") return async () => <ChatMarkdown text={await docxMarkdown(bytes)} />;
-    if (ext === "pptx") return async () => <ChatMarkdown text={(await pptxMarkdown(bytes)) || "This deck has no text."} />;
+    if (DECKS.has(ext)) return () => deckPreview(ext, bytes, render);
     return undefined;
   });
   if (load) return <Later load={load} />;
-  if (ext === "pdf")
-    return (
-      <Suspense fallback={<p className="dim">Loading the PDF viewer…</p>}>
-        <CanvasPdf bytes={bytes} />
-      </Suspense>
-    );
+  if (ext === "pdf") return <Pdf bytes={bytes} />;
   const image = IMAGE_TYPES[ext];
   if (image) return <ImagePreview bytes={bytes} type={image} name={name} />;
   if (!looksLikeText(bytes)) return <p className="dim">No preview for this kind of file. Save a copy to open it.</p>;
@@ -170,30 +215,33 @@ export function FilePreview({ name, bytes }: { name: string; bytes: Uint8Array }
   );
 }
 
-/** One file: its preview and what can be done with it. `row` is its path in a `files` panel, "" for a `file` panel. */
-export function FileView({ where, row, path, size }: { where: Where; row: string; path: string; size: number }) {
-  const name = baseName(path);
-  const tooBig = size > MAX_CANVAS_FILE_BYTES;
-  const [state, setState] = useState<{ bytes?: Uint8Array; error?: string }>({});
+/** What a file view reads: the file's blob, its name, and (for Copy path and Show in folder) its path on its machine. */
+export type FileSource = { repo: string; ref: BlobRef; name: string; path?: string; size?: number };
+
+/** One file: its preview and what can be done with it. A `size` known up front past the limit skips the read. */
+export function FileView({ repo, ref, name, path, size }: FileSource) {
+  const [state, setState] = useState<{ bytes?: Uint8Array; total?: number; error?: string }>({});
   const [saving, setSaving] = useState(false);
-  const { repo, threadId, panel } = where;
+  const known = size ?? state.total;
+  const tooBig = known !== undefined && known > MAX_PREVIEW_BYTES;
+  const skip = size !== undefined && size > MAX_PREVIEW_BYTES;
   useEffect(() => {
-    if (tooBig) return;
+    if (skip) return;
     let live = true;
     setState({});
-    readCanvasFile(repo, threadId, panel, row).then(
-      ({ bytes }) => live && setState({ bytes }),
+    readPreviewBytes(repo, ref).then(
+      ({ bytes, total }) => live && setState({ bytes, total }),
       (e: unknown) => live && setState({ error: errorMessage(e) }),
     );
     return () => {
       live = false;
     };
-  }, [repo, threadId, panel, row, tooBig]);
+  }, [repo, ref, skip]);
 
   const save = async () => {
     setSaving(true);
     try {
-      const bytes = state.bytes ?? (await readCanvasFile(repo, threadId, panel, row)).bytes;
+      const bytes = state.bytes ?? (await readPreviewBytes(repo, ref)).bytes;
       if (await ipc.saveFileDialog(name, bytes)) toast.success(`Saved ${name}`, "short");
     } catch (e) {
       toast.error(`Couldn't save ${name}: ${errorMessage(e)}`);
@@ -205,14 +253,14 @@ export function FileView({ where, row, path, size }: { where: Where; row: string
   return (
     <div className="canvas-file">
       <div className="canvas-file-actions">
-        <span className="canvas-file-name" title={path}>
-          {name} <span className="dim">· {formatBytes(size)}</span>
+        <span className="canvas-file-name" title={path ?? name}>
+          {name} {known !== undefined && <span className="dim">· {formatBytes(known)}</span>}
         </span>
-        <button type="button" className="btn ghost small" disabled={saving || tooBig} onClick={() => void save()}>
+        <button type="button" className="btn ghost small" disabled={saving || tooBig || (!state.bytes && !skip && !state.error)} onClick={() => void save()}>
           {saving ? "Saving…" : "Save a copy…"}
         </button>
-        <CopyTextButton text={path} label="path" />
-        {!isRemoteRepo(repo) && (
+        {path && <CopyTextButton text={path} label="path" />}
+        {path && !isRemoteRepo(repo) && (
           <button type="button" className="btn ghost small" onClick={() => void ipc.revealItemInDir(path).catch((e: unknown) => toast.error(errorMessage(e)))}>
             Show in folder
           </button>
@@ -220,11 +268,11 @@ export function FileView({ where, row, path, size }: { where: Where; row: string
       </div>
       <div className="canvas-file-preview">
         {tooBig ? (
-          <p className="dim">This file is larger than {formatBytes(MAX_CANVAS_FILE_BYTES)}, too large to preview or save here. Open it from its folder.</p>
+          <p className="dim">This file is larger than {formatBytes(MAX_PREVIEW_BYTES)}, too large to preview or save here. Open it from its folder.</p>
         ) : state.error ? (
           <p className="canvas-error">{state.error}</p>
         ) : state.bytes ? (
-          <FilePreview key={path} name={name} bytes={state.bytes} />
+          <FilePreview key={name} name={name} bytes={state.bytes} render={() => readRenderedPdf(repo, ref)} />
         ) : (
           <p className="dim">Reading…</p>
         )}
@@ -235,7 +283,13 @@ export function FileView({ where, row, path, size }: { where: Where; row: string
 
 export function FilePanel({ where, text }: { where: Where; text: string }) {
   const body = JSON.parse(text) as FileEntry;
-  return <FileView where={where} row="" path={body.path} size={body.size} />;
+  const [ref] = useState(() => canvasFileRef(where.threadId, where.panel, ""));
+  return <FileView repo={where.repo} ref={ref} name={baseName(body.path)} path={body.path} size={body.size} />;
+}
+
+function ListedFile({ where, dir, entry }: { where: Where; dir: string; entry: FileEntry }) {
+  const [ref] = useState(() => canvasFileRef(where.threadId, where.panel, entry.path));
+  return <FileView repo={where.repo} ref={ref} name={baseName(entry.path)} path={`${dir}/${entry.path}`} size={entry.size} />;
 }
 
 export function FilesPanel({ where, text }: { where: Where; text: string }) {
@@ -247,7 +301,7 @@ export function FilesPanel({ where, text }: { where: Where; text: string }) {
         <button type="button" className="btn ghost small canvas-files-back" onClick={() => setOpen(undefined)}>
           ← All files
         </button>
-        <FileView where={where} row={open.path} path={`${body.dir}/${open.path}`} size={open.size} />
+        <ListedFile where={where} dir={body.dir} entry={open} />
       </div>
     );
   if (body.entries.length === 0) return <p className="dim">No files matched in {body.dir}.</p>;

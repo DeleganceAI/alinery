@@ -19,7 +19,7 @@ import { acquireScope, useEntity, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
 import type { Replica } from "./replica";
 import { call, controlsOf, startedOf } from "./sessions";
-import { MAX_FILE_BYTES, readBlob, readBlobSized, upload } from "./tasks";
+import { MAX_FILE_BYTES, readBlob, upload } from "./tasks";
 
 export const chatApi = {
   chat: (repo: string) => createClient(ChatService, daemonTransport(repo)),
@@ -247,13 +247,8 @@ export function useCanvas(repo: string, threadId: string): Canvas | undefined {
 
 const MAX_PANEL_BYTES = 1024 * 1024;
 
-/** ponytail: the most a file panel reads into memory, for a preview or a saved copy; past it the user opens the file. */
-export const MAX_CANVAS_FILE_BYTES = 100 * 1024 * 1024;
-
 /** A file a `file` panel shows (`path` ignored) or a row of a `files` panel (`path` relative to its directory). */
-export async function readCanvasFile(repo: string, threadId: string, panel: string, path: string, max = MAX_CANVAS_FILE_BYTES): Promise<{ bytes: Uint8Array; total: number }> {
-  return call(() => readBlobSized(repo, create(BlobRefSchema, { target: { case: "canvasFile", value: { threadId, panel, path } } }), max));
-}
+export const canvasFileRef = (threadId: string, panel: string, path: string) => create(BlobRefSchema, { target: { case: "canvasFile", value: { threadId, panel, path } } });
 
 /** One panel's body as text (the daemon caps a write at 1 MB). */
 export async function readCanvasPanel(repo: string, threadId: string, panel: string): Promise<string> {

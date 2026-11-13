@@ -16,7 +16,7 @@ const REPO_STATE: Record<RepoRuntime["state"], string> = {
   not_attached: "Not running",
 };
 
-const LIBREOFFICE_URL = "https://www.libreoffice.org/download/download-libreoffice/";
+export const LIBREOFFICE_URL = "https://www.libreoffice.org/download/download-libreoffice/";
 const short = (hash: string | null) => (hash ? hash.slice(0, 8) : "—");
 
 /** One line on what the office skills will find: the Python, then LibreOffice and the PDF tools. */

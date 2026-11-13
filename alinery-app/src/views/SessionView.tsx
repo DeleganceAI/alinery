@@ -76,6 +76,7 @@ import {
   readArtifactText,
   readNodeText,
   readWorktreeText,
+  taskFileRef,
   useTaskArtifacts,
 } from "../sync/artifacts";
 import { useBoardTask, useSessionDisplay } from "../sync/board";
@@ -111,6 +112,7 @@ import type {
 import { useArtifactCommentDrafts } from "../useArtifactCommentDrafts";
 import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
 import { sessionIsRecoverable, sessionTerminalLabel } from "../vinculumHarness";
+import { FileView, richPreview } from "./CanvasFiles";
 import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 import { ChatModelDialog } from "./ChatModelDialog";
 import { ChatPane } from "./ChatPane";
@@ -518,13 +520,22 @@ export function SessionView({
     setArtifactErr("");
   }, [hasTask]);
 
+  // A PDF, office file or image previews in FileView, read as bytes; everything else is text.
+  const richRef = useMemo(
+    () =>
+      selectedArtifact && richPreview(selectedArtifact)
+        ? taskFileRef(taskSlug, selectedArtifact, { repo: selectedIsRepo, direct: selectedArtifactIsDirect, nodeId: selectedArtifactTreeId || undefined })
+        : undefined,
+    [taskSlug, selectedArtifact, selectedIsRepo, selectedArtifactIsDirect, selectedArtifactTreeId],
+  );
+
   useEffect(() => {
     let alive = true;
     setArtifactText("");
     setCommentAnchor(null);
     setCommentDraft("");
     setCommentSendStatus("");
-    if (!hasTask || !selectedArtifact || (!selectedIsRepo && !selectedArtifactIsDirect && !selectedArtifactTreeId)) {
+    if (!hasTask || !selectedArtifact || richPreview(selectedArtifact) || (!selectedIsRepo && !selectedArtifactIsDirect && !selectedArtifactTreeId)) {
       return () => {
         alive = false;
       };
@@ -1433,7 +1444,7 @@ export function SessionView({
                     <ArtifactProvenanceBadges handoffs={selectedArtifactItem?.handoffs} onOpenRelatedTask={onOpenRelatedTask} />
                     <div className="btn-group">
                       <CopyTextButton text={openFilePath(repoPath, taskSlug, selectedArtifact, selectedArtifactNode, selectedIsRepo ? cwd : undefined)} label="path" />
-                      <CopyArtifactButton text={artifactText} />
+                      {!richRef && <CopyArtifactButton text={artifactText} />}
                       {selectedPreviewable && (
                         <>
                           <button
@@ -1479,7 +1490,9 @@ export function SessionView({
                     </InlineStatus>
                   )}
                   <div className="artifactviewer">
-                    {!selectedPreviewable ? (
+                    {richRef ? (
+                      <FileView repo={repoPath} ref={richRef} name={selectedArtifact.slice(selectedArtifact.lastIndexOf("/") + 1)} />
+                    ) : !selectedPreviewable ? (
                       <CodeView path={selectedArtifact} text={artifactText} />
                     ) : artifactMode === "raw" ? (
                       <pre className="artifactraw">{artifactText}</pre>

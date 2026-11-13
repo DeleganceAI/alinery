@@ -571,7 +571,7 @@ Edit only the agent directory above.
 - Skills that sessions load live at skills/<name>/SKILL.md. The model is told the name, the description, and the path. It is not given the body. It reads the file with the read tool. Paths inside the skill are relative to that skill's directory.
 - mcp.json and .mcp.json in that directory are user MCP servers. The daemon connects stdio and streamable HTTP. It does not do OAuth. The alinery key is reserved for the built-in server. Do not add a server and claim it replaced the built-in.
 - Extensions under extensions/ are listed and not loaded. Do not add one and claim the session picked it up.
-- The daemon's own tools are read, write, edit, bash, alinery_phase_complete, and alinery_set_session_name. They are not files. Do not look for them in the agent directory. A write to xd://alinery_phase_complete is the phase tool.
+- The daemon's own tools are read, write, edit, bash, alinery_phase_complete, alinery_set_session_name, and alinery_render_page. They are not files. Do not look for them in the agent directory. A write to xd://alinery_phase_complete is the phase tool.
 
 - A SKILL.md starts with YAML frontmatter between --- lines: name (lowercase letters, numbers, and hyphens, at most 64 characters) and description (at most 1024 characters). disable-model-invocation: true keeps a skill from being offered to the model.
 - mcp.json is {"mcpServers": {"<name>": {...}}}. A stdio server has command, and optionally args, cwd, and env. A streamable HTTP server has url, and optionally headers. enabled: false turns a server off.

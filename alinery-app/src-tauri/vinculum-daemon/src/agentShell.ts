@@ -40,6 +40,12 @@ export function libreOfficeDir(platform = process.platform, home = homedir()): s
   return ["/Applications", join(home, "Applications")].map((apps) => join(apps, "LibreOffice.app", "Contents", "MacOS")).find((dir) => existsSync(join(dir, "soffice")));
 }
 
+/** LibreOffice's `soffice`, looked up now (it may be installed while the daemon runs): on PATH, or in its macOS app. */
+export function findSoffice(path = process.env.PATH ?? ""): string | undefined {
+  const app = libreOfficeDir();
+  return whichOn("soffice", path) ?? (app ? join(app, "soffice") : undefined);
+}
+
 export function agentShellEnv(o: { python?: string; shims?: string; repo: string; path?: string; libreOffice?: string }): Record<string, string> {
   const userBase = join(o.repo, ".alinery", "python-packages");
   const front = o.python ? [join(o.python, "bin"), join(userBase, "bin")] : [];

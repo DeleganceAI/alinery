@@ -7,7 +7,7 @@
 // module cuts them into chunks and uploads them to the daemon's staging area, and CreateTask names the staged uploads.
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
-import { BlobRefSchema, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
+import { type BlobRef, BlobRefSchema, BlobService } from "alinery-proto/alinery/v1/blobs_pb";
 import type { Cursor } from "alinery-proto/alinery/v1/common_pb";
 import type { Task as TaskProto } from "alinery-proto/alinery/v1/entities_pb";
 import { CreateTaskRequestSchema, DraftService, TaskService, WriteDraftRequestSchema } from "alinery-proto/alinery/v1/tasks_pb";
@@ -177,6 +177,19 @@ export async function readBlobSized(repo: string, ref: ReturnType<typeof create<
     at += p.length;
   }
   return { bytes: out, total: Math.max(total, length) };
+}
+
+/** ponytail: the most a file preview reads into memory, for the preview or a saved copy; past it the user opens the file. */
+export const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
+
+/** A file's bytes for its preview, up to `MAX_PREVIEW_BYTES`; `total` says whether that was all of it. */
+export function readPreviewBytes(repo: string, ref: BlobRef): Promise<{ bytes: Uint8Array; total: number }> {
+  return call(() => readBlobSized(repo, ref, MAX_PREVIEW_BYTES));
+}
+
+/** The PDF LibreOffice draws of a presentation `source` on the repository's machine (FAILED_PRECONDITION without it). */
+export function readRenderedPdf(repo: string, source: BlobRef): Promise<Uint8Array> {
+  return call(() => readBlob(repo, create(BlobRefSchema, { target: { case: "renderedPdf", value: { source } } }), MAX_PREVIEW_BYTES));
 }
 
 // ---- create, duplicate --------------------------------------------------------------------------------

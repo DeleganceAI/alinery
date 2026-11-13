@@ -99,6 +99,15 @@ vi.mock("../sync/git", async (actual) => ({
   worktreeDiffForRepo: mocks.worktreeDiff,
 }));
 vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+// A PDF, office file or image tab is CanvasFiles' FileView (its own tests); here only which blob it is handed.
+vi.mock("./CanvasFiles", async (actual) => ({
+  ...(await actual<typeof import("./CanvasFiles")>()),
+  FileView: ({ name, ref }: { name: string; ref: { target: { case: string; value: { path: string } } } }) => (
+    <p data-testid="file-view">
+      {name} {ref.target.case}:{ref.target.value.path}
+    </p>
+  ),
+}));
 vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
 vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../sync/sessions", async (actual) => ({
@@ -2309,6 +2318,14 @@ describe("repository files", () => {
     fireEvent.click(await within(await screen.findByRole("region", { name: "Repository files" })).findByRole("button", { name: "big.log" }));
     expect(await screen.findByText("Too large to show (3.0 MB).")).toBeDefined();
     expect(screen.queryByText("Couldn't show the file.")).toBeNull();
+  });
+
+  it("previews a PDF or office file from the worktree instead of reading it as text", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["deck.pptx"], truncated: false });
+    await renderDetail();
+    fireEvent.click(await within(await screen.findByRole("region", { name: "Repository files" })).findByRole("button", { name: "deck.pptx" }));
+    expect((await screen.findByTestId("file-view")).textContent).toBe("deck.pptx worktreeFile:deck.pptx");
+    expect(fakeArtifacts.readWorktree).not.toHaveBeenCalledWith("/repo", "parent", "deck.pptx");
   });
 
   it("filters the tree by name", async () => {

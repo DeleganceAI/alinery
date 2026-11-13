@@ -11,6 +11,7 @@ import { canvasFilePath, panelFile } from "./canvas.ts";
 import { chatAttachmentsDir, loadChat } from "./chat.ts";
 import { artifactFilePath, resolveArtifactEntry } from "./artifactFiles.ts";
 import { resolveNode } from "./artifactTree.ts";
+import { renderedPdf } from "./rendered.ts";
 import { alineryDir, attachmentsDir, safeComponent, taskDir } from "./taskFiles.ts";
 import { worktreeFilePath } from "./worktreeFiles.ts";
 
@@ -248,6 +249,11 @@ export function canvasFileBlob(repo: string, threadId: string, panel: string, pa
   loadChat(repo, threadId);
   const full = canvasFilePath(repo, threadId, panel, path);
   return regularFileBlob(full, full.slice(full.lastIndexOf("/") + 1), "file");
+}
+
+/** The PDF LibreOffice drew of a presentation (`file`, a path a source blob's resolver checked), cached by `renderedPdf`. */
+export async function renderedPdfBlob(repo: string, file: string): Promise<BlobBytes> {
+  return regularFileBlob(await renderedPdf(repo, file), "rendered.pdf", "rendered PDF", ARTIFACT_FRAME_BYTES);
 }
 
 /** A pasted image a draft keeps in `draft-attachments.json` (base64 inside the file). */
