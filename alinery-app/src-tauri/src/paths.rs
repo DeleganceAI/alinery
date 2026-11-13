@@ -95,6 +95,20 @@ pub(crate) fn require_repo_owned(state: &AppState, repo: &Path) -> Result<(), St
     if let Some(conflict) = state.daemon_conflict(repo) {
         return Err(EnsureDaemonError::Mismatch(Box::new(conflict)).to_string());
     }
+    reserve_gui(state, repo)
+}
+
+/// The gate for closing a repository. Closing needs the folder, not a usable daemon: a conflict no daemon answers for (damaged
+/// task state, a stale lane) leaves nothing to stop, so it does not hold the repository open. One naming an owner still refuses,
+/// since the close would stop a daemon that another window uses.
+pub(crate) fn require_repo_closable(state: &AppState, repo: &Path) -> Result<(), String> {
+    if let Some(conflict) = state.daemon_conflict(repo).filter(|conflict| !conflict.owners.is_empty()) {
+        return Err(EnsureDaemonError::Mismatch(Box::new(conflict)).to_string());
+    }
+    reserve_gui(state, repo)
+}
+
+fn reserve_gui(state: &AppState, repo: &Path) -> Result<(), String> {
     match state.reserve_repo(repo)? {
         Some(reservation) => {
             reservation.commit(state);

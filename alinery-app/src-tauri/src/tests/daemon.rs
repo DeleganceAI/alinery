@@ -1496,3 +1496,43 @@ fn mcp_endpoints_file_is_owner_only_and_holds_the_shape_the_daemon_binary_reads(
     assert_eq!(args[args.len() - 1], path.to_string_lossy());
     let _ = fs::remove_dir_all(&root);
 }
+
+// A repository that cannot open (damaged task state) must still close: no daemon answers for it, so there is nothing to stop.
+// A conflict naming an owner still refuses, since closing would stop a daemon another window uses.
+#[test]
+fn a_repo_that_cannot_open_can_still_be_closed() {
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let repo = std::env::temp_dir().join(format!("alinery-close-damaged-{n}"));
+    fs::create_dir_all(repo.join(".alinery")).unwrap();
+    let conflict = |owners: Vec<crate::DaemonOwnerConflict>| DaemonConflict {
+        repo: repo.display().to_string(),
+        app_protocol: PROTOCOL_VERSION,
+        app_config_identity: "config".into(),
+        owners,
+        issues: vec!["invalid task execution state: missing field `permission`".into()],
+        repairable_tasks: vec!["task".into()],
+        starter: None,
+        joinable: false,
+    };
+    let state = AppState::default();
+    state.set_daemon_conflict(&repo, conflict(Vec::new()));
+    assert!(require_repo_owned(&state, &repo).is_err(), "a damaged repo still refuses work");
+    assert!(crate::require_repo_closable(&state, &repo).is_ok());
+    assert!(state.owns_repo(&repo), "closing claims the folder like any other mutation");
+
+    let owned_elsewhere = AppState::default();
+    owned_elsewhere.set_daemon_conflict(
+        &repo,
+        conflict(vec![crate::DaemonOwnerConflict {
+            lane: "other".into(),
+            pid: Some(1),
+            protocol: Some(PROTOCOL_VERSION),
+            build_id: None,
+            app_config_identity: None,
+            impact: crate::TakeoverImpact::Unknown { detail: "unknown".into() },
+            takeover_unavailable: None,
+        }]),
+    );
+    assert!(crate::require_repo_closable(&owned_elsewhere, &repo).is_err());
+    let _ = fs::remove_dir_all(&repo);
+}
