@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The release signature's entitlements (bundle.macOS.entitlements). Tauri signs the app and its sidecar with the hardened
+  runtime; the sidecar, alinery-vinculum-daemon, is a Bun executable whose bun:ffi (the repo lock, the fsync worker) needs the
+  JIT. Without allow-jit it exits at start with "TypeError: bun:ffi requires the JIT". Checked by signing the daemon with
+  `codesign -o runtime` with and without this file: allow-jit alone lets it start, take its lock, listen and stop on SIGTERM.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

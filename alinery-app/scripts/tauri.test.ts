@@ -6,7 +6,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { childEnvironment, parseDevPort, piDaemonCompile, piDaemonInputs, remoteRuntimesProblem, reserveDevPort, selectTauriLaunch, settledRunner } from "./tauri.mjs";
+import {
+  childEnvironment,
+  parseDevPort,
+  piDaemonCompile,
+  piDaemonInputs,
+  REMOTE_RUNTIME_TARGETS,
+  remoteRuntimesProblem,
+  reserveDevPort,
+  selectTauriLaunch,
+  settledRunner,
+} from "./tauri.mjs";
 
 const DEV_CONFIG_ARGS = ["--config", "src-tauri/tauri.dev.conf.json"];
 
@@ -147,8 +157,14 @@ describe("piDaemonCompile", () => {
 });
 
 describe("remoteRuntimesProblem", () => {
-  it("accepts a manifest that lists at least one target", () => {
-    expect(remoteRuntimesProblem(JSON.stringify({ version: 1, targets: { "x86_64-unknown-linux-gnu": {} } }))).toBeUndefined();
+  it("accepts a manifest that lists every target", () => {
+    const targets = Object.fromEntries(REMOTE_RUNTIME_TARGETS.map((triple) => [triple, {}]));
+    expect(remoteRuntimesProblem(JSON.stringify({ version: 1, targets }))).toBeUndefined();
+  });
+
+  it("names the targets a Linux builder's manifest lacks", () => {
+    const linuxOnly = JSON.stringify({ version: 1, targets: { "x86_64-unknown-linux-gnu": {}, "aarch64-unknown-linux-gnu": {} } });
+    expect(remoteRuntimesProblem(linuxOnly)).toContain("no bundled remote runtime for x86_64-apple-darwin, aarch64-apple-darwin");
   });
 
   it("reports an empty, absent or unreadable manifest", () => {

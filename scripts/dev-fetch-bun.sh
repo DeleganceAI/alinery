@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch Bun at or above scripts/bun-pin.txt, install the pinned pi-durable 1.4.0
+# Fetch Bun at or above scripts/bun-pin.txt (exactly it for --release), install the pinned pi-durable 1.4.0
 # packages, and compile alinery-vinculum-daemon beside the app executable for one cargo
 # profile. `npm run tauri dev` and `npm run tauri build` run this with
 # --no-download; run it bare to allow the Bun download.
@@ -46,7 +46,8 @@ fi
 # an up-to-date output short-circuits both.
 if [ "$FORCE" = 0 ] && [ -f "$DEST" ]; then
   # Recursive: most of the daemon is under src/domain, src/rpc and src/sync, and it bundles playbook-engine.
-  if [ -z "$(find "$PIN_FILE" "$PKG/package.json" "$PKG/src" "$ROOT/playbook-engine/src" "$ROOT/proto/gen" -type f -newer "$DEST" -print -quit)" ]; then
+  # The app's package.json too: the daemon embeds its version (main.ts), and a release must not ship the last one's.
+  if [ -z "$(find "$PIN_FILE" "$PKG/package.json" "$PKG/bun.lock" "$ROOT/alinery-app/package.json" "$PKG/src" "$ROOT/playbook-engine/src" "$ROOT/proto/gen" -type f -newer "$DEST" -print -quit)" ]; then
     echo "alinery-vinculum-daemon: $DEST (up to date)"
     exit 0
   fi
@@ -61,6 +62,8 @@ if [ -z "$BUN" ] && command -v bun >/dev/null 2>&1 && version_ok "$(bun --versio
 fi
 if [ -z "$BUN" ]; then
   if [ "$DOWNLOAD" = 0 ]; then
+    # A release without Bun would bundle whatever daemon target/release last held.
+    [ "$PROFILE" = release ] && { echo "ERROR: Bun $PIN is not installed, so the release daemon cannot be compiled (run scripts/dev-fetch-bun.sh)" >&2; exit 1; }
     echo "alinery-vinculum-daemon: skipped (Bun $PIN is not installed; run scripts/dev-fetch-bun.sh to fetch it)"
     exit 0
   fi
@@ -70,12 +73,23 @@ if [ -z "$BUN" ]; then
 fi
 GOT="$("$BUN" --version)"
 version_ok "$GOT" "$PIN" || { echo "ERROR: Bun $GOT is older than $PIN" >&2; exit 1; }
+# A release is built by exactly the pinned Bun from exactly the lockfile; a dev build takes a newer Bun and may refresh the lock.
+if [ "$PROFILE" = release ]; then
+  [ "$GOT" = "$PIN" ] || { echo "ERROR: a release daemon needs Bun $PIN exactly, not $GOT" >&2; exit 1; }
+fi
 
 "$ROOT/scripts/install-proto.sh"
-(cd "$PKG" && "$BUN" install --frozen-lockfile || "$BUN" install)
+if [ "$PROFILE" = release ]; then
+  (cd "$PKG" && "$BUN" install --frozen-lockfile)
+else
+  (cd "$PKG" && "$BUN" install --frozen-lockfile || "$BUN" install)
+fi
+# x64 Linux: the baseline build, which runs without AVX2 (older CPUs and many VMs); the remote x64 runtime uses it too.
+COMPILE_TARGET=()
+[ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] && COMPILE_TARGET=(--target=bun-linux-x64-baseline)
 # Compile beside the output and rename over it: a daemon still running the old build keeps its own file, where a write
 # in place would change the pages under it (macOS kills a signed executable whose pages change).
-"$BUN" build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --outfile "$DEST.tmp"
+"$BUN" build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile ${COMPILE_TARGET[@]+"${COMPILE_TARGET[@]}"} --outfile "$DEST.tmp"
 chmod +x "$DEST.tmp"
 mv -f "$DEST.tmp" "$DEST"
 BYTES="$(wc -c < "$DEST" | tr -d ' ')"

@@ -37,9 +37,8 @@ function isDevLaunch(args) {
   return args.find((arg) => TAURI_SUBCOMMANDS.has(arg)) === "dev";
 }
 
-// The Vinculum daemon is deliberately not an externalBin, so no
-// cargo or tauri step compiles it. These two launches compile it beside the app
-// executable they are about to run; every other subcommand leaves it alone.
+// The Vinculum daemon is the externalBin, but no cargo or tauri step compiles it (copy-sidecar.sh only places it). These
+// two launches compile it beside the app executable they are about to run; every other subcommand leaves it alone.
 export function piDaemonCompile(args) {
   const subcommand = args.find((arg) => TAURI_SUBCOMMANDS.has(arg));
   if (!PI_DAEMON_SUBCOMMANDS.has(subcommand)) {
@@ -49,8 +48,11 @@ export function piDaemonCompile(args) {
 }
 
 // Remote (SSH) repos install the Linux and macOS runtimes bundled by scripts/build-remote-runtimes.sh,
-// which dev and build run first. A build without them still serves local repos, so a missing set only warns; release sets
-// ALINERY_REQUIRE_REMOTE_RUNTIMES=1 to make it fatal.
+// which dev and build run first. A build without them still serves local repos, so a missing one only warns; release sets
+// ALINERY_REQUIRE_REMOTE_RUNTIMES=1 to make it fatal. Every target counts: a Linux builder skips the darwin ones (no vtool or
+// codesign), and that build could not open a macOS host.
+export const REMOTE_RUNTIME_TARGETS = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"];
+
 export function remoteRuntimesProblem(manifestText) {
   let targets = {};
   try {
@@ -58,7 +60,9 @@ export function remoteRuntimesProblem(manifestText) {
   } catch {
     // Absent or unreadable manifest counts as no runtimes.
   }
-  return Object.keys(targets).length > 0 ? undefined : "no bundled remote runtimes (run scripts/build-remote-runtimes.sh); remote repositories will be unavailable in this build";
+  const missing = REMOTE_RUNTIME_TARGETS.filter((triple) => !(triple in targets));
+  if (missing.length === 0) return undefined;
+  return `no bundled remote runtime for ${missing.join(", ")} (run scripts/build-remote-runtimes.sh on a Mac, or copy a full resources/remote/ and set ALINERY_REMOTE_RUNTIMES_PREBUILT=1); remote repositories on those systems will be unavailable in this build`;
 }
 
 function devServerConfig(port) {
@@ -317,7 +321,9 @@ async function run(args) {
     const launch = selectTauriLaunch(args, import.meta.url, reservation?.port);
     const compile = piDaemonCompile(args);
     const subcommand = args.find((arg) => TAURI_SUBCOMMANDS.has(arg));
-    if (subcommand === "dev" || subcommand === "build") {
+    // A release whose runtimes were built on another machine (a Linux job given the macOS job's) keeps them: the build
+    // script starts by deleting the old archives.
+    if ((subcommand === "dev" || subcommand === "build") && process.env.ALINERY_REMOTE_RUNTIMES_PREBUILT !== "1") {
       await buildRemoteRuntimes(launch.sourceRoot);
     }
     if (subcommand === "build") {
