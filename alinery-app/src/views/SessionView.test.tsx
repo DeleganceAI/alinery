@@ -271,10 +271,15 @@ describe("SessionView artifact pane", () => {
     expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("heading", { name: "Ticket" })).toBeDefined();
     expect(screen.getByRole("group", { name: "Artifact category" })).toBeDefined();
+    // One view at a time: the conversation stays mounted, hidden, under an open file.
+    const conversation = document.querySelector<HTMLElement>(".termhost");
+    expect(conversation?.hidden).toBe(true);
 
     fireEvent.click(tabs.getByRole("button", { name: "Close 07-notes.md" }));
     expect(tabs.queryByRole("button", { name: "07-notes.md" })).toBeNull();
     expect(tabs.getByRole("button", { name: "Agent conversation" }).getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".termhost")).toBe(conversation);
+    expect(conversation?.hidden).toBe(false);
   });
 
   it("shows a comment another client added, with no poll", async () => {

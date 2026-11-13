@@ -4606,6 +4606,9 @@ header:has(~ main .task-info-panel) nav.tabs {
   line-height: 1.7;
   user-select: text;
   color: var(--text);
+  /* The site's periwinkle: the accent pulled toward muted text, for labels and markers. */
+  --md-label: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
+  --md-tint: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .md h1,
 .md h2,
@@ -4614,13 +4617,17 @@ header:has(~ main .task-info-panel) nav.tabs {
   color: var(--text-strong);
   line-height: 1.2;
   font-weight: 650;
+  letter-spacing: -0.012em;
 }
 .md h1 {
   margin: 0 0 1em;
   font-size: calc(24px * var(--ui-scale));
+  letter-spacing: -0.02em;
 }
 .md h2 {
-  margin: 1.7em 0 0.75em;
+  margin: 1.9em 0 0.8em;
+  padding-bottom: 0.45em;
+  border-bottom: 1px solid var(--border);
   font-size: calc(20px * var(--ui-scale));
 }
 .md h3 {
@@ -4644,44 +4651,83 @@ header:has(~ main .task-info-panel) nav.tabs {
   padding-left: 0.15em;
 }
 .md li::marker {
-  color: var(--text-faint);
+  color: var(--md-label);
+}
+.md ol > li::marker {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
 }
 .md a {
   color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 0.18em;
+  transition: text-decoration-color var(--dur-fast) ease;
+}
+.md a:hover {
+  text-decoration-color: currentColor;
 }
 .md strong {
   color: var(--text-strong);
 }
 .md hr {
   border: 0;
-  border-top: 1px solid var(--border);
-  margin: 1.4em 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong) 20%, var(--border-strong) 80%, transparent);
+  margin: 1.8em 0;
 }
 .md blockquote {
   margin: 1.1em 0;
-  padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid var(--border-strong);
+  padding: 0.6em 1em;
+  border-left: 2px solid var(--md-label);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--md-tint);
   color: var(--text-muted);
 }
+.md blockquote > :last-child {
+  margin-bottom: 0;
+}
+/* Tables: one rounded hairline frame, row rules only, a mono label row on a faint accent wash. */
 .md table {
   width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  margin: 1em 0 1.4em;
-  font-size: calc(14px * var(--ui-scale));
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 1.1em 0 1.5em;
+  font-size: 0.93em;
+  line-height: 1.55;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface-raised);
 }
 .md th,
 .md td {
-  border: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: 8px 14px;
+  text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
   word-break: break-word;
+  border-bottom: 1px solid var(--border);
+}
+.md tr:last-child > td {
+  border-bottom: 0;
 }
 .md th {
-  color: var(--text-strong);
-  background: var(--surface-subtle);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--md-label);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), var(--md-tint));
+}
+.md tbody tr {
+  transition: background var(--dur-fast) ease;
+}
+.md tbody tr:hover {
+  background: var(--md-tint);
+}
+.md td code {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-subtle));
 }
 .md code,
 .md pre {
@@ -4691,17 +4737,19 @@ header:has(~ main .task-info-panel) nav.tabs {
   color: var(--text-strong);
   background: var(--surface-subtle);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  padding: 0.08em 0.38em;
+  font-size: 0.86em;
   white-space: break-spaces;
 }
 .md pre {
   margin: 1em 0 1.35em;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-subtle);
   color: var(--text);
+  font-size: 0.9em;
   overflow-x: hidden;
   overflow-y: visible;
   white-space: pre-wrap;
@@ -7494,8 +7542,8 @@ header:has(~ main .task-info-panel) nav.tabs {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-/* The session view's main pane: its tabs over the conversation. An open artifact covers the conversation rather than
-   replacing it, so the chat keeps its scroll and the terminal its size. */
+/* The session view's main pane: its tabs, then one view at a time. An open file replaces the conversation, which stays
+   mounted but hidden (as the task view hides its Sessions tab), so the chat and terminal keep their state. */
 .session-main {
   display: flex;
   min-width: 0;
@@ -7507,16 +7555,17 @@ header:has(~ main .task-info-panel) nav.tabs {
   margin: 0;
 }
 .session-main-body {
-  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
 }
 .session-artifact-view {
-  position: absolute;
-  inset: 12px;
-  z-index: 3;
+  min-width: 0;
+  margin: 12px;
   background: var(--surface);
+}
+.session-main-body > .termhost[hidden] {
+  display: none;
 }
 .task-sessions-tab {
   display: flex;
@@ -8500,12 +8549,11 @@ header:has(~ main .task-info-panel) nav.tabs {
   box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: clamp(20px, 3.2vw, 46px);
+  /* The reading column is at most 980px wide, centered by the side padding (children keep their own margins). */
+  --artifact-gutter: clamp(20px, 3.2vw, 46px);
+  padding: var(--artifact-gutter) max(var(--artifact-gutter), calc((100% - 980px) / 2));
   font-size: calc(var(--artifact-font-size) * var(--ui-scale));
   background: var(--surface);
-}
-.artifactmd > * {
-  max-width: min(980px, 100%);
 }
 .artifactmd > h1:first-child,
 .artifactmd > h2:first-child,

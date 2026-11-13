@@ -1526,7 +1526,7 @@ export function SessionView({
                   )}
                 </div>
               )}
-              <div className="termhost" ref={termhostRef}>
+              <div className="termhost" ref={termhostRef} hidden={Boolean(fileTabs.current)}>
                 {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
                   <div className="session-view-loading" role="status" aria-live="polite">
                     <LoadingState label="Opening session…" state="connecting" />
