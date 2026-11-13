@@ -241,3 +241,72 @@ test("a save that expects the file as it was is a conflict when it changed meanw
   await savePlaybook(roots, ref, PLAYBOOK("mine", "B"), true, Buffer.from(PLAYBOOK("mine", "Edited")));
   expect(readFileSync(t.file("mine"), "utf8")).toBe(PLAYBOOK("mine", "B"));
 });
+
+test("a download kept for every repository goes to the machine's library and its registry, and updates there", async () => {
+  const t = await start();
+  const r = (await t.svc.importCommunityPlaybook({ meta: t.meta(), id: ID, package: await t.stage(PLAYBOOK("mine")), overwrite: false, global: true })).result!;
+  expect(r.outcome).toBe(O.SAVED);
+  expect(r.reference).toMatchObject({ scope: "global", key: "mine" });
+  expect(existsSync(join(t.dir, "playbooks/mine/playbook.md"))).toBe(true);
+  expect(existsSync(t.file("mine"))).toBe(false);
+  expect(readFileSync(join(t.dir, "playbooks/community-imports.toml"), "utf8")).toContain('local_scope = "global"');
+  expect(t.row()!.imports.map((i) => [i.id, i.localScope, i.locallyEdited])).toEqual([[ID, "global", false]]);
+  // Downloaded once is downloaded, whichever library holds it.
+  expect((await t.importIt(ID, PLAYBOOK("mine"))).outcome).toBe(O.ALREADY_DOWNLOADED);
+  const doc = PLAYBOOK("mine", "Newer");
+  expect((await t.updateIt(ID, doc)).outcome).toBe(O.SAVED);
+  expect(readFileSync(join(t.dir, "playbooks/mine/playbook.md"), "utf8")).toBe(doc);
+});
+
+test("keep as mine forgets the download and leaves its file", async () => {
+  const t = await start();
+  await t.importIt(ID, PLAYBOOK("mine"));
+  await t.svc.forgetCommunityImport({ meta: t.meta(), id: ID });
+  expect(t.row()!.imports).toEqual([]);
+  expect(existsSync(t.file("mine"))).toBe(true);
+  // An id with no record is nothing to do.
+  await t.svc.forgetCommunityImport({ meta: t.meta(), id: ID2 });
+});
+
+test("a publication link follows the playbook it was published from, moves between scopes and is forgotten", async () => {
+  const t = await start();
+  const links = () => t.row()!.published.map((p) => [p.id, p.reference?.scope, p.reference?.key]);
+  await t.svc.recordPublication({ meta: t.meta(), id: ID, reference: { scope: "repo", key: "mine" } });
+  expect(links()).toEqual([[ID, "repo", "mine"]]);
+  await t.svc.recordPublication({ meta: t.meta(), id: ID, reference: { scope: "global", key: "mine" } });
+  expect(links()).toEqual([[ID, "global", "mine"]]);
+  // One listing per playbook: linking another id to the same playbook replaces the first.
+  await t.svc.recordPublication({ meta: t.meta(), id: ID2, reference: { scope: "global", key: "mine" } });
+  expect(links()).toEqual([[ID2, "global", "mine"]]);
+  await t.svc.recordPublication({ meta: t.meta(), id: ID2 });
+  expect(links()).toEqual([]);
+  const refused = await t.svc.recordPublication({ meta: t.meta(), id: ID, reference: { scope: "bundled", key: "review" } }).then(() => null, (e) => ConnectError.from(e));
+  expect(refused).not.toBeNull();
+});
+
+test("a removed built-in is listed as hidden until it is restored", async () => {
+  const t = await start();
+  const library = () => {
+    t.row();
+    const e = t.store.get("playbook/_/library");
+    return e?.value.case === "playbookLibrary" ? e.value.value.hidden.map((h) => [h.key, h.title]) : undefined;
+  };
+  expect(library()).toEqual([]);
+  await t.svc.deletePlaybook({ meta: t.meta(), reference: { scope: "bundled", key: "review" } });
+  expect(library()).toEqual([["review", "Evidence-Backed Code Review"]]);
+  expect(t.store.get("playbook/bundled/review")).toBeUndefined();
+  await t.svc.restoreBundledPlaybook({ meta: t.meta(), key: "review" });
+  expect(library()).toEqual([]);
+  expect(t.store.get("playbook/bundled/review")).toBeDefined();
+});
+
+test("a catalog row carries its file's hash and its steps without prompts", async () => {
+  const t = await start();
+  const doc = PLAYBOOK("mine");
+  await t.importIt(ID, doc);
+  t.row();
+  const e = t.store.get("playbook/repo/mine");
+  const value = e?.value.case === "playbook" ? e.value.value : undefined;
+  expect(value?.bodySha256).toBe(sha(doc));
+  expect(value?.steps.map((s) => [s.key, s.title, s.inputs.map((i) => [i.path, i.mode]), s.outputs.map((o) => o.path)])).toEqual([["run", "Run", [["ticket.md", "single"]], ["result.md"]]]);
+});

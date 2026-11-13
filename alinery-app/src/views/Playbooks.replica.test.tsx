@@ -15,7 +15,7 @@ import { Playbooks } from "./Playbooks";
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 vi.mock("../ipc", async () => (await import("../test/mockIpc")).mockIpc());
 vi.mock("../sync/community", () => ({
-  listCommunityImports: vi.fn(async () => ({ imports: [] })),
+  listCommunityImports: vi.fn(async () => ({ imports: [], published: [] })),
   communityDownloadStatus: vi.fn(async () => ({ rows: [] })),
 }));
 

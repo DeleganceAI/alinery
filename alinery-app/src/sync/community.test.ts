@@ -6,7 +6,7 @@ import { CommunityImportOutcome, type PlaybookService } from "alinery-proto/alin
 import { afterEach, expect, it, vi } from "vitest";
 import { daemonTransport } from "../daemon/transport";
 import { cursor, daemonHarness, entity, scriptedSync, snapshot, untilAborted } from "../test/daemonHarness";
-import { communityDownloadStatus, importCommunityPlaybook, listCommunityImports, publishCommunityPlaybook, updateCommunityImport } from "./community";
+import { communityDownloadStatus, importCommunityPlaybook, listCommunityImports, publishCommunityPlaybook, unpublishCommunityPlaybook, updateCommunityImport } from "./community";
 
 vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
 const ipcMocks = vi.hoisted(() => ({
@@ -14,6 +14,7 @@ const ipcMocks = vi.hoisted(() => ({
   communityRemoteStatus: vi.fn(),
   downloadCommunitySource: vi.fn(),
   publishCommunityPlaybook: vi.fn(),
+  unpublishCommunityPlaybook: vi.fn(),
 }));
 vi.mock("../ipc", () => ipcMocks);
 const uploads = vi.hoisted(() => ({ upload: vi.fn() }));
@@ -45,7 +46,8 @@ function serve(playbooks: Partial<ServiceImpl<typeof PlaybookService>> = {}, com
 it("lists what the daemon's registry says, and a registry it could not read rejects with the reason", async () => {
   serve();
   expect(await listCommunityImports({ repoPath: "/a" })).toEqual({
-    imports: [{ id: ID, label: "nyx", playbookKey: "review", localKey: "review", importedVersion: 3, locallyEdited: false, localMissing: false }],
+    imports: [{ id: ID, label: "nyx", playbookKey: "review", localKey: "review", importedVersion: 3, locallyEdited: false, localMissing: false, localScope: "repo" }],
+    published: [],
   });
   serve({}, create(PlaybookCommunitySchema, { error: "invalid /a/.alinery/playbooks/community-imports.toml" }));
   await expect(listCommunityImports({ repoPath: "/a" })).rejects.toThrow("invalid /a/.alinery/playbooks/community-imports.toml");
@@ -143,6 +145,35 @@ it("publishing sends the playbook as the daemon holds it, with its declared key"
   expect(ipcMocks.publishCommunityPlaybook).toHaveBeenCalledWith({ source: "+++\nkey\n+++\n", key: "review", label: "nyx" });
   await publishCommunityPlaybook({ reference, repoPath: "/a" });
   expect(ipcMocks.publishCommunityPlaybook).toHaveBeenLastCalledWith({ source: "+++\nkey\n+++\n", key: "review" });
+});
+
+it("a published listing is linked to the copy it came from, and unpublishing forgets the link", async () => {
+  const recorded: unknown[] = [];
+  ipcMocks.publishCommunityPlaybook.mockResolvedValue({ kind: "saved", id: ID, label: "nyx", playbookKey: "review", title: "R", description: "", version: 1 });
+  ipcMocks.unpublishCommunityPlaybook.mockResolvedValueOnce({ kind: "failed", message: "You cannot remove this playbook." }).mockResolvedValueOnce({ kind: "removed" });
+  serve({
+    readPlaybook: () =>
+      ({
+        reference: { scope: "global", key: "review" },
+        definition: { version: 2, key: "review", title: "R", description: "", defaultModel: "", defaultHarness: "", step: [], preamble: "", sectionOrder: [] },
+        sourceText: "+++\nkey\n+++\n",
+        revision: 1n,
+      }) as never,
+    recordPublication: (req) => {
+      recorded.push({ id: req.id, reference: req.reference && { scope: req.reference.scope, key: req.reference.key } });
+      return { applied: { cursor: cursor(1) } };
+    },
+  });
+  expect((await publishCommunityPlaybook({ reference: { scope: "global", key: "review" }, repoPath: "/a" })).kind).toBe("saved");
+  expect(recorded).toEqual([{ id: ID, reference: { scope: "global", key: "review" } }]);
+  // A refusal leaves the link: the listing is still live.
+  expect(await unpublishCommunityPlaybook({ id: ID, repoPath: "/a" })).toEqual({ kind: "failed", message: "You cannot remove this playbook." });
+  expect(recorded).toHaveLength(1);
+  expect(await unpublishCommunityPlaybook({ id: ID, repoPath: "/a" })).toEqual({ kind: "removed" });
+  expect(recorded).toEqual([
+    { id: ID, reference: { scope: "global", key: "review" } },
+    { id: ID, reference: undefined },
+  ]);
 });
 
 it("a playbook the daemon calls invalid never leaves this machine", async () => {

@@ -327,8 +327,9 @@ export function resolvePlaybook(roots: Roots, ref: Ref): Scoped {
 const SCOPE_ORDER: Record<Scope, number> = { bundled: 0, global: 1, repo: 2 };
 const compareRefs = (a: Ref, b: Ref) => SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope] || compareStrings(a.key, b.key);
 
-/** core `load_playbook_catalog`: never throws; what cannot be read becomes a diagnostic. */
-export function loadCatalog(roots: Roots): Catalog {
+/** core `load_playbook_catalog`: never throws; what cannot be read becomes a diagnostic. `resolved` sees each definition that parsed
+ * (the projector takes its steps and hash from it without a second read; the conformance shape stays the Rust one). */
+export function loadCatalog(roots: Roots, resolved?: (found: Scoped) => void): Catalog {
   const references: Ref[] = BUNDLED_PLAYBOOKS.map(([key]) => ({ scope: "bundled", key }));
   const diagnostics: DocDiagnostic[] = [];
   for (const scope of ["global", "repo"] as const) {
@@ -365,6 +366,7 @@ export function loadCatalog(roots: Roots): Catalog {
     const source = sourceFor(roots, reference);
     try {
       const found = resolvePlaybook(roots, reference);
+      resolved?.(found);
       candidates.push({ source: found.source, title: found.definition.title, description: found.definition.description, modified_at_ms: found.modified_at_ms, diagnostics: [] });
     } catch (e) {
       if (!(e instanceof LoadFailure)) throw e;
@@ -415,6 +417,9 @@ async function withLibraryLock<T>(roots: Roots, scope: Scope, mutate: (root: str
   queue.set("library", run);
   return run;
 }
+
+/** The machine's library lock, for a read-modify-write of a file beside the global playbooks. */
+export const withGlobalLibraryLock = <T>(roots: Roots, mutate: () => T): Promise<T> => withLibraryLock(roots, "global", () => mutate());
 
 /** core `with_repo_library_lock`: `mutate` runs under the repository library's lock, so a read-modify-write of a file beside the playbooks is whole. */
 export const withRepoLibraryLock = <T>(roots: Roots, mutate: () => T): Promise<T> => withLibraryLock(roots, "repo", () => mutate());
@@ -490,6 +495,30 @@ export async function deletePlaybook(roots: Roots, ref: Ref): Promise<void> {
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "ENOTEMPTY" && (e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       }
+    } catch (e) {
+      ioSave(e);
+    }
+  });
+}
+
+/** The bundled playbooks a global tombstone hides, with the title each ships with. */
+export function hiddenBundled(roots: Roots): { key: string; title: string }[] {
+  return BUNDLED_PLAYBOOKS.filter(([key]) => {
+    try {
+      return bundledDeleted(roots, key);
+    } catch {
+      return false;
+    }
+  }).map(([key, text]) => ({ key, title: parsePlaybookDocument(text).document?.title ?? key }));
+}
+
+/** Undoes `deletePlaybook` of a bundled playbook: its tombstone goes. No tombstone is nothing to do. */
+export async function restoreBundled(roots: Roots, key: string): Promise<void> {
+  if (!BUNDLED_PLAYBOOKS.some(([k]) => k === key)) throw new SaveFailure({ kind: "unknown", source: sourceFor(roots, { scope: "bundled", key }) });
+  return withLibraryLock(roots, "global", (base) => {
+    try {
+      const path = join(base, `.deleted-bundled-${key}`);
+      if (checkLeaf(path)) rmSync(path);
     } catch (e) {
       ioSave(e);
     }

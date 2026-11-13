@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/playbooks.proto.
  */
 export const file_alinery_v1_playbooks: GenFile = /*@__PURE__*/
-  fileDesc("ChphbGluZXJ5L3YxL3BsYXlib29rcy5wcm90bxIKYWxpbmVyeS52MSIrCg1QbGF5Ym9va0lucHV0EgwKBHBhdGgYASABKAkSDAoEbW9kZRgCIAEoCSIwCg5QbGF5Ym9va091dHB1dBIMCgRwYXRoGAEgASgJEhAKCHJlcXVpcmVkGAIgASgIIvcBCgxQbGF5Ym9va1N0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJEg0KBXNob3J0GAMgASgJEhYKDmlzX2NvZGluZ19zdGVwGAQgASgIEhwKFGF1dG9fYWR2YW5jZV9kZWZhdWx0GAUgASgIEikKBmlucHV0cxgGIAMoCzIZLmFsaW5lcnkudjEuUGxheWJvb2tJbnB1dBIrCgdvdXRwdXRzGAcgAygLMhouYWxpbmVyeS52MS5QbGF5Ym9va091dHB1dBINCgVtb2RlbBgIIAEoCRIPCgdoYXJuZXNzGAkgASgJEg4KBnByb21wdBgKIAEoCSLXAQoSUGxheWJvb2tEZWZpbml0aW9uEg8KB3ZlcnNpb24YASABKA0SCwoDa2V5GAIgASgJEg0KBXRpdGxlGAMgASgJEhMKC2Rlc2NyaXB0aW9uGAQgASgJEhUKDWRlZmF1bHRfbW9kZWwYBSABKAkSFwoPZGVmYXVsdF9oYXJuZXNzGAYgASgJEiYKBHN0ZXAYByADKAsyGC5hbGluZXJ5LnYxLlBsYXlib29rU3RlcBIQCghwcmVhbWJsZRgIIAEoCRIVCg1zZWN0aW9uX29yZGVyGAkgAygJIkEKE1JlYWRQbGF5Ym9va1JlcXVlc3QSKgoJcmVmZXJlbmNlGAEgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZiLpAQoUUmVhZFBsYXlib29rUmVzcG9uc2USKgoJcmVmZXJlbmNlGAEgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIRCgRwYXRoGAIgASgJSACIAQESMgoKZGVmaW5pdGlvbhgDIAEoCzIeLmFsaW5lcnkudjEuUGxheWJvb2tEZWZpbml0aW9uEhMKC3NvdXJjZV90ZXh0GAQgASgJEhsKDm1vZGlmaWVkX2F0X21zGAUgASgESAGIAQESEAoIcmV2aXNpb24YBiABKARCBwoFX3BhdGhCEQoPX21vZGlmaWVkX2F0X21zIikKF1ZhbGlkYXRlUGxheWJvb2tSZXF1ZXN0Eg4KBnNvdXJjZRgBIAEoCSKXAQoYVmFsaWRhdGVQbGF5Ym9va1Jlc3BvbnNlEjcKCmRlZmluaXRpb24YASABKAsyHi5hbGluZXJ5LnYxLlBsYXlib29rRGVmaW5pdGlvbkgAiAEBEjMKC2RpYWdub3N0aWNzGAIgAygLMh4uYWxpbmVyeS52MS5QbGF5Ym9va0RpYWdub3N0aWNCDQoLX2RlZmluaXRpb24iSwoVUmVuZGVyUGxheWJvb2tSZXF1ZXN0EjIKCmRlZmluaXRpb24YASABKAsyHi5hbGluZXJ5LnYxLlBsYXlib29rRGVmaW5pdGlvbiIoChZSZW5kZXJQbGF5Ym9va1Jlc3BvbnNlEg4KBnNvdXJjZRgBIAEoCSKkAQoTU2F2ZVBsYXlib29rUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoGdGFyZ2V0GAIgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIOCgZzb3VyY2UYAyABKAkSEQoJb3ZlcndyaXRlGAQgASgIEhkKEWV4cGVjdGVkX3JldmlzaW9uGAUgASgEIm0KFFNhdmVQbGF5Ym9va1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSLwoFc2F2ZWQYAiABKAsyIC5hbGluZXJ5LnYxLlJlYWRQbGF5Ym9va1Jlc3BvbnNlIoYBChVEZWxldGVQbGF5Ym9va1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEioKCXJlZmVyZW5jZRgCIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWYSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAQiPgoWRGVsZXRlUGxheWJvb2tSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIrgBChFTYXZlUGlja2VyUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDgoGZ2xvYmFsGAIgASgIEiYKBW9yZGVyGAMgAygLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIoCgdlbnRyaWVzGAQgAygLMhcuYWxpbmVyeS52MS5QaWNrZXJFbnRyeRIZChFleHBlY3RlZF9yZXZpc2lvbhgFIAEoBCI6ChJTYXZlUGlja2VyUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJbChBDb21tdW5pdHlQYWNrYWdlEhEKCXVwbG9hZF9pZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgEEg0KBWxhYmVsGAMgASgJEhQKDHBsYXlib29rX2tleRgEIAEoCSKWAQoeSW1wb3J0Q29tbXVuaXR5UGxheWJvb2tSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIKCgJpZBgCIAEoCRItCgdwYWNrYWdlGAMgASgLMhwuYWxpbmVyeS52MS5Db21tdW5pdHlQYWNrYWdlEhEKCW92ZXJ3cml0ZRgEIAEoCCKbAQocVXBkYXRlQ29tbXVuaXR5SW1wb3J0UmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESCgoCaWQYAiABKAkSLQoHcGFja2FnZRgDIAEoCzIcLmFsaW5lcnkudjEuQ29tbXVuaXR5UGFja2FnZRIYChBvdmVyd3JpdGVfZWRpdGVkGAQgASgIIoECChVDb21tdW5pdHlJbXBvcnRSZXN1bHQSMwoHb3V0Y29tZRgBIAEoDjIiLmFsaW5lcnkudjEuQ29tbXVuaXR5SW1wb3J0T3V0Y29tZRIqCglyZWZlcmVuY2UYAiABKAsyFy5hbGluZXJ5LnYxLlBsYXlib29rUmVmEhgKEGltcG9ydGVkX3ZlcnNpb24YAyABKAQSFAoMbG9jYWxfc2hhMjU2GAQgASgJEhEKCWxvY2FsX2tleRgFIAEoCRIzCgtkaWFnbm9zdGljcxgGIAMoCzIeLmFsaW5lcnkudjEuUGxheWJvb2tEaWFnbm9zdGljEg8KB21lc3NhZ2UYByABKAkiegofSW1wb3J0Q29tbXVuaXR5UGxheWJvb2tSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEjEKBnJlc3VsdBgCIAEoCzIhLmFsaW5lcnkudjEuQ29tbXVuaXR5SW1wb3J0UmVzdWx0IngKHVVwZGF0ZUNvbW11bml0eUltcG9ydFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSMQoGcmVzdWx0GAIgASgLMiEuYWxpbmVyeS52MS5Db21tdW5pdHlJbXBvcnRSZXN1bHQqrgIKFkNvbW11bml0eUltcG9ydE91dGNvbWUSKAokQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASIgoeQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX1NBVkVEEAESJQohQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX0NPTkZMSUNUEAISLworQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX0FMUkVBRFlfRE9XTkxPQURFRBADEiMKH0NPTU1VTklUWV9JTVBPUlRfT1VUQ09NRV9FRElURUQQBBIkCiBDT01NVU5JVFlfSU1QT1JUX09VVENPTUVfSU5WQUxJRBAFEiMKH0NPTU1VTklUWV9JTVBPUlRfT1VUQ09NRV9GQUlMRUQQBjL3BQoPUGxheWJvb2tTZXJ2aWNlElEKDFJlYWRQbGF5Ym9vaxIfLmFsaW5lcnkudjEuUmVhZFBsYXlib29rUmVxdWVzdBogLmFsaW5lcnkudjEuUmVhZFBsYXlib29rUmVzcG9uc2USXQoQVmFsaWRhdGVQbGF5Ym9vaxIjLmFsaW5lcnkudjEuVmFsaWRhdGVQbGF5Ym9va1JlcXVlc3QaJC5hbGluZXJ5LnYxLlZhbGlkYXRlUGxheWJvb2tSZXNwb25zZRJXCg5SZW5kZXJQbGF5Ym9vaxIhLmFsaW5lcnkudjEuUmVuZGVyUGxheWJvb2tSZXF1ZXN0GiIuYWxpbmVyeS52MS5SZW5kZXJQbGF5Ym9va1Jlc3BvbnNlElEKDFNhdmVQbGF5Ym9vaxIfLmFsaW5lcnkudjEuU2F2ZVBsYXlib29rUmVxdWVzdBogLmFsaW5lcnkudjEuU2F2ZVBsYXlib29rUmVzcG9uc2USVwoORGVsZXRlUGxheWJvb2sSIS5hbGluZXJ5LnYxLkRlbGV0ZVBsYXlib29rUmVxdWVzdBoiLmFsaW5lcnkudjEuRGVsZXRlUGxheWJvb2tSZXNwb25zZRJLCgpTYXZlUGlja2VyEh0uYWxpbmVyeS52MS5TYXZlUGlja2VyUmVxdWVzdBoeLmFsaW5lcnkudjEuU2F2ZVBpY2tlclJlc3BvbnNlEnIKF0ltcG9ydENvbW11bml0eVBsYXlib29rEiouYWxpbmVyeS52MS5JbXBvcnRDb21tdW5pdHlQbGF5Ym9va1JlcXVlc3QaKy5hbGluZXJ5LnYxLkltcG9ydENvbW11bml0eVBsYXlib29rUmVzcG9uc2USbAoVVXBkYXRlQ29tbXVuaXR5SW1wb3J0EiguYWxpbmVyeS52MS5VcGRhdGVDb21tdW5pdHlJbXBvcnRSZXF1ZXN0GikuYWxpbmVyeS52MS5VcGRhdGVDb21tdW5pdHlJbXBvcnRSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common, file_alinery_v1_entities]);
+  fileDesc("ChphbGluZXJ5L3YxL3BsYXlib29rcy5wcm90bxIKYWxpbmVyeS52MSIrCg1QbGF5Ym9va0lucHV0EgwKBHBhdGgYASABKAkSDAoEbW9kZRgCIAEoCSIwCg5QbGF5Ym9va091dHB1dBIMCgRwYXRoGAEgASgJEhAKCHJlcXVpcmVkGAIgASgIIvcBCgxQbGF5Ym9va1N0ZXASCwoDa2V5GAEgASgJEg0KBXRpdGxlGAIgASgJEg0KBXNob3J0GAMgASgJEhYKDmlzX2NvZGluZ19zdGVwGAQgASgIEhwKFGF1dG9fYWR2YW5jZV9kZWZhdWx0GAUgASgIEikKBmlucHV0cxgGIAMoCzIZLmFsaW5lcnkudjEuUGxheWJvb2tJbnB1dBIrCgdvdXRwdXRzGAcgAygLMhouYWxpbmVyeS52MS5QbGF5Ym9va091dHB1dBINCgVtb2RlbBgIIAEoCRIPCgdoYXJuZXNzGAkgASgJEg4KBnByb21wdBgKIAEoCSLXAQoSUGxheWJvb2tEZWZpbml0aW9uEg8KB3ZlcnNpb24YASABKA0SCwoDa2V5GAIgASgJEg0KBXRpdGxlGAMgASgJEhMKC2Rlc2NyaXB0aW9uGAQgASgJEhUKDWRlZmF1bHRfbW9kZWwYBSABKAkSFwoPZGVmYXVsdF9oYXJuZXNzGAYgASgJEiYKBHN0ZXAYByADKAsyGC5hbGluZXJ5LnYxLlBsYXlib29rU3RlcBIQCghwcmVhbWJsZRgIIAEoCRIVCg1zZWN0aW9uX29yZGVyGAkgAygJIkEKE1JlYWRQbGF5Ym9va1JlcXVlc3QSKgoJcmVmZXJlbmNlGAEgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZiLpAQoUUmVhZFBsYXlib29rUmVzcG9uc2USKgoJcmVmZXJlbmNlGAEgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIRCgRwYXRoGAIgASgJSACIAQESMgoKZGVmaW5pdGlvbhgDIAEoCzIeLmFsaW5lcnkudjEuUGxheWJvb2tEZWZpbml0aW9uEhMKC3NvdXJjZV90ZXh0GAQgASgJEhsKDm1vZGlmaWVkX2F0X21zGAUgASgESAGIAQESEAoIcmV2aXNpb24YBiABKARCBwoFX3BhdGhCEQoPX21vZGlmaWVkX2F0X21zIikKF1ZhbGlkYXRlUGxheWJvb2tSZXF1ZXN0Eg4KBnNvdXJjZRgBIAEoCSKXAQoYVmFsaWRhdGVQbGF5Ym9va1Jlc3BvbnNlEjcKCmRlZmluaXRpb24YASABKAsyHi5hbGluZXJ5LnYxLlBsYXlib29rRGVmaW5pdGlvbkgAiAEBEjMKC2RpYWdub3N0aWNzGAIgAygLMh4uYWxpbmVyeS52MS5QbGF5Ym9va0RpYWdub3N0aWNCDQoLX2RlZmluaXRpb24iSwoVUmVuZGVyUGxheWJvb2tSZXF1ZXN0EjIKCmRlZmluaXRpb24YASABKAsyHi5hbGluZXJ5LnYxLlBsYXlib29rRGVmaW5pdGlvbiIoChZSZW5kZXJQbGF5Ym9va1Jlc3BvbnNlEg4KBnNvdXJjZRgBIAEoCSKkAQoTU2F2ZVBsYXlib29rUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESJwoGdGFyZ2V0GAIgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIOCgZzb3VyY2UYAyABKAkSEQoJb3ZlcndyaXRlGAQgASgIEhkKEWV4cGVjdGVkX3JldmlzaW9uGAUgASgEIm0KFFNhdmVQbGF5Ym9va1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQSLwoFc2F2ZWQYAiABKAsyIC5hbGluZXJ5LnYxLlJlYWRQbGF5Ym9va1Jlc3BvbnNlIoYBChVEZWxldGVQbGF5Ym9va1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEioKCXJlZmVyZW5jZRgCIAEoCzIXLmFsaW5lcnkudjEuUGxheWJvb2tSZWYSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAQiPgoWRGVsZXRlUGxheWJvb2tSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIrgBChFTYXZlUGlja2VyUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESDgoGZ2xvYmFsGAIgASgIEiYKBW9yZGVyGAMgAygLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIoCgdlbnRyaWVzGAQgAygLMhcuYWxpbmVyeS52MS5QaWNrZXJFbnRyeRIZChFleHBlY3RlZF9yZXZpc2lvbhgFIAEoBCI6ChJTYXZlUGlja2VyUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJbChBDb21tdW5pdHlQYWNrYWdlEhEKCXVwbG9hZF9pZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgEEg0KBWxhYmVsGAMgASgJEhQKDHBsYXlib29rX2tleRgEIAEoCSKmAQoeSW1wb3J0Q29tbXVuaXR5UGxheWJvb2tSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIKCgJpZBgCIAEoCRItCgdwYWNrYWdlGAMgASgLMhwuYWxpbmVyeS52MS5Db21tdW5pdHlQYWNrYWdlEhEKCW92ZXJ3cml0ZRgEIAEoCBIOCgZnbG9iYWwYBSABKAgimwEKHFVwZGF0ZUNvbW11bml0eUltcG9ydFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgoKAmlkGAIgASgJEi0KB3BhY2thZ2UYAyABKAsyHC5hbGluZXJ5LnYxLkNvbW11bml0eVBhY2thZ2USGAoQb3ZlcndyaXRlX2VkaXRlZBgEIAEoCCKBAgoVQ29tbXVuaXR5SW1wb3J0UmVzdWx0EjMKB291dGNvbWUYASABKA4yIi5hbGluZXJ5LnYxLkNvbW11bml0eUltcG9ydE91dGNvbWUSKgoJcmVmZXJlbmNlGAIgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZhIYChBpbXBvcnRlZF92ZXJzaW9uGAMgASgEEhQKDGxvY2FsX3NoYTI1NhgEIAEoCRIRCglsb2NhbF9rZXkYBSABKAkSMwoLZGlhZ25vc3RpY3MYBiADKAsyHi5hbGluZXJ5LnYxLlBsYXlib29rRGlhZ25vc3RpYxIPCgdtZXNzYWdlGAcgASgJInoKH0ltcG9ydENvbW11bml0eVBsYXlib29rUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZBIxCgZyZXN1bHQYAiABKAsyIS5hbGluZXJ5LnYxLkNvbW11bml0eUltcG9ydFJlc3VsdCJ4Ch1VcGRhdGVDb21tdW5pdHlJbXBvcnRSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkEjEKBnJlc3VsdBgCIAEoCzIhLmFsaW5lcnkudjEuQ29tbXVuaXR5SW1wb3J0UmVzdWx0IlIKHEZvcmdldENvbW11bml0eUltcG9ydFJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgoKAmlkGAIgASgJIkUKHUZvcmdldENvbW11bml0eUltcG9ydFJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQijQEKGFJlY29yZFB1YmxpY2F0aW9uUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESCgoCaWQYAiABKAkSLwoJcmVmZXJlbmNlGAMgASgLMhcuYWxpbmVyeS52MS5QbGF5Ym9va1JlZkgAiAEBQgwKCl9yZWZlcmVuY2UiQQoZUmVjb3JkUHVibGljYXRpb25SZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIlQKHVJlc3RvcmVCdW5kbGVkUGxheWJvb2tSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRILCgNrZXkYAiABKAkiRgoeUmVzdG9yZUJ1bmRsZWRQbGF5Ym9va1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQqrgIKFkNvbW11bml0eUltcG9ydE91dGNvbWUSKAokQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASIgoeQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX1NBVkVEEAESJQohQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX0NPTkZMSUNUEAISLworQ09NTVVOSVRZX0lNUE9SVF9PVVRDT01FX0FMUkVBRFlfRE9XTkxPQURFRBADEiMKH0NPTU1VTklUWV9JTVBPUlRfT1VUQ09NRV9FRElURUQQBBIkCiBDT01NVU5JVFlfSU1QT1JUX09VVENPTUVfSU5WQUxJRBAFEiMKH0NPTU1VTklUWV9JTVBPUlRfT1VUQ09NRV9GQUlMRUQQBjK4CAoPUGxheWJvb2tTZXJ2aWNlElEKDFJlYWRQbGF5Ym9vaxIfLmFsaW5lcnkudjEuUmVhZFBsYXlib29rUmVxdWVzdBogLmFsaW5lcnkudjEuUmVhZFBsYXlib29rUmVzcG9uc2USXQoQVmFsaWRhdGVQbGF5Ym9vaxIjLmFsaW5lcnkudjEuVmFsaWRhdGVQbGF5Ym9va1JlcXVlc3QaJC5hbGluZXJ5LnYxLlZhbGlkYXRlUGxheWJvb2tSZXNwb25zZRJXCg5SZW5kZXJQbGF5Ym9vaxIhLmFsaW5lcnkudjEuUmVuZGVyUGxheWJvb2tSZXF1ZXN0GiIuYWxpbmVyeS52MS5SZW5kZXJQbGF5Ym9va1Jlc3BvbnNlElEKDFNhdmVQbGF5Ym9vaxIfLmFsaW5lcnkudjEuU2F2ZVBsYXlib29rUmVxdWVzdBogLmFsaW5lcnkudjEuU2F2ZVBsYXlib29rUmVzcG9uc2USVwoORGVsZXRlUGxheWJvb2sSIS5hbGluZXJ5LnYxLkRlbGV0ZVBsYXlib29rUmVxdWVzdBoiLmFsaW5lcnkudjEuRGVsZXRlUGxheWJvb2tSZXNwb25zZRJLCgpTYXZlUGlja2VyEh0uYWxpbmVyeS52MS5TYXZlUGlja2VyUmVxdWVzdBoeLmFsaW5lcnkudjEuU2F2ZVBpY2tlclJlc3BvbnNlEnIKF0ltcG9ydENvbW11bml0eVBsYXlib29rEiouYWxpbmVyeS52MS5JbXBvcnRDb21tdW5pdHlQbGF5Ym9va1JlcXVlc3QaKy5hbGluZXJ5LnYxLkltcG9ydENvbW11bml0eVBsYXlib29rUmVzcG9uc2USbAoVVXBkYXRlQ29tbXVuaXR5SW1wb3J0EiguYWxpbmVyeS52MS5VcGRhdGVDb21tdW5pdHlJbXBvcnRSZXF1ZXN0GikuYWxpbmVyeS52MS5VcGRhdGVDb21tdW5pdHlJbXBvcnRSZXNwb25zZRJsChVGb3JnZXRDb21tdW5pdHlJbXBvcnQSKC5hbGluZXJ5LnYxLkZvcmdldENvbW11bml0eUltcG9ydFJlcXVlc3QaKS5hbGluZXJ5LnYxLkZvcmdldENvbW11bml0eUltcG9ydFJlc3BvbnNlEmAKEVJlY29yZFB1YmxpY2F0aW9uEiQuYWxpbmVyeS52MS5SZWNvcmRQdWJsaWNhdGlvblJlcXVlc3QaJS5hbGluZXJ5LnYxLlJlY29yZFB1YmxpY2F0aW9uUmVzcG9uc2USbwoWUmVzdG9yZUJ1bmRsZWRQbGF5Ym9vaxIpLmFsaW5lcnkudjEuUmVzdG9yZUJ1bmRsZWRQbGF5Ym9va1JlcXVlc3QaKi5hbGluZXJ5LnYxLlJlc3RvcmVCdW5kbGVkUGxheWJvb2tSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common, file_alinery_v1_entities]);
 
 /**
  * @generated from message alinery.v1.PlaybookInput
@@ -536,11 +536,18 @@ export type ImportCommunityPlaybookRequest = Message<"alinery.v1.ImportCommunity
   package?: CommunityPackage | undefined;
 
   /**
-   * replace a repo playbook of the same key
+   * replace a playbook of the same key in the target scope
    *
    * @generated from field: bool overwrite = 4;
    */
   overwrite: boolean;
+
+  /**
+   * keep it in the machine's library for every repository instead of this one
+   *
+   * @generated from field: bool global = 5;
+   */
+  global: boolean;
 };
 
 /**
@@ -680,6 +687,128 @@ export type UpdateCommunityImportResponse = Message<"alinery.v1.UpdateCommunityI
  */
 export const UpdateCommunityImportResponseSchema: GenMessage<UpdateCommunityImportResponse> = /*@__PURE__*/
   messageDesc(file_alinery_v1_playbooks, 21);
+
+/**
+ * @generated from message alinery.v1.ForgetCommunityImportRequest
+ */
+export type ForgetCommunityImportRequest = Message<"alinery.v1.ForgetCommunityImportRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string id = 2;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message alinery.v1.ForgetCommunityImportRequest.
+ * Use `create(ForgetCommunityImportRequestSchema)` to create a new message.
+ */
+export const ForgetCommunityImportRequestSchema: GenMessage<ForgetCommunityImportRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 22);
+
+/**
+ * @generated from message alinery.v1.ForgetCommunityImportResponse
+ */
+export type ForgetCommunityImportResponse = Message<"alinery.v1.ForgetCommunityImportResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.ForgetCommunityImportResponse.
+ * Use `create(ForgetCommunityImportResponseSchema)` to create a new message.
+ */
+export const ForgetCommunityImportResponseSchema: GenMessage<ForgetCommunityImportResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 23);
+
+/**
+ * @generated from message alinery.v1.RecordPublicationRequest
+ */
+export type RecordPublicationRequest = Message<"alinery.v1.RecordPublicationRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string id = 2;
+   */
+  id: string;
+
+  /**
+   * @generated from field: optional alinery.v1.PlaybookRef reference = 3;
+   */
+  reference?: PlaybookRef | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RecordPublicationRequest.
+ * Use `create(RecordPublicationRequestSchema)` to create a new message.
+ */
+export const RecordPublicationRequestSchema: GenMessage<RecordPublicationRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 24);
+
+/**
+ * @generated from message alinery.v1.RecordPublicationResponse
+ */
+export type RecordPublicationResponse = Message<"alinery.v1.RecordPublicationResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RecordPublicationResponse.
+ * Use `create(RecordPublicationResponseSchema)` to create a new message.
+ */
+export const RecordPublicationResponseSchema: GenMessage<RecordPublicationResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 25);
+
+/**
+ * @generated from message alinery.v1.RestoreBundledPlaybookRequest
+ */
+export type RestoreBundledPlaybookRequest = Message<"alinery.v1.RestoreBundledPlaybookRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * @generated from field: string key = 2;
+   */
+  key: string;
+};
+
+/**
+ * Describes the message alinery.v1.RestoreBundledPlaybookRequest.
+ * Use `create(RestoreBundledPlaybookRequestSchema)` to create a new message.
+ */
+export const RestoreBundledPlaybookRequestSchema: GenMessage<RestoreBundledPlaybookRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 26);
+
+/**
+ * @generated from message alinery.v1.RestoreBundledPlaybookResponse
+ */
+export type RestoreBundledPlaybookResponse = Message<"alinery.v1.RestoreBundledPlaybookResponse"> & {
+  /**
+   * @generated from field: alinery.v1.Applied applied = 1;
+   */
+  applied?: Applied | undefined;
+};
+
+/**
+ * Describes the message alinery.v1.RestoreBundledPlaybookResponse.
+ * Use `create(RestoreBundledPlaybookResponseSchema)` to create a new message.
+ */
+export const RestoreBundledPlaybookResponseSchema: GenMessage<RestoreBundledPlaybookResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_playbooks, 27);
 
 /**
  * @generated from enum alinery.v1.CommunityImportOutcome
@@ -829,6 +958,42 @@ export const PlaybookService: GenService<{
     methodKind: "unary";
     input: typeof UpdateCommunityImportRequestSchema;
     output: typeof UpdateCommunityImportResponseSchema;
+  },
+  /**
+   * Drops a download's record and keeps its file, so it becomes the person's own playbook (a withdrawn listing, or an edit kept).
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.PlaybookService.ForgetCommunityImport
+   */
+  forgetCommunityImport: {
+    methodKind: "unary";
+    input: typeof ForgetCommunityImportRequestSchema;
+    output: typeof ForgetCommunityImportResponseSchema;
+  },
+  /**
+   * Links a listing of the person's own to the local playbook it was published from; no `reference` forgets the link (unpublished).
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.PlaybookService.RecordPublication
+   */
+  recordPublication: {
+    methodKind: "unary";
+    input: typeof RecordPublicationRequestSchema;
+    output: typeof RecordPublicationResponseSchema;
+  },
+  /**
+   * Removes a bundled playbook's tombstone (`playbook/_/library` `hidden`).
+   *
+   * ACT
+   *
+   * @generated from rpc alinery.v1.PlaybookService.RestoreBundledPlaybook
+   */
+  restoreBundledPlaybook: {
+    methodKind: "unary";
+    input: typeof RestoreBundledPlaybookRequestSchema;
+    output: typeof RestoreBundledPlaybookResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_playbooks, 0);

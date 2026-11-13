@@ -1,13 +1,13 @@
-import { Activity, ArrowLeft, Compass, Download, Hand, Layers, type LucideIcon, Star, Triangle, Upload, User, X } from "lucide-react";
+import { Activity, ArrowLeft, Compass, Download, GitBranch, Hand, Layers, type LucideIcon, Star, Triangle, Upload, User, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./Playbooks.css";
-import { askConfirm } from "../confirm";
+import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { PlaybookGraph } from "../PlaybookGraph";
 import { PlaybookRing, PlaybookRingMark, placeholderSteps, RingReadout, readsEach } from "../PlaybookRing";
 import { PlaybookSourceEditor } from "../PlaybookSourceEditor";
-import { type LibraryRow, libraryRows, originLabel, SIGNAL_STATES, sha256Hex, statusOf } from "../playbookLibrary";
+import { type LibraryRow, libraryRows, lineDiff, originLabel, SIGNAL_STATES, statusOf } from "../playbookLibrary";
 import { Checkbox, Dialog, InlineStatus, LoadingState, playbookRefKey, repoName, samePlaybookRef, starredPlaybookKeys, withPlaybookStar } from "../shared";
 import * as community from "../sync/community";
 import {
@@ -15,6 +15,7 @@ import {
   listPlaybookCatalog,
   readPlaybook,
   renderPlaybookSource,
+  restoreBundledPlaybook,
   savePlaybookPickerPreferences,
   savePlaybookSource,
   validatePlaybookSource,
@@ -30,6 +31,7 @@ import type {
   PlaybookCatalog,
   PlaybookRef,
   PlaybookValidationError,
+  PublicationLink,
   ScopedPlaybook,
 } from "../types";
 
@@ -85,12 +87,13 @@ const errorText = (error: unknown) => {
 };
 
 // The rail: Library slices by origin, Signals only while something needs you, Community for what is not here yet.
-type View = "all" | "starred" | "mine" | "downloaded" | "alinery" | "update" | "changed" | "diverged" | "withdrawn" | "explore" | "listings";
+type View = "all" | "starred" | "mine" | "downloaded" | "team" | "alinery" | "update" | "changed" | "diverged" | "withdrawn" | "explore" | "listings";
 const VIEWS: { key: View; group: "Library" | "Signals" | "Community"; label: string; icon: LucideIcon; test?: (row: LibraryRow, starred: Set<string>) => boolean }[] = [
   { key: "all", group: "Library", label: "All", icon: Layers, test: (row) => row.state !== "remote" },
   { key: "starred", group: "Library", label: "Starred", icon: Star, test: (row, starred) => starred.has(row.id) },
   { key: "mine", group: "Library", label: "Mine", icon: User, test: (row) => row.origin.kind === "mine" && row.state !== "remote" },
   { key: "downloaded", group: "Library", label: "Downloaded", icon: Download, test: (row) => row.origin.kind === "download" },
+  { key: "team", group: "Library", label: "Team", icon: GitBranch, test: (row) => row.origin.kind === "team" },
   { key: "alinery", group: "Library", label: "Alinery", icon: Triangle, test: (row) => row.origin.kind === "alinery" },
   { key: "update", group: "Signals", label: "Updates", icon: Activity, test: (row) => row.state === "update" },
   { key: "changed", group: "Signals", label: "Not published", icon: Activity, test: (row) => row.state === "changed" },
@@ -101,6 +104,7 @@ const VIEWS: { key: View; group: "Library" | "Signals" | "Community"; label: str
 ];
 const NOTES: Record<LibraryRow["state"], string> = {
   builtin: "Built-ins update with the app. A copy is yours: it never changes underneath you.",
+  team: "Your team's version, committed in alinery/playbooks and changed through git. Copy it to experiment without touching the repo.",
   broken: "This definition doesn't read. Fix the file, then come back to the library.",
   yours: "Sign in to see whether this is published.",
   private: "Only on this machine. Publishing makes it a community listing.",
@@ -111,8 +115,8 @@ const NOTES: Record<LibraryRow["state"], string> = {
   synced: "Unedited and current.",
   edited: "You edited this copy. An update from the author asks before it overwrites your edits.",
   update: "Your copy is unedited, so updating replaces it.",
-  diverged: "Both sides moved. Updating overwrites your edits, so preview the author's version first.",
-  withdrawn: "The author removed the listing. Your copy still works.",
+  diverged: "Both sides moved. Compare shows the author's changes against yours: take theirs, or keep yours as your own playbook.",
+  withdrawn: "The author removed the listing. Your copy still works; keep it as yours to stop tracking the listing.",
 };
 
 function StatusLed({ row }: { row: LibraryRow }) {
@@ -223,9 +227,10 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
-  const [definitions, setDefinitions] = useState<Map<string, ScopedPlaybook>>(new Map());
-  const [sourceHashes, setSourceHashes] = useState<Map<string, string>>(new Map());
   const [imports, setImports] = useState<CommunityImportRow[]>([]);
+  const [published, setPublished] = useState<PublicationLink[]>([]);
+  // null = closed. Opened before the reads so the click is never silent.
+  const [compare, setCompare] = useState<{ row: LibraryRow; mine: string; theirs: string; version: number | null; error: string } | null>(null);
   const [downloads, setDownloads] = useState<DownloadStatusRow[] | null>(null);
   const [communityPlaybooks, setCommunityPlaybooks] = useState<CommunitySummary[]>([]);
   // The cursor and the query that minted it, together: a cursor from another query would
@@ -295,10 +300,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       community
         .listCommunityImports({ repoPath })
         .then((value) => {
-          if (live) setImports(value.imports);
+          if (!live) return;
+          setImports(value.imports);
+          setPublished(value.published);
         })
         .catch(() => {
-          if (live) setImports([]);
+          if (!live) return;
+          setImports([]);
+          setPublished([]);
         });
       // Until the community answers, a download reads as its version alone.
       community
@@ -309,41 +318,13 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         .catch(() => {});
     } else if (live) {
       setImports([]);
+      setPublished([]);
     }
     return () => {
       live = false;
       preferenceGeneration.current += 1;
     };
   }, [repoPath]);
-
-  // ponytail: one read per playbook, to draw its ring and hash its source against your listing. The catalog
-  // should carry each step graph and hash instead (plan phase 2); until then a large library pays N reads.
-  const candidates = catalog?.candidates;
-  useEffect(() => {
-    if (!candidates) return;
-    let live = true;
-    const owner = repoPath;
-    void Promise.all(
-      candidates
-        .filter((candidate) => candidate.diagnostics.length === 0)
-        .map(async (candidate) => {
-          try {
-            const value = await readPlaybook(candidate.source.reference, owner);
-            return { id: playbookRefKey(candidate.source.reference), value, hash: await sha256Hex(value.source_text) };
-          } catch {
-            return null;
-          }
-        }),
-    ).then((entries) => {
-      if (!live) return;
-      const read = entries.filter((entry) => entry !== null);
-      setDefinitions(new Map(read.map((entry) => [entry.id, entry.value])));
-      setSourceHashes(new Map(read.map((entry) => [entry.id, entry.hash])));
-    });
-    return () => {
-      live = false;
-    };
-  }, [candidates, repoPath]);
 
   useEffect(() => {
     if (open) detailRef.current?.focus({ preventScroll: true });
@@ -637,10 +618,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const reloadImports = async (owner: string | undefined) => {
     if (!owner) return;
     try {
-      const imports = (await community.listCommunityImports({ repoPath: owner })).imports;
-      if (currentRepo.current === owner) setImports(imports);
+      const value = await community.listCommunityImports({ repoPath: owner });
+      if (currentRepo.current !== owner) return;
+      setImports(value.imports);
+      setPublished(value.published);
     } catch {
-      if (currentRepo.current === owner) setImports([]);
+      if (currentRepo.current !== owner) return;
+      setImports([]);
+      setPublished([]);
     }
   };
   const openSignup = (action: () => Promise<void>) => {
@@ -710,18 +695,22 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     }
     setPreview(result.kind === "failed" ? { name, source: "", error: result.message } : { name, source: result.source, error: "" });
   };
-  const importPublication = async (owner: string | undefined, id: string, overwrite: boolean) => {
+  const importPublication = async (owner: string | undefined, id: string, overwrite: boolean, global = false) => {
     if (!owner) return;
-    const result = await community.importCommunityPlaybook({ id, repoPath: owner, overwrite });
+    const result = await community.importCommunityPlaybook({ id, repoPath: owner, overwrite, global });
     if (result.kind === "needs_account") {
-      openSignup(() => importPublication(owner, id, overwrite));
+      openSignup(() => importPublication(owner, id, overwrite, global));
+      return;
+    }
+    if (result.kind === "already_downloaded") {
+      setNotice("Already in your library.");
       return;
     }
     if (result.kind === "conflict") {
       if (
         (await askConfirm({
-          title: `Overwrite repo/${result.localKey}?`,
-          body: `Replace this library definition in ${owner}. Existing tasks retain their original definition.`,
+          title: `Overwrite ${global ? "global" : "repo"}/${result.localKey}?`,
+          body: `Replace this library definition ${global ? "for every repository" : `in ${owner}`}. Existing tasks retain their original definition.`,
           choices: [
             { key: "overwrite", label: "Overwrite", tone: "danger" },
             { key: "cancel", label: "Cancel", tone: "ghost" },
@@ -729,7 +718,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })) !== "overwrite"
       )
         return;
-      await importPublication(owner, id, true);
+      await importPublication(owner, id, true, global);
       return;
     }
     if (result.kind === "invalid") {
@@ -904,7 +893,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     imports,
     downloads,
     mine: communitySignedIn && mineReady && !mineError ? minePlaybooks : null,
-    sourceHashes,
+    published,
   });
   const counts = new Map(VIEWS.map((item) => [item.key, item.test ? rows.filter((row) => item.test?.(row, starredKeys)).length : communityPlaybooks.length]));
   const current = VIEWS.find((item) => item.key === view) ?? VIEWS[0];
@@ -919,7 +908,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   const rowForListing = (id: string) => rows.find((row) => row.importRow?.id === id || row.publication?.id === id) ?? null;
   const listing = view === "explore" ? (communityPlaybooks.find((item) => item.id === chosen) ?? communityPlaybooks[0] ?? null) : null;
   const inspected = listing ? rowForListing(listing.id) : view === "explore" ? null : (visible.find((row) => row.id === chosen) ?? visible[0] ?? null);
-  const realSteps = (row: LibraryRow) => definitions.get(row.id)?.definition.step;
+  const realSteps = (row: LibraryRow) => row.candidate?.steps;
   const stepsOf = (row: LibraryRow) => realSteps(row) ?? placeholderSteps(row.publication?.stepCount ?? 0);
 
   const selectView = (next: View) => {
@@ -937,7 +926,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
   };
   const copyRow = async (reference: PlaybookRef) => {
     try {
-      void begin("copy", undefined, definitions.get(playbookRefKey(reference)) ?? (await readPlaybook(reference, repoPath)));
+      void begin("copy", undefined, await readPlaybook(reference, repoPath));
     } catch (e) {
       setError(errorText(e));
     }
@@ -947,7 +936,97 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     if (!reference) return;
     void withAccount(async () => openPublishConfirm({ reference, playbookKey: reference.key, title: row.title, fromVersion: row.publication?.version ?? null }));
   };
-  const download = (id: string) => void withAccount(() => importPublication(repoPath, id, false));
+  const download = (id: string, global = false) => void withAccount(() => importPublication(repoPath, id, false, global));
+  const downloadButtons = (id: string, primary: boolean) => (
+    <>
+      <button
+        type="button"
+        className={primary ? "btn primary" : "btn"}
+        disabled={!repoPath}
+        title={repoPath ? undefined : "Select a repository before downloading."}
+        onClick={() => download(id)}
+      >
+        Download to this repo
+      </button>
+      <button type="button" className="btn ghost" disabled={!repoPath} title="Keep it in this machine's library for every repository" onClick={() => download(id, true)}>
+        For all repos
+      </button>
+    </>
+  );
+  const keepAsMine = async (row: LibraryRow) => {
+    const owner = repoPath;
+    const id = row.importRow?.id;
+    if (!owner || !id) return;
+    try {
+      await community.forgetCommunityImport({ id, repoPath: owner });
+      setCompare(null);
+      setNotice(`${row.title} is yours now. It no longer follows @${row.importRow?.label}.`);
+      await refresh(owner);
+      await reloadImports(owner);
+      await refreshDownloads(owner);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  const unpublish = async (row: LibraryRow) => {
+    const owner = repoPath;
+    const listing = row.publication;
+    if (!owner || !listing) return;
+    if (
+      !(await confirmDanger(
+        `Unpublish ${row.title}?`,
+        "People can no longer find or download it, and their copies read as withdrawn. Your local playbook stays. Publishing again starts a new listing at v1.",
+        "Unpublish",
+      ))
+    )
+      return;
+    const run = async () => {
+      const result = await community.unpublishCommunityPlaybook({ id: listing.id, repoPath: owner });
+      if (result.kind === "needs_account") {
+        openSignup(run);
+        return;
+      }
+      if (result.kind === "failed") {
+        setError(result.message);
+        return;
+      }
+      setNotice(`${row.title} is no longer published.`);
+      await reloadMine();
+      await reloadImports(owner);
+    };
+    await run();
+  };
+  const restoreBuiltIn = async (key: string) => {
+    const owner = repoPath;
+    try {
+      await restoreBundledPlaybook(key, owner);
+      await refresh(owner);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  // Your copy against the author's newer version; the choice is theirs or yours, never a silent merge.
+  const openCompare = async (row: LibraryRow) => {
+    const id = row.importRow?.id;
+    if (!row.reference || !id) return;
+    const version = row.download?.remoteVersion ?? null;
+    setCompare({ row, mine: "", theirs: "", version, error: "" });
+    try {
+      const [mine, theirs] = await Promise.all([readPlaybook(row.reference, repoPath), ipc.previewCommunityPlaybook({ id })]);
+      if (theirs.kind === "needs_account") {
+        setCompare(null);
+        openSignup(() => openCompare(row));
+        return;
+      }
+      setCompare(
+        theirs.kind === "failed"
+          ? { row, mine: mine.source_text, theirs: "", version, error: theirs.message }
+          : { row, mine: mine.source_text, theirs: theirs.source, version, error: "" },
+      );
+    } catch (e) {
+      setCompare({ row, mine: "", theirs: "", version, error: errorText(e) });
+    }
+  };
   const update = (id: string) => void withAccount(() => updatePublication(repoPath, id, false));
   const previewListing = (id: string, name: string) => void withAccount(() => previewPublication(id, name));
 
@@ -956,8 +1035,14 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
     const id = row.importRow?.id;
     const name = row.importRow ? `${row.importRow.label}/${row.importRow.playbookKey}` : row.title;
     const noRepo = !repoPath;
+    const unpublishButton = row.publication && (
+      <button type="button" className="btn ghost" disabled={noRepo} onClick={() => void unpublish(row)}>
+        Unpublish
+      </button>
+    );
     switch (row.state) {
       case "builtin":
+      case "team":
         return (
           row.reference && (
             <button type="button" className="btn" disabled={busy} onClick={() => row.reference && void copyRow(row.reference)}>
@@ -974,12 +1059,28 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       case "private":
       case "changed":
         return (
-          <button type="button" className="btn primary" disabled={noRepo} title={noRepo ? "Select a repository before publishing." : undefined} onClick={() => publish(row)}>
-            {row.publication ? `Publish v${row.publication.version + 1}` : "Publish"}
+          <>
+            <button type="button" className="btn primary" disabled={noRepo} title={noRepo ? "Select a repository before publishing." : undefined} onClick={() => publish(row)}>
+              {row.publication ? `Publish v${row.publication.version + 1}` : "Publish"}
+            </button>
+            {unpublishButton}
+          </>
+        );
+      case "live":
+        return unpublishButton;
+      case "diverged":
+        return (
+          <button type="button" className="btn primary" onClick={() => void openCompare(row)}>
+            Compare
+          </button>
+        );
+      case "withdrawn":
+        return (
+          <button type="button" className="btn primary" disabled={noRepo} onClick={() => void keepAsMine(row)}>
+            Keep as mine
           </button>
         );
       case "update":
-      case "diverged":
         return (
           id && (
             <>
@@ -995,9 +1096,10 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       case "remote":
         return (
           row.publication && (
-            <button type="button" className="btn primary" disabled={noRepo} onClick={() => row.publication && download(row.publication.id)}>
-              Download to this repo
-            </button>
+            <>
+              {downloadButtons(row.publication.id, true)}
+              {unpublishButton}
+            </>
           )
         );
       default:
@@ -1011,6 +1113,12 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
       return [
         { label: "Source", value: "Ships with Alinery", lit: true },
         { label: "Your copy", value: "None. Copy to edit; the original stays.", lit: false },
+      ];
+    }
+    if (row.origin.kind === "team") {
+      return [
+        { label: "Source", value: "Committed in alinery/playbooks", lit: true },
+        { label: "Your copy", value: "None. Edits go through the repo.", lit: false },
       ];
     }
     if (row.origin.kind === "download") {
@@ -1143,15 +1251,7 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         {item.description && <p>{item.description}</p>}
         {ringOf(item.title, placeholderSteps(item.stepCount), "panel")}
         <div className="pb-acts">
-          <button
-            type="button"
-            className="btn primary"
-            disabled={!repoPath}
-            title={repoPath ? undefined : "Select a repository before downloading."}
-            onClick={() => download(item.id)}
-          >
-            Download to this repo
-          </button>
+          {downloadButtons(item.id, true)}
           <button type="button" className="btn ghost" onClick={() => previewListing(item.id, name)}>
             Preview
           </button>
@@ -1253,6 +1353,23 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
         })}
       </ul>
       {catalog && visible.length === 0 && <p className="pb-empty">{needle ? "No matching playbooks." : "Nothing here."}</p>}
+      {view === "alinery" && !!catalog?.hidden?.length && (
+        <details className="pb-hidden">
+          <summary>
+            {catalog.hidden.length} removed {catalog.hidden.length === 1 ? "built-in" : "built-ins"}
+          </summary>
+          <ul aria-label="Removed built-ins">
+            {catalog.hidden.map((item) => (
+              <li key={item.key}>
+                <span>{item.title}</span>
+                <button type="button" className="btn ghost small" aria-label={`Restore ${item.title}`} onClick={() => void restoreBuiltIn(item.key)}>
+                  Restore
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {catalog?.diagnostics.map((item) => (
         <InlineStatus key={`${item.code}:${item.message}`} tone="error">
           {item.code === "picker_preferences" && (
@@ -1506,6 +1623,59 @@ export function Playbooks({ repoPath, onCreateTask }: { repoPath?: string; onCre
               {inspected ? rowInspector(inspected) : listing ? listingInspector(listing) : <p className="pb-empty">Nothing selected.</p>}
             </aside>
           </div>
+        )}
+        {compare && (
+          <Dialog onClose={() => setCompare(null)} role="dialog" ariaLabel={`Compare ${compare.row.title}`}>
+            <div className="mh">
+              <span className="mt">
+                Your copy against @{compare.row.importRow?.label}
+                {compare.version ? ` v${compare.version}` : ""}
+              </span>
+              <button type="button" className="x" aria-label="Close" title="Close" onClick={() => setCompare(null)}>
+                <X size={14} strokeWidth={1.5} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="mb">
+              {compare.error ? (
+                <InlineStatus tone="error">{compare.error}</InlineStatus>
+              ) : compare.theirs ? (
+                <section aria-label="Changes">
+                  <pre className="playbook-preview pb-diff">
+                    {lineDiff(compare.mine, compare.theirs).map((line) => (
+                      <span key={line.at} className={`pb-diff-${line.kind}`}>
+                        {line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}
+                        {line.text}
+                        {"\n"}
+                      </span>
+                    ))}
+                  </pre>
+                </section>
+              ) : (
+                <LoadingState label="Loading both versions" state={ORB_STATE} />
+              )}
+              <p className="pb-note">Lines marked − are only in your copy; + only in the author's.</p>
+            </div>
+            <div className="mfoot">
+              <button type="button" className="btn ghost small" data-autofocus onClick={() => setCompare(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn small" disabled={!repoPath} onClick={() => void keepAsMine(compare.row)}>
+                Keep mine
+              </button>
+              <button
+                type="button"
+                className="btn primary small"
+                disabled={!compare.theirs}
+                onClick={() => {
+                  const id = compare.row.importRow?.id;
+                  setCompare(null);
+                  if (id) void withAccount(() => updatePublication(repoPath, id, true));
+                }}
+              >
+                Take theirs
+              </button>
+            </div>
+          </Dialog>
         )}
         {preview && (
           <Dialog onClose={() => setPreview(null)} role="dialog" ariaLabel={`Preview ${preview.name}`}>

@@ -756,7 +756,17 @@ export type NormalizedPlaybook = {
 export type PlaybookValidationError = { code: string; message: string; line: number | null; field: string | null; severity: string };
 export type PlaybookSource = { reference: PlaybookRef; path: string | null };
 export type ScopedPlaybook = { source: PlaybookSource; definition: NormalizedPlaybook; source_text: string; modified_at_ms: number | null };
-export type PlaybookCandidate = { source: PlaybookSource; title: string | null; description: string | null; modified_at_ms: number | null; diagnostics: PlaybookValidationError[] };
+export type PlaybookCandidate = {
+  source: PlaybookSource;
+  title: string | null;
+  description: string | null;
+  modified_at_ms: number | null;
+  diagnostics: PlaybookValidationError[];
+  /** sha256 of the file as the daemon read it (compared with a listing's `bodySha256`); absent when it did not parse. */
+  body_sha256?: string;
+  /** The step graph without prompts, enough to draw the row's ring. */
+  steps?: NormalizedStep[];
+};
 export type PickerPreference = {
   reference: PlaybookRef;
   preferred?: boolean;
@@ -767,7 +777,13 @@ export type PickerPreference = {
   last_imported_at_ms: number | null;
 };
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
-export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
+export type PlaybookCatalog = {
+  candidates: PlaybookCandidate[];
+  picker_preferences: PickerPreferences;
+  diagnostics: PlaybookValidationError[];
+  /** Built-ins the person removed, which can be restored. */
+  hidden?: { key: string; title: string }[];
+};
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
 export type CommunitySummary = {
   id: string;
@@ -785,7 +801,20 @@ export type CommunitySummary = {
 };
 export type CommunityPlaybookPage = { playbooks: CommunitySummary[]; nextCursor: string | null };
 export type CommunityMineResult = { kind: "loaded"; playbooks: CommunitySummary[]; truncated: boolean } | { kind: "needs_account" } | { kind: "failed"; message: string };
-export type CommunityImportRow = { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number; locallyEdited?: boolean; localMissing?: boolean };
+export type CommunityImportRow = {
+  id: string;
+  label: string;
+  playbookKey: string;
+  localKey: string;
+  importedVersion: number;
+  locallyEdited?: boolean;
+  localMissing?: boolean;
+  /** Where the download lives: this repository, or the machine's library for every repository. */
+  localScope?: "repo" | "global";
+};
+/** One of the person's listings, linked to the local playbook it was published from. */
+export type PublicationLink = { id: string; reference: { scope: "repo" | "global"; key: string } };
+export type UnpublishResult = { kind: "removed" } | { kind: "needs_account" } | { kind: "failed"; message: string };
 export type DownloadStatusRow = {
   id: string;
   label: string;

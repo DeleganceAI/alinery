@@ -187,6 +187,7 @@ pub fn run() {
             preview_community_playbook,
             list_my_community_playbooks,
             publish_community_playbook,
+            unpublish_community_playbook,
             grok_key_ready,
             chat_file_stat,
             daemon_status,

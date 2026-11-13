@@ -22,6 +22,12 @@ service PlaybookService {
   // account and stages it through BlobService (a `staged` upload); these two write it into the repository, on the host that owns it.
   rpc ImportCommunityPlaybook(ImportCommunityPlaybookRequest) returns (ImportCommunityPlaybookResponse);  // ACT
   rpc UpdateCommunityImport(UpdateCommunityImportRequest) returns (UpdateCommunityImportResponse);      // ACT
+  // Drops a download's record and keeps its file, so it becomes the person's own playbook (a withdrawn listing, or an edit kept).
+  rpc ForgetCommunityImport(ForgetCommunityImportRequest) returns (ForgetCommunityImportResponse);      // ACT
+  // Links a listing of the person's own to the local playbook it was published from; no `reference` forgets the link (unpublished).
+  rpc RecordPublication(RecordPublicationRequest) returns (RecordPublicationResponse);                  // ACT
+  // Removes a bundled playbook's tombstone (`playbook/_/library` `hidden`).
+  rpc RestoreBundledPlaybook(RestoreBundledPlaybookRequest) returns (RestoreBundledPlaybookResponse);   // ACT
 }
 
 message PlaybookInput {
@@ -132,7 +138,8 @@ message ImportCommunityPlaybookRequest {
   MutationMeta meta = 1;
   string id = 2;  // the publication id (a lowercase uuid)
   CommunityPackage package = 3;
-  bool overwrite = 4;  // replace a repo playbook of the same key
+  bool overwrite = 4;  // replace a playbook of the same key in the target scope
+  bool global = 5;     // keep it in the machine's library for every repository instead of this one
 }
 message UpdateCommunityImportRequest {
   MutationMeta meta = 1;
@@ -166,4 +173,26 @@ message ImportCommunityPlaybookResponse {
 message UpdateCommunityImportResponse {
   Applied applied = 1;
   CommunityImportResult result = 2;
+}
+message ForgetCommunityImportRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+}
+message ForgetCommunityImportResponse {
+  Applied applied = 1;
+}
+message RecordPublicationRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+  optional PlaybookRef reference = 3;
+}
+message RecordPublicationResponse {
+  Applied applied = 1;
+}
+message RestoreBundledPlaybookRequest {
+  MutationMeta meta = 1;
+  string key = 2;
+}
+message RestoreBundledPlaybookResponse {
+  Applied applied = 1;
 }

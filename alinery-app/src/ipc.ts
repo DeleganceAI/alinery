@@ -54,6 +54,7 @@ import type {
   StagedUpdate,
   TakeoverOutcome,
   TakeoverPreview,
+  UnpublishResult,
   UpdateStatus,
 } from "./types";
 
@@ -217,6 +218,7 @@ export const downloadCommunitySource = (id: string) => invoke<CommunitySourceRes
 export const previewCommunityPlaybook = (args: { id: string }) => invoke<PreviewResult>("preview_community_playbook", args);
 /** `source` is the playbook as the repository's daemon holds it and `key` its declared key. */
 export const publishCommunityPlaybook = (args: { source: string; key: string; label?: string }) => invoke<PublishResult>("publish_community_playbook", args);
+export const unpublishCommunityPlaybook = (id: string) => invoke<UnpublishResult>("unpublish_community_playbook", { id });
 
 // ── update.rs ─────────────────────────────────────────────────────────
 export const checkUpdate = () => invoke<UpdateStatus>("check_update");

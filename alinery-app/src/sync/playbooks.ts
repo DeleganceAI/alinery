@@ -14,6 +14,7 @@ import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
 import type {
+  InputSelector,
   NormalizedPlaybook,
   PickerPreference,
   PickerPreferences,
@@ -88,10 +89,13 @@ function pickerOf(e: Entity | undefined): { preferences: PickerPreferences; erro
 export function catalogOf(rows: Entity[], global: boolean): PlaybookCatalog {
   const candidates: PlaybookCandidate[] = [];
   let library: PlaybookDiagnostic[] = [];
+  let hidden: { key: string; title: string }[] = [];
   let picker: Entity | undefined;
   for (const e of rows) {
-    if (e.key === LIBRARY_KEY && e.value.case === "playbookLibrary") library = e.value.value.diagnostics;
-    else if (e.key === (global ? GLOBAL_PICKER_KEY : PICKER_KEY)) picker = e;
+    if (e.key === LIBRARY_KEY && e.value.case === "playbookLibrary") {
+      library = e.value.value.diagnostics;
+      hidden = e.value.value.hidden.map((h) => ({ key: h.key, title: h.title }));
+    } else if (e.key === (global ? GLOBAL_PICKER_KEY : PICKER_KEY)) picker = e;
     else if (e.value.case === "playbook") {
       const p = e.value.value;
       const reference = refOf(p.reference);
@@ -102,6 +106,19 @@ export function catalogOf(rows: Entity[], global: boolean): PlaybookCatalog {
         description: p.description ?? null,
         modified_at_ms: p.modifiedAtMs === undefined ? null : Number(p.modifiedAtMs),
         diagnostics: p.diagnostics.map(diagnostic),
+        ...(p.bodySha256 ? { body_sha256: p.bodySha256 } : {}),
+        steps: p.steps.map((s) => ({
+          key: s.key,
+          title: s.title,
+          short: "",
+          is_coding_step: s.isCodingStep,
+          auto_advance_default: s.autoAdvanceDefault,
+          inputs: s.inputs.map((i) => ({ path: i.path, mode: i.mode as InputSelector["mode"] })),
+          outputs: s.outputs.map((o) => ({ path: o.path })),
+          model: "",
+          harness: "",
+          prompt: "",
+        })),
       });
     }
   }
@@ -113,7 +130,7 @@ export function catalogOf(rows: Entity[], global: boolean): PlaybookCatalog {
   const { preferences, error } = pickerOf(picker);
   const diagnostics = library.map(diagnostic);
   if (error) diagnostics.push({ code: "picker_preferences", message: error, line: null, field: null, severity: "error" });
-  return { candidates, picker_preferences: preferences, diagnostics };
+  return { candidates, picker_preferences: preferences, diagnostics, hidden };
 }
 
 function definitionOf(d: PlaybookDefinition | undefined): NormalizedPlaybook {
@@ -279,6 +296,12 @@ export async function deletePlaybookSource(reference: PlaybookRef, repoPath?: st
   // A repo playbook leaves the daemon's community import registry before its definition does (a registry it cannot read stops the delete).
   await written(host, () => client(host).deletePlaybook({ meta: newMutationMeta(), reference, expectedRevision: seen.get(seenKey(host, reference)) ?? 0n }));
   seen.delete(seenKey(host, reference));
+}
+
+/** Brings back a built-in the person removed (its global tombstone goes). */
+export async function restoreBundledPlaybook(key: string, repoPath?: string): Promise<void> {
+  const { host } = await libraryHost(repoPath);
+  await written(host, () => client(host).restoreBundledPlaybook({ meta: newMutationMeta(), key }));
 }
 
 export async function savePlaybookPickerPreferences(preferences: PickerPreferences, repoPath?: string): Promise<void> {

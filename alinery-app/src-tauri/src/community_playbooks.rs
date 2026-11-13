@@ -877,3 +877,62 @@ pub(crate) async fn publish_community_playbook(app: AppHandle, source: String, k
         code: String::new(),
     })
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum UnpublishResult {
+    Removed,
+    NeedsAccount,
+    Failed { message: String },
+}
+
+/// Removes one of the caller's listings (`DELETE /api/desktop/playbooks/:id`, owner only). A listing already gone is removed: that is
+/// what the person asked for. Local copies, the person's own and other people's downloads, are untouched.
+pub(crate) fn unpublish_community_playbook_with<R>(http: &mut dyn CommunityHttp, base: &str, auth_path: &Path, refresh: R, id: &str) -> UnpublishResult
+where
+    R: FnOnce(&AccountTokens) -> Result<AccountTokens, AccountAuthError>,
+{
+    if !publication_id(id) {
+        return UnpublishResult::Failed {
+            message: "Playbook not found.".into(),
+        };
+    }
+    if !access_token_present(auth_path) {
+        return UnpublishResult::NeedsAccount;
+    }
+    let url = format!("{}/api/desktop/playbooks/{id}", base.trim_end_matches('/'));
+    let response = match authed_exchange(http, auth_path, refresh, "DELETE", url, None) {
+        Ok(response) => response,
+        Err(AuthRetryError::NeedsAccount) => return UnpublishResult::NeedsAccount,
+        Err(AuthRetryError::Transport(message)) => {
+            return UnpublishResult::Failed {
+                message: safe_transport(&message),
+            }
+        }
+    };
+    match response.status {
+        200 | 404 => UnpublishResult::Removed,
+        status => match publish_failure(status, &response.body) {
+            PublishResult::Failed { code, .. } if code == "forbidden" => UnpublishResult::Failed {
+                message: "You cannot remove this playbook.".into(),
+            },
+            PublishResult::Failed { message, .. } => UnpublishResult::Failed { message },
+            _ => UnpublishResult::Failed { message: UNREACHABLE.into() },
+        },
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn unpublish_community_playbook(app: AppHandle, id: String) -> UnpublishResult {
+    let auth_path = match account_auth_path_for(&app) {
+        Ok(path) => path,
+        Err(message) => return UnpublishResult::Failed { message },
+    };
+    let base = accounts_url();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut http = CurlCommunityHttp;
+        unpublish_community_playbook_with(&mut http, &base, &auth_path, refresh_for(auth_path.clone()), &id)
+    })
+    .await
+    .unwrap_or(UnpublishResult::Failed { message: UNREACHABLE.into() })
+}

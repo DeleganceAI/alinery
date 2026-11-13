@@ -617,3 +617,38 @@
     border-top: 1px solid var(--border);
   }
 }
+
+/* Built-ins the person removed, under the Alinery view. */
+.pb-hidden {
+  padding: 8px 20px 16px;
+  color: var(--text-faint);
+}
+.pb-hidden summary {
+  cursor: pointer;
+}
+.pb-hidden ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pb-hidden li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Compare: your copy against the author's version. */
+.pb-diff span {
+  display: block;
+}
+.pb-diff-add {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.pb-diff-del {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}

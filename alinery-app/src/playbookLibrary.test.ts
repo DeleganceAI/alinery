@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { libraryRows, SIGNAL_STATES, sha256Hex, statusOf } from "./playbookLibrary";
+import { libraryRows, lineDiff, SIGNAL_STATES, statusOf } from "./playbookLibrary";
 import type { CommunityImportRow, CommunitySummary, DownloadStatusRow, PlaybookCandidate } from "./types";
 
-const candidate = (scope: "bundled" | "global" | "repo", key: string, broken = false): PlaybookCandidate => ({
-  source: { reference: { scope, key }, path: null },
+const candidate = (scope: "bundled" | "global" | "repo", key: string, broken = false, body_sha256?: string, path: string | null = null): PlaybookCandidate => ({
+  source: { reference: { scope, key }, path },
   title: key,
   description: null,
   modified_at_ms: null,
   diagnostics: broken ? [{ field: "steps", message: "bad" } as never] : [],
+  ...(body_sha256 ? { body_sha256 } : {}),
 });
 const imported = (localKey: string, overrides: Partial<CommunityImportRow> = {}): CommunityImportRow => ({
   id: `id-${localKey}`,
@@ -36,7 +37,7 @@ const status = (localKey: string, overrides: Partial<DownloadStatusRow> = {}): D
 const listing = (playbookKey: string, overrides: Partial<CommunitySummary> = {}): CommunitySummary =>
   ({ id: `pub-${playbookKey}`, label: "me", playbookKey, title: playbookKey, description: "", version: 3, bodySha256: "aaa", stepCount: 4, ...overrides }) as CommunitySummary;
 
-const one = (inputs: Partial<Parameters<typeof libraryRows>[0]>) => libraryRows({ candidates: [], imports: [], downloads: null, mine: null, sourceHashes: new Map(), ...inputs });
+const one = (inputs: Partial<Parameters<typeof libraryRows>[0]>) => libraryRows({ candidates: [], imports: [], downloads: null, mine: null, published: [], ...inputs });
 
 describe("libraryRows", () => {
   it("names a built-in by origin Alinery and range All repos", () => {
@@ -46,13 +47,9 @@ describe("libraryRows", () => {
   });
 
   it("reads your own playbook against your listings", () => {
-    const candidates = [candidate("global", "a"), candidate("repo", "b"), candidate("repo", "c"), candidate("repo", "d")];
+    const candidates = [candidate("global", "a"), candidate("repo", "b", false, "same"), candidate("repo", "c", false, "new"), candidate("repo", "d")];
     const mine = [listing("b", { bodySha256: "same" }), listing("c", { bodySha256: "old" }), listing("d")];
-    const sourceHashes = new Map([
-      ["repo/b", "same"],
-      ["repo/c", "new"],
-    ]);
-    const rows = one({ candidates, mine, sourceHashes });
+    const rows = one({ candidates, mine });
     expect(rows.map((row) => row.state)).toEqual(["private", "live", "changed", "live"]);
     expect(rows.map((row) => statusOf(row).label)).toEqual(["Not published", "Live · v3", "Changes not published", "Live · v3"]);
     expect(rows[0].range).toBe("All repos");
@@ -104,6 +101,55 @@ describe("libraryRows", () => {
   });
 });
 
-it("hashes text the way the library hashes a body", async () => {
-  expect(await sha256Hex("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+describe("links and origins", () => {
+  it("gives a listing to the copy it was published from, and the other copy of that key stays unpublished", () => {
+    const rows = one({
+      candidates: [candidate("global", "review"), candidate("repo", "review")],
+      mine: [listing("review")],
+      published: [{ id: "pub-review", reference: { scope: "global", key: "review" } }],
+    });
+    expect(rows.map((row) => [row.id, row.state])).toEqual([
+      ["global/review", "live"],
+      ["repo/review", "private"],
+    ]);
+  });
+
+  it("matches an unlinked listing by key once, and never claims a linked one by key", () => {
+    const rows = one({
+      candidates: [candidate("global", "a"), candidate("repo", "a"), candidate("repo", "b")],
+      mine: [listing("a"), listing("b", { id: "pub-b" })],
+      published: [{ id: "pub-b", reference: { scope: "global", key: "gone" } }],
+    });
+    expect(rows.map((row) => [row.id, row.state])).toEqual([
+      ["global/a", "live"],
+      ["repo/a", "private"],
+      ["repo/b", "private"],
+      ["listing:pub-b", "remote"],
+    ]);
+  });
+
+  it("reads a committed playbook as Team, read-only", () => {
+    const [row] = one({ candidates: [candidate("repo", "release", false, undefined, "/work/app/alinery/playbooks/release.md")], mine: [listing("release")] });
+    expect([row.origin.kind, row.state, statusOf(row).label]).toEqual(["team", "team", "Team · read-only"]);
+    expect(row.publication).toBeNull();
+  });
+
+  it("finds a download kept for every repository in the global scope", () => {
+    const rows = one({ candidates: [candidate("global", "x"), candidate("repo", "x")], imports: [imported("x", { localScope: "global" })] });
+    expect(rows.map((row) => [row.id, row.origin.kind, row.range])).toEqual([
+      ["global/x", "download", "All repos"],
+      ["repo/x", "mine", "This repo"],
+    ]);
+  });
+});
+
+it("diffs lines: what only your copy has is del, what only theirs has is add", () => {
+  expect(lineDiff("a\nb\nc", "a\nB\nc\nd").map(({ kind, text }) => [kind, text])).toEqual([
+    ["same", "a"],
+    ["del", "b"],
+    ["add", "B"],
+    ["same", "c"],
+    ["add", "d"],
+  ]);
+  expect(lineDiff("same", "same")).toEqual([{ at: 0, kind: "same", text: "same" }]);
 });

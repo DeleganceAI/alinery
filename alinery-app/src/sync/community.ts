@@ -4,28 +4,46 @@
 // (`BlobService`), and named in the import call. These keep the names and result shapes the library view already reads.
 import { CommunityImportOutcome, type CommunityImportResult } from "alinery-proto/alinery/v1/playbooks_pb";
 import * as ipc from "../ipc";
-import type { CommunityImportRow, DownloadStatusRow, ImportResult, PlaybookRef, PlaybookValidationError, PublishResult, UpdateResult } from "../types";
+import type {
+  CommunityImportRow,
+  DownloadStatusRow,
+  ImportResult,
+  PlaybookRef,
+  PlaybookValidationError,
+  PublicationLink,
+  PublishResult,
+  UnpublishResult,
+  UpdateResult,
+} from "../types";
 import { newMutationMeta } from "./mutation";
 import { client, diagnostic, PlaybookRefusal, readPlaybook, refOf, refused, withReplica, written } from "./playbooks";
 import { upload } from "./tasks";
 
 const COMMUNITY_KEY = "playbook/_/community";
 
-type Registry = { imports: { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number; localMissing: boolean; locallyEdited: boolean }[] };
+type Registry = {
+  imports: { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number; localMissing: boolean; locallyEdited: boolean; localScope: string }[];
+  published: PublicationLink[];
+};
+const scopeOf = (scope: string | undefined): "repo" | "global" => (scope === "global" ? "global" : "repo");
 
 /** The repository's registry as its daemon holds it; a registry the daemon could not read rejects with the reason. */
 async function registryOf(repo: string): Promise<Registry> {
   return withReplica(repo, (replica) => {
     const e = replica.get(COMMUNITY_KEY);
-    if (e?.value.case !== "playbookCommunity") return { imports: [] };
+    if (e?.value.case !== "playbookCommunity") return { imports: [], published: [] };
     if (e.value.value.error) throw new Error(e.value.value.error);
-    return { imports: e.value.value.imports.map((i) => ({ ...i, importedVersion: Number(i.importedVersion) })) };
+    return {
+      imports: e.value.value.imports.map((i) => ({ ...i, importedVersion: Number(i.importedVersion) })),
+      published: e.value.value.published.map((p) => ({ id: p.id, reference: { scope: scopeOf(p.reference?.scope), key: p.reference?.key ?? "" } })),
+    };
   });
 }
 
-export async function listCommunityImports(args: { repoPath: string }): Promise<{ imports: CommunityImportRow[] }> {
-  const { imports } = await registryOf(args.repoPath);
+export async function listCommunityImports(args: { repoPath: string }): Promise<{ imports: CommunityImportRow[]; published: PublicationLink[] }> {
+  const { imports, published } = await registryOf(args.repoPath);
   return {
+    published,
     imports: imports.map((i) => ({
       id: i.id,
       label: i.label,
@@ -34,6 +52,7 @@ export async function listCommunityImports(args: { repoPath: string }): Promise<
       importedVersion: i.importedVersion,
       locallyEdited: i.locallyEdited,
       localMissing: i.localMissing,
+      localScope: scopeOf(i.localScope),
     })),
   };
 }
@@ -105,14 +124,17 @@ async function run(repo: string, id: string, send: (pkg: { uploadId: string; ver
   }
 }
 
-export function importCommunityPlaybook(args: { id: string; repoPath: string; overwrite: boolean }): Promise<ImportResult> {
+/** `global` keeps the download in this machine's library for every repository instead of this one. */
+export function importCommunityPlaybook(args: { id: string; repoPath: string; overwrite: boolean; global?: boolean }): Promise<ImportResult> {
   return run(
     args.repoPath,
     args.id,
     async (pkg) =>
       (
         await written(args.repoPath, () =>
-          client(args.repoPath).importCommunityPlaybook({ meta: newMutationMeta(), id: args.id, package: pkg, overwrite: args.overwrite }).catch(refused),
+          client(args.repoPath)
+            .importCommunityPlaybook({ meta: newMutationMeta(), id: args.id, package: pkg, overwrite: args.overwrite, global: args.global ?? false })
+            .catch(refused),
         )
       ).result,
   ) as Promise<ImportResult>;
@@ -150,5 +172,31 @@ export async function publishCommunityPlaybook(args: { reference: PlaybookRef; r
       };
     return { kind: "failed", message: e instanceof Error ? e.message : String(e), code: "" };
   }
-  return ipc.publishCommunityPlaybook({ source: loaded.source_text, key: loaded.definition.key, ...(args.label === undefined ? {} : { label: args.label }) });
+  const result = await ipc.publishCommunityPlaybook({ source: loaded.source_text, key: loaded.definition.key, ...(args.label === undefined ? {} : { label: args.label }) });
+  // The listing is linked to the copy it came from, so a global and a repo playbook of one key never both claim it. The listing is
+  // live whether or not the link is written; the rows fall back to matching by key without it.
+  if (result.kind === "saved" && args.reference.scope !== "bundled")
+    await recordPublication({ id: result.id, reference: { scope: args.reference.scope, key: args.reference.key }, repoPath: args.repoPath }).catch(() => {});
+  return result;
+}
+
+/** Links (or, with `reference: null`, unlinks) one of the person's listings and the local playbook it was published from. */
+export async function recordPublication(args: { id: string; reference: PublicationLink["reference"] | null; repoPath: string }): Promise<void> {
+  await written(args.repoPath, () =>
+    client(args.repoPath)
+      .recordPublication({ meta: newMutationMeta(), id: args.id, ...(args.reference ? { reference: args.reference } : {}) })
+      .catch(refused),
+  );
+}
+
+/** Takes a listing down for everyone; local copies stay. The link goes once the library says it is gone. */
+export async function unpublishCommunityPlaybook(args: { id: string; repoPath: string }): Promise<UnpublishResult> {
+  const result = await ipc.unpublishCommunityPlaybook(args.id);
+  if (result.kind === "removed") await recordPublication({ id: args.id, reference: null, repoPath: args.repoPath }).catch(() => {});
+  return result;
+}
+
+/** Keep as mine: the download's record goes and its file stays, so it is the person's own playbook from now on. */
+export async function forgetCommunityImport(args: { id: string; repoPath: string }): Promise<void> {
+  await written(args.repoPath, () => client(args.repoPath).forgetCommunityImport({ meta: newMutationMeta(), id: args.id }).catch(refused));
 }

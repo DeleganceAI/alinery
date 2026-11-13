@@ -6,8 +6,8 @@
 import { create } from "@bufbuild/protobuf";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
 import type { Store } from "../sync/store.ts";
-import { registryRows } from "./communityImports.ts";
-import { type Candidate, type Catalog, loadCatalog, loadPicker, type PickerPreferences, type Roots } from "./playbookLibrary.ts";
+import { publications, registryRows, sha256 } from "./communityImports.ts";
+import { type Candidate, type Catalog, hiddenBundled, loadCatalog, loadPicker, type PickerPreferences, type Roots, type Scoped } from "./playbookLibrary.ts";
 import type { DocDiagnostic } from "playbook-engine/src/playbook-md.ts";
 
 export const playbookKey = (scope: string, key: string) => `playbook/${scope}/${key}`;
@@ -24,7 +24,23 @@ const millis = (n: number | null) => (n === null ? undefined : BigInt(n));
 export const diagnosticOf = (d: DocDiagnostic) => ({ code: d.code, message: d.message, line: d.line ?? undefined, field: d.field ?? undefined, severity: d.severity });
 const refOf = (r: { scope: string; key: string }) => ({ scope: r.scope, key: r.key });
 
-function candidateRow(c: Candidate): Entity {
+/** What a row adds from the definition it parsed: the file's hash and the step graph without prompts. */
+type Shape = { bodySha256: string; steps: { key: string; title: string; isCodingStep: boolean; autoAdvanceDefault: boolean; inputs: { path: string; mode: string }[]; outputs: { path: string; mode: string }[] }[] };
+function shapeOf(found: Scoped): Shape {
+  return {
+    bodySha256: sha256(found.source_text),
+    steps: found.definition.step.map((s) => ({
+      key: s.key,
+      title: s.title,
+      isCodingStep: s.is_coding_step,
+      autoAdvanceDefault: s.auto_advance_default,
+      inputs: s.inputs.map((i) => ({ path: i.path, mode: i.mode })),
+      outputs: s.outputs.map((o) => ({ path: o.path, mode: "" })),
+    })),
+  };
+}
+
+function candidateRow(c: Candidate, shape: Shape | undefined): Entity {
   const ref = c.source.reference;
   return create(EntitySchema, {
     key: playbookKey(ref.scope, ref.key),
@@ -37,6 +53,8 @@ function candidateRow(c: Candidate): Entity {
         description: c.description ?? undefined,
         modifiedAtMs: millis(c.modified_at_ms),
         diagnostics: c.diagnostics.map(diagnosticOf),
+        bodySha256: shape?.bodySha256 ?? "",
+        steps: shape?.steps ?? [],
       },
     },
   });
@@ -91,8 +109,9 @@ export class PlaybookProjector {
   /** The rows as the files are now; one commit. */
   refresh(): void {
     try {
-      const catalog: Catalog = loadCatalog(this.roots);
-      const puts = catalog.candidates.map(candidateRow);
+      const shapes = new Map<string, Shape>();
+      const catalog: Catalog = loadCatalog(this.roots, (found) => shapes.set(playbookKey(found.source.reference.scope, found.source.reference.key), shapeOf(found)));
+      const puts = catalog.candidates.map((c) => candidateRow(c, shapes.get(playbookKey(c.source.reference.scope, c.source.reference.key))));
       const picker = (roots: Roots, key: string) => {
         try {
           return pickerRow(key, loadPicker(roots), "");
@@ -105,10 +124,13 @@ export class PlaybookProjector {
       puts.push(
         create(EntitySchema, {
           key: LIBRARY_KEY,
-          value: { case: "playbookLibrary", value: { diagnostics: catalog.diagnostics.filter((d) => d.code !== "picker_preferences").map(diagnosticOf) } },
+          value: {
+            case: "playbookLibrary",
+            value: { diagnostics: catalog.diagnostics.filter((d) => d.code !== "picker_preferences").map(diagnosticOf), hidden: hiddenBundled(this.roots) },
+          },
         }),
       );
-      const community = registryRows(this.roots.repoDir);
+      const community = registryRows(this.roots);
       puts.push(
         create(EntitySchema, {
           key: COMMUNITY_KEY,
@@ -126,7 +148,9 @@ export class PlaybookProjector {
                 importedAt: r.imported_at,
                 localMissing: r.local_missing,
                 locallyEdited: r.locally_edited,
+                localScope: r.local_scope,
               })),
+              published: publications(this.roots),
             },
           },
         }),

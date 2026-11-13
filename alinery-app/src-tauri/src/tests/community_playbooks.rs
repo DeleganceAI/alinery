@@ -7,7 +7,8 @@
 use super::*;
 use crate::{
     community_remote_status_with, download_community_source_with, list_community_playbooks_with, list_my_community_playbooks_with, preview_community_playbook_with,
-    publish_community_playbook_with, CommunityHttp, CommunityHttpRequest, CommunityHttpResponse, MineResult, PreviewResult, PublishResult, SourceResult,
+    publish_community_playbook_with, unpublish_community_playbook_with, CommunityHttp, CommunityHttpRequest, CommunityHttpResponse, MineResult, PreviewResult, PublishResult,
+    SourceResult, UnpublishResult,
 };
 use crate::{rotated_tokens_for_test, save_tokens_for_test, AccountTokens};
 
@@ -1006,4 +1007,57 @@ fn download_source_404_and_503_are_messages() {
         panic!("not a failure");
     };
     assert_eq!(message, "Playbook library is unavailable.");
+}
+
+#[test]
+fn unpublish_deletes_the_listing_with_the_bearer() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-unpublish-ok").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(vec![json_response(200, r#"{"ok":true,"deleted":true}"#)]);
+    assert_eq!(
+        unpublish_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID),
+        UnpublishResult::Removed
+    );
+    assert_eq!(http.requests[0].method, "DELETE");
+    assert_eq!(http.requests[0].url, format!("http://library.test/api/desktop/playbooks/{IMPORT_ID}"));
+    assert!(http.requests[0].body.is_none());
+    assert_eq!(bearer(&http.requests[0].headers), "access");
+}
+
+#[test]
+fn unpublish_reads_a_missing_listing_as_removed_and_another_owner_as_refused() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let path = auth_dir("community-unpublish-refused").join("auth.json");
+    write_pairing(&path, "access", "refresh-keep");
+    let mut http = recorder(vec![
+        json_response(404, r#"{"ok":false,"error":"Playbook not found.","code":"not_found"}"#),
+        json_response(403, r#"{"ok":false,"error":"You cannot remove this playbook.","code":"forbidden"}"#),
+    ]);
+    assert_eq!(
+        unpublish_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID),
+        UnpublishResult::Removed
+    );
+    assert_eq!(
+        unpublish_community_playbook_with(&mut http, "http://library.test", &path, keep_refresh, IMPORT_ID),
+        UnpublishResult::Failed {
+            message: "You cannot remove this playbook.".into()
+        }
+    );
+}
+
+#[test]
+fn unpublish_signed_out_or_with_a_bad_id_sends_nothing() {
+    let _serial = crate::CREDENTIAL_HOOK_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let missing = auth_dir("community-unpublish-signed-out").join("missing-auth.json");
+    let mut http = recorder(Vec::new());
+    assert_eq!(
+        unpublish_community_playbook_with(&mut http, "http://library.test", &missing, keep_refresh, IMPORT_ID),
+        UnpublishResult::NeedsAccount
+    );
+    assert!(matches!(
+        unpublish_community_playbook_with(&mut http, "http://library.test", &missing, keep_refresh, "../x"),
+        UnpublishResult::Failed { .. }
+    ));
+    assert!(http.requests.is_empty());
 }

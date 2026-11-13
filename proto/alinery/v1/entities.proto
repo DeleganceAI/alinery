@@ -486,6 +486,21 @@ message Playbook {
   optional string description = 4;
   optional uint64 modified_at_ms = 5;
   repeated PlaybookDiagnostic diagnostics = 6;
+  string body_sha256 = 7;                // sha256 of the file's bytes, compared with a listing's `bodySha256`; "" when unreadable
+  repeated PlaybookStepOutline steps = 8;  // the step graph without prompts, enough to draw the row's ring
+}
+// One step's shape: what it reads and writes and how it runs, never its prompt.
+message PlaybookStepOutline {
+  string key = 1;
+  string title = 2;
+  bool is_coding_step = 3;
+  bool auto_advance_default = 4;
+  repeated PlaybookStepPath inputs = 5;
+  repeated PlaybookStepPath outputs = 6;
+}
+message PlaybookStepPath {
+  string path = 1;
+  string mode = 2;  // inputs only: "single", "each" or "complete"
 }
 message PickerEntry {
   PlaybookRef reference = 1;
@@ -506,6 +521,11 @@ message PlaybookPicker {
 // `playbook/_/library`: what the scan of the library's directories could not read.
 message PlaybookLibrary {
   repeated PlaybookDiagnostic diagnostics = 1;
+  repeated HiddenPlaybook hidden = 2;  // bundled playbooks the person removed (a global tombstone), which RestoreBundledPlaybook brings back
+}
+message HiddenPlaybook {
+  string key = 1;
+  string title = 2;
 }
 // One playbook the person downloaded from the community library (a record of `.alinery/playbooks/community-imports.toml`), with
 // what the daemon can say about the local file: whether it is gone, and whether it no longer matches what was imported.
@@ -519,11 +539,18 @@ message CommunityImport {
   string imported_at = 7;
   bool local_missing = 8;
   bool locally_edited = 9;
+  string local_scope = 10;  // "repo", or "global" for a download kept for every repository (the machine's registry)
+}
+// A listing of the person's own, linked to the local playbook it was published from (`community-published.toml` in that scope).
+message CommunityPublication {
+  string id = 1;
+  PlaybookRef reference = 2;
 }
 // `playbook/_/community` (S4.10): the repository's community import registry. `error` is why it could not be read (the list is then empty).
 message PlaybookCommunity {
   repeated CommunityImport imports = 1;
   string error = 2;
+  repeated CommunityPublication published = 3;
 }
 // A file the person attached to a task (`attachment/<slug>/<name>`); never an artifact. Its bytes come through BlobService.
 message Attachment {

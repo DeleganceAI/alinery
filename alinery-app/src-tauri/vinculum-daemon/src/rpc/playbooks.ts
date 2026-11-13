@@ -8,9 +8,9 @@ import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { CommunityImportOutcome, type PlaybookDefinition, type PlaybookDefinitionSchema, type PlaybookService, type ReadPlaybookResponseSchema } from "alinery-proto/alinery/v1/playbooks_pb";
 import { type PlaybookDocument, parsePlaybookDocument, renderPlaybookMd } from "playbook-engine/src/playbook-md.ts";
-import { forgetImportBeforeDelete, importCommunityPlaybook, type Outcome, type Package, updateCommunityImport } from "../domain/communityImports.ts";
+import { forgetImport, forgetImportBeforeDelete, importCommunityPlaybook, type Outcome, type Package, recordPublication, updateCommunityImport } from "../domain/communityImports.ts";
 import type { BlobStore } from "../domain/blobs.ts";
-import { COMMUNITY_KEY, GLOBAL_PICKER_KEY, PICKER_KEY, diagnosticOf, playbookKey, type PlaybookProjector } from "../domain/playbookProjector.ts";
+import { COMMUNITY_KEY, GLOBAL_PICKER_KEY, LIBRARY_KEY, PICKER_KEY, diagnosticOf, playbookKey, type PlaybookProjector } from "../domain/playbookProjector.ts";
 import {
   appConfigDirOf,
   deletePlaybook,
@@ -19,6 +19,7 @@ import {
   type PickerPreferences,
   type Ref,
   resolvePlaybook,
+  restoreBundled,
   type Roots,
   type SaveError,
   SaveFailure,
@@ -223,8 +224,8 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
       const reference = refOf(req.reference);
       return dedupe.once(metaOf(req.meta), () =>
         mutate("delete_playbook", playbookKey(reference.scope, reference.key), req.expectedRevision, async () => {
-          // A repo playbook leaves the community import registry first; a registry that cannot be read stops the delete.
-          if (reference.scope === "repo") await forgetImportBeforeDelete(roots(), reference.key);
+          // A downloaded playbook leaves the community import registry first; a registry that cannot be read stops the delete.
+          if (reference.scope !== "bundled") await forgetImportBeforeDelete(roots(), reference.key, reference.scope);
           await deletePlaybook(roots(), reference);
           d.projector.refresh();
           return { applied: applied() };
@@ -234,13 +235,41 @@ export function playbookService(d: PlaybookDeps, dedupe: Dedupe, store: Store): 
     importCommunityPlaybook: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>
-        community(req.package, (pkg) => mutate("import_community_playbook", COMMUNITY_KEY, 0n, () => importCommunityPlaybook(roots(), req.id, pkg, req.overwrite))),
+        community(req.package, (pkg) => mutate("import_community_playbook", COMMUNITY_KEY, 0n, () => importCommunityPlaybook(roots(), req.id, pkg, req.overwrite, req.global ? "global" : "repo"))),
       );
     },
     updateCommunityImport: (req, ctx) => {
       requireCapability(ctx, Capability.ACT);
       return dedupe.once(metaOf(req.meta), () =>
         community(req.package, (pkg) => mutate("update_community_import", COMMUNITY_KEY, 0n, () => updateCommunityImport(roots(), req.id, pkg, req.overwriteEdited))),
+      );
+    },
+    forgetCommunityImport: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        mutate("forget_community_import", COMMUNITY_KEY, 0n, async () => {
+          await forgetImport(roots(), req.id);
+          return { applied: applied() };
+        }),
+      );
+    },
+    recordPublication: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      const reference = req.reference ? refOf(req.reference) : null;
+      return dedupe.once(metaOf(req.meta), () =>
+        mutate("record_publication", COMMUNITY_KEY, 0n, async () => {
+          await recordPublication(roots(), req.id, reference);
+          return { applied: applied() };
+        }),
+      );
+    },
+    restoreBundledPlaybook: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        mutate("restore_bundled_playbook", LIBRARY_KEY, 0n, async () => {
+          await restoreBundled(roots(), req.key);
+          return { applied: applied() };
+        }),
       );
     },
     savePicker: (req, ctx) => {
