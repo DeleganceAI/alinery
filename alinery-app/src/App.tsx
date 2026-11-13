@@ -602,13 +602,12 @@ export default function App() {
       setView({ kind: "grid", gridViewId: gridViews[0].id });
       return;
     }
-    if (kind === "settings") setScope("active");
+    // Changing views never changes the repo scope; the header shows the active repo while Settings is open.
     setView({ kind });
   };
 
   const openSettings = (section?: SettingsSectionKey, opts?: { instant?: boolean }) => {
     setNavInstant(Boolean(opts?.instant));
-    setScope("active");
     setView({ kind: "settings", section });
   };
 
