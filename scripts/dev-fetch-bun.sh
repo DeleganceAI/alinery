@@ -73,8 +73,11 @@ version_ok "$GOT" "$PIN" || { echo "ERROR: Bun $GOT is older than $PIN" >&2; exi
 
 "$ROOT/scripts/install-proto.sh"
 (cd "$PKG" && "$BUN" install --frozen-lockfile || "$BUN" install)
-"$BUN" build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --outfile "$DEST"
-chmod +x "$DEST"
+# Compile beside the output and rename over it: a daemon still running the old build keeps its own file, where a write
+# in place would change the pages under it (macOS kills a signed executable whose pages change).
+"$BUN" build "$PKG/src/main.ts" "$PKG/src/platform/fsync-worker.ts" --compile --outfile "$DEST.tmp"
+chmod +x "$DEST.tmp"
+mv -f "$DEST.tmp" "$DEST"
 BYTES="$(wc -c < "$DEST" | tr -d ' ')"
 START="$(python3 - <<PY
 import subprocess, time

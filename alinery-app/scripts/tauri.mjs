@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { watch } from "node:fs";
 import { link, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -235,6 +236,61 @@ async function compilePiDaemon(sourceRoot, release) {
   }
 }
 
+/** What the daemon is compiled from, as `dev-fetch-bun.sh` judges its output stale. */
+export function piDaemonInputs(sourceRoot) {
+  const pkg = join(sourceRoot, "alinery-app", "src-tauri", "vinculum-daemon");
+  return [join(pkg, "src"), join(pkg, "package.json"), join(sourceRoot, "playbook-engine", "src"), join(sourceRoot, "proto", "gen")];
+}
+
+/** `task` once `ms` after the last trigger, and never two at once: a trigger during a run runs it once more after. */
+export function settledRunner(task, ms) {
+  let timer;
+  let running = false;
+  let again = false;
+  const fire = async () => {
+    if (running) {
+      again = true;
+      return;
+    }
+    running = true;
+    try {
+      await task();
+    } finally {
+      running = false;
+      if (again) {
+        again = false;
+        trigger();
+      }
+    }
+  };
+  const trigger = () => {
+    clearTimeout(timer);
+    timer = setTimeout(fire, ms);
+  };
+  return trigger;
+}
+
+// `tauri dev` rebuilds and restarts the app when its Rust changes, but compiles the daemon only at launch. After a pull
+// that changes the protocol, the restarted app took over the old daemon and started the same stale binary, which it
+// then had to take over again. Recompiling on a source change keeps the binary current; a daemon already running keeps
+// its old build until a takeover or a stop restarts it.
+function watchPiDaemon(sourceRoot, release) {
+  const recompile = settledRunner(() => {
+    console.log("alinery-vinculum-daemon: sources changed, recompiling");
+    return compilePiDaemon(sourceRoot, release);
+  }, 1000);
+  const watchers = piDaemonInputs(sourceRoot).map((path) => {
+    try {
+      return watch(path, { recursive: true }, recompile);
+    } catch {
+      return undefined; // a missing input is the compile's to report
+    }
+  });
+  return () => {
+    for (const watcher of watchers) watcher?.close();
+  };
+}
+
 // Remote (SSH) repos need the bundled Linux and macOS runtimes, so dev and build refresh them
 // first. A failure (no Bun, offline before Bun's cross targets are cached) only warns here; build
 // then checks the manifest, which ALINERY_REQUIRE_REMOTE_RUNTIMES=1 makes fatal.
@@ -282,13 +338,16 @@ async function run(args) {
       env: childEnvironment(process.env, launch.environment),
       stdio: "inherit",
     });
+    const stopWatching = compile && subcommand === "dev" ? watchPiDaemon(launch.sourceRoot, compile.release) : undefined;
 
     child.on("error", async (error) => {
+      stopWatching?.();
       await reservation?.release();
       console.error(error.message);
       process.exitCode = 1;
     });
     child.on("exit", async (code, signal) => {
+      stopWatching?.();
       await reservation?.release();
       if (signal) {
         process.kill(process.pid, signal);
