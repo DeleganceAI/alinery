@@ -208,7 +208,7 @@ export function SessionsList({
           item.playbook,
           item.step_title,
           item.phase,
-          item.harness === "omp" ? "OMP" : harnessDisplayName(item.harness),
+          harnessDisplayName(item.harness),
           item.model,
         ]
           .filter(Boolean)
@@ -374,7 +374,7 @@ export function SessionsList({
             const awaitingName = awaitingSessionName(item, obs);
             const sessionType = sessionTypeLabel(item);
             const subtaskLabel = item.subtask_name || item.subtask_slug || "Sub-task setup";
-            const agent = `${item.harness === "omp" ? "OMP" : harnessDisplayName(item.harness)}${item.model ? ` · ${item.model}` : ""}`;
+            const agent = `${harnessDisplayName(item.harness)}${item.model ? ` · ${item.model}` : ""}`;
             const taskTitle = `Task: ${item.task_name} (${item.task_slug})`;
             const selected = i === selectedIndex;
             return (

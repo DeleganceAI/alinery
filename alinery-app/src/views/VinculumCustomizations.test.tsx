@@ -69,9 +69,10 @@ describe("Vinculum customizations", () => {
     expect(within(tools).getByText("read")).toBeTruthy();
     const mcp = screen.getByRole("list", { name: "MCP servers" });
     expect(within(mcp).getByText("alinery")).toBeTruthy();
-    expect(screen.getByText(/whose agent runtime is Pi/)).toBeTruthy();
+    expect(screen.getByText(/Vinculum harness/)).toBeTruthy();
+    expect(screen.queryByText(/\bPi\b|\.pi\b/)).toBeNull();
     expect(screen.queryByText(/this OMP installation/)).toBeNull();
-    expect(screen.getByText(/vinculum agent directory/)).toBeTruthy();
+    expect(screen.getByText(/Vinculum agent directory/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show Ponytail in file manager" }));
     await waitFor(() => expect(mocks.revealItemInDir).toHaveBeenCalledWith("/config/agent/skills/ponytail/SKILL.md"));
   });

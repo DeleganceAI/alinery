@@ -214,7 +214,8 @@ describe("the prompt", () => {
     writeFileSync(join(dir, "mcp.json"), "private-content-mcp");
     writeFileSync(join(dir, "skills/demo/SKILL.md"), "private-content-skill");
     const prompt = customizationPrompt(join(install, "app.toml"), dir);
-    expect(prompt).toContain("pi-durable");
+    expect(prompt).toContain("Vinculum is Alinery's own agent harness");
+    expect(prompt).not.toMatch(/\bomp\b|\bpi\b|\.pi\b|pi-durable|earendil/i);
     expect(prompt).toContain("Alinery installation identifier: Alinery's $(touch INJECTED) 日本語");
     expect(prompt).not.toContain("private-content");
     const start = prompt.indexOf("\n(\n");

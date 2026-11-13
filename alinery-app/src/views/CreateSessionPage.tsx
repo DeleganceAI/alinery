@@ -279,7 +279,7 @@ export function CreateSessionPage({
               }}
             >
               <option value="no-harness">Terminal</option>
-              <option value="omp">OMP</option>
+              <option value="omp">Vinculum</option>
             </select>
           </label>
         )}

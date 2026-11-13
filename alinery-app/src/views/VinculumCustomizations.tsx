@@ -92,7 +92,7 @@ export function VinculumCustomizations() {
   return (
     <section aria-labelledby="vinculum-customizations-title">
       <h4 id="vinculum-customizations-title">Customizations</h4>
-      <p className="hint">Customize this Vinculum installation, whose agent runtime is Pi, or ask an outside coding AI to help.</p>
+      <p className="hint">Customize this installation's Vinculum harness, or ask an outside coding AI to help.</p>
       <div className="omp-customization-actions">
         {local && (
           <button
@@ -141,7 +141,7 @@ export function VinculumCustomizations() {
           {pending ? "Refreshing…" : "Refresh"}
         </button>
       </div>
-      <p className="omp-inventory-scope dim">These files live in this installation's vinculum agent directory, not a project .pi directory and not ~/.pi.</p>
+      <p className="omp-inventory-scope dim">These files live in this installation's Vinculum agent directory, the only place Vinculum reads them from.</p>
       <div aria-live="polite" aria-busy={pending}>
         {pending && !inventory && <p className="dim">Reading installed customizations…</p>}
         {error && (

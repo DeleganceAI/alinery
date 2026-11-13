@@ -494,7 +494,7 @@ export const installationIdentifier = (appConfig: string) => basename(appConfigD
 
 export function customizationPrompt(appConfig: string, agentDir: string): string {
   const agent = shellQuote(agentDir);
-  return `Help me customize the Vinculum harness in this Alinery installation. Its agent runtime is pi-durable, from Pi (@earendil-works/pi-durable 1.4.0). It is not OMP. There is no OMP binary to run. ~/.pi and ~/.omp are the wrong directories.
+  return `Help me customize the Vinculum harness in this Alinery installation. Vinculum is Alinery's own agent harness: the Alinery daemon runs each session's conversation itself, so there is no separate agent program to install, update, or run. Vinculum reads its configuration only from the agent directory below, never from a directory in the project or the home folder.
 
 Alinery installation identifier: ${installationIdentifier(appConfig)}
 Alinery app configuration: ${appConfig}
@@ -508,7 +508,8 @@ Edit only the agent directory above.
 - Extensions under extensions/ are listed and not loaded. Do not add one and claim the session picked it up.
 - The daemon's own tools are read, write, edit, bash, alinery_phase_complete, and alinery_set_session_name. They are not files. Do not look for them in the agent directory. A write to xd://alinery_phase_complete is the phase tool.
 
-- File formats are Pi's, in packages/coding-agent/docs/ of earendil-works/pi (skills and MCP). Do not use an OMP repository or pin these instructions to an OMP release.
+- A SKILL.md starts with YAML frontmatter between --- lines: name (lowercase letters, numbers, and hyphens, at most 64 characters) and description (at most 1024 characters). disable-model-invocation: true keeps a skill from being offered to the model.
+- mcp.json is {"mcpServers": {"<name>": {...}}}. A stdio server has command, and optionally args, cwd, and env. A streamable HTTP server has url, and optionally headers. enabled: false turns a server off.
 
 Example read-only inspection (POSIX shell; names only, not file contents):
 (

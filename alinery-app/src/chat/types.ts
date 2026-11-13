@@ -111,7 +111,7 @@ export type ChatCommand = {
 export const ACTOR = {
   you: { kind: "user", name: "You" } as const,
   agent: { kind: "assistant", name: "Agent" } as const,
-  omp: { kind: "harness", name: "OMP" } as const,
+  omp: { kind: "harness", name: "Vinculum" } as const,
   alinery: { kind: "system", name: "Alinery" } as const,
 };
 

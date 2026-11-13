@@ -108,7 +108,7 @@ export function sessionMessageDisabledReason(readiness: SessionMessageReadiness,
   }
   if (readiness.lifecycle.state !== "live") return "The session is not live.";
   if (readiness.body.includes(OMP_BRACKETED_PASTE_END)) {
-    return "The draft contains the OMP bracketed-paste end marker and cannot be delivered safely.";
+    return "The draft contains a bracketed-paste end marker and cannot be delivered safely.";
   }
   if (metrics.overLimit) return `Messages are limited to ${MAX_SESSION_MESSAGE_BYTES.toLocaleString()} UTF-8 bytes.`;
   if (readiness.body.length === 0) return "Enter a message to send.";
