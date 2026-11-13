@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentShellEnv, libreOfficeDir, runtimePart, whichOn, writeShims } from "./agentShell.ts";
@@ -49,7 +49,9 @@ test("tools are found as the shell would, and LibreOffice's app folder only on m
   const app = join(dir, "Applications", "LibreOffice.app", "Contents", "MacOS");
   mkdirSync(app, { recursive: true });
   writeFileSync(join(app, "soffice"), "");
-  expect(libreOfficeDir("darwin", dir)).toBe(app);
+  // The system /Applications copy wins over the user's, so on a Mac that has one it is the answer.
+  const system = "/Applications/LibreOffice.app/Contents/MacOS";
+  expect(libreOfficeDir("darwin", dir)).toBe(existsSync(join(system, "soffice")) ? system : app);
   expect(libreOfficeDir("linux", dir)).toBeUndefined();
 });
 

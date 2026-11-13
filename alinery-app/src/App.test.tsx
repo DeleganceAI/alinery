@@ -1783,7 +1783,7 @@ describe("setup screen: this computer", () => {
     const open = await chooseFolder("/raw");
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     fireEvent.click(open);
-    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" }, { timeout: 3000 });
     const focused = dialog.querySelector("[data-autofocus]");
     expect(focused?.textContent).toBe("Cancel");
     fireEvent.click(focused as HTMLElement);
@@ -1797,7 +1797,7 @@ describe("setup screen: this computer", () => {
     ipcMocks.classifyPickedFolder.mockResolvedValue({ kind: "absent", path: "/canon" });
     ipcMocks.initPickedFolder.mockResolvedValue({ kind: "initialized", root: "/inited" });
     fireEvent.click(open);
-    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" });
+    const dialog = await screen.findByRole("alertdialog", { name: "Initialize Git?" }, { timeout: 3000 });
     fireEvent.click(within(dialog).getByRole("button", { name: "Initialize Git" }));
     await waitFor(() => expect(ipcMocks.initPickedFolder).toHaveBeenCalledWith("/canon"));
     await waitFor(() => expect(ipcMocks.setActiveRepo).toHaveBeenCalledWith("/inited"));

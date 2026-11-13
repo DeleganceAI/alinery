@@ -82,7 +82,7 @@ mkdir -p "$OUT"
 rm -f "$OUT"/*.tar.gz "$OUT/manifest.json"
 
 "$ROOT/scripts/install-proto.sh"
-(cd "$PKG" && bun install --frozen-lockfile || bun install)
+(cd "$PKG" && bun install --frozen-lockfile)
 
 BUILT=()
 for entry in "${TARGETS[@]}"; do
