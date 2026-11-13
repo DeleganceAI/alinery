@@ -994,7 +994,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
             setProvidersDialog(null);
             void setChatModel(repo, id, model).then(
               (controls) => updateTranscript((current) => applySessionControls(current, controls)),
-              (cause: unknown) => registry.setError(String(cause)),
+              (cause: unknown) => registry.setError(errorMessage(cause)),
             );
           }}
           onClose={() => setProvidersDialog(null)}

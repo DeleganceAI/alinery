@@ -340,7 +340,7 @@ function ChatViewBody({
     if (!selected) return;
     void setChatModel(selected.repo_path, selected.session.id, model).then(
       (controls) => chat.applyControls(controls),
-      (cause: unknown) => setError(String(cause)),
+      (cause: unknown) => setError(errorMessage(cause)),
     );
   }
 
@@ -348,7 +348,7 @@ function ChatViewBody({
     if (!selected) return;
     void setChatThinkingLevel(selected.repo_path, selected.session.id, level).then(
       (controls) => chat.applyControls(controls),
-      (cause: unknown) => setError(String(cause)),
+      (cause: unknown) => setError(errorMessage(cause)),
     );
   }
 
@@ -640,7 +640,7 @@ function ChatViewBody({
             thinkingTitle={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
             thinking={transcript.sessionMeta.thinking}
             thinkingLevels={transcript.sessionMeta.thinkingLevels}
-            thinkingDisabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
+            disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread. Send a message to start it, then change this."}
             onPickModel={pickModel}
             onPickThinking={pickThinking}
             onProviders={() => chat.setProvidersDialog({ tab: "models", preselect: "" })}

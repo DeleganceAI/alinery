@@ -12,7 +12,7 @@ export function ChatModelBar({
   thinkingTitle,
   thinking,
   thinkingLevels,
-  thinkingDisabledReason,
+  disabledReason,
   onPickModel,
   onPickThinking,
   onProviders,
@@ -23,7 +23,8 @@ export function ChatModelBar({
   thinkingTitle?: string;
   thinking: string | undefined;
   thinkingLevels: string[] | undefined;
-  thinkingDisabledReason: string | null;
+  /** Set while Ava is not running: the daemon only changes a live thread's model or level, and a send resumes it first. */
+  disabledReason: string | null;
   onPickModel: (model: string) => void;
   onPickThinking: (level: string) => void;
   onProviders: () => void;
@@ -68,7 +69,8 @@ export function ChatModelBar({
           className="btn small chat-model-btn"
           aria-haspopup="menu"
           aria-expanded={open === "model"}
-          title={title ?? "Change model"}
+          title={disabledReason ?? title ?? "Change model"}
+          disabled={disabledReason !== null}
           onClick={() => toggle("model")}
         >
           <span className="chat-model-label">{model}</span>
@@ -81,8 +83,8 @@ export function ChatModelBar({
             aria-label={`Thinking level: ${thinking}`}
             aria-haspopup="menu"
             aria-expanded={open === "thinking"}
-            title={thinkingDisabledReason ?? thinkingTitle ?? "Change thinking level"}
-            disabled={thinkingDisabledReason !== null || levels.length === 0}
+            title={disabledReason ?? thinkingTitle ?? "Change thinking level"}
+            disabled={disabledReason !== null || levels.length === 0}
             onClick={() => toggle("thinking")}
           >
             <Brain size={13} aria-hidden="true" />

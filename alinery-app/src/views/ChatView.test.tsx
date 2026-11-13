@@ -361,6 +361,15 @@ describe("ChatView", () => {
     await waitFor(() => expect(mocks.chatSetModel).toHaveBeenCalledWith("/repo", "s-new", "xai/grok-4.6"));
   });
 
+  it("keeps the model fixed while Ava is not running in the thread", async () => {
+    const row = thread("s-ended", { session: meta("s-ended", { started_at: 1, ended_at: 2, archived: false, model: "xai/grok-4.6" }) });
+    fakeChat.set([row]);
+    render(chat());
+    fireEvent.click(await screen.findByRole("button", { name: threadRow("s-ended") }));
+    // The daemon refuses a model change on a thread with no live session ("unknown-session"); a send resumes it first.
+    expect(((await screen.findByRole("button", { name: "xai/grok-4.6" })) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("refreshes the thread status while it stays selected", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
