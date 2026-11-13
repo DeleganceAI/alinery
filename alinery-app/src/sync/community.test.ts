@@ -44,7 +44,9 @@ function serve(playbooks: Partial<ServiceImpl<typeof PlaybookService>> = {}, com
 
 it("lists what the daemon's registry says, and a registry it could not read rejects with the reason", async () => {
   serve();
-  expect(await listCommunityImports({ repoPath: "/a" })).toEqual({ imports: [{ id: ID, label: "nyx", playbookKey: "review", localKey: "review", importedVersion: 3 }] });
+  expect(await listCommunityImports({ repoPath: "/a" })).toEqual({
+    imports: [{ id: ID, label: "nyx", playbookKey: "review", localKey: "review", importedVersion: 3, locallyEdited: false, localMissing: false }],
+  });
   serve({}, create(PlaybookCommunitySchema, { error: "invalid /a/.alinery/playbooks/community-imports.toml" }));
   await expect(listCommunityImports({ repoPath: "/a" })).rejects.toThrow("invalid /a/.alinery/playbooks/community-imports.toml");
 });

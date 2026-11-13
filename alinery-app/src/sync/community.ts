@@ -25,7 +25,17 @@ async function registryOf(repo: string): Promise<Registry> {
 
 export async function listCommunityImports(args: { repoPath: string }): Promise<{ imports: CommunityImportRow[] }> {
   const { imports } = await registryOf(args.repoPath);
-  return { imports: imports.map((i) => ({ id: i.id, label: i.label, playbookKey: i.playbookKey, localKey: i.localKey, importedVersion: i.importedVersion })) };
+  return {
+    imports: imports.map((i) => ({
+      id: i.id,
+      label: i.label,
+      playbookKey: i.playbookKey,
+      localKey: i.localKey,
+      importedVersion: i.importedVersion,
+      locallyEdited: i.locallyEdited,
+      localMissing: i.localMissing,
+    })),
+  };
 }
 
 /** What the daemon says about each local copy, beside what the library says about its publication. */

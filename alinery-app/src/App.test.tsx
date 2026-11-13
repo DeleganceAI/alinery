@@ -1192,7 +1192,8 @@ describe("Playbooks navigation", () => {
     vi.mocked(ipc.getCurrentWebview, { partial: true }).mockReturnValue({ onDragDropEvent: async () => () => {} });
     await renderApp();
     fireEvent.click(screen.getByRole("button", { name: "Playbooks" }));
-    fireEvent.click(await screen.findByRole("button", { name: "repo review Repository" }));
+    // A row click selects it for the inspector; a double-click opens it.
+    fireEvent.doubleClick(within(await screen.findByRole("listitem", { name: "repo/review" })).getAllByRole("button")[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Create task from this playbook" }));
     expect(await screen.findByRole("radio", { name: /repo review/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /bundled review/ })).toHaveProperty("checked", false);
