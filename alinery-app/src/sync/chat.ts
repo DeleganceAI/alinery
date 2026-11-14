@@ -49,6 +49,39 @@ export function chatThreadsOf(repo: string, rows: Entity[], includeArchived: boo
   return sortChatThreads(out);
 }
 
+/** Task-less Terminal sessions whose process is starting or alive, oldest first: the drawer's shells. */
+export function liveDrawerShellsOf(rows: Entity[]): SessionMeta[] {
+  const shells: SessionMeta[] = [];
+  for (const e of rows) {
+    if (!e.key.startsWith("session/_/") || e.value.case !== "session") continue;
+    const process = e.value.value.status?.process;
+    const session = sessionDisplayOf(e);
+    if (session?.harness === "no-harness" && !session.archived && (process === "starting" || process === "alive")) shells.push(session as SessionMeta);
+  }
+  return shells.sort((a, b) => a.created - b.created);
+}
+
+/**
+ * One-shot read: the repo's drawer shells still running (task-less Terminal sessions, oldest first), or none if the daemon
+ * does not answer within `timeoutMs`. Their tabs are React state, so after a relaunch this is the only way back to them (#184).
+ */
+export function liveDrawerShellsNow(repo: string, timeoutMs = 3000): Promise<SessionMeta[]> {
+  const { replica, release } = acquireScope(repo, CHAT_SCOPE);
+  return new Promise<SessionMeta[]>((resolve) => {
+    let off = () => {};
+    const done = (shells: SessionMeta[]) => {
+      clearTimeout(timer);
+      off();
+      release();
+      resolve(shells);
+    };
+    const read = () => (replica.ready ? done(liveDrawerShellsOf(replica.all())) : undefined);
+    const timer = setTimeout(() => done([]), timeoutMs);
+    off = replica.listen(read);
+    read();
+  });
+}
+
 export function sortChatThreads(threads: ChatThread[]): ChatThread[] {
   return threads.sort(
     (a, b) =>

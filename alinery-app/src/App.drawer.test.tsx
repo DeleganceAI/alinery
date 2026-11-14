@@ -31,6 +31,7 @@ const drawerRecords = vi.hoisted(() => ({ current: [] as RecordedDrawer[] }));
 
 const mocks = vi.hoisted(() => ({
   createDrawerTerminal: vi.fn(),
+  liveDrawerShellsNow: vi.fn(async (_repo: string): Promise<SessionMeta[]> => []),
   killSession: vi.fn(async (_repo: string, _id: string, _slug: string) => {}),
   observationNow: vi.fn(),
   setActiveRepo: vi.fn(),
@@ -45,6 +46,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./sync/board", async (actual) => (await import("./test/boardHooks")).boardHooks(await actual()));
+vi.mock("./sync/chat", async (actual) => ({
+  ...(await actual<typeof import("./sync/chat")>()),
+  liveDrawerShellsNow: mocks.liveDrawerShellsNow,
+}));
 vi.mock("./sync/sessions", async (actual) => ({
   ...(await actual<typeof import("./sync/sessions")>()),
   killSession: mocks.killSession,
@@ -179,6 +184,7 @@ beforeEach(() => {
   );
   drawerRecords.current = [];
   mocks.createDrawerTerminal.mockReset();
+  mocks.liveDrawerShellsNow.mockReset().mockResolvedValue([]);
   mocks.killSession.mockReset().mockResolvedValue(undefined);
   mocks.observationNow.mockReset().mockRejectedValue(new Error("no status"));
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
@@ -198,6 +204,45 @@ afterEach(() => {
 });
 
 describe("App terminal drawer tabs", () => {
+  // A drawer shell outlives a normal quit (the daemon keeps the pty), so the next launch puts it back as a tab instead of
+  // leaving it as an unreachable live session (#184).
+  it("restores the previous launch's live drawer shells as tabs without creating a new shell", async () => {
+    mocks.liveDrawerShellsNow.mockResolvedValue([meta("s-old-1", "/repo"), meta("s-old-2", "")]);
+    await renderApp();
+    pressBackquote();
+    await waitFor(() =>
+      expect(latestDrawer().tabs).toEqual([
+        { id: "s-old-1", ordinal: 1, cwd: "/repo" },
+        { id: "s-old-2", ordinal: 2, cwd: "/repo" },
+      ]),
+    );
+    expect(latestDrawer().open).toBe(true);
+    expect(latestDrawer().activeId).toBe("s-old-1");
+    expect(mocks.liveDrawerShellsNow).toHaveBeenCalledWith("/repo");
+    expect(mocks.createDrawerTerminal).not.toHaveBeenCalled();
+    // A restored tab is a real drawer tab: closing it kills the shell like any other.
+    requireFn(latestDrawer().onClose, "onClose")("s-old-1");
+    await waitFor(() => expect(mocks.killSession).toHaveBeenCalledWith("/repo", "s-old-1", ""));
+    await waitFor(() => expect(latestDrawer().tabs).toEqual([{ id: "s-old-2", ordinal: 2, cwd: "/repo" }]));
+  });
+
+  it("restores once: hide and show keep the tabs, and a new tab continues the ordinal counter", async () => {
+    mocks.liveDrawerShellsNow.mockResolvedValue([meta("s-old-1"), meta("s-old-2")]);
+    await renderApp();
+    pressBackquote();
+    await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-old-1", "s-old-2"]));
+    pressBackquote();
+    await waitFor(() => expect(latestDrawer().open).toBe(false));
+    pressBackquote();
+    await waitFor(() => expect(latestDrawer().open).toBe(true));
+    expect(mocks.liveDrawerShellsNow).toHaveBeenCalledTimes(1);
+    expect(latestDrawer().tabs?.map((tab) => tab.id)).toEqual(["s-old-1", "s-old-2"]);
+    mocks.createDrawerTerminal.mockResolvedValueOnce(meta("s-3"));
+    requireFn(latestDrawer().onNew, "onNew")();
+    await waitFor(() => expect(latestDrawer().tabs?.map((tab) => tab.ordinal)).toEqual([1, 2, 3]));
+    expect(latestDrawer().activeId).toBe("s-3");
+  });
+
   it("does not create a terminal when there is no active repo", async () => {
     await renderApp({ ...appConfig, active_repo: "" });
     pressBackquote();

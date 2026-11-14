@@ -50,6 +50,7 @@ import { shouldShowSetup } from "./setup";
 import { ALL_REPOS, Dialog, isDevelopmentProductName, LoadingState, repoName, TopBar } from "./shared";
 import { resolveStartupView } from "./startupView";
 import { useRepoBoard, useSessionItems } from "./sync/board";
+import { liveDrawerShellsNow } from "./sync/chat";
 import { liveSessionsNow } from "./sync/hooks";
 import { observationNow } from "./sync/sessionObservation";
 import { createDrawerTerminal, createSession, killSession, markSessionNotificationRead, startSession } from "./sync/sessions";
@@ -576,6 +577,34 @@ export default function App() {
     setRepo(value);
   };
 
+  // Drawer shells outlive a normal quit (the daemon keeps the pty) but their tabs are only React state, so an empty
+  // drawer first puts the still-running ones back as tabs (#184). Resolves false when there is nothing to restore and a
+  // new shell should be created.
+  const restoreDrawerTabs = async (): Promise<boolean> => {
+    if (creatingDrawer.current) return true;
+    const repo = appConfigRef.current?.active_repo;
+    if (!repo) return true;
+    creatingDrawer.current = true;
+    setDrawerCreating(true);
+    const generation = drawerGeneration.current;
+    try {
+      const shells = await liveDrawerShellsNow(repo);
+      while (repoSwitchDepth.current > 0) await waitForRepoSwitch();
+      // Switched meanwhile: the shells belong to the previous repo. Drop the list; never kill.
+      if (drawerGeneration.current !== generation || appConfigRef.current?.active_repo !== repo) return true;
+      if (shells.length === 0) return false;
+      const tabs = shells.map((meta, i) => ({ id: meta.id, ordinal: i + 1, cwd: meta.worktree || repo }));
+      const next = { tabs, activeId: tabs[0].id, nextOrdinal: tabs.length + 1 };
+      drawerRef.current = next;
+      setDrawer(next);
+      setDrawerOpen(true);
+      return true;
+    } finally {
+      creatingDrawer.current = false;
+      setDrawerCreating(false);
+    }
+  };
+
   const toggleTerminalDrawer = async () => {
     if (!appConfigRef.current?.active_repo) return;
     if (drawerOpen) {
@@ -586,7 +615,7 @@ export default function App() {
       setDrawerOpen(true);
       return;
     }
-    await addDrawerTab();
+    if (!(await restoreDrawerTabs())) await addDrawerTab();
   };
 
   const switchTop = (kind: Tab, opts?: { instant?: boolean; gridViewId?: string }) => {
