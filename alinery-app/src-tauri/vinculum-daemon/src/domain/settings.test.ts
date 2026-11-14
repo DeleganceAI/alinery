@@ -143,6 +143,10 @@ describe("parsing", () => {
     expect(parseGlobal('[global.defaults]\nplaybook = "review"\n')?.defaults.playbook).toEqual({ scope: "bundled", key: "review" });
     expect(parseGlobal('[global.defaults]\nplaybook = "mine"\n')?.defaults.playbook).toEqual({ scope: "repo", key: "mine" });
   });
+  test("a saved row from a removed harness reads as unsupported, not as an unreadable file", () => {
+    const global = parseGlobal('[[global.harnesses.harness]]\nkey = "omp"\nname = "OMP CLI"\nbinary = "omp"\nadapter = "omp"\nmessage_adapter = "omp_bracketed_paste"\n');
+    expect(global?.harnesses.map((h) => [h.adapter, h.messageAdapter])).toEqual([["unsupported", "unsupported"]]);
+  });
   test("what serde refuses is refused, and unknown keys are not", () => {
     expect(parseOverrides("[defaults]\nmodel = 1\n")).toBeUndefined();
     expect(parseOverrides("[backup]\nretention = 256\n")).toBeUndefined();

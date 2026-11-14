@@ -8,7 +8,10 @@ pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 3;
 #[serde(rename_all = "snake_case")]
 pub enum HarnessAdapter {
     Vinculum,
+    // An adapter this build does not know, such as one a removed harness saved, reads as unsupported:
+    // one stale row must not make the whole app.toml unreadable. The daemon's `knownOr` does the same.
     #[default]
+    #[serde(other)]
     Unsupported,
 }
 
@@ -17,6 +20,7 @@ pub enum HarnessAdapter {
 pub enum MessageAdapter {
     VinculumBracketedPaste,
     #[default]
+    #[serde(other)]
     Unsupported,
 }
 

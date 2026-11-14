@@ -36,7 +36,7 @@ fn bundled_registry_is_vinculum_only() {
 }
 
 #[test]
-fn message_adapter_defaults_parses_and_rejects_unknown_names() {
+fn message_adapter_defaults_parses_and_reads_unknown_names_as_unsupported() {
     let legacy: HarnessFile = toml::from_str(
         r#"
 [[harness]]
@@ -60,16 +60,17 @@ message_adapter = "vinculum_bracketed_paste"
     .unwrap();
     assert_eq!(supported.harness[0].message_adapter, alinery_core::MessageAdapter::VinculumBracketedPaste);
 
-    assert!(toml::from_str::<HarnessFile>(
+    let unknown: HarnessFile = toml::from_str(
         r#"
 [[harness]]
 key = "unknown"
 name = "Unknown"
 binary = "unknown"
 message_adapter = "guessed"
-"#
+"#,
     )
-    .is_err());
+    .unwrap();
+    assert_eq!(unknown.harness[0].message_adapter, alinery_core::MessageAdapter::Unsupported);
 }
 
 #[test]

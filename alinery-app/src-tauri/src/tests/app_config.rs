@@ -286,3 +286,17 @@ fn removing_a_host_removes_its_mark() {
     let source = toml::to_string(&cfg).unwrap();
     assert!(!source.contains("devbox-a1b2c3"), "{source}");
 }
+
+#[test]
+fn a_saved_row_from_a_removed_harness_does_not_make_the_config_unreadable() {
+    let (_dir, path) = temp_app("removed-harness-row");
+    fs::write(
+        &path,
+        "[[global.harnesses.harness]]\nkey = \"omp\"\nname = \"OMP CLI\"\nbinary = \"omp\"\nadapter = \"omp\"\nmessage_adapter = \"omp_bracketed_paste\"\n",
+    )
+    .unwrap();
+    let cfg = read_existing_app_config(&path).unwrap().unwrap();
+    let row = &cfg.global.harnesses.harness[0];
+    assert_eq!(row.adapter, alinery_core::HarnessAdapter::Unsupported);
+    assert_eq!(row.message_adapter, alinery_core::MessageAdapter::Unsupported);
+}

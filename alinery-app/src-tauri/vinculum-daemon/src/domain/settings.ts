@@ -103,9 +103,10 @@ const optBool = (o: Obj, k: string): boolean | undefined => (present(o, k) ? boo
 const optU8 = (o: Obj, k: string): number | undefined => (present(o, k) ? uint(o[k], 255) : undefined);
 const table = (o: Obj, k: string): Obj => (present(o, k) ? obj(o[k]) : {});
 
-function oneOf(o: Obj, k: string, allowed: string[], fallback: string): string {
+/** Same as Rust's `#[serde(other)]`: an adapter this build does not know, such as one a removed harness saved, is unsupported, not an unreadable file. */
+function knownOr(o: Obj, k: string, known: string[], fallback: string): string {
   const value = str(o, k, fallback);
-  return allowed.includes(value) ? value : refuse();
+  return known.includes(value) ? value : fallback;
 }
 
 function harnessOf(v: unknown): Harness {
@@ -123,8 +124,8 @@ function harnessOf(v: unknown): Harness {
     // Sorted: Rust holds a HashMap, so two files are equal whatever order the keys came in.
     env: Object.fromEntries(Object.keys(env).sort().map((k) => [k, typeof env[k] === "string" ? (env[k] as string) : refuse()])),
     promptInjection: str(o, "prompt_injection"),
-    adapter: oneOf(o, "adapter", ["vinculum", "unsupported"], "unsupported"),
-    messageAdapter: oneOf(o, "message_adapter", ["vinculum_bracketed_paste", "unsupported"], "unsupported"),
+    adapter: knownOr(o, "adapter", ["vinculum"], "unsupported"),
+    messageAdapter: knownOr(o, "message_adapter", ["vinculum_bracketed_paste"], "unsupported"),
     models: list("models"),
     modelsCmd: str(o, "models_cmd"),
     resume: resume
