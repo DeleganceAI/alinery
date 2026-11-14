@@ -83,7 +83,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
       />,
     );
 
@@ -108,16 +108,16 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="chat"
+        initialSection="views.chat"
       />,
     );
 
-    // Off by default: no Chat section, and a request to open it lands on General.
+    // Off by default: no Chat view part, and a request to open it lands on its Views group.
     const checkbox = (await screen.findByRole("checkbox", { name: /^Chat/ })) as HTMLInputElement;
-    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Sessions view" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Chat view" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Session chat" })).toBeTruthy();
     fireEvent.click(checkbox);
-    expect(await screen.findByRole("button", { name: "Chat" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Chat view" })).toBeTruthy();
   });
 
   it("shows the Grok key without a daemon toggle", async () => {
@@ -130,7 +130,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
       />,
     );
 
@@ -149,7 +149,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
       />,
     );
 
@@ -170,7 +170,7 @@ describe("Settings experimental features", () => {
         onAppearanceChange={() => {}}
         onGlobalSettingsChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
       />,
     );
 

@@ -72,6 +72,8 @@ vi.mock("../sync/storage", () => ({
   verifyBackup: mocks.verifyBackup,
   useBackupBusy: () => mocks.busy.value,
   checkBackupDestination: mocks.checkBackupDestination,
+  // Storage shares the Data group with Backup, so it loads too; it never answers here.
+  storageInfo: () => new Promise(() => {}),
 }));
 
 vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
@@ -101,7 +103,7 @@ function renderBackup() {
       appearance={DEFAULT_APPEARANCE}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
-      initialSection="backup"
+      initialSection="data.backup"
     />,
   );
 }

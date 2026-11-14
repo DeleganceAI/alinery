@@ -108,7 +108,9 @@ const mcp: McpStatusHandle = {
   refresh: () => {},
 };
 
-function renderSection(initialSection: "harness" | "sessionsView" | "chat", appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
+const ANCHOR = { harness: "agents", sessionsView: "views.sessions", chat: "views.chat" } as const;
+
+function renderSection(section: keyof typeof ANCHOR, appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
   render(
     <Settings
       mcp={mcp}
@@ -117,9 +119,16 @@ function renderSection(initialSection: "harness" | "sessionsView" | "chat", appe
       appearance={appearance}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
-      initialSection={initialSection}
+      initialSection={ANCHOR[section]}
     />,
   );
+}
+
+// Every group renders on one page, so Session chat and Chat view both hold the same controls: query inside one.
+async function partOf(section: keyof typeof ANCHOR) {
+  const find = () => document.querySelector<HTMLElement>(`[data-anchor="${ANCHOR[section]}"]`);
+  await waitFor(() => expect(find()).not.toBeNull());
+  return within(find() as HTMLElement);
 }
 
 const renderHarnessSection = () => renderSection("harness");
@@ -248,7 +257,7 @@ describe("Sessions view and Chat tabs", () => {
     const missing = { chat_show_actor_labels: undefined, chat_show_agent_bubbles: undefined, chat_show_block_copy_buttons: undefined };
     renderSection(section, { ...DEFAULT_APPEARANCE, ...missing, ava_chat: missing });
     for (const label of [/Show You \/ Agent labels/, /Show agent reply bubbles/, /Show block copy buttons/]) {
-      expect(((await screen.findByLabelText(label)) as HTMLInputElement).checked).toBe(true);
+      expect(((await (await partOf(section)).findByLabelText(label)) as HTMLInputElement).checked).toBe(true);
     }
   });
 
@@ -256,13 +265,13 @@ describe("Sessions view and Chat tabs", () => {
     const disabled = { chat_show_actor_labels: false, chat_show_agent_bubbles: false, chat_show_block_copy_buttons: false };
     renderSection(section, { ...DEFAULT_APPEARANCE, ...disabled, ava_chat: disabled });
     for (const label of [/Show You \/ Agent labels/, /Show agent reply bubbles/, /Show block copy buttons/]) {
-      expect(((await screen.findByLabelText(label)) as HTMLInputElement).checked).toBe(false);
+      expect(((await (await partOf(section)).findByLabelText(label)) as HTMLInputElement).checked).toBe(false);
     }
   });
 
   it("Sessions view persists the copy button toggle into the flat chat_* fields and leaves ava_chat untouched", async () => {
     renderSection("sessionsView", split);
-    const toggle = await screen.findByLabelText(/Show copy buttons/);
+    const toggle = await (await partOf("sessionsView")).findByLabelText(/Show copy buttons/);
     expect((toggle as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle);
     await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
@@ -273,14 +282,14 @@ describe("Sessions view and Chat tabs", () => {
 
   it("Chat renders its own values, not the flat chat_* fields", async () => {
     renderSection("chat", { ...split, chat_show_copy_buttons: false, chat_max_width: "none" });
-    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("button", { name: "600px" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("false");
+    expect(((await (await partOf("chat")).findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect((await partOf("chat")).getByRole("button", { name: "600px" }).getAttribute("aria-pressed")).toBe("true");
+    expect((await partOf("chat")).getByRole("button", { name: "None" }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("Chat persists a toggle into ava_chat and leaves the flat chat_* fields untouched", async () => {
     renderSection("chat", split);
-    fireEvent.click(await screen.findByLabelText(/Show copy buttons/));
+    fireEvent.click(await (await partOf("chat")).findByLabelText(/Show copy buttons/));
     await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
     const saved = lastSavedAppearance();
     expect(saved.ava_chat).toEqual({ ...avaChat, chat_show_copy_buttons: false });
@@ -289,7 +298,7 @@ describe("Sessions view and Chat tabs", () => {
 
   it("Chat persists a choice card into ava_chat only", async () => {
     renderSection("chat", split);
-    fireEvent.click(await screen.findByRole("button", { name: "Dense" }));
+    fireEvent.click(await (await partOf("chat")).findByRole("button", { name: "Dense" }));
     await waitFor(() => expect(mocks.writeAppearance).toHaveBeenCalled());
     const saved = lastSavedAppearance();
     expect(saved.ava_chat?.chat_rail_density).toBe("dense");
@@ -298,8 +307,8 @@ describe("Sessions view and Chat tabs", () => {
 
   it("Chat falls back to the defaults when ava_chat was never saved", async () => {
     renderSection("chat", { ...DEFAULT_APPEARANCE, chat_show_copy_buttons: false });
-    expect(((await screen.findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
+    expect(((await (await partOf("chat")).findByLabelText(/Show copy buttons/)) as HTMLInputElement).checked).toBe(true);
+    expect((await partOf("chat")).getByRole("button", { name: "900px" }).getAttribute("aria-pressed")).toBe("true");
   });
 });
 

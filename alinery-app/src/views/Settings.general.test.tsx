@@ -71,7 +71,7 @@ const mcp: McpStatusHandle = {
 const NOTE =
   "This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while at least one session is not Idle.";
 
-// No initialSection: General is also the tab Settings opens on.
+// No initialSection: Settings opens at the top of its list, on Appearance.
 function renderGeneral(appearance: AppearancePrefs = DEFAULT_APPEARANCE) {
   const onAppearanceChange = vi.fn();
   render(<Settings mcp={mcp} activeRepo="/r" knownRepos={["/r"]} appearance={appearance} onAppearanceChange={onAppearanceChange} onNotificationsChange={() => {}} />);
@@ -109,7 +109,7 @@ describe("Settings General", () => {
     await waitFor(() => expect(ipc.writeAppearance).toHaveBeenCalledTimes(1));
     expect(ipc.writeAppearance).toHaveBeenCalledWith({ ...appearance, startup_view: "sessions" });
     expect(onAppearanceChange).toHaveBeenCalledWith({ ...appearance, startup_view: "sessions" });
-    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(true);
+    expect(screen.getByRole("button", { name: "Appearance" }).classList.contains("on")).toBe(true);
   });
 
   it("offers configured grid views and enabled tabs", async () => {
@@ -135,33 +135,30 @@ describe("Settings General", () => {
     expect(ipc.writeAppearance).not.toHaveBeenCalled();
   });
 
-  it("is the first tab and absorbs the pages folded into it", () => {
-    const labels = SECTIONS.map((section) => section.label);
-    expect(labels[0]).toBe("General");
-    for (const gone of ["Appearance", "Notifications", "Telemetry", "Power", "Playbooks", "Updates", "Experimental"]) expect(labels).not.toContain(gone);
+  it("lists every group once, in page order", () => {
+    expect(SECTIONS.map((section) => section.label)).toEqual(["Appearance", "Views", "Agents", "Connections", "Notifications", "Data", "MCP server", "System"]);
   });
 
-  it("opens on General with Playbooks above Notifications, Updates above Misc, and experimental options inside Misc", async () => {
+  it("renders every group on one page, with General's old parts under the groups they belong to", async () => {
     renderGeneral();
     await keepAwake();
-    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(true);
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(["Appearance", "Playbooks", "Notifications", "Updates", "Misc"]);
-    const subsection = (name: string) => within(screen.getByRole("heading", { name }).closest(".settings-subsection") as HTMLElement);
-    expect(subsection("Appearance").getByRole("button", { name: "Light" })).toBeTruthy();
-    expect(subsection("Playbooks").getByLabelText("Default playbook")).toBeTruthy();
-    expect(subsection("Notifications").getByRole("button", { name: "Send test notification" })).toBeTruthy();
-    expect(subsection("Notifications").getByRole("group", { name: "Dock badge categories" })).toBeTruthy();
-    expect(subsection("Updates").getByRole("button", { name: "Check now" })).toBeTruthy();
-    expect(subsection("Updates").getByRole("checkbox", { name: /Check for updates/ })).toBeTruthy();
-    const misc = subsection("Misc");
-    expect(misc.getByRole("heading", { level: 3, name: "Experimental options" })).toBeTruthy();
-    const boxes = misc.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(4);
-    expect(boxes[0]).toBe(await keepAwake());
-    expect(boxes[1]).toBe(telemetry());
-    expect(boxes[2]).toBe(misc.getByRole("checkbox", { name: /^Chat/ }));
+    expect(screen.getByRole("button", { name: "Appearance" }).classList.contains("on")).toBe(true);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual(SECTIONS.map((section) => section.label));
+    const group = (name: string) => within(screen.getByRole("region", { name }));
+    const part = (name: string) => within(screen.getByRole("heading", { level: 3, name }).closest(".settings-part") as HTMLElement);
+    expect(group("Appearance").getByRole("button", { name: "Light" })).toBeTruthy();
+    expect(group("Agents").getByLabelText("Default playbook")).toBeTruthy();
+    expect(group("Notifications").getByRole("button", { name: "Send test notification" })).toBeTruthy();
+    expect(group("Notifications").getByRole("group", { name: "Dock badge categories" })).toBeTruthy();
+    expect(part("Updates").getByRole("button", { name: "Check now" })).toBeTruthy();
+    expect(part("Updates").getByRole("checkbox", { name: /Check for updates/ })).toBeTruthy();
+    const misc = part("Power and privacy").getAllByRole("checkbox");
+    expect(misc).toEqual([await keepAwake(), telemetry()]);
+    const experimental = part("Experimental").getAllByRole("checkbox");
     // The canvas needs Chat on, so it sits under it and is off until Chat is.
-    expect(boxes[3]).toBe(misc.getByRole("checkbox", { name: /^Thread canvas/ }));
+    expect(experimental).toHaveLength(2);
+    expect(experimental[0]).toBe(part("Experimental").getByRole("checkbox", { name: /^Chat/ }));
+    expect(experimental[1]).toBe(part("Experimental").getByRole("checkbox", { name: /^Thread canvas/ }));
   });
 
   it("shows Keep awake off and editable, with the note under it", async () => {
@@ -192,7 +189,7 @@ describe("Settings General", () => {
     expect(lastWrite()).toEqual({ ...globalSettings, telemetry: { ...globalSettings.telemetry, enabled: false } });
   });
 
-  it("shows global values read-only in repository scope under one banner", async () => {
+  it("shows global values read-only in repository scope, each global-only group saying so once", async () => {
     renderGeneral();
     await keepAwake();
     fireEvent.click(screen.getByRole("button", { name: "r" }));
@@ -200,12 +197,13 @@ describe("Settings General", () => {
     expect(box.checked).toBe(false); // repo scope mirrors the global tier it reads
     expect(box.disabled).toBe(true);
     expect(telemetry().disabled).toBe(true);
-    expect((screen.getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);
+    expect((within(screen.getByRole("region", { name: "Notifications" })).getByRole("checkbox", { name: /Enabled/ }) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Light" }) as HTMLButtonElement).disabled).toBe(true);
     const startingView = screen.getByRole("combobox", { name: "Default starting view" }) as HTMLSelectElement;
     expect(startingView.disabled).toBe(true);
-    expect(screen.getAllByText(/are global-only\./)).toHaveLength(1);
-    expect(screen.getByText(/Appearance, notifications, updates, and misc are global-only\./)).toBeTruthy();
+    expect(screen.getByText(/Appearance settings are global-only\./)).toBeTruthy();
+    expect(screen.getByText(/Notifications settings are global-only\./)).toBeTruthy();
+    expect(screen.getByText(/Updates, power, privacy and experimental options are global-only\./)).toBeTruthy();
     expect((screen.getByRole("checkbox", { name: /Check for updates/ }) as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByRole("checkbox", { name: /Original Kanban/ })).toBeNull();
     expect((screen.getByRole("checkbox", { name: /^Chat/ }) as HTMLInputElement).disabled).toBe(true);
@@ -216,5 +214,54 @@ describe("Settings General", () => {
     fireEvent.change(startingView, { target: { value: "sessions" } });
     expect(ipc.writeGlobalSettings).not.toHaveBeenCalled();
     expect(ipc.writeAppearance).not.toHaveBeenCalled();
+  });
+});
+
+describe("Settings search", () => {
+  const search = () => screen.getByRole("searchbox", { name: "Search settings" }) as HTMLInputElement;
+  const rail = () => within(screen.getByRole("navigation", { name: "Settings sections" }));
+  const visibleGroupNames = () =>
+    [...document.querySelectorAll<HTMLElement>("section.settings-group")].filter((group) => !group.hidden).map((group) => group.querySelector("h2")?.textContent);
+
+  it("narrows the rail and the list to what matches, and Esc brings everything back", async () => {
+    renderGeneral();
+    await keepAwake();
+    fireEvent.change(search(), { target: { value: "dark mode" } });
+    expect(visibleGroupNames()).toEqual(["Appearance"]);
+    expect(rail().getAllByRole("button").map((button) => button.textContent)).toEqual(["Appearance"]);
+    fireEvent.keyDown(search(), { key: "Escape" });
+    expect(search().value).toBe("");
+    expect(visibleGroupNames()).toEqual(SECTIONS.map((section) => section.label));
+  });
+
+  it("shows a matching part under its group and keeps the field's own state while hidden", async () => {
+    renderGeneral();
+    await keepAwake();
+    fireEvent.change(search(), { target: { value: "telemetry" } });
+    expect(visibleGroupNames()).toEqual(["System"]);
+    expect(rail().getAllByRole("button").map((button) => button.textContent)).toEqual(["System", "Power and privacy"]);
+    expect((screen.getByRole("heading", { level: 3, name: "Updates", hidden: true }).closest(".settings-part") as HTMLElement).hidden).toBe(true);
+    expect(telemetry().closest("[hidden]")).toBeNull();
+  });
+
+  it("says so when nothing matches", async () => {
+    renderGeneral();
+    await keepAwake();
+    fireEvent.change(search(), { target: { value: "zzz" } });
+    expect(screen.getByText("Nothing matches “zzz”.")).toBeTruthy();
+    expect(visibleGroupNames()).toEqual([]);
+  });
+
+  it("reaches the field with / from the page, but not from inside another field", async () => {
+    renderGeneral();
+    await keepAwake();
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(document.activeElement).toBe(search());
+    const grok = screen.getByLabelText("Grok API key");
+    grok.focus();
+    fireEvent.keyDown(grok, { key: "/" });
+    expect(document.activeElement).toBe(grok);
+    fireEvent.keyDown(grok, { key: "f", metaKey: true });
+    expect(document.activeElement).toBe(search());
   });
 });

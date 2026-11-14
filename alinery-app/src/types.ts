@@ -1079,7 +1079,28 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "general" | "harness" | "connections" | "storage" | "sessionsView" | "chat" | "gridViews" | "mcp" | "backup";
+// A Settings group or one of its parts; `views/settingsIndex.ts` lists them in page order.
+export type SettingsSectionKey =
+  | "appearance"
+  | "views"
+  | "views.sessions"
+  | "views.chat"
+  | "views.grid"
+  | "agents"
+  | "agents.defaults"
+  | "agents.providers"
+  | "agents.playbooks"
+  | "connections"
+  | "notifications"
+  | "data"
+  | "data.storage"
+  | "data.backup"
+  | "mcp"
+  | "system"
+  | "system.updates"
+  | "system.sessions"
+  | "system.misc"
+  | "system.experimental";
 
 export type View =
   | { kind: "list" }

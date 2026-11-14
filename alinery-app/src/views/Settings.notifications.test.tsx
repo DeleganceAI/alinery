@@ -76,7 +76,7 @@ function renderNotifications(onNotificationsChange = vi.fn()) {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={onNotificationsChange}
-        initialSection="general"
+        initialSection="appearance"
       />
       <Toast />
     </>,

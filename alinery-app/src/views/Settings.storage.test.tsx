@@ -126,14 +126,14 @@ afterEach(cleanup);
 
 describe("Settings storage scope", () => {
   it("opens on All repositories, not the top-bar repo", async () => {
-    renderSettings("storage");
+    renderSettings("data.storage");
     const all = await screen.findByRole("button", { name: "All repositories" });
     expect(all.classList.contains("on")).toBe(true);
     expect(screen.getByRole("button", { name: "repo-a" }).classList.contains("on")).toBe(false);
   });
 
   it("shows the scope empty state on Storage and does not fetch", async () => {
-    renderSettings("storage");
+    renderSettings("data.storage");
     expect(await screen.findByText(SCOPE_EMPTY)).toBeTruthy();
     expect(screen.queryByText("Active data (read-only)")).toBeNull();
     expect(screen.queryByText("Delete all archived data…")).toBeNull();
@@ -141,7 +141,7 @@ describe("Settings storage scope", () => {
   });
 
   it("keeps Backup enabled on All repositories and shows the same empty state", async () => {
-    renderSettings("backup");
+    renderSettings("data.backup");
     const backupNav = (await screen.findByRole("button", { name: "Backup" })) as HTMLButtonElement;
     expect(backupNav.disabled).toBe(false);
     expect(backupNav.classList.contains("on")).toBe(true);
@@ -150,17 +150,17 @@ describe("Settings storage scope", () => {
   });
 
   it("stays on Backup when switching to All repositories", async () => {
-    renderSettings("backup");
+    renderSettings("data.backup");
     fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
     expect(await screen.findByText("Destination folder")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "All repositories" }));
     expect(await screen.findByText(SCOPE_EMPTY)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backup" }).classList.contains("on")).toBe(true);
-    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(false);
+    expect(screen.getByRole("button", { name: "Appearance" }).classList.contains("on")).toBe(false);
   });
 
   it("loads the Settings-scope repo, not the top-bar repo", async () => {
-    renderSettings("storage");
+    renderSettings("data.storage");
     fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
     await waitFor(() => expect(mocks.storageInfo).toHaveBeenCalledWith("/repo-b"));
     expect(await screen.findByText("Repository")).toBeTruthy();
@@ -172,7 +172,7 @@ describe("Settings storage scope", () => {
   });
 
   it("purges the Settings-scope repo", async () => {
-    renderSettings("storage");
+    renderSettings("data.storage");
     fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
     fireEvent.click(await screen.findByRole("button", { name: "Delete all archived data…" }));
     await waitFor(() => expect(mocks.deleteAllArchivedStorage).toHaveBeenCalledWith("/repo-b"));

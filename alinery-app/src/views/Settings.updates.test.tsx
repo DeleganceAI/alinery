@@ -88,7 +88,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={onCheckNow}
         onUpgrade={() => {}}
@@ -112,7 +112,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={async () => available}
         onUpgrade={onUpgrade}
@@ -135,7 +135,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={async () => available}
         onUpgrade={() => {}}

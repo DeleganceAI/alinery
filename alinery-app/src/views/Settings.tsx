@@ -87,6 +87,8 @@ import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } fro
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { RuntimePanel } from "./RuntimePanel";
+import "./Settings.css";
+import { groupOf, matchSettings, SETTINGS_GROUPS, visibleGroups } from "./settingsIndex";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
 const NO_REPOS: string[] = [];
@@ -177,17 +179,7 @@ function ConnectionMenu({ label, busy, onReconnect, onRemove }: { label: string;
   );
 }
 
-export const SECTIONS: { key: SettingsSectionKey; label: string }[] = [
-  { key: "general", label: "General" },
-  { key: "harness", label: "Harness" },
-  { key: "connections", label: "Connections" },
-  { key: "storage", label: "Storage" },
-  { key: "sessionsView", label: "Sessions view" },
-  { key: "chat", label: "Chat" },
-  { key: "gridViews", label: "Grid views" },
-  { key: "mcp", label: "MCP Server" },
-  { key: "backup", label: "Backup" },
-];
+export const SECTIONS = SETTINGS_GROUPS.map(({ key, label }) => ({ key, label }));
 
 type SettingsScope = { kind: "global" } | { kind: "repo"; repoPath: string };
 type ChoiceKey = "defaults";
@@ -347,12 +339,32 @@ export function Settings({
   const [storageErr, setStorageErr] = useState("");
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [purgeErrors, setPurgeErrors] = useState<PurgeFailure[]>([]);
-  const [activeSection, setActiveSection] = useState<SettingsSectionKey>(initialSection ?? "general");
+  // Groups that have come near the screen. Each loads its data the first time it does, not every group at mount.
+  const [seen, setSeen] = useState<ReadonlySet<SettingsSectionKey>>(() => new Set(initialSection ? [groupOf(initialSection)] : []));
+  const [activeAnchor, setActiveAnchor] = useState<SettingsSectionKey>(initialSection ?? "appearance");
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // / or ⌘F reaches the search from anywhere in Settings, unless a text field already has the keys.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const slash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey;
+      const find = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f";
+      if (!slash && !find) return;
+      if (slash && (e.target as HTMLElement | null)?.closest("input,textarea,select,[contenteditable]")) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const seenData = seen.has("data");
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [backupsErr, setBackupsErr] = useState("");
   // A manual backup or a restore this window is running; a run anyone started shows through the daemon's job rows.
   const [backupWorking, setBackupWorking] = useState(false);
-  const backupJobRunning = storageApi.useBackupBusy(activeSection === "backup" && scope.kind === "repo" ? scope.repoPath : "");
+  const backupJobRunning = storageApi.useBackupBusy(seenData && scope.kind === "repo" ? scope.repoPath : "");
   const backupBusy = backupWorking || backupJobRunning;
   const [connections, setConnections] = useState<ConnectionStatus[] | null>(null);
   const [connecting, setConnecting] = useState<ConnectionStatus["provider"] | "">("");
@@ -387,11 +399,6 @@ export function Settings({
   const effective = cfg;
   const chatEnabled = global?.experiments?.show_chat ?? false;
   useEffect(() => {
-    if (global && !chatEnabled && activeSection === "chat") setActiveSection("general");
-  }, [global, chatEnabled, activeSection]);
-
-  useEffect(() => {
-    if (activeSection !== "general") return;
     let alive = true;
     setPlaybookCatalog(null);
     setPlaybookError("");
@@ -406,7 +413,7 @@ export function Settings({
     return () => {
       alive = false;
     };
-  }, [activeSection, selectedRepo]);
+  }, [selectedRepo]);
 
   // Chat → Harness subsection acts on the SETTINGS scope — the repo picked in the scope bar,
   // or every open repository under "All repositories". The footer's daemon poll only knows
@@ -415,7 +422,53 @@ export function Settings({
   const [sessionsBusy, setSessionsBusy] = useState(false);
 
   // Each repo's stream keeps the count current; an unreachable daemon reads 0, so a repo never disappears from the list.
-  const liveByRepo = useLiveSessionsByRepo(activeSection === "harness" ? sessionTargets : NO_REPOS);
+  const liveByRepo = useLiveSessionsByRepo(seen.has("system") ? sessionTargets : NO_REPOS);
+
+  const markSeen = (keys: SettingsSectionKey[]) => setSeen((current) => (keys.every((key) => current.has(key)) ? current : new Set([...current, ...keys])));
+  // No smooth scrolling: DESIGN.md keeps keyboard-initiated navigation unanimated.
+  const jumpTo = (anchor: SettingsSectionKey) => {
+    markSeen([groupOf(anchor)]);
+    setActiveAnchor(anchor);
+    const panel = panelRef.current;
+    const target = panel?.querySelector<HTMLElement>(`[data-anchor="${anchor}"]`);
+    if (panel && target) panel.scrollTop = target.offsetTop;
+  };
+  // The rail follows the last anchor whose top has passed the panel's top. The panel's tail spacer lets the last group reach it.
+  const spy = () => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const passed = [...panel.querySelectorAll<HTMLElement>("[data-anchor]")].filter((el) => !el.closest("[hidden]") && el.offsetTop <= panel.scrollTop + 24);
+    const anchor = passed[passed.length - 1]?.dataset.anchor as SettingsSectionKey | undefined;
+    if (anchor) setActiveAnchor(anchor);
+  };
+  const ready = Boolean(global && cfg);
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!ready || !panel) return;
+    // jsdom has no IntersectionObserver: there only the group a deep link lands on loads, as its tab used to.
+    if (typeof IntersectionObserver === "undefined") return;
+    const keys = (els: Element[]) => els.map((el) => (el as HTMLElement).dataset.group as SettingsSectionKey);
+    const groupEls = [...panel.querySelectorAll("[data-group]")];
+    // A group within a screen below the fold counts, so its data is in by the time it scrolls into view.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const hits = keys(entries.filter((entry) => entry.isIntersecting).map((entry) => entry.target));
+        if (hits.length) markSeen(hits);
+      },
+      { root: panel, rootMargin: "0px 0px 100% 0px" },
+    );
+    for (const el of groupEls) observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+  // A deep link (the command palette's Settings rows) lands on its anchor once the list has rendered.
+  const landed = useRef(false);
+  useEffect(() => {
+    if (!ready || landed.current) return;
+    landed.current = true;
+    if (initialSection) jumpTo(initialSection);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   useEffect(() => {
     ipc
@@ -438,10 +491,9 @@ export function Settings({
       .finally(() => setLocalChecking(false));
   };
 
-  // Opening General refreshes the shared hook so a hit also reveals the TopBar
+  // Opening Settings refreshes the shared hook so a hit also reveals the TopBar
   // button. Tests that do not pass onCheckNow keep the local ipc path.
   useEffect(() => {
-    if (activeSection !== "general") return;
     if (onCheckNow) {
       onCheckNow().catch(() => {});
       return;
@@ -450,7 +502,7 @@ export function Settings({
       .checkUpdate()
       .then(setLocalUpdate)
       .catch(() => {});
-  }, [activeSection, onCheckNow]);
+  }, [onCheckNow]);
 
   const loadScope = (nextScope: SettingsScope) => {
     if (nextScope.kind === "global") {
@@ -489,7 +541,7 @@ export function Settings({
   // The scan walks the disk (a job of the daemon) — load it lazily when Storage is opened on a repository
   // chip. All repositories skips the walk; the panel shows the shared empty placeholder.
   useEffect(() => {
-    if (activeSection !== "storage") return;
+    if (!seenData) return;
     if (scope.kind !== "repo") {
       setStorage(null);
       setStorageErr("");
@@ -514,9 +566,9 @@ export function Settings({
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
+  }, [seenData, scope.kind, scope.kind === "repo" ? scope.repoPath : "global"]);
   useEffect(() => {
-    if (activeSection !== "connections") return;
+    if (!seen.has("connections")) return;
     let alive = true;
     setConnections(null);
     ipc
@@ -531,22 +583,22 @@ export function Settings({
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection]);
+  }, [seen.has("connections")]);
 
   // The list needs a valid destination, so load it lazily when the section is opened
   // rather than on every settings mount.
   useEffect(() => {
-    if (activeSection !== "backup" || scope.kind !== "repo") return;
+    if (!seenData || scope.kind !== "repo") return;
     setDestinationDraft(null);
     refreshBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, scope.kind, scope.kind === "repo" ? scope.repoPath : "global", cfg?.backup.destination]);
+  }, [seenData, scope.kind, scope.kind === "repo" ? scope.repoPath : "global", cfg?.backup.destination]);
 
   // A backup outlives this view: it is a job of the daemon, so `useBackupBusy` shows a run started elsewhere (another window,
   // an automatic trigger) the moment this view opens. When a run ends the list is read again.
   const wasRunning = useRef(false);
   useEffect(() => {
-    if (wasRunning.current && !backupJobRunning && activeSection === "backup") refreshBackups();
+    if (wasRunning.current && !backupJobRunning && seenData) refreshBackups();
     wasRunning.current = backupJobRunning;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backupJobRunning]);
@@ -872,11 +924,19 @@ export function Settings({
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
   const startupOptions = startupViewOptions(global);
-  // Chat settings belong to the experimental Chat tab: hidden with it. An open Chat section falls
-  // back to General when the flag is turned off (the effect above moves the state; this covers the
-  // render before it lands).
-  const visibleSections = chatEnabled ? SECTIONS : SECTIONS.filter((section) => section.key !== "chat");
-  const visibleActiveSection = !chatEnabled && activeSection === "chat" ? "general" : activeSection;
+  // Chat view settings belong to the experimental Chat tab: hidden with it.
+  const groups = visibleGroups(chatEnabled);
+  // A search hides what does not match rather than unmounting it, so a half-typed field keeps its draft.
+  const matches = matchSettings(groups, query);
+  const hide = (anchor: SettingsSectionKey) => matches !== null && !matches.has(anchor);
+  const shownGroups = groups.filter((group) => !hide(group.key));
+  const jumpToFirstHit = () => {
+    const group = shownGroups[0];
+    if (!group) return;
+    // A group that matched by its own name lands on its top; one that matched through a part lands on that part.
+    const firstPart = group.parts.find((p) => !hide(p.id));
+    jumpTo(group.parts.every((p) => !hide(p.id)) || !firstPart ? group.key : firstPart.id);
+  };
 
   const saveGridViews = (next: GridViewDefinition[], message: string) => {
     setGridViewDrafts({});
@@ -1426,7 +1486,7 @@ export function Settings({
   ) => (
     <>
       <div className="settings-subsection">
-        <h2>Journal</h2>
+        <h4>Journal</h4>
         <p>Which journal rows appear in {where}. Global-only.</p>
         {!isGlobal && globalOnly(`${title} settings`)}
         <Checkbox
@@ -1611,7 +1671,7 @@ export function Settings({
         />
       </div>
       <div className="settings-subsection">
-        <h2>Density</h2>
+        <h4>Density</h4>
         <p>Density, sizing and behavior of {where}. Global-only.</p>
         {!isGlobal && globalOnly(`${title} density settings`)}
         <Checkbox
@@ -1739,16 +1799,9 @@ export function Settings({
   );
 
   const renderHarness = () => {
-    // Acts on the SETTINGS scope — the repo picked in the scope bar, or every open
-    // repository under "All repositories". Live counts come from a per-repo probe.
-    const targets = sessionTargets.map((repo) => ({ repo, live: liveByRepo[repo] ?? 0 }));
-    const live = targets.reduce((sum, target) => sum + target.live, 0);
-    const plural = (n: number) => (n === 1 ? "" : "s");
-    const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
-    const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
     return (
       <div className="harness-settings-layout">
-        <section className="harness-settings-section" aria-labelledby="session-defaults-title">
+        <section className="harness-settings-section" data-anchor="agents.defaults" hidden={hide("agents.defaults")} aria-labelledby="session-defaults-title">
           <h3 id="session-defaults-title">Session defaults</h3>
           <p className="hint">
             Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. Playbooks and individual steps can override it.
@@ -1762,7 +1815,7 @@ export function Settings({
             </p>
           </details>
         </section>
-        <section className="vinculum-settings" aria-labelledby="providers-settings-title">
+        <section className="vinculum-settings" data-anchor="agents.providers" hidden={hide("agents.providers")} aria-labelledby="providers-settings-title">
           <div className="vinculum-settings-heading">
             <h3 id="providers-settings-title">Providers</h3>
             <p className="hint">Sign in to model providers for this installation.</p>
@@ -1776,71 +1829,77 @@ export function Settings({
             <VinculumCustomizations />
           </details>
         </section>
-        <details className="harness-disclosure harness-session-service">
-          <summary>
-            Session service{" "}
-            <span className="dim">
-              {live} live session{plural(live)}
-            </span>
-          </summary>
+      </div>
+    );
+  };
+
+  const renderSessionService = () => {
+    // Acts on the SETTINGS scope — the repo picked in the scope bar, or every open
+    // repository under "All repositories". Live counts come from a per-repo probe.
+    const targets = sessionTargets.map((repo) => ({ repo, live: liveByRepo[repo] ?? 0 }));
+    const live = targets.reduce((sum, target) => sum + target.live, 0);
+    const plural = (n: number) => (n === 1 ? "" : "s");
+    const scopeName = isGlobal ? (targets.length ? `all ${targets.length} open repositor${targets.length === 1 ? "y" : "ies"}` : "") : repoName(selectedRepo);
+    const hitsActiveRepo = targets.some((target) => target.repo === activeRepo);
+    return (
+      <div className="harness-session-service">
+        <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
+          Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
+          {isGlobal ? "" : " only"}
+          {hitsActiveRepo ? ", and also restarts the MCP server" : ""}. A fresh daemon is started immediately afterwards.
+        </div>
+        <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10, color: live > 0 ? "var(--danger)" : undefined }}>
+          {live > 0 ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.` : "No live sessions."}
+        </div>
+        {isGlobal && targets.length > 1 && (
           <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
-            Sessions run in a background daemon that survives app quit. Stopping them affects <strong>{scopeName || "the selected repository"}</strong>
-            {isGlobal ? "" : " only"}
-            {hitsActiveRepo ? ", and also restarts the MCP server" : ""}. A fresh daemon is started immediately afterwards.
+            {targets.map((target) => (
+              <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
+                {repoName(target.repo)} — {target.live} live session{plural(target.live)}
+              </div>
+            ))}
           </div>
-          <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10, color: live > 0 ? "var(--danger)" : undefined }}>
-            {live > 0 ? `${live} live session${plural(live)} will be killed. Any unsaved, in-flight harness work is lost.` : "No live sessions."}
-          </div>
-          {isGlobal && targets.length > 1 && (
-            <div className="dim" style={{ fontSize: "calc(12px * var(--ui-scale))", marginBottom: 10 }}>
-              {targets.map((target) => (
-                <div key={target.repo} title={target.repo} style={{ color: target.live > 0 ? "var(--danger)" : undefined }}>
-                  {repoName(target.repo)} — {target.live} live session{plural(target.live)}
-                </div>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            className="btn danger"
-            disabled={!targets.length || sessionsBusy}
-            onClick={() => {
-              void (async () => {
-                const breakdown = isGlobal && targets.length > 1 && (
-                  <ul className="confirm-list">
-                    {targets.map((t) => (
-                      <li key={t.repo}>
-                        <span className="confirm-repo">{repoName(t.repo)}</span>
-                        <span className="dim">
-                          {t.live} live session{plural(t.live)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                );
-                const ok = await confirmDanger(
-                  live > 0 ? `Stop ${live} live session${plural(live)} in ${scopeName}?` : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
-                  <>
-                    {breakdown}
-                    {live > 0 ? (
-                      <p className="confirm-loss">In-flight harness work is lost. This cannot be undone.</p>
-                    ) : (
-                      <p>No live sessions — the daemon is replaced with a fresh one.</p>
-                    )}
-                  </>,
-                  live > 0 ? "Stop sessions" : "Restart daemon",
-                );
-                if (!ok) return;
-                await stopScopedSessions(
-                  targets.map((target) => target.repo),
-                  scopeName,
-                );
-              })();
-            }}
-          >
-            Stop all sessions in {scopeName || "this repo"}
-          </button>
-        </details>
+        )}
+        <button
+          type="button"
+          className="btn danger"
+          disabled={!targets.length || sessionsBusy}
+          onClick={() => {
+            void (async () => {
+              const breakdown = isGlobal && targets.length > 1 && (
+                <ul className="confirm-list">
+                  {targets.map((t) => (
+                    <li key={t.repo}>
+                      <span className="confirm-repo">{repoName(t.repo)}</span>
+                      <span className="dim">
+                        {t.live} live session{plural(t.live)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              );
+              const ok = await confirmDanger(
+                live > 0 ? `Stop ${live} live session${plural(live)} in ${scopeName}?` : `Restart the session daemon${plural(targets.length)} for ${scopeName}?`,
+                <>
+                  {breakdown}
+                  {live > 0 ? (
+                    <p className="confirm-loss">In-flight harness work is lost. This cannot be undone.</p>
+                  ) : (
+                    <p>No live sessions — the daemon is replaced with a fresh one.</p>
+                  )}
+                </>,
+                live > 0 ? "Stop sessions" : "Restart daemon",
+              );
+              if (!ok) return;
+              await stopScopedSessions(
+                targets.map((target) => target.repo),
+                scopeName,
+              );
+            })();
+          }}
+        >
+          Stop all sessions in {scopeName || "this repo"}
+        </button>
       </div>
     );
   };
@@ -2029,7 +2088,7 @@ export function Settings({
   );
 
   const renderBackup = () => {
-    if (scope.kind !== "repo") return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
+    if (scope.kind !== "repo") return null;
     const backup = effective.backup;
     const hasDest = backup.destination.trim() !== "";
     const remote = isRemoteRepo(scope.repoPath);
@@ -2163,487 +2222,530 @@ export function Settings({
     );
   };
 
-  const renderSection = (key: string): ReactNode => {
-    switch (key) {
-      case "connections":
-        return connectionsSection();
-      case "general": {
-        // Playbooks follows the scope bar. The other subsections are global-only, so one banner covers them.
-        const lastCheck = updateCheckFailed
-          ? "Couldn't check"
-          : !displayedUpdate || displayedUpdate.checked_at === 0
-            ? "Not checked"
-            : displayedUpdate.available
-              ? `${displayedUpdate.available.version} available`
-              : "Up to date";
-        return (
+  const renderNotifications = () => (
+    <>
+      {check("enabled", "Enabled", "master switch")}
+      {check("banner", "Banner", "native notification")}
+      {check("sound", "Sound", "notification sound")}
+      {check("bounce", "Dock bounce", "off by default")}
+      {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
+      <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
+        {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
+        {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
+        {check("dock_badge_failures", "Failures", "include failed sessions")}
+        {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+      </div>
+      <button
+        type="button"
+        className="btn ghost small"
+        style={{ marginTop: 10 }}
+        onClick={() =>
+          ipc
+            .notifyTest()
+            .then(() => report("Test notification sent"))
+            .catch((e) => reportError(e))
+        }
+      >
+        Send test notification
+      </button>
+    </>
+  );
+
+  const renderUpdates = () => {
+    const lastCheck = updateCheckFailed
+      ? "Couldn't check"
+      : !displayedUpdate || displayedUpdate.checked_at === 0
+        ? "Not checked"
+        : displayedUpdate.available
+          ? `${displayedUpdate.available.version} available`
+          : "Up to date";
+    return (
+      <>
+        <div className="field">
+          <label>Current version</label>
+          <input className="field-input mono" type="text" value={appVersion} readOnly />
+        </div>
+        <div className="field" style={{ marginTop: 16 }}>
+          <label>Last check</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
+            <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
+              Check now
+            </button>
+          </div>
+        </div>
+        {displayedUpdate?.available && onUpgrade && (
+          <div className="field" style={{ marginTop: 16 }}>
+            <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
+              Upgrade to {displayedUpdate.available.version}
+            </button>
+          </div>
+        )}
+        <div className="field" style={{ marginTop: 16 }}>
+          {updatesCheck("Check for updates")}
+        </div>
+        <RuntimePanel mcp={mcp} />
+      </>
+    );
+  };
+
+  const renderMisc = () => (
+    <>
+      {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
+        (the daemon's platform/keepawake.ts); the note states the same rule it enforces. */}
+      <Checkbox
+        checked={global.power?.keep_awake ?? false}
+        disabled={!isGlobal}
+        onChange={setKeepAwake}
+        label={
+          <div>
+            <div>Keep this computer awake</div>
+            <div className="dsc">
+              This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while at
+              least one session is not Idle.
+            </div>
+          </div>
+        }
+      />
+      {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
+    </>
+  );
+
+  const renderExperimental = () => (
+    <>
+      <Checkbox
+        checked={global.experiments?.show_chat ?? false}
+        disabled={!isGlobal}
+        onChange={setShowChat}
+        label={
+          <div>
+            <div>Chat</div>
+            <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Sessions.</div>
+          </div>
+        }
+      />
+      <Checkbox
+        checked={global.experiments?.chat_canvas ?? false}
+        disabled={!isGlobal || !(global.experiments?.show_chat ?? false)}
+        onChange={setChatCanvas}
+        label={
+          <div>
+            <div>Thread canvas</div>
+            <div className="hint">
+              Lets you turn on a canvas for a chat thread: up to four panels (charts, tables, documents, small web pages) the thread's agent fills beside the conversation. Once on
+              for a thread it stays on. Turning this off hides every canvas.
+            </div>
+          </div>
+        }
+      />
+      <div className="field">
+        <label htmlFor="grok-api-key">Grok API key</label>
+        <input
+          id="grok-api-key"
+          className="field-input mono"
+          type="password"
+          autoComplete="off"
+          disabled={!isGlobal}
+          defaultValue={global.experiments?.grok_api_key ?? ""}
+          onBlur={(event) => {
+            if (event.target.value !== (global.experiments?.grok_api_key ?? "")) saveGrokKey(event.target.value);
+          }}
+        />
+      </div>
+    </>
+  );
+
+  const renderStorage = () => {
+    if (isGlobal) return null;
+    return (
+      <div className="mcp-guide">
+        {storageErr ? (
+          <InlineStatus tone="error" detail={storageErr}>
+            Couldn't read storage information.
+          </InlineStatus>
+        ) : !storage ? (
+          <LoadingState label="Loading storage paths…" state="searching" />
+        ) : (
           <>
-            {!isGlobal && globalOnly("Appearance, notifications, updates, and misc")}
-            <div className="settings-subsection">
-              <h2>Appearance</h2>
-              {renderAppearance()}
-            </div>
-            <div className="settings-subsection">
-              <h2>Playbooks</h2>
-              {renderPlaybooks()}
-            </div>
-            <div className="settings-subsection">
-              <h2>Notifications</h2>
-              {check("enabled", "Enabled", "master switch")}
-              {check("banner", "Banner", "native notification")}
-              {check("sound", "Sound", "notification sound")}
-              {check("bounce", "Dock bounce", "off by default")}
-              {check("dock_badge", "Dock badge", "show the current notice count on the macOS Dock icon")}
-              <div className="dock-badge-options" role="group" aria-label="Dock badge categories">
-                {check("dock_badge_input_waits", "Input waits", "include sessions waiting for input")}
-                {check("dock_badge_approval_waits", "Approval waits", "include sessions waiting for approval")}
-                {check("dock_badge_failures", "Failures", "include failed sessions")}
-                {check("dock_badge_completions", "Unread playbook completions", "include completed playbook steps")}
+            <div className="storage-usage">
+              <div className="storage-usage-row">
+                <span>Active data (read-only)</span>
+                <b>{formatMb(storage.active_bytes)}</b>
               </div>
-              <button
-                type="button"
-                className="btn ghost small"
-                style={{ marginTop: 10 }}
-                onClick={() =>
-                  ipc
-                    .notifyTest()
-                    .then(() => report("Test notification sent"))
-                    .catch((e) => reportError(e))
-                }
-              >
-                Send test notification
+              <div className="storage-usage-row">
+                <span>Archived (reclaimable)</span>
+                <b>
+                  {storage.archived_task_count} tasks · {storage.archived_session_count} sessions · {formatMb(storage.archived_bytes)}
+                </b>
+              </div>
+              <div className="storage-usage-row">
+                <span>Total measured</span>
+                <b>{formatMb(storage.active_bytes + storage.archived_bytes)}</b>
+              </div>
+              <button className="btn danger" type="button" disabled={purgeBusy || storage.archived_task_count + storage.archived_session_count === 0} onClick={purgeArchived}>
+                {purgeBusy ? "Deleting…" : "Delete all archived data…"}
               </button>
-            </div>
-            <div className="settings-subsection">
-              <h2>Updates</h2>
-              <div className="field">
-                <label>Current version</label>
-                <input className="field-input mono" type="text" value={appVersion} readOnly />
-              </div>
-              <div className="field" style={{ marginTop: 16 }}>
-                <label>Last check</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
-                  <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
-                    Check now
-                  </button>
-                </div>
-              </div>
-              {displayedUpdate?.available && onUpgrade && (
-                <div className="field" style={{ marginTop: 16 }}>
-                  <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
-                    Upgrade to {displayedUpdate.available.version}
-                  </button>
-                </div>
+              {purgeErrors.length > 0 && (
+                <ul className="storage-purge-errors">
+                  {purgeErrors.map((f) => (
+                    <li key={f.target}>
+                      <code>{f.target}</code> — {f.error}
+                    </li>
+                  ))}
+                </ul>
               )}
-              <div className="field" style={{ marginTop: 16 }}>
-                {updatesCheck("Check for updates")}
-              </div>
-              <RuntimePanel mcp={mcp} />
             </div>
-            <div className="settings-subsection">
-              <h2>Misc</h2>
-              {/* Each repository's daemon reads this pref and holds the idle-sleep inhibit
-                (the daemon's platform/keepawake.ts); the note states the same rule it enforces. */}
-              <Checkbox
-                checked={global.power?.keep_awake ?? false}
-                disabled={!isGlobal}
-                onChange={setKeepAwake}
-                label={
-                  <div>
-                    <div>Keep this computer awake</div>
-                    <div className="dsc">
-                      This keeps this computer from idling. It will not prevent closing the display from putting it to sleep. The screen can still turn off. It only does this while
-                      at least one session is not Idle.
-                    </div>
-                  </div>
-                }
-              />
-              {telemetryCheck("Share anonymous usage", "state changes only — no paths, prompts, or artifact text")}
-              <section className="settings-nested" aria-labelledby="experimental-options-title">
-                <h3 id="experimental-options-title">Experimental options</h3>
-                <Checkbox
-                  checked={global.experiments?.show_chat ?? false}
-                  disabled={!isGlobal}
-                  onChange={setShowChat}
-                  label={
-                    <div>
-                      <div>Chat</div>
-                      <div className="hint">Show the Chat view (threads under your repositories) in the top bar, after Sessions.</div>
-                    </div>
-                  }
-                />
-                <Checkbox
-                  checked={global.experiments?.chat_canvas ?? false}
-                  disabled={!isGlobal || !(global.experiments?.show_chat ?? false)}
-                  onChange={setChatCanvas}
-                  label={
-                    <div>
-                      <div>Thread canvas</div>
-                      <div className="hint">
-                        Lets you turn on a canvas for a chat thread: up to four panels (charts, tables, documents, small web pages) the thread's agent fills beside the
-                        conversation. Once on for a thread it stays on. Turning this off hides every canvas.
-                      </div>
-                    </div>
-                  }
-                />
-                <div className="field">
-                  <label htmlFor="grok-api-key">Grok API key</label>
+            {storageRow("App config", storage.app_config_path)}
+            {storageRow("Repository", storage.repo_path)}
+            {storageRow(".alinery", storage.alinery_dir)}
+            {storageRow("Repo config", storage.repo_config_path)}
+            {storageRow("Harnesses", storage.harnesses_path)}
+            {storageRow("Tasks", storage.tasks_dir)}
+            {storageRow("Worktrees", storage.worktrees_dir)}
+            {storageRow("Daemon socket", storage.alineryd_socket_path)}
+            {storageRow("Daemon lock", storage.alineryd_lock_path)}
+            {storageRow("MCP socket", storage.mcp_socket_path)}
+            {storageRow("MCP status", storage.mcp_status_path)}
+            <p style={{ margin: "6px 0 0" }}>Settings Global scope reads app.toml; repository scope reads partial .alinery/config.toml overrides.</p>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderGridViews = () => {
+    const controlsDisabled = isGlobal === false;
+    const disabledReason = isGlobal === false ? "Grid-based views are global settings." : "";
+    return (
+      <>
+        {isGlobal === false && globalOnly("Grid-based views")}
+        <div className="grid-view-settings-intro">
+          <h3>Grid-based views</h3>
+          <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and Chat take the numbers after them.</p>
+        </div>
+        <ol className="grid-view-settings-list">
+          {gridViews.map((view, index) => {
+            const value = gridViewDrafts[view.id] ?? view.name;
+            const error = gridViewErrors[view.id] ?? "";
+            const inputId = `grid-view-name-${view.id}`;
+            const errorId = `${inputId}-error`;
+            const deleteHelpId = `${inputId}-delete-help`;
+            return (
+              <li className="grid-view-settings-row" key={view.id}>
+                <div className="grid-view-slot" aria-label={`Shortcut ${gridViewShortcut(index)}`}>
+                  <span>View {index + 1}</span>
+                  <kbd>{gridViewShortcut(index)}</kbd>
+                </div>
+                <div className="grid-view-name-field">
+                  <label htmlFor={inputId}>Display name</label>
                   <input
-                    id="grok-api-key"
-                    className="field-input mono"
-                    type="password"
-                    autoComplete="off"
-                    disabled={!isGlobal}
-                    defaultValue={global.experiments?.grok_api_key ?? ""}
-                    onBlur={(event) => {
-                      if (event.target.value !== (global.experiments?.grok_api_key ?? "")) saveGrokKey(event.target.value);
+                    ref={(input) => {
+                      if (input && focusGridViewId === view.id) {
+                        input.focus();
+                        input.select();
+                        queueMicrotask(() => setFocusGridViewId(""));
+                      }
+                    }}
+                    id={inputId}
+                    className="field-input"
+                    type="text"
+                    value={value}
+                    disabled={controlsDisabled}
+                    title={controlsDisabled ? disabledReason : undefined}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? errorId : undefined}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.value;
+                      setGridViewDrafts((current) => ({ ...current, [view.id]: nextValue }));
+                      setGridViewErrors((current) => ({ ...current, [view.id]: gridViewNameError(view.id, nextValue) }));
+                    }}
+                    onBlur={() => commitGridViewName(view)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                      if (event.key === "Escape") {
+                        setGridViewDrafts((current) => ({ ...current, [view.id]: view.name }));
+                        setGridViewErrors((current) => ({ ...current, [view.id]: "" }));
+                      }
                     }}
                   />
-                </div>
-              </section>
-            </div>
-          </>
-        );
-      }
-      case "storage":
-        if (isGlobal) {
-          return <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />;
-        }
-        return (
-          <div className="mcp-guide">
-            {storageErr ? (
-              <InlineStatus tone="error" detail={storageErr}>
-                Couldn't read storage information.
-              </InlineStatus>
-            ) : !storage ? (
-              <LoadingState label="Loading storage paths…" state="searching" />
-            ) : (
-              <>
-                <div className="storage-usage">
-                  <div className="storage-usage-row">
-                    <span>Active data (read-only)</span>
-                    <b>{formatMb(storage.active_bytes)}</b>
-                  </div>
-                  <div className="storage-usage-row">
-                    <span>Archived (reclaimable)</span>
-                    <b>
-                      {storage.archived_task_count} tasks · {storage.archived_session_count} sessions · {formatMb(storage.archived_bytes)}
-                    </b>
-                  </div>
-                  <div className="storage-usage-row">
-                    <span>Total measured</span>
-                    <b>{formatMb(storage.active_bytes + storage.archived_bytes)}</b>
-                  </div>
-                  <button className="btn danger" type="button" disabled={purgeBusy || storage.archived_task_count + storage.archived_session_count === 0} onClick={purgeArchived}>
-                    {purgeBusy ? "Deleting…" : "Delete all archived data…"}
-                  </button>
-                  {purgeErrors.length > 0 && (
-                    <ul className="storage-purge-errors">
-                      {purgeErrors.map((f) => (
-                        <li key={f.target}>
-                          <code>{f.target}</code> — {f.error}
-                        </li>
-                      ))}
-                    </ul>
+                  {error && (
+                    <span className="field-error" id={errorId} role="alert">
+                      {error}
+                    </span>
                   )}
                 </div>
-                {storageRow("App config", storage.app_config_path)}
-                {storageRow("Repository", storage.repo_path)}
-                {storageRow(".alinery", storage.alinery_dir)}
-                {storageRow("Repo config", storage.repo_config_path)}
-                {storageRow("Harnesses", storage.harnesses_path)}
-                {storageRow("Tasks", storage.tasks_dir)}
-                {storageRow("Worktrees", storage.worktrees_dir)}
-                {storageRow("Daemon socket", storage.alineryd_socket_path)}
-                {storageRow("Daemon lock", storage.alineryd_lock_path)}
-                {storageRow("MCP socket", storage.mcp_socket_path)}
-                {storageRow("MCP status", storage.mcp_status_path)}
-                <p style={{ margin: "6px 0 0" }}>Settings Global scope reads app.toml; repository scope reads partial .alinery/config.toml overrides.</p>
+                <div className="grid-view-row-actions">
+                  <button
+                    type="button"
+                    className="btn ghost small icon"
+                    aria-label={`Move ${view.name} up`}
+                    title={controlsDisabled ? disabledReason : index === 0 ? "Already first" : `Assign ${gridViewShortcut(index - 1)}`}
+                    disabled={controlsDisabled || index === 0}
+                    onClick={() => moveGridView(index, -1)}
+                  >
+                    <ArrowUp size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small icon"
+                    aria-label={`Move ${view.name} down`}
+                    title={controlsDisabled ? disabledReason : index === gridViews.length - 1 ? "Already last" : `Assign ${gridViewShortcut(index + 1)}`}
+                    disabled={controlsDisabled || index === gridViews.length - 1}
+                    onClick={() => moveGridView(index, 1)}
+                  >
+                    <ArrowDown size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small icon danger"
+                    aria-label={`Delete ${view.name}`}
+                    aria-describedby={gridViews.length === 1 ? deleteHelpId : undefined}
+                    title={controlsDisabled ? disabledReason : gridViews.length === 1 ? "At least one Grid-based view is required" : `Delete ${view.name}`}
+                    disabled={controlsDisabled || gridViews.length === 1}
+                    onClick={() => void deleteGridView(view)}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                  {gridViews.length === 1 && (
+                    <span className="sr-only" id={deleteHelpId}>
+                      At least one Grid-based view is required.
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        <div className="grid-view-add-row">
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={controlsDisabled || gridViews.length >= MAX_GRID_VIEWS}
+            aria-describedby="grid-view-count"
+            title={controlsDisabled ? disabledReason : gridViews.length >= MAX_GRID_VIEWS ? `Maximum of ${MAX_GRID_VIEWS} Grid-based views reached` : "Add Grid-based View"}
+            onClick={addGridView}
+          >
+            <Plus size={15} aria-hidden="true" /> Add Grid-based View
+          </button>
+          <span className="hint" id="grid-view-count">
+            {gridViews.length >= MAX_GRID_VIEWS ? `Maximum of ${MAX_GRID_VIEWS} views configured` : `${gridViews.length} of ${MAX_GRID_VIEWS} views configured`}
+          </span>
+        </div>
+      </>
+    );
+  };
+
+  const renderMcp = () => {
+    const installReady = mcpInstallReady(mcp);
+    const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-vinculum-daemon", installReady ? mcp.host_args : ["--mcp"]);
+    const copyHostConfig = () => {
+      if (!installReady) return;
+      copyTextToClipboard(stdioHostConfigJson(mcp.binary_path, mcp.host_args))
+        .then(() => report("Config copied", "short"))
+        .catch((e) => reportError(e, "Couldn't copy the config"));
+    };
+    const checkRow = (ok: boolean, label: string, value: string, hint: string) => (
+      <div className={`mcp-check${ok ? " ok" : ""}`}>
+        {ok ? <Check size={13} strokeWidth={2} aria-hidden="true" /> : <Circle size={10} strokeWidth={1.5} aria-hidden="true" />}
+        <span className="mcp-check-label">{label}</span>
+        {value ? (
+          <>
+            <span className="mono mcp-check-value" title={value}>
+              {value}
+            </span>
+            <button className="btn ghost small icon" type="button" title={`Copy ${label} path`} aria-label={`Copy ${label} path`} onClick={() => copyStoragePath(value)}>
+              <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          </>
+        ) : (
+          <span className="mcp-check-hint">{hint}</span>
+        )}
+      </div>
+    );
+    // One derivation per prerequisite: the icon and the label must never disagree.
+    // The offline fallback in useMcpStatus reports binary_found with no path, so
+    // testing binary_found alone would caption a not-ready chip "Binary ready".
+    const binaryReady = mcp.binary_found && !!mcp.binary_path;
+    // Chips confirm what is satisfied. The status label already names the first thing
+    // that is not — captioning a chip with the same words printed "No repo" twice in a
+    // row, and the unmet hints below say what to do about it.
+    const metChip = (label: string, detail: string) => (
+      <span className="mcp-chip ok" title={detail || undefined}>
+        <Check size={12} strokeWidth={2} aria-hidden="true" />
+        {label}
+      </span>
+    );
+    // The section configures the active repository whatever the scope bar says, so a
+    // scope pointing elsewhere means the config on screen is not for the repo named
+    // above it. Name the real target, in full, rather than let it be pasted blind.
+    const scopeMismatch = !isGlobal && !!mcp.repo && selectedRepo !== mcp.repo;
+    // A disabled toggle owes the user the reason next to it. The same sentences appear
+    // on the Advanced rows, but Advanced is closed by default and the one user who
+    // cannot start the server is the one who should not have to go looking.
+    const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-vinculum-daemon binary not found next to the app — rebuild."].filter(
+      (hint): hint is string => typeof hint === "string",
+    );
+    return (
+      <div className="mcp-page">
+        <div className="mcp-hero">
+          <div className="mcp-hero-status">
+            <span className="statusdot">
+              <span className="d" style={{ background: mcpDotColor(mcp) }} />
+              {mcpStatusLabel(mcp)}
+            </span>
+            <div className="mcp-chips">
+              {mcp.repo && metChip(repoName(mcp.repo), mcp.repo)}
+              {binaryReady && metChip("Binary ready", mcp.binary_path)}
+            </div>
+          </div>
+          <Checkbox
+            checked={mcp.enabled}
+            disabled={mcpBusy || !mcp.repo || !mcp.binary_found}
+            onChange={() => {
+              setMcpBusy(true);
+              const wasEnabled = mcp.enabled;
+              (wasEnabled ? ipc.stopMcpServer() : ipc.startMcpServer())
+                .then(() => {
+                  mcp.refresh();
+                  report(wasEnabled ? "MCP server stopped" : "MCP server started");
+                })
+                .catch((e) => reportError(e, wasEnabled ? "Couldn't stop the MCP server" : "Couldn't start the MCP server"))
+                .finally(() => setMcpBusy(false));
+            }}
+            label={
+              <>
+                App-managed server <span className="dsc">— optional for Desktop hosts</span>
               </>
-            )}
+            }
+          />
+        </div>
+        {unmet.length > 0 && (
+          <div className="mcp-unmet">
+            {unmet.map((hint) => (
+              <p key={hint}>{hint}</p>
+            ))}
           </div>
-        );
-      case "harness":
-        return (
-          <div className="settings-subsection">
-            <h2>Harness</h2>
-            <p>Providers, session defaults, and background session daemons.</p>
-            {renderHarness()}
+        )}
+        {scopeMismatch && (
+          <InlineStatus tone="warning" detail={mcp.repo}>
+            This section always configures the active repository, not the <strong>{repoName(selectedRepo)}</strong> scope selected above. The config below is for:
+          </InlineStatus>
+        )}
+        {mcp.enabled && !mcp.running && mcp.error && (
+          <InlineStatus tone="error" detail={mcp.error}>
+            The MCP server is enabled but not running.
+          </InlineStatus>
+        )}
+        <section className="mcp-section">
+          <div className="mcp-section-head">
+            <div>
+              <h4 className="mcp-section-title">Host config</h4>
+              <p className="mcp-caption">
+                Add Alinery MCP to Claude Desktop, Cursor, or any host that runs a command with args. Merge the <span className="mono">alinery</span> entry — do not overwrite the
+                whole file. Restart the host after editing config. One process serves every repo; pass <span className="mono">repo</span> as a per-call tool argument (a path from{" "}
+                <span className="mono">alinery_list_repos</span>).
+              </p>
+            </div>
+            <button
+              className="btn ghost mcp-copy-btn"
+              type="button"
+              disabled={!installReady}
+              title={installReady ? "Copy full mcpServers config" : "Ensure alinery-vinculum-daemon is found"}
+              onClick={copyHostConfig}
+            >
+              Copy config
+            </button>
           </div>
-        );
-      case "sessionsView":
-        return renderChatViewSettings(appearance, (next) => saveAppearance({ ...appearance, ...next }), false);
-      case "chat":
-        return renderChatViewSettings(normalizeChatView(appearance.ava_chat ?? {}), (next) => saveAppearance({ ...appearance, ava_chat: next }), true);
-      case "gridViews": {
-        const controlsDisabled = isGlobal === false;
-        const disabledReason = isGlobal === false ? "Grid-based views are global settings." : "";
+          <pre className="mcp-config">{hostConfigJson}</pre>
+        </section>
+        <details className="mcp-advanced">
+          <summary>
+            <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
+            Advanced
+          </summary>
+          <div className="mcp-advanced-body">
+            <p className="mcp-caption">
+              Stdio tools call the repository's daemon with a token the Alinery app hands out, so they work while the daemon runs (the window can be closed once the app has started
+              it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
+            </p>
+            {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
+            <h4 className="mcp-section-title">Managed socket</h4>
+            <p className="mcp-caption">
+              App-local <span className="mono">alinery-vinculum-daemon --mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or switch
+              repos. Useful for same-machine debugging only.
+            </p>
+            {checkRow(!!mcp.socket_path, "Socket path", mcp.socket_path, "Select a repo to see the socket path.")}
+          </div>
+        </details>
+      </div>
+    );
+  };
+
+  const part = (id: SettingsSectionKey, body: ReactNode, titled = true) => (
+    <div className="settings-part" data-anchor={id} hidden={hide(id)}>
+      {titled && <h3 className="settings-part-title">{SETTINGS_GROUPS.flatMap((group) => group.parts).find((p) => p.id === id)?.label}</h3>}
+      {body}
+    </div>
+  );
+
+  const renderGroup = (key: SettingsSectionKey): ReactNode => {
+    switch (key) {
+      case "appearance":
+        return renderAppearance();
+      case "views":
         return (
           <>
-            {isGlobal === false && globalOnly("Grid-based views")}
-            <div className="grid-view-settings-intro">
-              <h2>Grid-based views</h2>
-              <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and Chat take the numbers after them.</p>
-            </div>
-            <ol className="grid-view-settings-list">
-              {gridViews.map((view, index) => {
-                const value = gridViewDrafts[view.id] ?? view.name;
-                const error = gridViewErrors[view.id] ?? "";
-                const inputId = `grid-view-name-${view.id}`;
-                const errorId = `${inputId}-error`;
-                const deleteHelpId = `${inputId}-delete-help`;
-                return (
-                  <li className="grid-view-settings-row" key={view.id}>
-                    <div className="grid-view-slot" aria-label={`Shortcut ${gridViewShortcut(index)}`}>
-                      <span>View {index + 1}</span>
-                      <kbd>{gridViewShortcut(index)}</kbd>
-                    </div>
-                    <div className="grid-view-name-field">
-                      <label htmlFor={inputId}>Display name</label>
-                      <input
-                        ref={(input) => {
-                          if (input && focusGridViewId === view.id) {
-                            input.focus();
-                            input.select();
-                            queueMicrotask(() => setFocusGridViewId(""));
-                          }
-                        }}
-                        id={inputId}
-                        className="field-input"
-                        type="text"
-                        value={value}
-                        disabled={controlsDisabled}
-                        title={controlsDisabled ? disabledReason : undefined}
-                        aria-invalid={Boolean(error)}
-                        aria-describedby={error ? errorId : undefined}
-                        onChange={(event) => {
-                          const nextValue = event.currentTarget.value;
-                          setGridViewDrafts((current) => ({ ...current, [view.id]: nextValue }));
-                          setGridViewErrors((current) => ({ ...current, [view.id]: gridViewNameError(view.id, nextValue) }));
-                        }}
-                        onBlur={() => commitGridViewName(view)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") event.currentTarget.blur();
-                          if (event.key === "Escape") {
-                            setGridViewDrafts((current) => ({ ...current, [view.id]: view.name }));
-                            setGridViewErrors((current) => ({ ...current, [view.id]: "" }));
-                          }
-                        }}
-                      />
-                      {error && (
-                        <span className="field-error" id={errorId} role="alert">
-                          {error}
-                        </span>
-                      )}
-                    </div>
-                    <div className="grid-view-row-actions">
-                      <button
-                        type="button"
-                        className="btn ghost small icon"
-                        aria-label={`Move ${view.name} up`}
-                        title={controlsDisabled ? disabledReason : index === 0 ? "Already first" : `Assign ${gridViewShortcut(index - 1)}`}
-                        disabled={controlsDisabled || index === 0}
-                        onClick={() => moveGridView(index, -1)}
-                      >
-                        <ArrowUp size={14} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn ghost small icon"
-                        aria-label={`Move ${view.name} down`}
-                        title={controlsDisabled ? disabledReason : index === gridViews.length - 1 ? "Already last" : `Assign ${gridViewShortcut(index + 1)}`}
-                        disabled={controlsDisabled || index === gridViews.length - 1}
-                        onClick={() => moveGridView(index, 1)}
-                      >
-                        <ArrowDown size={14} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn ghost small icon danger"
-                        aria-label={`Delete ${view.name}`}
-                        aria-describedby={gridViews.length === 1 ? deleteHelpId : undefined}
-                        title={controlsDisabled ? disabledReason : gridViews.length === 1 ? "At least one Grid-based view is required" : `Delete ${view.name}`}
-                        disabled={controlsDisabled || gridViews.length === 1}
-                        onClick={() => void deleteGridView(view)}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
-                      {gridViews.length === 1 && (
-                        <span className="sr-only" id={deleteHelpId}>
-                          At least one Grid-based view is required.
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-            <div className="grid-view-add-row">
-              <button
-                type="button"
-                className="btn secondary"
-                disabled={controlsDisabled || gridViews.length >= MAX_GRID_VIEWS}
-                aria-describedby="grid-view-count"
-                title={controlsDisabled ? disabledReason : gridViews.length >= MAX_GRID_VIEWS ? `Maximum of ${MAX_GRID_VIEWS} Grid-based views reached` : "Add Grid-based View"}
-                onClick={addGridView}
-              >
-                <Plus size={15} aria-hidden="true" /> Add Grid-based View
-              </button>
-              <span className="hint" id="grid-view-count">
-                {gridViews.length >= MAX_GRID_VIEWS ? `Maximum of ${MAX_GRID_VIEWS} views configured` : `${gridViews.length} of ${MAX_GRID_VIEWS} views configured`}
-              </span>
-            </div>
+            {part(
+              "views.sessions",
+              renderChatViewSettings(appearance, (next) => saveAppearance({ ...appearance, ...next }), false),
+            )}
+            {chatEnabled &&
+              part(
+                "views.chat",
+                renderChatViewSettings(normalizeChatView(appearance.ava_chat ?? {}), (next) => saveAppearance({ ...appearance, ava_chat: next }), true),
+              )}
+            {part("views.grid", renderGridViews(), false)}
           </>
         );
-      }
-      case "mcp": {
-        const installReady = mcpInstallReady(mcp);
-        const hostConfigJson = stdioHostConfigJson(installReady ? mcp.binary_path : "/path/to/alinery-vinculum-daemon", installReady ? mcp.host_args : ["--mcp"]);
-        const copyHostConfig = () => {
-          if (!installReady) return;
-          copyTextToClipboard(stdioHostConfigJson(mcp.binary_path, mcp.host_args))
-            .then(() => report("Config copied", "short"))
-            .catch((e) => reportError(e, "Couldn't copy the config"));
-        };
-        const checkRow = (ok: boolean, label: string, value: string, hint: string) => (
-          <div className={`mcp-check${ok ? " ok" : ""}`}>
-            {ok ? <Check size={13} strokeWidth={2} aria-hidden="true" /> : <Circle size={10} strokeWidth={1.5} aria-hidden="true" />}
-            <span className="mcp-check-label">{label}</span>
-            {value ? (
-              <>
-                <span className="mono mcp-check-value" title={value}>
-                  {value}
-                </span>
-                <button className="btn ghost small icon" type="button" title={`Copy ${label} path`} aria-label={`Copy ${label} path`} onClick={() => copyStoragePath(value)}>
-                  <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
-                </button>
-              </>
-            ) : (
-              <span className="mcp-check-hint">{hint}</span>
-            )}
-          </div>
-        );
-        // One derivation per prerequisite: the icon and the label must never disagree.
-        // The offline fallback in useMcpStatus reports binary_found with no path, so
-        // testing binary_found alone would caption a not-ready chip "Binary ready".
-        const binaryReady = mcp.binary_found && !!mcp.binary_path;
-        // Chips confirm what is satisfied. The status label already names the first thing
-        // that is not — captioning a chip with the same words printed "No repo" twice in a
-        // row, and the unmet hints below say what to do about it.
-        const metChip = (label: string, detail: string) => (
-          <span className="mcp-chip ok" title={detail || undefined}>
-            <Check size={12} strokeWidth={2} aria-hidden="true" />
-            {label}
-          </span>
-        );
-        // The section configures the active repository whatever the scope bar says, so a
-        // scope pointing elsewhere means the config on screen is not for the repo named
-        // above it. Name the real target, in full, rather than let it be pasted blind.
-        const scopeMismatch = !isGlobal && !!mcp.repo && selectedRepo !== mcp.repo;
-        // A disabled toggle owes the user the reason next to it. The same sentences appear
-        // on the Advanced rows, but Advanced is closed by default and the one user who
-        // cannot start the server is the one who should not have to go looking.
-        const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-vinculum-daemon binary not found next to the app — rebuild."].filter(
-          (hint): hint is string => typeof hint === "string",
-        );
+      case "agents":
         return (
-          <div className="mcp-page">
-            <div className="mcp-hero">
-              <div className="mcp-hero-status">
-                <span className="statusdot">
-                  <span className="d" style={{ background: mcpDotColor(mcp) }} />
-                  {mcpStatusLabel(mcp)}
-                </span>
-                <div className="mcp-chips">
-                  {mcp.repo && metChip(repoName(mcp.repo), mcp.repo)}
-                  {binaryReady && metChip("Binary ready", mcp.binary_path)}
-                </div>
-              </div>
-              <Checkbox
-                checked={mcp.enabled}
-                disabled={mcpBusy || !mcp.repo || !mcp.binary_found}
-                onChange={() => {
-                  setMcpBusy(true);
-                  const wasEnabled = mcp.enabled;
-                  (wasEnabled ? ipc.stopMcpServer() : ipc.startMcpServer())
-                    .then(() => {
-                      mcp.refresh();
-                      report(wasEnabled ? "MCP server stopped" : "MCP server started");
-                    })
-                    .catch((e) => reportError(e, wasEnabled ? "Couldn't stop the MCP server" : "Couldn't start the MCP server"))
-                    .finally(() => setMcpBusy(false));
-                }}
-                label={
-                  <>
-                    App-managed server <span className="dsc">— optional for Desktop hosts</span>
-                  </>
-                }
-              />
-            </div>
-            {unmet.length > 0 && (
-              <div className="mcp-unmet">
-                {unmet.map((hint) => (
-                  <p key={hint}>{hint}</p>
-                ))}
-              </div>
-            )}
-            {scopeMismatch && (
-              <InlineStatus tone="warning" detail={mcp.repo}>
-                This section always configures the active repository, not the <strong>{repoName(selectedRepo)}</strong> scope selected above. The config below is for:
-              </InlineStatus>
-            )}
-            {mcp.enabled && !mcp.running && mcp.error && (
-              <InlineStatus tone="error" detail={mcp.error}>
-                The MCP server is enabled but not running.
-              </InlineStatus>
-            )}
-            <section className="mcp-section">
-              <div className="mcp-section-head">
-                <div>
-                  <h4 className="mcp-section-title">Host config</h4>
-                  <p className="mcp-caption">
-                    Add Alinery MCP to Claude Desktop, Cursor, or any host that runs a command with args. Merge the <span className="mono">alinery</span> entry — do not overwrite
-                    the whole file. Restart the host after editing config. One process serves every repo; pass <span className="mono">repo</span> as a per-call tool argument (a
-                    path from <span className="mono">alinery_list_repos</span>).
-                  </p>
-                </div>
-                <button
-                  className="btn ghost mcp-copy-btn"
-                  type="button"
-                  disabled={!installReady}
-                  title={installReady ? "Copy full mcpServers config" : "Ensure alinery-vinculum-daemon is found"}
-                  onClick={copyHostConfig}
-                >
-                  Copy config
-                </button>
-              </div>
-              <pre className="mcp-config">{hostConfigJson}</pre>
-            </section>
-            <details className="mcp-advanced">
-              <summary>
-                <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
-                Advanced
-              </summary>
-              <div className="mcp-advanced-body">
-                <p className="mcp-caption">
-                  Stdio tools call the repository's daemon with a token the Alinery app hands out, so they work while the daemon runs (the window can be closed once the app has
-                  started it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
-                </p>
-                {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
-                <h4 className="mcp-section-title">Managed socket</h4>
-                <p className="mcp-caption">
-                  App-local <span className="mono">alinery-vinculum-daemon --mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or
-                  switch repos. Useful for same-machine debugging only.
-                </p>
-                {checkRow(!!mcp.socket_path, "Socket path", mcp.socket_path, "Select a repo to see the socket path.")}
-              </div>
-            </details>
-          </div>
+          <>
+            {renderHarness()}
+            {part("agents.playbooks", renderPlaybooks())}
+          </>
         );
-      }
-      case "backup":
-        return renderBackup();
+      case "connections":
+        return connectionsSection();
+      case "notifications":
+        return renderNotifications();
+      case "data":
+        // Storage and backups belong to one repository: under All repositories the group says so once, and keeps its anchors.
+        if (isGlobal)
+          return (
+            <>
+              <span data-anchor="data.storage" />
+              <span data-anchor="data.backup" />
+              <EmptyState title={SETTINGS_SCOPE_EMPTY_TITLE} />
+            </>
+          );
+        return (
+          <>
+            {part("data.storage", renderStorage())}
+            {part("data.backup", renderBackup())}
+          </>
+        );
+      case "mcp":
+        return renderMcp();
+      case "system":
+        return (
+          <>
+            {!isGlobal && globalOnly("Updates, power, privacy and experimental options")}
+            {part("system.updates", renderUpdates())}
+            {part("system.sessions", renderSessionService())}
+            {part("system.misc", renderMisc())}
+            {part("system.experimental", renderExperimental())}
+          </>
+        );
       default:
         return null;
     }
@@ -2675,21 +2777,82 @@ export function Settings({
         </div>
       </div>
       <div className="settings-shell">
-        <nav className="settings-nav">
-          {visibleSections.map((s) => (
-            <button
-              type="button"
-              key={s.key}
-              className={`settings-navitem${visibleActiveSection === s.key ? " on" : ""}`}
-              onClick={() => {
-                setActiveSection(s.key);
-              }}
-            >
-              {s.label}
-            </button>
-          ))}
+        <nav className="settings-nav" aria-label="Settings sections">
+          <input
+            ref={searchRef}
+            className="settings-search"
+            type="search"
+            placeholder="Search settings"
+            aria-label="Search settings"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (panelRef.current) panelRef.current.scrollTop = 0;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                jumpToFirstHit();
+              } else if (e.key === "Escape") {
+                // The first Esc clears; the next leaves the field, and only then does Esc mean "back".
+                e.stopPropagation();
+                if (query) setQuery("");
+                else e.currentTarget.blur();
+              }
+            }}
+          />
+          {shownGroups.map((group) => {
+            // While searching every matching part is listed; otherwise only the group in view opens.
+            const open = matches !== null || groupOf(activeAnchor) === group.key;
+            return (
+              <div key={group.key} className="settings-navgroup">
+                <button
+                  type="button"
+                  className={`settings-navitem${open ? " on" : ""}`}
+                  aria-current={activeAnchor === group.key ? "location" : undefined}
+                  onClick={() => jumpTo(group.key)}
+                >
+                  {group.label}
+                </button>
+                {open &&
+                  group.parts
+                    .filter((p) => !hide(p.id))
+                    .map((p) => (
+                      <button
+                        type="button"
+                        key={p.id}
+                        className={`settings-navitem sub${activeAnchor === p.id ? " on" : ""}`}
+                        aria-current={activeAnchor === p.id ? "location" : undefined}
+                        onClick={() => jumpTo(p.id)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+              </div>
+            );
+          })}
         </nav>
-        <div className="settings-panel">{renderSection(visibleActiveSection)}</div>
+        <div className="settings-panel" ref={panelRef} onScroll={spy}>
+          {matches?.size === 0 && <p className="settings-search-empty">Nothing matches “{query.trim()}”.</p>}
+          {groups.map((group, index) => (
+            <section
+              key={group.key}
+              className="settings-group"
+              data-group={group.key}
+              data-anchor={group.key}
+              hidden={hide(group.key)}
+              aria-labelledby={`settings-${group.key}-title`}
+            >
+              <header className="settings-group-head">
+                <span className="settings-group-n">{String(index + 1).padStart(2, "0")}</span>
+                <h2 id={`settings-${group.key}-title`}>{group.label}</h2>
+                {group.globalOnly && !isGlobal && <span className="settings-global-tag">Global</span>}
+              </header>
+              {group.globalOnly && !isGlobal && globalOnly(`${group.label} settings`)}
+              {renderGroup(group.key)}
+            </section>
+          ))}
+        </div>
       </div>
     </div>
   );

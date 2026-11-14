@@ -75,7 +75,7 @@ function renderGridSettings() {
       appearance={DEFAULT_APPEARANCE}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
-      initialSection="gridViews"
+      initialSection="views.grid"
     />,
   );
 }

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ARTIFACT_FONT_MAX, ARTIFACT_VIEWER_WIDTH_DEFAULT, DEFAULT_APPEARANCE, TERMINAL_FONT_MIN } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
@@ -49,7 +49,7 @@ vi.mock("../ipc", () =>
 );
 
 import * as ipc from "../ipc";
-import { SECTIONS, Settings } from "./Settings";
+import { Settings } from "./Settings";
 
 const mcp: McpStatusHandle = {
   enabled: false,
@@ -74,7 +74,7 @@ function renderAppearanceSection(onAppearanceChange = vi.fn(), appearance: Appea
       appearance={appearance}
       onAppearanceChange={onAppearanceChange}
       onNotificationsChange={() => {}}
-      initialSection="general"
+      initialSection="appearance"
     />,
   );
   return onAppearanceChange;
@@ -83,18 +83,6 @@ function renderAppearanceSection(onAppearanceChange = vi.fn(), appearance: Appea
 afterEach(() => {
   cleanup();
   vi.mocked(ipc.writeAppearance).mockClear();
-});
-
-describe("settings sections", () => {
-  it("lists Harness second, Chat right after Sessions view, and omits Distill and Harnesses", () => {
-    const labels = SECTIONS.map((section) => section.label);
-    expect(labels[1]).toBe("Harness");
-    expect(labels).toContain("Sessions view");
-    expect(labels.indexOf("Chat")).toBe(labels.indexOf("Sessions view") + 1);
-    expect(labels).not.toContain("Distill to Wiki");
-    expect(labels).not.toContain("Harnesses");
-    expect(labels).not.toContain("Sessions");
-  });
 });
 
 describe("appearance mode cards", () => {
@@ -116,8 +104,10 @@ describe("appearance mode cards", () => {
 
   it("is enabled in the default global scope", async () => {
     renderAppearanceSection();
+    // The rail has a System link too; the mode cards are the Appearance group's.
+    const appearance = within(await screen.findByRole("region", { name: "Appearance" }));
     for (const name of ["System", "Light", "Dark"]) {
-      const card = await screen.findByRole("button", { name });
+      const card = await appearance.findByRole("button", { name });
       expect((card as HTMLButtonElement).disabled).toBe(false);
     }
   });

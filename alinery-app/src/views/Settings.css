@@ -1,0 +1,127 @@
+/* Settings as one list: a rail of links beside every group in page order. Theme tokens only; the rail and eyebrows follow Playbooks.css. */
+.settings-nav {
+  width: 200px;
+  padding: 18px 10px;
+}
+.settings-navgroup {
+  display: grid;
+  gap: 1px;
+}
+.settings-navitem {
+  border-left: 0;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+}
+.settings-navitem:hover {
+  background: var(--surface-subtle);
+}
+.settings-navitem.on {
+  background: var(--accent-subtle);
+  color: var(--text-strong);
+}
+.settings-navitem.sub {
+  padding: 5px 10px 5px 22px;
+  font-size: calc(12px * var(--ui-scale));
+}
+.settings-navitem.sub.on {
+  background: none;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* offsetTop of every anchor is measured from here (jumpTo and the scroll-spy). */
+.settings-panel {
+  position: relative;
+  padding: 0 32px;
+}
+/* Room for the last group to scroll up to the top, so a jump lands on it and the rail can point at it. */
+.settings-panel::after {
+  content: "";
+  display: block;
+  height: 70vh;
+}
+.settings-group {
+  max-width: 860px;
+  padding: 28px 0 8px;
+}
+.settings-group + .settings-group {
+  border-top: 1px solid var(--border);
+}
+.settings-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-group-n {
+  font: 500 calc(10px * var(--ui-scale)) / 1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.settings-group-head h2 {
+  margin: 0;
+  font: 600 calc(16px * var(--ui-scale)) var(--font-display);
+  color: var(--text-strong);
+}
+.settings-global-tag {
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 2px 8px;
+  font: 500 calc(10px * var(--ui-scale)) var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-part + .settings-part {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.settings-part-title {
+  margin: 0 0 10px;
+  font-size: calc(14px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.settings-subsection h4 {
+  margin: 0 0 6px;
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+@media (max-width: 900px) {
+  .settings-nav {
+    width: 100%;
+  }
+  .settings-navgroup {
+    display: contents;
+  }
+  .settings-navitem.sub {
+    display: none;
+  }
+  .settings-panel {
+    padding: 0 16px;
+  }
+  .settings-nav input.settings-search {
+    flex: 0 0 180px;
+    margin: 0 6px 0 0;
+  }
+}
+
+/* Search: the rail's first row. Hidden rows keep their state; this beats any class that sets display. */
+.settings-panel [hidden] {
+  display: none;
+}
+.settings-nav input.settings-search {
+  width: 100%;
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+.settings-search-empty {
+  margin: 28px 0;
+  color: var(--text-muted);
+}
