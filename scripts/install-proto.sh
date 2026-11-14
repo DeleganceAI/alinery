@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Install proto/'s own node_modules. The daemon and the app link `alinery-proto` to proto/, so
+# Install proto/'s and playbook-engine/'s own node_modules. The daemon and the app link `alinery-proto` to proto/, so
 # every tool resolves the generated code's `@bufbuild/protobuf` import from proto/'s real
 # path: without this install, bun and Vite fail and tsc silently downgrades the types to
-# `Message`. Run it before any daemon or app install or build.
+# `Message`. The daemon links `playbook-engine` the same way, so its `smol-toml` import resolves
+# from playbook-engine/'s real path too (a fresh clone's daemon build fails without it). Run
+# it before any daemon or app install or build.
 #
 #   scripts/install-proto.sh              runtime dependencies only (building the daemon or app)
 #   scripts/install-proto.sh --with-dev   plus buf and protoc-gen-es (regenerating, check-proto-gen.sh)
@@ -17,3 +19,7 @@ fresh=0
 [ "$PROTO/node_modules/.package-lock.json" -nt "$PROTO/package-lock.json" ] && fresh=1
 [ -z "$DEV" ] && [ ! -x "$PROTO/node_modules/.bin/buf" ] && fresh=0
 [ "$fresh" = 1 ] || npm --prefix "$PROTO" ci $DEV --no-audit --no-fund --prefer-offline
+
+ENGINE="$PROTO/../playbook-engine"
+[ "$ENGINE/node_modules/.package-lock.json" -nt "$ENGINE/package-lock.json" ] ||
+  npm --prefix "$ENGINE" ci $DEV --no-audit --no-fund --prefer-offline
