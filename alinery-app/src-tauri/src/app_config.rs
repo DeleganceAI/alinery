@@ -430,6 +430,46 @@ pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), St
     Ok(())
 }
 
+/// Renames an older Alinery's `omp` harness to Vinculum in the files a reset keeps: the project's settings and playbooks,
+/// the global playbooks, and `app.toml` (its favorites and default move over, its saved harness row goes). Returns how many
+/// files changed.
+pub(crate) fn forget_older_harness(repo: &Path, app_config: &Path) -> Result<usize, String> {
+    let alinery = alinery_core::alinery_dir(repo);
+    let global_playbooks = app_config.parent().map(|dir| dir.join("playbooks"));
+    let mut roots = vec![alinery.join("config.toml"), alinery.join("playbooks"), repo.join("alinery").join("playbooks")];
+    roots.extend(global_playbooks);
+    let mut changed = alinery_core::older_alinery::rename_older_harness_in(&roots.iter().map(PathBuf::as_path).collect::<Vec<_>>())?;
+    if let Some(mut cfg) = read_existing_app_config(app_config)? {
+        if forget_older_harness_in_config(&mut cfg) {
+            write_app_config_at(app_config, &cfg)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+/// `app.toml`'s half of `forget_older_harness`. Returns whether anything changed.
+pub(crate) fn forget_older_harness_in_config(cfg: &mut AppConfig) -> bool {
+    let global = &mut cfg.global;
+    let mut changed = false;
+    if let Some(older) = global.model_favorites.remove("omp") {
+        let favorites = global.model_favorites.entry(alinery_core::DEFAULT_HARNESS_KEY.into()).or_default();
+        for model in older {
+            if !favorites.contains(&model) {
+                favorites.push(model);
+            }
+        }
+        changed = true;
+    }
+    if global.defaults.harness == "omp" {
+        global.defaults.harness = alinery_core::DEFAULT_HARNESS_KEY.into();
+        changed = true;
+    }
+    let rows = global.harnesses.harness.len();
+    global.harnesses.harness.retain(|row| row.key != "omp");
+    changed | (global.harnesses.harness.len() != rows)
+}
+
 pub(crate) fn write_app_config<R: tauri::Runtime>(app: &AppHandle<R>, cfg: &AppConfig) -> Result<(), String> {
     write_app_config_at(&app_config_path(app)?, cfg)
 }

@@ -448,6 +448,12 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     const accepted = await confirmDanger(
       `Back up and reset ${name}?`,
       <>
+        {conflict.outdated && (
+          <p>
+            {name} has sessions from an older version of Alinery, which this version can't open. After the reset, the older agent named in this project's settings and playbooks, in
+            your own playbooks, and in your model favorites and default model is changed to Vinculum.
+          </p>
+        )}
         <p>
           Every task and its sessions are saved to a zip next to the repository folder, then cleared, so {name} opens with no tasks. Settings and playbooks stay, and so do
           worktrees and their branches, with any uncommitted work.
@@ -521,6 +527,13 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
         }
       >
         {name} can't be opened because {count === 1 ? "one task's" : `${count} tasks'`} saved progress is damaged
+      </RepoStatusStrip>
+    );
+  }
+  if (displayed.owners.length === 0 && displayed.outdated) {
+    return (
+      <RepoStatusStrip tone="error" details={<EvidenceBlock text={evidenceText(displayed)} />} action={resetButton}>
+        {name} has sessions from an older version of Alinery · back up and reset to open it here
       </RepoStatusStrip>
     );
   }

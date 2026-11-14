@@ -16,6 +16,7 @@ pub mod legacy_daemon;
 pub mod lockfile;
 pub mod log;
 pub mod message;
+pub mod older_alinery;
 pub mod paths;
 pub mod playbook;
 pub mod protocol;

@@ -16,6 +16,8 @@ pub struct RepoOwnerReport {
     pub issues: Vec<String>,
     /// Tasks whose saved progress will not read but `execution::repair_execution_state` can fix.
     pub repairable: Vec<String>,
+    /// Sessions from an older Alinery hold the project until Back up and reset (`older_alinery`).
+    pub outdated: bool,
 }
 
 #[derive(Debug)]
@@ -78,6 +80,7 @@ struct Evidence {
     lanes: BTreeSet<String>,
     issues: Vec<String>,
     repairable: Vec<String>,
+    outdated: bool,
 }
 
 fn regular_file(path: &Path) -> Result<(), String> {
@@ -140,6 +143,7 @@ fn enumerate(repo: &Path) -> Evidence {
                 continue;
             }
         };
+        evidence.outdated |= crate::older_alinery::has_older_sessions(&crate::sessions_dir(repo, &slug));
         let task_path = entry.path().join("task.md");
         let task = regular_file(&task_path).and_then(|()| {
             let source = fs::read_to_string(&task_path).map_err(|e| format!("read {}: {e}", task_path.display()))?;
@@ -177,6 +181,10 @@ fn enumerate(repo: &Path) -> Evidence {
             evidence.issues.push("execution revision overflow".into());
         }
     }
+    evidence.outdated |= crate::older_alinery::has_older_sessions(&crate::root_sessions_dir(repo));
+    if evidence.outdated {
+        evidence.issues.push(crate::older_alinery::OLDER_SESSIONS_ISSUE.into());
+    }
     evidence
 }
 
@@ -211,6 +219,7 @@ pub fn inspect_owners(repo: &Path) -> Result<RepoOwnerReport, String> {
         lanes: Vec::new(),
         issues: evidence.issues,
         repairable: evidence.repairable,
+        outdated: evidence.outdated,
     };
     if let Err(error) = lease(&crate::alinery_dir(repo).join(".repo-owner.lock")) {
         report.issues.push(error);
@@ -310,6 +319,21 @@ mod tests {
         }
         assert!(check_available(repo).is_err());
         drop((leases, repo_lease));
+    }
+
+    #[test]
+    fn sessions_from_an_older_alinery_hold_the_project_until_they_are_gone() {
+        let fixture = Fixture::new();
+        let repo = &fixture.0;
+        assert!(!inspect_owners(repo).unwrap().outdated);
+        check_available(repo).unwrap();
+        fs::create_dir_all(crate::root_sessions_dir(repo).join("chat.omp")).unwrap();
+        let report = inspect_owners(repo).unwrap();
+        assert!(report.outdated);
+        assert!(report.issues.iter().any(|issue| issue == crate::older_alinery::OLDER_SESSIONS_ISSUE));
+        assert!(check_available(repo).unwrap_err().contains("older version of Alinery"));
+        fs::remove_dir_all(crate::root_sessions_dir(repo)).unwrap();
+        check_available(repo).unwrap();
     }
 
     #[test]

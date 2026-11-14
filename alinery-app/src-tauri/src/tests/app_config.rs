@@ -1,6 +1,6 @@
 //! Tests for app_config.rs — mcp_enabled logging via write_app_config_at.
 use super::*;
-use crate::{host_entries, read_existing_app_config, set_onboarded_in, RemoteHostView, LOCAL_HOST_ID};
+use crate::{forget_older_harness, host_entries, read_existing_app_config, set_onboarded_in, RemoteHostView, LOCAL_HOST_ID};
 use std::path::PathBuf;
 
 fn temp_app(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -299,4 +299,34 @@ fn a_saved_row_from_a_removed_harness_does_not_make_the_config_unreadable() {
     let row = &cfg.global.harnesses.harness[0];
     assert_eq!(row.adapter, alinery_core::HarnessAdapter::Unsupported);
     assert_eq!(row.message_adapter, alinery_core::MessageAdapter::Unsupported);
+}
+
+#[test]
+fn the_reset_moves_an_older_harness_over_to_vinculum_and_drops_its_row() {
+    let (dir, path) = temp_app("forget-older-harness");
+    let repo = dir.join("repo");
+    fs::create_dir_all(repo.join(".alinery/playbooks/mine")).unwrap();
+    fs::create_dir_all(dir.join("playbooks/global")).unwrap();
+    fs::write(repo.join(".alinery/config.toml"), "[defaults]\nharness = \"omp\"\nmodel = \"m\"\n").unwrap();
+    fs::write(repo.join(".alinery/playbooks/mine/playbook.md"), "+++\ndefault_harness = \"omp\"\n+++\n").unwrap();
+    fs::write(dir.join("playbooks/global/playbook.md"), "+++\ndefault_harness = \"omp\"\n+++\n").unwrap();
+    fs::write(
+        &path,
+        "[global.defaults]\nharness = \"omp\"\n\n[[global.harnesses.harness]]\nkey = \"omp\"\nname = \"OMP CLI\"\nbinary = \"omp\"\nadapter = \"omp\"\n\n[global.model_favorites]\nomp = [\"a\", \"b\"]\nvinculum = [\"b\", \"c\"]\n",
+    )
+    .unwrap();
+    assert_eq!(forget_older_harness(&repo, &path).unwrap(), 4);
+    let cfg = read_existing_app_config(&path).unwrap().unwrap();
+    assert_eq!(cfg.global.defaults.harness, "vinculum");
+    assert!(cfg.global.harnesses.harness.iter().all(|row| row.key != "omp"));
+    assert_eq!(cfg.global.model_favorites.keys().collect::<Vec<_>>(), ["vinculum"]);
+    assert_eq!(cfg.global.model_favorites["vinculum"], ["b", "c", "a"]);
+    assert!(fs::read_to_string(repo.join(".alinery/config.toml")).unwrap().contains("harness = \"vinculum\""));
+    assert!(fs::read_to_string(repo.join(".alinery/playbooks/mine/playbook.md"))
+        .unwrap()
+        .contains("default_harness = \"vinculum\""));
+    assert!(fs::read_to_string(dir.join("playbooks/global/playbook.md"))
+        .unwrap()
+        .contains("default_harness = \"vinculum\""));
+    assert_eq!(forget_older_harness(&repo, &path).unwrap(), 0);
 }

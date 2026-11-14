@@ -44,7 +44,17 @@ const LANE_LOCK = "/repo/.alinery/.alineryd-old-dev.lock";
 const held = (path: string) => `project owner is still running (${path}); stop it before opening this project here`;
 // The three near-identical sentences Rust reports for two held leases.
 const issues = [held(REPO_LOCK), held(LANE_LOCK), `${held(LANE_LOCK)}; cannot establish owner socket stopped (/repo/.alinery/alineryd-old-dev.sock): timed out`];
-const conflict: DaemonConflict = { repo: "/repo", app_protocol: 15, app_config_identity: "current", owners: [owner], issues, repairable_tasks: [], starter: null, joinable: false };
+const conflict: DaemonConflict = {
+  repo: "/repo",
+  app_protocol: 15,
+  app_config_identity: "current",
+  owners: [owner],
+  issues,
+  repairable_tasks: [],
+  outdated: false,
+  starter: null,
+  joinable: false,
+};
 const preview: TakeoverPreview = { confirmation_id: "consent-a", repo: "/repo", owner };
 const strip = () => screen.getByRole("button", { name: /repo is open elsewhere · showing saved progress/ });
 function tree(value: DaemonConflict | null, refresh: () => void) {
@@ -380,6 +390,20 @@ describe("repository status without a takeover", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
+  it("holds a project with an older Alinery's sessions and says the reset moves the older agent over to Vinculum", async () => {
+    vi.mocked(ipc.resetRepoState).mockResolvedValue("/repo-alinery-reset-1.zip");
+    const { refresh } = mount({ ...conflict, owners: [], outdated: true, issues: ["this project has sessions from an older version of Alinery"] });
+    const status = document.querySelector(".repo-strip") as HTMLElement;
+    expect(within(status).getByText("repo has sessions from an older version of Alinery · back up and reset to open it here")).toBeTruthy();
+    fireEvent.click(within(status).getByRole("button", { name: "Back up and reset…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Back up and reset repo?" });
+    expect(within(confirm).getByText(/is changed to Vinculum/)).toBeTruthy();
+    expect(ipc.resetRepoState).not.toHaveBeenCalled();
+    accept(confirm, "Back up and reset");
+    await waitFor(() => expect(ipc.resetRepoState).toHaveBeenCalledWith("/repo"));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
   it("keeps a second window separate: no takeover, one recovery action", () => {
     const pick = vi.fn();
     render(<RepoBusyBanner repo="/repo" onPickRepo={pick} />);
@@ -425,6 +449,7 @@ describe("a remote repository's daemon", () => {
     ],
     issues: ["The daemon on the host speaks protocol 22; this app speaks 24."],
     repairable_tasks: [],
+    outdated: false,
   };
 
   it("offers a confirmed restart that names the sessions it ends, and stops nothing before the answer", async () => {

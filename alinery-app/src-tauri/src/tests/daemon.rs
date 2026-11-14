@@ -744,6 +744,7 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             owners: Vec::new(),
             issues: vec!["unavailable".into()],
             repairable_tasks: Vec::new(),
+            outdated: false,
             starter: None,
             joinable: false,
         },
@@ -765,6 +766,7 @@ fn a_daemon_entry_is_repo_scoped_replaced_and_cleared() {
             owners: Vec::new(),
             issues: vec!["now refused".into()],
             repairable_tasks: Vec::new(),
+            outdated: false,
             starter: None,
             joinable: false,
         },
@@ -1511,6 +1513,7 @@ fn a_repo_that_cannot_open_can_still_be_closed() {
         owners,
         issues: vec!["invalid task execution state: missing field `permission`".into()],
         repairable_tasks: vec!["task".into()],
+        outdated: false,
         starter: None,
         joinable: false,
     };

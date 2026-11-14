@@ -40,6 +40,8 @@ pub(crate) struct DaemonConflict {
     pub(crate) issues: Vec<String>,
     /// Tasks whose saved progress will not read and that `repair_task_state` can fix.
     pub(crate) repairable_tasks: Vec<String>,
+    /// Sessions from an older Alinery hold the project; `reset_repo_state` clears them (`alinery_core::older_alinery`).
+    pub(crate) outdated: bool,
     /// Who started a remote repo's daemon, when it says; `None` for a local repo.
     pub(crate) starter: Option<DaemonStarter>,
     /// Someone else's daemon of this protocol that refuses this app's token: a member can let this app in (`remote_join_daemon`).
@@ -263,6 +265,7 @@ fn daemon_conflicts(repo: &Path, app_config: &Path) -> DaemonConflict {
         owners: Vec::new(),
         issues: Vec::new(),
         repairable_tasks: Vec::new(),
+        outdated: false,
         starter: None,
         joinable: false,
     };
@@ -271,6 +274,7 @@ fn daemon_conflicts(repo: &Path, app_config: &Path) -> DaemonConflict {
         Ok(report) => {
             conflict.issues = report.issues;
             conflict.repairable_tasks = report.repairable;
+            conflict.outdated = report.outdated;
             for observation in report.lanes {
                 if let Some(issue) = observation.issue {
                     conflict.issues.push(issue);
@@ -544,14 +548,20 @@ pub(crate) async fn repair_task_state(app: AppHandle, repo: String, slug: String
 }
 
 /// The user's "Back up and reset" on a project whose saved state will not open: every task and the root sessions go into a
-/// zip next to the repository, then are cleared (`alinery_core::reset_alinery_state`). Returns the zip's path.
+/// zip next to the repository, then are cleared (`alinery_core::reset_alinery_state`). What an older Alinery wrote in the
+/// files the reset keeps (settings, playbooks, `app.toml`) is then renamed to Vinculum. Returns the zip's path.
 #[tauri::command]
 pub(crate) async fn reset_repo_state(app: AppHandle, repo: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut archive = String::new();
+        let app_config = app_config_path(&app)?;
         fix_project_while_down(&app, &repo, |repo, _| {
             archive = alinery_core::reset_alinery_state(repo, env!("CARGO_PKG_VERSION"))?.display().to_string();
-            Ok(format!("app.project-state-reset archive={}", alinery_core::quote_log_value(&archive)))
+            let renamed = forget_older_harness(repo, &app_config)?;
+            Ok(format!(
+                "app.project-state-reset archive={} older_harness_files={renamed}",
+                alinery_core::quote_log_value(&archive)
+            ))
         })?;
         Ok(archive)
     })

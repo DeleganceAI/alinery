@@ -1368,6 +1368,7 @@ fn remote_conflict(session: &RemoteSession, key: &str, path: &str, hello: &crate
         }],
         issues: vec![issue],
         repairable_tasks: Vec::new(),
+        outdated: false,
     }
 }
 
@@ -1490,6 +1491,7 @@ pub(crate) fn foreign_conflict(key: &str, record: Option<&crate::host_wire::Host
         owners: Vec::new(),
         issues: vec![issue],
         repairable_tasks: Vec::new(),
+        outdated: false,
         starter,
         joinable,
     }

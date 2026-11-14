@@ -1193,6 +1193,8 @@ export type DaemonConflict = {
   owners: DaemonOwnerConflict[];
   issues: string[];
   repairable_tasks: string[];
+  /** Sessions from an older Alinery hold the project until Back up and reset. */
+  outdated: boolean;
   /** Who started a remote repo's daemon, when it says; null for a local repo. */
   starter: DaemonStarter | null;
   /** Someone else's daemon of this protocol that refuses this app's token: its members can let this app in. */

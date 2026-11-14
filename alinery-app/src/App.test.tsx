@@ -819,7 +819,15 @@ describe("onboarding gate", () => {
       sharing_reviewed: true,
       erased_sign_ins: [],
     };
-    const conflict = { repo: remoteKey, app_protocol: 40, app_config_identity: "x", owners: [], issues: ["protocol 39, this app speaks 40"], repairable_tasks: [] };
+    const conflict = {
+      repo: remoteKey,
+      app_protocol: 40,
+      app_config_identity: "x",
+      owners: [],
+      issues: ["protocol 39, this app speaks 40"],
+      repairable_tasks: [],
+      outdated: false,
+    };
     const extra = ipcMocks as Record<string, unknown>;
     extra.daemonStatus = vi.fn(async () => ({ mode: "local", extra_lanes: 0, stale_lanes: 0, repo: remoteKey, build_drift: false, conflict, repo_busy: false }));
     extra.stopDaemon = vi.fn(async () => undefined);
