@@ -68,3 +68,30 @@ test.skipIf(!runtimePython)("the pdftoppm shim draws pages under poppler's names
   expect(readdirSync(dir).filter((n) => /\.(jpg|png)$/.test(n)).sort()).toEqual(["one.png", "slide-09.jpg", "slide-10.jpg"]);
   expect(() => run("-cropbox", "deck.pdf", "x")).toThrow("-cropbox is not supported");
 });
+
+test.skipIf(!runtimePython)("the qpdf shim merges, picks, rotates, splits and encrypts as the skills show, and names real qpdf for the rest", () => {
+  const dir = temp();
+  const shims = writeShims(dir, process.execPath);
+  const env = { ...process.env, ...agentShellEnv({ python: runtimePython, shims, repo: dir, path: "/usr/bin:/bin" }) };
+  const run = (...args: string[]) => execFileSync("qpdf", args, { cwd: dir, env, encoding: "utf8", stdio: "pipe" });
+  const py = (code: string) => execFileSync("python3", ["-I", "-c", code], { cwd: dir, env, encoding: "utf8" }).trim();
+  // Each page carries its own width (100 + its number; b.pdf's from 151) so the page order can be read back.
+  py("from pypdf import PdfWriter\nfor name, n, base in (('a.pdf', 10, 100), ('b.pdf', 3, 150)):\n w = PdfWriter()\n for i in range(n): w.add_blank_page(base + i + 1, 100)\n w.write(name)");
+  const widths = (file: string) => py(`from pypdf import PdfReader\nprint(' '.join(str(int(p.mediabox.width) - 100) for p in PdfReader('${file}').pages))`);
+  run("--empty", "--pages", "a.pdf", "b.pdf", "--", "merged.pdf");
+  expect(widths("merged.pdf")).toBe("1 2 3 4 5 6 7 8 9 10 51 52 53");
+  run("a.pdf", "--pages", "a.pdf", "1,3-5,8,10-z", "--", "picked.pdf");
+  expect(widths("picked.pdf")).toBe("1 3 4 5 8 10");
+  run("--empty", "--pages", "a.pdf", "z-9", "b.pdf", "r1", "--", "mixed.pdf");
+  expect(widths("mixed.pdf")).toBe("10 9 53");
+  run("a.pdf", "rotated.pdf", "--rotate=+90:1");
+  expect(py("from pypdf import PdfReader\nprint([p.rotation for p in PdfReader('rotated.pdf').pages][:2])")).toBe("[90, 0]");
+  run("--split-pages=3", "a.pdf", "group_%02d.pdf");
+  expect(readdirSync(dir).filter((n) => n.startsWith("group_")).sort()).toEqual(["group_01-03.pdf", "group_04-06.pdf", "group_07-09.pdf", "group_10-10.pdf"]);
+  run("--encrypt", "u", "o", "256", "--print=none", "--", "a.pdf", "locked.pdf");
+  expect(run("--show-encryption", "locked.pdf")).toContain("print: not allowed");
+  run("--password=u", "--decrypt", "locked.pdf", "open.pdf");
+  expect(run("--show-encryption", "open.pdf")).toContain("File is not encrypted");
+  expect(() => run("--check", "a.pdf")).toThrow("brew install qpdf");
+  expect(() => run("a.pdf", "a.pdf")).toThrow("must not be one of the inputs");
+});
