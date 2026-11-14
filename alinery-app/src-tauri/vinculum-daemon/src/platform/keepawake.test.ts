@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, test } from "bun:test";
@@ -40,8 +40,10 @@ test("the pref reads as off for every file the Rust loader refuses, and on only 
 });
 
 test("the hold command is idle-only on each platform", () => {
+  // Where caffeinate is installed (macOS); a Linux runner has none, and the command is then undefined.
   const mac = holdCommand("darwin", 4242);
-  expect(mac).toEqual(["/usr/bin/caffeinate", "-i", "-w", "4242"]);
+  if (existsSync("/usr/bin/caffeinate")) expect(mac).toEqual(["/usr/bin/caffeinate", "-i", "-w", "4242"]);
+  else expect(mac).toBeUndefined();
   const linux = holdCommand("linux", 4242);
   // Where systemd-inhibit is installed; the sandbox that runs this may not have it.
   if (linux) {
