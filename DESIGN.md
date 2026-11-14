@@ -243,8 +243,11 @@ Rules:
 
 ### Typography
 
-- UI font: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif`.
-- Monospace: `SFMono-Regular, Menlo, Monaco, Consolas, monospace`.
+- The app uses alinery.ai's typefaces and ships them (Fontsource packages imported in `main.tsx`, so they load offline). Each token keeps the system stack behind the bundled face as its fallback.
+- UI font (`--font-ui`): `"Geist Variable"`, then `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif`.
+- Monospace (`--font-mono`): `"Geist Mono Variable"`, then `SFMono-Regular, Menlo, Monaco, Consolas, monospace`. The terminal reads this token.
+- Display (`--font-display`): `"Sora"` (400 and 600), then the UI font. Page titles and section titles only, never above `20px`.
+- Set fonts through these tokens, never a literal family.
 - The app must not bundle or redistribute Apple's proprietary fonts. The system stack uses them only when supplied by macOS.
 - Use monospace for code, paths, identifiers, terminal content, timestamps when alignment matters, and compact technical metadata.
 - Use the UI font for navigation, controls, prose, settings, dialogs, and artifact reading.

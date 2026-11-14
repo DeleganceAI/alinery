@@ -99,7 +99,8 @@ export function SessionTerminal({
     const term = new Terminal({
       convertEol: false,
       cursorBlink: true,
-      fontFamily: "Menlo, monospace",
+      // main.tsx waits for the bundled mono face before the first render, so xterm measures its cells, not the fallback's.
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "Menlo, monospace",
       fontSize: terminalFontSize,
       // Reattached normal-buffer sessions replay up to 8 MiB of durable output. Keep enough
       // xterm history for that replay instead of silently truncating it to the default 1,000 rows.

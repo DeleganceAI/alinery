@@ -58,8 +58,9 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 
   /* type */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
-  --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-ui: "Geist Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  --font-mono: "Geist Mono Variable", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-display: "Sora", var(--font-ui);
   --font-reading: var(--font-ui);
 
   /* layout constants */
@@ -1735,6 +1736,12 @@ main {
   color: var(--text-strong);
   font-size: calc(20px * var(--ui-scale));
   font-weight: 600;
+}
+/* Sora is the site's display face: page titles and section titles only, never above 20px (DESIGN.md). */
+.view-title,
+.create-title,
+.playbooks-page h1.pb-title {
+  font-family: var(--font-display);
 }
 .danger-text {
   color: var(--danger);
