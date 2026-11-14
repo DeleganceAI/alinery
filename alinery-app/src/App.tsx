@@ -1615,7 +1615,7 @@ export default function App() {
             </div>
           )}
           {view.kind === "settings" && (
-            <div className="view scroll">
+            <div className="view nopad">
               <Settings
                 key={`settings:${repoKey}:${view.section ?? ""}`}
                 mcp={mcp}

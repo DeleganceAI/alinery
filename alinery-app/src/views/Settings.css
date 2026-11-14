@@ -1,7 +1,7 @@
 /* Settings as one list: a rail of links beside every group in page order. Theme tokens only; the rail and eyebrows follow Playbooks.css. */
 .settings-nav {
   width: 200px;
-  padding: 18px 10px;
+  padding: 18px 12px 18px 22px; /* 22px plus an item's 10px lines its text up with the header's 32px */
 }
 .settings-navgroup {
   display: grid;
@@ -126,7 +126,7 @@
   color: var(--text-muted);
 }
 
-/* Header: title, what the scope means, and the one scope picker. Never shrinks in the column layout. */
+/* Header: title, what the scope means, and the one scope picker. Never shrinks in the column layout; the view around Settings has no padding, so this is its only inset. */
 .settings-head {
   flex: 0 0 auto;
   display: flex;
