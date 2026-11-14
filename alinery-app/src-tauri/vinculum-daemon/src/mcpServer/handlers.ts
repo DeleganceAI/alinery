@@ -41,7 +41,9 @@ const NOT_LOCAL_CHECKOUT_MSG =
 const NEEDS_APP_MCP = "alinery_send_review_handoff copies between two repositories, so it needs the Alinery app's MCP, which holds a token for every daemon the app has open; this MCP holds one for its own daemon only";
 
 export const text = (value: string): Reply => ({ content: [{ type: "text", text: value }] });
-const failure = (message: string): Reply => text(`error: ${message}`);
+// Every refusal is marked isError so a client can tell a failed call from content that happens to read "error:" (#169).
+const refusal = (message: string): Reply => ({ ...text(message), isError: true });
+const failure = (message: string): Reply => refusal(`error: ${message}`);
 const json = (value: unknown): Reply => text(JSON.stringify(value));
 const tagged = (value: unknown): Reply => ({ ...json(value), isError: true });
 
@@ -391,7 +393,7 @@ export async function callTool(ctx: Context, name: string, argsRaw: unknown): Pr
   try {
     if (name === "alinery_list_repos") return listRepos(ctx);
     if (name === "alinery_read_playbook" || name === "alinery_save_playbook") return await playbookTool(ctx, name, args);
-    if (!TOOL_NAMES.has(name)) return text(`unknown tool ${name}`);
+    if (!TOOL_NAMES.has(name)) return refusal(`unknown tool ${name}`);
     const { repo, discoveryOnly } = await resolveRepo(ctx, name, args.repo);
     if (discoveryOnly) {
       if (name === "alinery_list_tasks") return json([]);
@@ -402,7 +404,7 @@ export async function callTool(ctx: Context, name: string, argsRaw: unknown): Pr
     const conn = connection(ctx, repo);
     return await dispatch(ctx, name, args, repo, conn);
   } catch (e) {
-    if (e instanceof ToolError) return e.cause === "plain" ? text(e.message) : failure(e.message);
+    if (e instanceof ToolError) return e.cause === "plain" ? refusal(e.message) : failure(e.message);
     if (e instanceof ConnectError) return failure(e.rawMessage);
     if (e instanceof Error) return failure(e.message);
     throw e;
@@ -457,7 +459,8 @@ async function dispatch(ctx: Context, name: string, args: Args, repo: string, co
     case "alinery_get_task": {
       const slug = component(args, "slug");
       const task = (await reads(conn, slug)).task;
-      return text(task ? Bun.TOML.stringify(taskJson(task) as never) : "");
+      if (!task) return failure(`missing task '${slug}'`);
+      return text(Bun.TOML.stringify(taskJson(task) as never));
     }
     case "alinery_create_task":
       return createTask(conn, args);

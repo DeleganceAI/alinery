@@ -133,3 +133,16 @@ test("an archived task is left out of alinery_list_tasks while it still exists (
   expect(after).not.toContain("third-task");
   expect(after).toContain("first-task");
 });
+
+test("a refused call is marked isError and content is not, even content that reads like an error (#169)", async () => {
+  const { repo } = daemon.fixture;
+  const ctx = daemon.context({ endpoints: new Endpoints(undefined, join(daemon.fixture.root, "endpoints.json")) });
+  const missing = await callTool(ctx, "alinery_get_task", { repo, slug: "no-such-task" });
+  expect(missing).toEqual({ content: [{ type: "text", text: "error: missing task 'no-such-task'" }], isError: true });
+  expect((await callTool(ctx, "alinery_get_task", { repo, slug: "bad/slug" })).isError).toBe(true);
+  expect((await callTool(ctx, "alinery_list_tasks", {})).isError).toBe(true);
+  expect((await callTool(ctx, "alinery_nope", { repo })).isError).toBe(true);
+  const found = await callTool(ctx, "alinery_get_task", { repo, slug: "first-task" });
+  expect(found.isError).toBeUndefined();
+  expect(found.content[0].text).toContain("first-task");
+});
