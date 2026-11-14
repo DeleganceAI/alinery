@@ -262,6 +262,20 @@ test("a draft is written, shows its images through the entity and ReadBlob, and 
   expect(c.events.map((e) => e.event)).toEqual(["task.draft_create", "task.draft_create", "task.draft_delete"]);
 });
 
+test("promoting a draft keeps the branch and worktree names it chose, while another draft's names stay taken (#170)", async () => {
+  const c = await start();
+  const draft = (p: { name: string; branchName: string; worktreeName: string }) =>
+    c.drafts.writeDraft({ meta: meta(), ...p, playbook: { scope: "bundled", key: "one-shot" }, maxLiveSessions: 10 });
+  const keep = (await draft({ name: "Keep", branchName: "keep/me", worktreeName: "keep-tree" })).task?.slug ?? "";
+  await draft({ name: "Other", branchName: "taken", worktreeName: "taken-tree" });
+  const made = (await c.tasks.createTask(createRequest("Keep", { draftSlug: keep, branchName: "keep/me", worktreeName: "keep-tree" }))).created?.task;
+  expect(made?.branch).toBe("keep/me");
+  expect(made?.worktree.split("/").pop()).toBe("keep-tree");
+  const fresh = (await c.tasks.createTask(createRequest("Fresh", { branchName: "taken", worktreeName: "taken-tree" }))).created?.task;
+  expect(fresh?.branch).not.toBe("taken");
+  expect(fresh?.worktree.split("/").pop()).not.toBe("taken-tree");
+});
+
 test("a chat thread's attachment uploads into its attachments directory, reads back, and needs a thread that exists", async () => {
   const c = await start();
   const sessions = join(c.alinery, "sessions");

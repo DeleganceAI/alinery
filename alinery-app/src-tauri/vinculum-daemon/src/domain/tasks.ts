@@ -192,7 +192,16 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams, hooks: P
   let reservationError: string | undefined;
   const task = await withTaskMutation(repo, "reserve task provisioning", async () => {
     await hooks.before?.();
-    const reserved = listActiveTasks(repo);
+    let draft: TaskRecord | undefined;
+    if (p.draftSlug) {
+      if (safeComponent(p.draftSlug) !== p.draftSlug) throw new DomainError("invalid_argument", "invalid draft slug");
+      const found = readTask(repo, p.draftSlug);
+      if (!found) throw new DomainError("not_found", "draft is missing or has already been promoted");
+      if (found.draft !== true) throw new DomainError("failed_precondition", "draft was already created");
+      draft = found.archived === true ? undefined : found;
+    }
+    // The draft being promoted holds its own branch and worktree names; counting them as taken would add a -1 (#170).
+    const reserved = listActiveTasks(repo).filter((t) => !draft || t.slug !== draft.slug);
     const refs = await localBranches(repo);
     const branches = () => [...refs, ...reserved.map((t) => String(t.branch))];
     const branchOccupied = (candidate: string) => branches().some((existing) => branchNamesConflict(existing, candidate));
@@ -205,14 +214,6 @@ export async function provisionTask(d: CreateDeps, p: CreateTaskParams, hooks: P
     if (parent) throw new DomainError("invalid_argument", `branch '${branchBase}' is blocked by existing or reserved parent branch '${parent}'; choose a branch outside '${parent}/'`);
     const branch = uniqueName(branchOccupied, branchBase);
     await ensureIgnored(repo);
-    let draft: TaskRecord | undefined;
-    if (p.draftSlug) {
-      if (safeComponent(p.draftSlug) !== p.draftSlug) throw new DomainError("invalid_argument", "invalid draft slug");
-      const found = readTask(repo, p.draftSlug);
-      if (!found) throw new DomainError("not_found", "draft is missing or has already been promoted");
-      if (found.draft !== true) throw new DomainError("failed_precondition", "draft was already created");
-      draft = found.archived === true ? undefined : found;
-    }
     const slug = uniqueName((s) => existsSync(taskDir(repo, s)) && draft?.slug !== s, requested);
     if (draft && draft.slug !== slug) renameSync(taskDir(repo, draft.slug), taskDir(repo, slug));
     // The draft's form state is spent; left behind it would keep a `draft/` row for a task.
