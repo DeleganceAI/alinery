@@ -126,31 +126,15 @@
   color: var(--text-muted);
 }
 
-/* Header: title, what the scope means, and the one scope picker. The arc is the playbook bar's horizon. */
+/* Header: title, what the scope means, and the one scope picker. Never shrinks in the column layout. */
 .settings-head {
-  position: relative;
-  overflow: hidden;
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   padding: 22px 32px 18px;
   border-bottom: 1px solid var(--border);
-}
-.settings-head::after {
-  content: "";
-  position: absolute;
-  width: 900px;
-  height: 900px;
-  border-radius: 50%;
-  right: -380px;
-  top: 40px;
-  border: 1px solid var(--border-strong);
-  box-shadow: 0 -1px 24px -8px var(--accent-subtle);
-  pointer-events: none;
-}
-.settings-head > * {
-  position: relative;
 }
 .settings-head-copy {
   min-width: 0;
