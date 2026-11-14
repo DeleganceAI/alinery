@@ -102,11 +102,12 @@ describe("the sender", () => {
     }
   });
 
-  test("an unreachable endpoint neither throws nor delays the caller", async () => {
+  test("an unreachable endpoint neither throws nor makes the caller wait", async () => {
     const path = appToml(`enabled = true\nprompted = true\ninstall_id = "abc"\nendpoint = "http://127.0.0.1:1"`);
-    const started = performance.now();
-    expect(() => telemetrySender(path, "1.0.0").record(() => event)).not.toThrow();
-    expect(performance.now() - started).toBeLessThan(50);
+    const sender = telemetrySender(path, "1.0.0");
+    let returned: unknown = "not called";
+    expect(() => void (returned = sender.record(() => event))).not.toThrow();
+    expect(returned).toBeUndefined(); // not a promise: the send runs in the background, nothing to await
     await Bun.sleep(100); // the failed send settles without an unhandled rejection
   });
 

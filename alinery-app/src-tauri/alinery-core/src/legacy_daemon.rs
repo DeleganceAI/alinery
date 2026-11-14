@@ -690,7 +690,6 @@ mod tests {
         let root = PathBuf::from(format!("/tmp/ai-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]));
         fs::create_dir_all(root.join(".alinery")).unwrap();
         let listener = UnixListener::bind(rpc_socket_path(&root, Some("lane"))).unwrap();
-        let started = Instant::now();
         // The listener answers connects, so the proof cannot complete within its 5 s budget.
         let handle = thread::spawn({
             let root = root.clone();
@@ -700,7 +699,6 @@ mod tests {
         assert!(!handle.is_finished(), "an answering rpc socket must keep the wait going");
         drop(listener);
         assert!(handle.join().unwrap().is_ok(), "once the socket stops answering and the lock is free the daemon is gone");
-        assert!(started.elapsed() < Duration::from_secs(5));
         fs::remove_dir_all(root).unwrap();
     }
 

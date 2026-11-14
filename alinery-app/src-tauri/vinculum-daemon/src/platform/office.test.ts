@@ -9,9 +9,8 @@ test("a conversion past its time limit is stopped, and its work directory goes w
   const soffice = join(dir, "soffice");
   writeFileSync(soffice, "#!/bin/sh\nexec sleep 30\n");
   chmodSync(soffice, 0o755);
-  const started = Date.now();
+  // The rejection proves the limit fired; a kill that failed would leave `sleep 30` running past the test timeout.
   await expect(convertToPdf(soffice, join(dir, "deck.pptx"), dir, 200)).rejects.toThrow("LibreOffice took longer than 0 seconds");
-  expect(Date.now() - started).toBeLessThan(5000);
   expect(readdirSync(dir).filter((n) => n.startsWith("convert-"))).toEqual([]);
 });
 
