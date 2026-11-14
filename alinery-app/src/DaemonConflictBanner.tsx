@@ -1,14 +1,17 @@
 import { ChevronDown, CircleAlert, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { copyTextToClipboard } from "./chat/CopyMessage";
-import { askConfirm, confirmDanger } from "./confirm";
+import { confirmDanger } from "./confirm";
 import * as ipc from "./ipc";
+import { isRemoteRepo } from "./remoteRepo";
 import { repoName } from "./shared";
+import { REPO_SCOPE, useEntity, useScope } from "./sync/hooks";
+import { decideJoin, JOIN_REQUESTS_KEY } from "./sync/members";
 import { toast } from "./toast";
 import type { DaemonConflict, DaemonOwnerConflict } from "./types";
 
 const HOST_GUARD_WARNING =
-  "OMP sessions are unavailable because Alinery could not validate its executable path. Use the confirmed Restart daemon / Stop all sessions action in Settings → Chat to restore OMP host protection. Terminal sessions remain available.";
+  "Alinery could not identify its own executable, so this daemon cannot tell the app from other local processes. Use the confirmed Restart daemon / Stop all sessions action in Settings → Chat to restore that check. Sessions are not affected.";
 
 export function HostGuardWarning({ visible }: { visible: boolean }) {
   if (!visible) return null;
@@ -50,7 +53,7 @@ function RepoStatusStrip({ tone, children, action, details }: { tone: "warning" 
 const EVIDENCE_NOTE = "Sessions started after this check also stop. Lock files are released when their owner stops; deleting them doesn't force access.";
 
 /** Copyable monospace evidence plus one line of guidance. */
-function EvidenceBlock({ text, note = EVIDENCE_NOTE }: { text: string; note?: string }) {
+function EvidenceBlock({ text }: { text: string }) {
   const copy = () =>
     copyTextToClipboard(text).then(
       () => toast.success("Details copied", "short"),
@@ -60,7 +63,7 @@ function EvidenceBlock({ text, note = EVIDENCE_NOTE }: { text: string; note?: st
     <>
       <pre className="repo-evidence">{text}</pre>
       <div className="repo-evidence-foot">
-        <span>{note}</span>
+        <span>{EVIDENCE_NOTE}</span>
         <button type="button" className="btn ghost small" onClick={() => void copy()}>
           Copy details
         </button>
@@ -116,25 +119,6 @@ function evidenceText(conflict: DaemonConflict): string {
   return lines.join("\n");
 }
 
-/** An unsuccessful open never selects the repository or authorizes a takeover. */
-export function showRepoOpenFailure(repo: string, cause: unknown): string {
-  const conflict = cause && typeof cause === "object" && "repo" in cause && "owners" in cause && "issues" in cause ? (cause as DaemonConflict) : null;
-  const message = conflict ? `Couldn't connect to ${repoName(repo)}. The repository was not opened.` : cause instanceof Error ? cause.message : String(cause);
-  void askConfirm({
-    title: `Couldn't open ${repoName(repo)}`,
-    body: (
-      <>
-        <p>{message}</p>
-        {conflict && <EvidenceBlock text={evidenceText(conflict)} note="No sessions were stopped. Resolve the ownership conflict, then try opening the repository again." />}
-      </>
-    ),
-    choices: [{ key: "close", label: "Close", tone: "ghost" }],
-    defaultKey: "close",
-    cancelKey: "close",
-  });
-  return message;
-}
-
 /** Dialog sentence and accept label, both naming what the takeover stops. */
 function takeoverPrompt(owner: DaemonOwnerConflict): { sentence: string; accept: string } {
   if (owner.impact.status === "unknown") {
@@ -159,7 +143,181 @@ export function resetTakeoverPrompts() {
 }
 
 export function DaemonConflictBanner({ conflict, onRefresh }: { conflict: DaemonConflict | null; onRefresh: () => void }) {
-  return conflict ? <SelectedRepoConflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} /> : null;
+  if (!conflict) return null;
+  // No owner to restart: a daemon someone else started, which refuses this app's token.
+  const Conflict = !isRemoteRepo(conflict.repo) ? SelectedRepoConflict : conflict.owners.length === 0 ? SomeoneElsesDaemon : RemoteDaemonConflict;
+  return <Conflict key={conflict.repo} conflict={conflict} onRefresh={onRefresh} />;
+}
+
+/** Who a restart would take a daemon from, or null when this person started it (or nobody says). */
+export function otherStarter(starter: { started_by: string; mine: boolean } | null | undefined): string | null {
+  if (!starter || starter.mine || !starter.started_by) return null;
+  return starter.started_by;
+}
+
+/** A restart of a daemon someone else started stops their sessions and drops everyone they let in: one more yes, naming them. */
+export async function confirmRestartingOthers(who: string | null, name: string): Promise<boolean> {
+  if (!who) return true;
+  return confirmDanger(
+    `Restart the daemon ${who} started?`,
+    <p>
+      {who} started the daemon for {name}. Restarting it stops their sessions, and everyone using it has to ask to join again. Check with them first.
+    </p>,
+    "Restart it anyway",
+  );
+}
+
+/**
+ * Asks, then restarts a remote repo's daemon that another Alinery version started, from this app's runtime. That ends its
+ * sessions, so it is always confirmed with their count. Returns whether it ran. The banner and the end of connecting a
+ * host both offer it.
+ */
+export async function restartRemoteDaemon(conflict: DaemonConflict): Promise<boolean> {
+  const name = repoName(conflict.repo);
+  const impact = conflict.owners[0]?.impact;
+  const live = impact?.status === "known" ? impact.sessions.length : null;
+  const who = otherStarter(conflict.starter);
+  const accepted = await confirmDanger(
+    `Restart the daemon for ${name}?`,
+    <>
+      <p>
+        {who ? `${who} started it with another Alinery version` : "Another Alinery version started it"}, so this app can't use it until it restarts on this version.{" "}
+        {live === null
+          ? "Its sessions could not be counted. Restarting stops all of them."
+          : live === 0
+            ? "No live sessions."
+            : `Restarting stops ${live} live session${live === 1 ? "" : "s"}.`}
+      </p>
+      <details className="takeover-details">
+        <summary>Details</summary>
+        <EvidenceBlock text={evidenceText(conflict)} />
+      </details>
+    </>,
+    live === null ? "Stop all sessions and restart" : live === 0 ? "Restart daemon" : `Stop ${live} session${live === 1 ? "" : "s"} and restart`,
+  );
+  if (!accepted || !(await confirmRestartingOthers(who, name))) return false;
+  try {
+    await ipc.stopDaemon(conflict.repo);
+    toast.success(`Restarted the daemon for ${name}`);
+  } catch (cause) {
+    toast.error(`Couldn't restart the daemon for ${name}: ${String(cause)}`);
+  }
+  return true;
+}
+
+/** A remote repo's daemon that this app cannot use (another Alinery version started it). There is
+ *  no other window to take over from; only restarting it replaces it, and that ends its sessions. */
+function RemoteDaemonConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
+  const [pending, setPending] = useState(false);
+  const restart = async () => {
+    setPending(true);
+    try {
+      if (await restartRemoteDaemon(conflict)) onRefresh();
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      details={<EvidenceBlock text={evidenceText(conflict)} />}
+      action={
+        <button type="button" className="btn small" disabled={pending} onClick={() => void restart()}>
+          Restart daemon…
+        </button>
+      }
+    >
+      {repoName(conflict.repo)}'s daemon on the host was started by another Alinery version · showing saved progress
+    </RepoStatusStrip>
+  );
+}
+
+/** A remote repo's daemon someone else started (a coworker on a shared box, or another Alinery build): it refuses this app's token,
+ *  so this app can neither use nor stop it. Its members can let this app in, without a restart. */
+function SomeoneElsesDaemon({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
+  const [waiting, setWaiting] = useState(false);
+  const name = repoName(conflict.repo);
+  const starter = conflict.starter;
+  const who = starter?.mine ? "another Alinery on this computer" : starter?.started_by || "someone else";
+  const join = async () => {
+    setWaiting(true);
+    toast.info(`Asked to join ${name}'s daemon. Anyone using it can let you in.`);
+    try {
+      await ipc.remoteJoinDaemon(conflict.repo);
+      toast.success(`Joined ${name}'s daemon`);
+      onRefresh();
+    } catch (cause) {
+      toast.error(`Couldn't join ${name}'s daemon: ${String(cause)}`);
+    } finally {
+      setWaiting(false);
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      details={<pre className="repo-evidence">{conflict.issues.join("\n")}</pre>}
+      action={
+        conflict.joinable && (
+          <button type="button" className="btn small" disabled={waiting} onClick={() => void join()}>
+            {waiting ? "Waiting for a yes…" : "Ask to join"}
+          </button>
+        )
+      }
+    >
+      {name}'s daemon was started by {who}
+      {starter?.os_user ? ` (as ${starter.os_user})` : ""} · showing saved progress
+    </RepoStatusStrip>
+  );
+}
+
+/** Requests to join the open repo's daemon, for anyone using it to answer. A yes gives the asker everything this app can do here. */
+export function JoinRequestsBanner({ repo }: { repo: string }) {
+  const replica = useScope(repo, REPO_SCOPE);
+  const entity = useEntity(replica, JOIN_REQUESTS_KEY);
+  const [busy, setBusy] = useState(false);
+  const requests = entity?.value.case === "joinRequests" ? entity.value.value.requests : [];
+  const first = requests[0];
+  if (!first) return null;
+  const name = repoName(repo);
+  const decide = async (approve: boolean) => {
+    if (
+      approve &&
+      !(await confirmDanger(
+        `Let ${first.label} use ${name}'s daemon?`,
+        <p>
+          They can see and do everything here that you can, including terminals and agents, which run as this daemon's login with its sign-ins. Only say yes to a request you
+          expect.
+        </p>,
+        "Let them in",
+      ))
+    )
+      return;
+    setBusy(true);
+    try {
+      await decideJoin(repo, first.id, approve);
+    } catch (cause) {
+      toast.error(`Couldn't answer ${first.label}: ${String(cause)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <RepoStatusStrip
+      tone="warning"
+      action={
+        <>
+          <button type="button" className="btn small" disabled={busy} onClick={() => void decide(true)}>
+            Let in…
+          </button>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={() => void decide(false)}>
+            Decline
+          </button>
+        </>
+      }
+    >
+      {first.label} asks to use {name}'s daemon{requests.length > 1 ? ` (${requests.length - 1} more waiting)` : ""}
+    </RepoStatusStrip>
+  );
 }
 
 function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflict; onRefresh: () => void }) {
@@ -259,6 +417,69 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     }
   };
 
+  const repair = async (slugs: string[]) => {
+    const accepted = await confirmDanger(
+      `Repair ${name}?`,
+      <>
+        <p>
+          {slugs.length === 1 ? "One task's" : "Some tasks'"} saved progress was written by another version of Alinery, or is missing a setting this version needs. Repair converts
+          it so the task opens; runs this version can't continue show as history. Your tasks, files and artifacts aren't changed, and a copy of each original file stays next to it.
+        </p>
+        <p>
+          {slugs.length === 1 ? "Task" : "Tasks"}: {slugs.join(", ")}
+        </p>
+      </>,
+      "Repair",
+    );
+    if (!accepted) return;
+    setPending(true);
+    try {
+      for (const slug of slugs) await ipc.repairTaskState(conflict.repo, slug);
+      toast.success(`Repaired ${name}`);
+    } catch (cause) {
+      toast.error(`Couldn't repair ${name}: ${String(cause)}`);
+    } finally {
+      setPending(false);
+      onRefresh();
+    }
+  };
+
+  const reset = async () => {
+    const accepted = await confirmDanger(
+      `Back up and reset ${name}?`,
+      <>
+        {conflict.outdated && (
+          <p>
+            {name} has sessions from an older version of Alinery, which this version can't open. After the reset, the older agent named in this project's settings and playbooks, in
+            your own playbooks, and in your model favorites and default model is changed to Vinculum.
+          </p>
+        )}
+        <p>
+          Every task and its sessions are saved to a zip next to the repository folder, then cleared, so {name} opens with no tasks. Settings and playbooks stay, and so do
+          worktrees and their branches, with any uncommitted work.
+        </p>
+        <p>The zip is a regular Alinery backup of this repository. Nothing is cleared unless it is written and reads back whole.</p>
+      </>,
+      "Back up and reset",
+    );
+    if (!accepted) return;
+    setPending(true);
+    try {
+      const archive = await ipc.resetRepoState(conflict.repo);
+      toast.success(`Reset ${name}. Backup saved to ${archive}`);
+    } catch (cause) {
+      toast.error(`Couldn't reset ${name}: ${String(cause)}`);
+    } finally {
+      setPending(false);
+      onRefresh();
+    }
+  };
+  const resetButton = isRemoteRepo(conflict.repo) ? null : (
+    <button type="button" className="btn ghost small" disabled={pending} onClick={() => void reset()}>
+      Back up and reset…
+    </button>
+  );
+
   // Auto-open once per conflict: the first takeable owner this mount sees, and never an owner
   // that already prompted. A partial takeover's next owner waits for an explicit click.
   const autoPrompted = useRef(false);
@@ -289,8 +510,35 @@ function SelectedRepoConflict({ conflict, onRefresh }: { conflict: DaemonConflic
     );
   }
   const blockingIssues = displayed.owners.length === 0 && conflictEvidence(displayed).issues.length > 0;
+  const repairable = displayed.owners.length === 0 ? displayed.repairable_tasks : [];
+  if (repairable.length > 0) {
+    const count = repairable.length;
+    return (
+      <RepoStatusStrip
+        tone="error"
+        details={<EvidenceBlock text={evidenceText(displayed)} />}
+        action={
+          <>
+            <button type="button" className="btn small" disabled={pending} onClick={() => void repair(repairable)}>
+              Repair…
+            </button>
+            {resetButton}
+          </>
+        }
+      >
+        {name} can't be opened because {count === 1 ? "one task's" : `${count} tasks'`} saved progress is damaged
+      </RepoStatusStrip>
+    );
+  }
+  if (displayed.owners.length === 0 && displayed.outdated) {
+    return (
+      <RepoStatusStrip tone="error" details={<EvidenceBlock text={evidenceText(displayed)} />} action={resetButton}>
+        {name} has sessions from an older version of Alinery · back up and reset to open it here
+      </RepoStatusStrip>
+    );
+  }
   return (
-    <RepoStatusStrip tone={blockingIssues ? "error" : "warning"} details={<EvidenceBlock text={evidenceText(displayed)} />}>
+    <RepoStatusStrip tone={blockingIssues ? "error" : "warning"} details={<EvidenceBlock text={evidenceText(displayed)} />} action={blockingIssues ? resetButton : undefined}>
       {blockingIssues ? `${name} can't be opened here · showing saved progress` : `${name} is open elsewhere · showing saved progress · quit the other window to work here`}
     </RepoStatusStrip>
   );

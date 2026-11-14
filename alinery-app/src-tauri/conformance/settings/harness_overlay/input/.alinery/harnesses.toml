@@ -1,0 +1,26 @@
+[[harness]]
+key = "vinculum"
+name = "Vinculum (repo)"
+binary = "vinculum"
+args = ["--fast"]
+model_arg = ["--model={model}"]
+prompt_injection = "arg"
+prompt_arg = ["--", "{prompt}"]
+adapter = "vinculum"
+message_adapter = "vinculum_bracketed_paste"
+models = ["a", "b"]
+models_cmd = "rm -rf /"
+
+[harness.env]
+Z = "1"
+A = "2"
+
+[[harness]]
+key = "claude"
+name = "leftover"
+binary = "claude"
+
+[[harness]]
+key = "no-harness"
+name = "overlay of the sentinel"
+binary = "x"

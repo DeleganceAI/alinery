@@ -1,32 +1,38 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildPromptMessage, taskAttachmentDir } from "../chat/attachments";
 import { askConfirm } from "../confirm";
-import * as ipc from "../ipc";
 import { type PastedImage, stagePastedImages } from "../pastedImages";
 import { ExecutionAvailabilityNotice, InlineStatus, ModelInput, repoName, taskKey } from "../shared";
+import { useRepoBoard } from "../sync/board";
+import { readTaskExecution } from "../sync/execution";
+import { addTaskAttachment } from "../sync/tasks";
 import type { BoardTask, SessionTypeChoice, TaskExecutionReply } from "../types";
-import { readTaskExecution } from "../useExecutionObservation";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 export function CreateSessionPage({
   allRepos,
+  repos,
   activeRepo,
   initialTask,
   onCancel,
   onCreated,
 }: {
   allRepos: boolean;
+  repos: string[];
   activeRepo: string;
   initialTask?: { repo_path: string; slug: string };
   onCancel: () => void;
   onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void>;
 }) {
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [taskId, setTaskId] = useState("");
+  // The tasks to pick from are the repo streams' task rows.
+  const board = useRepoBoard(repos);
+  const available = useMemo(() => board.tasks.filter((item) => !item.archived && !item.draft), [board.tasks]);
+  const tasks = available;
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [loadedTaskId, setLoadedTaskId] = useState("");
   const [selection, setSelection] = useState("auxiliary");
-  const [harness, setHarness] = useState("omp");
+  const [harness, setHarness] = useState("vinculum");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [pickModel, setPickModel] = useState(false);
@@ -56,6 +62,12 @@ export function CreateSessionPage({
     },
     [],
   );
+  useEffect(() => {
+    setTaskId((current) => {
+      const requested = available.find((item) => item.repo_path === initialTask?.repo_path && item.slug === initialTask?.slug);
+      return requested ? taskKey(requested) : available.some((item) => taskKey(item) === current) ? current : available[0] ? taskKey(available[0]) : "";
+    });
+  }, [available, initialTask?.repo_path, initialTask?.slug]);
   const task = tasks.find((candidate) => taskKey(candidate) === taskId);
   const records = Object.values(executionView?.state.executions ?? {});
   const [mode, executionId] = selection.split(":");
@@ -63,30 +75,9 @@ export function CreateSessionPage({
   const step = executionView?.definition.step.find((candidate) => candidate.key === execution?.candidate.step_key);
   const auxiliary = selection === "auxiliary";
   const existing = mode === "existing";
-  const effectiveHarness = auxiliary ? harness : "omp";
+  const effectiveHarness = auxiliary ? harness : "vinculum";
   const exactTaskLoaded = loadedTaskId === taskId;
-  const executionAvailable = executionView?.live?.status === "available" && !executionError;
-
-  useEffect(() => {
-    let alive = true;
-    ipc
-      .listBoardTasks(allRepos)
-      .then((items) => {
-        if (!alive) return;
-        const available = items.filter((item) => !item.archived && !item.draft);
-        setTasks(available);
-        setTaskId((current) => {
-          const requested = available.find((item) => item.repo_path === initialTask?.repo_path && item.slug === initialTask?.slug);
-          return requested ? taskKey(requested) : available.some((item) => taskKey(item) === current) ? current : available[0] ? taskKey(available[0]) : "";
-        });
-      })
-      .catch((cause) => {
-        if (alive) setError(String(cause));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [allRepos, initialTask?.repo_path, initialTask?.slug]);
+  const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
 
   useEffect(() => {
     let alive = true;
@@ -106,7 +97,7 @@ export function CreateSessionPage({
           setLoadedTaskId(taskKey(task));
           setExecutionError("");
           if (initial) {
-            const queued = Object.values(value.state.executions).find((record) => record.lifecycle === "queued");
+            const queued = Object.values(value.state.executions ?? {}).find((record) => record.lifecycle === "queued");
             if (queued) setSelection(`existing:${queued.id}`);
           }
           initial = false;
@@ -179,8 +170,7 @@ export function CreateSessionPage({
         for (const image of imagesRef.current) {
           let name = savedImages.current.get(image.id);
           if (!name) {
-            const bytes = Array.from(new Uint8Array(await image.file.arrayBuffer()));
-            name = await ipc.writeChatAttachmentBytes(task.slug, image.name, bytes, task.repo_path);
+            name = await addTaskAttachment(task.repo_path, task.slug, image.name, new Uint8Array(await image.file.arrayBuffer()));
             savedImages.current.set(image.id, name);
           }
           copied.push({ name });
@@ -289,7 +279,7 @@ export function CreateSessionPage({
               }}
             >
               <option value="no-harness">Terminal</option>
-              <option value="omp">OMP</option>
+              <option value="vinculum">Vinculum</option>
             </select>
           </label>
         )}
@@ -300,7 +290,7 @@ export function CreateSessionPage({
               Execution {execution.id} · {execution.lifecycle} · Current owner {execution.owner_session_id}
             </p>
             {mode === "recover" && executionAvailable && (
-              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Manual continuation requires renewed readiness.</p>
+              <p>Recovery retains these assignments and replaces only this proven-stopped owner. Its completion permission will be reset.</p>
             )}
             {mode === "manual" && (
               <p>This independent execution uses the selected input occurrences. The daemon reserves new output paths; it does not complete the original execution.</p>
@@ -310,7 +300,7 @@ export function CreateSessionPage({
               {Object.entries(execution.candidate.inputs).flatMap(([selector, ids]) =>
                 ids.map((id) => (
                   <li key={`${selector}:${id}`}>
-                    <code>{selector}</code> ← <code>{executionView?.state.occurrences[id]?.relative_path ?? id}</code> · occurrence {id}
+                    <code>{selector}</code> ← <code>{executionView?.state.occurrences?.[id]?.relative_path ?? id}</code> · occurrence {id}
                   </li>
                 )),
               )}
@@ -351,7 +341,7 @@ export function CreateSessionPage({
         {effectiveHarness !== "no-harness" && !existing && (
           <label className="create-field">
             <span>Model override (empty = authored precedence)</span>
-            <ModelInput harness="omp" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
+            <ModelInput harness="vinculum" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
           </label>
         )}
         {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}

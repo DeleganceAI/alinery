@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import * as ipc from "./ipc";
+import { listTaskPullRequests } from "./sync/git";
 import type { PullRequestSnapshot, TaskActivityRef } from "./types";
 
 const FRESH_MS = 60_000;
@@ -27,7 +27,7 @@ async function refresh(tasks: TaskActivityRef[]) {
   if (missing.size) {
     // Defer IPC until every entry is marked pending so overlapping consumers share it.
     const request = Promise.resolve()
-      .then(() => ipc.listTaskPullRequests([...missing.values()]))
+      .then(() => listTaskPullRequests([...missing.values()]))
       .catch((error: unknown): Record<string, PullRequestSnapshot> => {
         const message = error instanceof Error ? error.message : String(error);
         return Object.fromEntries([...missing.keys()].map((key) => [key, { pr: null, error: message }]));

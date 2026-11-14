@@ -1,0 +1,172 @@
+{
+  "slug": "gamma",
+  "steps": [
+    {
+      "op": "list_comments",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "add",
+      "artifact": "02-plan.md",
+      "anchor_id": "p1",
+      "anchor_kind": "line",
+      "anchor_label": "L3",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 3,
+      "line_end": 3,
+      "body": "  first <comment>  "
+    },
+    {
+      "op": "add",
+      "artifact": "02-plan.md",
+      "anchor_id": "p2",
+      "anchor_kind": "line",
+      "anchor_label": "L1",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 1,
+      "line_end": 2,
+      "body": "second"
+    },
+    {
+      "op": "add",
+      "artifact": "02-plan.md",
+      "anchor_id": "p3",
+      "anchor_kind": "line",
+      "anchor_label": "L1",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 1,
+      "line_end": 1,
+      "body": "   "
+    },
+    {
+      "op": "list_comments",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "save_draft",
+      "artifact": "02-plan.md",
+      "anchor_id": "d1",
+      "anchor_kind": "line",
+      "anchor_label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "anchor_excerpt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "line_start": 4,
+      "line_end": 4,
+      "body": "draft body"
+    },
+    {
+      "op": "save_draft",
+      "artifact": "02-plan.md",
+      "anchor_id": "d0",
+      "anchor_kind": "line",
+      "anchor_label": "d0",
+      "anchor_excerpt": "e",
+      "line_start": 2,
+      "line_end": 2,
+      "body": "earlier"
+    },
+    {
+      "op": "list_drafts"
+    },
+    {
+      "op": "write",
+      "artifact": "02-plan.md",
+      "text": "# Plan changed\n"
+    },
+    {
+      "op": "list_drafts"
+    },
+    {
+      "op": "save_draft",
+      "artifact": "02-plan.md",
+      "anchor_id": "d0",
+      "anchor_kind": "line",
+      "anchor_label": "d0",
+      "anchor_excerpt": "e",
+      "line_start": 2,
+      "line_end": 2,
+      "body": ""
+    },
+    {
+      "op": "delete_draft",
+      "artifact": "02-plan.md",
+      "anchor_id": "d1"
+    },
+    {
+      "op": "list_drafts"
+    },
+    {
+      "op": "pending_status",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "archive",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "pending_status",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "archive",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "write",
+      "artifact": "02-plan.md",
+      "text": "# Plan edited again\n"
+    },
+    {
+      "op": "pending_status",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "add",
+      "artifact": "02-plan.md",
+      "anchor_id": "p4",
+      "anchor_kind": "line",
+      "anchor_label": "L2",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 2,
+      "line_end": 2,
+      "body": "third"
+    },
+    {
+      "op": "archive",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "clear_pending",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "pending_status",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "list_comments",
+      "artifact": "02-plan.md"
+    },
+    {
+      "op": "add",
+      "artifact": "../x.md",
+      "anchor_id": "p1",
+      "anchor_kind": "line",
+      "anchor_label": "L1",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 1,
+      "line_end": 1,
+      "body": "escape"
+    },
+    {
+      "op": "add",
+      "artifact": "missing.md",
+      "anchor_id": "p1",
+      "anchor_kind": "line",
+      "anchor_label": "L1",
+      "anchor_excerpt": "ex <b> & more",
+      "line_start": 1,
+      "line_end": 1,
+      "body": "x"
+    }
+  ]
+}

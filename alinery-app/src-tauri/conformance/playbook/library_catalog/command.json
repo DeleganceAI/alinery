@@ -1,0 +1,86 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "personal"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "broken"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "mismatch"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "missing"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "../x"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "global",
+    "key": "Upper"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "repo",
+    "key": "team"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "repo",
+    "key": "release"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "repo",
+    "key": "twin"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "bundled",
+    "key": "one-shot"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "bundled",
+    "key": "nope"
+   }
+  }
+ ]
+}

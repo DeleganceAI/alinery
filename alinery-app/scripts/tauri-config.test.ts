@@ -9,13 +9,25 @@ it("bundles the Apache license, copyright notice, and third-party license texts"
     bundle: { licenseFile: string; resources: Record<string, string> };
   };
   const resourceRoot = new URL("../src-tauri/", import.meta.url);
-  const bundled = Object.fromEntries(Object.entries(config.bundle.resources).map(([source, destination]) => [destination, readFileSync(new URL(source, resourceRoot), "utf8")]));
+  const bundled = Object.fromEntries(
+    Object.entries(config.bundle.resources)
+      .filter(([, destination]) => !destination.endsWith("/"))
+      .map(([source, destination]) => [destination, readFileSync(new URL(source, resourceRoot), "utf8")]),
+  );
 
   expect(bundled.LICENSE).toContain("Version 2.0, January 2004");
   expect(bundled.LICENSE).toBe(readFileSync(new URL(config.bundle.licenseFile, resourceRoot), "utf8"));
   expect(bundled.NOTICE).toContain("Copyright 2026 Delegance Inc.");
   expect(bundled["THIRD-PARTY-NOTICES.md"]).toContain("Copyright (c) 2025 Mario Zechner");
   expect(bundled["THIRD-PARTY-NOTICES.md"]).toContain(readFileSync(new URL("playbooks/superdevelop/LICENSE.superpowers", resourceRoot), "utf8"));
+});
+
+it("bundles the remote runtimes and keeps dev builds compiling without them", () => {
+  const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")) as { bundle: { resources: Record<string, string> } };
+  expect(config.bundle.resources["resources/remote/"]).toBe("remote/");
+  // tauri-build fails on a missing resource, so the sidecar script must leave an empty manifest.
+  expect(readFileSync(new URL("../src-tauri/scripts/copy-sidecar.sh", import.meta.url), "utf8")).toContain("resources/remote/manifest.json");
+  expect(readFileSync(new URL("../src-tauri/.gitignore", import.meta.url), "utf8")).toContain("/resources/remote/");
 });
 
 describe("tauri development config overlay", () => {

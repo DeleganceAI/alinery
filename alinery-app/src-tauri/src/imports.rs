@@ -1,5 +1,7 @@
 //! imports: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
+
+pub(crate) use alinery_core::git_actions::{issue_number, GitHubIssueRef};
 use pulldown_cmark::{Event, LinkType, Parser, Tag, TagEnd};
 
 // ---- M5 Linear import (opt-in, one-way) --------------------------------------
@@ -136,7 +138,7 @@ pub(crate) fn import_linear_images(description: &str, mut download: impl FnMut(&
 }
 
 // Import through the current OAuth connection.
-pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str) -> Result<LinearTicket, String> {
+pub(crate) fn import_linear_in(app_config: &Path, reference: &str) -> Result<LinearTicket, String> {
     let token = linear_oauth_access_token()
         .map_err(|error| {
             if error.clears_account_label() {
@@ -191,21 +193,10 @@ pub(crate) fn import_linear_in(app_config: &Path, _repo: &Path, reference: &str)
 }
 
 #[tauri::command]
-pub(crate) async fn import_linear(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<LinearTicket, String> {
-    // Issue and image downloads are blocking; keep them off the main thread.
-    let app_config = app_config_path(&app)?;
-    let repo = require_owned_active_repo(&state)?;
-    tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &repo, &reference))
-        .await
-        .map_err(|error| format!("import linear task: {error}"))?
-}
-
-#[tauri::command]
 pub(crate) async fn import_linear_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<LinearTicket, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
+    owned_target(&app, &state, &repo_path)?;
     let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &repo, &reference))
+    tauri::async_runtime::spawn_blocking(move || import_linear_in(&app_config, &reference))
         .await
         .map_err(|error| format!("import linear task: {error}"))?
 }
@@ -213,28 +204,7 @@ pub(crate) async fn import_linear_for_repo(app: AppHandle, state: State<'_, AppS
 // ---- GitHub issue and pull-request import ------------------------------------
 // Accepts a full issue or pull-request URL, owner/repo#123,
 // owner/repo/issues/123, owner/repo/pull/123, or a bare #123/123 when the
-// active repo's origin is github.com/owner/repo(.git).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct GitHubIssueRef {
-    pub(crate) owner: String,
-    pub(crate) repo: String,
-    pub(crate) number: u64,
-}
-
-impl GitHubIssueRef {
-    pub(crate) fn label(&self) -> String {
-        format!("{}/{}#{}", self.owner, self.repo, self.number)
-    }
-}
-
-pub(crate) fn issue_number(s: &str) -> Option<u64> {
-    let s = s.trim();
-    (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
-        .then(|| s.parse::<u64>().ok())
-        .flatten()
-        .filter(|n| *n > 0)
-}
-
+// repo's origin is github.com/owner/repo(.git).
 pub(crate) fn owner_repo(owner: &str, repo: &str) -> Option<(String, String)> {
     let owner = owner.trim();
     let repo = repo.trim().trim_end_matches(".git");
@@ -261,14 +231,6 @@ pub(crate) fn github_repo_from_remote(remote: &str) -> Option<(String, String)> 
     }
     let mut parts = path.split('/');
     owner_repo(parts.next()?, parts.next()?)
-}
-
-pub(crate) fn active_github_repo(repo: &Path) -> Option<(String, String)> {
-    let out = git_cmd(repo).args(["remote", "get-url", "origin"]).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .and_then(|remote| github_repo_from_remote(&remote))
 }
 
 pub(crate) fn parse_issue_path(path: &str) -> Option<GitHubIssueRef> {
@@ -452,9 +414,8 @@ impl<T: GitHubTransport> GitHubRequester for GitHubClient<T> {
     }
 }
 
-fn github_client(app_config: &Path, repo: &Path) -> GitHubClient<CurlGitHubTransport> {
-    let configured = load_config_with_app_path(app_config, repo).github.token.trim().to_string();
-    GitHubClient::new(CurlGitHubTransport, gh_auth_token(), Some(configured))
+fn github_client(configured_token: &str) -> GitHubClient<CurlGitHubTransport> {
+    GitHubClient::new(CurlGitHubTransport, gh_auth_token(), Some(configured_token.trim().to_string()))
 }
 
 fn github_resource_url(reference: &GitHubIssueRef, kind: GitHubResourceKind) -> String {
@@ -614,9 +575,10 @@ pub(crate) fn import_github_with<R: GitHubRequester>(requester: &mut R, referenc
     })
 }
 
-pub(crate) fn import_github_in(app_config: &Path, repo_root: &Path, reference: &str) -> Result<GitHubIssue, String> {
-    let reference = parse_github_ref(reference, active_github_repo(repo_root)).ok_or_else(|| format!("not a GitHub issue or pull request URL/ref: {reference}"))?;
-    let issue = import_github_with(&mut github_client(app_config, repo_root), reference)?;
+/// The fetch itself: `default_repo` resolves a bare `#123`, `configured_token` is the repo's own override.
+fn import_github_with_context(app_config: &Path, reference: &str, default_repo: Option<(String, String)>, configured_token: &str) -> Result<GitHubIssue, String> {
+    let reference = parse_github_ref(reference, default_repo).ok_or_else(|| format!("not a GitHub issue or pull request URL/ref: {reference}"))?;
+    let issue = import_github_with(&mut github_client(configured_token), reference)?;
     emit_at(
         app_config,
         alinery_core::TelemetryEvent::ImportFetch {
@@ -627,22 +589,26 @@ pub(crate) fn import_github_in(app_config: &Path, repo_root: &Path, reference: &
     Ok(issue)
 }
 
+/// The requests go out from this machine with this machine's credentials, whichever machine the repository is on. The page supplies
+/// the two facts that live with the repository: its `origin` URL (the daemon's `GitService.GitOriginUrl`, which a bare `#123` needs) and
+/// its own GitHub token override from its settings row (`None`: it has none, so the global token applies; `Some("")` is a blank
+/// override, as in `resolve_effective_config`).
 #[tauri::command]
-pub(crate) async fn import_github(app: AppHandle, state: State<'_, AppState>, reference: String) -> Result<GitHubIssue, String> {
+pub(crate) async fn import_github_for_repo(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_path: String,
+    reference: String,
+    origin_url: Option<String>,
+    token_override: Option<String>,
+) -> Result<GitHubIssue, String> {
+    owned_target(&app, &state, &repo_path)?;
     // The issue fetch and the comment thread are separate HTTP calls, 15s each.
     let app_config = app_config_path(&app)?;
-    let repo = require_owned_active_repo(&state)?;
-    tauri::async_runtime::spawn_blocking(move || import_github_in(&app_config, &repo, &reference))
-        .await
-        .map_err(|error| format!("import github task: {error}"))?
-}
-
-#[tauri::command]
-pub(crate) async fn import_github_for_repo(app: AppHandle, state: State<'_, AppState>, repo_path: String, reference: String) -> Result<GitHubIssue, String> {
-    let repo = target_repo_for_app(&app, &repo_path)?;
-    require_repo_owned(&state, &repo)?;
-    let app_config = app_config_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || import_github_in(&app_config, &repo, &reference))
-        .await
-        .map_err(|error| format!("import github task: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let token = token_override.unwrap_or_else(|| alinery_core::load_global_settings(&app_config).github.token);
+        import_github_with_context(&app_config, &reference, origin_url.as_deref().and_then(github_repo_from_remote), &token)
+    })
+    .await
+    .map_err(|error| format!("import github task: {error}"))?
 }

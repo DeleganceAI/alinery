@@ -1,27 +1,45 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
+import { daemonTransport } from "../daemon/transport";
 import { PRIORITY_SESSION_SORT } from "../sessionAttention";
+import { fakeArtifacts } from "../test/artifactHooks";
+import { fakeBoard } from "../test/boardHooks";
+import { fakeExecution } from "../test/executionFeed";
 import { mockIpc } from "../test/mockIpc";
 import { navReady, requireNav } from "../test/nav";
+import { sessionDaemon } from "../test/sessionDaemon";
 import type {
+  AgentState,
+  ArtifactOccurrence,
   ArtifactTreeNode,
   BoardNav,
   BoardTask,
-  DispatchOutcome,
   ExecutionAvailability,
   SessionDisplayMeta,
   SessionMeta,
   SessionObservation,
+  SessionState,
   SubtaskManagerState,
   Task,
-  TaskActivityRef,
   TaskActivitySummary,
-  TaskExecutionReply,
 } from "../types";
 import { executionRecord, executionReply, partiallyPublishedExecution } from "./executionTestFixture";
-import { TaskDetail } from "./TaskDetail";
+import { shortWorktreePath, TaskDetail, type TaskSessionTarget } from "./TaskDetail";
 
+let daemon = sessionDaemon();
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+const explicitStatuses = new Set<string>();
+// `sessionStatuses.mockResolvedValue({ id: observation })` states what the fake daemon says about those sessions.
+const sessionStatuses = {
+  mockResolvedValue(map: Record<string, SessionObservation>) {
+    for (const [id, o] of Object.entries(map)) {
+      explicitStatuses.add(id);
+      daemon.showId(id, o);
+    }
+    return sessionStatuses;
+  },
+};
 const scenario = vi.hoisted(() => ({
   task: {} as Task,
   relatedTasks: [] as Task[],
@@ -37,33 +55,22 @@ const scenario = vi.hoisted(() => ({
 
 const ipcSpies = vi.hoisted(() => ({
   startSubtaskManager: vi.fn(),
-  recoverSubtaskManager: vi.fn(),
   discardSubtask: vi.fn(),
   createSessionForRepo: vi.fn(),
   restoreTaskForRepo: vi.fn(),
   archiveSessionForRepo: vi.fn(),
-  rpcWriteSession: vi.fn(),
+  sessionAbort: vi.fn(),
   renameSession: vi.fn(),
   renameTask: vi.fn(),
   setAutoApproveAllForRepo: vi.fn(),
 }));
 
 const mocks = vi.hoisted(() => ({
-  getTask: vi.fn(),
-  listTasks: vi.fn(),
+  listWorktreeFiles: vi.fn(async () => ({ paths: [] as string[], truncated: false })),
+  worktreeLog: vi.fn(),
+  worktreeDiff: vi.fn(),
   subtaskState: vi.fn(),
-  listTaskActivity: vi.fn(),
-  listBoardTasks: vi.fn(),
   getTaskExecution: vi.fn(),
-  listSessions: vi.fn(),
-  listArtifactsWithMetadata: vi.fn(),
-  listTaskArtifactTree: vi.fn(),
-  readArtifact: vi.fn(),
-  readTaskArtifactNode: vi.fn(),
-  readAttachmentImage: vi.fn(),
-  listArtifactCommentDrafts: vi.fn(),
-  sessionStatuses: vi.fn(),
-  sessionStatus: vi.fn(),
   worktreeExists: vi.fn(),
   markSessionNotificationRead: vi.fn(),
 }));
@@ -78,37 +85,49 @@ const toastSpies = vi.hoisted(() => ({
 }));
 vi.mock("../toast", () => toastSpies);
 
+vi.mock("../sync/tasks", async (actual) => ({
+  ...(await actual<typeof import("../sync/tasks")>()),
+  worktreeExists: mocks.worktreeExists,
+  restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
+  renameTask: ipcSpies.renameTask,
+  setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
+}));
+vi.mock("../sync/git", async (actual) => ({
+  ...(await actual<typeof import("../sync/git")>()),
+  listWorktreeFilesForRepo: mocks.listWorktreeFiles,
+  worktreeLogForRepo: mocks.worktreeLog,
+  worktreeDiffForRepo: mocks.worktreeDiff,
+}));
+vi.mock("../sync/artifacts", async (actual) => (await import("../test/artifactHooks")).artifactHooks(await actual()));
+// A PDF, office file or image tab is CanvasFiles' FileView (its own tests); here only which blob it is handed.
+vi.mock("./CanvasFiles", async (actual) => ({
+  ...(await actual<typeof import("./CanvasFiles")>()),
+  FileView: ({ name, ref }: { name: string; ref: { target: { case: string; value: { path: string } } } }) => (
+    <p data-testid="file-view">
+      {name} {ref.target.case}:{ref.target.value.path}
+    </p>
+  ),
+}));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/sessions", async (actual) => ({
+  ...(await actual<typeof import("../sync/sessions")>()),
+  createSession: ipcSpies.createSessionForRepo,
+  archiveSession: ipcSpies.archiveSessionForRepo,
+  renameSession: ipcSpies.renameSession,
+  markSessionNotificationRead: mocks.markSessionNotificationRead,
+  abortSession: ipcSpies.sessionAbort,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
-    getTask: mocks.getTask,
-    listTasks: mocks.listTasks,
-    subtaskState: mocks.subtaskState,
-    listTaskActivity: mocks.listTaskActivity,
-    listBoardTasks: mocks.listBoardTasks,
     getTaskExecution: mocks.getTaskExecution,
-    listSessions: mocks.listSessions,
-    listArtifactsWithMetadata: mocks.listArtifactsWithMetadata,
-    listTaskArtifactTree: mocks.listTaskArtifactTree,
-    readArtifact: mocks.readArtifact,
-    readTaskArtifactNode: mocks.readTaskArtifactNode,
-    readAttachmentImage: mocks.readAttachmentImage,
-    listArtifactCommentDrafts: mocks.listArtifactCommentDrafts,
-    sessionStatuses: mocks.sessionStatuses,
-    sessionStatus: mocks.sessionStatus,
-    worktreeExists: mocks.worktreeExists,
-    createSessionForRepo: ipcSpies.createSessionForRepo,
-    restoreTaskForRepo: ipcSpies.restoreTaskForRepo,
-    archiveSessionForRepo: ipcSpies.archiveSessionForRepo,
-    rpcWriteSession: ipcSpies.rpcWriteSession,
-    renameSession: ipcSpies.renameSession,
-    renameTask: ipcSpies.renameTask,
-    setAutoApproveAllForRepo: ipcSpies.setAutoApproveAllForRepo,
-    markSessionNotificationRead: mocks.markSessionNotificationRead,
-    startSubtaskManager: ipcSpies.startSubtaskManager,
-    recoverSubtaskManager: ipcSpies.recoverSubtaskManager,
-    discardSubtask: ipcSpies.discardSubtask,
   }),
 );
+vi.mock("../sync/subtasks", () => ({
+  subtaskState: mocks.subtaskState,
+  startSubtaskManager: ipcSpies.startSubtaskManager,
+  discardSubtask: ipcSpies.discardSubtask,
+}));
 
 const parentTask: Task = {
   name: "Parent",
@@ -233,11 +252,35 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
     process: { state: "alive" },
     agent: { state: agent },
     playbook: { state: "in_progress" },
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   },
   checkpoint: {},
 });
+
+let lastBoard = "";
+// A test that states nothing about the task leaves the streams unanswered, so the view shows its seed.
+let streamsSilent = false;
+
+/** Puts the scenario on the fake streams: the task and its relatives, the child's board row and activity, and the session rows. */
+function syncBoard() {
+  if (streamsSilent) return;
+  // A listed session the test gave no status reads as never started (or as the manager scenario says).
+  for (const row of scenario.sessions ?? [])
+    if (!explicitStatuses.has(row.id)) daemon.showId(row.id, scenario.managerObservation ?? { lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+  const next = {
+    ready: true,
+    anyRepoTasks: [scenario.task, ...scenario.relatedTasks] as never,
+    tasks: [scenario.childBoardTask] as never,
+    anyActivity: scenario.childActivity,
+    taskSessions: scenario.sessions,
+  };
+  // A stream that has nothing new sends nothing, so an unchanged scenario leaves the views' rows as they are.
+  const key = JSON.stringify(next);
+  if (key === lastBoard) return;
+  lastBoard = key;
+  fakeBoard.set(next);
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -267,17 +310,24 @@ beforeEach(() => {
   };
   scenario.childBoardTask = { ...childBoardTask };
   scenario.managerObservation = null;
+  explicitStatuses.clear();
   vi.stubGlobal("localStorage", {
-    getItem: vi.fn(() => null),
+    // Most cases assert on the expanded header; the compact header has its own case.
+    getItem: vi.fn((key: string) => (key === "alinery.taskHeaderOpen" ? "1" : null)),
     setItem: vi.fn(),
   });
-  ipcSpies.startSubtaskManager.mockResolvedValue({ session: { ...manager }, execution: null, start: "started" });
-  ipcSpies.recoverSubtaskManager.mockResolvedValue({ session: { ...manager, subtask_slug: "child" }, execution: null, start: "started" });
+  // Starting and recovering are one call; `recover` binds the new manager to the active child.
+  ipcSpies.startSubtaskManager.mockReset().mockImplementation(async (_repo: string, _slug: string, recover?: boolean) => ({
+    session: recover ? { ...manager, subtask_slug: "child" } : { ...manager },
+    execution: null,
+    start: "started",
+  }));
   ipcSpies.restoreTaskForRepo.mockReset().mockResolvedValue(undefined);
   ipcSpies.archiveSessionForRepo.mockReset();
-  ipcSpies.rpcWriteSession.mockReset().mockResolvedValue({ status: "written" });
+  ipcSpies.sessionAbort.mockReset().mockResolvedValue(undefined);
   ipcSpies.renameSession.mockReset().mockImplementation(async ({ sessionId, name }: { sessionId: string; name: string }) => {
     scenario.sessions = scenario.sessions.map((item) => (item.id === sessionId ? { ...item, name, name_source: "user" } : item));
+    syncBoard();
     return { name, source: "user" };
   });
   ipcSpies.setAutoApproveAllForRepo.mockReset();
@@ -290,6 +340,7 @@ beforeEach(() => {
       ...scenario.state,
       active_subtask: scenario.state.active_subtask?.slug === childSlug ? { ...scenario.state.active_subtask, name } : scenario.state.active_subtask,
     };
+    syncBoard();
     return updated;
   });
   ipcSpies.discardSubtask.mockImplementation(async () => {
@@ -310,49 +361,53 @@ beforeEach(() => {
     } else {
       scenario.sessions = [];
     }
+    syncBoard();
   });
   confirmSpies.confirmDanger.mockResolvedValue(true);
-  mocks.getTask.mockReset().mockImplementation(async (slug: string) => (slug === scenario.task.slug ? scenario.task : null));
-  mocks.listTasks.mockReset().mockImplementation(async () => [scenario.task, ...scenario.relatedTasks]);
-  mocks.subtaskState.mockReset().mockImplementation(async () => scenario.state);
-  mocks.listTaskActivity
-    .mockReset()
-    .mockImplementation(async (refs: TaskActivityRef[]) => Object.fromEntries(refs.map((ref) => [`${ref.repoPath}:${ref.taskSlug}`, scenario.childActivity])));
-  mocks.listBoardTasks.mockReset().mockImplementation(async () => [scenario.childBoardTask]);
+  // The daemon's stream carries what the scenario holds; a poll is where a test's change reaches the view.
+  mocks.subtaskState.mockReset().mockImplementation(async () => {
+    syncBoard();
+    return scenario.state;
+  });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([]));
-  mocks.listSessions.mockReset().mockImplementation(async () => scenario.sessions);
-  mocks.listArtifactsWithMetadata.mockReset().mockResolvedValue([]);
-  mocks.listTaskArtifactTree.mockReset().mockResolvedValue([]);
-  mocks.readArtifact.mockReset().mockResolvedValue("");
-  mocks.readTaskArtifactNode.mockReset().mockResolvedValue("");
-  mocks.readAttachmentImage.mockReset().mockReturnValue(new Promise(() => {}));
-  mocks.listArtifactCommentDrafts.mockReset().mockResolvedValue([]);
-  mocks.sessionStatuses.mockReset().mockImplementation(async (ids: string[]) =>
-    Object.fromEntries(
-      ids.map((id) => [
-        id,
-        scenario.managerObservation ?? {
-          lifecycle: { state: "never_started" as const },
-          state: null,
-          checkpoint: {},
-        },
-      ]),
-    ),
-  );
-  mocks.sessionStatus.mockReset().mockResolvedValue({ lifecycle: { state: "never_started" }, state: null, checkpoint: {} });
+  fakeExecution.reset();
+  fakeArtifacts.reset();
+  fakeArtifacts.readArtifact.mockResolvedValue("");
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   mocks.worktreeExists.mockReset().mockResolvedValue(true);
   mocks.markSessionNotificationRead.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   cleanup();
+  fakeBoard.reset();
+  lastBoard = "";
+  streamsSilent = false;
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-async function renderDetail(slug = "parent", sessionView: "controls" | "graph" = "controls") {
+/** A session opens as a tab of the task: `onOpenSession` records each tab the first time it renders (an open of a tab
+ * already open only shows it); every open, repeated or not, acknowledges the session. */
+function sessionTabSpy() {
   const onOpenSession = vi.fn();
+  const opened = new Set<string>();
+  const renderSession = (t: TaskSessionTarget) => {
+    if (!opened.has(`${t.taskSlug}:${t.id}`)) {
+      opened.add(`${t.taskSlug}:${t.id}`);
+      onOpenSession(t.taskSlug, t.id, t.cwd, t.phase, t.harness, t.model, t.playbook, t.generic, ...(t.intent ? [t.intent] : []));
+    }
+    return <section aria-label={`Conversation ${t.id}`} />;
+  };
+  return { onOpenSession, renderSession };
+}
+const lastAcknowledged = () => mocks.markSessionNotificationRead.mock.lastCall?.[2];
+
+async function renderDetail(slug = "parent", sessionView: "controls" | "graph" = "controls") {
+  syncBoard();
+  const { onOpenSession, renderSession } = sessionTabSpy();
   const onOpenRelatedTask = vi.fn();
   const onNewSession = vi.fn();
   render(
@@ -360,7 +415,7 @@ async function renderDetail(slug = "parent", sessionView: "controls" | "graph" =
       slug={slug}
       repoPath="/repo"
       onBack={() => {}}
-      onOpenSession={onOpenSession}
+      renderSession={renderSession}
       onOpenRelatedTask={onOpenRelatedTask}
       onNewSession={onNewSession}
       onDuplicate={() => {}}
@@ -384,7 +439,7 @@ describe("task run graph", () => {
       { ...session({ id: "prior" }), name: "Prior attempt" },
     ];
     mocks.getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "replacement", previous_session_ids: ["prior"] })]));
-    mocks.sessionStatuses.mockResolvedValue(
+    sessionStatuses.mockResolvedValue(
       observed
         ? {
             unread: observation("idle"),
@@ -431,7 +486,7 @@ describe("task run graph", () => {
     retained.definition.section_order.push("never-run");
     retained.state.occurrences = {
       "accepted-result": {
-        ...retained.state.occurrences["input-a"],
+        ...(retained.state.occurrences?.["input-a"] as ArtifactOccurrence),
         id: "accepted-result",
         producer_execution_id: produced.id,
         selector: "result.md",
@@ -443,7 +498,7 @@ describe("task run graph", () => {
     };
     scenario.sessions = [producer, consumer];
     mocks.getTaskExecution.mockResolvedValue(retained);
-    mocks.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
+    fakeArtifacts.readArtifact.mockResolvedValue("# Accepted finding\n\nRead the recorded occurrence, not the assigned output path.");
 
     const { onOpenSession } = await renderDetail("parent", "graph");
     const graph = within(screen.getByRole("region", { name: "Task run graph" }));
@@ -466,14 +521,18 @@ describe("task run graph", () => {
       "attach",
     );
 
+    // The session opened as a tab; back on the Sessions tab, the graph opens an artifact.
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Sessions" }));
     // The artifact scan intentionally has no entry: persisted occurrence provenance is enough.
     fireEvent.click(graph.getByRole("button", { name: /research\/2-result-10\.md/ }));
     expect(await screen.findByRole("heading", { name: "Accepted finding" })).toBeDefined();
-    expect(mocks.readArtifact).toHaveBeenCalledExactlyOnceWith("parent", "research/2-result-10.md");
-    expect(screen.getByRole("button", { name: "Back to artifact list" })).toBeDefined();
+    expect(fakeArtifacts.readArtifact).toHaveBeenCalledExactlyOnceWith("/repo", "parent", "research/2-result-10.md");
+    const fileTabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(fileTabs.getByRole("button", { name: "2-result-10.md" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(fileTabs.getByRole("button", { name: "Sessions" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-    const consumerRow = screen.getByText(consumer.name).closest("tr") as HTMLTableRowElement;
+    const consumerRow = screen.getByText(consumer.name, { selector: "td *" }).closest("tr") as HTMLTableRowElement;
     expect(within(consumerRow).getByRole("button", { name: "Rename session" })).toBeDefined();
     expect(screen.queryByRole("region", { name: "Task run graph" })).toBeNull();
     const showGraph = screen.getByRole("button", { name: "Show graph view" });
@@ -538,8 +597,23 @@ describe("session work names", () => {
       fireEvent.click(cell);
       expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
       fireEvent.keyDown(row, { key: "Enter" });
-      expect(onOpenSession.mock.lastCall?.[1]).toBe(item.id);
+      expect(lastAcknowledged()).toBe(item.id);
     }
+  });
+
+  it("opens a session as a tab of the task, in place of the session list, and closing it returns to the list", async () => {
+    scenario.sessions = [{ ...session({ id: "cache", created: 10 }), name: "Repair cache eviction", name_source: "user" as const }];
+    await renderDetail();
+    fireEvent.click((await screen.findByText("Repair cache eviction")).closest("td") as HTMLTableCellElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "Repair cache eviction", pressed: true })).toBeDefined();
+    expect(screen.getByRole("region", { name: "Conversation cache" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Sessions" })).toBeNull();
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledWith("/repo", "parent", "cache");
+
+    fireEvent.click(tabs.getByRole("button", { name: "Close cache" }));
+    expect(screen.queryByRole("region", { name: "Conversation cache" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeDefined();
   });
 
   it("keeps a manager work name distinct from its current child name when relationship metadata is raw", async () => {
@@ -560,9 +634,9 @@ describe("session work names", () => {
     expect(onOpenSession.mock.lastCall?.[1]).toBe(rawManager.id);
   });
 
-  it("shows a waiting ellipsis for a live unnamed OMP session and still opens rename", async () => {
-    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+  it("shows a waiting ellipsis for a live unnamed Vinculum session and still opens rename", async () => {
+    scenario.sessions = [session({ id: "waiting", harness: "vinculum" })];
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     await renderDetail();
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Rename session" }));
@@ -572,14 +646,14 @@ describe("session work names", () => {
 
   it("replaces the name animation with a dash when a live agent becomes idle", async () => {
     vi.useFakeTimers();
-    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
+    scenario.sessions = [session({ id: "waiting", harness: "vinculum" })];
+    sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     const rendered = renderDetail();
     await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
     await rendered;
     expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined();
 
-    mocks.sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
+    sessionStatuses.mockResolvedValue({ waiting: observation("idle") });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -590,8 +664,8 @@ describe("session work names", () => {
   });
 
   it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
-    scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({
+    scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "vinculum" })];
+    sessionStatuses.mockResolvedValue({
       terminal: observation("busy"),
       stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
     });
@@ -753,7 +827,7 @@ describe("retained name editing", () => {
     expect(await within(row).findByText("Preserved manager purpose")).toBeDefined();
   });
 
-  it("older_relationship_task_and_board_reads_cannot_undo_child_name_commit", async () => {
+  it("a child rename shows at once and the stream's later name replaces it", async () => {
     vi.useFakeTimers();
     const oldChild = { ...childBoardTask, name: "Old child purpose" };
     scenario.relatedTasks = [oldChild];
@@ -766,16 +840,6 @@ describe("retained name editing", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    const tasksRead = deferred<Task[]>();
-    const relationshipRead = deferred<SubtaskManagerState>();
-    const boardRead = deferred<BoardTask[]>();
-    const oldRelationship = scenario.state;
-    mocks.listTasks.mockReturnValueOnce(tasksRead.promise);
-    mocks.subtaskState.mockReturnValueOnce(relationshipRead.promise);
-    mocks.listBoardTasks.mockReturnValueOnce(boardRead.promise);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
     const row = screen.getByRole("button", { name: "Open manager session" }).closest("tr") as HTMLTableRowElement;
     fireEvent.click(within(row).getByRole("button", { name: "Rename task" }));
     fireEvent.change(within(row).getByRole("textbox"), { target: { value: "Committed child purpose" } });
@@ -783,11 +847,6 @@ describe("retained name editing", () => {
       fireEvent.keyDown(within(row).getByRole("textbox"), { key: "Enter" });
     });
     expect(within(row).getByText("Committed child purpose")).toBeDefined();
-    await act(async () => {
-      tasksRead.resolve([scenario.task, oldChild]);
-      relationshipRead.resolve(oldRelationship);
-      boardRead.resolve([oldChild]);
-    });
     expect(within(row).queryByText("Old child purpose")).toBeNull();
     expect(screen.getByRole("button", { name: "Open Committed child purpose" })).toBeDefined();
     expect(within(row).getByText("Manager purpose")).toBeDefined();
@@ -833,11 +892,11 @@ describe("task session archive pending feedback", () => {
 });
 
 describe("task session row Stop", () => {
-  it.each(["not_sent", "unknown"] as const)("reports %s abort delivery without opening or archiving, guards repeats, and allows retry", async (status) => {
-    scenario.sessions = [session({ id: "stop-me", harness: "omp" })];
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
-    const pending = deferred<DispatchOutcome>();
-    ipcSpies.rpcWriteSession.mockReturnValueOnce(pending.promise);
+  it("aborts the current turn without opening or archiving the session, guards repeats, and allows retry", async () => {
+    scenario.sessions = [session({ id: "stop-me", harness: "vinculum" })];
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("busy"), transport: "rpc" } });
+    const pending = deferred<void>();
+    ipcSpies.sessionAbort.mockReturnValueOnce(pending.promise);
     const { onOpenSession } = await renderDetail();
     const stop = await screen.findByRole("button", { name: "Stop" });
     await waitFor(() => expect((stop as HTMLButtonElement).disabled).toBe(false));
@@ -845,16 +904,16 @@ describe("task session row Stop", () => {
       fireEvent.click(stop);
       fireEvent.click(stop);
     });
-    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(1);
-    expect(ipcSpies.rpcWriteSession).toHaveBeenCalledWith("stop-me", expect.objectContaining({ type: "abort" }));
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(1);
+    expect(ipcSpies.sessionAbort).toHaveBeenCalledWith("/repo", "stop-me");
     expect(onOpenSession).not.toHaveBeenCalled();
     expect(ipcSpies.archiveSessionForRepo).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "Stopping…" }) as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => pending.resolve({ status, reason: "abort delivery failed" }));
+    await act(async () => pending.reject(new Error("abort delivery failed")));
     expect(screen.getByText(/abort delivery failed/)).toBeDefined();
-    mocks.sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
+    sessionStatuses.mockResolvedValue({ "stop-me": { ...observation("idle"), transport: "rpc" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(ipcSpies.rpcWriteSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(ipcSpies.sessionAbort).toHaveBeenCalledTimes(2));
     await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true));
     expect(screen.getByRole("button", { name: "Kill" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Archive" })).toBeDefined();
@@ -868,12 +927,21 @@ describe("task session row Stop", () => {
       { id: "exited", agent: "busy", transport: "rpc", live: false },
       { id: "terminal", agent: "busy", transport: "pty", live: true },
     ] as const;
-    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
-    mocks.sessionStatuses.mockResolvedValue(
+    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "vinculum" }), name: id }));
+    sessionStatuses.mockResolvedValue(
       Object.fromEntries(
-        rows.map(({ id, agent, transport, live }) => {
+        rows.map(({ id, agent, transport, live }): [string, SessionObservation] => {
           const obs = observation("busy");
-          return [id, { ...obs, transport, lifecycle: live ? obs.lifecycle : { state: "exited", code: 0 }, state: { ...obs.state, agent: { state: agent } } }];
+          // A daemon that still holds an exited session reports its process as exited.
+          return [
+            id,
+            {
+              ...obs,
+              transport,
+              lifecycle: live ? obs.lifecycle : { state: "live_exited" },
+              state: { ...obs.state, process: live ? { state: "alive" } : { state: "exited", code: 0 }, agent: { state: agent } as AgentState } as SessionState,
+            },
+          ];
         }),
       ),
     );
@@ -891,10 +959,11 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   retained.state.enabled_steps = ["worker"];
   mocks.getTaskExecution.mockResolvedValue(retained);
   await renderDetail();
+  fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
   const modes = within(screen.getByRole("group", { name: "Task playbook view" }));
   expect(modes.getByRole("button", { name: "List" }).getAttribute("aria-pressed")).toBe("true");
   expect(await screen.findByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
-  expect(screen.getByText("Continue automatically")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
 
   fireEvent.click(modes.getByRole("button", { name: "Graph" }));
   fireEvent.click(screen.getByRole("button", { name: "Highlight Retained worker" }));
@@ -905,23 +974,48 @@ it("switches the saved task playbook between its list and graph-only canvas whil
   expect(screen.queryByLabelText("Retained worker: 1 active sessions")).toBeNull();
 
   const sideTabs = within(screen.getByRole("group", { name: "Task side panel" }));
-  fireEvent.click(sideTabs.getByRole("button", { name: "Artifacts" }));
+  fireEvent.click(sideTabs.getByRole("button", { name: "Files" }));
   fireEvent.click(sideTabs.getByRole("button", { name: "Playbook" }));
   expect(screen.getByRole("button", { name: "Graph" }).getAttribute("aria-pressed")).toBe("true");
 
   fireEvent.click(screen.getByRole("button", { name: "List" }));
   expect(screen.getByLabelText("Retained worker: 1 active sessions")).toBeTruthy();
-  expect(screen.getByText("Continue automatically")).toBeTruthy();
+  expect(screen.getByText("Automatic")).toBeTruthy();
+});
+
+describe("compact task header", () => {
+  it("shows branch, worktree and Archive until expanded, then remembers the choice", async () => {
+    const stored = new Map<string, string>();
+    vi.mocked(localStorage.getItem).mockImplementation((key) => stored.get(key) ?? null);
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      stored.set(key, value);
+    });
+    await renderDetail();
+    const info = within(screen.getByRole("region", { name: "Task information" }));
+    expect(info.getByText("Branch")).toBeDefined();
+    expect(info.getByText("Worktree")).toBeDefined();
+    expect(info.getByRole("button", { name: "Archive task" })).toBeDefined();
+    expect(info.queryByRole("button", { name: "Auto Approval All" })).toBeNull();
+    expect(info.queryByText("PR URL")).toBeNull();
+
+    fireEvent.click(info.getByRole("button", { name: "Show task details" }));
+    expect(info.getByRole("button", { name: "Auto Approval All" })).toBeDefined();
+    expect(info.getByText("PR URL")).toBeDefined();
+    expect(info.getAllByRole("button", { name: "Archive task" })).toHaveLength(1);
+    expect(stored.get("alinery.taskHeaderOpen")).toBe("1");
+  });
+
+  it("shortens a worktree path to its .alinery part", () => {
+    expect(shortWorktreePath("/Users/me/repo/.alinery/worktrees/fix")).toBe(".alinery/worktrees/fix");
+    expect(shortWorktreePath("/elsewhere/fix")).toBe("/elsewhere/fix");
+  });
 });
 
 describe("removed distill surfaces", () => {
   it("keeps a historical session visible without offering Distill or a Wiki tab", async () => {
     scenario.sessions = [session({ id: "historical", phase: "distill-to-wiki" })];
     await renderDetail();
-    const artifacts = screen.getByRole("button", { name: "Artifacts" });
-    expect(artifacts.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(artifacts);
-    expect(artifacts.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Files" }).getAttribute("aria-pressed")).toBe("true");
 
     expect(screen.getByText(/distill-to-wiki/)).toBeDefined();
     expect(screen.queryByRole("button", { name: "Distill" })).toBeNull();
@@ -969,7 +1063,7 @@ describe("Task Detail sub-task manager projection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start sub-task" }));
 
     await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledOnce());
-    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("parent");
+    expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent");
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -994,7 +1088,7 @@ describe("Task Detail sub-task manager projection", () => {
         process: { state: "exited", code: 143 },
         agent: { state: "idle" },
         playbook: { state: "failed", reason: "Process exited" },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
       checkpoint: {},
@@ -1080,7 +1174,8 @@ describe("Task Detail sub-task manager projection", () => {
     fireEvent.click(sessionRow);
     expect(onOpenSession).toHaveBeenCalledWith("child", "still-live", "/worktrees/child", "research", "claude", "", "superdevelop", false);
     fireEvent.keyDown(sessionRow, { key: "Enter" });
-    expect(onOpenSession).toHaveBeenCalledTimes(2);
+    expect(mocks.markSessionNotificationRead).toHaveBeenCalledTimes(2);
+    expect(onOpenSession).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a finalized child in its manager session's existing list position", async () => {
@@ -1131,7 +1226,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Discard setup",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     await waitFor(() => expect(screen.queryByText("Sub-task setup")).toBeNull());
     expect((screen.getByRole("button", { name: "Start sub-task" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1169,7 +1264,7 @@ describe("Task Detail sub-task manager projection", () => {
         "Kill sub-task",
       ),
     );
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", "manager-1"));
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", "manager-1"));
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -1207,8 +1302,8 @@ describe("Task Detail sub-task manager projection", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "in_progress" },
-        adapter: "omp",
-        message_adapter: "omp_bracketed_paste",
+        adapter: "vinculum",
+        message_adapter: "vinculum_bracketed_paste",
       },
       checkpoint: {},
     };
@@ -1251,14 +1346,14 @@ describe("Task Detail sub-task manager projection", () => {
     });
     scenario.sessions = [unavailableManager, session({ id: "unrelated", created: 1 })];
     const { onOpenSession } = await renderDetail();
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
 
     const childRow = screen.getByText("Child", { selector: "span" }).closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("Manager unavailable")).toBeDefined();
     const replace = within(childRow).getByRole("button", { name: "Replace manager session" });
     expect(screen.getAllByRole("button", { name: "Replace manager session" })).toHaveLength(1);
     fireEvent.click(replace);
-    await waitFor(() => expect(ipcSpies.recoverSubtaskManager).toHaveBeenCalledWith("parent"));
+    await waitFor(() => expect(ipcSpies.startSubtaskManager).toHaveBeenCalledWith("/repo", "parent", true));
     expect(onOpenSession).toHaveBeenCalledWith("parent", "manager-1", "/worktrees/parent", "", "claude", "sonnet", "", true, "attach");
   });
 
@@ -1269,8 +1364,8 @@ describe("Task Detail sub-task manager projection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Kill sub-task" }));
 
-    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("parent", ""));
-    expect(ipcSpies.recoverSubtaskManager).not.toHaveBeenCalled();
+    await waitFor(() => expect(ipcSpies.discardSubtask).toHaveBeenCalledWith("/repo", "parent", ""));
+    expect(ipcSpies.startSubtaskManager).not.toHaveBeenCalled();
     const childLabel = await screen.findByText("Child", { selector: "span" });
     const childRow = childLabel.closest("tr") as HTMLTableRowElement;
     expect(within(childRow).getByText("KILLED")).toBeDefined();
@@ -1283,6 +1378,9 @@ describe("Task Detail sub-task manager projection", () => {
   it("refreshes relationship pointers and manager rows during polling", async () => {
     vi.useFakeTimers();
     const renderPromise = renderDetail();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     await vi.waitFor(() => expect(screen.getByRole("heading", { name: "Parent" })).toBeDefined());
     await renderPromise;
     expect(screen.queryByText("Child", { selector: "span" })).toBeNull();
@@ -1303,13 +1401,17 @@ describe("Task Detail sub-task manager projection", () => {
 const noop = () => {};
 
 function renderSeededDetail(props: Partial<Parameters<typeof TaskDetail>[0]> = {}) {
+  // A test that stated nothing about the task has its streams not yet answering, so the seed shows.
+  streamsSilent = scenario.task.slug !== (props.slug ?? "a-task");
+  if (streamsSilent) fakeBoard.set({ ready: false });
+  else syncBoard();
   return render(
     <TaskDetail
       slug={props.slug ?? "a-task"}
       repoPath="/r"
       initialTask={props.initialTask}
       onBack={noop}
-      onOpenSession={noop}
+      renderSession={() => null}
       onNewSession={noop}
       onOpenRelatedTask={noop}
       onDuplicate={noop}
@@ -1489,6 +1591,8 @@ describe("archived task recovery action", () => {
 
 describe("keying by slug", () => {
   it("remounts on slug change instead of keeping the previous task's rows", () => {
+    streamsSilent = true;
+    fakeBoard.set({ ready: false });
     const taskA = task({ slug: "a", name: "Task A", branch: "branch-a" });
     const taskB = task({ slug: "b", name: "Task B", branch: "branch-b" });
     const { rerender } = render(
@@ -1498,7 +1602,7 @@ describe("keying by slug", () => {
         repoPath="/r"
         initialTask={taskA}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -1518,7 +1622,7 @@ describe("keying by slug", () => {
         repoPath="/r"
         initialTask={taskB}
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={noop}
@@ -1536,7 +1640,7 @@ describe("keying by slug", () => {
 describe("authoritative task execution", () => {
   it("distinguishes accepted outputs from omissions and counts only this execution's wildcard publications", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(partiallyPublishedExecution());
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
@@ -1554,7 +1658,7 @@ describe("authoritative task execution", () => {
 
   it("shows concurrent primary work without newer auxiliary sessions changing progress", async () => {
     const fixture = task();
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(
       executionReply([
         executionRecord(),
@@ -1562,11 +1666,11 @@ describe("authoritative task execution", () => {
         executionRecord({ id: "execution-old", owner_session_id: "owner-old", lifecycle: "completed", receipt_id: "accepted-old", shutdown_confirmed: true }),
       ]),
     );
-    mocks.listSessions.mockResolvedValue([
+    scenario.sessions = [
       session({ id: "auxiliary-newest", created: 100, generic: true, phase: "" }),
       session({ id: "owner-b", created: 3 }),
       session({ id: "owner-a", created: 2 }),
-    ]);
+    ];
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     expect(screen.queryByRole("region", { name: "Task executions" })).toBeNull();
@@ -1581,48 +1685,26 @@ describe("authoritative task execution", () => {
     expect(screen.getByText("Auxiliary")).toBeDefined();
   });
 
-  it.each(["waiting", "complete"] as const)("uses the aggregate %s assessment rather than a completed sink", async (status) => {
+  it("grants the displayed execution owner without granting a replacement after stale ownership", async () => {
     const fixture = task();
-    const retained = executionReply([executionRecord({ lifecycle: "completed", receipt_id: "accepted", shutdown_confirmed: true })]);
-    retained.assessment = {
-      status,
-      reasons:
-        status === "waiting"
-          ? [
-              {
-                code: "open_obligation",
-                message: "Another branch remains unresolved",
-                execution_id: null,
-                context_id: null,
-                collection_id: null,
-                selector: null,
-              },
-            ]
-          : [],
-    };
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.getTaskExecution.mockResolvedValue(retained);
+    scenario.task = fixture;
+    mocks.getTaskExecution.mockResolvedValue(executionReply());
+    fakeExecution.allow.mockRejectedValue(new Error("owner changed"));
     renderSeededDetail({ initialTask: fixture });
-    const assessment = await screen.findByRole("status", { name: "Playbook status" });
-    if (status === "complete") {
-      expect(assessment.textContent).toContain("Playbook complete");
-      expect(within(assessment).queryByRole("button")).toBeNull();
-    } else {
-      expect(assessment.textContent).toContain("Another branch remains unresolved");
-      expect(screen.queryByText("Playbook complete")).toBeNull();
-    }
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    expect(await screen.findByRole("article", { name: "Execution execution-a" })).toBeDefined();
-    expect(screen.queryByRole("button", { name: /Allow this session|Continue (to|playbook)/ })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Allow this session to complete · owner-a" }));
+    await waitFor(() => expect(fakeExecution.allow).toHaveBeenCalledWith("/r", "a-task", "execution-a", undefined));
+    await waitFor(() => expect(within(screen.getByRole("alert")).getByText("Error: owner changed")).toBeDefined());
+    expect((screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("retains saved execution details across authority changes without a second continuation action", async () => {
+  it("retains saved execution details while live authority changes and only grants completion after recovery", async () => {
     vi.useFakeTimers();
     const fixture = task();
     const retained = executionReply();
     let live: ExecutionAvailability = { status: "offline", detail: "Daemon socket disconnected" };
     let corrupt = false;
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockImplementation(async () => {
       if (corrupt) throw new Error("Invalid execution.json");
       return { ...retained, live };
@@ -1632,45 +1714,60 @@ describe("authoritative task execution", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
     expect(screen.getByRole("group", { name: "Task playbook view" })).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    const completion = () => screen.queryByRole("button", { name: /Allow this session|Continue (to|playbook)/ });
+    const completion = () => screen.getByRole("button", { name: "Allow this session to complete · owner-a" }) as HTMLButtonElement;
     const assignments = within(screen.getByRole("article", { name: "Execution execution-a" }));
     fireEvent.click(assignments.getByText("Inputs and outputs"));
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
-    expect(completion()).toBeNull();
+    expect(completion().disabled).toBe(true);
+    fireEvent.click(completion());
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect((screen.getByText("Daemon socket disconnected").closest("details") as HTMLDetailsElement).open).toBe(false);
 
     live = { status: "foreign_owner", detail: "Different app configuration owns this lane" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(completion()).toBeNull();
+    expect(completion().disabled).toBe(true);
+    fireEvent.click(completion());
+    expect(fakeExecution.allow).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect((screen.getByText(live.detail).closest("details") as HTMLDetailsElement).open).toBe(false);
     expect(assignments.getByText("research/2-result-10.md")).toBeDefined();
 
     live = { status: "available" };
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
-    expect(completion()).toBeNull();
+    expect(completion().disabled).toBe(false);
     expect(screen.queryByText("Different app configuration owns this lane")).toBeNull();
+    await act(async () => {
+      fireEvent.click(completion());
+    });
+    expect(fakeExecution.allow).toHaveBeenCalledExactlyOnceWith("/r", "a-task", "execution-a", undefined);
 
     corrupt = true;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(within(screen.getByRole("alert")).getByText("Error: Invalid execution.json")).toBeDefined();
-    expect(completion()).toBeNull();
+    expect(completion().disabled).toBe(true);
     expect(assignments.getByText("research/1-request-2.md")).toBeDefined();
+    fireEvent.click(completion());
+    expect(fakeExecution.allow).toHaveBeenCalledTimes(1);
 
     corrupt = false;
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
+      fakeExecution.refresh();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(completion()).toBeNull();
+    expect(completion().disabled).toBe(false);
   });
 
   it("shows queued interrupted and accepted-but-live state with exact assignments and creation failure", async () => {
@@ -1684,7 +1781,7 @@ describe("authoritative task execution", () => {
     ]);
     retained.state.creation = "partial";
     retained.state.creation_error = "One root could not launch";
-    mocks.getTask.mockResolvedValue(fixture);
+    scenario.task = fixture;
     mocks.getTaskExecution.mockResolvedValue(retained);
     renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "History" }));
@@ -1702,24 +1799,32 @@ describe("authoritative task execution", () => {
 });
 
 describe("Task Detail auto approval", () => {
-  it("toggles task-wide automatic continuation on and off", async () => {
+  it("turns every locked step automatic while on and restores the devised steps when off", async () => {
     scenario.task = { ...parentTask, engine_version: 2 };
     const retained = executionReply();
     retained.state.enabled_steps = [];
     mocks.getTaskExecution.mockResolvedValue(retained);
     await renderDetail();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Playbook" }));
     const toggle = screen.getByRole("button", { name: "Auto Approval All" });
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.classList.contains("ghost")).toBe(true);
+    expect(toggle.classList.contains("auto-approve")).toBe(true);
+    expect(toggle.classList.contains("on")).toBe(false);
+    expect(screen.queryByText("Automatic")).toBeNull();
 
     ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: true });
     fireEvent.click(toggle);
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", true));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("true"));
+    expect(screen.getByRole("button", { name: "Auto Approval All" }).classList.contains("on")).toBe(true);
+    expect(screen.getByText("Automatic")).toBeTruthy();
 
     ipcSpies.setAutoApproveAllForRepo.mockResolvedValue({ ...scenario.task, auto_approve_all: false });
     fireEvent.click(screen.getByRole("button", { name: "Auto Approval All" }));
     await waitFor(() => expect(ipcSpies.setAutoApproveAllForRepo).toHaveBeenCalledWith("/repo", "parent", false));
     await waitFor(() => expect(screen.getByRole("button", { name: "Auto Approval All" }).getAttribute("aria-pressed")).toBe("false"));
+    expect(screen.queryByText("Automatic")).toBeNull();
   });
 
   it("keeps Auto Approval All off for an archived task", async () => {
@@ -1739,7 +1844,7 @@ describe("Task Detail duplicate action", () => {
       worktree: "",
       archived: true,
     });
-    mocks.getTask.mockResolvedValue(source);
+    scenario.task = source;
     const onDuplicate = vi.fn();
     let nav: BoardNav | null = null;
     const rendered = renderSeededDetail({
@@ -1767,7 +1872,7 @@ describe("Task Detail duplicate action", () => {
         slug={source.slug}
         repoPath="/r"
         onBack={noop}
-        onOpenSession={noop}
+        renderSession={() => null}
         onNewSession={noop}
         onOpenRelatedTask={noop}
         onDuplicate={onDuplicate}
@@ -1793,11 +1898,11 @@ describe("session list without identifiers", () => {
     const archived = session({ id: "opaque-archived", archived: true, created: 10 });
     const resumed = session({ id: "opaque-resumed", resume_of: archived.id, created: 20 });
     const newest = session({ id: "opaque-newest", created: 30 });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([archived, resumed, newest]);
-    mocks.sessionStatuses.mockResolvedValue({});
-    const onOpenSession = vi.fn();
-    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    scenario.task = fixture;
+    scenario.sessions = [archived, resumed, newest];
+    sessionStatuses.mockResolvedValue({});
+    const { onOpenSession, renderSession } = sessionTabSpy();
+    const { container } = renderSeededDetail({ initialTask: fixture, renderSession });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Show archived" }));
@@ -1815,11 +1920,11 @@ describe("session list without identifiers", () => {
 
     const openable = within(table).getAllByRole("row", { name: "Open session superdevelop · research" });
     fireEvent.click(openable[0]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    expect(lastAcknowledged()).toBe(newest.id);
     fireEvent.keyDown(openable[1], { key: "Enter" });
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(resumed.id);
+    expect(lastAcknowledged()).toBe(resumed.id);
     fireEvent.keyDown(openable[0], { key: " " });
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(newest.id);
+    expect(lastAcknowledged()).toBe(newest.id);
     fireEvent.click(history);
     expect(onOpenSession).toHaveBeenLastCalledWith(
       "a-task",
@@ -1848,9 +1953,9 @@ describe("attention-first session order", () => {
       }),
       session({ id: "older-design", created: 10, phase: "design" }),
     ]);
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({
+    scenario.task = fixture;
+    scenario.sessions = [...backendRows];
+    sessionStatuses.mockResolvedValue({
       "older-design": observation("busy"),
       "newer-tdd": { ...observation("idle"), lifecycle: { state: "exited", code: 0 }, state: null },
     });
@@ -1860,8 +1965,6 @@ describe("attention-first session order", () => {
     await waitFor(() => {
       expect(renderedSessionSteps(container)).toEqual([...backendRows].reverse().map((row) => `${row.playbook} · ${row.phase}`));
     });
-    expect(mocks.sessionStatuses).toHaveBeenCalledTimes(1);
-    expect(mocks.sessionStatuses).toHaveBeenCalledWith(["newer-tdd", "older-design"], "a-task");
     expect(backendRows.map((row) => row.id)).toEqual(["newer-tdd", "older-design"]);
   });
 
@@ -1875,9 +1978,9 @@ describe("attention-first session order", () => {
       semantic: { phase_completed_at: 90 },
       notification_read_at: 90,
     });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue([unread, acknowledged]);
-    mocks.sessionStatuses.mockResolvedValue({
+    scenario.task = fixture;
+    scenario.sessions = [unread, acknowledged];
+    sessionStatuses.mockResolvedValue({
       "unread-design": {
         lifecycle: { state: "exited", code: 0 },
         state: null,
@@ -1903,12 +2006,15 @@ describe("attention-first session order", () => {
     const fixture = task();
     let stopped = session({ id: "stopped-generic", created: 20, generic: true, phase: "", ended_at: 100, exit_code: 143 });
     const idle = session({ id: "current-structure", created: 30, phase: "structure" });
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockImplementation(async () => [idle, stopped]);
+    scenario.task = fixture;
+    scenario.sessions = [idle, stopped];
     mocks.markSessionNotificationRead.mockImplementation(async (_repoPath: string, _taskSlug: string, id: string) => {
-      if (id === stopped.id) stopped = { ...stopped, exit_notification_read_at: 100 };
+      if (id !== stopped.id) return;
+      stopped = { ...stopped, exit_notification_read_at: 100 };
+      scenario.sessions = [idle, stopped];
+      syncBoard();
     });
-    mocks.sessionStatuses.mockResolvedValue({
+    sessionStatuses.mockResolvedValue({
       "stopped-generic": {
         lifecycle: { state: "exited", code: 143 },
         state: null,
@@ -1917,16 +2023,15 @@ describe("attention-first session order", () => {
       "current-structure": observation("idle"),
     });
 
-    const onOpenSession = vi.fn();
-    const { container } = renderSeededDetail({ initialTask: fixture, onOpenSession });
+    const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
 
     await screen.findByRole("img", { name: "Failed: process exited with code 143" });
     const rows = container.querySelectorAll(".task-session-table tbody tr");
-    fireEvent.click(rows[0]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(stopped.id);
+    // Opening the exited session would acknowledge it; open the idle one, then return to the list.
     fireEvent.click(rows[1]);
-    expect(onOpenSession.mock.lastCall?.[1]).toBe(idle.id);
+    expect(lastAcknowledged()).toBe(idle.id);
+    fireEvent.click(within(screen.getByRole("group", { name: "Open files" })).getByRole("button", { name: "Sessions" }));
     const acknowledge = screen.getByRole("button", { name: "Acknowledge exited sessions" });
     const stoppedRow = screen.getByRole("img", { name: "Failed: process exited with code 143" }).closest("tr") as HTMLTableRowElement;
     expect(within(stoppedRow).getByRole("img", { name: "Failed: process exited with code 143" })).toBeDefined();
@@ -1948,9 +2053,9 @@ describe("session time columns and sorting", () => {
       session({ id: "older", phase: "design", created: 20, started_at: 100 }),
       session({ id: "newer", phase: "build", created: 10, started_at: 200 }),
     ]);
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(backendRows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    scenario.sessions = [...backendRows];
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design", "superdevelop · clarify"]));
@@ -1982,9 +2087,9 @@ describe("session time columns and sorting", () => {
     vi.useFakeTimers();
     const fixture = task();
     let rows = [session({ id: "a", phase: "design", created: 20, status_changed_at: 100 }), session({ id: "b", phase: "build", created: 10, status_changed_at: 200 })];
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockImplementation(async () => rows);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    scenario.sessions = rows;
+    sessionStatuses.mockResolvedValue({});
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
@@ -1994,6 +2099,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     rows = [{ ...rows[0], status_changed_at: 300 }, rows[1]];
+    scenario.sessions = rows;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2017,24 +2123,23 @@ describe("session time columns and sorting", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "failed", reason },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
       checkpoint: {},
     });
     let targetObservation = failedObservation("StaleSource");
-    mocks.getTask.mockResolvedValue(fixture);
-    mocks.listSessions.mockResolvedValue(rows);
-    mocks.sessionStatuses.mockImplementation(async () => ({
-      target: targetObservation,
-    }));
+    scenario.task = fixture;
+    scenario.sessions = rows;
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
 
     const { container } = renderSeededDetail({ initialTask: fixture });
     fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
     await vi.waitFor(() => expect(renderedSessionSteps(container)).toEqual(["superdevelop · build", "superdevelop · design"]));
-    expect(screen.getByText("Stale")).toBeDefined();
+    await vi.waitFor(() => expect(screen.getByText("Stale")).toBeDefined());
 
     targetObservation = failedObservation("boom");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2045,6 +2150,7 @@ describe("session time columns and sorting", () => {
     expect(screen.getByRole("button", { name: "Priority" }).getAttribute("aria-pressed")).toBe("false");
 
     targetObservation = failedObservation("StaleSource");
+    sessionStatuses.mockResolvedValue({ target: targetObservation });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
@@ -2081,62 +2187,188 @@ describe("session time columns and sorting", () => {
 });
 
 describe("the empty-sessions state", () => {
-  it("shows fetched sessions while execution observation is slow and accepts its eventual result", async () => {
-    vi.useFakeTimers();
-    const pending = deferred<TaskExecutionReply>();
-    mocks.getTaskExecution.mockReturnValue(pending.promise);
-    scenario.sessions = [{ ...session({ id: "already-started" }), name: "Already running", name_source: "user", name_error: null }];
-    renderSeededDetail({ initialTask: scenario.task });
-    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-    try {
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(7000);
-      });
-      expect(screen.getByText("Already running")).toBeDefined();
-      expect(screen.queryByText("No sessions yet.")).toBeNull();
-      await act(async () => {
-        pending.resolve(executionReply([]));
-      });
-      expect(screen.getByText("Retained worker")).toBeDefined();
-    } finally {
-      await act(async () => pending.resolve(executionReply([])));
-    }
-  });
-
-  it("never renders before load() settles, and appears once it does", async () => {
+  it("never renders before the sessions stream has a snapshot, and appears once it does", async () => {
     const fixture = task();
-    const getTaskDeferred = deferred<Task | null>();
-    const listSessionsDeferred = deferred<SessionMeta[]>();
-    mocks.getTask.mockReturnValue(getTaskDeferred.promise);
-    mocks.listSessions.mockReturnValue(listSessionsDeferred.promise);
-    mocks.listArtifactsWithMetadata.mockResolvedValue([]);
-    mocks.sessionStatuses.mockResolvedValue({});
+    scenario.task = fixture;
+    sessionStatuses.mockResolvedValue({});
 
+    scenario.sessions = null as never; // the stream has no snapshot yet
     renderSeededDetail({ initialTask: fixture });
-    fireEvent.click(screen.getByRole("button", { name: "Show list view" }));
-    expect(screen.getByText("Loading sessions…")).toBeDefined();
-
-    // Do not show an empty list before the first successful session read.
+    // Do not show an empty graph before the first snapshot.
     expect(screen.queryByText("No sessions yet.")).toBeNull();
 
-    getTaskDeferred.resolve(fixture);
-    listSessionsDeferred.resolve([]);
-
+    scenario.sessions = [];
+    act(() => syncBoard());
     await waitFor(() => expect(screen.getByText("No sessions yet.")).toBeDefined());
   });
 });
 
-describe("a get_task error", () => {
-  it("surfaces in the error bar without hiding the seeded header", async () => {
-    const fixture = task();
-    mocks.getTask.mockRejectedValue(new Error("parse task.md: bad toml"));
+describe("main pane file tabs", () => {
+  it("opens artifacts as tabs beside Sessions, each with its own mode and review state", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });
+    fakeArtifacts.set("parent", {
+      items: [item("a.md"), item("b.md")] as never,
+      tree: [owned("a.md"), owned("b.md")],
+      pending: [{ artifact: "b.md", review: "01-review.md" }] as never,
+    });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
 
-    renderSeededDetail({ initialTask: fixture });
+    // A double click keeps the tab; the second click of one carries detail 2.
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 2 });
+    expect(await screen.findByRole("heading", { name: "Heading a.md" })).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    expect(screen.queryByText(/has not changed yet/)).toBeNull();
 
-    await waitFor(() => expect(screen.getByText(/parse task\.md: bad toml/)).toBeDefined());
-    // The seeded header must survive the error — a regression here (e.g. an unguarded
-    // `.catch` that also clears `task`) would blank it.
-    expect(screen.getByText(fixture.name)).toBeDefined();
+    fireEvent.click(files.getByRole("button", { name: /^b\.md/ }));
+    expect(await screen.findByRole("heading", { name: "Heading b.md" })).toBeDefined();
+    expect(screen.getByText(/01-review\.md sent\. b\.md has not changed yet\./)).toBeDefined();
+
+    fireEvent.click(tabs.getByRole("button", { name: "a.md" }));
+    expect(await screen.findByText("# Heading a.md")).toBeDefined();
+    expect(screen.queryByText(/has not changed yet/)).toBeNull();
+
+    // Closing the active first tab falls back to Sessions; the sessions pane shows again.
+    fireEvent.click(tabs.getByRole("button", { name: "Close a.md" }));
+    expect(tabs.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe("true");
+    expect(tabs.queryByRole("button", { name: "a.md" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeDefined();
+    fireEvent.click(tabs.getByRole("button", { name: "Close b.md" }));
+    expect(tabs.queryByRole("button", { name: "b.md" })).toBeNull();
+  });
+  it("a single click opens a temporary tab the next one replaces, and clicking it in the strip keeps it", async () => {
+    const owned = (label: string): ArtifactTreeNode => ({ id: `node-${label}`, kind: "owned", label, owner_task_slug: "parent", source: "owned", children: [] });
+    const item = (name: string) => ({ name, modified_at_ms: null, playbook_step: "research", session_id: "s1", handoffs: [], attachment: false });
+    fakeArtifacts.set("parent", { items: [item("a.md"), item("b.md"), item("c.md")] as never, tree: [owned("a.md"), owned("b.md"), owned("c.md")] });
+    fakeArtifacts.readArtifact.mockImplementation(async (_repo: string, _slug: string, name: string) => `# Heading ${name}`);
+    await renderDetail();
+    const files = within(document.querySelector("aside.artifactpane") as HTMLElement);
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    const tab = (name: string) => tabs.queryByRole("button", { name });
+
+    fireEvent.click(await files.findByRole("button", { name: /^a\.md/ }), { detail: 1 });
+    expect(tab("a.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(true);
+    fireEvent.click(files.getByRole("button", { name: /^b\.md/ }), { detail: 1 });
+    expect(await screen.findByRole("heading", { name: "Heading b.md" })).toBeDefined();
+    expect(tab("a.md")).toBeNull();
+
+    fireEvent.click(tab("b.md") as HTMLElement);
+    expect(tab("b.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(false);
+    fireEvent.click(files.getByRole("button", { name: /^c\.md/ }), { detail: 1 });
+    expect(tab("b.md")).toBeDefined();
+    expect(tab("c.md")?.closest(".task-main-tab")?.classList.contains("temp")).toBe(true);
+  });
+});
+
+describe("git tab", () => {
+  it("lists the branch's commits and opens one as a diff tab without reading it as an artifact", async () => {
+    mocks.worktreeLog.mockResolvedValue({
+      commits: [{ oid: "b".repeat(40), subject: "Fix src/a.ts", author: "t", time_ms: 0 }],
+      base: "main",
+      truncated: false,
+      staged: 0,
+      uncommitted: 0,
+    });
+    mocks.worktreeDiff.mockResolvedValue({ patch: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n", truncated: false });
+    await renderDetail();
+    fireEvent.click(within(screen.getByRole("group", { name: "Task side panel" })).getByRole("button", { name: "Git" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Fix src\/a\.ts/ }), { detail: 2 });
+
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    // The tab names the commit, not the tail of a path in its subject.
+    expect(tabs.getByRole("button", { name: "bbbbbbb Fix src/a.ts" }).getAttribute("aria-pressed")).toBe("true");
+    expect(await screen.findByRole("region", { name: "src/a.ts" })).toBeDefined();
+    expect(mocks.worktreeDiff).toHaveBeenCalledWith("/repo", "parent", { kind: "commit", oid: "b".repeat(40) });
+    expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "bbbbbbb Fix src/a.ts");
+  });
+});
+
+describe("repository files", () => {
+  it("lists the worktree under the artifacts and opens files as tabs: markdown previews, code shows as text", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["README.md", "src/main.ts"], truncated: false });
+    fakeArtifacts.worktreeTexts = { "README.md": "# Read me", "src/main.ts": "export const x = 1;" };
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    expect(mocks.listWorktreeFiles).toHaveBeenCalledWith("/repo", "parent");
+
+    fireEvent.click(await repo.findByRole("button", { name: "README.md" }), { detail: 2 });
+    expect(await screen.findByRole("heading", { name: "Read me" })).toBeDefined();
+    expect(fakeArtifacts.readWorktree).toHaveBeenCalledWith("/repo", "parent", "README.md");
+    expect(fakeArtifacts.readArtifact).not.toHaveBeenCalledWith("/repo", "parent", "README.md");
+
+    fireEvent.click(repo.getByText("src/"));
+    fireEvent.click(await repo.findByRole("button", { name: "main.ts" }));
+    expect((await screen.findByText("const")).className).toBe("hljs-keyword");
+    expect(document.querySelector(".codeview-code")?.textContent).toBe("export const x = 1;");
+    expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
+
+    const tabs = within(screen.getByRole("group", { name: "Open files" }));
+    expect(tabs.getByRole("button", { name: "README.md" })).toBeDefined();
+    expect(tabs.getByRole("button", { name: "main.ts" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("collapses every open folder at once", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["src/lib/a.ts", "src/main.ts"], truncated: false });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    fireEvent.click(await repo.findByText("src/"));
+    fireEvent.click(await repo.findByText("lib/"));
+    expect(await repo.findByRole("button", { name: "a.ts" })).toBeDefined();
+    fireEvent.click(repo.getByRole("button", { name: "Collapse all folders" }));
+    expect(repo.queryByRole("button", { name: "main.ts" })).toBeNull();
+    fireEvent.click(repo.getByText("src/"));
+    expect(await repo.findByRole("button", { name: "main.ts" })).toBeDefined();
+    expect(repo.queryByRole("button", { name: "a.ts" })).toBeNull();
+  });
+
+  it("comments on a worktree markdown file under its repo: target, and not on code", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/plan.md", "main.ts"], truncated: false });
+    fakeArtifacts.worktreeTexts = { "docs/plan.md": "# Plan\n\nShip it.\n", "main.ts": "export {};" };
+    fakeArtifacts.set("parent", { pending: [{ artifact: "repo:docs/plan.md", review: "repo:docs/plan.review-001.md" }] as never });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    fireEvent.click(await repo.findByText("docs/"));
+    fireEvent.click(await repo.findByRole("button", { name: "plan.md" }));
+    expect(await screen.findByText(/plan\.review-001\.md sent\. docs\/plan\.md has not changed yet\./)).toBeDefined();
+    fireEvent.click(await screen.findByText("Ship it."));
+    fireEvent.change(await screen.findByPlaceholderText("Add a comment for the next phase..."), { target: { value: "Which release?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
+    await waitFor(() => expect(fakeArtifacts.addComment).toHaveBeenCalledWith(expect.objectContaining({ artifact: "repo:docs/plan.md", body: "Which release?" })));
+
+    fireEvent.click(repo.getByRole("button", { name: "main.ts" }));
+    fireEvent.click(await screen.findByText("export"));
+    expect(screen.queryByPlaceholderText("Add a comment for the next phase...")).toBeNull();
+  });
+
+  it("names the size of a file it won't show", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["big.log"], truncated: false });
+    const { FileNotShown } = await import("../sync/artifacts");
+    fakeArtifacts.readWorktree.mockRejectedValueOnce(new FileNotShown("Too large to show (3.0 MB)."));
+    await renderDetail();
+    fireEvent.click(await within(await screen.findByRole("region", { name: "Repository files" })).findByRole("button", { name: "big.log" }));
+    expect(await screen.findByText("Too large to show (3.0 MB).")).toBeDefined();
+    expect(screen.queryByText("Couldn't show the file.")).toBeNull();
+  });
+
+  it("previews a PDF or office file from the worktree instead of reading it as text", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["deck.pptx"], truncated: false });
+    await renderDetail();
+    fireEvent.click(await within(await screen.findByRole("region", { name: "Repository files" })).findByRole("button", { name: "deck.pptx" }));
+    expect((await screen.findByTestId("file-view")).textContent).toBe("deck.pptx worktreeFile:deck.pptx");
+    expect(fakeArtifacts.readWorktree).not.toHaveBeenCalledWith("/repo", "parent", "deck.pptx");
+  });
+
+  it("filters the tree by name", async () => {
+    mocks.listWorktreeFiles.mockResolvedValueOnce({ paths: ["docs/guide.md", "src/main.ts"], truncated: false });
+    await renderDetail();
+    const repo = within(await screen.findByRole("region", { name: "Repository files" }));
+    await repo.findByText("docs/");
+    fireEvent.change(repo.getByRole("searchbox", { name: "Filter repository files" }), { target: { value: "guide" } });
+    expect(repo.getByRole("button", { name: "docs/guide.md" })).toBeDefined();
+    expect(repo.queryByText("src/")).toBeNull();
   });
 });
 
@@ -2150,19 +2382,20 @@ describe("artifact preview images", () => {
       source: "snapshot",
       children,
     });
-    mocks.listTaskArtifactTree.mockResolvedValue([
-      node("snapshot", "subtask_folder", "child", [
-        node("snapshot-attachments", "subtask_folder", "Attachments", [node("snapshot-shot", "attachment", "shot.png")]),
-        node("snapshot-research", "subtask_folder", "research", [node("snapshot-findings", "referenced", "findings.md")]),
-      ]),
-    ]);
-    mocks.readTaskArtifactNode.mockResolvedValue("![shot](../attachments/shot.png)");
+    fakeArtifacts.set("parent", {
+      tree: [
+        node("snapshot", "subtask_folder", "child", [
+          node("snapshot-attachments", "subtask_folder", "Attachments", [node("snapshot-shot", "attachment", "shot.png")]),
+          node("snapshot-research", "subtask_folder", "research", [node("snapshot-findings", "referenced", "findings.md")]),
+        ]),
+      ],
+    });
+    fakeArtifacts.nodeTexts["snapshot-findings"] = "![shot](../attachments/shot.png)";
     await renderDetail();
 
-    fireEvent.click(screen.getByRole("button", { name: "Artifacts" }));
     fireEvent.click(await screen.findByRole("button", { name: /findings\.md/ }));
 
-    await waitFor(() => expect(mocks.readAttachmentImage).toHaveBeenCalledWith("parent", "shot.png", "snapshot-shot"));
-    expect(mocks.readTaskArtifactNode).toHaveBeenCalledWith("parent", "snapshot-findings");
+    await waitFor(() => expect(fakeArtifacts.readBytes).toHaveBeenCalledWith("/repo", "parent", "snapshot-shot"));
+    expect(fakeArtifacts.readNode).toHaveBeenCalledWith("/repo", "parent", "snapshot-findings");
   });
 });

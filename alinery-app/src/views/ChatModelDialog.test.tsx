@@ -18,7 +18,6 @@ describe("ChatModelDialog", () => {
     onTabChange: vi.fn(),
     onApplyModel: vi.fn(),
     onLogin: vi.fn(),
-    onHatchTerminalLogin: vi.fn(),
     onAssignRole: vi.fn(),
     onClose: vi.fn(),
   };
@@ -44,7 +43,7 @@ describe("ChatModelDialog", () => {
     expect(html).not.toContain("openrouter");
   });
 
-  it("lists Advanced rows when expanded: env-only and RPC-incompatible", () => {
+  it("lists an API-key provider as sign-in and an env-only provider as ready", () => {
     const html = renderToStaticMarkup(
       <ChatModelDialog
         {...base}
@@ -60,9 +59,10 @@ describe("ChatModelDialog", () => {
     expect(html).toContain("Anthropic");
     expect(html).toContain("Signed in");
     expect(html).toContain("Baseten");
+    expect(html).toContain("Sign in");
     expect(html).toContain("openrouter");
-    expect(html).toContain("Terminal /login");
-    expect(html).toContain("Ready via env");
+    expect(html).toContain("Ready");
+    expect(html).not.toContain("Terminal /login");
   });
 
   it("filters Accounts by name or provider id, case-insensitively, and Esc clears before closing", () => {
@@ -90,7 +90,7 @@ describe("ChatModelDialog", () => {
 
     // Advanced rows are searchable while collapsed, and the footer toggle steps aside meanwhile.
     fireEvent.change(search, { target: { value: "router" } });
-    expect(screen.getByRole("button", { name: /openrouter/ })).toBeTruthy();
+    expect(screen.getByText(/openrouter/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Advanced" })).toBeNull();
 
     fireEvent.change(search, { target: { value: "zzz" } });

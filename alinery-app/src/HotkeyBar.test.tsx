@@ -1,8 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HotkeyBar } from "./HotkeyBar";
 import type { DaemonStatus } from "./types";
 import type { McpStatus } from "./useMcpStatus";
+
+vi.mock("./ipc", async () => (await import("./test/mockIpc")).mockIpc());
 
 const daemon: DaemonStatus = {
   reachable: false,
@@ -31,6 +33,7 @@ const mcp: McpStatus = {
   socket_reachable: false,
   binary_found: true,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -43,7 +46,6 @@ describe("HotkeyBar runtime status", () => {
     expect(html).toContain('class="live down"');
     expect(html).toContain("Daemon");
     expect(html).toContain("MCP server");
-    expect(html).toContain("Daemon build");
     expect(html).not.toContain("<details");
     expect(html).not.toContain("<summary");
     expect(html).not.toContain("Alinery Dev");

@@ -59,6 +59,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -74,7 +75,7 @@ function renderGridSettings() {
       appearance={DEFAULT_APPEARANCE}
       onAppearanceChange={() => {}}
       onNotificationsChange={() => {}}
-      initialSection="gridViews"
+      initialSection="views.grid"
     />,
   );
 }

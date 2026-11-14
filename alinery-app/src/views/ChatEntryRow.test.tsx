@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import { ACTOR, type ChatEntry, TYPE_LABEL } from "../chat/types";
@@ -34,16 +31,6 @@ describe("ChatEntryRow", () => {
     expect(onApprove).toHaveBeenCalledWith("ui-confirm", true);
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     expect(onApprove).toHaveBeenCalledWith("ui-confirm", false);
-  });
-
-  it("left-aligns work rails with the icon first and no dash rulers", () => {
-    const { container } = render(<ChatEntryRow entry={{ id: "t1", at: Date.now(), actor: ACTOR.agent, type: "thinking", text: "plan", streaming: true }} />);
-    expect(container.querySelector(".chat-rail-rule")).toBeNull();
-    const line = container.querySelector(".chat-rail-line");
-    expect(line).toBeTruthy();
-    const children = Array.from(line?.children ?? []);
-    expect(children[0]?.classList.contains("chat-rail-icon")).toBe(true);
-    expect(children[1]?.classList.contains("chat-rail-copy")).toBe(true);
   });
 
   it("labels a follow_up row as queued without actor labels", () => {
@@ -202,62 +189,15 @@ describe("ChatEntryRow markdown + copy", () => {
 });
 
 describe("DEL-722 block-local streaming", () => {
-  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../chat/fixtures");
   const rows = (entries: ChatEntry[]) => (
     <ol>
       {entries.map((entry) => (
         <li key={entry.id} data-entry-id={entry.id}>
-          <ChatEntryRow entry={entry} defaultExpanded={false} autoCollapseThinking />
+          <ChatEntryRow entry={entry} />
         </li>
       ))}
     </ol>
   );
-
-  it("keeps completed thinking collapsed while the recorded answer streams in the same mounted list", () => {
-    let state = emptyTranscript();
-    const view = render(rows(state.entries));
-    const events = ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"];
-    const expanded: boolean[] = [];
-    let originalRail: Element | null = null;
-
-    for (const [index, event] of events.entries()) {
-      const frame: unknown = JSON.parse(readFileSync(join(fixtures, `live-${event}.json`), "utf8"));
-      state = applyRpcLine(state, frame);
-      view.rerender(rows(state.entries));
-      const thinking = state.entries.find((entry) => entry.type === "thinking");
-      expect(thinking).toBeTruthy();
-      const row = view.container.querySelector<HTMLElement>(`[data-entry-id="${thinking?.id}"]`);
-      expect(row).not.toBeNull();
-      const rail = row?.querySelector(".chat-rail");
-      expect(rail).toBeTruthy();
-      if (index === 0) originalRail = rail ?? null;
-      expect.soft(rail, event).toBe(originalRail);
-      expanded.push(row?.querySelector(".chat-rail-line")?.getAttribute("aria-expanded") === "true");
-      if (index === 0) {
-        expect.soft(row?.querySelector(".chat-work-pre")?.textContent, event).toBe("The user wants me to reply");
-      } else {
-        expect.soft(row?.querySelector(".chat-work-pre"), event).toBeNull();
-        expect.soft(row?.querySelector(".chat-rail-panel")?.textContent, event).toBe("");
-      }
-
-      if (index >= 1) {
-        const answer = state.entries.find((entry) => entry.type === "text");
-        expect(answer).toBeTruthy();
-        const answerRow = view.container.querySelector<HTMLElement>(`[data-entry-id="${answer?.id}"]`);
-        assert(answerRow, "Missing answer row");
-        expect.soft(answerRow?.querySelector(".chat-msg-body")?.textContent, event).toContain("323");
-        const live = event === "text_start" || event === "text_delta";
-        expect.soft(Boolean(answerRow?.querySelector(".chat-caret")), event).toBe(live);
-        if (live) {
-          expect.soft(answerRow?.querySelector(".chat-text-body")?.textContent, event).toBe("323");
-          expect.soft(within(answerRow).queryByRole("button", { name: "Copy message" }), event).toBeNull();
-        }
-      }
-    }
-
-    expect(expanded).toEqual([true, false, false, false, false]);
-    view.unmount();
-  });
 
   it("preserves an earlier text row's Markdown and copy controls while a second indexed text block streams", () => {
     const events = [

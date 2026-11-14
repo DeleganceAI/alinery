@@ -1,8 +1,15 @@
 import { type ReactNode, useEffect, useState } from "react";
-import * as ipc from "./ipc";
+import { CopyTextButton } from "./chat/CopyMessage";
+import { filesAreRemote, revealActionLabel, revealPath } from "./revealPath";
+import { alineryFilePath, attachmentFilePath, readNodeBytes } from "./sync/artifacts";
+import { readAttachmentBytes } from "./sync/tasks";
 
-/** Blob URL for an attachment image (empty while loading or when `name` is empty); `setError` lets callers report decode/reveal failures in the same slot. */
-export function useAttachmentImageSrc(taskSlug: string, name: string, nodeId?: string) {
+/**
+ * Blob URL for an attachment image, read from the daemon (BlobService, so a remote repo works too): a tree node by
+ * `nodeId`, an attachment of the task by `name`. Empty while loading or when `name` is empty; `setError` lets a caller
+ * report a decode or reveal failure in the same slot.
+ */
+export function useAttachmentImageSrc(repoPath: string, taskSlug: string, name: string, nodeId?: string) {
   const [src, setSrc] = useState("");
   const [error, setError] = useState("");
 
@@ -12,7 +19,7 @@ export function useAttachmentImageSrc(taskSlug: string, name: string, nodeId?: s
     setSrc("");
     setError("");
     if (!name) return;
-    ipc.readAttachmentImage(taskSlug, name, nodeId).then(
+    (nodeId ? readNodeBytes(repoPath, taskSlug, nodeId) : readAttachmentBytes(repoPath, taskSlug, name)).then(
       (bytes) => {
         if (cancelled) return;
         url = URL.createObjectURL(new Blob([bytes]));
@@ -26,13 +33,29 @@ export function useAttachmentImageSrc(taskSlug: string, name: string, nodeId?: s
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [taskSlug, name, nodeId]);
+  }, [taskSlug, name, nodeId, repoPath]);
 
   return { src, error, setError };
 }
 
-export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSlug: string; name: string; nodeId?: string; children?: ReactNode }) {
-  const { src, error, setError } = useAttachmentImageSrc(taskSlug, name, nodeId);
+/** `revealBelow` is a tree node's path below `.alinery/`; without it the attachment's own place is used. */
+export function AttachmentPreview({
+  taskSlug,
+  name,
+  nodeId,
+  repoPath,
+  revealBelow,
+  children,
+}: {
+  taskSlug: string;
+  name: string;
+  nodeId?: string;
+  repoPath: string;
+  revealBelow?: string;
+  children?: ReactNode;
+}) {
+  const { src, error, setError } = useAttachmentImageSrc(repoPath, taskSlug, name, nodeId);
+  const path = revealBelow ? alineryFilePath(repoPath, revealBelow) : nodeId ? "" : attachmentFilePath(repoPath, taskSlug, name);
 
   return (
     <details className="attachment-preview" open>
@@ -53,17 +76,19 @@ export function AttachmentPreview({ taskSlug, name, nodeId, children }: { taskSl
         )}
       </div>
       <div className="attachment-preview-actions">
-        <button
-          type="button"
-          className="btn ghost small"
-          aria-label={`Show ${name} in folder`}
-          onClick={() => {
-            const path = nodeId ? ipc.artifactNodePath(taskSlug, nodeId) : ipc.attachmentPath(taskSlug, name);
-            path.then(ipc.revealItemInDir).catch((reason) => setError(String(reason)));
-          }}
-        >
-          Show in folder
-        </button>
+        {path && (
+          <>
+            <button
+              type="button"
+              className="btn ghost small"
+              aria-label={filesAreRemote() ? `Copy path of ${name} on host` : `Show ${name} in folder`}
+              onClick={() => revealPath(path).catch((reason) => setError(String(reason)))}
+            >
+              {revealActionLabel()}
+            </button>
+            {filesAreRemote() ? null : <CopyTextButton text={path} label="path" />}
+          </>
+        )}
         {children}
       </div>
     </details>

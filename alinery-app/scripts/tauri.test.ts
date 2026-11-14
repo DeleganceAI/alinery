@@ -5,8 +5,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
-import { childEnvironment, parseDevPort, reserveDevPort, selectTauriLaunch } from "./tauri.mjs";
+import { describe, expect, it, vi } from "vitest";
+import {
+  childEnvironment,
+  parseDevPort,
+  piDaemonCompile,
+  piDaemonInputs,
+  REMOTE_RUNTIME_TARGETS,
+  remoteRuntimesProblem,
+  reserveDevPort,
+  selectTauriLaunch,
+  settledRunner,
+} from "./tauri.mjs";
 
 const DEV_CONFIG_ARGS = ["--config", "src-tauri/tauri.dev.conf.json"];
 
@@ -126,6 +136,78 @@ describe("selectTauriLaunch", () => {
     } finally {
       await Promise.all(reservations.map((reservation) => reservation.release()));
       await rm(lockDirectory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("piDaemonCompile", () => {
+  it("compiles the optional daemon into the profile the launch will run", () => {
+    expect(piDaemonCompile(["dev"])).toEqual({ release: false });
+    expect(piDaemonCompile(["dev", "--release"])).toEqual({ release: true });
+    expect(piDaemonCompile(["build", "--bundles", "app"])).toEqual({ release: true });
+    expect(piDaemonCompile(["build", "--debug"])).toEqual({ release: false });
+  });
+
+  it("leaves subcommands that run no app executable alone", () => {
+    expect(piDaemonCompile(["bundle"])).toBeUndefined();
+    expect(piDaemonCompile(["info"])).toBeUndefined();
+    expect(piDaemonCompile(["--version"])).toBeUndefined();
+    expect(piDaemonCompile([])).toBeUndefined();
+  });
+});
+
+describe("remoteRuntimesProblem", () => {
+  it("accepts a manifest that lists every target", () => {
+    const targets = Object.fromEntries(REMOTE_RUNTIME_TARGETS.map((triple) => [triple, {}]));
+    expect(remoteRuntimesProblem(JSON.stringify({ version: 1, targets }))).toBeUndefined();
+  });
+
+  it("names the targets a Linux builder's manifest lacks", () => {
+    const linuxOnly = JSON.stringify({ version: 1, targets: { "x86_64-unknown-linux-gnu": {}, "aarch64-unknown-linux-gnu": {} } });
+    expect(remoteRuntimesProblem(linuxOnly)).toContain("no bundled remote runtime for x86_64-apple-darwin, aarch64-apple-darwin");
+  });
+
+  it("reports an empty, absent or unreadable manifest", () => {
+    for (const manifest of [JSON.stringify({ version: 1, targets: {} }), undefined, "", "not json"]) {
+      expect(remoteRuntimesProblem(manifest)).toContain("scripts/build-remote-runtimes.sh");
+    }
+  });
+});
+
+describe("the dev daemon recompile", () => {
+  it("watches what dev-fetch-bun.sh compiles the daemon from", () => {
+    expect(piDaemonInputs(SOURCE_ROOT)).toEqual([
+      join(PACKAGE_ROOT, "src-tauri", "vinculum-daemon", "src"),
+      join(PACKAGE_ROOT, "src-tauri", "vinculum-daemon", "package.json"),
+      join(SOURCE_ROOT, "playbook-engine", "src"),
+      join(SOURCE_ROOT, "proto", "gen"),
+    ]);
+  });
+
+  it("compiles once a burst of changes settles, and once more for a change made while it compiles", async () => {
+    vi.useFakeTimers();
+    try {
+      let finish = () => {};
+      const task = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+      const trigger = settledRunner(task, 1000);
+      trigger();
+      trigger();
+      await vi.advanceTimersByTimeAsync(999);
+      trigger();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      trigger();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(task).toHaveBeenCalledTimes(1);
+      finish();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(task).toHaveBeenCalledTimes(2);
+      finish();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(task).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

@@ -15,7 +15,7 @@ Use this same conversation to design, monitor, integrate, and finish the child. 
 
 ## Human decisions
 
-Every human-facing question MUST be made by calling the `ask` tool so OMP opens its input popup. Never print a prose question in the terminal. In this prompt, **ask**, **approval**, **choice**, **decide**, **discuss whether**, and **confirmation** always mean: call the `ask` tool and wait for its popup result. Do not mark a todo blocked instead of calling `ask`. Do not end the turn while waiting for approval unless an `ask` tool call is currently open.
+Every human-facing question MUST be made by calling the `ask` tool so Vinculum opens its input popup. Never print a prose question in the terminal. In this prompt, **ask**, **approval**, **choice**, **decide**, **discuss whether**, and **confirmation** always mean: call the `ask` tool and wait for its popup result. Do not mark a todo blocked instead of calling `ask`. Do not end the turn while waiting for approval unless an `ask` tool call is currently open.
 
 Use `ask` (the tool, not prose) for all of these gates:
 

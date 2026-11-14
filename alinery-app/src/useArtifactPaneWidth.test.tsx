@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ARTIFACT_VIEWER_WIDTH_MAX, ARTIFACT_VIEWER_WIDTH_MIN, clampArtifactViewerWidth, DEFAULT_APPEARANCE } from "./appearance";
+import { PaneResizer } from "./PaneResizer";
 import { mockIpc } from "./test/mockIpc";
 import type { AppearancePrefs } from "./types";
 import { useArtifactPaneWidth } from "./useArtifactPaneWidth";
@@ -24,8 +25,8 @@ beforeEach(() => {
   vi.mocked(ipc.writeAppearance).mockClear();
 });
 
-function Probe({ appearance, onAppearanceChange }: { appearance: AppearancePrefs; onAppearanceChange: (next: AppearancePrefs) => void }) {
-  const [width, resizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange);
+function Probe({ appearance, onAppearanceChange, side }: { appearance: AppearancePrefs; onAppearanceChange: (next: AppearancePrefs) => void; side?: "left" | "right" }) {
+  const [width, resizerProps] = useArtifactPaneWidth(appearance, onAppearanceChange, side);
   return (
     <div>
       <div data-testid="width">{width}</div>
@@ -36,7 +37,39 @@ function Probe({ appearance, onAppearanceChange }: { appearance: AppearancePrefs
 
 const appearanceAt = (artifact_viewer_width: number): AppearancePrefs => ({ ...DEFAULT_APPEARANCE, artifact_viewer_width });
 
+function CollapsibleProbe() {
+  const [width, props, collapse] = useArtifactPaneWidth(appearanceAt(480), vi.fn(), "left");
+  return (
+    <div>
+      <div data-testid="width">{width}</div>
+      <div data-testid="collapsed">{String(collapse.collapsed)}</div>
+      <PaneResizer props={props} collapse={collapse} />
+    </div>
+  );
+}
+
 describe("useArtifactPaneWidth", () => {
+  it("snaps shut when dragged well past the minimum and reopens at the width it had", () => {
+    render(<CollapsibleProbe />);
+    const resizer = screen.getByRole("separator", { name: "Resize artifact pane" });
+    // A left-side pane shrinks as the divider moves left: 480 - 220 reaches the minimum, but not far enough to snap.
+    fireEvent.pointerDown(resizer, { clientX: 500 });
+    fireEvent.pointerMove(window, { clientX: 280 });
+    expect(screen.getByTestId("collapsed").textContent).toBe("false");
+    fireEvent.pointerUp(window, { clientX: 280 });
+    expect(screen.getByTestId("collapsed").textContent).toBe("false");
+
+    fireEvent.pointerDown(resizer, { clientX: 500 });
+    fireEvent.pointerMove(window, { clientX: 100 });
+    fireEvent.pointerUp(window, { clientX: 100 });
+    expect(screen.getByTestId("collapsed").textContent).toBe("true");
+    expect(ipc.writeAppearance).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show side panel" }));
+    expect(screen.getByTestId("collapsed").textContent).toBe("false");
+    expect(screen.getByTestId("width").textContent).toBe(String(ARTIFACT_VIEWER_WIDTH_MIN));
+  });
+
   it("seeds from appearance and does not persist on mount", () => {
     render(<Probe appearance={appearanceAt(480)} onAppearanceChange={vi.fn()} />);
     expect(screen.getByTestId("width").textContent).toBe("480");
@@ -64,6 +97,21 @@ describe("useArtifactPaneWidth", () => {
     expect(screen.getByTestId("width").textContent).toBe("580");
     expect(onAppearanceChange).toHaveBeenCalledOnce();
     expect(vi.mocked(ipc.writeAppearance).mock.calls[0][0]).toEqual(appearanceAt(580));
+  });
+
+  it("grows a left-side pane when dragged or arrowed to the right", () => {
+    render(<Probe appearance={appearanceAt(480)} onAppearanceChange={vi.fn()} side="left" />);
+    const resizer = screen.getByRole("separator", { name: "Resize artifact pane" });
+
+    fireEvent.pointerDown(resizer, { clientX: 500 });
+    fireEvent.pointerMove(window, { clientX: 600 });
+    fireEvent.pointerUp(window, { clientX: 600 });
+    expect(screen.getByTestId("width").textContent).toBe("580");
+
+    fireEvent.keyDown(resizer, { key: "ArrowRight" });
+    expect(screen.getByTestId("width").textContent).toBe("600");
+    fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(screen.getByTestId("width").textContent).toBe("580");
   });
 
   it("persists keyboard width changes through the appearance path", () => {

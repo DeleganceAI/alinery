@@ -7,14 +7,14 @@ import {
   isTurnActive,
   LARGE_MESSAGE_BYTES,
   MAX_SESSION_MESSAGE_BYTES,
-  OMP_BRACKETED_PASTE_END,
-  OMP_INTERRUPT_DATA,
   requestsSessionMessageSubmit,
   type SessionMessageReadiness,
   sessionMessageDisabledReason,
   sessionMessageDraftKey,
   sessionMessageMetrics,
   shouldShowChatComposer,
+  VINCULUM_BRACKETED_PASTE_END,
+  VINCULUM_INTERRUPT_DATA,
 } from "./sessionMessage";
 import type { AgentState, LifecycleState, SessionObservation, SessionState } from "./types";
 
@@ -23,7 +23,7 @@ const ready = (overrides: Partial<SessionMessageReadiness> = {}): SessionMessage
   lifecycle: { state: "live" },
   process: { state: "alive" },
   agent: { state: "idle" },
-  messageAdapter: "omp_bracketed_paste",
+  messageAdapter: "vinculum_bracketed_paste",
   body: "message",
   composing: false,
   sending: false,
@@ -95,7 +95,7 @@ describe("shouldShowChatComposer", () => {
     history: false,
     actionPanel: false,
     utilityTerminal: false,
-    harness: "omp",
+    harness: "vinculum",
   };
 
   it("shows only beside writable task harness terminals", () => {
@@ -124,17 +124,13 @@ describe("sessionMessageDisabledReason", () => {
     [{ process: { state: "exited", code: 0 } } as Partial<SessionMessageReadiness>, "exited"],
     [{ lifecycle: { state: "live_exited" } } as Partial<SessionMessageReadiness>, "exited"],
     [{ lifecycle: { state: "orphaned" } } as Partial<SessionMessageReadiness>, "not live"],
-    [{ body: `before${OMP_BRACKETED_PASTE_END}after` } as Partial<SessionMessageReadiness>, "end marker"],
+    [{ body: `before${VINCULUM_BRACKETED_PASTE_END}after` } as Partial<SessionMessageReadiness>, "end marker"],
     [{ body: "a".repeat(MAX_SESSION_MESSAGE_BYTES + 1) } as Partial<SessionMessageReadiness>, "limited to"],
     [{ body: "" } as Partial<SessionMessageReadiness>, "Enter a message"],
     [{ composing: true } as Partial<SessionMessageReadiness>, "composition"],
     [{ sending: true } as Partial<SessionMessageReadiness>, "in progress"],
   ])("explains a blocked readiness state", (overrides, text) => {
     expect(sessionMessageDisabledReason(ready(overrides))).toContain(text);
-  });
-
-  it("accepts a message after OMP gave up on a turn, so Retry can continue it", () => {
-    expect(sessionMessageDisabledReason(ready({ agent: { state: "errored", message: "socket closed" } }))).toBeNull();
   });
 });
 
@@ -146,7 +142,7 @@ describe("chatMessageDisabledReason", () => {
 
 describe("canInterruptSession", () => {
   it.each([{ state: "busy" } as const, { state: "waiting_for_input", correlation_id: "ask-1" } as const, { state: "waiting_for_approval", correlation_id: "approval-1" } as const])(
-    "allows interruption while the OMP turn is active: %j",
+    "allows interruption while the Vinculum turn is active: %j",
     (agent) => {
       expect(canInterruptSession(ready({ agent }))).toBe(true);
     },
@@ -161,23 +157,25 @@ describe("canInterruptSession", () => {
     expect(canInterruptSession(ready({ agent: { state: "busy" }, interrupting: true }))).toBe(false);
   });
 
-  it("uses OMP's verified Escape interrupt byte", () => {
-    expect(OMP_INTERRUPT_DATA).toHaveLength(1);
-    expect(OMP_INTERRUPT_DATA.charCodeAt(0)).toBe(27);
+  it("uses Vinculum's verified Escape interrupt byte", () => {
+    expect(VINCULUM_INTERRUPT_DATA).toHaveLength(1);
+    expect(VINCULUM_INTERRUPT_DATA.charCodeAt(0)).toBe(27);
   });
 });
 
 describe("isTurnActive", () => {
+  // A Vinculum session as the sync replica reports it (`observationOf`): transport rpc, process from the daemon's live row.
   const live = (agent: AgentState = { state: "idle" }): SessionObservation & { state: SessionState } => ({
     lifecycle: { state: "live" },
     state: {
       process: { state: "alive" },
       agent,
       playbook: { state: "in_progress" },
-      adapter: "omp",
-      message_adapter: "omp_bracketed_paste",
+      adapter: "unsupported",
+      message_adapter: "unsupported",
     },
     checkpoint: {},
+    transport: "rpc",
   });
 
   it("treats live transcript guesses and open turns as active even when the poll still says idle", () => {
@@ -193,7 +191,8 @@ describe("isTurnActive", () => {
     (agent) => {
       const observation = live(agent);
       expect(isTurnActive({ observation })).toBe(true);
-      observation.state.process = { state: "exited", code: 0 };
+      observation.state.process = { state: "exited", code: null };
+      observation.lifecycle = { state: "live_exited" };
       expect(isTurnActive({ observation, pendingTurn: true, turnOpen: true })).toBe(false);
     },
   );
@@ -217,8 +216,8 @@ describe("isTurnActive", () => {
   it("preserves optimistic activity before a live observation arrives", () => {
     for (const observation of [
       null,
-      { lifecycle: { state: "live" }, state: null, checkpoint: {} },
-      { lifecycle: { state: "never_started" }, state: null, checkpoint: {} },
+      { lifecycle: { state: "live" }, state: null, checkpoint: {}, transport: null },
+      { lifecycle: { state: "never_started" }, state: null, checkpoint: {}, transport: null },
     ] satisfies (SessionObservation | null)[]) {
       expect(isTurnActive({ observation, pendingTurn: true })).toBe(true);
       expect(isTurnActive({ observation, turnOpen: true })).toBe(true);

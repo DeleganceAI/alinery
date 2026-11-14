@@ -1,0 +1,13 @@
+[github]
+
+[defaults]
+model = ""
+draft_autosave = false
+
+[defaults.playbook]
+scope = "repo"
+key = "my \"quoted\" flow"
+
+[backup]
+destination = ""
+retention = 0

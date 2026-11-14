@@ -1,0 +1,91 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "{{ARTIFACTS_DIR}} {{ARTIFACT_FILE}} {{REVIEW_HANDOFF_FILE}} {{SESSION_HISTORY_DIR}} {{TASK_NAME}} {{TASK_SLUG}} {{WORKTREE}} {{PLAYBOOK_KEY}} {{PHASE_KEY}} {{PHASE_TITLE}} {{TICKET_FILE}} {{PROMPT_EXTRA}}\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_prompt_token",
+          "field": "step[run].prompt",
+          "line": 21,
+          "message": "unknown prompt token {{UNKNOWN}}",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_prompt_token",
+          "field": "step[run].prompt",
+          "line": 21,
+          "message": "unknown prompt token {{task_name}}",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_prompt_token",
+          "field": "step[run].prompt",
+          "line": 21,
+          "message": "unknown prompt token {{ TASK_NAME }}",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "rendered": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nmodel = \"\"\nharness = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{ path = \"ticket.md\", mode = \"single\" }]\noutputs = [{ path = \"result.md\" }]\n+++\nPreamble\n<!-- alinery:step run -->\n\\{{UNKNOWN}} \\{{TASK_NAME}} incomplete {{ fine }\n",
+      "reparsed_equal": true,
+      "rerendered_equal": true
+    },
+    {
+      "errors": [
+        {
+          "code": "unknown_prompt_token",
+          "field": "step[run].prompt",
+          "line": 23,
+          "message": "unknown prompt token {{NOPE}}",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

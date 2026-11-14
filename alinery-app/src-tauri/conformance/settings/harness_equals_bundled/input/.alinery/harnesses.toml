@@ -1,0 +1,44 @@
+# The Vinculum row. Vinculum runs inside the daemon, so the launch fields below are
+# vestigial: nothing spawns `binary` or runs `models_cmd`. This is not a
+# multi-harness picker registry. Extra keys in leftover app.toml /
+# .alinery/harnesses.toml stay on disk but are not launchable.
+# Terminal (`no-harness`) is a compiled sentinel, not a TOML row.
+#
+# Per entry:
+#   key               id stored on the session ("harness" in <id>.meta.json)
+#   name              display label
+#   binary            PATH name or absolute path
+#   args              literal args, always passed; {worktree} = the session's cwd
+#   model_arg         appended only when a model is picked; {model} = that model
+#   prompt_injection  "arg"   = build prompt argv from prompt_arg
+#                     "stdin" = spawn, then write the seeded prompt + CR to the pty
+#   prompt_arg        argv template for "arg"; exactly one {prompt} placeholder
+#   adapter           "vinculum" enables structured semantics
+#   message_adapter   independent ongoing-message encoding
+#   models            static model suggestions (free text still allowed)
+#   models_cmd        optional shell pipeline the ↻ button runs via `$SHELL -ilc`
+#                     to refresh suggestions; must print ONE model id per line.
+#                     `{binary}` is replaced with `binary`.
+#   [harness.env]     optional extra environment (values also take {worktree}/{model})
+#
+# Command line built as: binary  model_arg(if model)  args  prompt_arg(if seeded).
+# Positional prompt templates include `--` so prompt text cannot become a CLI option.
+
+[[harness]]
+key = "vinculum"
+name = "Vinculum"
+binary = "vinculum"
+args = []
+model_arg = ["--model={model}"]
+prompt_injection = "arg"
+prompt_arg = ["--", "{prompt}"]
+adapter = "vinculum"
+message_adapter = "vinculum_bracketed_paste"
+# {binary} models --json is a flat list; pull the selector with grep+cut (no jq dependency).
+models_cmd = "{binary} models --json 2>/dev/null | grep -oE '\"selector\":\"[^\"]*\"' | cut -d'\"' -f4"
+
+# Resume (issue #24): "manual" makes the row resume-capable but token-less until a token is set.
+[harness.resume]
+enabled = true
+id_source = "manual"
+resume_args = ["--resume={resume_token}"]

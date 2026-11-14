@@ -1,0 +1,446 @@
+{
+  "child": {
+    "paths": {
+      "artifact-09b802828bf3f28c": {
+        "error": true
+      },
+      "artifact-3d61bc66da8d0ddd": {
+        "error": true
+      },
+      "artifact-4be72aaef13d3785": {
+        "error": true
+      },
+      "artifact-5a5f0257d53cc406": {
+        "error": true
+      },
+      "artifact-5d8a15c3a2a02a54": {
+        "error": true
+      },
+      "artifact-5f19f8765541b742": {
+        "error": true
+      },
+      "artifact-8e33c89b30385a55": {
+        "error": true
+      },
+      "artifact-8ff5eb1fa98b32e6": {
+        "error": true
+      },
+      "artifact-90a068e7c41ce35e": "<REPO>/.alinery/tasks/child/artifacts/attachments/c.png",
+      "artifact-9c4d0ae6bc28709a": {
+        "error": true
+      },
+      "artifact-a2f6c538268ec73c": {
+        "error": true
+      },
+      "artifact-a6add48cea6d60ad": {
+        "error": true
+      },
+      "artifact-ae6d80dd74e95fa0": "<REPO>/.alinery/tasks/parent/artifacts/subtasks/old/attachments/old.png",
+      "artifact-cea25e0b34d26005": {
+        "error": true
+      },
+      "artifact-d2e6a454576dd03e": "<REPO>/.alinery/tasks/parent/artifacts/attachments/shot.png",
+      "artifact-d99e119b675bdfd3": {
+        "error": true
+      }
+    },
+    "reads": {
+      "artifact-09b802828bf3f28c": "parent ticket\n",
+      "artifact-3d61bc66da8d0ddd": {
+        "error": true
+      },
+      "artifact-4be72aaef13d3785": "n10\n",
+      "artifact-5a5f0257d53cc406": "child work\n",
+      "artifact-5d8a15c3a2a02a54": {
+        "error": true
+      },
+      "artifact-5f19f8765541b742": {
+        "error": true
+      },
+      "artifact-8e33c89b30385a55": {
+        "error": true
+      },
+      "artifact-8ff5eb1fa98b32e6": "n2\n",
+      "artifact-90a068e7c41ce35e": {
+        "error": true
+      },
+      "artifact-9c4d0ae6bc28709a": {
+        "error": true
+      },
+      "artifact-a2f6c538268ec73c": {
+        "error": true
+      },
+      "artifact-a6add48cea6d60ad": "deep a\n",
+      "artifact-ae6d80dd74e95fa0": {
+        "error": true
+      },
+      "artifact-cea25e0b34d26005": {
+        "error": true
+      },
+      "artifact-d2e6a454576dd03e": {
+        "error": true
+      },
+      "artifact-d99e119b675bdfd3": "old result\n"
+    },
+    "tree": [
+      {
+        "children": [],
+        "id": "artifact-5a5f0257d53cc406",
+        "kind": "owned",
+        "label": "01-child.md",
+        "owner_task_slug": "child",
+        "source": "owned"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "artifact-90a068e7c41ce35e",
+            "kind": "attachment",
+            "label": "c.png",
+            "owner_task_slug": "child",
+            "source": "owned"
+          }
+        ],
+        "id": "artifact-8e33c89b30385a55",
+        "kind": "subtask_folder",
+        "label": "Attachments",
+        "owner_task_slug": "child",
+        "source": "owned"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "artifact-09b802828bf3f28c",
+            "kind": "referenced",
+            "label": "00-ticket.md",
+            "owner_task_slug": "parent",
+            "source": "parent_context"
+          },
+          {
+            "children": [],
+            "id": "artifact-8ff5eb1fa98b32e6",
+            "kind": "referenced",
+            "label": "2-note.md",
+            "owner_task_slug": "parent",
+            "source": "parent_context"
+          },
+          {
+            "children": [],
+            "id": "artifact-4be72aaef13d3785",
+            "kind": "referenced",
+            "label": "10-note.md",
+            "owner_task_slug": "parent",
+            "source": "parent_context"
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "artifact-d2e6a454576dd03e",
+                "kind": "attachment",
+                "label": "shot.png",
+                "owner_task_slug": "parent",
+                "source": "parent_context"
+              }
+            ],
+            "id": "artifact-5f19f8765541b742",
+            "kind": "subtask_folder",
+            "label": "Attachments",
+            "owner_task_slug": "parent",
+            "source": "parent_context"
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "artifact-d99e119b675bdfd3",
+                "kind": "referenced",
+                "label": "01-result.md",
+                "owner_task_slug": "old",
+                "source": "snapshot"
+              },
+              {
+                "children": [
+                  {
+                    "children": [],
+                    "id": "artifact-ae6d80dd74e95fa0",
+                    "kind": "attachment",
+                    "label": "old.png",
+                    "owner_task_slug": "old",
+                    "source": "snapshot"
+                  }
+                ],
+                "id": "artifact-cea25e0b34d26005",
+                "kind": "subtask_folder",
+                "label": "Attachments",
+                "owner_task_slug": "old",
+                "source": "snapshot"
+              }
+            ],
+            "id": "artifact-5d8a15c3a2a02a54",
+            "kind": "subtask_folder",
+            "label": "old",
+            "owner_task_slug": "old",
+            "source": "snapshot"
+          },
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [],
+                    "id": "artifact-a6add48cea6d60ad",
+                    "kind": "referenced",
+                    "label": "a.md",
+                    "owner_task_slug": "parent",
+                    "source": "parent_context"
+                  }
+                ],
+                "id": "artifact-a2f6c538268ec73c",
+                "kind": "subtask_folder",
+                "label": "deep",
+                "owner_task_slug": "parent",
+                "source": "parent_context"
+              }
+            ],
+            "id": "artifact-3d61bc66da8d0ddd",
+            "kind": "subtask_folder",
+            "label": "research",
+            "owner_task_slug": "parent",
+            "source": "parent_context"
+          }
+        ],
+        "id": "artifact-9c4d0ae6bc28709a",
+        "kind": "subtask_folder",
+        "label": "Parent context",
+        "owner_task_slug": "parent",
+        "source": "parent_context"
+      }
+    ],
+    "unknown_node_refused": true
+  },
+  "parent": {
+    "paths": {
+      "artifact-141065586907fb38": {
+        "error": true
+      },
+      "artifact-236a71215865ccff": {
+        "error": true
+      },
+      "artifact-50f4434d84d7fefd": {
+        "error": true
+      },
+      "artifact-56f11b34a4da19af": "<REPO>/.alinery/tasks/parent/artifacts/attachments/shot.png",
+      "artifact-6a97c1a1d4fb1c67": "<REPO>/.alinery/tasks/parent/artifacts/subtasks/old/attachments/old.png",
+      "artifact-725bd31c2b7ec22d": {
+        "error": true
+      },
+      "artifact-7db3703e41098ac8": {
+        "error": true
+      },
+      "artifact-817fb474324d7e77": {
+        "error": true
+      },
+      "artifact-889fd024a43decfe": {
+        "error": true
+      },
+      "artifact-a0feb186f4d2ee25": {
+        "error": true
+      },
+      "artifact-aec4f4b353c8e433": "<REPO>/.alinery/tasks/child/artifacts/attachments/c.png",
+      "artifact-b7f7d3b3f0ca2c0e": {
+        "error": true
+      },
+      "artifact-d6e9671abcf6ebda": {
+        "error": true
+      },
+      "artifact-e1b9e48583df2c7f": {
+        "error": true
+      },
+      "artifact-f3d66b37e65d9764": {
+        "error": true
+      },
+      "artifact-f8c0590c7b9a89b0": {
+        "error": true
+      }
+    },
+    "reads": {
+      "artifact-141065586907fb38": {
+        "error": true
+      },
+      "artifact-236a71215865ccff": {
+        "error": true
+      },
+      "artifact-50f4434d84d7fefd": "n2\n",
+      "artifact-56f11b34a4da19af": {
+        "error": true
+      },
+      "artifact-6a97c1a1d4fb1c67": {
+        "error": true
+      },
+      "artifact-725bd31c2b7ec22d": "parent ticket\n",
+      "artifact-7db3703e41098ac8": {
+        "error": true
+      },
+      "artifact-817fb474324d7e77": "child work\n",
+      "artifact-889fd024a43decfe": "old result\n",
+      "artifact-a0feb186f4d2ee25": {
+        "error": true
+      },
+      "artifact-aec4f4b353c8e433": {
+        "error": true
+      },
+      "artifact-b7f7d3b3f0ca2c0e": {
+        "error": true
+      },
+      "artifact-d6e9671abcf6ebda": {
+        "error": true
+      },
+      "artifact-e1b9e48583df2c7f": {
+        "error": true
+      },
+      "artifact-f3d66b37e65d9764": "n10\n",
+      "artifact-f8c0590c7b9a89b0": "deep a\n"
+    },
+    "tree": [
+      {
+        "children": [],
+        "id": "artifact-725bd31c2b7ec22d",
+        "kind": "owned",
+        "label": "00-ticket.md",
+        "owner_task_slug": "parent",
+        "source": "owned"
+      },
+      {
+        "children": [],
+        "id": "artifact-50f4434d84d7fefd",
+        "kind": "owned",
+        "label": "2-note.md",
+        "owner_task_slug": "parent",
+        "source": "owned"
+      },
+      {
+        "children": [],
+        "id": "artifact-f3d66b37e65d9764",
+        "kind": "owned",
+        "label": "10-note.md",
+        "owner_task_slug": "parent",
+        "source": "owned"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "artifact-56f11b34a4da19af",
+            "kind": "attachment",
+            "label": "shot.png",
+            "owner_task_slug": "parent",
+            "source": "owned"
+          }
+        ],
+        "id": "artifact-a0feb186f4d2ee25",
+        "kind": "subtask_folder",
+        "label": "Attachments",
+        "owner_task_slug": "parent",
+        "source": "owned"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "artifact-817fb474324d7e77",
+            "kind": "referenced",
+            "label": "01-child.md",
+            "owner_task_slug": "child",
+            "source": "active_child"
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "artifact-aec4f4b353c8e433",
+                "kind": "attachment",
+                "label": "c.png",
+                "owner_task_slug": "child",
+                "source": "active_child"
+              }
+            ],
+            "id": "artifact-7db3703e41098ac8",
+            "kind": "subtask_folder",
+            "label": "Attachments",
+            "owner_task_slug": "child",
+            "source": "active_child"
+          }
+        ],
+        "id": "artifact-b7f7d3b3f0ca2c0e",
+        "kind": "subtask_folder",
+        "label": "child",
+        "owner_task_slug": "child",
+        "source": "active_child"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "artifact-889fd024a43decfe",
+            "kind": "referenced",
+            "label": "01-result.md",
+            "owner_task_slug": "old",
+            "source": "snapshot"
+          },
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "artifact-6a97c1a1d4fb1c67",
+                "kind": "attachment",
+                "label": "old.png",
+                "owner_task_slug": "old",
+                "source": "snapshot"
+              }
+            ],
+            "id": "artifact-d6e9671abcf6ebda",
+            "kind": "subtask_folder",
+            "label": "Attachments",
+            "owner_task_slug": "old",
+            "source": "snapshot"
+          }
+        ],
+        "id": "artifact-236a71215865ccff",
+        "kind": "subtask_folder",
+        "label": "old",
+        "owner_task_slug": "old",
+        "source": "snapshot"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "children": [],
+                "id": "artifact-f8c0590c7b9a89b0",
+                "kind": "owned",
+                "label": "a.md",
+                "owner_task_slug": "parent",
+                "source": "owned"
+              }
+            ],
+            "id": "artifact-e1b9e48583df2c7f",
+            "kind": "subtask_folder",
+            "label": "deep",
+            "owner_task_slug": "parent",
+            "source": "owned"
+          }
+        ],
+        "id": "artifact-141065586907fb38",
+        "kind": "subtask_folder",
+        "label": "research",
+        "owner_task_slug": "parent",
+        "source": "owned"
+      }
+    ],
+    "unknown_node_refused": true
+  }
+}

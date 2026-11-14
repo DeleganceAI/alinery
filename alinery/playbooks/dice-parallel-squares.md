@@ -4,7 +4,7 @@ key = "dice-parallel-squares"
 title = "Dice Loop + Parallel Squares"
 description = "Roll a die, fan out squares of 2, 3 and 5, join the complete results, then loop on 1-4 or stop on 5-6. Preserve every round."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "roll"

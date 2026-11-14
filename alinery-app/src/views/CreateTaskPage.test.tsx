@@ -8,6 +8,7 @@ import type {
   BoardTask,
   Config,
   CreateTaskResult,
+  DraftAttachments,
   LinearTicket,
   PickerPreferences,
   PlaybookCatalog,
@@ -16,6 +17,7 @@ import type {
   ScopedPlaybook,
   TargetedCreateResult,
   Task,
+  TaskAttachment,
   TaskSourceBranches,
 } from "../types";
 import { CreateTaskPage, stepModelDisplay } from "./CreateTaskPage";
@@ -45,7 +47,7 @@ const sources: ScopedPlaybook[] = [
     title,
     description: `${title} instructions`,
     default_model: "",
-    default_harness: "omp",
+    default_harness: "vinculum",
     preamble: "",
     section_order: ["build"],
     step: [
@@ -122,7 +124,7 @@ const draftTask: BoardTask = {
   current_column_title: "",
 };
 
-const readConfigForRepo = vi.hoisted(() =>
+const readEffectiveConfig = vi.hoisted(() =>
   vi.fn(
     async () =>
       ({
@@ -135,16 +137,49 @@ const taskSourceBranchesForRepo = vi.hoisted(() => vi.fn<(repoPath: string, sele
 
 vi.mock("../ipc", () =>
   mockIpc({
-    taskSourceBranchesForRepo,
-    readConfigForRepo,
-    listPlaybookCatalog: vi.fn(async () => structuredClone(catalog)),
-    readPlaybook: vi.fn(),
-    prepareTaskAttachments: vi.fn(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
     connectionStatuses: vi.fn(async () => []),
-    listHarnessModelsForRepo: vi.fn(async () => []),
     getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} }) as unknown as Webview),
   }),
 );
+
+const listModels = vi.hoisted(() => vi.fn(async () => [] as string[]));
+// The model list is the daemon's ProviderService (sync/providers), not ipc.
+vi.mock("../sync/providers", () => ({ listModels }));
+// The source branches are the daemon's GitService (sync/git), not ipc.
+vi.mock("../sync/git", () => ({ taskSourceBranchesForRepo }));
+// The import's repository facts (origin URL, token override) come from the daemon (sync/imports.test.ts); here the request is what the page sends.
+vi.mock("../sync/imports", async () => ({
+  importGithubIssue: async (repo: string, reference: string) => (await import("../ipc")).importGithubForRepo(repo, reference, null, null),
+}));
+
+// The playbook library is the daemon's PlaybookService (sync/playbooks), not ipc.
+type PlaybookReads = typeof import("../sync/playbooks");
+const playbookReads = vi.hoisted(() => ({
+  listPlaybookCatalog: vi.fn<PlaybookReads["listPlaybookCatalog"]>(),
+  readPlaybook: vi.fn<PlaybookReads["readPlaybook"]>(),
+  savePlaybookPickerPreferences: vi.fn<PlaybookReads["savePlaybookPickerPreferences"]>(),
+}));
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookReads }));
+
+// The task writes live in sync/tasks (the daemon's TaskService, DraftService and BlobService), not in ipc.
+type TaskWrites = typeof import("../sync/tasks");
+const taskWrites = vi.hoisted(() => ({
+  createTaskForRepo: vi.fn<TaskWrites["createTaskForRepo"]>(),
+  writeDraftForRepo: vi.fn<TaskWrites["writeDraftForRepo"]>(),
+  readDraftAttachmentsForRepo: vi.fn<TaskWrites["readDraftAttachmentsForRepo"]>(),
+  deleteDraftForRepo: vi.fn<TaskWrites["deleteDraftForRepo"]>(),
+  prepareTaskAttachments: vi.fn<TaskWrites["prepareTaskAttachments"]>(async () => ({ attachments: [], attachment_urls: [], attachment_errors: [] })),
+}));
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), ...taskWrites }));
+// Creating a task must not create or start a session on its own: those are the daemon's SessionService.
+const sessionWrites = vi.hoisted(() => ({ createSession: vi.fn(), startSession: vi.fn() }));
+vi.mock("../sync/sessions", async (actual) => ({ ...(await actual<typeof import("../sync/sessions")>()), ...sessionWrites }));
+
+// The saved ticket a draft carries is read through BlobService.
+const artifactReads = vi.hoisted(() => ({ readArtifactText: vi.fn<(repo: string, slug: string, name: string) => Promise<string>>() }));
+vi.mock("../sync/artifacts", async (actual) => ({ ...(await actual<typeof import("../sync/artifacts")>()), ...artifactReads }));
+
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), readEffectiveConfig }));
 
 import * as ipc from "../ipc";
 
@@ -172,7 +207,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  readConfigForRepo.mockResolvedValue({
+  readEffectiveConfig.mockResolvedValue({
     defaults: { harness: "claude", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
   taskSourceBranchesForRepo.mockReset().mockImplementation(async (_repoPath: string, selectedBaseRef?: string | null) => ({
@@ -183,19 +218,19 @@ beforeEach(() => {
     head: { kind: "branch", full_ref: "refs/heads/main", name: "main" },
     selected: selectedBaseRef == null ? null : { base_ref: selectedBaseRef, available: ["refs/heads/main", "refs/heads/release"].includes(selectedBaseRef) },
   }));
-  vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
+  vi.mocked(playbookReads.listPlaybookCatalog).mockImplementation(async () => structuredClone(catalog));
   vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
-  vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => {
+  vi.mocked(playbookReads.readPlaybook).mockImplementation(async (reference) => {
     const source = sources.find((item) => item.source.reference.scope === reference.scope && item.source.reference.key === reference.key);
     if (!source) throw new Error(`Unknown test playbook: ${reference.scope}/${reference.key}`);
     return structuredClone(source);
   });
-  vi.mocked(ipc.createTaskForRepo).mockResolvedValue(readyReply);
-  vi.mocked(ipc.savePlaybookPickerPreferences).mockReset().mockResolvedValue(undefined);
-  vi.mocked(ipc.writeDraftForRepo)
+  vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue(readyReply);
+  vi.mocked(playbookReads.savePlaybookPickerPreferences).mockReset().mockResolvedValue(undefined);
+  vi.mocked(taskWrites.writeDraftForRepo)
     .mockReset()
     .mockResolvedValue({ slug: "draft-storage" } as Task);
-  vi.mocked(ipc.readDraftAttachmentsForRepo).mockReset().mockResolvedValue({ entries: [], images: [] });
+  vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockReset().mockResolvedValue({ entries: [], images: [] });
 });
 afterEach(() => {
   cleanup();
@@ -211,112 +246,11 @@ describe("provider imports", () => {
     await screen.findByRole("radiogroup", { name: "Choose playbook" });
 
     expect(ipc.connectionStatuses).not.toHaveBeenCalled();
-    expect(ipc.listHarnessModelsForRepo).not.toHaveBeenCalled();
+    expect(listModels).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Initial harness")).toBeNull();
     expect(screen.queryByLabelText("Harness")).toBeNull();
     expect(screen.getByRole("button", { name: "GitHub" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Linear" })).toBeDefined();
-  });
-});
-
-describe("continuation choices", () => {
-  it("uses graph destinations rather than step order and submits an explicit manual choice", async () => {
-    const source = structuredClone(sources[0]);
-    const build = { ...source.definition.step[0], auto_advance_default: true };
-    const review = { ...build, key: "review", title: "Review", inputs: [{ path: "result.md", mode: "single" as const }], outputs: [{ path: "review.md" }] };
-    source.definition.step = [review, build];
-    source.definition.section_order = ["review", "build"];
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(source);
-    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-
-    await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
-    const choices = within(screen.getByRole("group", { name: /Build/ }));
-    expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(choices.getByRole("button", { name: "Wait for me" }));
-    expect(choices.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.change(screen.getByLabelText("Build model"), { target: { value: "build-override" } });
-    expect(choices.getByRole("button", { name: "Wait for me" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByRole("group", { name: /Review/ })).toBeNull();
-    expect(screen.getByText("Playbook complete").closest("button")).toBeNull();
-    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Manual build" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
-      expect.objectContaining({ request: expect.objectContaining({ auto_advance_steps: ["review"], step_models: { build: "build-override" } }) }),
-    );
-  });
-
-  it("shows choices for a self-loop but plain completion for a one-step sink", async () => {
-    const loop = structuredClone(sources[0]);
-    loop.definition.step[0].inputs = [{ path: "result.md", mode: "single" }];
-    vi.mocked(ipc.readPlaybook).mockResolvedValueOnce(loop);
-    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    const choices = within(await screen.findByRole("group", { name: "Build" }));
-    fireEvent.click(choices.getByRole("button", { name: "Continue automatically" }));
-    expect(choices.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByText("Playbook complete")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot workflow preview" });
-    expect(screen.queryByRole("group", { name: "Build" })).toBeNull();
-    expect(screen.getByText("Playbook complete").closest("button")).toBeNull();
-  });
-
-  it("saves and reopens all-manual choices, retains them on refresh, and resets them for another definition", async () => {
-    const loop = structuredClone(sources[0]);
-    loop.definition.step[0].inputs = [{ path: "result.md", mode: "single" }];
-    loop.definition.step[0].auto_advance_default = true;
-    const alternate = structuredClone(loop);
-    alternate.source = sources[3].source;
-    alternate.definition.title = "One-shot";
-    alternate.definition.key = "one-shot";
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? alternate : loop));
-    const view = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    fireEvent.click(within(await screen.findByRole("group", { name: "Build" })).getByRole("button", { name: "Wait for me" }));
-    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Manual draft" } });
-    await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ autoAdvance: [], name: "Manual draft" })));
-    const savedCalls = vi.mocked(ipc.writeDraftForRepo).mock.calls;
-    const saved = savedCalls[savedCalls.length - 1]?.[0];
-    if (!saved || !Array.isArray(saved.autoAdvance)) throw new Error("Expected saved draft with explicit continuation choices");
-    view.unmount();
-    const reopened = render(
-      <CreateTaskPage
-        initialDraft={{ ...draftTask, name: saved.name, auto_advance: saved.autoAdvance }}
-        activeRepo="/repo"
-        knownRepos={["/repo"]}
-        onCancel={() => {}}
-        onCreated={() => {}}
-      />,
-    );
-    expect(
-      within(await screen.findByRole("group", { name: "Build" }))
-        .getByRole("button", { name: "Wait for me" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    fireEvent.focus(window);
-    expect(
-      within(await screen.findByRole("group", { name: "Build" }))
-        .getByRole("button", { name: "Wait for me" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ auto_advance_steps: [] }) }));
-    reopened.unmount();
-    render(<CreateTaskPage initialDraft={{ ...draftTask, auto_advance: [] }} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByRole("group", { name: "Build" });
-    fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
-    await screen.findByRole("region", { name: "One-shot workflow preview" });
-    expect(
-      within(screen.getByRole("group", { name: "Build" }))
-        .getByRole("button", { name: "Continue automatically" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Reset defaults" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ request: expect.objectContaining({ auto_advance_steps: ["build"] }) }));
   });
 });
 
@@ -360,7 +294,7 @@ describe("GitHub imports", () => {
       title: "Imported title",
       description: "Imported description",
     });
-    vi.mocked(ipc.writeDraftForRepo).mockResolvedValue({
+    vi.mocked(taskWrites.writeDraftForRepo).mockResolvedValue({
       slug: "imported-title",
     } as Task);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -372,19 +306,19 @@ describe("GitHub imports", () => {
 
     await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported title"));
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Imported description");
-    expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo", "owner/repo#2");
+    expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo", "owner/repo#2", null, null);
     await new Promise<void>((resolve) => setTimeout(resolve, 450));
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited title" } });
-    await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalled(), { timeout: 1_000 });
-    expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
+    await waitFor(() => expect(taskWrites.writeDraftForRepo).toHaveBeenCalled(), { timeout: 1_000 });
+    expect(taskWrites.writeDraftForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/repo",
         name: "Edited title",
         description: "Imported description",
         githubIssue: "owner/repo#2",
-        harness: "omp",
+        harness: "vinculum",
       }),
     );
   });
@@ -405,7 +339,7 @@ describe("GitHub imports", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/repo-b" } });
     resolveImport({ reference: "owner/repo#9", title: "Stale title", description: "Stale description" });
 
-    await waitFor(() => expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo-a", "owner/repo#9"));
+    await waitFor(() => expect(ipc.importGithubForRepo).toHaveBeenCalledWith("/repo-a", "owner/repo#9", null, null));
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Repository B state");
     expect(screen.getByPlaceholderText(/Describe the feature/)).not.toHaveProperty("value", "Stale description");
   });
@@ -420,13 +354,13 @@ describe("scoped playbook selection", () => {
     expect(screen.getByText("Recommended")).toBeTruthy();
     expect(screen.getAllByRole("radio")).toHaveLength(5);
     expect(screen.queryByRole("combobox", { name: "Show installed playbooks" })).toBeNull();
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 
   it("persists stars and explicit unstars across refresh without changing the selection or draft", async () => {
     let saved: PickerPreferences = structuredClone(catalog.picker_preferences);
-    vi.mocked(ipc.listPlaybookCatalog).mockImplementation(async () => ({ ...structuredClone(catalog), picker_preferences: structuredClone(saved) }));
-    vi.mocked(ipc.savePlaybookPickerPreferences).mockImplementation(async (preferences) => {
+    vi.mocked(playbookReads.listPlaybookCatalog).mockImplementation(async () => ({ ...structuredClone(catalog), picker_preferences: structuredClone(saved) }));
+    vi.mocked(playbookReads.savePlaybookPickerPreferences).mockImplementation(async (preferences) => {
       saved = structuredClone(preferences);
     });
     const view = render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -435,7 +369,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByPlaceholderText(/Describe the feature/), { target: { value: "Keep this context" } });
     fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
     await screen.findByRole("button", { name: "Unstar One-shot" });
-    expect(ipc.savePlaybookPickerPreferences).toHaveBeenLastCalledWith(
+    expect(playbookReads.savePlaybookPickerPreferences).toHaveBeenLastCalledWith(
       expect.objectContaining({ entries: expect.arrayContaining([expect.objectContaining({ reference: sources[3].source.reference, preferred: true })]) }),
       "/repo",
     );
@@ -444,14 +378,14 @@ describe("scoped playbook selection", () => {
     expect(saved.entries).toContainEqual(expect.objectContaining({ reference: sources[0].source.reference, preferred: false }));
     expect(screen.getAllByRole("radio")[0]).toHaveProperty("value", "bundled/one-shot");
     fireEvent.focus(window);
-    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(playbookReads.listPlaybookCatalog).toHaveBeenCalledTimes(2));
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.getByRole("button", { name: "Star SuperDevelop" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("button", { name: "Unstar One-shot" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Keep my draft");
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Keep this context");
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     view.unmount();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "One-shot workflow preview" });
@@ -465,18 +399,18 @@ describe("scoped playbook selection", () => {
       order: [sources[3].source.reference],
       entries: [{ reference: sources[3].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(starred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(starred);
     render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.getAllByRole("radio")[0]).toHaveProperty("value", "bundled/one-shot");
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Draft task");
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
   });
 
   it("commits star changes only after success and blocks concurrent writes and focus refreshes", async () => {
     const save = deferred<void>();
-    vi.mocked(ipc.savePlaybookPickerPreferences).mockReturnValue(save.promise);
+    vi.mocked(playbookReads.savePlaybookPickerPreferences).mockReturnValue(save.promise);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
@@ -484,8 +418,8 @@ describe("scoped playbook selection", () => {
     expect(screen.getByRole("button", { name: "Star Global SuperDevelop" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: "Star Global SuperDevelop" }));
     fireEvent.focus(window);
-    expect(ipc.savePlaybookPickerPreferences).toHaveBeenCalledTimes(1);
-    expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(1);
+    expect(playbookReads.savePlaybookPickerPreferences).toHaveBeenCalledTimes(1);
+    expect(playbookReads.listPlaybookCatalog).toHaveBeenCalledTimes(1);
     await act(async () => save.reject(new Error("disk full")));
     expect(screen.getByText(/Couldn't save starred playbooks: Error: disk full/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Star One-shot" })).toHaveProperty("disabled", false);
@@ -495,28 +429,28 @@ describe("scoped playbook selection", () => {
 
   it("does not apply a pending star save to another repository", async () => {
     const save = deferred<void>();
-    vi.mocked(ipc.savePlaybookPickerPreferences).mockReturnValue(save.promise);
+    vi.mocked(playbookReads.savePlaybookPickerPreferences).mockReturnValue(save.promise);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "/other" } });
-    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenLastCalledWith("/other"));
+    await waitFor(() => expect(playbookReads.listPlaybookCatalog).toHaveBeenLastCalledWith("/other"));
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     await act(async () => save.resolve());
     expect(screen.getByRole("button", { name: "Star One-shot" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByRole("button", { name: "Unstar One-shot" })).toBeNull();
-    expect(ipc.savePlaybookPickerPreferences).toHaveBeenCalledWith(expect.anything(), "/repo");
+    expect(playbookReads.savePlaybookPickerPreferences).toHaveBeenCalledWith(expect.anything(), "/repo");
   });
 
   it("keeps malformed preferences read-only while allowing explicit playbook selection", async () => {
     const invalid = structuredClone(catalog);
     invalid.diagnostics = [{ code: "picker_preferences", message: "Malformed picker preferences", line: 1, field: "preferences", severity: "error" }];
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(invalid);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(invalid);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.getByRole("button", { name: "Star One-shot" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: "Star One-shot" }));
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
     await screen.findByRole("region", { name: "One-shot workflow preview" });
   });
@@ -530,7 +464,7 @@ describe("scoped playbook selection", () => {
       inputs: index === 2 ? [{ path: "sources/*.md", mode: "each" as const }] : [],
       outputs: [{ path: `result-${index}.md` }],
     }));
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(source);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(source);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const preview = within(await screen.findByRole("region", { name: "SuperDevelop workflow preview" }));
     expect(preview.getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Frame the question", "Gather sources", "Read sourcesParallel"]);
@@ -566,7 +500,7 @@ describe("scoped playbook selection", () => {
     expect(description).toHaveProperty("value", "Keep the task context");
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", true);
     expect(document.activeElement).toBe(trigger);
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
   });
 
   it.each(["metaKey", "ctrlKey"])("suppresses the create shortcut with %s while inspecting a workflow", async (modifier) => {
@@ -576,10 +510,10 @@ describe("scoped playbook selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "View workflow" }));
     const dialog = await screen.findByRole("dialog", { name: "SuperDevelop workflow" });
     fireEvent.keyDown(dialog, { key: "Enter", [modifier]: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", [modifier]: true });
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1));
   });
 
   it.each([false, true])("opens the exact scoped seed first without persisting or creating (preferred: %s)", async (seedPreferred) => {
@@ -589,7 +523,7 @@ describe("scoped playbook selection", () => {
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
     if (seedPreferred) preferred.picker_preferences.entries.push({ ...preferred.picker_preferences.entries[0], reference: sources[2].source.reference });
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "Repository SuperDevelop workflow preview" });
     expect(screen.getByRole("radio", { name: "Repository SuperDevelop — repo/superdevelop" })).toHaveProperty("checked", true);
@@ -601,11 +535,11 @@ describe("scoped playbook selection", () => {
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
     });
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
-    expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
-    expect(ipc.startSession).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" }));
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     expect(screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(displayedOrder);
@@ -615,7 +549,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Seeded task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({ playbook: { reference: sources[2].source.reference, source: sources[2].source_text } }),
       }),
@@ -630,11 +564,11 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("radio", { name: /One-shot/ });
     expect(screen.getByRole("radio", { name: "SuperDevelop — bundled/superdevelop" })).toHaveProperty("checked", false);
     expect(screen.queryByRole("region", { name: /workflow preview$/ })).toBeNull();
-    expect(ipc.readPlaybook).not.toHaveBeenCalled();
+    expect(playbookReads.readPlaybook).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Blocked task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
     await screen.findByRole("region", { name: "One-shot workflow preview" });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
@@ -657,8 +591,8 @@ describe("scoped playbook selection", () => {
     expect(screen.queryByRole("region", { name: /workflow preview$/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
   });
 
   it("starts with the first valid starred playbook and expands only the selected card", async () => {
@@ -675,7 +609,7 @@ describe("scoped playbook selection", () => {
         last_imported_at_ms: null,
       })),
     };
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "One-shot workflow preview" });
     const choices = () => screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
@@ -696,7 +630,7 @@ describe("scoped playbook selection", () => {
       order: [sources[0].source.reference],
       entries: [{ reference: sources[0].source.reference, preferred: true, hidden: false, collapsed: false, badge: null, color: null, last_imported_at_ms: null }],
     };
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(preferred);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(preferred);
     const onCancel = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={onCancel} onCreated={() => {}} />);
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
@@ -723,7 +657,7 @@ describe("scoped playbook selection", () => {
     ]);
     expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Preserved draft");
     expect(description).toHaveProperty("value", "Keep this task description");
-    expect(ipc.savePlaybookPickerPreferences).not.toHaveBeenCalled();
+    expect(playbookReads.savePlaybookPickerPreferences).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "no matching workflow" } });
     expect(screen.queryByRole("radio")).toBeNull();
     fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search playbooks" }), { key: "Escape" });
@@ -740,15 +674,15 @@ describe("scoped playbook selection", () => {
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
     fireEvent.change(screen.getByRole("searchbox", { name: "Search playbooks" }), { target: { value: "superdevelop" } });
     fireEvent.keyDown(screen.getByRole("button", { name: "Clear playbooks search" }), { key: "Enter", [modifier]: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", [modifier]: true });
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1));
   });
 
   it("opens an unconfigured repository in the searchable library including legacy-hidden choices", async () => {
     const unconfigured = structuredClone(catalog);
     unconfigured.picker_preferences.entries = [{ reference: sources[1].source.reference, hidden: true, collapsed: false, badge: null, color: null, last_imported_at_ms: null }];
-    vi.mocked(ipc.listPlaybookCatalog).mockResolvedValue(unconfigured);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValue(unconfigured);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("searchbox", { name: "Search playbooks" });
     const choices = screen.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value);
@@ -775,8 +709,8 @@ describe("scoped playbook selection", () => {
 
     const nextCatalog = deferred<PlaybookCatalog>();
     const nextSource = deferred<ScopedPlaybook>();
-    vi.mocked(ipc.listPlaybookCatalog).mockReturnValueOnce(nextCatalog.promise);
-    vi.mocked(ipc.readPlaybook).mockReturnValue(nextSource.promise);
+    vi.mocked(playbookReads.listPlaybookCatalog).mockReturnValueOnce(nextCatalog.promise);
+    vi.mocked(playbookReads.readPlaybook).mockReturnValue(nextSource.promise);
     fireEvent.focus(window);
     expect(screen.getByRole("region", { name: "Global SuperDevelop workflow preview" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
@@ -804,13 +738,13 @@ describe("scoped playbook selection", () => {
     fireEvent.click(await screen.findByRole("button", { name: "View workflow" }));
     expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
     const refreshedSource = deferred<ScopedPlaybook>();
-    vi.mocked(ipc.readPlaybook).mockReturnValue(refreshedSource.promise);
+    vi.mocked(playbookReads.readPlaybook).mockReturnValue(refreshedSource.promise);
     await act(async () => fireEvent.focus(window));
     expect(screen.getByRole("dialog", { name: "SuperDevelop workflow" })).toBeTruthy();
     await act(async () => refreshedSource.reject(new Error("Could not read updated playbook")));
     expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
     await act(async () => fireEvent.focus(window));
     expect(screen.getByRole("region", { name: "SuperDevelop workflow preview" })).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "SuperDevelop workflow" })).toBeNull();
@@ -823,9 +757,9 @@ describe("scoped playbook selection", () => {
     await screen.findByRole("region", { name: "SuperDevelop workflow preview" });
     const message = failure === "request" ? "Couldn't load repository settings." : "Some playbook sources could not be loaded.";
     if (failure === "request") {
-      vi.mocked(ipc.listPlaybookCatalog).mockRejectedValueOnce(new Error("Temporary catalog failure"));
+      vi.mocked(playbookReads.listPlaybookCatalog).mockRejectedValueOnce(new Error("Temporary catalog failure"));
     } else {
-      vi.mocked(ipc.listPlaybookCatalog).mockResolvedValueOnce({
+      vi.mocked(playbookReads.listPlaybookCatalog).mockResolvedValueOnce({
         ...structuredClone(catalog),
         diagnostics: [{ code: "picker_preferences", message: "Malformed preferences", field: null, line: null, severity: "error" }],
       });
@@ -848,7 +782,7 @@ describe("scoped playbook selection", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Global SuperDevelop/ }));
     await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.focus(window);
-    await waitFor(() => expect(ipc.listPlaybookCatalog).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(playbookReads.listPlaybookCatalog).toHaveBeenCalledTimes(3));
     await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByRole("radio", { name: /Global SuperDevelop/ })).toHaveProperty("checked", true);
     expect(screen.getByRole("radio", { name: /Broken/ })).toHaveProperty("disabled", true);
@@ -859,7 +793,7 @@ describe("scoped playbook selection", () => {
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Scoped task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/other",
         request: expect.objectContaining({ playbook: { reference: { scope: "global", key: "superdevelop" }, source: sources[1].source_text } }),
@@ -869,45 +803,29 @@ describe("scoped playbook selection", () => {
 
   it("drops removed step keys on same-source refresh without restoring unchecked completion choices", async () => {
     const original = structuredClone(sources[0]);
-    const build = { ...original.definition.step[0], inputs: [{ path: "result.md", mode: "single" as const }], auto_advance_default: true };
+    const build = { ...original.definition.step[0], auto_advance_default: true };
     original.definition.step = [build, { ...build, key: "removed", title: "Removed" }, { ...build, key: "keep", title: "Keep" }];
     const revised = structuredClone(original);
     revised.source_text = "revised bundled/superdevelop source\n";
     revised.definition.step = [build, { ...build, key: "keep", title: "Keep" }, { ...build, key: "added", title: "Added" }];
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(original);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(original);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
 
-    const buildChoice = within(await screen.findByRole("group", { name: "Build" }));
-    expect(buildChoice.getByRole("button", { name: "Continue automatically" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(buildChoice.getByRole("button", { name: "Wait for me" }));
-    expect(
-      within(screen.getByRole("group", { name: "Removed" }))
-        .getByRole("button", { name: "Continue automatically" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(revised);
+    const buildChoice = await screen.findByRole("checkbox", { name: "Build" });
+    expect(buildChoice).toHaveProperty("checked", true);
+    fireEvent.click(buildChoice);
+    expect(screen.getByRole("checkbox", { name: "Removed" })).toHaveProperty("checked", true);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(revised);
     fireEvent.focus(window);
 
-    expect(
-      within(await screen.findByRole("group", { name: "Added" }))
-        .getByRole("button", { name: "Wait for me" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(screen.queryByRole("group", { name: "Removed" })).toBeNull();
-    expect(
-      within(screen.getByRole("group", { name: "Build" }))
-        .getByRole("button", { name: "Wait for me" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(
-      within(screen.getByRole("group", { name: "Keep" }))
-        .getByRole("button", { name: "Continue automatically" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
+    expect(await screen.findByRole("checkbox", { name: "Added" })).toHaveProperty("checked", false);
+    expect(screen.queryByRole("checkbox", { name: "Removed" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Build" })).toHaveProperty("checked", false);
+    expect(screen.getByRole("checkbox", { name: "Keep" })).toHaveProperty("checked", true);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Refreshed task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({
           playbook: { reference: original.source.reference, source: revised.source_text },
@@ -918,22 +836,22 @@ describe("scoped playbook selection", () => {
   });
 
   it("does not replace an unavailable configured default with the first catalog item", async () => {
-    readConfigForRepo.mockResolvedValue({ defaults: { harness: "omp", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
+    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "vinculum", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: /One-shot/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
   });
 });
 
-describe("OMP model default", () => {
+describe("Vinculum model default", () => {
   it("does not prefill a leftover claude-owned model", async () => {
-    readConfigForRepo.mockResolvedValue({
+    readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "claude", model: "sonnet", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
@@ -951,10 +869,10 @@ describe("OMP model default", () => {
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
   });
 
-  it("preserves a configured OMP default for signed-in accounts", async () => {
+  it("preserves a configured Vinculum default for signed-in accounts", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
-    readConfigForRepo.mockResolvedValue({
-      defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+    readEffectiveConfig.mockResolvedValue({
+      defaults: { harness: "vinculum", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
@@ -970,7 +888,7 @@ describe("OMP model default", () => {
 
   it.each(["anthropic/claude-sonnet-4-6", ""])("preserves the saved draft model %j while signed in", async (model) => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
-    const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
+    const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "vinculum", model } };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", model);
@@ -1013,9 +931,22 @@ describe("per-step default model", () => {
     });
   });
 
-  it("opens the model picker from both step and task model controls", async () => {
+  it("places Task Default Model above automatic completion permissions and drops the old Model label", async () => {
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    const stepModel = await screen.findByLabelText("Build model");
+    await screen.findByRole("checkbox", { name: "Build" });
+    const taskModel = screen.getByLabelText("Task Default Model");
+    const permission = screen.getByText("Automatic completion permission for future executions");
+    expect(taskModel.compareDocumentPosition(permission) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(screen.queryByLabelText("Model")).toBeNull();
+  });
+
+  it("gives each permission row its own model control", async () => {
+    render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
+    const checkbox = await screen.findByRole("checkbox", { name: "Build" });
+    const stepModel = screen.getByLabelText("Build model");
+    expect(checkbox.closest(".step-model-row")?.contains(stepModel)).toBe(true);
+    expect(screen.getAllByText("Step model")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Browse models" })).toBeNull();
     fireEvent.click(stepModel);
     const stepDialog = await screen.findByRole("dialog", { name: /Models|Providers/ });
     fireEvent.click(within(stepDialog).getAllByRole("button", { name: "Cancel" })[0]);
@@ -1037,7 +968,7 @@ describe("per-step default model", () => {
   it("keeps a playbook step pin when the task model changes", async () => {
     const pinned = structuredClone(sources[0]);
     pinned.definition.step[0].model = "step-pin";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(pinned);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(stepModel.value).toBe("step-pin");
@@ -1050,7 +981,7 @@ describe("per-step default model", () => {
   it("keeps a playbook-wide model when the task model changes", async () => {
     const wide = structuredClone(sources[0]);
     wide.definition.default_model = "playbook-wide";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(wide);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(wide);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
     expect(stepModel.value).toBe("playbook-wide");
@@ -1068,10 +999,10 @@ describe("per-step default model", () => {
     expect((screen.getByLabelText("Build model") as HTMLInputElement).value).toBe("step-override");
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Override task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ build: "step-override" });
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.playbook.source).toBe(sources[0].source_text);
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.auto_advance_steps).toEqual([]);
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ build: "step-override" });
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.playbook.source).toBe(sources[0].source_text);
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.auto_advance_steps).toEqual([]);
   });
 
   it("removes the override when the step box returns to the chain", async () => {
@@ -1082,8 +1013,8 @@ describe("per-step default model", () => {
     expect(screen.queryByText("Override")).toBeNull();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Reset task" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({});
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({});
   });
 
   it("drops an override when the task model catches up and then follows the task model", async () => {
@@ -1111,7 +1042,7 @@ describe("per-step default model", () => {
       { ...second.definition.step[0], key: "added", title: "Added", model: "new-pin" },
     ];
     second.definition.section_order = ["keep", "added"];
-    vi.mocked(ipc.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? second : first));
+    vi.mocked(playbookReads.readPlaybook).mockImplementation(async (reference) => structuredClone(reference.key === "one-shot" ? second : first));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     fireEvent.change(await screen.findByLabelText("Task Default Model"), { target: { value: "task-model" } });
     fireEvent.change(await screen.findByLabelText("Keep model"), { target: { value: "kept-override" } });
@@ -1122,13 +1053,13 @@ describe("per-step default model", () => {
     expect(screen.getByText("Playbook step")).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Switched" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ keep: "kept-override" });
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.step_models).toEqual({ keep: "kept-override" });
   });
 
   it("preserves saved step overrides through a failed focus refresh and draft reopen", async () => {
     let saved: BoardTask = { ...draftTask, step_models: { build: "saved-override" } };
-    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
+    vi.mocked(taskWrites.writeDraftForRepo).mockImplementation(async (args) => {
       saved = { ...saved, name: args.name, step_models: args.stepModels ?? undefined };
       return { slug: saved.slug } as Task;
     });
@@ -1139,15 +1070,15 @@ describe("per-step default model", () => {
         form = render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
       });
       expect(screen.getByLabelText("Build model")).toHaveProperty("value", "saved-override");
-      vi.mocked(ipc.readPlaybook).mockRejectedValue(new Error("Could not read updated playbook"));
+      vi.mocked(playbookReads.readPlaybook).mockRejectedValue(new Error("Could not read updated playbook"));
       await act(async () => fireEvent.focus(window));
       expect(within(screen.getByRole("complementary", { name: "Playbook" })).getByText(/Could not read updated playbook/)).toBeTruthy();
       expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited while unavailable" } });
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Edited while unavailable", stepModels: { build: "saved-override" } }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Edited while unavailable", stepModels: { build: "saved-override" } }));
       form.unmount();
-      vi.mocked(ipc.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
+      vi.mocked(playbookReads.readPlaybook).mockResolvedValue(structuredClone(sources[0]));
       await act(async () => {
         render(<CreateTaskPage initialDraft={saved} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
       });
@@ -1165,14 +1096,14 @@ describe("per-step default model", () => {
       { ...restored.definition.step[0], key: "build", title: "Build", model: "" },
       { ...restored.definition.step[0], key: "review", title: "Review", model: "review-pin" },
     ];
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(restored);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(restored);
     render(
       <CreateTaskPage
         activeRepo="/repo"
         knownRepos={["/repo"]}
         onCancel={() => {}}
         onCreated={() => {}}
-        initialDraft={{ ...draftTask, launch_defaults: { harness: "omp", model: "task-model" }, step_models: { build: "restored-override" } }}
+        initialDraft={{ ...draftTask, launch_defaults: { harness: "vinculum", model: "task-model" }, step_models: { build: "restored-override" } }}
       />,
     );
     expect(((await screen.findByLabelText("Build model")) as HTMLInputElement).value).toBe("restored-override");
@@ -1185,7 +1116,7 @@ describe("per-step default model", () => {
   it("does not fill a step box from the remembered model", async () => {
     const pinned = structuredClone(sources[0]);
     pinned.definition.step[0].model = "step-pin";
-    vi.mocked(ipc.readPlaybook).mockResolvedValue(pinned);
+    vi.mocked(playbookReads.readPlaybook).mockResolvedValue(pinned);
     vi.stubGlobal("localStorage", { getItem: (key: string) => (key.includes("lastmodel") ? "remembered-model" : null), setItem: () => {} });
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
@@ -1193,24 +1124,24 @@ describe("per-step default model", () => {
     expect(stepModel.value).not.toBe("remembered-model");
   });
 
-  it("shows the configured omp model as product default only after the task model is cleared", async () => {
-    readConfigForRepo.mockResolvedValue({
-      defaults: { harness: "omp", model: "configured-omp", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+  it("shows the configured vinculum model as product default only after the task model is cleared", async () => {
+    readEffectiveConfig.mockResolvedValue({
+      defaults: { harness: "vinculum", model: "configured-vinculum", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const taskModel = await screen.findByLabelText("Task Default Model");
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
-    expect(taskModel).toHaveProperty("value", "configured-omp");
-    expect(stepModel.value).toBe("configured-omp");
+    expect(taskModel).toHaveProperty("value", "configured-vinculum");
+    expect(stepModel.value).toBe("configured-vinculum");
     expect(screen.queryByText("Product default")).toBeNull();
     fireEvent.change(taskModel, { target: { value: "" } });
-    expect(stepModel.value).toBe("configured-omp");
+    expect(stepModel.value).toBe("configured-vinculum");
     expect(screen.getByText("Product default")).toBeTruthy();
   });
 
   it("leaves a step box blank only when the whole chain is empty", async () => {
-    readConfigForRepo.mockResolvedValue({
-      defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+    readEffectiveConfig.mockResolvedValue({
+      defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
@@ -1232,8 +1163,8 @@ describe("Linear description images", () => {
 
   it("submits successful images first while preserving surrounding text, failed links, and URL attachments", async () => {
     vi.mocked(ipc.importLinearForRepo).mockResolvedValueOnce(ticket);
-    vi.mocked(ipc.prepareTaskAttachments).mockResolvedValueOnce({
-      attachments: [{ name: "manual.txt", bytes: "AQ==" }],
+    vi.mocked(taskWrites.prepareTaskAttachments).mockResolvedValueOnce({
+      attachments: [{ name: "manual.txt", upload_id: "up-manual" }],
       attachment_urls: ["https://example.test/manual.png"],
       attachment_errors: ["Could not read missing.txt"],
     });
@@ -1246,12 +1177,12 @@ describe("Linear description images", () => {
     await screen.findByText(image.name);
     expect(screen.getByText(imageError)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    const request = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request;
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    const request = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request;
     expect(request.description).toBe(description);
     expect(request.attachments).toEqual([
       { name: image.name, bytes: image.bytes },
-      { name: "manual.txt", bytes: "AQ==" },
+      { name: "manual.txt", upload_id: "up-manual" },
     ]);
     expect(request.attachment_urls).toEqual(["https://example.test/manual.png"]);
     expect(request.attachment_errors).toEqual([imageError, "Could not read missing.txt"]);
@@ -1265,13 +1196,13 @@ describe("Linear description images", () => {
     await screen.findByText(image.name);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
     const restored = description.replace(`attachments/${image.name}`, image.source_url);
-    await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ description: restored })));
+    await waitFor(() => expect(taskWrites.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ description: restored })));
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", description);
     fireEvent.click(screen.getByRole("button", { name: `Remove ${image.name}` }));
     expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", restored);
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request).toMatchObject({ description: restored, attachments: [] });
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request).toMatchObject({ description: restored, attachments: [] });
   });
 
   it("replaces Linear images on reimport and clears them after a successful GitHub import without removing manual files", async () => {
@@ -1314,9 +1245,9 @@ describe("Linear description images", () => {
     beginImport();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     if (end === "clear") {
-      vi.mocked(ipc.deleteDraftForRepo).mockResolvedValueOnce();
+      vi.mocked(taskWrites.deleteDraftForRepo).mockResolvedValueOnce();
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", ""));
     } else if (end === "repo roundtrip") {
@@ -1358,11 +1289,11 @@ describe("starting branch contract", () => {
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main");
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
-    vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("denied"));
+    vi.mocked(taskWrites.deleteDraftForRepo).mockRejectedValueOnce(new Error("denied"));
     fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
     await screen.findByText(/Couldn't clear the draft/);
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
-    vi.mocked(ipc.deleteDraftForRepo).mockResolvedValueOnce();
+    vi.mocked(taskWrites.deleteDraftForRepo).mockResolvedValueOnce();
     fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main"));
     expect(taskSourceBranchesForRepo).toHaveBeenLastCalledWith("/repo", null);
@@ -1383,10 +1314,10 @@ describe("starting branch contract", () => {
       await act(async () => vi.advanceTimersByTimeAsync(1000));
       expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", "Imported");
       expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
-      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited import" } });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/release" }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/release" }));
     } finally {
       cleanup();
       vi.useRealTimers();
@@ -1409,13 +1340,13 @@ describe("starting branch contract", () => {
     const title = screen.getByPlaceholderText("New task name…");
     fireEvent.keyDown(title, { key: "Enter", metaKey: true });
     fireEvent.keyDown(title, { key: "Enter", ctrlKey: true });
-    expect(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
+    expect(taskWrites.prepareTaskAttachments).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Retry starting branches" }));
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce();
   });
 
   it("ignores obsolete branch responses across A B A", async () => {
@@ -1458,7 +1389,7 @@ describe("starting branch contract", () => {
     await act(async () => abandoned.resolve(branchSnapshot("abandoned", ["abandoned"])));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/main"));
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
   });
 
   it("restores a detached source after HEAD moves and submits its full OID", async () => {
@@ -1474,7 +1405,7 @@ describe("starting branch contract", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ base_ref: oid }) }));
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ base_ref: oid }) }));
   });
 
   it.each(["", "release", "refs/heads/deleted", "b".repeat(40)])("blocks unavailable saved identity %j without substitution", async (base) => {
@@ -1484,7 +1415,7 @@ describe("starting branch contract", () => {
     expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", base);
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/main" } });
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
   });
@@ -1503,10 +1434,7 @@ describe("starting branch contract", () => {
     await waitFor(() => expect(screen.getByLabelText("Starting branch")).toHaveProperty("disabled", false));
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
-    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ base_ref: "refs/heads/release" }) }));
+    expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false);
   });
 
   it("saves source edits and restores them in the draft repository without rewriting on reopen", async () => {
@@ -1516,12 +1444,12 @@ describe("starting branch contract", () => {
         render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={() => {}} />),
       );
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
       fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", draftBaseRef: "refs/heads/release" }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", draftBaseRef: "refs/heads/release" }));
       view.unmount();
-      vi.mocked(ipc.writeDraftForRepo).mockClear();
+      vi.mocked(taskWrites.writeDraftForRepo).mockClear();
       await act(async () =>
         render(
           <CreateTaskPage
@@ -1535,7 +1463,7 @@ describe("starting branch contract", () => {
       );
       expect(screen.getByLabelText("Starting branch")).toHaveProperty("value", "refs/heads/release");
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
       expect(taskSourceBranchesForRepo).toHaveBeenLastCalledWith("/repo", "refs/heads/release");
     } finally {
       cleanup();
@@ -1561,21 +1489,21 @@ describe("starting branch contract", () => {
       );
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited" } });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
       await act(async () => pending.reject(new Error("read failed")));
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited again" } });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/deleted" }));
       view.unmount();
       const fresh = deferred<TaskSourceBranches>();
       taskSourceBranchesForRepo.mockReturnValueOnce(fresh.promise);
       await act(async () => render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />));
       fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Fresh edit" } });
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: null }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: null }));
       await act(async () => fresh.resolve(branchSnapshot()));
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      expect(ipc.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/main" }));
+      expect(taskWrites.writeDraftForRepo).toHaveBeenLastCalledWith(expect.objectContaining({ draftBaseRef: "refs/heads/main" }));
     } finally {
       cleanup();
       vi.useRealTimers();
@@ -1597,8 +1525,8 @@ describe("starting branch contract", () => {
       expect.soft(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
       fireEvent.keyDown(title, { key: "Enter", metaKey: true });
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
-      expect.soft(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
-      expect.soft(ipc.createTaskForRepo).not.toHaveBeenCalled();
+      expect.soft(taskWrites.prepareTaskAttachments).not.toHaveBeenCalled();
+      expect.soft(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     } finally {
       cleanup();
       vi.useRealTimers();
@@ -1606,14 +1534,14 @@ describe("starting branch contract", () => {
   });
 
   it("creates from the saved starting branch rather than an implicit HEAD", async () => {
-    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    vi.mocked(artifactReads.readArtifactText).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, branch: "new-task-branch", draft_base_ref: "refs/heads/release" };
     render(<CreateTaskPage initialDraft={saved} activeRepo="/other" knownRepos={["/other", "/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce();
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         repoPath: "/repo",
         request: expect.objectContaining({ base_ref: "refs/heads/release", branch_name: "new-task-branch" }),
@@ -1622,7 +1550,7 @@ describe("starting branch contract", () => {
   });
 
   it.each(["title", "session cap"] as const)("does not rewrite a reopened draft until a %s edit", async (field) => {
-    vi.mocked(ipc.readArtifactForRepo).mockResolvedValueOnce("Saved description");
+    vi.mocked(artifactReads.readArtifactText).mockResolvedValueOnce("Saved description");
     const saved = { ...draftTask, draft_base_ref: "refs/heads/release" };
     vi.useFakeTimers();
     try {
@@ -1632,12 +1560,12 @@ describe("starting branch contract", () => {
       expect(screen.getByRole("region", { name: /workflow preview$/ })).toBeDefined();
       expect(screen.getByPlaceholderText(/Describe the feature/)).toHaveProperty("value", "Saved description");
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
-      expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
       if (field === "title") fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited draft" } });
       else fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum live sessions" }), { target: { value: "7" } });
       await act(async () => vi.advanceTimersByTimeAsync(1_000));
-      expect(ipc.writeDraftForRepo).toHaveBeenCalledOnce();
-      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
+      expect(taskWrites.writeDraftForRepo).toHaveBeenCalledOnce();
+      expect(taskWrites.writeDraftForRepo).toHaveBeenCalledWith(
         expect.objectContaining({ draftBaseRef: "refs/heads/release", ...(field === "title" ? { name: "Edited draft" } : { maxLiveSessions: 7 }) }),
       );
     } finally {
@@ -1660,15 +1588,15 @@ describe("v2 task creation", () => {
       expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
       fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
     }
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     fireEvent.change(cap, { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     await screen.findByRole("button", { name: "Open task" });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ max_live_sessions: 3 }) }));
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ max_live_sessions: 3 }) }));
   });
 
   it.each(["started", "queued", "not_requested"] as const)("opens task detail automatically after successful creation (%s)", async (start) => {
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue({
       ...readyReply,
       start,
       sessions: [{ id: "root-a" }, { id: "root-b" }] as CreateTaskResult["sessions"],
@@ -1696,7 +1624,7 @@ describe("v2 task creation", () => {
   });
 
   it("keeps attachment warnings visible before opening a ready task", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue({
       ...readyReply,
       errors: [{ stage: "attachments", code: "import_failed", message: "Could not copy evidence.pdf" }],
     });
@@ -1723,7 +1651,7 @@ describe("v2 task creation", () => {
       ],
       errors: [{ stage: "launch", code: "spawn_failed", message: "Runner unavailable" }],
     } as CreateTaskResult;
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue(reply);
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue(reply);
     const onCreated = vi.fn();
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={onCreated} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
@@ -1740,9 +1668,9 @@ describe("v2 task creation", () => {
     await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Open session root-b" }));
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repo", task: reply.task, selectedSessionId: "root-b" }));
-    expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.createSessionForRepo).not.toHaveBeenCalled();
-    expect(ipc.startSession).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
+    expect(sessionWrites.createSession).not.toHaveBeenCalled();
+    expect(sessionWrites.startSession).not.toHaveBeenCalled();
   });
 
   it("waits for the stable draft identity and stops autosave throughout promotion", async () => {
@@ -1750,7 +1678,7 @@ describe("v2 task creation", () => {
     const saved = new Promise<Task>((resolve) => {
       resolveSave = resolve;
     });
-    vi.mocked(ipc.writeDraftForRepo).mockReturnValueOnce(saved);
+    vi.mocked(taskWrites.writeDraftForRepo).mockReturnValueOnce(saved);
     render(
       <CreateTaskPage initialDraft={draftTask} initialPlaybook={sources[2].source.reference} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />,
     );
@@ -1759,19 +1687,19 @@ describe("v2 task creation", () => {
     expect(screen.getByRole("radio", { name: /Repository SuperDevelop/ })).toHaveProperty("checked", false);
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/release" } });
     fireEvent.change(screen.getByLabelText("New task branch"), { target: { value: "destination" } });
-    await waitFor(() => expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(taskWrites.writeDraftForRepo).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Late edit" } });
     fireEvent.change(screen.getByLabelText("Starting branch"), { target: { value: "refs/heads/main" } });
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     await act(async () => resolveSave({ slug: "stable-draft" } as Task));
     await screen.findByRole("button", { name: "Open task" });
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
     });
-    expect(ipc.writeDraftForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.createTaskForRepo).toHaveBeenCalledWith(
+    expect(taskWrites.writeDraftForRepo).toHaveBeenCalledTimes(1);
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({
           draft_slug: "stable-draft",
@@ -1785,7 +1713,7 @@ describe("v2 task creation", () => {
   });
 
   it("keeps a partial reply without a task identity visible and blocks repeated creation", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockResolvedValue({
+    vi.mocked(taskWrites.createTaskForRepo).mockResolvedValue({
       ...readyReply,
       task: null,
       creation: "partial",
@@ -1798,11 +1726,11 @@ describe("v2 task creation", () => {
     await screen.findByText(/provisioning: Inspect durable state/);
     expect(screen.getByRole("button", { name: "Open task" })).toHaveProperty("disabled", true);
     fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
   });
 
   it("freezes creation and autosave after a lost provisioning reply", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("Connection closed"));
+    vi.mocked(taskWrites.createTaskForRepo).mockRejectedValue(new Error("Connection closed"));
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
@@ -1813,15 +1741,15 @@ describe("v2 task creation", () => {
     await act(async () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 450));
     });
-    expect(ipc.createTaskForRepo).toHaveBeenCalledTimes(1);
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).toHaveBeenCalledTimes(1);
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
   });
 });
 
 describe("task creation feedback", () => {
   it("signals opened before repository settings settle", async () => {
     let finishConfig!: (config: Config) => void;
-    readConfigForRepo.mockReturnValue(
+    readEffectiveConfig.mockReturnValue(
       new Promise<Config>((resolve) => {
         finishConfig = resolve;
       }),
@@ -1843,11 +1771,11 @@ describe("task creation feedback", () => {
     const result: CreateTaskResult = {
       ...readyReply,
       task: { name: "Slow task", slug: "slow-task", branch: "slow-task", worktree: "/repo/.alinery/worktrees/slow-task" } as Task,
-      sessions: [{ id: "s-slow-task", harness: "omp" }] as CreateTaskResult["sessions"],
+      sessions: [{ id: "s-slow-task", harness: "vinculum" }] as CreateTaskResult["sessions"],
       attachment_errors: [],
     };
     let finishCreate!: (result: CreateTaskResult) => void;
-    vi.mocked(ipc.createTaskForRepo).mockReturnValue(
+    vi.mocked(taskWrites.createTaskForRepo).mockReturnValue(
       new Promise<CreateTaskResult>((resolve) => {
         finishCreate = resolve;
       }),
@@ -1864,7 +1792,7 @@ describe("task creation feedback", () => {
     expect(toastSpies.success).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
     finishCreate(result);
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ ...result, repoPath: "/repo" }));
     await waitFor(() => expect(onBusy).toHaveBeenCalledWith(null));
@@ -1873,7 +1801,7 @@ describe("task creation feedback", () => {
   });
 
   it("resolves the loader to an error and keeps the typed name when the creation reply is lost", async () => {
-    vi.mocked(ipc.createTaskForRepo).mockRejectedValue(new Error("worktree add failed"));
+    vi.mocked(taskWrites.createTaskForRepo).mockRejectedValue(new Error("worktree add failed"));
     const onCreated = vi.fn();
     await startCreate(onCreated);
 
@@ -1892,7 +1820,7 @@ describe("task creation feedback", () => {
     await startCreate(onCreated);
 
     await waitFor(() => expect(toastSpies.toast).toHaveBeenCalledWith("A task is already being duplicated — wait for it to finish.", "error"));
-    expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
     expect(toastSpies.loading).not.toHaveBeenCalled();
   });
 });
@@ -1929,13 +1857,13 @@ describe("clipboard task attachments", () => {
   };
 
   it("restores autosaved pasted image bytes on reopen and persists image-only removal", async () => {
-    let saved: ipc.DraftAttachments = { entries: [], images: [] };
-    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
+    let saved: DraftAttachments = { entries: [], images: [] };
+    vi.mocked(taskWrites.writeDraftForRepo).mockImplementation(async (args) => {
       if (!args.draftAttachments) throw new Error("Missing draft attachments");
       saved = structuredClone(args.draftAttachments);
       return { slug: draftTask.slug } as Task;
     });
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
+    vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
     const first = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
     paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([0, 255, 128, 1])], "image.png", { type: "image/png" })]);
@@ -1947,8 +1875,8 @@ describe("clipboard task attachments", () => {
     expect(await screen.findByRole("img", { name: `Preview of ${imageName}` })).toHaveProperty("src", expect.stringContaining("blob:"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: imageName, bytes: "AP+AAQ==" }]);
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: imageName, bytes: "AP+AAQ==" }]);
     await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
     second.unmount();
 
@@ -1963,13 +1891,13 @@ describe("clipboard task attachments", () => {
   });
 
   it("flushes pasted images when leaving before the autosave debounce", async () => {
-    let saved: ipc.DraftAttachments = { entries: [], images: [] };
-    vi.mocked(ipc.writeDraftForRepo).mockImplementation(async (args) => {
+    let saved: DraftAttachments = { entries: [], images: [] };
+    vi.mocked(taskWrites.writeDraftForRepo).mockImplementation(async (args) => {
       if (!args.draftAttachments) throw new Error("Missing draft attachments");
       saved = structuredClone(args.draftAttachments);
       return { slug: draftTask.slug } as Task;
     });
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
+    vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockImplementation(async () => structuredClone(saved));
     const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", false));
     paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([255])], "image.png", { type: "image/png" })]);
@@ -1980,10 +1908,10 @@ describe("clipboard task attachments", () => {
   });
 
   it("merges pending hydration with user attachments and releases restored previews on unmount", async () => {
-    const loaded = deferred<ipc.DraftAttachments>();
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
+    const loaded = deferred<DraftAttachments>();
+    vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
     const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
-    await screen.findByLabelText("Build model");
+    await screen.findByRole("checkbox", { name: "Build" });
     paste(screen.getByPlaceholderText(/Describe the feature/), [new File([new Uint8Array([2])], "image.png", { type: "image/png" })]);
     const entry = screen.getByPlaceholderText(/Paste file paths/);
     fireEvent.change(entry, { target: { value: "/new.png" } });
@@ -1991,7 +1919,7 @@ describe("clipboard task attachments", () => {
     await act(async () => loaded.resolve({ entries: ["/saved.png", "https://example.com/image"], images: [{ name: "saved.png", bytes: "AQ==", mime_type: "image/png" }] }));
     expect(screen.getByRole("img", { name: "Preview of saved.png" })).toHaveProperty("src", expect.stringContaining("blob:"));
     await waitFor(() =>
-      expect(ipc.writeDraftForRepo).toHaveBeenCalledWith(
+      expect(taskWrites.writeDraftForRepo).toHaveBeenCalledWith(
         expect.objectContaining({
           draftAttachments: {
             entries: ["/saved.png", "https://example.com/image", "/new.png"],
@@ -2009,20 +1937,20 @@ describe("clipboard task attachments", () => {
   });
 
   it("shows hydration errors and does not overwrite unread attachments or create", async () => {
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockRejectedValueOnce(new Error("unreadable snapshot"));
+    vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockRejectedValueOnce(new Error("unreadable snapshot"));
     render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByText(/Couldn't load draft attachments:.*unreadable snapshot/);
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "Edited title" } });
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 450));
     });
-    expect(ipc.writeDraftForRepo).not.toHaveBeenCalled();
+    expect(taskWrites.writeDraftForRepo).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Create task" })).toHaveProperty("disabled", true);
   });
 
   it("does not allocate restored previews after unmount", async () => {
-    const loaded = deferred<ipc.DraftAttachments>();
-    vi.mocked(ipc.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
+    const loaded = deferred<DraftAttachments>();
+    vi.mocked(taskWrites.readDraftAttachmentsForRepo).mockReturnValueOnce(loaded.promise);
     const form = render(<CreateTaskPage initialDraft={draftTask} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     form.unmount();
     await act(async () => loaded.resolve({ entries: [], images: [{ name: "saved.png", bytes: "AQ==", mime_type: "image/png" }] }));
@@ -2039,8 +1967,8 @@ describe("clipboard task attachments", () => {
     const bytes = new Uint8Array([0, 255, 128, 1]);
     paste(screen.getByPlaceholderText(placeholder), [new File([bytes], name, { type })], "", filesOnly);
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    const submitted = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0];
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    const submitted = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0];
     expect(submitted.repoPath).toBe("/repo");
     expect(submitted.request.attachments).toEqual([{ name: expect.stringMatching(/^[^/\\]+\.(png|jpg|jpeg)$/), bytes: "AP+AAQ==" }]);
   });
@@ -2055,8 +1983,8 @@ describe("clipboard task attachments", () => {
     fireEvent.click(remove[0]);
     expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: expect.stringMatching(/^[^/\\]+\.png$/), bytes: "Ag==" }]);
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.attachments).toEqual([{ name: expect.stringMatching(/^[^/\\]+\.png$/), bytes: "Ag==" }]);
   });
 
   it("cancels image-only insertion but leaves mixed text and ordinary paste native", async () => {
@@ -2074,9 +2002,9 @@ describe("clipboard task attachments", () => {
       imageOnly: imageOnly.defaultPrevented,
     }).toEqual({ text: false, nonImage: false, mixed: false, imageOnly: true });
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-    await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-    const attachments = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments;
-    expect(attachments?.map((attachment) => attachment.bytes)).toEqual(["/w==", "/w=="]);
+    await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+    const attachments = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.attachments;
+    expect(attachments?.map((attachment) => (attachment as TaskAttachment).bytes)).toEqual(["/w==", "/w=="]);
     expect(new Set(attachments?.map((attachment) => attachment.name)).size).toBe(2);
   });
 
@@ -2084,11 +2012,11 @@ describe("clipboard task attachments", () => {
     let dropFiles: (paths: string[]) => void;
 
     beforeEach(() => {
-      vi.mocked(ipc.createTaskForRepo).mockReset().mockResolvedValue(readyReply);
-      vi.mocked(ipc.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
+      vi.mocked(taskWrites.createTaskForRepo).mockReset().mockResolvedValue(readyReply);
+      vi.mocked(taskWrites.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
       vi.mocked(ipc.pickAttachmentFilesDialog).mockReset().mockResolvedValue([]);
-      vi.mocked(ipc.deleteDraftForRepo).mockReset().mockResolvedValue(undefined);
-      vi.mocked(ipc.readArtifactForRepo).mockReset().mockResolvedValue("Saved description");
+      vi.mocked(taskWrites.deleteDraftForRepo).mockReset().mockResolvedValue(undefined);
+      vi.mocked(artifactReads.readArtifactText).mockReset().mockResolvedValue("Saved description");
       vi.mocked(ipc.getCurrentWebview).mockReturnValue({
         onDragDropEvent: async (handler) => {
           dropFiles = (paths) => handler({ event: "tauri://drag-drop", id: 0, payload: { type: "drop", paths, position: { x: 0, y: 0 } } } as Parameters<typeof handler>[0]);
@@ -2099,10 +2027,10 @@ describe("clipboard task attachments", () => {
 
     afterEach(() => {
       vi.restoreAllMocks();
-      vi.mocked(ipc.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
+      vi.mocked(taskWrites.prepareTaskAttachments).mockReset().mockResolvedValue({ attachments: [], attachment_urls: [], attachment_errors: [] });
       vi.mocked(ipc.pickAttachmentFilesDialog).mockReset();
-      vi.mocked(ipc.deleteDraftForRepo).mockReset();
-      vi.mocked(ipc.readArtifactForRepo).mockReset();
+      vi.mocked(taskWrites.deleteDraftForRepo).mockReset();
+      vi.mocked(artifactReads.readArtifactText).mockReset();
       vi.mocked(ipc.getCurrentWebview)
         .mockReset()
         .mockReturnValue({
@@ -2122,7 +2050,9 @@ describe("clipboard task attachments", () => {
       fireEvent.keyDown(input, { key: "Enter" });
     };
     const submittedBytes = () =>
-      vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments?.map((attachment) => Array.from(atob(attachment.bytes), (character) => character.charCodeAt(0)));
+      vi
+        .mocked(taskWrites.createTaskForRepo)
+        .mock.calls[0][0].request.attachments?.map((attachment) => Array.from(atob((attachment as TaskAttachment).bytes), (character) => character.charCodeAt(0)));
     const visibleErrors = () =>
       screen
         .getAllByRole("alert")
@@ -2147,7 +2077,7 @@ describe("clipboard task attachments", () => {
       expect(visibleErrors()).toMatch(/25|too large|size/i);
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(2);
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
       expect(submittedBytes()).toEqual([[0, 255, 128], [3]]);
     });
 
@@ -2163,8 +2093,8 @@ describe("clipboard task attachments", () => {
       expect(screen.queryByRole("img")).toBeNull();
       expect(screen.getByRole("button", { name: /remove/i })).toBe(remove);
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-      const attachment = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.attachments?.[0];
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+      const attachment = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.attachments?.[0];
       expect(attachment?.name).toMatch(/^[^/\\]+\.png$/);
       expect(attachment?.name).not.toMatch(/private|unsafe|\.\./);
       expect(row?.textContent).toContain(attachment?.name);
@@ -2206,7 +2136,7 @@ describe("clipboard task attachments", () => {
       expect(live).toEqual(new Set([previews[1]]));
       fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "/repo" } });
       await screen.findByRole("region", { name: /workflow preview$/ });
-      vi.mocked(ipc.deleteDraftForRepo).mockRejectedValueOnce(new Error("Draft deletion denied"));
+      vi.mocked(taskWrites.deleteDraftForRepo).mockRejectedValueOnce(new Error("Draft deletion denied"));
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
       await screen.findByText(/Couldn't clear the draft/);
       expect(live).toEqual(new Set([previews[1]]));
@@ -2234,7 +2164,7 @@ describe("clipboard task attachments", () => {
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128, 1])]);
       const preview = screen.getByRole("img").getAttribute("src");
       const prepared = deferred<PreparedTaskAttachments>();
-      vi.mocked(ipc.prepareTaskAttachments).mockReturnValueOnce(prepared.promise);
+      vi.mocked(taskWrites.prepareTaskAttachments).mockReturnValueOnce(prepared.promise);
       let reader: FileReader | undefined;
       if (failure !== "preparation") {
         vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementationOnce(function (this: FileReader) {
@@ -2242,7 +2172,7 @@ describe("clipboard task attachments", () => {
         });
       }
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.prepareTaskAttachments).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.prepareTaskAttachments).toHaveBeenCalledOnce());
       if (failure === "preparation") {
         await act(async () => prepared.reject(new Error("Path read failed")));
       } else {
@@ -2252,7 +2182,7 @@ describe("clipboard task attachments", () => {
       }
       await screen.findByText(/Couldn't prepare task attachments/);
       await waitFor(() => expect(taskMutationGuard.currentKind()).toBeNull());
-      expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
       expect(screen.queryByText(/Creation outcome is unknown/)).toBeNull();
       expect(screen.getByRole("img").getAttribute("src")).toBe(preview);
       expect(URL.revokeObjectURL).not.toHaveBeenCalled();
@@ -2261,9 +2191,9 @@ describe("clipboard task attachments", () => {
       fireEvent.click(screen.getByRole("button", { name: "Remove /retry.txt" }));
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
       expect(submittedBytes()).toEqual([[0, 255, 128, 1]]);
-      expect(ipc.prepareTaskAttachments).toHaveBeenCalledTimes(2);
+      expect(taskWrites.prepareTaskAttachments).toHaveBeenCalledTimes(2);
     });
 
     it.each(["ready-with-errors", "partial", "unknown"] as const)("freezes the captured attachment package across late asynchronous mutations (%s)", async (outcome) => {
@@ -2271,8 +2201,8 @@ describe("clipboard task attachments", () => {
       const preparation = deferred<PreparedTaskAttachments>();
       const creation = deferred<CreateTaskResult>();
       vi.mocked(ipc.pickAttachmentFilesDialog).mockReturnValueOnce(picker.promise);
-      vi.mocked(ipc.prepareTaskAttachments).mockReturnValueOnce(preparation.promise);
-      vi.mocked(ipc.createTaskForRepo).mockReturnValueOnce(creation.promise);
+      vi.mocked(taskWrites.prepareTaskAttachments).mockReturnValueOnce(preparation.promise);
+      vi.mocked(taskWrites.createTaskForRepo).mockReturnValueOnce(creation.promise);
       const onCreated = vi.fn();
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo", "/other"]} onCancel={() => {}} onCreated={onCreated} />);
       await screen.findByRole("region", { name: /workflow preview$/ });
@@ -2308,16 +2238,18 @@ describe("clipboard task attachments", () => {
         expect(ipc.pickAttachmentFilesDialog).toHaveBeenCalledOnce();
       };
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.prepareTaskAttachments).toHaveBeenCalledWith(["/captured.bin"]));
+      await waitFor(() => expect(taskWrites.prepareTaskAttachments).toHaveBeenCalledWith("/other", ["/captured.bin"]));
       mutate();
       await act(async () => picker.resolve(["/late-picker.txt"]));
       expectFrozen();
-      await act(async () => preparation.resolve({ attachments: [{ name: "captured.bin", bytes: "/wA=" }], attachment_urls: [], attachment_errors: [] }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-      expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].repoPath).toBe("/other");
-      expect(vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request.base_ref).toBe("refs/heads/release");
-      expect(submittedBytes()).toEqual([
-        [255, 0],
+      await act(async () => preparation.resolve({ attachments: [{ name: "captured.bin", upload_id: "up-captured" }], attachment_urls: [], attachment_errors: [] }));
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].repoPath).toBe("/other");
+      expect(vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.base_ref).toBe("refs/heads/release");
+      // The staged file travels by id and keeps its place ahead of the pasted images.
+      const sent = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request.attachments ?? [];
+      expect(sent[0]).toEqual({ name: "captured.bin", upload_id: "up-captured" });
+      expect(sent.slice(1).map((attachment) => Array.from(atob((attachment as TaskAttachment).bytes), (character) => character.charCodeAt(0)))).toEqual([
         [0, 255],
         [128, 1],
       ]);
@@ -2339,32 +2271,32 @@ describe("clipboard task attachments", () => {
       mutate();
       expectFrozen();
       fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
-      expect(ipc.createTaskForRepo).toHaveBeenCalledOnce();
+      expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce();
       expect(onCreated).not.toHaveBeenCalled();
     });
 
     it("serializes pending draft clearing with button and keyboard creation", async () => {
       const deletion = deferred<void>();
-      vi.mocked(ipc.deleteDraftForRepo).mockReturnValueOnce(deletion.promise);
+      vi.mocked(taskWrites.deleteDraftForRepo).mockReturnValueOnce(deletion.promise);
       render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} initialDraft={draftTask} onCancel={() => {}} onCreated={() => {}} />);
       await screen.findByDisplayValue("Saved description");
       await screen.findByRole("region", { name: /workflow preview$/ });
       paste(screen.getByPlaceholderText(/Describe the feature/), [image([0, 255, 128])]);
       fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
-      await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.deleteDraftForRepo).toHaveBeenCalledOnce());
       const create = screen.getByRole("button", { name: "Create task" });
       expect(create).toHaveProperty("disabled", true);
       fireEvent.click(create);
       fireEvent.keyDown(screen.getByPlaceholderText("New task name…"), { key: "Enter", metaKey: true });
       await act(async () => deletion.reject(new Error("Draft deletion denied")));
       await screen.findByText(/Couldn't clear the draft/);
-      expect(ipc.prepareTaskAttachments).not.toHaveBeenCalled();
-      expect(ipc.createTaskForRepo).not.toHaveBeenCalled();
+      expect(taskWrites.prepareTaskAttachments).not.toHaveBeenCalled();
+      expect(taskWrites.createTaskForRepo).not.toHaveBeenCalled();
       expect(screen.getAllByRole("img")).toHaveLength(1);
       expect(URL.revokeObjectURL).not.toHaveBeenCalled();
       expect(create).toHaveProperty("disabled", false);
       fireEvent.click(create);
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
       expect(submittedBytes()).toEqual([[0, 255, 128]]);
     });
 
@@ -2378,7 +2310,7 @@ describe("clipboard task attachments", () => {
       fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
       if (end === "clear") {
         fireEvent.click(screen.getByRole("button", { name: "Clear draft" }));
-        await waitFor(() => expect(ipc.deleteDraftForRepo).toHaveBeenCalledOnce());
+        await waitFor(() => expect(taskWrites.deleteDraftForRepo).toHaveBeenCalledOnce());
         await waitFor(() => expect(screen.getByPlaceholderText("New task name…")).toHaveProperty("value", ""));
       } else {
         view.unmount();
@@ -2401,10 +2333,10 @@ describe("clipboard task attachments", () => {
       const fetch = vi.fn();
       vi.stubGlobal("fetch", fetch);
       vi.mocked(ipc.pickAttachmentFilesDialog).mockResolvedValueOnce(["/picked.bin"]);
-      vi.mocked(ipc.prepareTaskAttachments).mockResolvedValueOnce({
+      vi.mocked(taskWrites.prepareTaskAttachments).mockResolvedValueOnce({
         attachments: [
-          { name: "picked.bin", bytes: "AP8=" },
-          { name: "dropped.bin", bytes: "gAE=" },
+          { name: "picked.bin", upload_id: "up-picked" },
+          { name: "dropped.bin", upload_id: "up-dropped" },
         ],
         attachment_urls: ["https://example.test/evidence.png"],
         attachment_errors: ["Could not read /missing.bin"],
@@ -2417,14 +2349,15 @@ describe("clipboard task attachments", () => {
       addEntry("https://example.test/evidence.png");
       paste(screen.getByPlaceholderText(/Paste file paths/), [image([255, 0, 128, 1])]);
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
-      expect(ipc.prepareTaskAttachments).toHaveBeenCalledWith(["/picked.bin", "/dropped.bin", "/missing.bin", "https://example.test/evidence.png"]);
-      const request = vi.mocked(ipc.createTaskForRepo).mock.calls[0][0].request;
-      expect(submittedBytes()).toEqual([
-        [0, 255],
-        [128, 1],
-        [255, 0, 128, 1],
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
+      expect(taskWrites.prepareTaskAttachments).toHaveBeenCalledWith("/repo", ["/picked.bin", "/dropped.bin", "/missing.bin", "https://example.test/evidence.png"]);
+      const request = vi.mocked(taskWrites.createTaskForRepo).mock.calls[0][0].request;
+      // Files named on the form are staged on the daemon by id; pasted images travel as bytes.
+      expect(request.attachments?.slice(0, 2)).toEqual([
+        { name: "picked.bin", upload_id: "up-picked" },
+        { name: "dropped.bin", upload_id: "up-dropped" },
       ]);
+      expect(Array.from(atob(((request.attachments ?? [])[2] as TaskAttachment).bytes), (character) => character.charCodeAt(0))).toEqual([255, 0, 128, 1]);
       expect(request.attachments?.map((attachment) => attachment.name)).toEqual(["picked.bin", "dropped.bin", expect.stringMatching(/^[^/\\]+\.png$/)]);
       expect(request.attachment_urls).toEqual(["https://example.test/evidence.png"]);
       expect(request.attachment_errors).toEqual(["Could not read /missing.bin"]);
@@ -2450,7 +2383,7 @@ describe("clipboard task attachments", () => {
       paste(target, [image([5], "replacement.png", limit)]);
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(4);
       fireEvent.click(screen.getByRole("button", { name: "Create task" }));
-      await waitFor(() => expect(ipc.createTaskForRepo).toHaveBeenCalledOnce());
+      await waitFor(() => expect(taskWrites.createTaskForRepo).toHaveBeenCalledOnce());
       expect(submittedBytes()).toEqual([[1], [3], [4], [5]]);
     });
   });

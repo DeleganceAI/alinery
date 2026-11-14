@@ -12,7 +12,7 @@
 ///
 /// A protocol bump means every user with live sessions has to stop them deliberately
 /// before installing, so treat it as a real cost.
-pub const PROTOCOL_VERSION: u32 = 21;
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// How a running daemon relates to this build of the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,5 +70,17 @@ pub fn poller_action(compat: Option<DaemonCompat>) -> PollerAction {
         None => PollerAction::Spawn,
         Some(c) if c.usable() => PollerAction::Leave,
         Some(_) => PollerAction::SurfaceConflict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_json_lines_wire_is_retired_at_39() {
+        // 39 is the first daemon that serves `alinery.v1` and nothing else. The app stops an older daemon over the old wire
+        // (`legacy_daemon`) and never starts one, so the floor only moves up.
+        const { assert!(PROTOCOL_VERSION >= 39) };
     }
 }

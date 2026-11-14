@@ -2,21 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 4;
+pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessAdapter {
-    Omp,
+    Vinculum,
+    // An adapter this build does not know, such as one a removed harness saved, reads as unsupported:
+    // one stale row must not make the whole app.toml unreadable. The daemon's `knownOr` does the same.
     #[default]
+    #[serde(other)]
     Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageAdapter {
-    OmpBracketedPaste,
+    VinculumBracketedPaste,
     #[default]
+    #[serde(other)]
     Unsupported,
 }
 
@@ -33,9 +37,9 @@ pub struct SemanticCheckpoint {
     #[serde(default)]
     pub phase_completed_at: Option<u64>,
     #[serde(default)]
-    pub omp_session_id: Option<String>,
+    pub vinculum_session_id: Option<String>,
     #[serde(default)]
-    pub omp_turn_id: Option<u64>,
+    pub vinculum_turn_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,128 +61,41 @@ where
     Ok(value)
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum ContinuationBoundary {
-    PrimaryControl,
-    NativeTools,
-    AdmittedQueue,
-    PublicEntries,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ContinuationControl {
-    pub process_incarnation: String,
-    pub capability_revision: u64,
-    pub work_revision: u64,
-    pub continuation_requested_revision: Option<u64>,
-    pub available: bool,
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunnerEvent {
     Busy {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
         correlation_id: Option<String>,
     },
     Idle {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     WaitingForInput {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
         correlation_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     WaitingForApproval {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
         correlation_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
-    ContinuationBind {
+    PhaseCompleted {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
-        omp_session_id: String,
-        groups: Vec<ContinuationBoundary>,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        operation_id: String,
-        expected_capability_revision: u64,
-    },
-    ContinuationPoll {
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
-        process_incarnation: Option<String>,
-    },
-    ContinuationRevoke {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        operation_id: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        reason: String,
-        expected_capability_revision: u64,
-    },
-    NativeWorkEntered {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        operation_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
-        dispatch_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
-        dispatch_proof: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
-        parent_operation_id: Option<String>,
-    },
-    NativeWorkSettled {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        operation_id: String,
-    },
-    NativeDispatchConsumed {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        dispatch_id: String,
-    },
-    NativeDispatchTransferred {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        dispatch_id: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        replacement_dispatch_id: String,
-    },
-    NativeDispatchRejected {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        dispatch_id: String,
-        reason: String,
-    },
-    ReadinessReported {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        expected_work_revision: u64,
-    },
-    ContinuationFinalize {
-        #[serde(deserialize_with = "deserialize_non_empty_string")]
-        process_incarnation: String,
-        ready_revision: u64,
+        vinculum_session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vinculum_turn_id: Option<u64>,
     },
     SessionNameSuggested {
         name: String,
     },
     AdapterError {
-        detail: String,
-    },
-    /// OMP ended a turn with stop reason `error` and will not retry it on its own.
-    TurnError {
         detail: String,
     },
 }
@@ -220,10 +137,6 @@ pub enum AgentState {
         correlation_id: String,
     },
     Idle,
-    /// Settled like Idle, but the last turn stopped on an error OMP gave up on.
-    Errored {
-        message: String,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -491,20 +404,6 @@ pub struct TaskRelationships {
     pub active_subtask: Option<TaskSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SubtaskManagerState {
-    pub parent_manager_session: Option<SessionMeta>,
-    pub parent_manager_owner_task_slug: String,
-    pub task: TaskSummary,
-    pub parent_task: Option<TaskSummary>,
-    pub active_subtask: Option<TaskSummary>,
-    pub manager_session: Option<SessionMeta>,
-    pub manager_owner_task_slug: String,
-    pub can_start: bool,
-    pub can_recover: bool,
-    pub disabled_reason: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSubtaskInput {
@@ -755,7 +654,7 @@ impl Default for UpdatePrefs {
 }
 
 /// Global-only. Each alineryd re-reads this from the app config to decide whether to hold an
-/// idle-sleep inhibit (`alineryd/src/idle_inhibit.rs`); a missing or unreadable file is off.
+/// idle-sleep inhibit (`vinculum-daemon/src/platform/keepawake.ts`); a missing or unreadable file is off.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PowerPrefs {
     #[serde(default)]
@@ -769,6 +668,14 @@ pub struct ExperimentalFeatures {
     pub show_original_kanban: bool,
     /// Chat tab (threads under repositories). Off until opted in.
     pub show_chat: bool,
+    /// Lets the user turn on a chat thread's canvas (panels its agent fills). Off until opted in. Turning it off hides
+    /// every canvas; a thread's own switch, once on, stays on.
+    pub chat_canvas: bool,
+    /// Retained Vinculum opt-in. The old key `pi_durable` still loads. This branch starts Vinculum either way.
+    #[serde(alias = "pi_durable")]
+    pub vinculum: bool,
+    /// Grok key for the experimental daemon. Empty is unset. Kept when the toggle turns off.
+    pub grok_api_key: String,
 }
 
 impl Default for ExperimentalFeatures {
@@ -776,6 +683,9 @@ impl Default for ExperimentalFeatures {
         Self {
             show_original_kanban: true,
             show_chat: false,
+            chat_canvas: false,
+            vinculum: false,
+            grok_api_key: String::new(),
         }
     }
 }
@@ -850,6 +760,24 @@ impl Default for BackupDefaults {
     }
 }
 
+/// The bundled playbook keys a legacy default could name (the library that held them moved to the daemon, S5.1).
+const LEGACY_BUNDLED_PLAYBOOK_KEYS: &[&str] = &[
+    "superdevelop",
+    "one-shot",
+    "review",
+    "bug-hunting",
+    "free-form",
+    "generic-session",
+    "natural-planning-brainstorm",
+    "systematic-naming",
+    "primed-feature-development",
+    "systematic-evidence-review",
+    "build-playbook",
+    "academic-survey",
+    "spec",
+    "solution-exploration",
+];
+
 // Legacy defaults used repository registry keys, including the bundled keys copied
 // into that registry. Upgrade only settings fields: task/command PlaybookRef stays
 // strict. Reads leave files untouched; the next normal save writes scoped values.
@@ -870,7 +798,7 @@ impl SettingsPlaybookRef {
                 if !valid_playbook_key(&key) {
                     return Err(E::custom("legacy playbook default must be a valid playbook key"));
                 }
-                let scope = if crate::playbook_library::BUNDLED_PLAYBOOKS.iter().any(|(bundled, _)| *bundled == key) {
+                let scope = if LEGACY_BUNDLED_PLAYBOOK_KEYS.contains(&key.as_str()) {
                     PlaybookScope::Bundled
                 } else {
                     PlaybookScope::Repo

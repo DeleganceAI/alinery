@@ -653,7 +653,7 @@ function MarkdownPre({ children, comments, draftAnchorIds, onAddComment, onOpenZ
 /**
  * Attachment name an image `src` points at from inside artifact `artifactPath` (relative to artifacts/),
  * or null when it is absolute, has a scheme, escapes the root, or is not exactly attachments/<name>.
- * Decodes percent-escapes because mdast normalizes `a b.png` to `a%20b.png`; Rust re-validates the name.
+ * Decodes percent-escapes because mdast normalizes `a b.png` to `a%20b.png`; the daemon re-validates the name.
  */
 export function attachmentNameFor(artifactPath: string | undefined, src: string | undefined): string | null {
   if (!src || src.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;
@@ -673,23 +673,24 @@ export function attachmentNameFor(artifactPath: string | undefined, src: string 
   }
 }
 
-type ArtifactImageProps = ComponentProps<"img"> & { taskSlug?: string; artifactPath?: string; attachmentNodeIds?: ReadonlyMap<string, string> };
+type ArtifactImageProps = ComponentProps<"img"> & { repoPath?: string; taskSlug?: string; artifactPath?: string; attachmentNodeIds?: ReadonlyMap<string, string> };
 
 // shortcut: only attachments/<name> at the artifact's namespace root resolves (the task's artifacts/, or for a tree
-// artifact its parent/live-child/snapshot root, read by node id so only names in the last-polled tree); any other
-// image under artifacts/ keeps its literal src. Add a Rust read_artifact_image if harnesses write images elsewhere.
-function ArtifactImage({ taskSlug, artifactPath, attachmentNodeIds, alt, ...props }: ArtifactImageProps) {
-  const resolved = taskSlug ? attachmentNameFor(artifactPath, props.src) : null;
+// artifact its parent/live-child/snapshot root, read by node id so only names in the current tree); any other image
+// under artifacts/ keeps its literal src. Add a BlobRef target if harnesses write images elsewhere.
+function ArtifactImage({ repoPath, taskSlug, artifactPath, attachmentNodeIds, alt, ...props }: ArtifactImageProps) {
+  const resolved = repoPath && taskSlug ? attachmentNameFor(artifactPath, props.src) : null;
   const nodeId = resolved ? attachmentNodeIds?.get(resolved) : undefined;
   const name = attachmentNodeIds && !nodeId ? null : resolved;
-  const { src, error } = useAttachmentImageSrc(taskSlug ?? "", name ?? "", nodeId);
+  const { src, error } = useAttachmentImageSrc(repoPath ?? "", taskSlug ?? "", name ?? "", nodeId);
   if (name == null) return <img alt={alt} {...props} />;
   return <img alt={alt} {...props} src={src || undefined} title={error || props.title} />;
 }
 
 type ArtifactMarkdownProps = {
   text: string;
-  /** Owner of the attachments dir plus the artifact's name relative to artifacts/, so relative images resolve (#159). */
+  /** The repo and the owner of the attachments dir plus the artifact's name relative to artifacts/, so relative images resolve. */
+  repoPath?: string;
   taskSlug?: string;
   artifactPath?: string;
   /** Tree artifacts only: attachment name -> tree node id in its namespace root (`taskSlug` is then the viewing task); unlisted names stay unresolved. */
@@ -721,6 +722,7 @@ function sameAttachmentNodeIds(previous: ReadonlyMap<string, string> | undefined
 function sameArtifactMarkdownProps(previous: ArtifactMarkdownProps, next: ArtifactMarkdownProps): boolean {
   return (
     previous.text === next.text &&
+    previous.repoPath === next.repoPath &&
     previous.taskSlug === next.taskSlug &&
     previous.artifactPath === next.artifactPath &&
     sameAttachmentNodeIds(previous.attachmentNodeIds, next.attachmentNodeIds) &&
@@ -733,6 +735,7 @@ function sameArtifactMarkdownProps(previous: ArtifactMarkdownProps, next: Artifa
 
 export const ArtifactMarkdown = memo(function ArtifactMarkdown({
   text,
+  repoPath,
   taskSlug,
   artifactPath,
   attachmentNodeIds,
@@ -860,9 +863,9 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({
           {...props}
         />
       ),
-      img: ({ node, ...props }) => <ArtifactImage taskSlug={taskSlug} artifactPath={artifactPath} attachmentNodeIds={attachmentNodeIds} {...props} />,
+      img: ({ node, ...props }) => <ArtifactImage repoPath={repoPath} taskSlug={taskSlug} artifactPath={artifactPath} attachmentNodeIds={attachmentNodeIds} {...props} />,
     }),
-    [comments, draftAnchorIds, onAddComment, openDiagramZoom, taskSlug, artifactPath, attachmentNodeIds],
+    [comments, draftAnchorIds, onAddComment, openDiagramZoom, repoPath, taskSlug, artifactPath, attachmentNodeIds],
   );
   return (
     <>

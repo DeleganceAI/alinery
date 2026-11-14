@@ -1,14 +1,15 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 import { APPEARANCE_EVENT } from "./appearance";
-import { decodeChannelFrame } from "./channelFrame";
-import { CopyTextButton } from "./chat/CopyMessage";
 import * as ipc from "./ipc";
+import { observationNow } from "./sync/sessionObservation";
+import { type OpenSessionArgs, openSession, readSessionHistory } from "./sync/sessions";
+import { terminalLink } from "./sync/terminal";
 import { attachGpuRenderer } from "./terminalRenderer";
 import { restoreViewport, saveViewport } from "./terminalViewport";
-import type { DispatchOutcome, SessionObservation } from "./types";
+import type { SessionObservation } from "./types";
 import "@xterm/xterm/css/xterm.css";
 
 // xterm needs concrete colors; these tokens are plain hexes in both built-in
@@ -31,35 +32,24 @@ function terminalTheme() {
   };
 }
 
-// `attachId` is unique per mounted pane and scopes daemon replacement/detach. `streamToken` is
-// unique per socket pump within that mount so stale data/close events cannot affect a reattach.
+// `streamToken` is unique per attach within a mount, so a stale timer cannot act on a newer attach.
 let nextStreamToken = 1;
 
-type RecoverableChunk = { id: string; data: string; outcome: Exclude<DispatchOutcome, { status: "written" }> | null };
-// App-lifetime input ownership, independent of xterm mounts and pending write callbacks.
-// Output never enters this store. Retain original strings; escape only their presentation.
-const inputRecovery = new Map<string, { chunks: RecoverableChunk[]; listeners: Set<() => void> }>();
-
-function recoveryFor(key: string) {
-  let recovery = inputRecovery.get(key);
-  if (!recovery) {
-    recovery = { chunks: [], listeners: new Set() };
-    inputRecovery.set(key, recovery);
-  }
-  return recovery;
-}
 export type SessionTerminalConnectionState = "opening" | "open" | "recovering" | "failed";
 // One xterm pane bound to one pty session. Bytes are written straight to the
 // terminal — never through React state (pty output is thousands of tiny writes/sec).
-// M3: taskSlug + phase let a FRESH spawn seed OMP with the phase prompt. On
-// reattach the backend ignores them (OMP already has it), so passing them always
+// M3: taskSlug + phase let a FRESH spawn seed Vinculum with the phase prompt. On
+// reattach the backend ignores them (Vinculum already has it), so passing them always
 // is safe.
-/** The daemon calls a terminal makes. Default: the active-repo session commands; a chat thread passes its own repo-scoped set. */
+/**
+ * What a terminal needs beside its byte stream (`TerminalService`, sync/terminal.ts). Default: the
+ * active repo; a chat thread passes its own repo, and has nothing to start.
+ */
 export type SessionTerminalIo = {
-  open: (args: Parameters<typeof ipc.openSession>[0]) => Promise<void>;
-  write: (data: string, dispatchId: string) => Promise<DispatchOutcome>;
-  resize: (cols: number, rows: number) => Promise<void>;
-  detach: (attachId: number) => Promise<void>;
+  /** Spawn or resume the shell. Not called to rejoin a running one. */
+  open: (args: OpenSessionArgs) => Promise<void>;
+  /** The repo key the daemon is reached by. */
+  repo: () => Promise<string>;
   status: () => Promise<SessionObservation>;
 };
 
@@ -97,32 +87,20 @@ export function SessionTerminal({
   io?: SessionTerminalIo;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const recovery = recoveryFor(JSON.stringify([cwd, taskSlug, sessionId]));
-  const chunks = useSyncExternalStore(
-    (notify) => {
-      recovery.listeners.add(notify);
-      return () => {
-        recovery.listeners.delete(notify);
-      };
-    },
-    () => recovery.chunks,
-  );
 
   useEffect(() => {
-    const attachId = ipc.nextAttachId();
     const host = hostRef.current;
     if (!host) return;
     const sessionIo: SessionTerminalIo = io ?? {
-      open: (args) => ipc.openSession(args),
-      write: (data, dispatchId) => ipc.writeSession(sessionId, data, dispatchId),
-      resize: (cols, rows) => ipc.resizeSession(sessionId, cols, rows),
-      detach: (id) => ipc.detachSession(sessionId, id),
-      status: () => ipc.sessionStatus(sessionId, taskSlug || null),
+      open: async (args) => openSession((await ipc.readAppConfig()).active_repo, args),
+      repo: async () => (await ipc.readAppConfig()).active_repo,
+      status: async () => observationNow((await ipc.readAppConfig()).active_repo, taskSlug, sessionId),
     };
     const term = new Terminal({
       convertEol: false,
       cursorBlink: true,
-      fontFamily: "Menlo, monospace",
+      // main.tsx waits for the bundled mono face before the first render, so xterm measures its cells, not the fallback's.
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "Menlo, monospace",
       fontSize: terminalFontSize,
       // Reattached normal-buffer sessions replay up to 8 MiB of durable output. Keep enough
       // xterm history for that replay instead of silently truncating it to the default 1,000 rows.
@@ -149,18 +127,18 @@ export function SessionTerminal({
     };
     window.addEventListener(APPEARANCE_EVENT, onAppearance);
 
-    // The pty keeps running in Rust after we navigate away (the "bag" of live
-    // sessions). detach_session below stops the reader forwarding to this channel,
-    // but a few bytes may already be in flight — guard against writing to a disposed
-    // terminal so they're dropped instead of thrown at a torn-down xterm.
+    // The pty keeps running in the daemon after we navigate away (the "bag" of live sessions).
+    // Detaching stops the stream, but a few bytes may already be in flight — guard against writing
+    // to a disposed terminal so they're dropped instead of thrown at a torn-down xterm.
     let disposed = false;
 
     if (readOnly) {
       // Read-only history replay (issue #24 P7): fetch the session's recorded activity
-      // chunks once and write them. NO open_session/attach, NO stdin, NO daemon resize —
+      // chunks once and write them. NO ResumeSession/attach, NO stdin, NO daemon resize —
       // this pane never touches the daemon, so it works after the pty (and daemon) are gone.
-      ipc
-        .readSessionHistory({ id: sessionId, taskSlug: taskSlug || null })
+      sessionIo
+        .repo()
+        .then((repo) => readSessionHistory(repo, { id: sessionId, taskSlug: taskSlug || null }))
         .then((bytes) => {
           if (disposed) return;
           if (bytes.byteLength) term.write(new Uint8Array(bytes));
@@ -181,14 +159,15 @@ export function SessionTerminal({
 
     onConnectionStateChange?.("opening");
 
-    // Open (reattach to the live pty, replaying its screen, or spawn fresh), THEN resize — so the
-    // session exists in Rust before we size it. The close listener is installed first below so no
-    // socket pump can close before recovery is armed.
+    // Start the shell (spawn or resume) if asked to, THEN attach: the stream replays the screen from
+    // the last offset this pane rendered, so a reattach repeats and loses nothing.
     let currentStreamToken = 0;
     let reattachCount = 0;
     let lastClose = 0;
-    let unlisten: (() => void) | null = null;
     let opened = false;
+    let link: ReturnType<typeof terminalLink> | null = null;
+    // The live view stopped because the daemon could not be reached (a remote host that dropped).
+    let paused = false;
     let resizeFrame = 0;
     let lastResize = "";
     let viewportIdleTimer = 0;
@@ -224,15 +203,14 @@ export function SessionTerminal({
       const rows = term.rows;
       term.resize(cols - 1, rows);
       lastResize = `${cols - 1}x${rows}`;
-      void sessionIo
-        .resize(cols - 1, rows)
+      void Promise.resolve(link?.resize(cols - 1, rows))
         .catch(() => {})
         .finally(() => {
           replayRestoreTimer = window.setTimeout(() => {
             if (disposed || currentStreamToken !== streamToken) return;
             term.resize(cols, rows);
             lastResize = `${cols}x${rows}`;
-            void sessionIo.resize(cols, rows).catch(() => {});
+            void link?.resize(cols, rows).catch(() => {});
             requestAnimationFrame(syncViewport);
           }, 100);
         });
@@ -255,9 +233,42 @@ export function SessionTerminal({
       return true;
     };
 
-    // A fresh binary Channel and stream token per (re)attach. Every app-channel body carries a
-    // little-endian payload length followed by PTY bytes and optional zero padding; the envelope
-    // keeps even tiny updates on Tauri's binary fetch path instead of `webview.eval`.
+    // The shell ended: its stream closing is not a drop to recover from.
+    let exited = false;
+    const onStreamClosed = async () => {
+      const streamToken = currentStreamToken;
+      if (disposed || exited) return;
+      onConnectionStateChange?.("recovering");
+      const now = Date.now();
+      if (now - lastClose > 30000) reattachCount = 0;
+      lastClose = now;
+      reattachCount += 1;
+      if (reattachCount > 6) {
+        term.writeln("\r\n[live view paused — output outpacing this view; reopen to resume]");
+        onConnectionStateChange?.("failed");
+        return;
+      }
+      try {
+        const obs = await sessionIo.status();
+        if (disposed || exited || streamToken !== currentStreamToken || (obs.lifecycle.state !== "live" && obs.lifecycle.state !== "live_exited")) {
+          return;
+        }
+      } catch (e) {
+        if (!disposed && streamToken === currentStreamToken) {
+          term.writeln(`\r\n[live view paused — status unavailable; reopen to resume] ${String(e)}`);
+          paused = true;
+          onConnectionStateChange?.("failed");
+        }
+        return;
+      }
+      setTimeout(() => {
+        if (disposed || streamToken !== currentStreamToken) return;
+        void doAttach(true);
+      }, 400 * reattachCount);
+    };
+
+    // Start the shell if this mount spawns or resumes it, then attach from the last offset. The stream
+    // carries the geometry, so no separate resize follows.
     const doAttach = async (reattach: boolean): Promise<boolean> => {
       const geometryReady = fitVisibleTerminal();
       const streamToken = nextStreamToken++;
@@ -269,101 +280,59 @@ export function SessionTerminal({
       window.clearTimeout(replayRestoreTimer);
       replayRestoreTimer = 0;
       replayGeometryToken = (reattach || intent === "attach") && harness !== "no-harness" ? streamToken : 0;
-      const onBytes = new ipc.Channel<ArrayBuffer>();
-      onBytes.onmessage = (bytes) => {
-        if (disposed || currentStreamToken !== streamToken) return;
-        const payload = decodeChannelFrame(bytes);
-        if (payload && payload.length > 0) {
-          term.write(payload, () => scheduleReplayViewportSync(streamToken));
-        }
-      };
       try {
-        await sessionIo.open({
-          id: sessionId,
-          cwd,
-          attachId,
-          streamToken,
-          taskSlug: taskSlug || null,
-          // Seed the phase prompt only on a genuine fresh spawn — never on a reattach.
-          phase: !reattach && intent === "spawn" ? phase || null : null,
-          model,
-          // A reattach must never re-spawn or re-resume the harness; it only rejoins the live pty.
-          intent: reattach ? "attach" : intent,
-          resumeToken: resumeToken ?? null,
-          cols: geometryReady ? term.cols : null,
-          rows: geometryReady ? term.rows : null,
-          onBytes,
-        });
+        // A reattach only rejoins the live pty; it never re-spawns or re-resumes the harness.
+        if (!reattach && intent !== "attach") {
+          await sessionIo.open({
+            id: sessionId,
+            cwd,
+            taskSlug: taskSlug || null,
+            // Seed the phase prompt only on a genuine fresh spawn.
+            phase: intent === "spawn" ? phase || null : null,
+            model,
+            harness,
+            intent,
+            resumeToken: resumeToken ?? null,
+            cols: geometryReady ? term.cols : null,
+            rows: geometryReady ? term.rows : null,
+          });
+          if (disposed || currentStreamToken !== streamToken) return false;
+        }
+        const repo = await sessionIo.repo();
+        if (disposed || currentStreamToken !== streamToken) return false;
+        link ??= terminalLink(
+          repo,
+          { taskSlug, id: sessionId },
+          {
+            data: (bytes) => {
+              if (!disposed) term.write(bytes, () => scheduleReplayViewportSync(currentStreamToken));
+            },
+            exit: () => {
+              exited = true;
+            },
+            closed: () => void onStreamClosed(),
+            reset: () => term.reset(),
+          },
+        );
+        await link.attach(geometryReady ? { cols: term.cols, rows: term.rows } : null);
+        if (disposed) link.detach();
         if (disposed || currentStreamToken !== streamToken) return false;
         opened = true;
+        lastResize = geometryReady ? `${term.cols}x${term.rows}` : lastResize;
         onConnectionStateChange?.("open");
-        if (geometryReady) {
-          await sessionIo.resize(term.cols, term.rows);
-          lastResize = `${term.cols}x${term.rows}`;
-        }
         return true;
       } catch (e) {
         if (!disposed && currentStreamToken === streamToken) {
           const message = reattach ? "\r\n[live view paused — stream recovery failed; reopen to resume] " : "\r\n[spawn failed] ";
           term.writeln(message + String(e));
+          paused = reattach;
         }
         onConnectionStateChange?.("failed");
         return false;
       }
     };
 
-    // A slow or closed client is dropped by the daemon so it cannot block the harness. Recover
-    // only the latest socket pump for this mounted pane, and bound churn so a genuinely slow view
-    // degrades to a visible paused notice instead of a clear/reattach loop.
-    const startMonitoredStream = async () => {
-      try {
-        const fn = await ipc.listen<{ id: string; attach_id: number; stream_token: number }>("session_stream_closed", async (ev) => {
-          const streamToken = ev.payload.stream_token;
-          if (disposed || ev.payload.id !== sessionId || ev.payload.attach_id !== attachId || streamToken !== currentStreamToken) {
-            return;
-          }
-          onConnectionStateChange?.("recovering");
-          const now = Date.now();
-          if (now - lastClose > 30000) reattachCount = 0;
-          lastClose = now;
-          reattachCount += 1;
-          if (reattachCount > 6) {
-            term.writeln("\r\n[live view paused — output outpacing this view; reopen to resume]");
-            onConnectionStateChange?.("failed");
-            return;
-          }
-          try {
-            const obs = await sessionIo.status();
-            if (disposed || streamToken !== currentStreamToken || (obs.lifecycle.state !== "live" && obs.lifecycle.state !== "live_exited")) {
-              return;
-            }
-          } catch (e) {
-            if (!disposed && streamToken === currentStreamToken) {
-              term.writeln(`\r\n[live view paused — status unavailable; reopen to resume] ${String(e)}`);
-              onConnectionStateChange?.("failed");
-            }
-            return;
-          }
-
-          setTimeout(() => {
-            if (disposed || streamToken !== currentStreamToken) return;
-            term.clear();
-            void doAttach(true);
-          }, 400 * reattachCount);
-        });
-        if (disposed) {
-          fn();
-          return;
-        }
-        unlisten = fn;
-      } catch (e) {
-        if (!disposed) {
-          term.writeln(`\r\n[live stream unavailable — reopen to retry] ${String(e)}`);
-        }
-        return;
-      }
-
-      if (disposed) return;
+    const start = async () => {
       await new Promise<void>((resolve) => {
         let framesLeft = 60;
         const tryFit = () => {
@@ -377,33 +346,18 @@ export function SessionTerminal({
       });
       if (!disposed) await doAttach(false);
     };
-    void startMonitoredStream();
+    void start();
 
-    // Own the original chunk before dispatch: completion may arrive after navigation.
-    // Transport uncertainty never permits resending or executing input as output.
-    const dataSub = term.onData((data) => {
-      const chunk: RecoverableChunk = { id: crypto.randomUUID(), data, outcome: null };
-      recovery.chunks = [...recovery.chunks, chunk];
-      const notify = () => {
-        for (const listener of recovery.listeners) listener();
-      };
-      notify();
-      void (async () => {
-        try {
-          const outcome = await sessionIo.write(data, chunk.id);
-          if (outcome.status === "written") {
-            recovery.chunks = recovery.chunks.filter((item) => item !== chunk);
-          } else {
-            chunk.outcome = outcome;
-            recovery.chunks = [...recovery.chunks];
-          }
-        } catch (error) {
-          chunk.outcome = { status: "unknown", reason: String(error) };
-          recovery.chunks = [...recovery.chunks];
-        }
-        notify();
-      })();
+    // A remote host that dropped is back: rejoin the live pty the lost stream left paused.
+    const stopHostWatch = ipc.onRemoteHostConnected(() => {
+      if (disposed || !paused) return;
+      paused = false;
+      reattachCount = 0;
+      void doAttach(true);
     });
+
+    // Keystrokes -> pty. They wait in the link until the attach has an id.
+    const dataSub = term.onData((d) => void link?.write(d).catch(() => {}));
 
     const ro = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
@@ -412,7 +366,7 @@ export function SessionTerminal({
         const size = `${term.cols}x${term.rows}`;
         if (size === lastResize) return;
         lastResize = size;
-        sessionIo.resize(term.cols, term.rows).catch(() => {});
+        void link?.resize(term.cols, term.rows).catch(() => {});
       });
     });
     ro.observe(host);
@@ -420,39 +374,20 @@ export function SessionTerminal({
     return () => {
       disposed = true; // gates every term.write, so in-flight bytes are dropped, not thrown at a torn-down xterm
       window.removeEventListener(APPEARANCE_EVENT, onAppearance);
-      if (unlisten) unlisten();
+      stopHostWatch();
       window.clearTimeout(viewportIdleTimer);
       window.clearTimeout(viewportHardTimer);
       window.clearTimeout(replayRestoreTimer);
       // Detach (don't kill): the pty keeps running in the background so reopening
       // this session reattaches to the same PTY instead of spawning a fresh one.
-      // attachId-scoped so a stale detach can't clobber a newer attach's live sink.
-      sessionIo.detach(attachId).catch(() => {});
+      link?.detach();
       ro.disconnect();
       cancelAnimationFrame(resizeFrame);
       dataSub.dispose();
       if (keepViewport) saveViewport(sessionId, term);
       term.dispose();
     };
-  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange, io, recovery]);
+  }, [sessionId, cwd, taskSlug, phase, harness, model, intent, resumeToken, readOnly, keepViewport, terminalFontSize, onConnectionStateChange, io]);
 
-  return (
-    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-      {chunks.length > 0 && (
-        <section aria-label="Recoverable terminal input" style={{ maxHeight: "35%", overflow: "auto", flexShrink: 0 }}>
-          <p>Original input retained. Unknown delivery must not be resent without checking the session.</p>
-          <CopyTextButton text={chunks.map((chunk) => chunk.data).join("")} label="original input" />
-          <ol>
-            {chunks.map((chunk) => (
-              <li key={chunk.id}>
-                <span>{chunk.outcome === null ? "Delivery pending" : `${chunk.outcome.status === "not_sent" ? "Not sent" : "Delivery unknown"}: ${chunk.outcome.reason}`}</span>
-                <pre>{JSON.stringify(chunk.data)}</pre>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-      <div ref={hostRef} style={{ width: "100%", flex: 1, minHeight: 0 }} />
-    </div>
-  );
+  return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }

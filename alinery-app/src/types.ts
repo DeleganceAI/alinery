@@ -1,10 +1,13 @@
 /** "system" follows the macOS appearance; explicit choices override it. */
 export type AppearanceMode = "system" | "light" | "dark";
-/** Journal spacing. Absent / unknown → normal. */
+/** Chat journal spacing. Absent / unknown → normal. */
 export type ChatRailDensity = "dense" | "normal" | "comfortable";
+/** How the auto-compaction limit is read. Absent → percent. */
+export type ChatCompactionBasis = "percent" | "tokens";
+
 /** Centered Chat column max width. Absent → "900". */
 export type ChatMaxWidth = "600" | "900" | "1200" | "none";
-/** Preferred OMP hatch when starting a session. Absent → "chat". */
+/** Preferred Vinculum hatch when starting a session. Absent → "chat". */
 export type SessionDefaultView = "chat" | "terminal";
 export type StartupView = Exclude<Tab, "grid"> | `grid:${string}`;
 export type AppearancePrefs = {
@@ -34,8 +37,14 @@ export type AppearancePrefs = {
   chat_show_subagent_drawer?: boolean;
   /** Collapse thinking when streaming ends unless expand-by-default is on. Absent → true. */
   chat_auto_collapse_thinking?: boolean;
-  /** Push set_auto_compaction to OMP. Absent → true. */
+  /** Ask Vinculum to compact when context fills. Absent → true. */
   chat_auto_compaction?: boolean;
+  /** `percent` or `tokens`. Absent → percent. */
+  chat_compaction_basis?: ChatCompactionBasis;
+  /** Percent of the model window. Absent → 80. */
+  chat_compaction_percent?: number;
+  /** Token ceiling. A larger value is capped at the selected model's context window. Absent → 128000. */
+  chat_compaction_tokens?: number;
   /** Stick scroll to bottom on new entries. Absent → true. */
   chat_auto_scroll?: boolean;
   /** Rail / journal spacing. Absent → normal. */
@@ -62,7 +71,7 @@ export type AppearancePrefs = {
   chat_show_block_copy_buttons?: boolean;
   /** Per-message copy icon inside chat bubbles. Absent → true. */
   chat_show_copy_buttons?: boolean;
-  /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
+  /** Preferred Vinculum session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
   /** View to open on launch. Absent in older configs defaults to the task list. */
   startup_view?: StartupView;
@@ -84,6 +93,9 @@ export type ChatViewPrefs = Pick<
   | "chat_show_subagent_drawer"
   | "chat_auto_collapse_thinking"
   | "chat_auto_compaction"
+  | "chat_compaction_basis"
+  | "chat_compaction_percent"
+  | "chat_compaction_tokens"
   | "chat_auto_scroll"
   | "chat_rail_density"
   | "chat_font_size"
@@ -243,14 +255,23 @@ export type ExperimentalFeatures = {
   show_original_kanban?: boolean;
   /** Chat tab, shown after Sessions. Absent = hidden; true shows the tab. */
   show_chat?: boolean;
+  /** Lets the user turn on a chat thread's canvas. Absent = off; turning it off hides every canvas. */
+  chat_canvas?: boolean;
+  /** Retained Vinculum opt-in. Absent = off. This branch starts Vinculum either way; a saved `pi_durable` key still loads. */
+  vinculum?: boolean;
+  /** Grok key for the experimental daemon. Empty or absent is unset. */
+  grok_api_key?: string;
 };
 export type GridViewDefinition = { id: string; name: string; slot: number };
 export type UpdateRelease = { version: string; url: string; sha256: string; size: number; protocol_version: number; published_at: string };
 export type UpdateStatus = { current: string; available: UpdateRelease | null; checked_at: number };
-export type OmpRelease = { version: string; asset_url: string };
-export type OmpUpdateStatus = { installed: string; available: OmpRelease | null; checked_at: number; binary_path: string; config_dir: string };
-export type OmpCustomization = { name: string; kind: string; source: string; path: string | null };
-export type OmpCustomizations = { items: OmpCustomization[]; errors: string[] };
+export type VinculumCustomization = { name: string; kind: string; source: string; path: string | null; offered?: boolean; included?: boolean; enabled?: boolean };
+/** `skills`: how many skills the model is offered against the limit, the length of that list, and the removed included ones. */
+export type SkillSummary = { on: number; limit: number; catalogChars: number; removed: string[] };
+export type VinculumCustomizations = { items: VinculumCustomization[]; errors: string[]; skills?: SkillSummary };
+export type VinculumMcpServer = { name: string; builtin: boolean; state: "connected" | "disabled" | "error" | string; error?: string };
+export type VinculumDaemonCustomizations = { tools: string[]; servers: VinculumMcpServer[] };
+export type SkillInstall = { name: string; exists: boolean };
 export type StagedUpdate = { version: string; app_path: string; scratch_dir: string };
 export type GlobalSettings = {
   notifications: NotificationPrefs;
@@ -366,9 +387,100 @@ export type Harness = {
 };
 export type EffectiveHarness = Harness & { source: SettingSource };
 export type HarnessFile = { harness: Harness[] };
+/** An SSH host that remote repos (`alinery+ssh://<host-id>/<path>`) live on. */
+export type RemoteHost = {
+  label: string;
+  ssh_args: string[];
+  home?: string | null;
+  platform?: string | null;
+  glibc?: string | null;
+  /** Whether the onboarding steps have run on this host. */
+  onboarded?: boolean;
+};
+export type RemoteHostView = {
+  host_id: string;
+  label: string;
+  destination: string;
+  /** `reconnecting`: the connection dropped and the app is retrying on its own. */
+  state: "idle" | "connecting" | "reconnecting" | "connected" | "failed";
+  /** A `failed` host nothing will retry. `failed` alone also shows briefly while a dropped link is about to be retried. */
+  gave_up: boolean;
+  /** What the connect dialog shows while `connecting`. */
+  phase: string;
+  error: string | null;
+  home: string | null;
+  platform: string | null;
+  /** False for a host that has not been told what it may receive yet. */
+  sharing_reviewed: boolean;
+  /** Provider ids whose sign-ins were removed from the host and not yet acknowledged. */
+  erased_sign_ins: string[];
+};
+/** The Settings Runtime panel's rows (`runtime_status`), read from the shell's memory and the bundled manifest. */
+export type RuntimeStatus = { hosts: HostRuntime[]; repos: RepoRuntime[]; local_link: LinkTraffic };
+/** Calls and bytes the shell's bridge has carried to one host's daemons since the app started. */
+export type LinkTraffic = { calls: number; bytes_up: number; bytes_down: number };
+/** `running` is the host's runtime while connected; `bundled` is what this app carries for it. They differ when the host is stale. */
+export type HostRuntime = {
+  host_id: string;
+  label: string;
+  state: RemoteHostView["state"];
+  running: string | null;
+  bundled: string | null;
+  link: LinkTraffic;
+  daemons: BoxDaemon[];
+};
+/**
+ * `host` is `local` or the ssh host id; `version` is the app release the daemon reported (empty from an older daemon, null before it
+ * answered). `joined`: someone else started it and let this app in. `started_by` is empty when the daemon does not say.
+ */
+export type RepoRuntime = {
+  repo: string;
+  state: "current" | "build_drift" | "joined" | "conflict" | "not_attached";
+  issues: string[];
+  host: string;
+  version: string | null;
+  started_by: string;
+  os_user: string;
+  mine: boolean;
+};
+/** One row of the host list: this computer first (`host_id` "local"), then each remote host. */
+export type HostEntry = {
+  host_id: string;
+  label: string;
+  local: boolean;
+  onboarded: boolean;
+  remote: RemoteHostView | null;
+};
+/** Why a host cannot run a daemon, found by the probe before anything is installed (`Refusal` in remote.rs). */
+export type RefusalKind = "unsupported_os" | "unsupported_cpu" | "no_glibc" | "old_glibc" | "old_macos" | "large_pages" | "missing_tools" | "no_runtime" | "stops_processes";
+export type HostRefusal = { kind: RefusalKind; message: string; missing_tools: string[]; fix: string | null };
+/** What "Test connection" learned about a host the probe accepts. */
+export type HostTestReport = { platform: string; glibc: string | null };
+/** Where a destination resolves to, as `ssh -G` reports it. */
+export type SshTarget = { hostname: string; user: string | null; port: number; jump: string | null };
+/** What this Mac could give a host, and what the host is set to receive. */
+export type RemoteSharingView = {
+  reviewed: boolean;
+  /** Items to show ticked: `hosted-models`, `custom-providers`, `grok`, `key:<provider>`. */
+  shared: string[];
+  keys: string[];
+  /** Browser sign-ins on this Mac. Never copied. */
+  sign_ins: string[];
+  custom_providers: boolean;
+  grok: boolean;
+  hosted: boolean;
+  /** Unix seconds. */
+  hosted_expires_at: number | null;
+  erased_sign_ins: string[];
+};
+export type RemoteDirEntry = { name: string; git: boolean; symlink: boolean };
+export type RemoteDirListing = { path: string; entries: RemoteDirEntry[]; truncated: boolean };
 export type AppConfig = {
   active_repo: string;
   known_repos: string[];
+  /** Whether the onboarding steps have run on this computer. */
+  local_onboarded?: boolean;
+  remote_hosts?: Record<string, RemoteHost>;
   mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;
@@ -526,9 +638,9 @@ export type SessionStatusRef = {
 };
 // --- Structured session observation types (Step 4 / Phase 3 protocol) ---
 
-// Mirrors alinery-core HarnessAdapter: "omp" | "unsupported"
-export type HarnessAdapter = "omp" | "unsupported";
-export type MessageAdapter = "omp_bracketed_paste" | "unsupported";
+// Mirrors alinery-core HarnessAdapter: "vinculum" | "unsupported"
+export type HarnessAdapter = "vinculum" | "unsupported";
+export type MessageAdapter = "vinculum_bracketed_paste" | "unsupported";
 
 // Mirrors alinery-core ProcessState
 export type ProcessState = { state: "starting" } | { state: "alive" } | { state: "exited"; code: number | null };
@@ -539,8 +651,7 @@ export type AgentState =
   | { state: "busy" }
   | { state: "waiting_for_input"; correlation_id: string }
   | { state: "waiting_for_approval"; correlation_id: string }
-  | { state: "idle" }
-  | { state: "errored"; message: string };
+  | { state: "idle" };
 
 // Mirrors alinery-core PlaybookState
 export type PlaybookState = { state: "in_progress" } | { state: "ready_to_advance" } | { state: "completed" } | { state: "failed"; reason: string };
@@ -557,8 +668,8 @@ export type SessionState = {
 // Mirrors alinery-core SemanticCheckpoint (daemon-written, meta-persisted)
 export type SemanticCheckpoint = {
   phase_completed_at?: number | null;
-  omp_session_id?: string | null;
-  omp_turn_id?: number | null;
+  vinculum_session_id?: string | null;
+  vinculum_turn_id?: number | null;
 };
 
 // The normalized app-facing observation returned by session_status / session_list_statuses
@@ -571,6 +682,8 @@ export type SessionObservation = {
   state: SessionState | null;
   checkpoint: SemanticCheckpoint;
   transport?: SessionTransport | null;
+  /** What an attention notification calls the session: its task's name (S4.4). */
+  attention_label?: string;
 };
 
 export type ChatPart =
@@ -585,21 +698,21 @@ export type ChatMessage = {
   role: "user" | "assistant" | "toolResult";
   content: ChatPart[];
   stopReason?: string;
-  /** OMP's reason text on a `stopReason: "error"` row. */
-  errorMessage?: string;
   customType?: string;
   /**
-   * Id of the OMP journal row this message came from. Present only for messages read off disk;
+   * Id of the Vinculum journal row this message came from. Present only for messages read off disk;
    * live streamed messages have none. Entry ids derive from it so that paging older history in
    * cannot renumber rows that are already mounted.
    */
   rowId?: string;
-  /** OMP's per-message stamp. A streamed snapshot and the journal row OMP persists for it share it. */
+  /** Vinculum's per-message stamp. A streamed snapshot and the journal row Vinculum persists for it share it. */
   timestamp?: number;
   /** toolResult rows carry these; assistant toolCall parts carry their own copies. */
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
+  /** A Vinculum tool result whose call is still running. Absent once the stored result has replaced it. */
+  streaming?: boolean;
 };
 
 // Mirrors alinery-core's LifecycleState (serde tag = "state", snake_case). Derived by the
@@ -634,6 +747,8 @@ export type NormalizedPlaybook = {
   description: string;
   default_model: string;
   default_harness: string;
+  /** Required: this is the normalized shape. A raw Struct is normalized at the boundary that reads
+   * it (`definitionOfStruct` in `sync/execution.ts`), so a view never sees a definition without it. */
   step: NormalizedStep[];
   preamble: string;
   section_order: string[];
@@ -641,7 +756,17 @@ export type NormalizedPlaybook = {
 export type PlaybookValidationError = { code: string; message: string; line: number | null; field: string | null; severity: string };
 export type PlaybookSource = { reference: PlaybookRef; path: string | null };
 export type ScopedPlaybook = { source: PlaybookSource; definition: NormalizedPlaybook; source_text: string; modified_at_ms: number | null };
-export type PlaybookCandidate = { source: PlaybookSource; title: string | null; description: string | null; modified_at_ms: number | null; diagnostics: PlaybookValidationError[] };
+export type PlaybookCandidate = {
+  source: PlaybookSource;
+  title: string | null;
+  description: string | null;
+  modified_at_ms: number | null;
+  diagnostics: PlaybookValidationError[];
+  /** sha256 of the file as the daemon read it (compared with a listing's `bodySha256`); absent when it did not parse. */
+  body_sha256?: string;
+  /** The step graph without prompts, enough to draw the row's ring. */
+  steps?: NormalizedStep[];
+};
 export type PickerPreference = {
   reference: PlaybookRef;
   preferred?: boolean;
@@ -652,7 +777,13 @@ export type PickerPreference = {
   last_imported_at_ms: number | null;
 };
 export type PickerPreferences = { order: PlaybookRef[]; entries: PickerPreference[] };
-export type PlaybookCatalog = { candidates: PlaybookCandidate[]; picker_preferences: PickerPreferences; diagnostics: PlaybookValidationError[] };
+export type PlaybookCatalog = {
+  candidates: PlaybookCandidate[];
+  picker_preferences: PickerPreferences;
+  diagnostics: PlaybookValidationError[];
+  /** Built-ins the person removed, which can be restored. */
+  hidden?: { key: string; title: string }[];
+};
 export type PlaybookValidation = { definition: NormalizedPlaybook | null; diagnostics: PlaybookValidationError[] };
 export type CommunitySummary = {
   id: string;
@@ -670,7 +801,20 @@ export type CommunitySummary = {
 };
 export type CommunityPlaybookPage = { playbooks: CommunitySummary[]; nextCursor: string | null };
 export type CommunityMineResult = { kind: "loaded"; playbooks: CommunitySummary[]; truncated: boolean } | { kind: "needs_account" } | { kind: "failed"; message: string };
-export type CommunityImportRow = { id: string; label: string; playbookKey: string; localKey: string; importedVersion: number };
+export type CommunityImportRow = {
+  id: string;
+  label: string;
+  playbookKey: string;
+  localKey: string;
+  importedVersion: number;
+  locallyEdited?: boolean;
+  localMissing?: boolean;
+  /** Where the download lives: this repository, or the machine's library for every repository. */
+  localScope?: "repo" | "global";
+};
+/** One of the person's listings, linked to the local playbook it was published from. */
+export type PublicationLink = { id: string; reference: { scope: "repo" | "global"; key: string } };
+export type UnpublishResult = { kind: "removed" } | { kind: "needs_account" } | { kind: "failed"; message: string };
 export type DownloadStatusRow = {
   id: string;
   label: string;
@@ -686,6 +830,13 @@ export type DownloadStatusRow = {
   locallyEdited: boolean;
   error: string | null;
 };
+/** What the library says about one publication (the shell asks it, without the account). */
+export type RemoteStatusRow = { id: string; title: string | null; description: string | null; remoteVersion: number | null; remoteMissing: boolean; error: string | null };
+/** A package downloaded with this machine's account, for the repository's daemon to import. */
+export type CommunitySourceResult =
+  | { kind: "downloaded"; document: string; version: number; label: string; playbookKey: string }
+  | { kind: "needs_account" }
+  | { kind: "failed"; message: string };
 export type ImportResult =
   | { kind: "saved"; reference: PlaybookRef; importedVersion: number; localSha256: string }
   | { kind: "needs_account" }
@@ -713,25 +864,7 @@ export type SessionTypeChoice =
 export type SavePlaybookRequest = { target: PlaybookRef; source: string; overwrite: boolean };
 export type LaunchChoices = { harness: string; model: string };
 export type ExecutionLifecycle = "queued" | "starting" | "running" | "finishing" | "completed" | "launch_failed" | "failed" | "interrupted";
-export type ContinuationMode = "automatic" | "manual";
-export type Terminality = "terminal" | "nonterminal" | "unresolved";
-export type ReadyAssessmentKey = { destinations: string[]; terminality: Terminality };
-export type AssessmentReason = { code: string; message: string; execution_id: string | null; context_id: string | null; collection_id: string | null; selector: string | null };
-export type ExecutionAssessment = { destinations: { step_key: string; title: string }[]; terminality: Terminality; reasons: AssessmentReason[] };
-export type TaskAssessment = { status: "active" | "waiting" | "blocked" | "complete"; reasons: AssessmentReason[] };
-export type CompletionOutcome =
-  | { status: "accepted"; receipt_id: string }
-  | { status: "ready" | "requested"; ready_revision: number }
-  | { status: "waiting" | "stale" | "unavailable"; reason: string }
-  | { status: "invalid_outputs"; diagnostics: string[] };
-export type DispatchOutcome = { status: "written" } | { status: "not_sent" | "unknown"; reason: string };
-export type ContinueExecutionRequest = { task_slug: string; execution_id: string; session_id: string; process_incarnation: string; ready_revision: number };
-export type PrepareEndExecutionRequest = { task_slug: string; execution_id: string; session_id: string };
-export type EndExecutionRequest = PrepareEndExecutionRequest & { process_incarnation: string; work_revision: number };
-export type EndExecutionPreparation = { request: EndExecutionRequest; artifacts: string[]; diagnostics: string[] };
-export type SuppliedExecutionArtifact = { relative_path: string; content: string };
-export type StopExecutionReply = { shutdown_confirmed: boolean };
-export type ExecutionArtifactsPreview = { assessment: ExecutionAssessment; diagnostics: string[] };
+export type CompletionPermission = { kind: "automatic" | "locked" | "consumed" } | { kind: "human_granted"; execution_id: string; session_id: string };
 export type OutputAssignment = { selector: string; relative_path: string; discriminator: number };
 export type ExecutionCandidate = {
   step_key: string;
@@ -755,13 +888,7 @@ export type ExecutionRecord = {
   is_coding_step: boolean;
   start_requested: boolean;
   lifecycle: ExecutionLifecycle;
-  continuation_mode: ContinuationMode;
-  work_revision: number;
-  last_admission_sequence: number;
-  last_ready_revision: number | null;
-  ready_revision: number | null;
-  continuation_requested_revision: number | null;
-  ready_assessment: ReadyAssessmentKey | null;
+  permission: CompletionPermission;
   receipt_id: string | null;
   exit_code: number | null;
   shutdown_confirmed: boolean;
@@ -790,11 +917,21 @@ export type TaskExecutionState = {
   max_live_sessions: number;
   enabled_steps: string[];
   auto_approve_all?: boolean;
+  /** O21: the records are the old runner's. They show as finished history, with no approve or resume. */
+  history_only?: boolean;
   launch_defaults: LaunchChoices;
-  executions: Record<string, ExecutionRecord>;
-  occurrences: Record<string, ArtifactOccurrence>;
-  contexts: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
-  collections: Record<
+  /**
+   * The maps below come from the engine block, and `getTaskExecution` merges them only for a
+   * `stored` or `converted` state. A `history_only` task (the old runner's records, no engine
+   * state) and a `fresh` one answer without them, so every reader defaults them.
+   *
+   * They are optional for that reason: treating them as required is what let two callers throw
+   * `Cannot convert undefined or null to object` during render and blank the window.
+   */
+  executions?: Record<string, ExecutionRecord>;
+  occurrences?: Record<string, ArtifactOccurrence>;
+  contexts?: Record<string, { id: string; parent_id: string | null; cause: { kind: string }; bindings: Record<string, string[]> }>;
+  collections?: Record<
     string,
     {
       id: string;
@@ -809,24 +946,25 @@ export type TaskExecutionState = {
   >;
 };
 export type ExecutionAvailability = { status: "available" } | { status: "offline" | "foreign_owner" | "incompatible" | "unavailable"; detail: string };
-export type ContinuationCapability = { process_incarnation: string; available: boolean; reason: string | null };
 export type TaskExecutionReply = {
   state: TaskExecutionState;
   definition: NormalizedPlaybook;
   live: ExecutionAvailability;
-  assessment: TaskAssessment;
-  executions: Record<string, ExecutionAssessment>;
-  continuation: Record<string, ContinuationCapability>;
+  /** The execution row's revision, sent back as `expected_revision` when the person approves from this view. */
+  revision?: bigint;
 };
 export type TaskAttachment = { name: string; bytes: string };
-export type PreparedTaskAttachments = { attachments: TaskAttachment[]; attachment_urls: string[]; attachment_errors: string[] };
+/** A file already uploaded to the daemon's staging area (`prepareTaskAttachments`); CreateTask names it by this id. */
+export type StagedUpload = { name: string; upload_id: string };
+export type PreparedTaskAttachments = { attachments: StagedUpload[]; attachment_urls: string[]; attachment_errors: string[] };
+export type DraftAttachments = { entries: string[]; images: { name: string; bytes: string; mime_type: string }[] };
 export type CreateTaskRequest = {
   name: string;
   draft_slug?: string | null;
   requested_slug?: string | null;
   description?: string;
   evidence?: string;
-  attachments?: TaskAttachment[];
+  attachments?: (TaskAttachment | StagedUpload)[];
   attachment_urls?: string[];
   attachment_errors?: string[];
   linear_id?: string;
@@ -860,6 +998,8 @@ export type RepoScope = "active" | "all";
 export type ReviewHandoffRecord = {
   version: number;
   direction: string;
+  source_repo_path?: string;
+  target_repo_path?: string;
   source_task: string;
   source_session: string;
   source_artifact: string;
@@ -905,6 +1045,8 @@ export type ArtifactTreeNode = {
   owner_task_slug: string;
   source: ArtifactTreeSource;
   children: ArtifactTreeNode[];
+  /** A file node's path below `.alinery/` on the daemon's machine, for Reveal and Copy path; never read as a file name. */
+  reveal_path?: string;
 };
 
 export type SessionMessageActionProvenance =
@@ -937,7 +1079,28 @@ export type ReviewHandoffDraft = ReviewHandoffSource & {
   prompt_extra: string;
 };
 
-export type SettingsSectionKey = "general" | "harness" | "connections" | "storage" | "sessionsView" | "chat" | "gridViews" | "mcp" | "backup";
+// A Settings group or one of its parts; `views/settingsIndex.ts` lists them in page order.
+export type SettingsSectionKey =
+  | "appearance"
+  | "views"
+  | "views.sessions"
+  | "views.chat"
+  | "views.grid"
+  | "agents"
+  | "agents.defaults"
+  | "agents.providers"
+  | "agents.playbooks"
+  | "connections"
+  | "notifications"
+  | "data"
+  | "data.storage"
+  | "data.backup"
+  | "mcp"
+  | "system"
+  | "system.updates"
+  | "system.sessions"
+  | "system.misc"
+  | "system.experimental";
 
 export type View =
   | { kind: "list" }
@@ -1050,7 +1213,20 @@ export type DaemonConflict = {
   app_config_identity: string;
   owners: DaemonOwnerConflict[];
   issues: string[];
+  repairable_tasks: string[];
+  /** Sessions from an older Alinery hold the project until Back up and reset. */
+  outdated: boolean;
+  /** Who started a remote repo's daemon, when it says; null for a local repo. */
+  starter: DaemonStarter | null;
+  /** Someone else's daemon of this protocol that refuses this app's token: its members can let this app in. */
+  joinable: boolean;
 };
+
+/** `mine`: this person on this machine started it (possibly from another Alinery build). */
+export type DaemonStarter = { started_by: string; os_user: string; mine: boolean };
+
+/** One daemon running on an ssh host, whoever started it, from the record it leaves there. */
+export type BoxDaemon = { repo: string; lane: string; pid: number; os_user: string; started_by: string; started_at_ms: number; version: string; protocol: number };
 
 export type TakeoverPreview = {
   confirmation_id: string;
@@ -1060,12 +1236,15 @@ export type TakeoverPreview = {
 
 export type TakeoverOutcome = { status: "attached" } | { status: "blocked"; conflict: DaemonConflict } | { status: "reconfirm"; preview: TakeoverPreview };
 
+/** What only the shell knows about a repo's daemon (the `daemon_status` command); the rest of `DaemonStatus` is the daemon's own entity. */
+export type ShellDaemonStatus = Pick<DaemonStatus, "mode" | "extra_lanes" | "stale_lanes" | "repo" | "build_drift" | "conflict" | "repo_busy">;
+
 export type DaemonStatus = {
   reachable: boolean;
-  mode: string; // "local" today; "remote" reserved for a future remote daemon
+  mode: string; // "local", or "remote" for a daemon behind an SSH forward
   // Independent process-level count (alive PTY processes).
   alive: number;
-  // Agent-state counts (OMP-only; unsupported/unknown sessions excluded from agent counts).
+  // Agent-state counts (Vinculum-only; unsupported/unknown sessions excluded from agent counts).
   busy: number;
   waiting_for_input: number;
   waiting_for_approval: number;
@@ -1082,7 +1261,7 @@ export type DaemonStatus = {
   conflict: DaemonConflict | null;
   /** B6: another live alinery holds this repo's `.alinery/.alinery-app.lock`. */
   repo_busy: boolean;
-  /** The selected daemon lacks a canonical executable for dynamic host screening. */
+  /** The daemon reports (entity `daemon/_/status`) that it lacks a canonical executable for dynamic host screening. */
   host_guard_warning: boolean;
 };
 
@@ -1093,6 +1272,7 @@ export type McpStatus = {
   socket_reachable: boolean;
   binary_found: boolean;
   binary_path: string;
+  host_args: string[];
   repo: string;
   socket_path: string;
   error: string;

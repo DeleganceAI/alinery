@@ -87,7 +87,7 @@
   border: 0;
   background: var(--surface);
   color: var(--accent);
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   cursor: pointer;
 }

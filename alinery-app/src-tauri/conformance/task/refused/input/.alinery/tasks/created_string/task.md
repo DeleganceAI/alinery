@@ -1,0 +1,5 @@
+name = "n"
+slug = "created_string"
+branch = "b"
+worktree = "/w"
+created = "1"

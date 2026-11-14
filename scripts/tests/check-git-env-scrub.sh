@@ -18,7 +18,7 @@ TAURI="$ROOT/alinery-app/src-tauri"
 # The helper itself is the one legitimate raw spawn.
 hits=$(grep -rn 'Command::new("git")' \
   --include='*.rs' \
-  "$TAURI/src" "$TAURI/alinery-core" "$TAURI/alineryd" "$TAURI/mcp" "$TAURI/runner" \
+  "$TAURI/src" "$TAURI/alinery-core" "$TAURI/mcp" \
   | grep -v '^.*/alinery-core/src/git.rs:' || true)
 
 if [ -n "$hits" ]; then
@@ -26,5 +26,7 @@ if [ -n "$hits" ]; then
   echo "$hits" >&2
   exit 1
 fi
+
+# The daemon's own git spawn site is checked by check-daemon-git-spawn.sh.
 
 echo "OK: all git spawns go through alinery_core::git_cmd"

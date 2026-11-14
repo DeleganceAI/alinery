@@ -1,6 +1,6 @@
-import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Package, Plus, Search, TriangleAlert, X } from "lucide-react";
+import { ArrowUpCircle, Check, ChevronDown, CircleAlert, CircleCheck, FolderPlus, Info, Plus, Search, Server, TriangleAlert, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type OrbState, ThinkingOrb } from "thinking-orbs";
 import { AccountMenu } from "./AccountMenu";
 import type { ArchiveTaskPhase } from "./archiveTask";
@@ -10,7 +10,11 @@ import { IdleDot, ORB_SPEED, ORB_STATE, RunningIndicator, StateIcon } from "./In
 import * as ipc from "./ipc";
 import { BrandMark } from "./Logo";
 import { deriveModelRows } from "./modelFavorites";
+import { parseRemoteRepo, repoDisplayPath } from "./remoteRepo";
 import { type ObservationDisplayKind, observationDisplayKind, sessionDisplayKind } from "./sessionAttention";
+import { useTaskActivityMap } from "./sync/board";
+import { listModels } from "./sync/providers";
+import { killSession } from "./sync/sessions";
 import { useTabPill } from "./tabMotion";
 import { toast } from "./toast";
 import type {
@@ -21,9 +25,7 @@ import type {
   ExecutionAvailability,
   ExecutionRecord,
   GridViewDefinition,
-  KanbanColumn,
   LifecycleState,
-  OmpUpdateStatus,
   PickerPreferences,
   PlaybookCandidate,
   PlaybookRef,
@@ -39,7 +41,10 @@ import type {
   TaskExecutionState,
   UpdateStatus,
 } from "./types";
+import { isVinculumHarness } from "./vinculumHarness";
 import { WindowControls } from "./WindowChrome";
+
+export { isVinculumHarness };
 
 export const ALL_REPOS = "__all_repos__";
 
@@ -113,10 +118,10 @@ export function findOwnedArtifactNode(nodes: ArtifactTreeNode[], relativePath: s
 }
 
 export function isAllowedLaunchHarness(key: string): boolean {
-  return key === "omp" || key === "no-harness";
+  return isVinculumHarness(key) || key === "no-harness";
 }
 
-export function ompDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
+export function vinculumDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
   const harness = defaults?.harness?.trim() ?? "";
   if (harness === "" || isAllowedLaunchHarness(harness)) {
     return defaults?.model || "";
@@ -126,7 +131,7 @@ export function ompDefaultModel(defaults: { harness?: string; model?: string } |
 
 export function harnessDisplayName(harness: string) {
   if (harness === "no-harness") return "Terminal";
-  if (harness === "omp") return "OMP CLI";
+  if (isVinculumHarness(harness)) return "Vinculum";
   return "Unsupported";
 }
 
@@ -325,16 +330,6 @@ export function sameBoardBuckets(left: Record<string, BoardTask[]>, right: Recor
   );
 }
 
-export function sameKanbanColumns(left: KanbanColumn[], right: KanbanColumn[]) {
-  return (
-    left.length === right.length &&
-    left.every((column, index) => {
-      const other = right[index];
-      return column.key === other.key && column.title === other.title;
-    })
-  );
-}
-
 export function sameTaskActivityMaps(left: TaskActivityMap, right: TaskActivityMap) {
   const keys = Object.keys(left);
   return (
@@ -506,7 +501,7 @@ export function ExecutionAvailabilityNotice({ live, controls = false }: { live: 
 }
 
 export function ExecutionOutputs({ execution, occurrences }: { execution: ExecutionRecord; occurrences: TaskExecutionState["occurrences"] }) {
-  const accepted = Object.values(occurrences).filter((occurrence) => occurrence.producer_execution_id === execution.id);
+  const accepted = Object.values(occurrences ?? {}).filter((occurrence) => occurrence.producer_execution_id === execution.id);
   return (
     <ul aria-label="Execution outputs">
       {execution.outputs.map((output) => {
@@ -646,6 +641,8 @@ export function TopBar({
   onSelectRepo,
   onRemoveRepo,
   onAddRepo,
+  onAddRemote,
+  remoteStates,
   onBrand,
   onSearch,
   onCreate,
@@ -653,8 +650,6 @@ export function TopBar({
   update,
   onUpgrade,
   updating,
-  ompUpdate,
-  onOmpUpdateClick,
 }: {
   isDev: boolean;
   active: Tab;
@@ -669,13 +664,15 @@ export function TopBar({
   onSelectRepo: (path: string) => void;
   onRemoveRepo: (path: string) => void;
   onAddRepo: () => void;
+  /** Opens the remote repositories modal. */
+  onAddRemote?: () => void;
+  /** Connection state per remote host id, for the repo menu. */
+  remoteStates?: Record<string, string>;
   onBrand: () => void;
   onSearch: () => void;
   onCreate: () => void;
   update?: UpdateStatus | null;
   onUpgrade?: () => void;
-  ompUpdate?: OmpUpdateStatus | null;
-  onOmpUpdateClick?: () => void;
   updating?: boolean;
 }) {
   const includeAll = active !== "settings";
@@ -732,20 +729,6 @@ export function TopBar({
             <ArrowUpCircle size={16} strokeWidth={1.5} aria-hidden="true" />
           </button>
         )}
-        {ompUpdate?.available && (
-          <button
-            type="button"
-            className="iconbtn omp-update"
-            title={`OMP update ${ompUpdate.available.version}`}
-            aria-label={`OMP update ${ompUpdate.available.version}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOmpUpdateClick?.();
-            }}
-          >
-            <Package size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        )}
       </div>
       <nav className="tabs" ref={tabsRef}>
         <span className="tab-indicator" aria-hidden="true" />
@@ -765,10 +748,15 @@ export function TopBar({
         </span>
       </button>
       <div className="repo-switcher">
-        <RepoSelect value={value} includeAll={includeAll} knownRepos={appConfig.known_repos} onSelect={onSelectRepo} onRemove={onRemoveRepo} />
+        <RepoSelect value={value} includeAll={includeAll} knownRepos={appConfig.known_repos} remoteStates={remoteStates} onSelect={onSelectRepo} onRemove={onRemoveRepo} />
         <button type="button" className="iconbtn repo-add" title="Add repo" aria-label="Add repository" onClick={onAddRepo}>
           <FolderPlus size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
+        {onAddRemote ? (
+          <button type="button" className="iconbtn repo-add" title="Add remote repo (SSH)" aria-label="Add remote repository" onClick={onAddRemote}>
+            <Server size={16} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       <button type="button" className="iconbtn search" title="Search (⌘K)" aria-label="Search" onClick={onSearch}>
         <Search size={15} strokeWidth={1.5} aria-hidden="true" />
@@ -787,12 +775,14 @@ function RepoSelect({
   value,
   includeAll,
   knownRepos,
+  remoteStates,
   onSelect,
   onRemove,
 }: {
   value: string;
   includeAll: boolean;
   knownRepos: string[];
+  remoteStates?: Record<string, string>;
   onSelect: (path: string) => void;
   onRemove: (path: string) => void;
 }) {
@@ -870,36 +860,49 @@ function RepoSelect({
               </button>
             </div>
           )}
-          {knownRepos.map((repo) => (
-            <div key={repo} className={`repo-opt${repo === value ? " on" : ""}`}>
-              <button
-                type="button"
-                className="repo-opt-main"
-                title={repo}
-                onClick={() => {
-                  setOpen(false);
-                  trigger.current?.focus();
-                  onSelect(repo);
-                }}
-              >
-                <span className="repo-opt-name">{repoName(repo)}</span>
-                <span className="repo-opt-path">{repo}</span>
-              </button>
-              <button
-                type="button"
-                className="repo-opt-x"
-                title={`Close ${repoName(repo)} — stops its session daemon (killing live sessions) and drops it from the list; repo files are untouched`}
-                aria-label={`Close ${repoName(repo)}`}
-                onClick={() => {
-                  setOpen(false);
-                  trigger.current?.focus();
-                  onRemove(repo);
-                }}
-              >
-                <X size={14} strokeWidth={1.5} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
+          {knownRepos.map((repo) => {
+            const remote = parseRemoteRepo(repo);
+            const offline = remote !== null && remoteStates?.[remote.hostId] !== "connected";
+            return (
+              <div key={repo} className={`repo-opt${repo === value ? " on" : ""}${offline ? " offline" : ""}`}>
+                <button
+                  type="button"
+                  className="repo-opt-main"
+                  title={remote && offline ? `${repoDisplayPath(repo)} — not connected` : repoDisplayPath(repo)}
+                  onClick={() => {
+                    setOpen(false);
+                    trigger.current?.focus();
+                    onSelect(repo);
+                  }}
+                >
+                  <span className="repo-opt-name">
+                    {repoName(repo)}
+                    {remote ? (
+                      <span className="repo-host-badge">{!offline ? "SSH" : remoteStates?.[remote.hostId] === "reconnecting" ? "SSH · reconnecting" : "SSH · offline"}</span>
+                    ) : null}
+                  </span>
+                  <span className="repo-opt-path">{repoDisplayPath(repo)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="repo-opt-x"
+                  title={
+                    remote
+                      ? `Remove ${repoName(repo)} from the list — its sessions keep running on the host`
+                      : `Close ${repoName(repo)} — stops its session daemon (killing live sessions) and drops it from the list; repo files are untouched`
+                  }
+                  aria-label={`Close ${repoName(repo)}`}
+                  onClick={() => {
+                    setOpen(false);
+                    trigger.current?.focus();
+                    onRemove(repo);
+                  }}
+                >
+                  <X size={14} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1040,8 +1043,6 @@ export function obsLabel(kind: ObservationDisplayKind): string {
       return "Running";
     case "idle":
       return "Idle";
-    case "errored":
-      return "Error";
     case "unknown":
       return "Unknown";
   }
@@ -1075,8 +1076,6 @@ function obsTooltip(kind: ObservationDisplayKind): string {
       return "Agent is processing — in progress";
     case "idle":
       return "Agent turn complete — idle";
-    case "errored":
-      return "The last turn stopped on an error — retry to continue";
     case "unknown":
       return "Agent state unknown";
   }
@@ -1084,21 +1083,28 @@ function obsTooltip(kind: ObservationDisplayKind): string {
 
 // Attention reason to pass to notify_session_attention, or null if no notification.
 // Unsupported/unknown never notify.
-function attentionReason(kind: ObservationDisplayKind): "idle" | "errored" | "waiting_for_input" | "waiting_for_approval" | null {
+function attentionReason(kind: ObservationDisplayKind): "idle" | "waiting_for_input" | "waiting_for_approval" | null {
   if (kind === "idle") return "idle";
-  if (kind === "errored") return "errored";
   if (kind === "waiting_for_input") return "waiting_for_input";
   if (kind === "waiting_for_approval") return "waiting_for_approval";
   return null;
 }
 
-// Both standalone dots and filtered collections use the same transition policy.
-export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, repoPath: string, slug: string) {
+// Both standalone dots and filtered collections use the same transition policy: a session that was
+// settled and now waits on something it was not waiting on (a new Attention `wait`) notifies, and so
+// does busy -> idle. A first sighting ("loading", or no previous kind) and a re-render that shows the
+// same kind again, which is all a reconnect snapshot of an unchanged session is, raise nothing.
+export function notifySessionAttentionTransition(previous: ObservationDisplayKind | null, current: ObservationDisplayKind, label: string) {
   const reason = attentionReason(current);
-  if (previous === "busy" && reason !== null) {
-    ipc.notifySessionAttention(repoPath, slug, reason).catch(() => {});
-  }
+  if (reason === null || previous === null || previous === "loading" || previous === "unknown" || previous === current) return;
+  if (reason === "idle" && previous !== "busy") return;
+  ipc.notifySessionAttention(attentionBody(label, reason)).catch(() => {});
 }
+
+const ATTENTION_SUFFIX = { idle: "idle, needs you", waiting_for_input: "waiting for your input", waiting_for_approval: "waiting for your approval" } as const;
+
+/** The text of an attention notification: the label the session entity carries (its task's name) and why it needs the person. */
+export const attentionBody = (label: string, reason: keyof typeof ATTENTION_SUFFIX) => `${label || "session"} — ${ATTENTION_SUFFIX[reason]}`;
 
 // Whether this kind should suppress the dot in minimal mode (only show for notable states).
 function obsMinimalHide(kind: ObservationDisplayKind): boolean {
@@ -1116,50 +1122,29 @@ export function StatusDot({
   exitCode = null,
   exitAcknowledged = false,
   notifyTransitions = true,
+  terminalLabel = null,
 }: {
   id: string;
   slug?: string;
   repoPath?: string;
   minimal?: boolean;
-  // When provided by a parent that already polls, the dot is fully controlled.
-  // When absent, the dot polls session_status itself.
+  // The parent reads the session from its subscription (useSessionObservations); null shows "loading".
   observation?: SessionObservation | null;
   superseded?: boolean;
   unreadCompletion?: boolean;
   exitCode?: number | null;
   exitAcknowledged?: boolean;
   notifyTransitions?: boolean;
+  /** Replaces Exited when the session is stopped: recoverable, completed, or a real exit. */
+  terminalLabel?: "Recoverable" | "Completed" | "Ready to advance" | "Exited" | null;
 }) {
   const pollKey = `${slug ?? ""}\u0000${id}`;
-  const [polledObs, setPolledObs] = useState<{ key: string; observation: SessionObservation } | null>(null);
   const prevKind = useRef<{ key: string; kind: ObservationDisplayKind } | null>(null);
-  const controlled = observation !== undefined;
-
-  // Self-polling path: used by standalone dots that don't have a parent batcher.
-  useEffect(() => {
-    if (controlled) return;
-    let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(id, slug ?? null)
-        .then((obs) => {
-          if (alive) setPolledObs({ key: pollKey, observation: obs });
-        })
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id, slug, controlled, pollKey]);
-
-  // A SessionView can retain this component while navigating between session ids.
-  // Never render the previous session's observation during the first poll for the new id.
-  const currentPolledObs = polledObs?.key === pollKey ? polledObs.observation : null;
-  const obs = observation ?? currentPolledObs;
+  const obs = observation ?? null;
   const observedKind: ObservationDisplayKind = obs ? observationDisplayKind(obs) : "loading";
   const kind = sessionDisplayKind(obs, superseded, exitCode, exitAcknowledged);
+  const processLive =
+    obs?.lifecycle.state === "live" || obs?.lifecycle.state === "live_exited" || obs?.state?.process.state === "alive" || obs?.state?.process.state === "starting";
 
   // Attention notifications: fire on transitions into idle/waiting states.
   // Never notify for unsupported/unknown; artifact presence never triggers.
@@ -1167,8 +1152,8 @@ export function StatusDot({
     const prev = prevKind.current?.key === pollKey ? prevKind.current.kind : null;
     prevKind.current = { key: pollKey, kind: observedKind };
     if (!notifyTransitions || !slug || !repoPath) return;
-    notifySessionAttentionTransition(prev, observedKind, repoPath, slug);
-  }, [observedKind, notifyTransitions, pollKey, repoPath, slug]);
+    notifySessionAttentionTransition(prev, observedKind, obs?.attention_label ?? "");
+  }, [observedKind, notifyTransitions, pollKey, repoPath, slug, obs?.attention_label]);
 
   if (kind === "failed" && !exitAcknowledged && exitCode != null && exitCode !== 0) {
     return (
@@ -1179,6 +1164,33 @@ export function StatusDot({
         aria-label={`Failed: process exited with code ${exitCode}`}
       >
         <StateIcon state="failed" />
+      </span>
+    );
+  }
+
+  // An accepted completion the user has not opened outranks the bare "Exited" word.
+  if (
+    terminalLabel &&
+    !(unreadCompletion && terminalLabel === "Exited") &&
+    !processLive &&
+    kind !== "busy" &&
+    kind !== "starting" &&
+    kind !== "waiting_for_input" &&
+    kind !== "waiting_for_approval"
+  ) {
+    const title =
+      terminalLabel === "Recoverable"
+        ? "This step was not accepted. The conversation is still in the session file."
+        : terminalLabel === "Completed"
+          ? "Phase completed \u2014 checkpoint accepted"
+          : terminalLabel === "Ready to advance"
+            ? "Phase completed \u2014 ready to advance to the next step"
+            : "Session is not live in the current daemon";
+    const quiet = terminalLabel === "Recoverable" || terminalLabel === "Exited";
+    return (
+      <span className="statusdot" title={title}>
+        <span className="d" style={{ background: quiet ? "var(--text-faint)" : "var(--success)" }} />
+        {terminalLabel}
       </span>
     );
   }
@@ -1194,8 +1206,7 @@ export function StatusDot({
     );
   }
 
-  const agent = obs?.state?.agent;
-  return <StatusMarker kind={kind} minimal={minimal} title={kind === "errored" && agent?.state === "errored" ? agent.message : undefined} />;
+  return <StatusMarker kind={kind} minimal={minimal} />;
 }
 
 /**
@@ -1231,7 +1242,7 @@ export function StatusMarker({
   }
 
   // Compact badges for waits and failures.
-  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "errored" || kind === "unknown") {
+  if (kind === "waiting_for_input" || kind === "waiting_for_approval" || kind === "failed" || kind === "unknown") {
     return (
       <span className={`statusdot statusdot-badge statusdot-${kind}`} title={title}>
         <StateIcon state={kind} />
@@ -1257,7 +1268,7 @@ export function StatusMarker({
 // A parent that already batches status may provide `live`; standalone uses retain their poller.
 // `repoPath` makes the kill repository-explicit; omitting it (the drawer's root session, which
 // has no per-repo identity) falls back to the active-repo command — same idiom as
-// listHarnessModelsForRepo below.
+// the model list's optional repository (`listModels`).
 export function KillButton({
   id,
   slug,
@@ -1270,30 +1281,11 @@ export function KillButton({
   slug?: string;
   repoPath?: string;
   onKilled?: () => void;
-  live?: boolean;
+  live: boolean;
   danger?: boolean;
 }) {
-  const [polledLive, setPolledLive] = useState(false);
   const [busy, setBusy] = useState(false);
-  const controlled = live !== undefined;
-  useEffect(() => {
-    if (controlled) return;
-    let alive = true;
-    const tick = () =>
-      ipc
-        .sessionStatus(id, slug ?? null)
-        .then((obs) => {
-          if (alive) setPolledLive(obs.lifecycle.state === "live");
-        })
-        .catch(() => {});
-    tick();
-    const t = setInterval(tick, 1500);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id, slug, controlled]);
-  if (!(live ?? polledLive)) return null;
+  if (!live) return null;
   return (
     <button
       type="button"
@@ -1303,7 +1295,7 @@ export function KillButton({
       onClick={(e) => {
         e.stopPropagation();
         setBusy(true);
-        (repoPath ? ipc.killSessionForRepo(repoPath, id, slug ?? "") : ipc.killSession(id, slug ?? ""))
+        (repoPath ? killSession(repoPath, id, slug ?? "") : ipc.readAppConfig().then((config) => killSession(config.active_repo, id, slug ?? "")))
           .then(() => {
             toast("Session killed", "success");
             onKilled?.();
@@ -1317,37 +1309,48 @@ export function KillButton({
   );
 }
 
-export function useBoardTaskActivity(tasks: BoardTask[], active = true) {
-  const [activity, setActivity] = useState<TaskActivityMap>({});
-  const taskSignature = tasks.map(taskKey).sort().join("\u0000");
+/** Activity of these tasks, kept current by their repos' streams (the daemon derives it onto the task row). */
+export function useBoardTaskActivity(tasks: BoardTask[], active = true): TaskActivityMap {
+  const refs: TaskActivityRef[] = useMemo(
+    () => tasks.map((task) => ({ repoPath: task.repo_path, taskSlug: task.slug })),
+    // biome-ignore lint/correctness/useExhaustiveDependencies: the signature stands for the tasks
+    [tasks.map(taskKey).sort().join("\u0000")],
+  );
+  const next = useTaskActivityMap(refs, active);
+  const last = useRef(next);
+  if (!sameTaskActivityMaps(last.current, next)) last.current = next;
+  return last.current;
+}
 
-  useEffect(() => {
-    if (!active) return;
-    let alive = true;
-    let timer: number | undefined;
-    const refs: TaskActivityRef[] = tasks.map((task) => ({
-      repoPath: task.repo_path,
-      taskSlug: task.slug,
-    }));
-    const load = async () => {
-      try {
-        const next = refs.length ? await ipc.listTaskActivity(refs) : {};
-        if (alive) setActivity((current) => (sameTaskActivityMaps(current, next) ? current : next));
-      } catch {
-        if (alive) setActivity((current) => (sameTaskActivityMaps(current, {}) ? current : {}));
-      } finally {
-        if (alive) timer = window.setTimeout(load, 3000);
-      }
-    };
+/** Brings a repo's daemon back on demand: a remote repo reconnects its host (which reinstalls a stale runtime and reattaches every repo on
+ *  it), a local one reattaches its daemon the way opening it does. The notice clears by itself when the daemon answers again. */
+function RepoReconnectButton({ repo }: { repo: string }) {
+  const [busy, setBusy] = useState(false);
+  const remote = parseRemoteRepo(repo);
+  const reconnect = () => {
+    setBusy(true);
+    (remote ? ipc.remoteConnect(remote.hostId, false) : ipc.setActiveRepo(repo)).catch((error) => toast(String(error), "error")).finally(() => setBusy(false));
+  };
+  return (
+    <button type="button" className="btn ghost small" disabled={busy} onClick={reconnect}>
+      {busy ? "Reconnecting…" : "Reconnect"}
+    </button>
+  );
+}
 
-    void load();
-    return () => {
-      alive = false;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [active, taskSignature]);
-
-  return activity;
+/** One warning per repo whose daemon is not answering: stale rows are the last known state, and a repo that never answered has none. */
+export function RepoLinkNotices({ repos }: { repos: Record<string, { loaded: boolean; reachable: boolean; stale: boolean }> }) {
+  const down = Object.entries(repos).filter(([, state]) => !state.reachable);
+  if (!down.length) return null;
+  return (
+    <>
+      {down.map(([repo, state]) => (
+        <InlineStatus key={repo} tone="warning" action={<RepoReconnectButton repo={repo} />}>
+          {repoName(repo)}: {state.stale ? "daemon not connected, showing the last known tasks" : "no daemon connection"}
+        </InlineStatus>
+      ))}
+    </>
+  );
 }
 
 export const EMPTY_TASK_ACTIVITY: TaskActivitySummary = {
@@ -1418,7 +1421,7 @@ const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `
 
 /**
  * Model selector: a select-style trigger showing the chosen `provider/id`, opening either the
- * host's picker (`onOpenPicker`, the account-aware OMP dialog) or this component's own
+ * host's picker (`onOpenPicker`, the account-aware Vinculum dialog) or this component's own
  * per-harness list. The empty value means the harness default; the clear control restores it.
  */
 export function ModelInput({
@@ -1540,9 +1543,8 @@ export function ModelInput({
     const request = ++discoveryRequestRef.current;
     waitingDiscoveryRef.current = null;
     setBusy(true);
-    // Was a runtime-selected command name plus a matching payload shape. Neither the
-    // command nor its arguments were reachable by any static check that way.
-    (repoPath ? ipc.listHarnessModelsForRepo(repoPath, harness) : ipc.listHarnessModels(harness))
+    // The daemon of `repoPath` (else the active repository) lists its own host's models.
+    listModels(harness, repoPath)
       .then((next) => {
         if (discoveryRequestRef.current !== request) return;
         setModels(next);

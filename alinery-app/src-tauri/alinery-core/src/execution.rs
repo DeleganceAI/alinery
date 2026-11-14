@@ -4,8 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::playbook::{parse_playbook_md, ArtifactSelector, NormalizedPlaybook, NormalizedStep, PlaybookRef};
-use crate::playbook_scheduler::{assess_execution, ReadyAssessmentKey, Terminality, ValidatedPublication};
+use crate::playbook::{parse_playbook_md, ArtifactSelector, NormalizedPlaybook, PlaybookRef};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -27,17 +26,15 @@ pub enum ExecutionLifecycle {
     Interrupted,
 }
 
-impl ExecutionLifecycle {
-    pub fn holds_capacity(&self) -> bool {
-        matches!(self, Self::Starting | Self::Running | Self::Finishing | Self::Interrupted)
-    }
-}
+impl ExecutionLifecycle {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ContinuationMode {
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompletionPermission {
     Automatic,
-    Manual,
+    Locked,
+    HumanGranted { execution_id: String, session_id: String },
+    Consumed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -133,22 +130,14 @@ pub struct ExecutionRecord {
     pub is_coding_step: bool,
     pub start_requested: bool,
     pub lifecycle: ExecutionLifecycle,
-    pub continuation_mode: ContinuationMode,
-    pub work_revision: u64,
-    pub last_admission_sequence: u64,
-    pub last_ready_revision: Option<u64>,
-    pub ready_revision: Option<u64>,
-    pub continuation_requested_revision: Option<u64>,
-    pub ready_assessment: Option<ReadyAssessmentKey>,
-    #[serde(default)]
-    pub human_end: Option<crate::EndExecutionRequest>,
+    pub permission: CompletionPermission,
     pub receipt_id: Option<String>,
     pub exit_code: Option<i32>,
     pub shutdown_confirmed: bool,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskExecutionState {
     pub version: u32,
     pub revision: u64,
@@ -173,18 +162,10 @@ pub struct TaskExecutionState {
     pub executions: BTreeMap<String, ExecutionRecord>,
     pub occurrences: BTreeMap<String, ArtifactOccurrence>,
     pub collections: BTreeMap<String, ArtifactCollection>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum CompletionOutcome {
-    Accepted { receipt_id: String },
-    Ready { ready_revision: u64 },
-    Requested { ready_revision: u64 },
-    Waiting { reason: String },
-    Stale { reason: String },
-    Unavailable { reason: String },
-    InvalidOutputs { diagnostics: Vec<String> },
+    /// The playbook engine's own state (S4.2), written by the daemon. Rust never reads it; it is carried
+    /// through unchanged so a Rust writer's read-modify-write cannot erase it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<serde_json::Value>,
 }
 
 pub fn execution_state_path(repo: &Path, slug: &str) -> Result<PathBuf, String> {
@@ -201,132 +182,62 @@ pub fn task_playbook_path(repo: &Path, slug: &str) -> Result<PathBuf, String> {
 pub fn read_execution_state(repo: &Path, slug: &str) -> Result<TaskExecutionState, String> {
     let path = execution_state_path(repo, slug)?;
     let bytes = fs::read(&path).map_err(|e| format!("task execution state unavailable (pre-v2 tasks cannot launch): {}: {e}", path.display()))?;
-    decode_execution_state(&bytes).map(|(state, _)| state)
+    parse_execution_state(&bytes)
 }
 
-pub const MAX_WORK_REVISION: u64 = (1_u64 << 53) - 1;
+fn parse_execution_state(bytes: &[u8]) -> Result<TaskExecutionState, String> {
+    let state: TaskExecutionState = serde_json::from_slice(bytes).map_err(|e| format!("invalid task execution state: {e}"))?;
+    if state.version != 1 || state.max_live_sessions == 0 {
+        return Err("unsupported or invalid task execution state".into());
+    }
+    Ok(state)
+}
 
-/// Decode historical evidence without writing it. Only repository ownership preflight
-/// may persist the conversion after proving every prior daemon owner stopped.
-pub fn decode_execution_state(bytes: &[u8]) -> Result<(TaskExecutionState, bool), String> {
-    #[derive(Deserialize)]
-    #[serde(tag = "kind", rename_all = "snake_case")]
-    enum LegacyPermission {
-        Automatic,
-        Locked,
-        HumanGranted { execution_id: String, session_id: String },
-        Consumed,
+/// Saved progress this build cannot read, made readable. Two cases, both safe to fill in:
+/// - records from before `permission` was required lack it. `locked` grants nothing, so it cannot approve anything.
+/// - the `version: 2` format of another branch (main), whose records carry a continuation mode instead. It is read
+///   as version 1: the extra fields are carried along unread, and with no engine state the daemon shows the task's
+///   runs as history only (O21), so nothing is launched from records it does not understand.
+///
+/// Returns the fixed bytes and how many changes were made, or `None` when nothing applies or the result would still
+/// not read.
+fn repaired_execution_state(bytes: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let mut value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let mut changes = 0;
+    if value.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+        value["version"] = serde_json::json!(1);
+        changes += 1;
     }
-    let mut value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| format!("invalid task execution state: {e}"))?;
-    let version = value["version"].as_u64().ok_or("missing execution state version")?;
-    let converted = version == 1;
-    if converted {
-        let enabled: BTreeSet<String> = serde_json::from_value(value["enabled_steps"].clone()).map_err(|e| e.to_string())?;
-        let records = value["executions"].as_object_mut().ok_or("invalid legacy executions")?;
-        for (id, record) in records {
-            let object = record.as_object_mut().ok_or("invalid legacy execution")?;
-            for field in [
-                "continuation_mode",
-                "work_revision",
-                "last_admission_sequence",
-                "last_ready_revision",
-                "ready_revision",
-                "continuation_requested_revision",
-                "ready_assessment",
-            ] {
-                if object.contains_key(field) {
-                    return Err("legacy execution contains contradictory continuation state".into());
-                }
-            }
-            let permission: LegacyPermission = serde_json::from_value(object.remove("permission").ok_or("missing legacy completion permission")?).map_err(|e| e.to_string())?;
-            let accepted = object.get("receipt_id").is_some_and(|v| !v.is_null());
-            let mode = match permission {
-                LegacyPermission::Automatic if !accepted => ContinuationMode::Automatic,
-                LegacyPermission::Locked if !accepted => ContinuationMode::Manual,
-                LegacyPermission::HumanGranted { execution_id, session_id } if !accepted => {
-                    if execution_id != *id
-                        || object.get("owner_session_id").and_then(|v| v.as_str()) != Some(session_id.as_str())
-                        || !matches!(object.get("lifecycle").and_then(|v| v.as_str()), Some("running" | "failed" | "interrupted"))
-                    {
-                        return Err("contradictory legacy completion grant".into());
-                    }
-                    ContinuationMode::Manual
-                }
-                LegacyPermission::Consumed if accepted => {
-                    if enabled.contains(object["candidate"]["step_key"].as_str().ok_or("invalid legacy step")?) {
-                        ContinuationMode::Automatic
-                    } else {
-                        ContinuationMode::Manual
-                    }
-                }
-                _ => return Err("contradictory legacy permission and receipt".into()),
-            };
-            object.insert("continuation_mode".into(), serde_json::to_value(mode).map_err(|e| e.to_string())?);
-            object.insert("work_revision".into(), 0.into());
-            object.insert("last_admission_sequence".into(), 0.into());
-            for field in ["last_ready_revision", "ready_revision", "continuation_requested_revision", "ready_assessment"] {
-                object.insert(field.into(), serde_json::Value::Null);
-            }
-        }
-        value["version"] = 2.into();
-    } else if version != 2 {
-        return Err("unsupported task execution state".into());
-    }
-    if !converted
-        && value["executions"]
-            .as_object()
-            .is_some_and(|records| records.values().any(|record| record.get("permission").is_some()))
-    {
-        return Err("current execution state contains legacy permission".into());
-    }
-    let mut state: TaskExecutionState = serde_json::from_value(value).map_err(|e| format!("invalid task execution state: {e}"))?;
-    if state.max_live_sessions == 0 {
-        return Err("invalid task execution capacity".into());
-    }
-    let mut receipts = BTreeSet::new();
-    for (id, record) in &mut state.executions {
-        // Version 1 completed every accepted exit; retain its evidence without treating an unsuccessful exit as deliverable.
-        if converted
-            && record.lifecycle == ExecutionLifecycle::Completed
-            && record.receipt_id.is_some()
-            && record.shutdown_confirmed
-            && record.exit_code != Some(0)
-            && record.human_end.is_none()
-        {
-            record.lifecycle = ExecutionLifecycle::Failed;
-        }
-        if let Some(receipt) = &record.receipt_id {
-            if receipt.is_empty() || !receipts.insert(receipt) {
-                return Err(format!("invalid or duplicate execution receipt for {id}"));
-            }
-        }
-        if id != &record.id
-            || record.owner_session_id.is_empty()
-            || record.work_revision > MAX_WORK_REVISION
-            || record.last_admission_sequence > MAX_WORK_REVISION
-            || record.last_ready_revision.is_some_and(|r| r > record.work_revision)
-            || record.ready_revision.is_some_and(|r| r != record.work_revision || record.last_ready_revision != Some(r))
-            || record.ready_revision.is_some() != record.ready_assessment.is_some()
-            || record.continuation_requested_revision.is_some_and(|r| record.ready_revision != Some(r))
-            || (record.receipt_id.is_none() && matches!(record.lifecycle, ExecutionLifecycle::Finishing | ExecutionLifecycle::Completed))
-            || (record.receipt_id.is_some()
-                && matches!(
-                    record.lifecycle,
-                    ExecutionLifecycle::Queued | ExecutionLifecycle::Starting | ExecutionLifecycle::Running | ExecutionLifecycle::LaunchFailed
-                ))
-            || (record.lifecycle == ExecutionLifecycle::Completed && (!record.shutdown_confirmed || (record.exit_code != Some(0) && record.human_end.is_none())))
-            || record.human_end.as_ref().is_some_and(|intent| {
-                intent.execution_id != *id || intent.session_id != record.owner_session_id || intent.work_revision != record.work_revision || intent.process_incarnation.is_empty()
-            })
-            || (record.shutdown_confirmed && record.lifecycle.holds_capacity())
-            || (!record.shutdown_confirmed && record.exit_code.is_some())
-            || (matches!(record.lifecycle, ExecutionLifecycle::Failed | ExecutionLifecycle::LaunchFailed) && !record.shutdown_confirmed)
-            || (record.lifecycle == ExecutionLifecycle::Queued && record.shutdown_confirmed)
-        {
-            return Err(format!("contradictory execution state for {id}"));
+    for record in value.get_mut("executions")?.as_object_mut()?.values_mut().filter_map(|record| record.as_object_mut()) {
+        if !record.contains_key("permission") {
+            record.insert("permission".into(), serde_json::json!({ "kind": "locked" }));
+            changes += 1;
         }
     }
-    Ok((state, converted))
+    let fixed = serde_json::to_vec_pretty(&value).ok()?;
+    (changes > 0 && parse_execution_state(&fixed).is_ok()).then_some((fixed, changes))
+}
+
+/// Whether [`repair_execution_state`] can make this task's saved progress readable.
+pub fn execution_state_repairable(repo: &Path, slug: &str) -> bool {
+    execution_state_path(repo, slug)
+        .ok()
+        .and_then(|path| fs::read(path).ok())
+        .is_some_and(|bytes| repaired_execution_state(&bytes).is_some())
+}
+
+/// User-triggered repair of a task whose saved progress will not read. The original is kept beside it as
+/// `execution.json.before-repair-<unix seconds>`. Callers make sure no daemon is writing the file.
+pub fn repair_execution_state(repo: &Path, slug: &str) -> Result<usize, String> {
+    crate::with_task_mutation_lock(repo, "repair task state", || {
+        let path = execution_state_path(repo, slug)?;
+        let original = fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let (fixed, filled) = repaired_execution_state(&original).ok_or("nothing in this task's saved progress can be repaired automatically")?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        crate::fs_atomic::write_bytes_durable(&path.with_file_name(format!("execution.json.before-repair-{stamp}")), &original)?;
+        crate::fs_atomic::write_bytes_durable(&path, &fixed)?;
+        Ok(filled)
+    })
 }
 
 pub fn read_task_playbook(repo: &Path, slug: &str, state: &TaskExecutionState) -> Result<NormalizedPlaybook, String> {
@@ -368,7 +279,7 @@ pub fn new_execution_state(
         .chain(definition.step.iter().map(|step| step.harness.as_str()))
         .chain(std::iter::once(launch_defaults.harness.as_str()))
     {
-        if !harness.trim().is_empty() && harness.trim() != "omp" {
+        if !harness.trim().is_empty() && harness.trim() != "vinculum" {
             return Err(format!("unsupported graph harness '{harness}'"));
         }
     }
@@ -385,7 +296,7 @@ pub fn new_execution_state(
         bindings: BTreeMap::new(),
     };
     Ok(TaskExecutionState {
-        version: 2,
+        version: 1,
         revision: 0,
         creation: "provisioning".into(),
         creation_error: None,
@@ -403,6 +314,7 @@ pub fn new_execution_state(
         executions: BTreeMap::new(),
         occurrences: BTreeMap::new(),
         collections: BTreeMap::new(),
+        engine: None,
     })
 }
 fn normalize_step_models(definition: &NormalizedPlaybook, raw: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
@@ -471,909 +383,30 @@ pub fn mutate_execution_state<T>(
             return Err("task execution belongs to another daemon lane or app configuration".into());
         }
         let definition = read_task_playbook(repo, slug, &state)?;
-        let before = state.clone();
         let result = mutate(&definition, &mut state)?;
-        if state != before {
-            write_execution_state_unlocked(repo, slug, &mut state)?;
-        }
+        write_execution_state_unlocked(repo, slug, &mut state)?;
         Ok(result)
     })
 }
 
-pub fn resolve_execution_launch(
-    definition: &NormalizedPlaybook,
-    step: &NormalizedStep,
-    task: &LaunchChoices,
-    product: &LaunchChoices,
-    explicit: Option<&LaunchChoices>,
-    step_models: &BTreeMap<String, String>,
-) -> Result<LaunchChoices, String> {
-    fn first<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
-        values.into_iter().find(|s| !s.trim().is_empty()).unwrap_or("").trim().to_string()
-    }
-    let launch = LaunchChoices {
-        harness: first([
-            explicit.map_or("", |v| v.harness.as_str()),
-            &step.harness,
-            &definition.default_harness,
-            &task.harness,
-            &product.harness,
-            "omp",
-        ]),
-        model: first([
-            explicit.map_or("", |v| v.model.as_str()),
-            step_models.get(&step.key).map(String::as_str).unwrap_or(""),
-            &step.model,
-            &definition.default_model,
-            &task.model,
-            &product.model,
-        ]),
-    };
-    if launch.harness != "omp" {
-        return Err(format!("unsupported graph harness '{}'", launch.harness));
-    }
-    Ok(launch)
-}
-
-fn output_path(selector: &str, depth: u64, discriminator: u64) -> Result<String, String> {
-    ArtifactSelector::parse(selector)?;
-    let (directory, name) = selector.rsplit_once('/').map_or(("", selector), |(dir, name)| (dir, name));
-    let stem = name.strip_suffix(".md").ok_or("output must be Markdown")?;
-    let filename = format!("{depth}-{stem}-{discriminator}.md");
-    Ok(if directory.is_empty() { filename } else { format!("{directory}/{filename}") })
-}
-
-fn parent_directories<'a>(paths: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
-    let mut directories = BTreeSet::new();
-    for mut path in paths {
-        while let Some((parent, _)) = path.rsplit_once('/') {
-            directories.insert(parent.to_string());
-            path = parent;
-        }
-    }
-    directories
-}
-
-fn validate_execution_binding(state: &TaskExecutionState, step: &NormalizedStep, candidate: &ExecutionCandidate) -> Result<(), String> {
-    use crate::playbook::InputMode;
-    let expected: BTreeSet<_> = step.inputs.iter().map(|input| input.path.as_str()).collect();
-    if expected != candidate.inputs.keys().map(String::as_str).collect() {
-        return Err("execution bindings must match the step's declared inputs".into());
-    }
-    let mut uses_each = false;
-    let mut uses_complete = false;
-    for input in &step.inputs {
-        let ids = &candidate.inputs[&input.path];
-        let selector = ArtifactSelector::parse(&input.path)?;
-        if ids.is_empty() || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
-            return Err("execution inputs must be nonempty distinct occurrences".into());
-        }
-        for id in ids {
-            let occurrence = state.occurrences.get(id).ok_or("unknown input occurrence")?;
-            if !selector.matches(&occurrence.logical_path) {
-                return Err("input occurrence does not match declared selector".into());
-            }
-        }
-        match input.mode {
-            InputMode::Single if ids.len() != 1 => return Err("single input requires exactly one occurrence".into()),
-            InputMode::Single => {}
-            InputMode::Each => {
-                uses_each = true;
-                let collection_id = candidate.each_collection_id.as_ref().ok_or("missing each collection")?;
-                let collection = state.collections.get(collection_id).ok_or("unknown each collection")?;
-                if ids.len() != 1 || candidate.each_member_id.as_ref() != ids.first() || !collection.membership_closed || !collection.member_occurrence_ids.contains(&ids[0]) {
-                    return Err("each binding does not identify one accepted collection member".into());
-                }
-                let context = state.contexts.get(&candidate.context_id).ok_or("unknown each context")?;
-                if !matches!(&context.cause, ContextCause::Member { collection_id: bound, occurrence_id } if bound == collection_id && occurrence_id == &ids[0]) {
-                    return Err("each execution context does not match its member".into());
-                }
-            }
-            InputMode::Complete => {
-                uses_complete = true;
-                let collection = state
-                    .collections
-                    .get(candidate.complete_collection_id.as_ref().ok_or("missing complete collection")?)
-                    .ok_or("unknown complete collection")?;
-                let members: BTreeSet<_> = collection
-                    .member_occurrence_ids
-                    .iter()
-                    .filter(|id| state.occurrences.get(*id).is_some_and(|occurrence| selector.matches(&occurrence.logical_path)))
-                    .collect();
-                if !collection.membership_closed
-                    || members != ids.iter().collect()
-                    || collection.context_id != candidate.context_id
-                    || collection.expected_execution_ids.iter().any(|id| {
-                        !state
-                            .executions
-                            .get(id)
-                            .is_some_and(|record| record.lifecycle == ExecutionLifecycle::Completed && record.shutdown_confirmed && record.receipt_id.is_some())
-                    })
-                {
-                    return Err("complete input requires the entire closed collection after producer handoff".into());
-                }
-            }
-        }
-    }
-    if uses_each != candidate.each_collection_id.is_some() || uses_each != candidate.each_member_id.is_some() || uses_complete != candidate.complete_collection_id.is_some() {
-        return Err("undeclared collection binding".into());
-    }
-    Ok(())
-}
-
-fn occupied_artifacts(root: &Path, relative: &Path, paths: &mut Vec<String>) -> Result<(), String> {
-    let directory = root.join(relative);
-    let entries = match fs::read_dir(&directory) {
+/// Archiving a task drops the byte copies its executions kept (O27). Each execution's manifest stays in
+/// `execution.json`, so what a step saw is still named; only the bytes go. The task's artifacts are untouched.
+pub fn prune_execution_objects(repo: &Path, slug: &str) -> Result<(), String> {
+    let root = crate::task_dir(repo, slug).join("executions");
+    let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("read artifacts {}: {e}", directory.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("read {}: {error}", root.display())),
     };
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let rel = relative.join(entry.file_name());
-        let name = rel.to_str().ok_or("non UTF-8 artifact path")?;
-        let metadata = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            if relative.as_os_str().is_empty() && matches!(entry.file_name().to_str(), Some("attachments" | "subtasks")) {
-                continue;
-            }
-            paths.push(name.into());
-            occupied_artifacts(root, &rel, paths)?;
-        } else {
-            paths.push(name.into());
+        let objects = entry.map_err(|error| error.to_string())?.path().join("objects");
+        match fs::remove_dir_all(&objects) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove {}: {error}", objects.display())),
         }
     }
     Ok(())
-}
-
-/// Reserve the complete output set before any process launch or artifact write.
-/// All callers must hold the repo mutation lock until this state is committed.
-pub fn reserve_execution(
-    repo: &Path,
-    slug: &str,
-    definition: &NormalizedPlaybook,
-    state: &mut TaskExecutionState,
-    candidate: ExecutionCandidate,
-    product: &LaunchChoices,
-    explicit: Option<&LaunchChoices>,
-    start_requested: bool,
-) -> Result<String, String> {
-    let binding_key = candidate.binding_key()?;
-    if !candidate.manual {
-        if let Some(existing) = state.executions.values().find(|e| !e.candidate.manual && e.binding_key == binding_key) {
-            return Ok(existing.id.clone());
-        }
-    }
-    let step = definition.step.iter().find(|step| step.key == candidate.step_key).ok_or("unknown execution step")?;
-    if !state.contexts.contains_key(&candidate.context_id) {
-        return Err("unknown binding context".into());
-    }
-    validate_execution_binding(state, step, &candidate)?;
-    let mut parents = BTreeSet::new();
-    let mut parent_depth = 0;
-    for occurrence_id in candidate.inputs.values().flatten() {
-        let occurrence = state.occurrences.get(occurrence_id).ok_or("unknown input occurrence")?;
-        if !occurrence_deliverable(state, occurrence) {
-            return Err("input producer has not completed handoff".into());
-        }
-        parent_depth = parent_depth.max(occurrence.depth);
-        if let Some(parent) = &occurrence.producer_execution_id {
-            parents.insert(parent.clone());
-        }
-    }
-    let depth = parent_depth.checked_add(1).ok_or("execution depth overflow")?;
-    let mut occupied = Vec::new();
-    let root = crate::shared::resolve_artifact_directory(repo, &format!(".alinery/tasks/{slug}/artifacts"))?;
-    occupied_artifacts(&root, Path::new(""), &mut occupied)?;
-    // Physical reservations remain disjoint on case-insensitive filesystems too;
-    // logical selector identity stays case-sensitive.
-    let occupied: Vec<_> = occupied.into_iter().map(|path| path.to_lowercase()).collect();
-    let reservations: Vec<_> = state
-        .executions
-        .values()
-        .flat_map(|e| e.outputs.iter())
-        .map(|a| ArtifactSelector::parse(&a.relative_path.to_lowercase()))
-        .collect::<Result<_, _>>()?;
-    let required_directories = parent_directories(step.outputs.iter().map(|output| output.path.as_str()));
-    for directory in &required_directories {
-        crate::shared::resolve_artifact_directory(&root, directory)?;
-        if reservations.iter().any(|reservation| reservation.matches(&directory.to_lowercase())) {
-            return Err(format!("output directory '{directory}' conflicts with a reserved output file"));
-        }
-    }
-    let mut occupied_directories = parent_directories(
-        state
-            .executions
-            .values()
-            .flat_map(|record| record.outputs.iter())
-            .map(|assignment| assignment.relative_path.as_str()),
-    );
-    occupied_directories.extend(required_directories);
-    let occupied_directories: BTreeSet<_> = occupied_directories.into_iter().map(|path| path.to_lowercase()).collect();
-    let mut outputs: Vec<OutputAssignment> = Vec::new();
-    let mut output_selectors = Vec::new();
-    for output in &step.outputs {
-        let mut instance = 1_u64;
-        loop {
-            let relative_path = output_path(&output.path, depth, instance)?;
-            let physical = ArtifactSelector::parse(&relative_path.to_lowercase())?;
-            let existing_overlap = occupied.iter().any(|name| physical.matches(name)) || occupied_directories.iter().any(|directory| physical.matches(directory));
-            let reserved_overlap = reservations.iter().chain(&output_selectors).any(|other| physical.overlaps(other));
-            if !existing_overlap && !reserved_overlap {
-                outputs.push(OutputAssignment {
-                    selector: output.path.clone(),
-                    relative_path,
-                    discriminator: instance,
-                    required: output.required,
-                });
-                output_selectors.push(physical);
-                break;
-            }
-            instance = instance.checked_add(1).ok_or("artifact instance overflow")?;
-        }
-    }
-    let launch = resolve_execution_launch(definition, step, &state.launch_defaults, product, explicit, &state.step_models)?;
-    let id = uuid::Uuid::new_v4().to_string();
-    let record = ExecutionRecord {
-        id: id.clone(),
-        binding_key,
-        candidate,
-        outputs,
-        parent_execution_ids: parents,
-        depth,
-        owner_session_id: format!("s{}", uuid::Uuid::new_v4()),
-        previous_session_ids: Vec::new(),
-        launch,
-        is_coding_step: step.is_coding_step,
-        start_requested,
-        lifecycle: ExecutionLifecycle::Queued,
-        continuation_mode: if state.enabled_steps.contains(&step.key) {
-            ContinuationMode::Automatic
-        } else {
-            ContinuationMode::Manual
-        },
-        work_revision: 0,
-        last_admission_sequence: 0,
-        last_ready_revision: None,
-        ready_revision: None,
-        continuation_requested_revision: None,
-        ready_assessment: None,
-        human_end: None,
-        receipt_id: None,
-        exit_code: None,
-        shutdown_confirmed: false,
-        error: None,
-    };
-    state.executions.insert(id.clone(), record);
-    Ok(id)
-}
-
-pub fn occurrence_deliverable(state: &TaskExecutionState, occurrence: &ArtifactOccurrence) -> bool {
-    match &occurrence.producer_execution_id {
-        None => state.creation == "ready",
-        Some(id) => state
-            .executions
-            .get(id)
-            .is_some_and(|e| e.lifecycle == ExecutionLifecycle::Completed && e.shutdown_confirmed && e.receipt_id.is_some()),
-    }
-}
-
-pub fn request_execution_start(state: &mut TaskExecutionState, id: &str) -> Result<(), String> {
-    let record = state.executions.get_mut(id).ok_or("unknown execution")?;
-    if record.lifecycle != ExecutionLifecycle::Queued {
-        return Err("execution is not queued; recover failed work explicitly".into());
-    }
-    record.start_requested = true;
-    Ok(())
-}
-
-pub fn claim_execution_launch(state: &mut TaskExecutionState, id: &str) -> Result<bool, String> {
-    if state.creation != "ready" {
-        return Err("task creation is not ready".into());
-    }
-    let record = state.executions.get(id).ok_or("unknown execution")?;
-    if record.lifecycle != ExecutionLifecycle::Queued || !record.start_requested {
-        return Ok(false);
-    }
-    let live = state.executions.values().filter(|e| e.lifecycle.holds_capacity()).count();
-    if live >= state.max_live_sessions as usize {
-        return Ok(false);
-    }
-    if record.is_coding_step && state.executions.values().any(|e| e.is_coding_step && e.lifecycle.holds_capacity()) {
-        return Ok(false);
-    }
-    state.executions.get_mut(id).ok_or("unknown execution")?.lifecycle = ExecutionLifecycle::Starting;
-    Ok(true)
-}
-
-pub fn record_execution_spawn(state: &mut TaskExecutionState, id: &str, session_id: &str, result: Result<(), String>) -> Result<(), String> {
-    let record = owned_execution(state, id, session_id)?;
-    if record.lifecycle != ExecutionLifecycle::Starting {
-        return Err("execution has no launch claim".into());
-    }
-    match result {
-        Ok(()) => record.lifecycle = ExecutionLifecycle::Running,
-        Err(error) => {
-            record.lifecycle = ExecutionLifecycle::LaunchFailed;
-            record.shutdown_confirmed = true;
-            record.error = Some(error);
-        }
-    }
-    Ok(())
-}
-
-fn owned_execution<'a>(state: &'a mut TaskExecutionState, id: &str, session_id: &str) -> Result<&'a mut ExecutionRecord, String> {
-    let record = state.executions.get_mut(id).ok_or("unknown execution")?;
-    if record.owner_session_id != session_id {
-        return Err("stale execution owner".into());
-    }
-    Ok(record)
-}
-
-fn assigned_members(repo: &Path, slug: &str, assignment: &OutputAssignment, supplied: &[crate::SuppliedExecutionArtifact]) -> Result<Vec<(String, String)>, String> {
-    let physical = ArtifactSelector::parse(&assignment.relative_path)?;
-    let root = crate::shared::resolve_artifact_directory(repo, &format!(".alinery/tasks/{slug}/artifacts"))?;
-    let mut paths = if physical.wildcard {
-        let probe = if physical.directory.is_empty() {
-            "__assignment_probe.md".to_string()
-        } else {
-            format!("{}/__assignment_probe.md", physical.directory)
-        };
-        let parent = crate::resolve_artifact_path(&root, &probe)?.parent().ok_or("artifact has no directory")?.to_path_buf();
-        let mut paths = Vec::new();
-        let entries = match fs::read_dir(parent) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return validate_assigned_paths(
-                    &root,
-                    assignment,
-                    &physical,
-                    supplied.iter().filter(|a| physical.matches(&a.relative_path)).map(|a| a.relative_path.clone()).collect(),
-                    supplied,
-                )
-            }
-            Err(error) => return Err(format!("read assigned output directory: {error}")),
-        };
-        for entry in entries {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let name = entry.file_name().into_string().map_err(|_| "non UTF-8 output")?;
-            let relative = if physical.directory.is_empty() {
-                name
-            } else {
-                format!("{}/{name}", physical.directory)
-            };
-            if physical.matches(&relative) {
-                paths.push(relative);
-            }
-        }
-        paths.sort();
-        paths
-    } else {
-        vec![assignment.relative_path.clone()]
-    };
-    paths.extend(supplied.iter().filter(|a| physical.matches(&a.relative_path)).map(|a| a.relative_path.clone()));
-    paths.sort();
-    paths.dedup();
-    validate_assigned_paths(&root, assignment, &physical, paths, supplied)
-}
-
-fn validate_assigned_paths(
-    root: &Path,
-    assignment: &OutputAssignment,
-    physical: &ArtifactSelector,
-    paths: Vec<String>,
-    supplied: &[crate::SuppliedExecutionArtifact],
-) -> Result<Vec<(String, String)>, String> {
-    let logical = ArtifactSelector::parse(&assignment.selector)?;
-    let mut members = Vec::new();
-    for relative in paths {
-        let path = crate::resolve_artifact_path(root, &relative)?;
-        if !supplied.iter().any(|a| a.relative_path == relative) {
-            let meta = match fs::symlink_metadata(&path) {
-                Ok(meta) => meta,
-                // An enumerated wildcard member disappearing is an inspection failure, not omission.
-                Err(error) if !physical.wildcard && error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(format!("assigned output {relative}: {error}")),
-            };
-            if !meta.is_file() || meta.file_type().is_symlink() || meta.len() == 0 {
-                return Err(format!("assigned output '{relative}' must be a nonempty regular file"));
-            }
-            fs::File::open(&path).map_err(|error| format!("read assigned output '{relative}': {error}"))?;
-        }
-        let logical_path = if physical.wildcard {
-            let name = relative.rsplit('/').next().ok_or("invalid output filename")?;
-            let slot = name
-                .strip_prefix(&physical.prefix)
-                .and_then(|rest| rest.strip_suffix(&physical.suffix))
-                .filter(|s| !s.is_empty())
-                .ok_or("wildcard output member must have a nonempty slot")?;
-            let name = format!("{}{}{}", logical.prefix, slot, logical.suffix);
-            if logical.directory.is_empty() {
-                name
-            } else {
-                format!("{}/{name}", logical.directory)
-            }
-        } else {
-            assignment.selector.clone()
-        };
-        members.push((logical_path, relative));
-    }
-    Ok(members)
-}
-
-/// The enclosing transaction must commit before returning this outcome to the runner.
-pub fn inspect_execution_publications(repo: &Path, slug: &str, record: &ExecutionRecord) -> Result<Vec<ValidatedPublication>, Vec<String>> {
-    inspect_supplied_execution_publications(repo, slug, record, &[])
-}
-
-pub fn inspect_supplied_execution_publications(
-    repo: &Path,
-    slug: &str,
-    record: &ExecutionRecord,
-    supplied: &[crate::SuppliedExecutionArtifact],
-) -> Result<Vec<ValidatedPublication>, Vec<String>> {
-    let mut seen = std::collections::BTreeSet::new();
-    for artifact in supplied {
-        if artifact.content.trim().is_empty() || artifact.content.contains('\0') {
-            return Err(vec![format!("supplied artifact '{}' must contain nonblank text", artifact.relative_path)]);
-        }
-        if !seen.insert(&artifact.relative_path) {
-            return Err(vec![format!("duplicate supplied artifact '{}'", artifact.relative_path)]);
-        }
-        if let Err(error) = crate::validate_artifact_filename(&artifact.relative_path) {
-            return Err(vec![error]);
-        }
-        if ArtifactSelector::parse(&artifact.relative_path).is_ok_and(|selector| selector.wildcard) {
-            return Err(vec!["supplied artifacts must name a concrete wildcard member".into()]);
-        }
-        if !record
-            .outputs
-            .iter()
-            .any(|a| ArtifactSelector::parse(&a.relative_path).is_ok_and(|s| s.matches(&artifact.relative_path)))
-        {
-            return Err(vec![format!("unassigned artifact '{}'", artifact.relative_path)]);
-        }
-    }
-    let mut publications = Vec::new();
-    let mut diagnostics = Vec::new();
-    for assignment in &record.outputs {
-        match assigned_members(repo, slug, assignment, supplied) {
-            Ok(members) => publications.extend(members.into_iter().map(|(logical_path, relative_path)| ValidatedPublication {
-                selector: assignment.selector.clone(),
-                logical_path,
-                relative_path,
-                discriminator: assignment.discriminator,
-            })),
-            Err(error) => diagnostics.push(error),
-        }
-    }
-    for assignment in &record.outputs {
-        if assignment.required && !publications.iter().any(|publication| publication.selector == assignment.selector) {
-            diagnostics.push(format!(
-                "required output '{}' was not published; completion stays rejected until that nonempty file exists",
-                assignment.selector
-            ));
-        }
-    }
-    if diagnostics.is_empty() && publications.is_empty() {
-        diagnostics.push("Completion requires at least one valid assigned artifact overall; no publications were found.".into());
-    }
-    if diagnostics.is_empty() {
-        Ok(publications)
-    } else {
-        Err(diagnostics)
-    }
-}
-
-fn advance_work_revision(record: &mut ExecutionRecord) -> Result<u64, String> {
-    let revision = record.work_revision.checked_add(1).filter(|r| *r <= MAX_WORK_REVISION).ok_or("work revision overflow")?;
-    record.work_revision = revision;
-    record.ready_revision = None;
-    record.continuation_requested_revision = None;
-    record.ready_assessment = None;
-    Ok(revision)
-}
-
-pub fn invalidate_execution_readiness(state: &mut TaskExecutionState, id: &str, session_id: &str, operation_sequence: u64) -> Result<u64, String> {
-    let record = owned_execution(state, id, session_id)?;
-    if record.lifecycle != ExecutionLifecycle::Running || record.receipt_id.is_some() || record.continuation_requested_revision.is_some() || record.human_end.is_some() {
-        return Err("execution continuation has closed work admission".into());
-    }
-    if operation_sequence == 0 || operation_sequence > MAX_WORK_REVISION || operation_sequence < record.last_admission_sequence {
-        return Err("stale or invalid work admission sequence".into());
-    }
-    if operation_sequence == record.last_admission_sequence {
-        return Ok(record.work_revision);
-    }
-    let revision = advance_work_revision(record)?;
-    record.last_admission_sequence = operation_sequence;
-    record.error = None;
-    Ok(revision)
-}
-
-fn assessment_key(definition: &NormalizedPlaybook, state: &TaskExecutionState, id: &str, publications: &[ValidatedPublication]) -> Result<ReadyAssessmentKey, String> {
-    let assessment = assess_execution(definition, state, id, publications)?;
-    let mut destinations: Vec<_> = assessment.destinations.into_iter().map(|d| d.step_key).collect();
-    destinations.sort();
-    destinations.dedup();
-    Ok(ReadyAssessmentKey {
-        destinations,
-        terminality: assessment.terminality,
-    })
-}
-
-// An assessed endpoint stays open for review, regardless of automatic settings.
-// A later work revision can publish a destination and resume normal routing.
-fn permits_automatic_continuation(record: &ExecutionRecord) -> bool {
-    record.ready_assessment.as_ref().is_some_and(|assessment| assessment.terminality != Terminality::Terminal)
-}
-
-pub fn report_execution_ready(
-    repo: &Path,
-    slug: &str,
-    definition: &NormalizedPlaybook,
-    state: &mut TaskExecutionState,
-    id: &str,
-    session_id: &str,
-    expected_work_revision: u64,
-) -> Result<CompletionOutcome, String> {
-    let auto_approve_all = state.auto_approve_all;
-    let record = owned_execution(state, id, session_id)?;
-    if let Some(receipt_id) = &record.receipt_id {
-        return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
-    }
-    if record.work_revision != expected_work_revision {
-        return Ok(CompletionOutcome::Stale {
-            reason: "work changed since readiness was reported".into(),
-        });
-    }
-    if record.lifecycle != ExecutionLifecycle::Running {
-        return Ok(CompletionOutcome::Unavailable {
-            reason: "execution owner is not running".into(),
-        });
-    }
-    if record.ready_revision == Some(expected_work_revision) {
-        if record.continuation_requested_revision.is_some() {
-            return Ok(CompletionOutcome::Requested {
-                ready_revision: expected_work_revision,
-            });
-        }
-        return Ok(CompletionOutcome::Ready {
-            ready_revision: expected_work_revision,
-        });
-    }
-    let publications = match inspect_execution_publications(repo, slug, record) {
-        Ok(publications) => publications,
-        Err(diagnostics) => {
-            record.error = Some(diagnostics.join("\n"));
-            return Ok(CompletionOutcome::InvalidOutputs { diagnostics });
-        }
-    };
-    let key = assessment_key(definition, state, id, &publications)?;
-    if key.terminality == Terminality::Unresolved && state.executions[id].continuation_mode != ContinuationMode::Automatic {
-        return Ok(CompletionOutcome::Waiting {
-            reason: "execution destinations remain unresolved".into(),
-        });
-    }
-    let record = owned_execution(state, id, session_id)?;
-    record.last_ready_revision = Some(expected_work_revision);
-    record.ready_revision = Some(expected_work_revision);
-    record.ready_assessment = Some(key);
-    record.error = None;
-    if permits_automatic_continuation(record) && (auto_approve_all || record.continuation_mode == ContinuationMode::Automatic) {
-        record.continuation_requested_revision = Some(expected_work_revision);
-        finalize_execution_continuation(repo, slug, definition, state, id, session_id, expected_work_revision)
-    } else {
-        Ok(CompletionOutcome::Ready {
-            ready_revision: expected_work_revision,
-        })
-    }
-}
-
-pub fn request_execution_continuation(state: &mut TaskExecutionState, id: &str, session_id: &str, ready_revision: u64) -> Result<CompletionOutcome, String> {
-    let record = owned_execution(state, id, session_id)?;
-    if let Some(receipt_id) = &record.receipt_id {
-        return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
-    }
-    if record.lifecycle != ExecutionLifecycle::Running || record.ready_revision != Some(ready_revision) || record.work_revision != ready_revision {
-        return Ok(CompletionOutcome::Stale {
-            reason: "ready generation is no longer current".into(),
-        });
-    }
-    record.continuation_requested_revision = Some(ready_revision);
-    Ok(CompletionOutcome::Requested { ready_revision })
-}
-
-/// Enabling the task override authorizes eligible ready work without changing step policy.
-/// Disabling it does not revoke continuation already requested, just like an explicit Continue.
-pub fn set_execution_auto_approve_all(state: &mut TaskExecutionState, enabled: bool) {
-    state.auto_approve_all = enabled;
-    if enabled {
-        for record in state.executions.values_mut() {
-            if record.lifecycle == ExecutionLifecycle::Running
-                && record.receipt_id.is_none()
-                && record.human_end.is_none()
-                && record.ready_revision == Some(record.work_revision)
-                && permits_automatic_continuation(record)
-            {
-                record.continuation_requested_revision = record.ready_revision;
-            }
-        }
-    }
-}
-
-/// Change the step policy without revoking an already requested or accepted handoff.
-pub fn set_step_continuation(state: &mut TaskExecutionState, definition: &NormalizedPlaybook, step_key: &str, automatic: bool) -> Result<(), String> {
-    if !definition.step.iter().any(|step| step.key == step_key) {
-        return Err(format!("unknown step '{step_key}'"));
-    }
-    if state.auto_approve_all && !automatic {
-        return Err("Turn off Auto Approval All before selecting Wait for me".into());
-    }
-    if automatic {
-        state.enabled_steps.insert(step_key.into());
-    } else {
-        state.enabled_steps.remove(step_key);
-    }
-    for record in state.executions.values_mut() {
-        if record.candidate.step_key != step_key || record.receipt_id.is_some() || record.continuation_requested_revision.is_some() || record.human_end.is_some() {
-            continue;
-        }
-        record.continuation_mode = if automatic { ContinuationMode::Automatic } else { ContinuationMode::Manual };
-        if automatic && record.lifecycle == ExecutionLifecycle::Running && record.ready_revision == Some(record.work_revision) && permits_automatic_continuation(record) {
-            record.continuation_requested_revision = record.ready_revision;
-        }
-    }
-    Ok(())
-}
-
-pub fn finalize_execution_continuation(
-    repo: &Path,
-    slug: &str,
-    definition: &NormalizedPlaybook,
-    state: &mut TaskExecutionState,
-    id: &str,
-    session_id: &str,
-    ready_revision: u64,
-) -> Result<CompletionOutcome, String> {
-    let record = owned_execution(state, id, session_id)?;
-    // Replay the immutable transaction before any filesystem inspection.
-    if let Some(receipt_id) = &record.receipt_id {
-        return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
-    }
-    if record.lifecycle != ExecutionLifecycle::Running
-        || record.work_revision != ready_revision
-        || record.ready_revision != Some(ready_revision)
-        || record.continuation_requested_revision != Some(ready_revision)
-    {
-        return Ok(CompletionOutcome::Stale {
-            reason: "continuation intent is no longer current".into(),
-        });
-    }
-    let publications = match inspect_execution_publications(repo, slug, record) {
-        Ok(publications) => publications,
-        Err(diagnostics) => {
-            advance_work_revision(record)?;
-            record.error = Some(diagnostics.join("\n"));
-            return Ok(CompletionOutcome::InvalidOutputs { diagnostics });
-        }
-    };
-    let key = assessment_key(definition, state, id, &publications)?;
-    let record = owned_execution(state, id, session_id)?;
-    if record.ready_assessment.as_ref() != Some(&key) || (key.terminality == Terminality::Unresolved && record.continuation_mode != ContinuationMode::Automatic) {
-        advance_work_revision(record)?;
-        record.error = Some("validated destinations changed; report readiness again".into());
-        return Ok(CompletionOutcome::Stale {
-            reason: record.error.clone().unwrap(),
-        });
-    }
-    accept_publications(state, id, session_id, publications)
-}
-
-fn accept_publications(state: &mut TaskExecutionState, id: &str, session_id: &str, publications: Vec<ValidatedPublication>) -> Result<CompletionOutcome, String> {
-    let record = owned_execution(state, id, session_id)?;
-    let accepted: Vec<_> = publications
-        .into_iter()
-        .map(|publication| ArtifactOccurrence {
-            id: uuid::Uuid::new_v4().to_string(),
-            producer_execution_id: Some(id.into()),
-            selector: publication.selector,
-            logical_path: publication.logical_path,
-            relative_path: publication.relative_path,
-            discriminator: publication.discriminator,
-            depth: record.depth,
-            context_id: record.candidate.context_id.clone(),
-            collection_ids: BTreeSet::new(),
-        })
-        .collect();
-    let receipt_id = uuid::Uuid::new_v4().to_string();
-    record.receipt_id = Some(receipt_id.clone());
-    record.lifecycle = if record.shutdown_confirmed && record.human_end.is_some() {
-        ExecutionLifecycle::Completed
-    } else {
-        ExecutionLifecycle::Finishing
-    };
-    record.error = None;
-    for occurrence in accepted {
-        state.occurrences.insert(occurrence.id.clone(), occurrence);
-    }
-    Ok(CompletionOutcome::Accepted { receipt_id })
-}
-
-/// Explicit UI authorization is distinct from native readiness and is accepted only after shutdown proof.
-pub fn accept_human_end(
-    repo: &Path,
-    slug: &str,
-    definition: &NormalizedPlaybook,
-    state: &mut TaskExecutionState,
-    request: &crate::EndExecutionRequest,
-) -> Result<CompletionOutcome, String> {
-    let record = owned_execution(state, &request.execution_id, &request.session_id)?;
-    if record.human_end.as_ref() != Some(request) || record.work_revision != request.work_revision {
-        return Ok(CompletionOutcome::Stale {
-            reason: "human authorization is no longer current".into(),
-        });
-    }
-    if !record.shutdown_confirmed {
-        return Ok(CompletionOutcome::Waiting {
-            reason: "process exit and output drain are not proven; ownership retained".into(),
-        });
-    }
-    if let Some(receipt_id) = &record.receipt_id {
-        return Ok(CompletionOutcome::Accepted { receipt_id: receipt_id.clone() });
-    }
-    let publications = match inspect_execution_publications(repo, slug, record) {
-        Ok(publications) => publications,
-        Err(diagnostics) => {
-            record.error = Some(diagnostics.join("\n"));
-            return Ok(CompletionOutcome::InvalidOutputs { diagnostics });
-        }
-    };
-    let key = assessment_key(definition, state, &request.execution_id, &publications)?;
-    if key.terminality == Terminality::Unresolved {
-        return Ok(CompletionOutcome::Waiting {
-            reason: "execution destinations remain unresolved".into(),
-        });
-    }
-    accept_publications(state, &request.execution_id, &request.session_id, publications)
-}
-
-/// Only the process owner may invoke this after wait/reap AND output drain succeed.
-pub fn confirm_execution_exit(state: &mut TaskExecutionState, id: &str, session_id: &str, exit_code: Option<i32>) -> Result<(), String> {
-    let record = owned_execution(state, id, session_id)?;
-    if record.shutdown_confirmed {
-        return if record.exit_code == exit_code {
-            Ok(())
-        } else {
-            Err("execution exit is already confirmed with a different exit code".into())
-        };
-    }
-    record.shutdown_confirmed = true;
-    record.exit_code = exit_code;
-    record.lifecycle = if record.receipt_id.is_some() && exit_code == Some(0) {
-        ExecutionLifecycle::Completed
-    } else {
-        ExecutionLifecycle::Failed
-    };
-    if record.receipt_id.is_none() {
-        record.error = Some(format!("execution ended without accepted completion (exit {exit_code:?})"));
-    } else if exit_code != Some(0) {
-        record.error = Some(format!("execution ended unsuccessfully after accepted completion (exit {exit_code:?})"));
-    } else {
-        record.error = None;
-    }
-    Ok(())
-}
-
-pub fn recover_execution_owner(state: &mut TaskExecutionState, id: &str) -> Result<String, String> {
-    let record = state.executions.get_mut(id).ok_or("unknown execution")?;
-    if record.receipt_id.is_some() || !record.shutdown_confirmed {
-        return Err("recovery requires an unaccepted execution with proven stopped owner".into());
-    }
-    record.previous_session_ids.push(record.owner_session_id.clone());
-    record.owner_session_id = format!("s{}", uuid::Uuid::new_v4());
-    record.continuation_mode = ContinuationMode::Manual;
-    record.work_revision = 0;
-    record.last_admission_sequence = 0;
-    record.last_ready_revision = None;
-    record.ready_revision = None;
-    record.continuation_requested_revision = None;
-    record.ready_assessment = None;
-    record.human_end = None;
-    record.lifecycle = ExecutionLifecycle::Queued;
-    record.start_requested = false;
-    record.shutdown_confirmed = false;
-    record.exit_code = None;
-    record.error = None;
-    Ok(record.owner_session_id.clone())
-}
-
-/// Explicit human attestation that an Interrupted owner's process is gone and its exit
-/// will never be observed (daemon killed mid-step). Never inferred from pids or metas.
-/// Release is not acceptance: the record ends Failed with no receipt.
-pub fn release_interrupted_owner(state: &mut TaskExecutionState, id: &str, session_id: &str) -> Result<(), String> {
-    let record = owned_execution(state, id, session_id)?;
-    if record.lifecycle != ExecutionLifecycle::Interrupted || record.shutdown_confirmed || record.receipt_id.is_some() {
-        return Err("release requires an interrupted, unaccepted execution whose exit was never recorded".into());
-    }
-    confirm_execution_exit(state, id, session_id, None)?;
-    state.executions.get_mut(id).ok_or("unknown execution")?.error = Some("previous process released by user; no exit was recorded".into());
-    Ok(())
-}
-
-pub fn interrupt_unproven_owners(state: &mut TaskExecutionState, proven_live_sessions: &BTreeSet<String>) {
-    for record in state.executions.values_mut() {
-        if record.lifecycle.holds_capacity() && !proven_live_sessions.contains(&record.owner_session_id) {
-            if record.receipt_id.is_none() {
-                record.ready_revision = None;
-                record.continuation_requested_revision = None;
-                record.ready_assessment = None;
-            }
-            record.lifecycle = ExecutionLifecycle::Interrupted;
-            record.error = Some("previous process disposition is unknown; ownership retained".into());
-        }
-    }
-}
-
-pub fn execution_assignment_prompt(repo: &Path, slug: &str, state: &TaskExecutionState, id: &str) -> Result<String, String> {
-    use std::fmt::Write;
-    let record = state.executions.get(id).ok_or("unknown execution")?;
-    let root = crate::artifacts_dir(repo, slug);
-    let mut prompt = String::from(concat!(
-        "\n\n## Engine assignment (authoritative)\n",
-        "You are responsible for this one engine-assigned execution in an Alinery Playbook. Other executions may run before, after, or concurrently in the same task. Work only on this execution. Do not start, stop, advance, or modify other executions; the engine coordinates them.\n\n",
-        "Read only the assigned input occurrences below. Do not infer lineage or choose versions by filenames.\n",
-    ));
-    for (selector, ids) in &record.candidate.inputs {
-        for occurrence_id in ids {
-            let occurrence = state.occurrences.get(occurrence_id).ok_or("missing assigned occurrence")?;
-            let _ = writeln!(
-                prompt,
-                "Read: {} (logical {selector}; occurrence {occurrence_id}; producer {})",
-                root.join(&occurrence.relative_path).display(),
-                occurrence.producer_execution_id.as_deref().unwrap_or("seed")
-            );
-        }
-    }
-    for assignment in &record.outputs {
-        let _ = writeln!(
-            prompt,
-            "Write: {} (logical {}; {}{})",
-            root.join(&assignment.relative_path).display(),
-            assignment.selector,
-            if assignment.required { "required publication" } else { "possible publication" },
-            if assignment.relative_path.contains('*') {
-                ", wildcard family with zero or finitely many valid members"
-            } else if assignment.required {
-                "; omitting this exact nonempty file rejects completion"
-            } else {
-                ""
-            }
-        );
-    }
-    prompt.push_str(concat!(
-        "\nEach output declaration is a possible publication, not an individual file requirement. Successful completion requires at least one valid assigned artifact overall. Safely absent outputs and zero-member wildcard families may be omitted; present invalid artifacts and genuine filesystem inspection errors reject the entire attempt. Publish only within these exact assigned paths. This current publication rule supersedes older blanket all-output requirements and older zero-publication guidance, but never waives substantive work, deliverables, verification, decisions, or human approval. Missing substantive work stays interactive. Accepted publications are immutable: files written after acceptance do not extend the receipt.\n",
-        "\nCompletion is an explicit handshake: alinery_phase_complete reports validated readiness. An assessed endpoint with no next destination stays in this session for human review, even with automatic continuation enabled; remain available for follow-up instructions. Manual nonterminal work stays in this session until the user chooses Continue in the desktop; automatic nonterminal work uses the same final validation and acceptance path. Only Accepted requests ordinary shutdown. A written artifact, user-facing report, idle session, or process exit does not complete this execution by itself.\n\n",
-        "## Deliver the result\n\n",
-        "Your artifact is a file on disk, not your chat response. Printing its contents or naming its path does not create it.\n\n",
-        "When the assigned work, verification, and substantive decisions are ready:\n",
-        "1. Use a filesystem tool to write the required deliverables to their exact assigned output paths. Publish only the outputs appropriate to the outcome; do not manufacture unused branch triggers.\n",
-        "2. Verify that the files were saved successfully.\n",
-        "3. Send a brief user-facing handoff naming the saved artifacts and verification. Do not substitute the full document in chat for saving it.\n",
-        "4. Invoke alinery_phase_complete as an actual tool call in the same assistant turn as the handoff, before ending the turn.\n\n",
-        "In OMP, invoke completion through your existing write tool with these arguments:\n",
-        "{\"path\":\"xd://alinery_phase_complete\",\"content\":\"{}\",\"i\":\"Completing assigned execution\"}\n",
-        "This executes the completion tool; it does not create a file. You do not need a separately listed alinery_phase_complete tool or a separate xd:// tool. Make the actual write tool call, not a chat message containing these arguments.\n\n",
-        "Do not end a ready-to-complete turn after only the handoff. Finish all required work and the handoff before invoking the tool because acceptance requests shutdown.\n\n",
-        "If clarification, substantive approval, output work, or another blocker remains, explain what is needed and stay interactive instead. Do not call the completion tool merely because the session is idle.\n\n",
-        "Ready or Waiting is not acceptance: remain available for review. After review or revision, report readiness again. Only the desktop can request manual continuation; do not ask for a separate permission-to-finish approval or manufacture human intent. These instructions supersede obsolete Finish-permission instructions in the retained definition, without changing substantive approval requirements. Unavailable or stale results are not success; remain interactive and resolve the stated blocker.\n\n",
-        "Correct invalid outputs before retrying. Resolve delivery or ownership failures rather than claiming success. Only an accepted tool result confirms completion. After acceptance, do no further work; allow ordinary shutdown. Only successors whose declared inputs are satisfied by accepted publications become eligible after confirmed process exit; completion does not promise every possible successor will run.\n\n",
-        "Do not modify other executions' artifacts.\n",
-    ));
-    if record.outputs.iter().any(|assignment| assignment.required) {
-        prompt.push_str("An exact output marked required above is not optional. Omitting it rejects completion and leaves this execution running. That exception supersedes the possible-publication sentence for those paths only.\n");
-    }
-    Ok(prompt)
 }
 
 #[cfg(test)]

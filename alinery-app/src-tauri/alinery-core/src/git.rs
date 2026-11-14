@@ -312,68 +312,6 @@ pub fn registered_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-fn chat_worktree_path(repo: &Path, session_id: &str) -> Result<PathBuf, String> {
-    let id = crate::safe_component(session_id).ok_or_else(|| "invalid session id".to_string())?;
-    Ok(crate::chat_worktrees_dir(repo).join(id))
-}
-
-pub fn add_chat_worktree(repo: &Path, session_id: &str) -> Result<PathBuf, String> {
-    let path = chat_worktree_path(repo, session_id)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let branch = format!("chat/{session_id}");
-    let output = git_cmd(repo)
-        .args(["worktree", "add", "-b", &branch])
-        .arg(&path)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(format!("git worktree add: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    Ok(path)
-}
-
-pub fn remove_chat_worktree_path(repo: &Path, session_id: &str, path: &Path) -> Result<(), String> {
-    let expected = chat_worktree_path(repo, session_id)?;
-    let repo_canon = repo.canonicalize().map_err(|error| error.to_string())?;
-    let path_canon = path.canonicalize().map_err(|_| "chat worktree path is not that session".to_string())?;
-    if path_canon == repo_canon {
-        return Err("refusing to remove the repository checkout".into());
-    }
-    let task_worktrees = crate::worktrees_dir(repo);
-    if path.starts_with(&task_worktrees) || path_canon.starts_with(&task_worktrees) {
-        return Err("refusing to remove a task worktree".into());
-    }
-    let root = expected.parent().ok_or("chat worktree path is not that session")?;
-    let root_canon = root.canonicalize().map_err(|_| "chat worktree path is not that session".to_string())?;
-    let child = path_canon.strip_prefix(&root_canon).map_err(|_| "chat worktree path is not that session".to_string())?;
-    if child != Path::new(session_id) {
-        return Err("chat worktree path is not that session".into());
-    }
-    let output = git_cmd(repo)
-        .args(["worktree", "remove", "--force"])
-        .arg(&path_canon)
-        .output()
-        .map_err(|error| format!("git worktree remove: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("git worktree remove failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    Ok(())
-}
-
-pub fn abbrev_ref(dir: &Path) -> Result<String, String> {
-    let output = git_cmd(dir).args(["rev-parse", "--abbrev-ref", "HEAD"]).output().map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(format!("git rev-parse: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    let label = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if label.is_empty() {
-        return Err("git rev-parse returned an empty branch".into());
-    }
-    Ok(label)
-}
-
 /// Canonicalized top-level directory of the Git working tree containing `path`. The single
 /// place that turns an arbitrary caller-supplied path into a trustworthy repo identity —
 /// `git rev-parse --show-toplevel` rejects anything that is not a real, locally accessible
@@ -993,6 +931,33 @@ mod tests {
         assert!(parse_git_credential("protocol=https\n").is_none());
     }
 
+    #[test]
+    fn system_git_sets_neither_exec_path_nor_credential_helper() {
+        let selected = GitProgram {
+            program: PathBuf::from("/usr/bin/git"),
+            bundled: false,
+        };
+        let cmd = git_command(Path::new("/tmp/repo"), &selected);
+        assert!(env_value(&cmd, "GIT_EXEC_PATH").is_none());
+        let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
+        assert!(!args.iter().any(|arg| arg == "credential.helper=osxkeychain"), "{args:?}");
+        assert_eq!(args.first().map(String::as_str), Some("-C"));
+    }
+
+    fn unique_git_tree(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("alinery-core-git-tree-{name}-{nanos}"));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("libexec/git-core")).unwrap();
+        std::fs::write(root.join("bin/git"), b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root.join("bin/git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        root
+    }
+
     // Issue #158: Git Credential Manager hung, git was killed at the 5s deadline, and the orphaned
     // helper kept git's inherited stderr open. The fill must still return at the deadline and
     // must not leave the helper behind.
@@ -1055,76 +1020,5 @@ mod tests {
         );
         assert_eq!(result.err().as_deref(), Some("git credential fill timed out"));
         assert!(!helper_alive, "helper {helper_pid} outlived the timed-out fill");
-    }
-
-    fn commit_file(repo: &Path) {
-        std::fs::write(repo.join("README"), "hi").unwrap();
-        let add = git_cmd(repo).args(["add", "README"]).output().unwrap();
-        assert!(add.status.success(), "{add:?}");
-        let commit = git_cmd(repo)
-            .args(["-c", "user.email=t@example.com", "-c", "user.name=Test", "commit", "-m", "init"])
-            .output()
-            .unwrap();
-        assert!(commit.status.success(), "{}", String::from_utf8_lossy(&commit.stderr));
-    }
-
-    #[test]
-    fn chat_worktree_add_remove_keeps_branch_and_refuses_escapes() {
-        let repo = unique_repo("chat-wt");
-        commit_file(&repo);
-        let id = "s01234567";
-        let path = add_chat_worktree(&repo, id).expect("add chat worktree");
-        assert_eq!(path, crate::chat_worktrees_dir(&repo).join(id));
-        assert!(path.is_dir());
-        let branch = git_cmd(&repo).args(["rev-parse", "--verify", &format!("refs/heads/chat/{id}")]).output().unwrap();
-        assert!(branch.status.success(), "branch chat/{id} missing");
-        assert_eq!(abbrev_ref(&path).unwrap(), format!("chat/{id}"));
-        let checkout = abbrev_ref(&repo).unwrap();
-        assert_ne!(checkout, format!("chat/{id}"));
-        assert!(!checkout.is_empty());
-        assert!(remove_chat_worktree_path(&repo, id, &repo).is_err());
-        assert!(repo.join(".git").is_dir());
-        let task_wt = crate::worktrees_dir(&repo).join("task-leaf");
-        std::fs::create_dir_all(&task_wt).unwrap();
-        assert!(remove_chat_worktree_path(&repo, id, &task_wt).is_err());
-        assert!(task_wt.is_dir());
-        remove_chat_worktree_path(&repo, id, &path).expect("remove");
-        assert!(!path.exists());
-        let kept = git_cmd(&repo).args(["rev-parse", "--verify", &format!("refs/heads/chat/{id}")]).output().unwrap();
-        assert!(kept.status.success(), "remove must keep chat/{id}");
-        let outside = repo.join("outside");
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&outside, &path).unwrap();
-        assert!(remove_chat_worktree_path(&repo, id, &path).is_err());
-        assert!(outside.is_dir());
-        let _ = std::fs::remove_dir_all(&repo);
-    }
-
-    #[test]
-    fn system_git_sets_neither_exec_path_nor_credential_helper() {
-        let selected = GitProgram {
-            program: PathBuf::from("/usr/bin/git"),
-            bundled: false,
-        };
-        let cmd = git_command(Path::new("/tmp/repo"), &selected);
-        assert!(env_value(&cmd, "GIT_EXEC_PATH").is_none());
-        let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
-        assert!(!args.iter().any(|arg| arg == "credential.helper=osxkeychain"), "{args:?}");
-        assert_eq!(args.first().map(String::as_str), Some("-C"));
-    }
-
-    fn unique_git_tree(name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("alinery-core-git-tree-{name}-{nanos}"));
-        std::fs::create_dir_all(root.join("bin")).unwrap();
-        std::fs::create_dir_all(root.join("libexec/git-core")).unwrap();
-        std::fs::write(root.join("bin/git"), b"#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(root.join("bin/git"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        root
     }
 }

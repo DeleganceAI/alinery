@@ -1,0 +1,102 @@
+syntax = "proto3";
+package alinery.v1;
+
+service AdminService {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);  // ADMIN (S5.1, O20 c)
+  // The sessions whose process is running, for the consent a takeover or a restart asks for (S5.3: the JSON-lines `list` op).
+  rpc LiveSessions(LiveSessionsRequest) returns (LiveSessionsResponse);  // ADMIN
+  // Joining a daemon someone else started (a coworker on a shared box). RequestJoin and CollectJoin need no token: they are how a
+  // client without one asks for one. A member (any holder of the daemon's own or a member token) decides with DecideJoin, and the
+  // pending requests are the `daemon/_/join-requests` entity. A member token is the daemon's own token's equal and dies with the daemon.
+  rpc RequestJoin(RequestJoinRequest) returns (RequestJoinResponse);  // no token
+  rpc CollectJoin(CollectJoinRequest) returns (CollectJoinResponse);  // no token; the request's secret
+  rpc DecideJoin(DecideJoinRequest) returns (DecideJoinResponse);     // APPROVE
+}
+
+// `label` is how the asking app describes its person and machine, e.g. "jon on Strix"; shown to the members who decide.
+message RequestJoinRequest { string label = 1; }
+message RequestJoinResponse {
+  string request_id = 1;
+  string request_secret = 2;  // CollectJoin needs it, so only the asker collects the token
+}
+message CollectJoinRequest {
+  string request_id = 1;
+  string request_secret = 2;
+}
+enum JoinState {
+  JOIN_STATE_UNSPECIFIED = 0;
+  JOIN_STATE_PENDING = 1;
+  JOIN_STATE_APPROVED = 2;  // `token` is set
+  JOIN_STATE_DENIED = 3;    // also an expired or unknown request
+}
+message CollectJoinResponse {
+  JoinState state = 1;
+  string token = 2;
+}
+message DecideJoinRequest {
+  string request_id = 1;
+  bool approve = 2;
+}
+message DecideJoinResponse {}
+
+message LiveSessionsRequest {}
+message LiveSession { string id = 1; }
+message LiveSessionsResponse { repeated LiveSession sessions = 1; }
+
+// Only CAPABILITY_AGENT can be minted; anything else is INVALID_ARGUMENT. The token is 32 random bytes, hex; it lives in the
+// daemon's memory and dies with it. A second mint with the same `label` replaces the first, so a client that refreshes its
+// token does not pile them up. `label` is for the log only.
+message MintTokenRequest {
+  Capability capability = 1;
+  string label = 2;
+}
+message MintTokenResponse { string token = 1; }
+
+message HelloRequest {
+  string client_id = 1;
+  string client_kind = 2;  // "desktop", "mcp"
+  uint32 protocol = 3;
+}
+
+message HelloResponse {
+  uint32 protocol = 1;
+  string build_id = 2;
+  string epoch = 3;
+  repeated Capability capabilities = 4;
+  string repo_root = 5;
+  string app_config_identity = 6;  // ensure_daemon reuses only on protocol and identity match
+  string version = 7;              // the app release the daemon was built from, for display only
+  string started_by = 8;           // how the app that started it described its person and machine (--started-by), for display only
+  string os_user = 9;              // the login the daemon runs as
+  int64 started_at_ms = 10;
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_VIEW = 1;     // read entities, read-only terminal attach
+  CAPABILITY_ACT = 2;      // commands, terminal input
+  CAPABILITY_APPROVE = 3;  // approvals, auto-approve
+  CAPABILITY_ADMIN = 4;    // Shutdown, daemon-wide settings
+  CAPABILITY_AGENT = 5;    // MCP: the four session tools until S5.1, then exactly the RPCs behind its tools (O18 b)
+}
+
+// Invariant 1: the only ways to stop a daemon. UNSPECIFIED is rejected.
+enum ShutdownOrigin {
+  SHUTDOWN_ORIGIN_UNSPECIFIED = 0;
+  SHUTDOWN_ORIGIN_STOP_DAEMON = 1;
+  SHUTDOWN_ORIGIN_CLOSE_REPO = 2;
+  SHUTDOWN_ORIGIN_RESTORE_BACKUP = 3;
+  SHUTDOWN_ORIGIN_CONFIRMED_TAKEOVER = 4;
+  SHUTDOWN_ORIGIN_STOP_REMOTE = 5;
+}
+
+message ShutdownRequest {
+  ShutdownOrigin origin = 1;
+  string confirmation_id = 2;
+}
+
+message ShutdownResponse {
+  uint32 sessions_stopped = 1;
+}

@@ -29,7 +29,7 @@ const row = (notice: SessionNoticeRow["notice"], id: string = notice): SessionNo
     created: 10,
     archived: false,
     phase: "implementation",
-    harness: "omp",
+    harness: "vinculum",
     model: "",
     playbook: "superdevelop",
     generic: false,

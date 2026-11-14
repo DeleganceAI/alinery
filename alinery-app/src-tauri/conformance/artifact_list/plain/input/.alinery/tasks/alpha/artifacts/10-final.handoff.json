@@ -1,0 +1,1 @@
+{"version": 2, "direction": "inbound", "source_repo_path": "/r", "target_repo_path": "/r2", "source_task": "beta", "source_session": "s1", "source_artifact": "x.md", "target_task": "alpha", "target_artifact": "10-final.md", "target_session": "t1", "target_phase": "review", "created_at_ms": 100}

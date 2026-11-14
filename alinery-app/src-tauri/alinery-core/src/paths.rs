@@ -2,6 +2,11 @@ use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
 
+/// The uid this process runs as; keys per-user scratch directories such as `/tmp/alinery-<uid>`.
+pub fn effective_uid() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
 /// Stable application configuration root, including development instance paths.
 pub fn app_config_dir_of(app_config: &Path) -> Option<&Path> {
     let dir = app_config.parent()?;
@@ -61,6 +66,18 @@ fn mcp_stem(namespace: Option<&str>) -> String {
     }
 }
 
+/// The daemon's gRPC socket (plan T1): `.alinery/rpc.sock` or `.alinery/rpc-<ns>.sock`, the lane naming of `alineryd[-ns].sock`.
+pub fn rpc_socket_path(repo: &Path, namespace: Option<&str>) -> PathBuf {
+    let clean = namespace
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(48)
+        .collect::<String>();
+    let stem = if clean.is_empty() { "rpc".to_string() } else { format!("rpc-{clean}") };
+    alinery_dir(repo).join(format!("{stem}.sock"))
+}
+
 /// Reconciler transaction lock (one per repo, separate from daemon ownership).
 pub fn alineryd_reconciler_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".alineryd-reconciler.lock")
@@ -83,8 +100,8 @@ pub fn task_mutation_lock_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join(".task-mutation.lock")
 }
 
-/// Enumerate alineryd lane sockets under `.alinery/`: `(namespace, path)`.
-/// Prod lane uses `namespace == ""` for `alineryd.sock`.
+/// Enumerate the daemon lane sockets under `.alinery/`: `(namespace, path)`. A lane has the gRPC socket
+/// `rpc[-ns].sock`, and an older daemon's lane also has `alineryd[-ns].sock`. The prod lane uses `namespace == ""`.
 pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     let dir = alinery_dir(repo);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -94,14 +111,12 @@ pub fn list_alineryd_lane_sockets(repo: &Path) -> Vec<(String, PathBuf)> {
     for ent in entries.flatten() {
         let name = ent.file_name();
         let Some(s) = name.to_str() else { continue };
-        if !s.ends_with(".sock") || !s.starts_with("alineryd") {
-            continue;
-        }
+        let Some(stem) = s.strip_suffix(".sock") else { continue };
         // skip unrelated *.sock
-        let ns = if s == "alineryd.sock" {
+        let ns = if stem == "alineryd" || stem == "rpc" {
             String::new()
-        } else if let Some(rest) = s.strip_prefix("alineryd-") {
-            rest.trim_end_matches(".sock").to_string()
+        } else if let Some(rest) = stem.strip_prefix("alineryd-").or_else(|| stem.strip_prefix("rpc-")) {
+            rest.to_string()
         } else {
             continue;
         };
@@ -125,19 +140,11 @@ pub fn harnesses_toml_path(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("harnesses.toml")
 }
 
-pub fn playbooks_dir(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("playbooks")
-}
-
 pub fn artifacts_dir(repo: &Path, slug: &str) -> PathBuf {
     tasks_dir(repo).join(slug).join("artifacts")
 }
 
 // Compat alias for alineryd and old code (ponytail: no bigger rename yet)
-pub fn artifacts_dir_for(repo: &Path, slug: &str) -> PathBuf {
-    artifacts_dir(repo, slug)
-}
-
 pub fn attachments_dir(repo: &Path, slug: &str) -> PathBuf {
     artifacts_dir(repo, slug).join("attachments")
 }
@@ -197,19 +204,14 @@ pub(crate) fn validate_retained_file(repo: &Path, path: &Path) -> Result<(), Str
     Ok(())
 }
 
-// Alinery-owned OMP conversation dir, sibling of `<id>.meta.json`. Not the worktree
-// checkout and not `~/.omp/agent/sessions/`.
-pub fn session_omp_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
+// Alinery-owned Vinculum conversation dir, sibling of `<id>.meta.json`. Not the worktree checkout.
+pub fn session_vinculum_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
-    dir.join(format!("{id}.omp"))
+    dir.join(format!("{id}.vinculum"))
 }
 
-// Files a taskless chat thread attached. Sibling of `<id>.omp`, not inside the worktree,
+// Files a taskless chat thread attached. Sibling of `<id>.vinculum`, not inside the worktree,
 // so removing that worktree does not delete them and they are not untracked git files.
-pub fn chat_attachments_dir(repo: &Path, id: &str) -> PathBuf {
-    root_sessions_dir(repo).join(format!("{id}.attachments"))
-}
-
 // The daemon appends raw session output to this single-file sidecar.
 pub fn session_scrollback_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
@@ -250,10 +252,6 @@ fn collect_meta_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 pub fn worktrees_dir(repo: &Path) -> PathBuf {
     alinery_dir(repo).join("worktrees")
-}
-
-pub fn chat_worktrees_dir(repo: &Path) -> PathBuf {
-    alinery_dir(repo).join("chat-worktrees")
 }
 
 // task_dir moved to task.rs to avoid glob import ambiguity
@@ -308,7 +306,7 @@ pub fn safe_component(s: &str) -> Option<&str> {
 /// Walk `exe` for a real install prefix. Some only for
 /// `…/<X>.app/Contents/MacOS/<exe>` or a parent directory named `Alinery`
 /// (Linux prefix). `target/debug/Alinery` and `target/debug/deps/…` return None
-/// so resolve falls through to `default_omp_alongside_dir`.
+/// so resolve falls through to `default_git_alongside_dir`.
 pub fn containing_install_root(exe: &Path) -> Option<PathBuf> {
     let macos_dir = exe.parent()?;
     if macos_dir.file_name()? == "MacOS" {
@@ -324,22 +322,6 @@ pub fn containing_install_root(exe: &Path) -> Option<PathBuf> {
         return Some(macos_dir.to_path_buf());
     }
     None
-}
-
-/// Alongside directory for a given Alinery install root. Path-shape, not cfg:
-/// `.app` → sibling `<stem>.omp`; otherwise sibling `omp`.
-pub fn omp_alongside_dir(install_root: &Path) -> PathBuf {
-    let parent = install_root.parent().unwrap_or(install_root);
-    if install_root.extension().is_some_and(|ext| ext == "app") {
-        let stem = install_root.file_stem().unwrap_or_default().to_string_lossy();
-        parent.join(format!("{stem}.omp"))
-    } else {
-        parent.join("omp")
-    }
-}
-
-pub fn omp_binary_path(omp_dir: &Path) -> PathBuf {
-    omp_dir.join("omp")
 }
 
 /// Alongside directory for the fallback Git tree. Path-shape, not cfg:
@@ -382,91 +364,11 @@ pub(crate) fn installed_git_binary() -> PathBuf {
     }
 }
 
-/// One Alinery-global alongside dir used when `containing_install_root` is None
-/// (`tauri dev`, cargo test). Matches install.sh's default dest formula.
-pub fn default_omp_alongside_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        omp_alongside_dir(Path::new("/Applications/Alinery.app"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
-        omp_alongside_dir(&home.join(".local/share/alinery/Alinery"))
-    }
-}
-
-/// Isolated OMP HOME under the app-config parent (not `~/.omp`).
-/// Returns `(PI_CODING_AGENT_DIR, PI_CONFIG_DIR)`.
-pub fn omp_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
-    let omp_root = app_config.parent().unwrap_or(app_config).join("omp");
-    let config_root = omp_root.join("config");
-    let agent_dir = config_root.join("agent");
-    (agent_dir, config_root)
-}
-
-/// The only variables an isolated OMP child inherits from the daemon's own environment.
-///
-/// Everything outside this list is dropped, because "a fresh install starts un-authenticated" and
-/// "inherits whatever the launching shell exported" cannot both be true: OMP reads provider
-/// credentials from env vars as readily as from its credential store, so one exported key silently
-/// authenticates an instance that owns an empty store — and nothing in the UI would disagree.
-///
-/// So the list carries only what a coding agent cannot work without and what is not a credential:
-/// locale and temp so tools behave, the ssh agent socket so git over ssh keeps working, and proxy
-/// settings so a machine behind one can still reach an API. `PATH`, `TERM`, and every `ALINERY_*`
-/// / `PI_*` var are set explicitly at spawn and do not belong here.
-///
-/// A key that genuinely must be injected goes in the harness row's `env` map, which is applied
-/// after this and therefore still wins — explicit, per-install, and visible in config.
-pub const OMP_ENV_ALLOWLIST: &[&str] = &[
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "SHELL",
-    "TMPDIR",
-    "TZ",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "SSH_AUTH_SOCK",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-];
-
-/// The allowlisted variables that are actually set, ready to re-apply after an `env_clear()`.
-pub fn omp_inherited_env() -> Vec<(&'static str, String)> {
-    OMP_ENV_ALLOWLIST.iter().filter_map(|key| std::env::var(key).ok().map(|value| (*key, value))).collect()
-}
-
-/// Packaged OMP binary: `ALINERY_OMP_PATH` override → install-root sibling →
-/// default alongside dir. Fail-closed; never PATH search.
-pub fn resolve_packaged_omp_path() -> Result<PathBuf, String> {
-    let path = match std::env::var("ALINERY_OMP_PATH") {
-        Ok(value) if !value.is_empty() => PathBuf::from(value),
-        _ => match std::env::current_exe() {
-            Ok(exe) => match containing_install_root(&exe) {
-                Some(root) => omp_binary_path(&omp_alongside_dir(&root)),
-                None => omp_binary_path(&default_omp_alongside_dir()),
-            },
-            Err(_) => omp_binary_path(&default_omp_alongside_dir()),
-        },
-    };
-    if path.is_file() {
-        Ok(path)
-    } else {
-        // Naming the fix here is worth more than the doc that also describes it: this is the
-        // string a dev sees the first time a session refuses to start, and "not found" on its own
-        // does not even say where it looked.
-        Err(format!(
-            "bundled OMP not found at {} — from a checkout run scripts/dev-fetch-omp.sh; in an installed app, reinstall Alinery",
-            path.display()
-        ))
-    }
+/// Vinculum agent home under the app-config parent (not `~/.pi`).
+/// Returns `(agent dir, config root)`: `<app.toml parent>/vinculum/config/agent` and `.../config`.
+pub fn vinculum_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
+    let config_root = app_config.parent().unwrap_or(app_config).join("vinculum").join("config");
+    (config_root.join("agent"), config_root)
 }
 
 #[cfg(test)]
@@ -491,19 +393,12 @@ mod tests {
     }
 
     #[test]
-    fn session_omp_dir_root_vs_task() {
+    fn session_vinculum_dir_root_vs_task() {
         let repo = Path::new("/tmp/alinery_repo");
-        assert_eq!(session_omp_dir(repo, "", "s1"), root_sessions_dir(repo).join("s1.omp"));
-        assert_eq!(session_omp_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.omp"));
-        // Sibling of meta, not nested under it, not a worktree path, not ~/.omp.
-        assert_eq!(session_omp_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
-    }
-
-    #[test]
-    fn chat_attachments_dir_sits_beside_the_session() {
-        let repo = Path::new("/repo");
-        assert_eq!(chat_attachments_dir(repo, "s1"), root_sessions_dir(repo).join("s1.attachments"));
-        assert_eq!(chat_attachments_dir(repo, "s1").parent(), session_omp_dir(repo, "", "s1").parent());
+        assert_eq!(session_vinculum_dir(repo, "", "s1"), root_sessions_dir(repo).join("s1.vinculum"));
+        assert_eq!(session_vinculum_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.vinculum"));
+        // Sibling of meta, not nested under it, not a worktree path, not ~/.vinculum.
+        assert_eq!(session_vinculum_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
     }
 
     #[test]
@@ -618,24 +513,6 @@ mod tests {
     }
 
     #[test]
-    fn omp_alongside_dir_macos_app() {
-        assert_eq!(omp_alongside_dir(Path::new("/Applications/Alinery.app")), PathBuf::from("/Applications/Alinery.omp"));
-    }
-
-    #[test]
-    fn omp_alongside_dir_linux_prefix() {
-        assert_eq!(
-            omp_alongside_dir(Path::new("/home/u/.local/share/alinery/Alinery")),
-            PathBuf::from("/home/u/.local/share/alinery/omp")
-        );
-    }
-
-    #[test]
-    fn omp_binary_path_joins_omp() {
-        assert_eq!(omp_binary_path(Path::new("/Applications/Alinery.omp")), PathBuf::from("/Applications/Alinery.omp/omp"));
-    }
-
-    #[test]
     fn git_alongside_dir_macos_app() {
         assert_eq!(git_alongside_dir(Path::new("/Applications/Alinery.app")), PathBuf::from("/Applications/Alinery.git"));
     }
@@ -666,93 +543,6 @@ mod tests {
         {
             let home = dirs::home_dir().expect("HOME");
             assert_eq!(default_git_alongside_dir(), home.join(".local/share/alinery/git"));
-        }
-    }
-
-    #[test]
-    fn default_omp_alongside_dir_matches_install_default() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(default_omp_alongside_dir(), PathBuf::from("/Applications/Alinery.omp"));
-        #[cfg(not(target_os = "macos"))]
-        {
-            let home = dirs::home_dir().expect("HOME");
-            assert_eq!(default_omp_alongside_dir(), home.join(".local/share/alinery/omp"));
-        }
-    }
-
-    #[test]
-    fn omp_home_dirs_are_under_app_config_parent_omp() {
-        let (agent, config_root) = omp_home_dirs(Path::new("/tmp/id/app.toml"));
-        assert_eq!(agent, PathBuf::from("/tmp/id/omp/config/agent"));
-        assert_eq!(config_root, PathBuf::from("/tmp/id/omp/config"));
-        assert!(agent.starts_with("/tmp/id/omp"));
-        assert!(config_root.starts_with("/tmp/id/omp"));
-        assert!(!agent.starts_with(std::env::var_os("HOME").unwrap_or_default()));
-    }
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct OmpPathEnvGuard {
-        prev: Option<std::ffi::OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-    impl OmpPathEnvGuard {
-        fn set(value: Option<&str>) -> Self {
-            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let prev = std::env::var_os("ALINERY_OMP_PATH");
-            match value {
-                Some(v) => std::env::set_var("ALINERY_OMP_PATH", v),
-                None => std::env::remove_var("ALINERY_OMP_PATH"),
-            }
-            Self { prev, _lock: lock }
-        }
-    }
-    impl Drop for OmpPathEnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var("ALINERY_OMP_PATH", v),
-                None => std::env::remove_var("ALINERY_OMP_PATH"),
-            }
-        }
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_env_present() {
-        let path = std::env::temp_dir().join(format!("alinery-omp-present-{}", std::process::id()));
-        std::fs::write(&path, b"omp-fixture").unwrap();
-        let _guard = OmpPathEnvGuard::set(Some(path.to_str().unwrap()));
-        let got = resolve_packaged_omp_path().expect("present override");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(got, path);
-        assert_ne!(got.as_os_str(), "omp");
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_env_absent_file() {
-        let missing = format!("/no/such/alinery-omp-{}", std::process::id());
-        let _guard = OmpPathEnvGuard::set(Some(&missing));
-        let err = resolve_packaged_omp_path().expect_err("missing override");
-        assert!(err.contains("bundled OMP not found at"), "{err}");
-        assert!(err.contains(&missing), "{err}");
-    }
-
-    #[test]
-    fn resolve_packaged_omp_path_never_path_search() {
-        let _guard = OmpPathEnvGuard::set(None);
-        // Dev machines may already have `scripts/dev-fetch-omp.sh` output; CI usually
-        // does not. Either way the resolver must not fall through to the PATH name `omp`.
-        match resolve_packaged_omp_path() {
-            Ok(path) => {
-                assert!(path.is_absolute(), "{}", path.display());
-                assert_ne!(path.as_os_str(), "omp");
-                assert!(path.is_file(), "{}", path.display());
-            }
-            Err(err) => {
-                assert!(err.contains("bundled OMP not found at"), "{err}");
-                let path = err.rsplit_once(" at ").map(|(_, p)| p).unwrap_or(&err);
-                assert!(path.starts_with('/'), "{err}");
-                assert_ne!(path, "omp");
-            }
         }
     }
 }

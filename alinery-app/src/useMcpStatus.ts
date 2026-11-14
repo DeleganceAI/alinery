@@ -8,6 +8,7 @@ export type McpStatus = {
   socket_reachable: boolean;
   binary_found: boolean;
   binary_path: string;
+  host_args: string[];
   repo: string;
   socket_path: string;
   error: string;
@@ -22,6 +23,7 @@ const OFFLINE: McpStatus = {
   socket_reachable: false,
   binary_found: true,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",

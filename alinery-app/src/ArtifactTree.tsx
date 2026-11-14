@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { classifyAttachment } from "./chat/attachments";
-import * as ipc from "./ipc";
+import { CopyTextButton } from "./chat/CopyMessage";
+import { revealPath } from "./revealPath";
+import { alineryFilePath } from "./sync/artifacts";
 import type { ArtifactTreeNode } from "./types";
 
 export function isDirectOwnedArtifactNode(node: ArtifactTreeNode): boolean {
@@ -30,7 +32,7 @@ export function treeArtifactImages(nodes: ArtifactTreeNode[], node: ArtifactTree
   for (let index = 1; index < chain.length - 1; index += 1) {
     if (chain[index].owner_task_slug !== chain[index - 1].owner_task_slug) root = index;
   }
-  // Attachments sit one level down, in the root's "Attachments" folder (artifact_tree.rs attachment_folder).
+  // Attachments sit one level down, in the root's "Attachments" folder (daemon artifactTree.ts attachmentFolder).
   const attachments = chain.length > 1 ? chain[root].children.flatMap((child) => child.children).filter((child) => child.kind === "attachment") : [];
   return {
     artifactPath: chain
@@ -50,6 +52,7 @@ const sourceLabels: Partial<Record<ArtifactTreeNode["source"], string>> = {
 function ArtifactTreeRow({
   node,
   taskSlug,
+  repoPath,
   depth,
   selectedId,
   collapsed,
@@ -59,11 +62,13 @@ function ArtifactTreeRow({
 }: {
   node: ArtifactTreeNode;
   taskSlug: string;
+  repoPath: string;
   depth: number;
   selectedId?: string;
   collapsed: Set<string>;
   onToggle: (id: string) => void;
-  onSelect: (node: ArtifactTreeNode) => void;
+  /** `keep`: the second click of a double click. */
+  onSelect: (node: ArtifactTreeNode, keep: boolean) => void;
   onError: (error: string) => void;
 }) {
   const folder = node.kind === "subtask_folder";
@@ -72,38 +77,46 @@ function ArtifactTreeRow({
   if (node.kind === "attachment" && classifyAttachment({ name: node.label }) === "image") {
     return (
       <div style={{ paddingLeft: `${depth * 16}px` }}>
-        <AttachmentPreview taskSlug={taskSlug} name={node.label} nodeId={node.id}>
+        <AttachmentPreview taskSlug={taskSlug} name={node.label} nodeId={node.id} repoPath={repoPath} revealBelow={node.reveal_path}>
           {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
         </AttachmentPreview>
       </div>
     );
   }
+  const row = (
+    <button
+      type="button"
+      className={`artifactitem artifact-tree-row${selectedId === node.id ? " selected" : ""}${node.kind === "attachment" ? " attachment" : ""}`}
+      style={{ paddingLeft: `${10 + depth * 16}px` }}
+      title={node.label}
+      onClick={(event) => {
+        if (folder) {
+          onToggle(node.id);
+        } else if (node.kind === "attachment") {
+          if (node.reveal_path) revealPath(alineryFilePath(repoPath, node.reveal_path)).catch((error) => onError(String(error)));
+        } else {
+          onSelect(node, event.detail >= 2);
+        }
+      }}
+    >
+      <span className="artifact-tree-chevron" aria-hidden="true">
+        {folder ? (isCollapsed ? "›" : "⌄") : ""}
+      </span>
+      <span className="artifactitem-name">{node.label}</span>
+      {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
+    </button>
+  );
   return (
     <>
-      <button
-        type="button"
-        className={`artifactitem artifact-tree-row${selectedId === node.id ? " selected" : ""}${node.kind === "attachment" ? " attachment" : ""}`}
-        style={{ paddingLeft: `${10 + depth * 16}px` }}
-        title={node.label}
-        onClick={() => {
-          if (folder) {
-            onToggle(node.id);
-          } else if (node.kind === "attachment") {
-            ipc
-              .artifactNodePath(taskSlug, node.id)
-              .then(ipc.revealItemInDir)
-              .catch((error) => onError(String(error)));
-          } else {
-            onSelect(node);
-          }
-        }}
-      >
-        <span className="artifact-tree-chevron" aria-hidden="true">
-          {folder ? (isCollapsed ? "›" : "⌄") : ""}
-        </span>
-        <span className="artifactitem-name">{node.label}</span>
-        {badge && <span className={`artifact-source-badge ${node.source}`}>{badge}</span>}
-      </button>
+      {/* An attachment opens nothing here (a click reveals it), so its row carries Copy path; the button cannot nest in the row's. */}
+      {node.kind === "attachment" && node.reveal_path ? (
+        <div className="artifact-copy-row">
+          {row}
+          <CopyTextButton text={alineryFilePath(repoPath, node.reveal_path)} label="path" />
+        </div>
+      ) : (
+        row
+      )}
       {folder &&
         !isCollapsed &&
         node.children.map((child) => (
@@ -111,6 +124,7 @@ function ArtifactTreeRow({
             key={child.id}
             node={child}
             taskSlug={taskSlug}
+            repoPath={repoPath}
             depth={depth + 1}
             selectedId={selectedId}
             collapsed={collapsed}
@@ -125,15 +139,17 @@ function ArtifactTreeRow({
 
 export function ArtifactTree({
   taskSlug,
+  repoPath,
   nodes,
   selectedId,
   onSelect,
   onError,
 }: {
   taskSlug: string;
+  repoPath: string;
   nodes: ArtifactTreeNode[];
   selectedId?: string;
-  onSelect: (node: ArtifactTreeNode) => void;
+  onSelect: (node: ArtifactTreeNode, keep: boolean) => void;
   onError: (error: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -154,6 +170,7 @@ export function ArtifactTree({
           key={node.id}
           node={node}
           taskSlug={taskSlug}
+          repoPath={repoPath}
           depth={0}
           selectedId={selectedId}
           collapsed={collapsed}

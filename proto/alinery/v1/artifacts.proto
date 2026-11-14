@@ -1,0 +1,163 @@
+// proto/alinery/v1/artifacts.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+import "alinery/v1/sessions.proto";
+import "alinery/v1/tasks.proto";
+
+// Review comments on a task's artifacts (S4.5). The read side is the task scope: `artifact/`, `attachment/`, `comment/`,
+// `comment_draft/`, `review_pending/` and `artifact_tree/` rows, and BlobService for the bodies. These are the writes.
+// A write answers after the rows it changed are in the store, so the caller's next read sees it.
+service ArtifactService {
+  rpc AddComment(AddCommentRequest) returns (AddCommentResponse);                            // ACT
+  rpc SaveCommentDraft(SaveCommentDraftRequest) returns (SaveCommentDraftResponse);          // ACT
+  rpc DeleteCommentDraft(DeleteCommentDraftRequest) returns (DeleteCommentDraftResponse);    // ACT
+  // Sends the comments as a review file without a session: the next `<stem>.review-NNN.md`, marked pending.
+  rpc SendReview(SendReviewRequest) returns (SendReviewResponse);                            // ACT
+  rpc ClearReviewPending(ClearReviewPendingRequest) returns (ClearReviewPendingResponse);    // ACT
+  // Writes the review files and returns the prompt to send a session. `FinalizeMessageActions` follows once it was sent.
+  rpc PrepareCommentsPrompt(PrepareCommentsPromptRequest) returns (PrepareCommentsPromptResponse);  // ACT
+  rpc PrepareReviewApproval(PrepareReviewApprovalRequest) returns (PrepareReviewApprovalResponse);  // ACT
+  rpc FinalizeMessageActions(FinalizeMessageActionsRequest) returns (FinalizeMessageActionsResponse);  // ACT
+  // The two halves of a review handoff. Both tasks must be on one machine, each daemon owns its own repository, so the
+  // client carries the artifact's text from the source daemon to the target and the record back (see the plan, S4.5).
+  rpc InstallReviewHandoff(InstallReviewHandoffRequest) returns (InstallReviewHandoffResponse);  // ACT, on the target's daemon
+  rpc RecordOutboundHandoff(RecordOutboundHandoffRequest) returns (RecordOutboundHandoffResponse);  // ACT, on the source's daemon
+}
+
+message CommentInput {
+  string anchor_id = 1;
+  string anchor_kind = 2;
+  string anchor_label = 3;
+  string anchor_excerpt = 4;
+  uint32 line_start = 5;
+  uint32 line_end = 6;
+  string body = 7;
+}
+
+message AddCommentRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string artifact = 3;
+  CommentInput comment = 4;
+}
+message AddCommentResponse {
+  Applied applied = 1;
+  string comment_id = 2;
+}
+
+// An empty body deletes the draft. `expected_revision` is the draft row's revision as the client last saw it (0: no check).
+message SaveCommentDraftRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string artifact = 3;
+  CommentInput comment = 4;
+  uint64 expected_revision = 5;
+}
+message SaveCommentDraftResponse { Applied applied = 1; }
+
+message DeleteCommentDraftRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string artifact = 3;
+  string anchor_id = 4;
+  uint64 expected_revision = 5;
+}
+message DeleteCommentDraftResponse { Applied applied = 1; }
+
+message SendReviewRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string artifact = 3;
+}
+message SendReviewResponse {
+  Applied applied = 1;
+  string review = 2;  // the review file's name
+}
+
+message ClearReviewPendingRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string artifact = 3;
+}
+message ClearReviewPendingResponse { Applied applied = 1; }
+
+message PreparedSnapshot {
+  string artifact = 1;
+  string review = 2;
+  string comments_hash = 3;
+}
+message ArtifactCommentsProvenance { repeated PreparedSnapshot items = 1; }
+message ReviewApprovalProvenance { string review_artifact = 1; }
+// What a prepared prompt promises, handed back to `FinalizeMessageActions` once the message went out.
+message Provenance {
+  oneof kind {
+    ArtifactCommentsProvenance artifact_comments = 1;
+    ReviewApprovalProvenance review_approval = 2;
+  }
+}
+message PreparedAction {
+  string text = 1;
+  Provenance provenance = 2;
+}
+
+message PrepareCommentsPromptRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  repeated string artifacts = 3;
+}
+message PrepareReviewApprovalRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string review_artifact = 3;
+}
+message PrepareCommentsPromptResponse {
+  Applied applied = 1;
+  PreparedAction action = 2;
+}
+message PrepareReviewApprovalResponse {
+  Applied applied = 1;
+  PreparedAction action = 2;
+}
+
+message FinalizeMessageActionsRequest {
+  MutationMeta meta = 1;
+  string session_id = 2;
+  string task_slug = 3;
+  repeated Provenance actions = 4;
+}
+message FinalizeMessageActionsResponse { Applied applied = 1; }
+
+// Installed on the target task's daemon: the evidence artifact (`review-handoff-NNN.md`, the source's text under a header),
+// a session on the chosen step with the evidence named in its prompt, and the inbound record.
+message InstallReviewHandoffRequest {
+  MutationMeta meta = 1;
+  string source_repo_path = 2;
+  string source_slug = 3;
+  string source_session = 4;
+  string source_artifact = 5;
+  string source_text = 6;
+  string target_repo_path = 7;
+  string target_slug = 8;
+  string target_phase = 9;
+  string harness = 10;
+  string model = 11;
+  string prompt_extra = 12;
+  bool start = 13;
+}
+message InstallReviewHandoffResponse {
+  Applied applied = 1;
+  string target_artifact = 2;
+  SessionStarted started = 3;
+  HandoffRecord record = 4;  // the inbound record; the outbound one is the same with direction = "outbound"
+  repeated CreationError errors = 5;  // a record that could not be written; the handoff itself went through
+}
+
+message RecordOutboundHandoffRequest {
+  MutationMeta meta = 1;
+  string source_slug = 2;
+  HandoffRecord record = 3;
+}
+message RecordOutboundHandoffResponse { Applied applied = 1; }

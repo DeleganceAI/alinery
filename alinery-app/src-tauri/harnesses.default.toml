@@ -1,4 +1,5 @@
-# Bundled OMP launch config. OMP is packaged with the app; this is not a
+# The Vinculum row. Vinculum runs inside the daemon, so the launch fields below are
+# vestigial: nothing spawns `binary` or runs `models_cmd`. This is not a
 # multi-harness picker registry. Extra keys in leftover app.toml /
 # .alinery/harnesses.toml stay on disk but are not launchable.
 # Terminal (`no-harness`) is a compiled sentinel, not a TOML row.
@@ -12,35 +13,31 @@
 #   prompt_injection  "arg"   = build prompt argv from prompt_arg
 #                     "stdin" = spawn, then write the seeded prompt + CR to the pty
 #   prompt_arg        argv template for "arg"; exactly one {prompt} placeholder
-#   adapter           "omp" enables structured semantics
+#   adapter           "vinculum" enables structured semantics
 #   message_adapter   independent ongoing-message encoding
 #   models            static model suggestions (free text still allowed)
 #   models_cmd        optional shell pipeline the ↻ button runs via `$SHELL -ilc`
 #                     to refresh suggestions; must print ONE model id per line.
-#                     `{binary}` is replaced with the resolved packaged OMP path
-#                     (never a PATH search for `omp`).
+#                     `{binary}` is replaced with `binary`.
 #   [harness.env]     optional extra environment (values also take {worktree}/{model})
 #
 # Command line built as: binary  model_arg(if model)  args  prompt_arg(if seeded).
 # Positional prompt templates include `--` so prompt text cannot become a CLI option.
 
 [[harness]]
-key = "omp"
-name = "OMP CLI"
-binary = "omp"
+key = "vinculum"
+name = "Vinculum"
+binary = "vinculum"
 args = []
 model_arg = ["--model={model}"]
 prompt_injection = "arg"
 prompt_arg = ["--", "{prompt}"]
-adapter = "omp"
-message_adapter = "omp_bracketed_paste"
+adapter = "vinculum"
+message_adapter = "vinculum_bracketed_paste"
 # {binary} models --json is a flat list; pull the selector with grep+cut (no jq dependency).
 models_cmd = "{binary} models --json 2>/dev/null | grep -oE '\"selector\":\"[^\"]*\"' | cut -d'\"' -f4"
 
-# Resume (issue #24): omp has no launch-bindable id (no --session-id), so it can't mint one up
-# front — it resumes by session-id prefix/path. Hence "manual": the row is resume-capable but
-# starts token-less; set the token to omp's session id (Set resume token), then Resume relaunches
-# via --resume=<token> (attached form — --resume takes an OPTIONAL value) with no phase seed.
+# Resume (issue #24): "manual" makes the row resume-capable but token-less until a token is set.
 [harness.resume]
 enabled = true
 id_source = "manual"

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { SyncLinks } from "./SyncLinks";
 import type { DaemonStatus } from "./types";
 import { type McpStatus, mcpFooterLabel } from "./useMcpStatus";
 
@@ -54,6 +56,7 @@ export function HotkeyBar({
   version = "",
   gridViewName,
   gridViewShortcut,
+  onOpenRepo,
 }: {
   view: string;
   daemon: DaemonStatus;
@@ -62,6 +65,8 @@ export function HotkeyBar({
   version?: string;
   gridViewName?: string;
   gridViewShortcut?: string;
+  /** Selects a repository, so its daemon-conflict banner can be acted on. */
+  onOpenRepo?: (repo: string) => void;
 }) {
   const baseHints = HINTS[view] ?? HINTS.list;
   const hints = view === "grid" && gridViewName && gridViewShortcut ? [...baseHints, [gridViewShortcut, gridViewName] satisfies Hint] : baseHints;
@@ -72,11 +77,12 @@ export function HotkeyBar({
   const mcpLabel = mcpFooterLabel(mcp);
   const daemonStatus = !daemon.reachable ? "Offline" : `${daemon.alive} live session${daemon.alive === 1 ? "" : "s"}`;
   const mcpStatus = !mcp.repo ? "No repository" : mcpLabel ? mcpLabel.replace(/^MCP /, "") : "Unavailable";
-  const buildStatus = daemon.build_drift ? "Older build" : daemon.reachable ? "Current" : "Not connected";
+  // The sync links sample the shell once a second, so they mount only while the popover is open.
+  const [open, setOpen] = useState(false);
 
   return (
     <footer className="app-status-footer">
-      <div className="fstat">
+      <div className="fstat" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
         <span className={`live ${dotClass}`} aria-hidden="true" />
         <span className={`footer-brand ${dotClass}`}>
           <span>Alinery</span>
@@ -89,10 +95,7 @@ export function HotkeyBar({
               <b>MCP server</b>
               {mcpStatus}
             </span>
-            <span>
-              <b>Daemon build</b>
-              {buildStatus}
-            </span>
+            {open && <SyncLinks appVersion={version} onOpenRepo={onOpenRepo} />}
           </span>
         </span>
         {version && <span className="footer-version">v{version}</span>}

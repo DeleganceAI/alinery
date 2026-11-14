@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { collectLiveSubagents } from "./chat/subagents";
+import type { ChatEntry } from "./chat/types";
 import {
   appendHarnessNotice,
   appendOptimisticAbort,
@@ -10,6 +11,7 @@ import {
   applyFilePage,
   applyRpcLine,
   applyRpcLines,
+  applyVinculumTranscript,
   type ChatTranscriptState,
   carryOver,
   dismissPendingUi,
@@ -34,27 +36,7 @@ const stamped = (line: unknown, timestamp: number) => {
   return { ...event, message: { ...event.message, timestamp } };
 };
 
-it("does not attribute an equal-caption native image to an unmatched dispatch", () => {
-  const original = appendOptimisticUser(emptyTranscript(), "same caption", "follow_up", undefined, [
-    { kind: "image", name: "second.png", mimeType: "image/png", src: "blob:second" },
-  ]);
-  original.entries[0].id = "dispatch:second";
-  const next = applyRpcLine(original, {
-    type: "message_start",
-    message: {
-      role: "user",
-      content: [
-        { type: "text", text: "same caption" },
-        { type: "image", mimeType: "image/png", data: "first-image" },
-      ],
-    },
-  });
-  const pending = next.entries.find((entry) => entry.id === "dispatch:second");
-  expect(pending).toMatchObject({ type: "follow_up", attachments: [{ name: "second.png", src: "blob:second" }] });
-  expect(next.entries.some((entry) => entry.type === "prompt" && entry.attachments?.some((attachment) => attachment.src === "data:image/png;base64,first-image"))).toBe(true);
-});
-
-describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
+describe("chatTranscript (live grok-4.6 / vinculum 18.1.10)", () => {
   it("records ready protocol v1", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-ready.json"));
     expect(state.ready).toBe(true);
@@ -127,7 +109,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.ready).toBe(false);
   });
 
-  it("does not duplicate an optimistic user row when OMP echoes the same text", () => {
+  it("does not duplicate an optimistic user row when Vinculum echoes the same text", () => {
     const seeded = appendOptimisticUser(emptyTranscript(), "hello");
     const state = applyRpcLine(seeded, {
       type: "message_start",
@@ -305,12 +287,12 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     const getState = (data: object) => ({ type: "response", command: "get_state", success: true, data });
     const withLevel = (thinking: string) => applyRpcLine(emptyTranscript(), getState({ model: reasoning, thinkingLevel: thinking }));
 
-    it("takes the level from the thinkingLevel OMP actually sends", () => {
+    it("takes the level from the thinkingLevel Vinculum actually sends", () => {
       const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "low" });
       expect(state.sessionMeta.thinking).toBe("low");
     });
 
-    it("shows the concrete level when OMP resolved a configured auto", () => {
+    it("shows the concrete level when Vinculum resolved a configured auto", () => {
       const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "medium", configured: "auto" });
       expect(state.sessionMeta.thinking).toBe("medium");
     });
@@ -335,7 +317,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
       expect(mixed.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
     });
 
-    it("clears the level for a model without reasoning, which OMP sends no level for", () => {
+    it("clears the level for a model without reasoning, which Vinculum sends no level for", () => {
       const state = applyRpcLine(withLevel("high"), getState({ model: { provider: "xai", id: "grok", reasoning: false } }));
       expect(state.sessionMeta.thinking).toBeUndefined();
       expect(state.sessionMeta.thinkingLevels).toEqual([]);
@@ -367,7 +349,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
 });
 
 describe("extension_ui_request confirm", () => {
-  it("maps OMP confirm message onto the approval row and pending instructions", () => {
+  it("maps Vinculum confirm message onto the approval row and pending instructions", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-extension_ui_confirm.json"));
     const approval = state.entries.filter((e) => e.type === "approval");
     expect(approval).toHaveLength(1);
@@ -387,7 +369,7 @@ describe("extension_ui_request confirm", () => {
     ]);
   });
 
-  it("keeps instructions-only confirm detail for non-OMP producers", () => {
+  it("keeps instructions-only confirm detail for non-Vinculum producers", () => {
     const state = applyRpcLine(emptyTranscript(), {
       type: "extension_ui_request",
       id: "ui-confirm-instructions",
@@ -445,20 +427,12 @@ describe("journal pages", () => {
     expect(state.entries[0]).toMatchObject({ type: "tool_result", tool: "bash", text: "ls output", status: "ok" });
   });
 
-  // Issue #128: the live path appends the error row on agent_end, but a reopened session dropped
-  // errorMessage on hydration, so the failure that stalled the step was invisible after reopening.
-  it("hydrates the error row of a turn OMP gave up on", () => {
-    const failed = mapHydratedMessage(msg("a1", "assistant", "partial", { stopReason: "error", errorMessage: "The socket connection was closed unexpectedly" }), "a1");
-    const state = applyFilePage(emptyTranscript(), { start: 0, messages: failed ? [failed] : [] }, "initial");
-    expect(state.entries[state.entries.length - 1]).toMatchObject({ id: "f:a1:error", type: "error", text: "The socket connection was closed unexpectedly" });
-  });
-
   it("marks a failed tool result", () => {
     const state = applyFilePage(emptyTranscript(), { start: 0, messages: [msg("t2", "toolResult", "boom", { toolName: "bash", isError: true })] }, "initial");
     expect(state.entries[0]).toMatchObject({ status: "error" });
   });
 
-  // Entry ids must come from the OMP row, or prepending an older page renumbers every mounted row
+  // Entry ids must come from the Vinculum row, or prepending an older page renumbers every mounted row
   // and React remounts the whole journal.
   it("keeps entry ids stable when an older page is prepended", () => {
     const first = applyFilePage(emptyTranscript(), { start: 400, messages: [msg("b", "user", "second")] }, "initial");
@@ -492,7 +466,7 @@ describe("journal pages", () => {
     const state = applyFilePage(emptyTranscript(), { start: 900, messages: [] }, "initial");
     expect(state.fileStart).toBe(900);
   });
-  it("lets OMP's turn_start emit its marker even after a send already guessed a turn", () => {
+  it("lets Vinculum's turn_start emit its marker even after a send already guessed a turn", () => {
     // Regression: the guess used to set `turnOpen`, so `openTurn` short-circuited and no start
     // marker was ever appended — leaving a dangling "Turn 1 end" for every prompt.
     const guessed = { ...emptyTranscript(), pendingTurn: true };
@@ -507,7 +481,7 @@ describe("journal pages", () => {
     expect(ended.turnOpen).toBe(false);
   });
 
-  it("drops the guessed turn when OMP refuses the send", () => {
+  it("drops the guessed turn when Vinculum refuses the send", () => {
     // Regression: nothing cleared the guess, so one refusal forced every later send to steer a
     // turn that did not exist, for the life of the mount.
     const guessed = { ...emptyTranscript(), pendingTurn: true };
@@ -543,12 +517,12 @@ describe("journal pages", () => {
     expect(matchingSendFailure({ type: "response", id: "c1", command: "get_state", success: false, error: "nope" }, "c1")).toBeNull();
     expect(matchingSendFailure({ type: "response", id: "c2", command: "prompt", success: false, error: "nope" }, "c1")).toBeNull();
   });
-  it("drops the guessed turn when OMP handled the command locally", () => {
+  it("drops the guessed turn when Vinculum handled the command locally", () => {
     const guessed = { ...emptyTranscript(), pendingTurn: true };
     const handled = applyRpcLine(guessed, { type: "response", success: true, command: "prompt", data: { agentInvoked: false } });
     expect(handled.pendingTurn).toBe(false);
   });
-  it("drops the guessed turn when only prompt_result says OMP ran an extension command locally", () => {
+  it("drops the guessed turn when only prompt_result says Vinculum ran an extension command locally", () => {
     const guessed = { ...emptyTranscript(), pendingTurn: true };
     const admitted = applyRpcLine(guessed, { type: "response", success: true, command: "prompt" });
     expect(admitted.pendingTurn).toBe(true);
@@ -606,8 +580,11 @@ describe("subagent envelopes", () => {
       type: "subagent_progress",
       payload: { progress: { id: "sa-1", status: "completed", durationMs: 4000 } },
     });
-    const finished = done.entries.find((entry) => entry.type === "subagent_status" && entry.subagentId === "sa-1");
-    expect(finished).toMatchObject({ id: row?.id, status: "completed", summary: "Search the repo", durationMs: 4000 });
+    const finished = done.entries.find((entry): entry is Extract<ChatEntry, { type: "subagent_status" }> => entry.type === "subagent_status" && entry.subagentId === "sa-1");
+    expect(finished?.id).toBe(row?.id);
+    expect(finished?.status).toBe("completed");
+    expect(finished?.summary).toBe("Search the repo");
+    expect(finished?.durationMs).toBe(4000);
 
     const both = applyRpcLine(done, load("live-subagent_lifecycle-b.json"));
     expect(both.entries.filter((entry) => entry.type === "subagent_status")).toHaveLength(2);
@@ -620,7 +597,7 @@ describe("subagent envelopes", () => {
     expect(liveIds(cards).sort()).toEqual(["sa-1", "sa-2"]);
   });
 
-  it("produces no card when the envelope has no OMP id", () => {
+  it("produces no card when the envelope has no Vinculum id", () => {
     const state = applyRpcLine(emptyTranscript(), { type: "subagent_lifecycle", payload: { agent: "Explore", status: "started" } });
     expect(collectLiveSubagents(state.entries)).toEqual([]);
   });
@@ -692,7 +669,7 @@ describe("subagent envelopes", () => {
     expect(cards[0]?.preview).toBe("Still searching");
   });
 
-  // OMP stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
+  // Vinculum stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
   // element 0 is what the subagent is saying now. `description` is an async LLM-generated label.
   it("prefers the newest output line over the intent and the description", () => {
     const withOutput = applyRpcLine(emptyTranscript(), {
@@ -1465,7 +1442,7 @@ describe("settleRefusedSend", () => {
     expect(next.pendingTurn).toBe(false);
   });
 
-  it("takes back only its own message, never one OMP wrote with the same words", () => {
+  it("takes back only its own message, never one Vinculum wrote with the same words", () => {
     const journal = applyFilePage(emptyTranscript(), { start: 0, messages: [journalMessage] }, "initial");
     const state = appendOptimisticUser(journal, "continue", "prompt");
     const next = settleRefusedSend(state, "e1", "continue", true);
@@ -1568,7 +1545,7 @@ describe("carryOver", () => {
     expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
   });
 
-  it("keeps the rows OMP refused, under fresh ids, and none of the sends it accepted", () => {
+  it("keeps the rows Vinculum refused, under fresh ids, and none of the sends it accepted", () => {
     const typed = appendOptimisticUser(appendOptimisticUser(read(500, "m2"), "refused", "prompt"), "accepted", "prompt");
     const previous = settleRefusedSend(typed, "e1", "refused", false);
     const next = carryOver(previous, read(500, "m2", "m3"));
@@ -1579,54 +1556,89 @@ describe("carryOver", () => {
   });
 });
 
-// Repro for #130 (minor): a sign-in's `open_url` is fire-and-forget on OMP's side and never leaves
-// the daemon's replay ring, so a reattached accounts dialog shows every earlier sign-in link as a
-// live "waiting" row. A `login` response is the moment those rows are superseded.
-describe("login response settles pending browser links (#130)", () => {
-  it.each([true, false])("settles the manual OAuth fallback after browser login (success=%s), preserving unrelated questions", (success) => {
-    const fallback = {
-      type: "extension_ui_request",
-      id: "a1b2c3",
-      method: "input",
-      title: "Paste the authorization code (or full redirect URL):",
-      timeout: 600000,
-    };
-    const pending = applyRpcLines([
-      { type: "extension_ui_request", id: "task-question", method: "input", title: "Which branch should I use?" },
-      { type: "extension_ui_request", id: "task-approval", method: "confirm", title: "Run bash?" },
-      fallback,
+describe("applyVinculumTranscript", () => {
+  const reply = [
+    { id: "u1", role: "user", content: [{ type: "text", text: "hi" }] },
+    {
+      id: "live",
+      role: "assistant",
+      streaming: true,
+      content: [
+        { type: "thinking", thinking: "plan" },
+        { type: "redactedThinking" },
+        { type: "text", text: "Hel" },
+        { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+      ],
+    },
+  ];
+
+  it("builds thinking, tool-call, and tool-result rows, and a longer partial keeps the earlier row ids", () => {
+    const state = applyVinculumTranscript(reply);
+    expect(state.entries.map((entry) => entry.type)).toEqual(["prompt", "thinking", "redacted_thinking", "text", "tool_call"]);
+    expect(state.entries[1]).toMatchObject({ id: "f:live:thinking:0", type: "thinking", text: "plan", streaming: true });
+    expect(state.entries[4]).toMatchObject({ id: "f:live:tool:c1", type: "tool_call", tool: "read", status: "running", args: '{"path":"a.ts"}' });
+    const ids = state.entries.map((entry) => entry.id);
+
+    const grown = applyVinculumTranscript([
+      reply[0],
+      {
+        ...reply[1],
+        content: [
+          { type: "thinking", thinking: "plan" },
+          { type: "redactedThinking" },
+          { type: "text", text: "Hello" },
+          { type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } },
+        ],
+      },
     ]);
-    const settled = applyRpcLine(pending, {
-      type: "response",
-      id: "l1",
-      command: "login",
-      success,
-      ...(success ? { data: { providerId: "openai-codex" } } : { error: "Login failed" }),
-    });
-    expect(settled.pendingUi.map((request) => request.id)).toEqual(["task-question", "task-approval"]);
-    expect(settled.entries.some((entry) => entry.type === "approval" && entry.requestId === "task-approval")).toBe(true);
-    expect(settled.entries.some((entry) => entry.type === "error")).toBe(!success);
-    expect(applyRpcLine(settled, fallback)).toBe(settled);
+    expect(grown.entries.map((entry) => entry.id)).toEqual(ids);
+    expect(grown.entries[3]).toMatchObject({ id: "f:live:text:0", text: "Hello" });
   });
 
-  it("dismisses pending open_url rows when a login response arrives", () => {
-    const pending = applyRpcLine(emptyTranscript(), {
-      type: "extension_ui_request",
-      id: "stale-url",
-      method: "open_url",
-      url: "https://auth.openai.com/codex/device",
-      instructions: "Enter code: ABCD-EFGH",
-    });
-    expect(pending.entries).toMatchObject([{ type: "approval", instructions: "Enter code: ABCD-EFGH" }]);
-    const settled = applyRpcLine(pending, { type: "response", id: "l1", command: "login", success: true, data: { providerId: "openai-codex-device" } });
-    expect(settled.pendingUi).toEqual([]);
-    expect(settled.entries.some((e) => e.type === "approval")).toBe(false);
+  it("keeps a committed tool call running while its slot has output", () => {
+    const state = applyVinculumTranscript([
+      {
+        id: "a1",
+        role: "assistant",
+        runningToolIds: ["c2"],
+        content: [
+          { type: "text", text: "Running." },
+          { type: "toolCall", id: "c1", name: "read", arguments: {} },
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "ls" } },
+        ],
+      },
+      { id: "r1", role: "toolResult", toolName: "read", toolCallId: "c1", content: [{ type: "text", text: "stored" }] },
+      { id: "live:c2", role: "toolResult", streaming: true, toolName: "bash", toolCallId: "c2", content: [{ type: "text", text: "partial out" }] },
+    ]);
+    const calls = state.entries.flatMap((entry) => (entry.type === "tool_call" ? [{ id: entry.id, status: entry.status, tool: entry.tool }] : []));
+    expect(calls).toEqual([
+      { id: "f:a1:tool:c1", status: "ok", tool: "read" },
+      { id: "f:a1:tool:c2", status: "running", tool: "bash" },
+    ]);
+    expect(state.entries.filter((entry) => entry.type === "tool_result")).toMatchObject([
+      { id: "f:r1", tool: "read", text: "stored", status: "ok" },
+      { id: "f:live:c2", tool: "bash", text: "partial out", status: "running" },
+    ]);
   });
 
-  it("settles them on a failed login too, and still records the error", () => {
-    const pending = applyRpcLine(emptyTranscript(), { type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device" });
-    const settled = applyRpcLine(pending, { type: "response", id: "l1", command: "login", success: false, error: "Device authorization timed out" });
-    expect(settled.pendingUi).toEqual([]);
-    expect(settled.entries.map((e) => e.type)).toEqual(["error"]);
+  it("keeps the model and thinking level when a later poll only appends a message", () => {
+    const controls = { model: "xai/grok-4.6", thinking: "high", thinking_levels: ["off", "low", "high"] };
+    const first = applyVinculumTranscript({ messages: [reply[0]], ...controls });
+    expect(first.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const second = applyVinculumTranscript({ messages: [...reply], ...controls });
+    expect(second.messages).toHaveLength(2);
+    expect(second.sessionMeta).toMatchObject({ model: "xai/grok-4.6", thinking: "high", thinkingLevels: ["off", "low", "high"] });
+    const quiet = applyVinculumTranscript({ messages: [reply[0]], model: "alinery/DeepSeek", thinking: "off", thinking_levels: [] });
+    expect(quiet.sessionMeta.thinking).toBe("off");
+    expect(quiet.sessionMeta.thinkingLevels).toEqual([]);
+  });
+});
+
+describe("applyVinculumTranscript context usage", () => {
+  it("takes the daemon's context tokens and limit, and leaves both-zero (a daemon that does not report it) unset", () => {
+    const reported = applyVinculumTranscript({ messages: [], model: "p/m", context_tokens: 20_000, context_window: 120_000 });
+    expect(reported.sessionMeta.contextUsage).toEqual({ tokens: 20_000, contextWindow: 120_000 });
+    const silent = applyVinculumTranscript({ messages: [], model: "p/m", context_tokens: 0, context_window: 0 });
+    expect(silent.sessionMeta.contextUsage).toBeUndefined();
   });
 });

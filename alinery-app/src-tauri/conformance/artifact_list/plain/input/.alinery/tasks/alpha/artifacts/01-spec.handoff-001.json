@@ -1,0 +1,1 @@
+{"version": 2, "direction": "outbound", "source_repo_path": "/r", "target_repo_path": "/r2", "source_task": "alpha", "source_session": "s1", "source_artifact": "01-spec.md", "target_task": "beta", "target_artifact": "review-handoff-001.md", "target_session": "t1", "target_phase": "review", "created_at_ms": 200}

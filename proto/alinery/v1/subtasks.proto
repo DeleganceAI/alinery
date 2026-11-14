@@ -1,0 +1,114 @@
+// proto/alinery/v1/subtasks.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+import "alinery/v1/sessions.proto";
+import "google/protobuf/struct.proto";
+
+// The life of a parent task's sub-task (S4.8): what the task page offers, the manager session that designs the child, and
+// killing a child or throwing away a setup that never made one. The last three calls are the manager agent's own (S5.1,
+// `alinery_create_subtask`, `alinery_inspect_subtask_finish`, `alinery_finalize_subtask`). The daemon owns every file these touch
+// and stops the sessions itself, so a repository on another machine answers the same calls. A write that changes a file the
+// store holds answers with the cursor that covers it.
+service SubtaskService {
+  rpc SubtaskState(SubtaskStateRequest) returns (SubtaskStateResponse);        // VIEW
+  rpc StartManager(StartManagerRequest) returns (StartManagerResponse);  // ACT
+  rpc DiscardSubtask(DiscardSubtaskRequest) returns (DiscardSubtaskResponse);   // ACT
+  rpc CreateSubtask(CreateSubtaskRequest) returns (CreateSubtaskResponse);   // ACT
+  rpc InspectSubtaskFinish(InspectSubtaskFinishRequest) returns (InspectSubtaskFinishResponse);   // VIEW
+  rpc FinalizeSubtask(FinalizeSubtaskRequest) returns (FinalizeSubtaskResponse);   // ACT
+}
+
+// The fields of a task that a sub-task view shows (`TaskSummary` in alinery-core).
+message SubtaskTaskSummary {
+  string name = 1;
+  string slug = 2;
+  string branch = 3;
+  string worktree = 4;
+  bool has_worktree = 5;
+  string playbook = 6;
+  bool archived = 7;
+  bool draft = 8;
+  string subtask_outcome = 9;
+}
+
+message SubtaskStateRequest {
+  string slug = 1;
+}
+// What the sub-task controls on a task page need: the links, the manager sessions, and why starting one is or is not allowed.
+message SubtaskStateResponse {
+  SubtaskTaskSummary task = 1;
+  optional SubtaskTaskSummary parent_task = 2;
+  optional SubtaskTaskSummary active_subtask = 3;
+  optional Session manager_session = 4;
+  string manager_owner_task_slug = 5;
+  optional Session parent_manager_session = 6;
+  string parent_manager_owner_task_slug = 7;
+  bool can_start = 8;
+  bool can_recover = 9;
+  string disabled_reason = 10;
+}
+
+// Creates the manager session of `slug`, and starts it. `recover` binds a new manager to the task's active child.
+message StartManagerRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  bool recover = 3;
+}
+message StartManagerResponse {
+  Applied applied = 1;
+  SessionStarted started = 2;
+}
+
+// Kills the child `manager_session_id` is bound to (and its active descendants) as history, or, for a manager with no child
+// yet (and for "" when the task has an active child), stops and removes the setup session. Every session it owns is stopped first.
+message DiscardSubtaskRequest {
+  MutationMeta meta = 1;
+  string slug = 2;
+  string manager_session_id = 3;
+}
+message DiscardSubtaskResponse {
+  Applied applied = 1;
+  repeated string stopped_session_ids = 2;
+}
+
+// The manager agent creates the child it designed. The playbook is chosen by the caller (it read it from PlaybookService), as
+// CreateTask takes one; unset, the child inherits its parent's retained definition. `result` is the JSON the tool has always
+// answered: the parent and child summaries, the manager session and how far provisioning got.
+message CreateSubtaskRequest {
+  MutationMeta meta = 1;
+  string manager_session_id = 2;
+  string name = 3;
+  string slug = 4;
+  optional PlaybookRef playbook_ref = 5;
+  string playbook_source = 6;
+  string instructions = 7;
+  bool start = 8;
+}
+message CreateSubtaskResponse {
+  Applied applied = 1;
+  google.protobuf.Struct result = 2;
+}
+
+// What a finish would do now: the git and artifact state of the bound child and, per mode, what blocks it. The daemon fills the
+// parent's live sessions from its own runner, so there is no other lane to ask.
+message InspectSubtaskFinishRequest {
+  string manager_session_id = 1;
+}
+message InspectSubtaskFinishResponse {
+  google.protobuf.Struct inspection = 1;
+}
+
+// Archives the bound child as finished (`mode`: artifacts_only, integrated_code or archive_without_code) and snapshots its
+// artifacts under the parent. A pre-archive backup is queued first, as for any archive.
+message FinalizeSubtaskRequest {
+  MutationMeta meta = 1;
+  string manager_session_id = 2;
+  string mode = 3;
+}
+message FinalizeSubtaskResponse {
+  Applied applied = 1;
+  google.protobuf.Struct result = 2;
+}

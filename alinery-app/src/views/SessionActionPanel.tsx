@@ -2,7 +2,7 @@ import { harnessDisplayName, isAllowedLaunchHarness, KillButton } from "../share
 import type { LifecycleState } from "../types";
 
 // Shown instead of a live terminal for a session the running daemon does NOT own
-// (orphaned / interrupted / exited), or a leftover non-OMP harness (including live
+// (orphaned / interrupted / exited), or a leftover non-Vinculum harness (including live
 // and never_started — those rows refuse attach rather than mounting a PTY).
 function stateLabel(state: LifecycleState, artifactReady: boolean, unsupported: boolean): { label: string; hint: string } {
   if (unsupported) {
@@ -46,7 +46,8 @@ export function SessionActionPanel({
   archiveBusy,
   onViewHistory,
   onKilled,
-  canRelease = false,
+  onRecover,
+  recoverBusy = false,
 }: {
   id: string;
   phase: string;
@@ -56,15 +57,18 @@ export function SessionActionPanel({
   artifactReady?: boolean;
   repoPath: string;
   taskSlug: string;
-  onStartFresh?: () => void;
+  onStartFresh: () => void;
   onArchive: () => void;
   archiveBusy: boolean;
   onViewHistory: () => void;
   onKilled: () => void;
-  canRelease?: boolean;
+  onRecover?: () => void;
+  recoverBusy?: boolean;
 }) {
   const unsupported = !isAllowedLaunchHarness(harness);
-  const { label, hint } = stateLabel(state, artifactReady, unsupported);
+  const described = stateLabel(state, artifactReady, unsupported);
+  const label = onRecover ? "Recoverable" : described.label;
+  const hint = onRecover ? "The daemon stopped before this step was accepted. The conversation is still in the session file." : described.hint;
   const harnessName = harnessDisplayName(harness);
   return (
     <div className="session-action-panel">
@@ -74,15 +78,14 @@ export function SessionActionPanel({
         <span className="pill">{harnessName + (model ? ` · ${model}` : "")}</span>
         <span className="dim mono sap-id">{id}</span>
       </div>
-      {hint ? (
-        <p className="sap-hint dim">
-          {hint}
-          {/* Issue #129: the dead owner is released from Session actions, which this panel does not show. */}
-          {canRelease && state.state === "interrupted" ? " Session actions → Restart this step or End & continue releases this step after confirmation." : null}
-        </p>
-      ) : null}
+      {hint ? <p className="sap-hint dim">{hint}</p> : null}
       <div className="sap-actions">
-        {!unsupported && onStartFresh && (
+        {onRecover && (
+          <button type="button" className="btn" disabled={archiveBusy || recoverBusy} onClick={onRecover}>
+            {recoverBusy ? "Recovering session…" : "Recover session"}
+          </button>
+        )}
+        {!unsupported && (
           <button type="button" className="btn" disabled={archiveBusy} onClick={onStartFresh}>
             Start fresh
           </button>

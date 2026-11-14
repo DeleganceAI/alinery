@@ -1,0 +1,8 @@
+# Generated on every `tauri dev` by scripts/copy-sidecar.sh. They live inside the
+# directory the dev watcher watches, and a change here kills the running
+# `cargo run` and the Vite process with it.
+resources/ownership/
+alinery-vinculum-daemon-*
+alinery-mcp-*
+alinery-runner-*
+alineryd-*

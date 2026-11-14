@@ -1,174 +1,141 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, type Mock, vi } from "vitest";
+import { createRouterTransport } from "@connectrpc/connect";
+import { cleanup, render, waitFor } from "@testing-library/react";
+import { type AttachRequest, type AttachResponse, TerminalService, type WriteRequest } from "alinery-proto/alinery/v1/terminal_pb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonTransport } from "./daemon/transport";
 import { SessionTerminal, type SessionTerminalIo } from "./SessionTerminal";
+import type { SessionObservation } from "./types";
 
-const terminals = vi.hoisted(() => [] as { input: (data: string) => void; write: Mock; writeln: Mock }[]);
+type FakeTerm = { written: string[]; cleared: number; reset: number; typed: (data: string) => void };
+const terms = vi.hoisted(() => [] as FakeTerm[]);
+
+vi.mock("./daemon/transport", () => ({ daemonTransport: vi.fn() }));
+vi.mock("./ipc", () => ({ onRemoteHostConnected: () => () => {}, readAppConfig: vi.fn(), readSessionHistory: vi.fn(), openSession: vi.fn() }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
     options = {};
-    input = (_data: string) => {};
-    write = vi.fn();
-    writeln = vi.fn();
+    handlers: Array<(d: string) => void> = [];
+    me: FakeTerm = {
+      written: [],
+      cleared: 0,
+      reset: 0,
+      typed: (d) => {
+        for (const h of this.handlers) h(d);
+      },
+    };
     constructor() {
-      terminals.push(this);
+      terms.push(this.me);
     }
     loadAddon() {}
     open() {}
+    onData(h: (d: string) => void) {
+      this.handlers.push(h);
+      return { dispose: () => {} };
+    }
+    write(bytes: Uint8Array, done?: () => void) {
+      this.me.written.push(new TextDecoder().decode(bytes));
+      done?.();
+    }
+    writeln() {}
+    clear() {
+      this.me.cleared += 1;
+    }
+    reset() {
+      this.me.reset += 1;
+    }
     resize() {}
     refresh() {}
     dispose() {}
-    onData(callback: (data: string) => void) {
-      this.input = callback;
-      return { dispose() {} };
-    }
   },
 }));
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
+    fit() {}
     proposeDimensions() {
       return { cols: 80, rows: 24 };
     }
-    fit() {}
   },
 }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
-vi.mock("./terminalRenderer", () => ({ attachGpuRenderer() {} }));
-vi.mock("./ipc", () => ({ nextAttachId: () => 1, listen: async () => () => {}, Channel: class {}, readSessionHistory: async () => new ArrayBuffer(0) }));
+vi.mock("./terminalRenderer", () => ({ attachGpuRenderer: () => {} }));
+
+const data = (text: string, offset: number, attachId = ""): AttachResponse =>
+  ({ body: { case: "data", value: new TextEncoder().encode(text) }, offset: BigInt(offset), attachId, truncated: false }) as AttachResponse;
+
+/** A daemon whose Attach calls each play a script, then end the stream (a drop). */
+function fakeDaemon(scripts: AttachResponse[][]) {
+  const attaches: AttachRequest[] = [];
+  const writes: WriteRequest[] = [];
+  const transport = createRouterTransport((router) =>
+    router.service(TerminalService, {
+      async *attach(req, ctx) {
+        attaches.push(req);
+        const script = scripts[attaches.length - 1] ?? [];
+        for (const f of script) yield f;
+        if (attaches.length >= scripts.length) await new Promise<void>((r) => ctx.signal.addEventListener("abort", () => r()));
+      },
+      async write(req) {
+        writes.push(req);
+        return {};
+      },
+      async resize() {
+        return {};
+      },
+      async detach() {
+        return {};
+      },
+    }),
+  );
+  return { transport, attaches, writes };
+}
+
+const live = { lifecycle: { state: "live" } } as unknown as SessionObservation;
+const io: SessionTerminalIo = { open: vi.fn(async () => {}), repo: async () => "/repo", status: async () => live };
+
+function mount(intent: "attach" | "spawn" = "attach") {
+  return render(<SessionTerminal sessionId="s1" cwd="/repo" taskSlug="t" phase="" harness="no-harness" model="" intent={intent} terminalFontSize={13} io={io} />);
+}
 
 beforeEach(() => {
-  terminals.length = 0;
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
+  terms.length = 0;
+  vi.mocked(io.open).mockClear();
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+    observe() {}
+    disconnect() {}
+  };
 });
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+afterEach(cleanup);
 
-it("unknown_chunks_remain_ordered_and_recoverable", async () => {
-  let rejectFirst!: (reason: Error) => void;
-  let rejectSecond!: (reason: Error) => void;
-  const first = new Promise<void>((_resolve, reject) => {
-    rejectFirst = reject;
-  });
-  const second = new Promise<void>((_resolve, reject) => {
-    rejectSecond = reject;
-  });
-  const write = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second).mockResolvedValue({ status: "written" });
-  const io: SessionTerminalIo = {
-    open: vi.fn().mockResolvedValue(undefined),
-    write,
-    resize: vi.fn().mockResolvedValue(undefined),
-    detach: vi.fn().mockResolvedValue(undefined),
-    status: vi.fn(),
-  };
-  const props = {
-    sessionId: "raw-recovery",
-    cwd: "/repo",
-    taskSlug: "task",
-    phase: "build",
-    harness: "no-harness",
-    model: "",
-    intent: "attach" as const,
-    terminalFontSize: 14,
-    io,
-  };
-  const copy = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal("navigator", { clipboard: { writeText: copy } });
-  const view = render(<SessionTerminal {...props} />);
-  const original = ["é\u001b[31m\r", "中\u0003\n"];
-  act(() => {
-    terminals[0].input(original[0]);
-    terminals[0].input(original[1]);
-  });
-  view.unmount();
-  await act(async () => {
-    rejectSecond(new Error("partial write"));
-  });
-  render(<SessionTerminal {...props} />);
-  await act(async () => {
-    rejectFirst(new Error("connection lost"));
-  });
-  expect(screen.getByText(/unknown.*connection lost/i)).toBeTruthy();
-  expect(screen.getByText(/unknown.*partial write/i)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Copy original input" }));
-  await waitFor(() => expect(copy).toHaveBeenCalledWith(original.join("")));
-  expect(write).toHaveBeenCalledTimes(2);
-  for (const terminal of terminals) {
-    expect(terminal.write).not.toHaveBeenCalled();
-    expect(terminal.writeln).not.toHaveBeenCalled();
-  }
-  act(() => terminals[1].input("delivered"));
-  await waitFor(() => expect(write).toHaveBeenCalledTimes(3));
-  fireEvent.click(screen.getByRole("button", { name: /Copy original input|Copied original input/ }));
-  expect(copy).toHaveBeenLastCalledWith(original.join(""));
-});
+describe("SessionTerminal", () => {
+  it("reattaches from the last offset it rendered, without clearing the screen, and restarts input numbering", async () => {
+    const daemon = fakeDaemon([[data("hello", 0, "a1"), data("world", 5)], [data("!", 10, "a2")]]);
+    vi.mocked(daemonTransport).mockReturnValue(daemon.transport);
+    mount();
+    await waitFor(() => expect(daemon.attaches).toHaveLength(2), { timeout: 4000 });
+    expect(daemon.attaches[0]?.fromOffset).toBe(0n);
+    expect(daemon.attaches[1]?.fromOffset).toBe(10n);
+    expect(daemon.attaches[1]).toMatchObject({ cols: 80, rows: 24, session: { taskSlug: "t", id: "s1" } });
+    await waitFor(() => expect(terms[0]?.written.join("")).toBe("helloworld!"));
+    expect(terms[0]?.cleared).toBe(0);
+    expect(io.open).not.toHaveBeenCalled();
 
-it("retains typed refusals and unknown writes in original order across teardown", async () => {
-  let finishFirst!: (value: { status: "not_sent"; reason: string }) => void;
-  const write = vi
-    .fn()
-    .mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishFirst = resolve;
-        }),
-    )
-    .mockResolvedValueOnce({ status: "unknown", reason: "partial write" })
-    .mockResolvedValue({ status: "written" });
-  const io: SessionTerminalIo = {
-    open: vi.fn().mockResolvedValue(undefined),
-    write,
-    resize: vi.fn().mockResolvedValue(undefined),
-    detach: vi.fn().mockResolvedValue(undefined),
-    status: vi.fn(),
-  };
-  const props = {
-    sessionId: "typed-raw-recovery",
-    cwd: "/repo",
-    taskSlug: "task",
-    phase: "build",
-    harness: "no-harness",
-    model: "",
-    intent: "attach" as const,
-    terminalFontSize: 14,
-    io,
-  };
-  const copy = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal("navigator", { clipboard: { writeText: copy } });
-  const view = render(<SessionTerminal {...props} />);
-  const originals = ["é\u001b[31m\r", "中\u0003\n"];
-  await act(async () => {
-    terminals[0].input(originals[0]);
-    terminals[0].input(originals[1]);
+    terms[0]?.typed("ls");
+    terms[0]?.typed("\r");
+    await waitFor(() => expect(daemon.writes).toHaveLength(2));
+    expect(daemon.writes.map((w) => [w.attachId, w.inputSeq, new TextDecoder().decode(w.data)])).toEqual([
+      ["a2", 0n, "ls"],
+      ["a2", 1n, "\r"],
+    ]);
   });
-  view.unmount();
-  await act(async () => finishFirst({ status: "not_sent", reason: "Continuation requested" }));
-  const reattached = render(<SessionTerminal {...props} />);
-  expect(screen.getByText(/not sent.*Continuation requested/i)).toBeTruthy();
-  expect(screen.getByText(/unknown.*partial write/i)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Copy original input" }));
-  await waitFor(() => expect(copy).toHaveBeenCalledWith(originals.join("")));
-  expect(write).toHaveBeenCalledTimes(2);
-  expect(write.mock.calls[0][1]).toEqual(expect.any(String));
-  expect(write.mock.calls[1][1]).not.toBe(write.mock.calls[0][1]);
-  await act(async () => terminals[1].input("written"));
-  expect(screen.queryByText('"written"')).toBeNull();
-  for (const terminal of terminals) {
-    expect(terminal.write).not.toHaveBeenCalled();
-    expect(terminal.writeln).not.toHaveBeenCalled();
-  }
-  reattached.unmount();
-  render(<SessionTerminal {...props} readOnly />);
-  expect(screen.getByText(/unknown.*partial write/i)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Copy original input" }));
-  await waitFor(() => expect(copy).toHaveBeenLastCalledWith(originals.join("")));
-  expect(write).toHaveBeenCalledTimes(3);
+
+  it("starts the shell before it attaches when the pane spawns one", async () => {
+    const daemon = fakeDaemon([[data("$ ", 0, "a1")]]);
+    vi.mocked(daemonTransport).mockReturnValue(daemon.transport);
+    mount("spawn");
+    await waitFor(() => expect(terms[0]?.written.join("")).toBe("$ "));
+    expect(io.open).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(io.open).mock.calls[0]?.[0]).toMatchObject({ id: "s1", intent: "spawn", taskSlug: "t" });
+  });
 });

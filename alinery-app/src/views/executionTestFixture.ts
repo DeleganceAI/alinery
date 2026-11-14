@@ -18,17 +18,11 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
     depth: 2,
     owner_session_id: "owner-a",
     previous_session_ids: [],
-    launch: { harness: "omp", model: "authored-model" },
+    launch: { harness: "vinculum", model: "authored-model" },
     is_coding_step: false,
     start_requested: true,
     lifecycle: "running",
-    continuation_mode: "manual",
-    work_revision: 0,
-    last_admission_sequence: 0,
-    last_ready_revision: null,
-    ready_revision: null,
-    continuation_requested_revision: null,
-    ready_assessment: null,
+    permission: { kind: "locked" },
     receipt_id: null,
     exit_code: null,
     shutdown_confirmed: false,
@@ -40,16 +34,13 @@ export function executionRecord(overrides: Partial<ExecutionRecord> = {}): Execu
 export function executionReply(records: ExecutionRecord[] = [executionRecord()]): TaskExecutionReply {
   return {
     live: { status: "available" },
-    assessment: { status: "active", reasons: [] },
-    executions: Object.fromEntries(records.map((record) => [record.id, { destinations: [], terminality: "unresolved", reasons: [] }])),
-    continuation: {},
     definition: {
       version: 2,
       key: "retained",
       title: "Retained playbook",
       description: "Task-owned source",
       default_model: "authored-model",
-      default_harness: "omp",
+      default_harness: "vinculum",
       preamble: "",
       section_order: ["worker"],
       step: [
@@ -68,7 +59,7 @@ export function executionReply(records: ExecutionRecord[] = [executionRecord()])
       ],
     },
     state: {
-      version: 2,
+      version: 1,
       revision: 1,
       creation: "ready",
       creation_error: null,
@@ -77,7 +68,7 @@ export function executionReply(records: ExecutionRecord[] = [executionRecord()])
       reference: { scope: "repo", key: "retained" },
       max_live_sessions: 3,
       enabled_steps: [],
-      launch_defaults: { harness: "omp", model: "" },
+      launch_defaults: { harness: "vinculum", model: "" },
       contexts: {},
       collections: {},
       executions: Object.fromEntries(records.map((record) => [record.id, record])),
@@ -112,6 +103,8 @@ export function partiallyPublishedExecution(ownerSessionId = "owner-a"): TaskExe
       ],
     }),
   ]);
+  const occurrences = reply.state.occurrences ?? {};
+  reply.state.occurrences = occurrences;
   for (const [id, producer, selector, relativePath] of [
     ["options", "execution-a", "resolution-options.md", "2-resolution-options-10.md"],
     ["paper-a", "execution-a", "papers/*.md", "papers/2-a-12.md"],
@@ -119,8 +112,8 @@ export function partiallyPublishedExecution(ownerSessionId = "owner-a"): TaskExe
     ["other-fix", "execution-b", "selected-fix.md", "2-selected-fix-20.md"],
     ["other-note", "execution-b", "notes/*.md", "notes/2-other-21.md"],
   ]) {
-    reply.state.occurrences[id] = {
-      ...reply.state.occurrences["input-a"],
+    occurrences[id] = {
+      ...occurrences["input-a"],
       id,
       producer_execution_id: producer,
       selector,

@@ -1,4 +1,4 @@
-import type { ImageContent } from "../ompRpc";
+import type { ImageContent } from "../vinculumRpc";
 import { buildPromptMessage, canStage, type DraftAttachment } from "./attachments";
 
 export type PreparedChatSend = {
@@ -25,7 +25,7 @@ async function blobBytes(previewUrl: string): Promise<number[]> {
 export async function prepareChatAttachments(store: ChatAttachmentStore, caption: string, attachments: DraftAttachment[]): Promise<PreparedChatSend> {
   const restated: DraftAttachment[] = [];
   for (const item of attachments) {
-    if (item.sourcePath && !item.copiedName) {
+    if (item.sourcePath) {
       const stat = await store.stat(item.sourcePath);
       restated.push({ ...item, name: stat.name, bytes: stat.bytes });
     } else {

@@ -1,11 +1,13 @@
-import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { chatMaxWidthCss } from "../appearance";
+import { formatDuration } from "../chat/format";
+import { type JournalItem, journalItems } from "../chat/journalRows";
 import { collectLiveSubagents } from "../chat/subagents";
 import type { ChatEntry, SessionChatStatus } from "../chat/types";
 import { type ChatPrefs, chatActivityLabel, DEFAULT_CHAT_VISIBILITY, visibleChatEntries, workRailDefaultExpanded } from "../chat/visibility";
 import { RunningIndicator } from "../Indicators";
 import { ChatEntryRow } from "./ChatEntryRow";
+import { ChatWorkStrip } from "./ChatWorkStrip";
 import { SubagentDrawer } from "./SubagentDrawer";
 
 function ChatPaneImpl({
@@ -16,10 +18,6 @@ function ChatPaneImpl({
   onLoadOlder,
   loadingOlder = false,
   atStart = true,
-  floatingActivity = false,
-  recoveryContent,
-  activityContent,
-  activityRunning,
 }: {
   entries: ChatEntry[];
   status?: SessionChatStatus;
@@ -30,18 +28,14 @@ function ChatPaneImpl({
   loadingOlder?: boolean;
   /** The first prompt of the conversation is loaded — there is nothing older to fetch. */
   atStart?: boolean;
-  floatingActivity?: boolean;
-  recoveryContent?: ReactNode;
-  activityContent?: ReactNode;
-  activityRunning?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
-  const floatingFooter = useRef<HTMLDivElement>(null);
   const stick = useRef(visibility.autoScroll);
   const anchor = useRef<{ id: string; top: number } | null>(null);
   const shown = useMemo(() => visibleChatEntries(entries, visibility), [entries, visibility]);
-  const activity = activityContent ?? chatActivityLabel(status, shown);
-  const hasFloatingFooter = floatingActivity && Boolean(activity);
+  const activity = chatActivityLabel(status, shown);
+  const items = useMemo(() => journalItems(shown, status !== "idle"), [shown, status]);
+  const stepOpen = useCallback((entry: ChatEntry) => workRailDefaultExpanded(entry, visibility), [visibility]);
 
   useEffect(() => {
     stick.current = visibility.autoScroll;
@@ -53,26 +47,9 @@ function ChatPaneImpl({
     el.scrollTop = el.scrollHeight;
   }, [visibility.autoScroll]);
 
-  useLayoutEffect(() => {
-    const footer = floatingFooter.current;
-    const list = scroller.current;
-    if (!hasFloatingFooter || !footer || !list) return;
-    const measure = () => {
-      list.style.setProperty("--chat-footer-height", `${footer.getBoundingClientRect().height}px`);
-      scrollToEnd();
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(footer);
-    return () => {
-      observer.disconnect();
-      list.style.removeProperty("--chat-footer-height");
-    };
-  }, [hasFloatingFooter, scrollToEnd]);
-
   useEffect(() => {
     scrollToEnd();
-  }, [shown, activity, recoveryContent, scrollToEnd]);
+  }, [shown, activity, scrollToEnd]);
 
   const requestOlder = useCallback(() => {
     const el = scroller.current;
@@ -118,12 +95,6 @@ function ChatPaneImpl({
   }
 
   const liveSubs = useMemo(() => collectLiveSubagents(entries), [entries]);
-  const activityIndicator = activity ? (
-    <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
-      {activityRunning !== false && <RunningIndicator running={activityRunning ?? status === "running"} />}
-      <span>{activity}</span>
-    </div>
-  ) : null;
 
   return (
     <div
@@ -140,38 +111,57 @@ function ChatPaneImpl({
     >
       {visibility.showSubagentDrawer ? <SubagentDrawer agents={liveSubs} /> : null}
       <div ref={scroller} onScroll={onScroll} className="chat-list">
-        {shown.length === 0 && !recoveryContent ? <div className="chat-empty">No messages yet</div> : null}
+        {shown.length === 0 ? <div className="chat-empty">No messages yet</div> : null}
         <ol className="chat-journal">
           {loadingOlder ? <li className="chat-older">Loading earlier messages…</li> : atStart && shown.length > 0 ? <li className="chat-older">Start of conversation</li> : null}
-          {shown.map((entry) => (
-            <li key={entry.id} data-entry-id={entry.id}>
-              <ChatEntryRow
-                entry={entry}
-                onApprove={onApprove}
-                defaultExpanded={workRailDefaultExpanded(entry, visibility)}
-                autoCollapseThinking={visibility.autoCollapseThinking && !visibility.expandThinking}
-                showDate={visibility.showDate}
-                showTime={visibility.showTime}
-                showActorLabels={visibility.showActorLabels}
-                showBlockCopyButtons={visibility.showBlockCopyButtons}
-                showCopyButton={visibility.showCopyButtons}
-              />
+          {items.map((item) => (
+            <li key={item.key} className="chat-journal-item" data-node={nodeOf(item)} data-entry-id={item.kind === "turn" ? undefined : item.key}>
+              {item.kind === "work" ? (
+                <ChatWorkStrip
+                  entries={item.entries}
+                  live={item.live}
+                  defaultOpen={item.entries.some(stepOpen)}
+                  collapseWhenDone={visibility.autoCollapseThinking && !visibility.expandThinking}
+                  stepOpen={stepOpen}
+                />
+              ) : item.kind === "turn" ? (
+                <div className="chat-turn-end">
+                  <span className="chat-turn-rule" />
+                  <span className="chat-turn-copy">
+                    {[`${item.steps} ${item.steps === 1 ? "step" : "steps"}`, item.durationMs != null ? formatDuration(item.durationMs) : ""].filter(Boolean).join(" · ")}
+                  </span>
+                </div>
+              ) : (
+                <ChatEntryRow
+                  entry={item.entry}
+                  onApprove={onApprove}
+                  narration={item.role === "narration"}
+                  showDate={visibility.showDate}
+                  showTime={visibility.showTime}
+                  showActorLabels={visibility.showActorLabels}
+                  showBlockCopyButtons={visibility.showBlockCopyButtons}
+                  showCopyButton={visibility.showCopyButtons}
+                />
+              )}
             </li>
           ))}
-          {recoveryContent && <li>{recoveryContent}</li>}
         </ol>
       </div>
-      {floatingActivity
-        ? activity && (
-            <div className="session-continuation-anchor">
-              <div className="chat-floating-footer" ref={floatingFooter}>
-                {activityIndicator}
-              </div>
-            </div>
-          )
-        : activityIndicator}
+      {activity ? (
+        <div className="chat-activity" role="status" data-testid="chat-activity" aria-live="polite">
+          <RunningIndicator running={status === "running"} />
+          <span>{activity}</span>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+/** The marker the row puts on the journal's spine (see `.chat-journal-item` in theme.css). */
+function nodeOf(item: JournalItem): string {
+  if (item.kind === "work") return item.live ? "live" : "work";
+  if (item.kind === "turn") return "turn";
+  return item.role;
 }
 
 export const ChatPane = memo(ChatPaneImpl);

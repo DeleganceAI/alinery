@@ -1,0 +1,11 @@
+{
+  "anon_id": "11111111-2222-3333-4444-555555555555",
+  "app_version": "VERSION",
+  "event": "session.archive",
+  "os": "OS",
+  "props": {
+    "killed_live": false,
+    "session_id": "sess-2",
+    "source": "alineryd"
+  }
+}

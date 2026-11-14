@@ -1,0 +1,166 @@
+// proto/alinery/v1/providers.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// Provider sign-in, the custom OpenAI-compatible providers and the model list (S4.12). The credential files are the
+// daemon's, so a repository on another machine signs in on that machine's daemon and lists that machine's models.
+// What stays in the shell is the browser: an `auth_url` event is opened by the page through the shell's `open_url`.
+// Everything that reads or writes a credential is ADMIN, the poll and the reply included (a poll carries the sign-in
+// URL and the device code, a reply carries the key the user typed); the catalog and the model list name no secret.
+service ProviderService {
+  rpc Catalog(CatalogRequest) returns (CatalogResponse);            // VIEW
+  rpc LoginStart(LoginStartRequest) returns (LoginStartResponse);          // ADMIN
+  rpc LoginPoll(LoginPollRequest) returns (LoginPollResponse);            // ADMIN
+  rpc LoginReply(LoginReplyRequest) returns (LoginReplyResponse);   // ADMIN
+  rpc Logout(LogoutRequest) returns (LogoutResponse);              // ADMIN
+  rpc SaveCustom(SaveCustomRequest) returns (SaveCustomResponse);      // ADMIN
+  rpc DeleteCustom(DeleteCustomRequest) returns (DeleteCustomResponse);  // ADMIN
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);   // VIEW
+}
+
+message CatalogRequest {}
+message CatalogResponse {
+  ProviderCatalog catalog = 1;
+}
+
+message LoginProvider {
+  string id = 1;
+  string name = 2;
+  bool authenticated = 3;
+  bool stored = 4;  // a credential file entry; env and ambient sign-ins have none and cannot be signed out here
+  bool api_key = 5;
+  bool oauth = 6;
+  string api_key_name = 7;
+  string oauth_name = 8;
+}
+message CatalogModel {
+  string provider = 1;
+  string id = 2;
+}
+message CustomProvider {
+  string id = 1;
+  string name = 2;
+  string base_url = 3;
+  bool has_key = 4;  // the key itself never leaves the daemon
+  repeated string models = 5;
+}
+message ProviderCatalog {
+  repeated LoginProvider providers = 1;
+  repeated CatalogModel models = 2;  // the models of every signed-in provider
+  repeated CustomProvider custom = 3;
+}
+
+enum LoginMethod {
+  LOGIN_METHOD_UNSPECIFIED = 0;
+  LOGIN_METHOD_API_KEY = 1;
+  LOGIN_METHOD_OAUTH = 2;
+}
+message LoginStartRequest {
+  MutationMeta meta = 1;
+  string provider = 2;
+  LoginMethod method = 3;  // UNSPECIFIED is INVALID_ARGUMENT
+}
+message LoginStartResponse {
+  LoginStatus status = 1;
+}
+message LoginPollRequest {
+  string login_id = 1;
+}
+message LoginPollResponse {
+  LoginStatus status = 1;
+}
+
+message LoginPromptOption {
+  string id = 1;
+  string label = 2;
+  optional string description = 3;
+}
+message LoginPrompt {
+  string type = 1;  // "text", "secret", "select" or "manual_code"
+  string message = 2;
+  optional string placeholder = 3;
+  repeated LoginPromptOption options = 4;
+}
+message LoginLink {
+  string url = 1;
+  optional string label = 2;
+}
+message LoginInfo {
+  string message = 1;
+  repeated LoginLink links = 2;
+}
+message LoginAuthUrl {
+  string url = 1;
+  optional string instructions = 2;
+}
+message LoginDeviceCode {
+  string user_code = 1;
+  string verification_uri = 2;
+  optional uint32 interval_seconds = 3;
+  optional uint32 expires_in_seconds = 4;
+}
+message LoginProgress {
+  string message = 1;
+}
+message LoginEvent {
+  oneof event {
+    LoginInfo info = 1;
+    LoginAuthUrl auth_url = 2;
+    LoginDeviceCode device_code = 3;
+    LoginProgress progress = 4;
+  }
+}
+message LoginStatus {
+  string login_id = 1;
+  string status = 2;  // "pending", "prompt", "done", "error" or "cancelled"
+  optional LoginPrompt prompt = 3;
+  repeated LoginEvent events = 4;
+  string failure = 5;
+}
+
+message LoginReplyRequest {
+  MutationMeta meta = 1;
+  string login_id = 2;
+  string value = 3;
+  bool cancel = 4;  // the user closed the dialog: the reply is a cancel, `value` is ignored
+}
+message LoginReplyResponse {}
+
+message LogoutRequest {
+  MutationMeta meta = 1;
+  string provider = 2;
+}
+message LogoutResponse {
+  ProviderCatalog catalog = 1;
+}
+
+message SaveCustomRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+  string name = 3;
+  string base_url = 4;
+  string api_key = 5;   // blank with keep_key keeps the stored key; blank without it clears the key
+  bool keep_key = 6;
+  repeated string models = 7;
+}
+message SaveCustomResponse {
+  ProviderCatalog catalog = 1;
+}
+message DeleteCustomRequest {
+  MutationMeta meta = 1;
+  string id = 2;
+}
+message DeleteCustomResponse {
+  ProviderCatalog catalog = 1;
+}
+
+// The model suggestions for a harness's picker: the harness row's own `models`, then `provider/id` for every model of a
+// signed-in provider on this daemon's host. A harness the app cannot launch, and Terminal, have none.
+message ListModelsRequest {
+  string harness = 1;
+}
+message ListModelsResponse {
+  repeated string models = 1;
+}

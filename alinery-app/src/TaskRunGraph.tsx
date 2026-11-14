@@ -6,6 +6,7 @@ import { classifySessionNotice, hasAcknowledgedExit, hasUnacknowledgedExit } fro
 import { StatusDot } from "./shared";
 import type { ArtifactOccurrence, SessionMeta, SessionObservation, TaskExecutionState } from "./types";
 import { type PanZoomView, usePanZoom } from "./usePanZoom";
+import { sessionTerminalLabel } from "./vinculumHarness";
 import "./TaskRunGraph.css";
 
 const MIN_ZOOM = 0.01;
@@ -166,12 +167,14 @@ export function TaskRunGraph({
     <section className="task-run-graph" aria-label="Task run graph">
       {sessions.length === 0 && <p className="dim">No sessions yet.</p>}
       <div className="task-run-modes" role="group" aria-label="Run graph display mode">
-        <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
-          Flow
-        </button>
-        <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
-          Artifact dependencies
-        </button>
+        <div className="btn-group">
+          <button type="button" className="btn ghost small" aria-pressed={displayMode === "flow"} onClick={() => setDisplayMode("flow")}>
+            Flow
+          </button>
+          <button type="button" className="btn ghost small" aria-pressed={displayMode === "dependencies"} onClick={() => setDisplayMode("dependencies")}>
+            Artifact dependencies
+          </button>
+        </div>
         {displayMode === "flow" && <p className="dim task-run-flow-hint">Session ordering · dashed links indicate resumed sessions.</p>}
       </div>
       {displayMode === "flow" && externalArtifacts.length > 0 && (
@@ -322,9 +325,14 @@ export function TaskRunGraph({
                   const previousAttempt = Boolean(execution && execution.owner_session_id !== session.id);
                   const unreadCompletion = classifySessionNotice(session, observation) === "unread_completion";
                   const exitAcknowledged = hasAcknowledgedExit(session);
+                  const processLive = observation?.lifecycle.state === "live" || observation?.lifecycle.state === "live_exited";
+                  const terminalLabel =
+                    processLive || previousAttempt
+                      ? null
+                      : sessionTerminalLabel(session.harness, session.id, execution, session.ended_at != null || observation?.lifecycle.state === "exited");
                   const savedStatus = previousAttempt
                     ? "Previous attempt"
-                    : (execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));
+                    : (terminalLabel ?? execution?.lifecycle.replace(/_/g, " ") ?? (session.ended_at != null ? "Exited" : "Status unavailable"));
                   return (
                     <div
                       key={node.key}
@@ -343,18 +351,29 @@ export function TaskRunGraph({
                         <span className="task-run-node-status">
                           {!previousAttempt && execution?.lifecycle === "queued" ? (
                             savedStatus
-                          ) : observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                          ) : processLive || !terminalLabel ? (
+                            observation || unreadCompletion || hasUnacknowledgedExit(session) || exitAcknowledged ? (
+                              <StatusDot
+                                id={session.id}
+                                observation={observation ?? null}
+                                superseded={previousAttempt}
+                                unreadCompletion={unreadCompletion}
+                                exitCode={session.exit_code}
+                                exitAcknowledged={exitAcknowledged}
+                                notifyTransitions={false}
+                              />
+                            ) : (
+                              savedStatus
+                            )
+                          ) : (
                             <StatusDot
                               id={session.id}
                               observation={observation ?? null}
-                              superseded={previousAttempt}
-                              unreadCompletion={unreadCompletion}
+                              terminalLabel={terminalLabel}
                               exitCode={session.exit_code}
                               exitAcknowledged={exitAcknowledged}
                               notifyTransitions={false}
                             />
-                          ) : (
-                            savedStatus
                           )}
                           {session.archived && " · archived"}
                         </span>

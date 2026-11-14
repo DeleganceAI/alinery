@@ -1,0 +1,18 @@
+{
+  "op": "write",
+  "overrides": {
+    "github": {},
+    "defaults": {
+      "model": "",
+      "draft_autosave": false,
+      "playbook": {
+        "scope": "repo",
+        "key": "my \"quoted\" flow"
+      }
+    },
+    "backup": {
+      "destination": "",
+      "retention": 0
+    }
+  }
+}

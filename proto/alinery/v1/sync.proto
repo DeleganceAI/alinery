@@ -1,0 +1,69 @@
+// proto/alinery/v1/sync.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+import "alinery/v1/entities.proto";
+
+service SyncService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+message SubscribeRequest {
+  Scope scope = 1;
+  Cursor cursor = 2;  // unset: start with a snapshot
+}
+
+message Scope {
+  oneof kind {
+    RepoScope repo = 1;        // board: tasks, drafts, execution summaries, daemon status, jobs
+    TaskScope task = 2;        // one task: sessions, artifacts, comments, executions, attachments
+    SessionScope session = 3;  // one session: status, attention, meta
+    ChatScope chat = 4;        // chat threads and their sessions
+  }
+}
+message RepoScope {}
+message TaskScope {
+  string slug = 1;
+}
+message SessionScope {
+  SessionRef session = 1;
+}
+message ChatScope {}
+
+// One frame of the stream.
+message SubscribeResponse {
+  oneof frame {
+    Snapshot snapshot = 1;
+    Delta delta = 2;
+    UpToDate up_to_date = 3;
+    MustRefetch must_refetch = 4;
+    Heartbeat heartbeat = 5;
+  }
+}
+
+message Snapshot {
+  repeated Entity entities = 1;
+  Cursor cursor = 2;
+  bool complete = 3;  // false: more Snapshot frames follow
+}
+message Delta {
+  repeated Change changes = 1;
+  Cursor cursor = 2;
+}
+message UpToDate {
+  Cursor cursor = 1;
+}
+message MustRefetch {
+  string reason = 1;  // drop the replica, subscribe again with no cursor
+}
+message Heartbeat {
+  Cursor cursor = 1;
+}
+
+message Change {
+  oneof op {
+    Entity put = 1;
+    string delete = 2;  // entity key
+  }
+}

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::lockfile::lock_exclusive_blocking;
-use crate::paths::omp_home_dirs;
+use crate::paths::vinculum_home_dirs;
 use crate::write_owner_only_bytes;
 
 const HOSTED_PROVIDER: &str = "alinery";
@@ -36,6 +36,14 @@ pub struct HostedModel {
     pub max_tokens: u64,
     #[serde(default)]
     pub price: Option<u8>,
+    /// Per-model thinking menu from the hosted catalog. Absent on older catalogs.
+    /// Kept verbatim so a rewrite of `inference.json` does not drop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Value>,
+    /// What the model reads (`["text", "image"]`), from the hosted catalog; absent means text only. Kept verbatim
+    /// like `thinking`: the daemon turns it into Pi's `input`, and Pi swaps an image for a placeholder without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,7 +87,7 @@ pub fn inference_path(config_dir: &Path) -> PathBuf {
 }
 
 pub fn models_yml_path(app_config: &Path) -> PathBuf {
-    omp_home_dirs(app_config).0.join("models.yml")
+    vinculum_home_dirs(app_config).0.join("models.yml")
 }
 
 /// Directory that holds `auth.json` / `inference.json` for this `app.toml`.
@@ -242,6 +250,11 @@ fn inference_due_for_renewal(file: &InferenceFile, now: u64) -> bool {
 
 pub fn inference_spawn_cache_fresh(config_dir: &Path, now: u64) -> bool {
     load_inference_file(&inference_path(config_dir)).is_some_and(|file| inference_unexpired(&file, now) && !inference_due_for_renewal(&file, now))
+}
+
+/// When the cached hosted token stops working, for a caller that shows it to the user.
+pub fn inference_expires_at(config_dir: &Path) -> Option<u64> {
+    load_inference_file(&inference_path(config_dir)).map(|file| file.expires_at)
 }
 
 pub fn minted_catalog_if_unexpired(config_dir: &Path) -> Option<HostedCatalog> {
@@ -538,7 +551,7 @@ fn refresh_jwt_access_token(supabase_url: &str, auth_path: &Path, tokens: &mut V
     write_owner_only_bytes(auth_path, &bytes)
 }
 
-/// Refresh hosted inference before an OMP process starts. Unsigned/unpaid is `Ok` (BYOK).
+/// Refresh hosted inference before a Vinculum session starts. Unsigned/unpaid is `Ok` (BYOK).
 /// Unexpired cache that is not due for renewal skips JWT and mint HTTP.
 pub fn ensure_hosted_inference_for_spawn(app_config: &Path) -> Result<(), String> {
     ensure_hosted_inference_for_spawn_at(app_config, &accounts_url(), SUPABASE_URL)
@@ -639,6 +652,79 @@ mod tests {
         let before = fs::read(&inf).unwrap();
         assert_eq!(ensure_hosted_inference_for_spawn_at(&app_config, "http://127.0.0.1:1", "http://127.0.0.1:1"), Ok(()));
         assert_eq!(fs::read(&inf).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn thinking_survives_catalog_parse_and_inference_rewrite() {
+        let catalog = parse_hosted_catalog_body(
+            br#"{
+              "ok": true,
+              "provider": "alinery",
+              "default_model": "alinery/DeepSeek-V4.1-Flash",
+              "base_url": "https://inference.alinery.ai/v1",
+              "plans_url": "https://accounts.alinery.ai/plans",
+              "models": [
+                {
+                  "id": "DeepSeek-V4.1-Flash",
+                  "name": "DeepSeek-V4.1-Flash",
+                  "context_window": 1048576,
+                  "max_tokens": 32768,
+                  "price": 1,
+                  "input": ["text", "image"],
+                  "thinking": {
+                    "reasoning": true,
+                    "levels": {"off":"none","minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}
+                  }
+                },
+                {
+                  "id": "GLM-5.3",
+                  "name": "GLM-5.3",
+                  "context_window": 1,
+                  "max_tokens": 1,
+                  "price": 2,
+                  "thinking": {
+                    "reasoning": true,
+                    "levels": {"off":null,"minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}
+                  }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            catalog.models[0].thinking.as_ref().and_then(|value| value.get("reasoning")).and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(catalog.models[1].thinking.as_ref().and_then(|value| value.pointer("/levels/off")), Some(&Value::Null));
+        let yaml = render_models_yml(&catalog, "inf_keep");
+        assert!(!yaml.contains("thinking"));
+        assert!(!yaml.contains("reasoning_effort"));
+
+        let dir = temp_dir("thinking");
+        let path = inference_path(&dir);
+        write_inference_file(&path, "inf_keep", 10, "s", 1, &catalog).unwrap();
+        let loaded = load_inference_file(&path).unwrap();
+        assert_eq!(loaded.catalog.models[0].thinking, catalog.models[0].thinking);
+        assert_eq!(loaded.catalog.models[0].input.as_deref(), Some(&["text".to_string(), "image".to_string()][..]));
+        assert!(loaded.catalog.models[1].input.is_none());
+        assert_eq!(
+            loaded.catalog.models[1].thinking.as_ref().and_then(|value| value.pointer("/levels/off")),
+            Some(&Value::Null)
+        );
+
+        let bare = parse_hosted_catalog_body(
+            br#"{
+              "ok": true,
+              "provider": "alinery",
+              "default_model": "alinery/Qwen3.6-35B-A3B",
+              "base_url": "https://inference.alinery.ai/v1",
+              "plans_url": "https://accounts.alinery.ai/plans",
+              "models": [{"id":"Qwen3.6-35B-A3B","name":"Qwen","context_window":1,"max_tokens":1,"price":1}]
+            }"#,
+        )
+        .unwrap();
+        assert!(bare.models[0].thinking.is_none());
         let _ = fs::remove_dir_all(dir);
     }
 

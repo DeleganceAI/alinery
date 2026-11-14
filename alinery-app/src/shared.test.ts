@@ -1,23 +1,20 @@
 import { act, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as ipc from "./ipc";
 import {
+  attentionBody,
   finalizedSubtaskNotice,
   findOwnedArtifactNode,
   formatAbsolute,
   formatAge,
   harnessDisplayName,
   isAllowedLaunchHarness,
-  notifySessionAttentionTransition,
-  ompDefaultModel,
   orderPlaybookCandidates,
   playbookRefKey,
   RECOMMENDED_PLAYBOOK,
   repoName,
   SessionTimestamp,
   sameBoardTasks,
-  sameKanbanColumns,
   sameLifecycleMaps,
   sameSessionMetas,
   sameTask,
@@ -25,12 +22,12 @@ import {
   starredPlaybookKeys,
   taskKey,
   useMinuteNow,
+  vinculumDefaultModel,
   withPlaybookStar,
 } from "./shared";
 import type {
   ArtifactTreeNode,
   BoardTask,
-  KanbanColumn,
   LifecycleState,
   PickerPreferences,
   PlaybookCandidate,
@@ -81,8 +78,9 @@ describe("harnessDisplayName", () => {
     expect(harnessDisplayName("no-harness")).toBe("Terminal");
   });
 
-  it("uses the bundled OMP label", () => {
-    expect(harnessDisplayName("omp")).toBe("OMP CLI");
+  it("uses the Vinculum label for the session key and the registry key", () => {
+    expect(harnessDisplayName("vinculum")).toBe("Vinculum");
+    expect(harnessDisplayName("vinculum")).toBe("Vinculum");
   });
 
   it("labels leftover and empty keys Unsupported", () => {
@@ -93,8 +91,9 @@ describe("harnessDisplayName", () => {
 });
 
 describe("isAllowedLaunchHarness", () => {
-  it("accepts only omp and Terminal", () => {
-    expect(isAllowedLaunchHarness("omp")).toBe(true);
+  it("accepts only vinculum and Terminal", () => {
+    expect(isAllowedLaunchHarness("vinculum")).toBe(true);
+    expect(isAllowedLaunchHarness("vinculum")).toBe(true);
     expect(isAllowedLaunchHarness("no-harness")).toBe(true);
     expect(isAllowedLaunchHarness("claude")).toBe(false);
     expect(isAllowedLaunchHarness("codex")).toBe(false);
@@ -103,12 +102,13 @@ describe("isAllowedLaunchHarness", () => {
   });
 });
 
-describe("ompDefaultModel", () => {
-  it("keeps only omp-owned selectors", () => {
-    expect(ompDefaultModel({ harness: "omp", model: "sonnet" })).toBe("sonnet");
-    expect(ompDefaultModel({ harness: "claude", model: "sonnet" })).toBe("");
-    expect(ompDefaultModel({ harness: "", model: "sonnet" })).toBe("sonnet");
-    expect(ompDefaultModel({ harness: "omp", model: "" })).toBe("");
+describe("vinculumDefaultModel", () => {
+  it("keeps only vinculum-owned selectors", () => {
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "claude", model: "sonnet" })).toBe("");
+    expect(vinculumDefaultModel({ harness: "", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "" })).toBe("");
   });
 });
 
@@ -292,21 +292,6 @@ describe("re-render comparators", () => {
     expect(sameSessionMetas([manager], [{ ...manager, subtask_slug: "other-child" } as SessionMeta])).toBe(false);
   });
 
-  it("sameKanbanColumns notices a renamed or reordered column", () => {
-    const a: KanbanColumn[] = [
-      { key: "a", title: "A" },
-      { key: "b", title: "B" },
-    ] as KanbanColumn[];
-    expect(sameKanbanColumns(a, [...a])).toBe(true);
-    expect(
-      sameKanbanColumns(a, [
-        { key: "a", title: "Renamed" },
-        { key: "b", title: "B" },
-      ] as KanbanColumn[]),
-    ).toBe(false);
-    expect(sameKanbanColumns(a, [a[1], a[0]])).toBe(false);
-  });
-
   it("sameBoardTasks notices a phase move, which is the whole point of the board", () => {
     expect(sameBoardTasks([task()], [task()])).toBe(true);
     expect(sameBoardTasks([task()], [task({ current_phase: "review" })])).toBe(false);
@@ -383,7 +368,7 @@ describe("re-render comparators", () => {
         id: "s1",
         worktree: "/w",
         phase: "design",
-        harness: "omp",
+        harness: "vinculum",
         model: "m",
         playbook: "superdevelop",
         generic: false,
@@ -413,17 +398,12 @@ describe("re-render comparators", () => {
   });
 });
 
-describe("notifySessionAttentionTransition", () => {
-  // Issue #128: a turn OMP gave up on notified as "idle", which reads like a clean finish.
-  it("notifies a turn that stopped on an error as errored, not idle", () => {
-    vi.mocked(ipc.notifySessionAttention).mockClear().mockResolvedValue(undefined);
-    notifySessionAttentionTransition("busy", "errored", "/r", "task");
-    notifySessionAttentionTransition("busy", "idle", "/r", "task");
-    notifySessionAttentionTransition("errored", "errored", "/r", "task");
-    expect(vi.mocked(ipc.notifySessionAttention).mock.calls).toEqual([
-      ["/r", "task", "errored"],
-      ["/r", "task", "idle"],
-    ]);
+describe("attentionBody", () => {
+  it("names the session's label and why it needs the person, as the Rust session_attention_body did", () => {
+    expect(attentionBody("Fix login", "idle")).toBe("Fix login — idle, needs you");
+    expect(attentionBody("Fix login", "waiting_for_input")).toBe("Fix login — waiting for your input");
+    expect(attentionBody("Fix login", "waiting_for_approval")).toBe("Fix login — waiting for your approval");
+    expect(attentionBody("", "idle")).toBe("session — idle, needs you");
   });
 });
 

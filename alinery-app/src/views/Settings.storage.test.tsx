@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
+import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings, SettingsSectionKey, StorageInfo } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -20,7 +21,7 @@ const globalSettings: GlobalSettings = {
     dock_badge_completions: true,
   },
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+  defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,
@@ -64,29 +65,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    readScopedSettingsForRepo: async () => ({
-      global: globalSettings,
-      overrides: { github: {}, defaults: {}, backup: {} },
-      effective: {
-        notifications: globalSettings.notifications,
-        github: globalSettings.github,
-        defaults: globalSettings.defaults,
-        provenance: {
-          github_token: "global",
-          defaults: { harness: "global", model: "global", thinking: "global", playbook: "global", draft_autosave: "global" },
-        },
-        backup: globalSettings.backup,
-        telemetry: globalSettings.telemetry,
-      },
-    }),
-    storageInfo: mocks.storageInfo,
-    deleteAllArchivedStorage: mocks.deleteAllArchivedStorage,
-    listBackups: async () => [],
-    backupBusy: async () => false,
     getVersion: async () => "0.0.0",
   }),
 );
+// The scan and the purge are jobs of the daemon (sync/storage).
+vi.mock("../sync/storage", () => ({
+  storageInfo: mocks.storageInfo,
+  deleteAllArchivedStorage: mocks.deleteAllArchivedStorage,
+  listBackups: async () => [],
+  useBackupBusy: () => false,
+}));
 
+vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 import { Settings } from "./Settings";
@@ -98,6 +88,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -119,6 +110,8 @@ function renderSettings(section: SettingsSectionKey) {
 }
 
 beforeEach(() => {
+  fakeSettings.reset();
+  for (const repo of ["/repo-a", "/repo-b"]) fakeSettings.serve(repo, (overrides) => effectiveOf(globalSettings, overrides));
   mocks.storageInfo.mockReset().mockImplementation(async (repoPath: string) => storageFor(repoPath));
   mocks.deleteAllArchivedStorage.mockReset().mockResolvedValue({
     deleted_tasks: 3,
@@ -133,14 +126,12 @@ afterEach(cleanup);
 
 describe("Settings storage scope", () => {
   it("opens on All repositories, not the top-bar repo", async () => {
-    renderSettings("storage");
-    const all = await screen.findByRole("button", { name: "All repositories" });
-    expect(all.classList.contains("on")).toBe(true);
-    expect(screen.getByRole("button", { name: "repo-a" }).classList.contains("on")).toBe(false);
+    renderSettings("data.storage");
+    expect(((await screen.findByRole("combobox", { name: "Editing" })) as HTMLSelectElement).value).toBe("");
   });
 
   it("shows the scope empty state on Storage and does not fetch", async () => {
-    renderSettings("storage");
+    renderSettings("data.storage");
     expect(await screen.findByText(SCOPE_EMPTY)).toBeTruthy();
     expect(screen.queryByText("Active data (read-only)")).toBeNull();
     expect(screen.queryByText("Delete all archived data…")).toBeNull();
@@ -148,7 +139,7 @@ describe("Settings storage scope", () => {
   });
 
   it("keeps Backup enabled on All repositories and shows the same empty state", async () => {
-    renderSettings("backup");
+    renderSettings("data.backup");
     const backupNav = (await screen.findByRole("button", { name: "Backup" })) as HTMLButtonElement;
     expect(backupNav.disabled).toBe(false);
     expect(backupNav.classList.contains("on")).toBe(true);
@@ -157,18 +148,18 @@ describe("Settings storage scope", () => {
   });
 
   it("stays on Backup when switching to All repositories", async () => {
-    renderSettings("backup");
-    fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
+    renderSettings("data.backup");
+    await pickScope("/repo-b");
     expect(await screen.findByText("Destination folder")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "All repositories" }));
+    await pickScope("");
     expect(await screen.findByText(SCOPE_EMPTY)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backup" }).classList.contains("on")).toBe(true);
-    expect(screen.getByRole("button", { name: "General" }).classList.contains("on")).toBe(false);
+    expect(screen.getByRole("button", { name: "Appearance" }).classList.contains("on")).toBe(false);
   });
 
   it("loads the Settings-scope repo, not the top-bar repo", async () => {
-    renderSettings("storage");
-    fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
+    renderSettings("data.storage");
+    await pickScope("/repo-b");
     await waitFor(() => expect(mocks.storageInfo).toHaveBeenCalledWith("/repo-b"));
     expect(await screen.findByText("Repository")).toBeTruthy();
     expect(screen.getByText("Repository").closest(".storage-path-row")?.querySelector("pre")?.textContent).toBe("/repo-b");
@@ -179,8 +170,8 @@ describe("Settings storage scope", () => {
   });
 
   it("purges the Settings-scope repo", async () => {
-    renderSettings("storage");
-    fireEvent.click(await screen.findByRole("button", { name: "repo-b" }));
+    renderSettings("data.storage");
+    await pickScope("/repo-b");
     fireEvent.click(await screen.findByRole("button", { name: "Delete all archived data…" }));
     await waitFor(() => expect(mocks.deleteAllArchivedStorage).toHaveBeenCalledWith("/repo-b"));
   });

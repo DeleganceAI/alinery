@@ -1,0 +1,8 @@
+version: v2
+modules:
+  - path: .
+    excludes: [node_modules]
+lint:
+  use: [STANDARD]
+breaking:
+  use: [FILE]

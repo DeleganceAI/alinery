@@ -1,0 +1,18 @@
+{
+  "task/old/old": {
+    "current_phase": "define-tests",
+    "current_step_title": "define-tests",
+    "latest_session_title": "Generic",
+    "playbook_steps": [],
+    "playbook_title": "superdevelop",
+    "session_count": 4
+  },
+  "task/other-playbook/other-playbook": {
+    "current_phase": "",
+    "current_step_title": "",
+    "latest_session_title": "build",
+    "playbook_steps": [],
+    "playbook_title": "x",
+    "session_count": 1
+  }
+}

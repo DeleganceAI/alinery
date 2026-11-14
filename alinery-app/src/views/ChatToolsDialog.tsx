@@ -12,7 +12,7 @@ export function ChatToolsDialog({ tools, onClose }: { tools: DumpTool[]; onClose
         </button>
       </div>
       <div className="mb">
-        <p className="dim">Active agent tools from get_state. Toggling OMP built-ins needs Terminal.</p>
+        <p className="dim">Active agent tools from get_state. Vinculum's built-in tools can't be toggled here.</p>
         {tools.length === 0 ? <p className="dim">No tools in the current dump.</p> : null}
         <ul className="chat-model-list">
           {tools.map((tool) => (

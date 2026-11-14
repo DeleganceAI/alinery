@@ -18,7 +18,7 @@ const session = (id: string, overrides: Partial<SessionDisplayMeta> = {}): Sessi
   created: 1,
   archived: false,
   phase: "worker",
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   playbook: "retained",
   generic: false,
@@ -45,6 +45,33 @@ const occurrence = (id: string, producer: string | null, path = `${id}.md`): Art
 
 afterEach(cleanup);
 
+it("shows recoverable instead of exited, and completed when the step was accepted", () => {
+  const failed = executionRecord({ id: "e-failed", owner_session_id: "failed", lifecycle: "failed", receipt_id: null, shutdown_confirmed: true });
+  const done = executionRecord({ id: "e-done", owner_session_id: "done", lifecycle: "completed", receipt_id: "e-done", shutdown_confirmed: true });
+  const stopped = executionRecord({ id: "e-stopped", owner_session_id: "stopped", lifecycle: "running", receipt_id: null });
+  render(
+    <TaskRunGraph
+      sessions={[
+        session("failed", { harness: "vinculum", ended_at: 10, exit_code: 0 }),
+        session("done", { harness: "vinculum", ended_at: 11, exit_code: 0 }),
+        session("stopped", { harness: "vinculum", ended_at: 12, exit_code: 0 }),
+      ]}
+      state={executionReply([failed, done, stopped]).state}
+      observations={{
+        failed: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+        done: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+        stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
+      }}
+      onOpenSession={vi.fn()}
+      onOpenArtifact={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Open session failed" }).textContent).toContain("Recoverable");
+  expect(screen.getByRole("button", { name: "Open session done" }).textContent).toContain("Completed");
+  expect(screen.getByRole("button", { name: "Open session stopped" }).textContent).toContain("Exited");
+  expect(screen.getByRole("button", { name: "Open session failed" }).textContent).not.toContain("Exited");
+});
+
 it("keeps queued owners queued after observation polling and shows live activity once started", () => {
   const worker = session("worker");
   const record = { ...execution("worker"), lifecycle: "queued" as const };
@@ -68,8 +95,8 @@ it("keeps queued owners queued after observation polling and shows live activity
             process: { state: "alive" },
             agent: { state: "busy" },
             playbook: { state: "in_progress" },
-            adapter: "omp",
-            message_adapter: "omp_bracketed_paste",
+            adapter: "vinculum",
+            message_adapter: "vinculum_bracketed_paste",
           },
         },
       }}
@@ -380,11 +407,28 @@ it("keeps isolated sessions navigable without execution state and does not reord
   expect(screen.queryByRole("button", { name: /Open session/ })).toBeNull();
 });
 
+// `getTaskExecution` merges the engine maps only for a stored or converted state, so a
+// history-only task answers without `executions` or `occurrences`. Both reads used to be
+// bare Object.values calls, which threw during render and blanked the window.
+it("draws a history-only state that carries neither map", () => {
+  const reply = executionReply([]);
+  const sparse = { ...reply.state, history_only: true } as Record<string, unknown>;
+  delete sparse.executions;
+  delete sparse.occurrences;
+
+  const graph = buildTaskRunGraph([session("s1")] as SessionDisplayMeta[], sparse as never);
+  expect(graph.connections).toEqual([]);
+  expect([...graph.nodes.values()].map((node) => node.key)).toEqual(["session:s1"]);
+
+  render(<TaskRunGraph sessions={[session("s1")] as SessionDisplayMeta[]} state={sparse as never} onOpenSession={() => {}} onOpenArtifact={() => {}} />);
+  expect(screen.queryByText(/Cannot convert undefined or null to object/)).toBeNull();
+});
+
 it("labels a never-started held owner queued in both graph modes (issue #151)", () => {
   // Durable state from the report: queued execution, start never requested, owner meta never stamped.
   const owner = session("owner", { started_at: null, ended_at: null, exit_code: null });
   const record = { ...execution("owner", { "request.md": ["input-a"] }), lifecycle: "queued" as const, start_requested: false };
-  // What session_list_statuses produces for that meta: classify(None, None, None, None) -> never_started.
+  // What `lifecycleOf` (sync/sessionObservation.ts) derives for a session entity with no startedAt.
   const observation: SessionObservation = { lifecycle: { state: "never_started" }, state: null, checkpoint: {} };
   render(<TaskRunGraph sessions={[owner]} state={executionReply([record]).state} observations={{ owner: observation }} onOpenSession={vi.fn()} onOpenArtifact={vi.fn()} />);
   const node = () => screen.getByRole("button", { name: "Open session owner" });

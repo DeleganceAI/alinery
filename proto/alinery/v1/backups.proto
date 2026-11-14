@@ -1,0 +1,43 @@
+// proto/alinery/v1/backups.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/entities.proto";
+
+// The reads and checks around a backup (S4.9). Creating one is JobService.StartBackup; restoring one is not a daemon
+// call at all (it replaces the files under the daemon, so the shell stops the daemon and runs it, 2.3.5). The archives
+// are written and read with the host's `zip` and `unzip` (O11 b), so a repository on another machine lists and checks
+// the archives on its own disk.
+service BackupService {
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);                                // VIEW
+  rpc CheckBackupDestination(CheckBackupDestinationRequest) returns (CheckBackupDestinationResponse);  // ACT (it writes a probe file)
+  rpc VerifyBackup(VerifyBackupRequest) returns (VerifyBackupResponse);                              // VIEW
+}
+
+message BackupListItem {
+  string id = 1;  // the archive's file name
+  string path = 2;
+  uint64 created_at = 3;
+  string trigger = 4;
+  uint64 size_bytes = 5;
+  string alinery_version = 6;
+}
+// The archives of this repository in the destination its settings name, newest first.
+message ListBackupsRequest {}
+message ListBackupsResponse {
+  repeated BackupListItem items = 1;
+}
+// Is `destination` somewhere this repository may write backups: an existing writable directory outside `.alinery`?
+message CheckBackupDestinationRequest {
+  string destination = 1;
+}
+message CheckBackupDestinationResponse {
+  string resolved = 1;  // the canonical path the daemon will use
+}
+// Does the archive at `path` belong to this repository? Refused with a message if not.
+message VerifyBackupRequest {
+  string path = 1;
+}
+message VerifyBackupResponse {
+  BackupResult meta = 1;
+}

@@ -1,0 +1,11 @@
+[github]
+token = ""
+
+[defaults]
+model = ""
+thinking = ""
+draft_autosave = false
+
+[backup]
+enabled = false
+destination = ""

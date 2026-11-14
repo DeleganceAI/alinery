@@ -5,8 +5,8 @@ import { chatActivityLabel, chatVisibilityFromAppearance, DEFAULT_CHAT_VISIBILIT
 const thinking: ChatEntry = { id: "1", actor: ACTOR.agent, type: "thinking", text: "plan" };
 const tool: ChatEntry = { id: "2", actor: ACTOR.agent, type: "tool_call", tool: "read", status: "ok" };
 const text: ChatEntry = { id: "3", actor: ACTOR.agent, type: "text", text: "hi" };
-const harness: ChatEntry = { id: "4", actor: ACTOR.omp, type: "harness", event: "model_changed", text: "xai/grok" };
-const turn: ChatEntry = { id: "5", actor: ACTOR.omp, type: "turn_marker", turn: 1, phase: "end" };
+const harness: ChatEntry = { id: "4", actor: ACTOR.vinculum, type: "harness", event: "model_changed", text: "xai/grok" };
+const turn: ChatEntry = { id: "5", actor: ACTOR.vinculum, type: "turn_marker", turn: 1, phase: "end" };
 const subRow: ChatEntry = {
   id: "6",
   actor: subagent("plan"),

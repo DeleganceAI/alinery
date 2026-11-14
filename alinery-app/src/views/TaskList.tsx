@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type ArchiveTaskPhase, archiveBoardTask } from "../archiveTask";
 import { ORB_STATE } from "../Indicators";
-import * as ipc from "../ipc";
 import { ArchiveFilter, ListToolbar } from "../ListToolbar";
 import type { StarterTaskPreset } from "../onboarding";
 import { PlaybookStarterDeck } from "../PlaybookStarterDeck";
@@ -13,13 +12,14 @@ import {
   formatAge,
   InlineStatus,
   LoadingState,
+  RepoLinkNotices,
   repoName,
-  sameBoardTasks,
   TaskActivityIndicators,
   taskKey,
   useBoardTaskActivity,
   useMinuteNow,
 } from "../shared";
+import { useRepoBoard } from "../sync/board";
 import type { BoardNav, BoardTask, PlaybookRef, TaskActivitySession, TaskActivityStatus, TaskActivitySummary } from "../types";
 import "./TaskList.css";
 
@@ -109,6 +109,7 @@ export function flattenTaskRows(tasks: BoardTask[], compare = compareTaskRows): 
 type ErrState = { msg: string; detail: string } | null;
 export function TaskList({
   allRepos,
+  repos,
   onOpen,
   onDuplicate,
   registerNav,
@@ -117,6 +118,8 @@ export function TaskList({
   onReplayOnboarding,
 }: {
   allRepos: boolean;
+  /** The repos this list shows: every known repo, or the active one. Each has its own stream. */
+  repos: string[];
   onOpen: (task: BoardTask) => void;
   onDuplicate: (task: BoardTask) => void;
   registerNav: (n: BoardNav | null) => void;
@@ -124,12 +127,13 @@ export function TaskList({
   onCreate: (initialPlaybook?: PlaybookRef, initialPreset?: StarterTaskPreset) => void;
   onReplayOnboarding?: () => void;
 }) {
-  const [tasks, setTasks] = useState<BoardTask[]>([]);
-  const [loaded, setLoaded] = useState(false);
   const [selectedKey, setSelectedKey] = useState("");
   const [err, setErr] = useState<ErrState>(null);
   const [pendingArchive, setPendingArchive] = useState<BoardTask | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const board = useRepoBoard(repos);
+  const loaded = board.loaded;
+  const tasks = useMemo(() => board.tasks.filter((task) => showArchived || !task.archived), [board.tasks, showArchived]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [playbookFilter, setPlaybookFilter] = useState("");
@@ -190,46 +194,6 @@ export function TaskList({
   };
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
 
-  const load = useRef<() => void>(() => {});
-  useEffect(() => {
-    let alive = true;
-    let inFlight = false;
-    let refreshPending = false;
-    const fetchTasks = async (refresh = false) => {
-      if (inFlight) {
-        refreshPending ||= refresh;
-        return;
-      }
-      inFlight = true;
-      try {
-        const ts = await ipc.listBoardTasks(allRepos);
-        if (!alive) return;
-        const visible = ts.filter((task) => showArchived || !task.archived);
-        setTasks((current) => (sameBoardTasks(current, visible) ? current : visible));
-        setErr(null);
-      } catch (e) {
-        if (alive) setErr({ msg: "Couldn't load tasks.", detail: String(e) });
-      } finally {
-        inFlight = false;
-        if (alive) {
-          setLoaded(true);
-          if (refreshPending) {
-            refreshPending = false;
-            void fetchTasks();
-          }
-        }
-      }
-    };
-    load.current = () => void fetchTasks(true);
-    void fetchTasks();
-    const timer = window.setInterval(() => void fetchTasks(), 3000);
-    return () => {
-      alive = false;
-      load.current = () => {};
-      window.clearInterval(timer);
-    };
-  }, [allRepos, showArchived]);
-
   useEffect(() => {
     void import("../views/TaskDetail");
   }, []);
@@ -244,6 +208,8 @@ export function TaskList({
     if (visibleSelectedKey && visibleSelectedKey !== selectedKey) setSelectedKey(visibleSelectedKey);
   }, [visibleSelectedKey, selectedKey]);
   const empty = loaded && tasks.length === 0;
+  // A repo the daemon cannot reach is not known to be empty, so it gets no starter (as a load error gets none).
+  const unreachable = Object.values(board.repos).some((state) => !state.reachable);
   const noMatches = loaded && !empty && rows.length === 0;
 
   // Keyboard selection (j/k, arrows) must stay visible in long lists.
@@ -282,7 +248,6 @@ export function TaskList({
       setErr(failure);
       return;
     }
-    load.current();
   };
 
   const heading = (
@@ -371,9 +336,10 @@ export function TaskList({
           {err.msg}
         </InlineStatus>
       )}
+      <RepoLinkNotices repos={board.repos} />
       {!loaded && <LoadingState label="Loading tasks" state={ORB_STATE} />}
       {empty ? (
-        <div className="list list-empty task-list-starter">{!err && <PlaybookStarterDeck onCreate={onCreate} onReplayOnboarding={onReplayOnboarding} />}</div>
+        <div className="list list-empty task-list-starter">{!err && !unreachable && <PlaybookStarterDeck onCreate={onCreate} onReplayOnboarding={onReplayOnboarding} />}</div>
       ) : noMatches ? (
         <div className="list list-empty task-list-no-matches">
           <EmptyState title="No tasks match these filters." hint={`Clear filters to show all ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}.`} />

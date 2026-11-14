@@ -1,0 +1,22 @@
+// proto/alinery/v1/executions.proto
+syntax = "proto3";
+package alinery.v1;
+
+import "alinery/v1/common.proto";
+
+// Execution approvals (S4.2). The read side is the `execution/<slug>/<slug>` entity (entities.proto).
+// The engine decides everything else about an execution; the daemon only passes the person's permission on.
+service ExecutionService {
+  rpc AllowCompletion(AllowCompletionRequest) returns (AllowCompletionResponse);  // APPROVE
+}
+
+// Lets one live execution finish: the engine marks it permitted and tells its agent to wrap up.
+message AllowCompletionRequest {
+  MutationMeta meta = 1;
+  string task_slug = 2;
+  string execution_id = 3;       // the engine's id, `e1`, `e2`, ...
+  uint64 expected_revision = 4;  // the execution entity's revision the person saw; 0: no check; a mismatch is ABORTED
+}
+message AllowCompletionResponse {
+  Applied applied = 1;
+}

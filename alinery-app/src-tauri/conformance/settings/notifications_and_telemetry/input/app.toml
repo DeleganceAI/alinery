@@ -1,0 +1,10 @@
+[global.notifications]
+enabled = false
+bounce = true
+dock_badge_failures = false
+
+[global.telemetry]
+enabled = true
+prompted = true
+install_id = "11111111-2222-3333-4444-555555555555"
+endpoint = "http://127.0.0.1:9"

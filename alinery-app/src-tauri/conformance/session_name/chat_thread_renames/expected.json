@@ -1,0 +1,45 @@
+{
+  "steps": [
+    {
+      "name": "Plan the migration",
+      "source": "auto",
+      "status": "saved"
+    },
+    {
+      "name": "Retitled as the thread grows",
+      "source": "auto",
+      "status": "saved"
+    },
+    {
+      "name": "Mine",
+      "source": "user",
+      "status": "saved"
+    },
+    {
+      "name": "Mine",
+      "source": "user",
+      "status": "unchanged"
+    },
+    {
+      "name": "Mine again",
+      "source": "user",
+      "status": "saved"
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    },
+    {
+      "error": true
+    }
+  ],
+  "stored": "Mine again"
+}

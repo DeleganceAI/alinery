@@ -58,8 +58,9 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 
   /* type */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
-  --font-mono: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-ui: "Geist Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  --font-mono: "Geist Mono Variable", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-display: "Sora", var(--font-ui);
   --font-reading: var(--font-ui);
 
   /* layout constants */
@@ -320,10 +321,14 @@ header {
   border-bottom: 1px solid var(--border);
   background: var(--canvas);
   min-width: 0;
-  /* header hosts the repo dropdown popup; keep it above page content;
-     modals (70+), toast (90) and boot (200) still paint over it. */
   position: relative;
   z-index: 20;
+}
+/* The app's top bar hosts the repo and account menus, so it sits above page content, including every page header
+   that inherits the z-index above (Settings, Playbooks); the artifact drawer (60), modals (70+), toast (90) and
+   boot (200) still paint over it. */
+header[data-tauri-drag-region] {
+  z-index: 50;
 }
 .brand {
   display: flex;
@@ -517,6 +522,26 @@ nav.tabs {
 nav.tabs::-webkit-scrollbar {
   display: none;
 }
+/* The top-level views read as tabs: full-height cells split by dividers, the selected one filled like the main pane's
+   open tab. The sliding indicator is that fill, so switching still animates. */
+nav.tabs {
+  align-self: stretch;
+  gap: 0;
+  border-left: 1px solid var(--border);
+}
+nav.tabs .tab {
+  height: 100%;
+  /* The selected cell's top 4px is its accent bar: every label sits centered in the fill below it, level with the others. */
+  padding-top: 4px;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+}
+nav.tabs .tab-indicator {
+  height: 100%;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: inset 0 4px 0 var(--accent);
+}
 .tab-indicator {
   position: absolute;
   top: 0;
@@ -592,6 +617,10 @@ nav.tabs .tab:hover:not(.on) {
   flex: 0 1000 auto;
   min-width: calc(var(--control-h) + 64px * max(1, var(--ui-scale)));
 }
+/* With Add remote repository beside Add repository, the floor holds both buttons. */
+.repo-switcher:has(.repo-add ~ .repo-add) {
+  min-width: calc(2 * var(--control-h) + 64px * max(1, var(--ui-scale)));
+}
 .repo-switcher .repo {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -600,6 +629,11 @@ nav.tabs .tab:hover:not(.on) {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   margin-left: -1px;
+}
+/* Add repo and add remote repo sit together as one joined control. */
+.repo-switcher .repo-add:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .repo-select {
   position: relative;
@@ -1707,6 +1741,12 @@ main {
   font-size: calc(20px * var(--ui-scale));
   font-weight: 600;
 }
+/* Sora is the site's display face: page titles and section titles only, never above 20px (DESIGN.md). */
+.view-title,
+.create-title,
+.playbooks-page h1.pb-title {
+  font-family: var(--font-display);
+}
 .danger-text {
   color: var(--danger);
 }
@@ -1729,46 +1769,6 @@ main {
 .createform-page {
   width: min(880px, 100%);
   gap: 16px;
-}
-.create-continuation-label {
-  overflow-wrap: anywhere;
-}
-.create-continuation-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.create-continuation-choices button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--control-h);
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.create-continuation-choices button[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.create-continuation-choices button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.create-continuation-choices button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.create-continuation-check {
-  width: 1em;
-}
-.create-continuation-complete {
-  color: var(--text-muted);
 }
 .create-repository-source {
   display: grid;
@@ -2183,9 +2183,9 @@ main {
   font-size: calc(12px * var(--ui-scale));
   font-weight: 500;
 }
-/* Keep each step's continuation and model together; wrap within the form panel. */
+/* Step models are a right-hand column: one title over the fields, checkbox copy
+   stays on the left. Source text hangs off the field as a subscript badge. */
 .step-model-list {
-  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2193,52 +2193,27 @@ main {
 .step-model-head,
 .step-model-row {
   display: grid;
-  grid-template-columns: minmax(5rem, 1fr) minmax(0, 2fr) minmax(9rem, 1.5fr);
-  gap: 8px 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem) 7.5rem;
+  column-gap: 8px;
   align-items: center;
 }
-.step-model-head {
+.step-model-title {
+  grid-column: 2;
+  justify-self: end;
   color: var(--text-faint);
   font-size: calc(10px * var(--ui-scale));
   font-weight: 600;
-  padding-bottom: 6px;
+  line-height: 1;
 }
-.step-model-row {
-  padding: 6px 0;
-}
-.step-model-control {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.step-model-row .opt {
   min-width: 0;
+  gap: 8px;
+  padding: 2px 0;
 }
-.step-continuation-control::before,
-.step-model-control::before {
-  display: none;
-  content: attr(data-label);
-  color: var(--text-faint);
-  font-size: calc(10px * var(--ui-scale));
-}
-@container (max-width: 580px) {
-  .step-model-head {
-    display: none;
-  }
-  .step-model-row {
-    grid-template-columns: minmax(0, 1fr) minmax(9rem, 1fr);
-  }
-  .create-continuation-label {
-    grid-column: 1 / -1;
-  }
-  .step-continuation-control::before,
-  .step-model-control::before {
-    display: block;
-    margin-bottom: 4px;
-  }
-}
-@container (max-width: 340px) {
-  .step-model-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.step-model-row .opt-copy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .step-model-row .model-select {
   min-width: 0;
@@ -2480,75 +2455,6 @@ textarea.field-input {
   height: 100%;
   min-height: 0;
 }
-.settings-scopebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-.settings-scope-eyebrow {
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  font-weight: 500;
-}
-.settings-scope-title {
-  color: var(--text-strong);
-  font-size: calc(16px * var(--ui-scale));
-  font-weight: 600;
-  margin-top: 2px;
-}
-/* A flex item defaults to min-width:auto, so the nowrap detail below propped this
-   column open at its full width and the bar overflowed instead of ellipsising. */
-.settings-scope-summary {
-  min-width: 0;
-}
-.settings-scope-detail {
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  margin-top: 2px;
-  max-width: 620px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings-scope-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  /* Chips wrap, so a floor here only bought overflow at small widths and large scales. */
-  min-width: 0;
-  max-height: 72px;
-  overflow-y: auto;
-}
-.scope-chip {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: calc(12px * var(--ui-scale));
-  max-width: 220px;
-  overflow: hidden;
-  padding: 6px 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
-}
-.scope-chip:hover {
-  color: var(--text-strong);
-  border-color: var(--border-strong);
-}
-.scope-chip.on {
-  color: var(--text-strong);
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-}
 .settings-shell {
   display: flex;
   flex: 1 1 auto;
@@ -2575,48 +2481,8 @@ textarea.field-input {
   font-size: calc(13px * var(--ui-scale));
   transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
-.settings-navitem-wrap {
-  position: relative;
-  display: block;
-}
-.settings-navitem-wrap.disabled {
-  cursor: not-allowed;
-}
-.settings-navitem-wrap.disabled .settings-navitem {
-  color: var(--text-faint);
-  cursor: not-allowed;
-  opacity: 0.3;
-}
 .settings-navitem:hover {
   color: var(--text-strong);
-}
-.settings-navitem-wrap.disabled:hover .settings-navitem {
-  color: var(--text-faint);
-}
-.settings-nav-tooltip {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  left: calc(100% + 8px);
-  width: max-content;
-  max-width: 280px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-menu);
-  color: var(--text-strong);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.35;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(-50%) translateX(-4px);
-  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
-}
-.settings-navitem-wrap.disabled:hover .settings-nav-tooltip,
-.settings-navitem-wrap.disabled:focus-visible .settings-nav-tooltip {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
 }
 .settings-navitem.on {
   color: var(--text-strong);
@@ -2820,9 +2686,6 @@ textarea.field-input {
     border-bottom: 1px solid var(--border);
     padding: 6px;
   }
-  .settings-navitem-wrap {
-    flex: 0 0 auto;
-  }
   .settings-navitem {
     width: auto;
     white-space: nowrap;
@@ -2834,27 +2697,8 @@ textarea.field-input {
     border-left-color: transparent;
     border-bottom-color: var(--accent);
   }
-  .settings-nav-tooltip {
-    top: calc(100% + 6px);
-    left: 0;
-    transform: translateY(-4px);
-  }
-  .settings-navitem-wrap.disabled:hover .settings-nav-tooltip,
-  .settings-navitem-wrap.disabled:focus-visible .settings-nav-tooltip {
-    transform: translateY(0);
-  }
 }
 @media (max-width: 760px) {
-  .settings-scopebar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .settings-scope-actions {
-    justify-content: flex-start;
-    max-height: 100px;
-    min-width: 0;
-    width: 100%;
-  }
 }
 .opt {
   position: relative;
@@ -3336,8 +3180,8 @@ textarea.field-input {
   display: grid;
   gap: 7px;
   width: max-content;
-  min-width: 210px;
-  max-width: min(300px, calc(100vw - 24px));
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 24px));
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3363,6 +3207,91 @@ textarea.field-input {
 .fstat:hover .footer-status-tooltip {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
+}
+/* Bridges the gap above the footer, so the pointer can reach the popover's buttons without closing it. */
+.footer-status-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+}
+/* Sync links: one block per daemon host, its traffic, then each repository's daemon version. */
+.footer-status-tooltip .sync-links {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.footer-status-tooltip .sync-links span {
+  display: inline;
+}
+.sync-link {
+  display: grid;
+  gap: 4px;
+}
+.sync-link-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sync-link-head .live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.sync-link-head .live.down {
+  background: var(--danger);
+}
+.sync-link-state {
+  margin-left: auto;
+}
+.footer-status-tooltip .sync-link-rate {
+  display: flex;
+  gap: 10px;
+  padding-left: 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.sync-link-note {
+  padding-left: 14px;
+  color: var(--warning);
+}
+.footer-status-tooltip .sync-link-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+}
+.sync-link-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-link-version {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+.sync-link-update {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--warning);
+  cursor: pointer;
+}
+.sync-link-update:hover {
+  border-color: var(--warning);
+  background: var(--warning-subtle);
 }
 .fstat .fmeta {
   display: inline-flex;
@@ -3826,7 +3755,7 @@ dialog.modal::backdrop {
   overflow: visible;
 }
 
-/* resume-token (manual-harness) modal — manual bridge until omp auto-resume lands */
+/* resume-token (manual-harness) modal — manual bridge until vinculum auto-resume lands */
 .resume-token-modal .field-input {
   width: 100%;
   box-sizing: border-box;
@@ -3908,9 +3837,16 @@ dialog.modal::backdrop {
   overflow: auto;
 }
 .detail.taskdetail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+/* The header spans the full width; the side panel sits left of the sessions pane, as in a session. */
+.taskdetail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
 }
 /* The metadata and session table are the only vertical scroll owners. Making
    this parent scroll recreates DEL-541's competing scrollbar and dead space. */
@@ -3920,7 +3856,7 @@ dialog.modal::backdrop {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  padding-right: 12px;
+  padding: 12px 12px 8px;
 }
 .detail h2 {
   margin: 6px 0;
@@ -3996,6 +3932,78 @@ dialog.modal::backdrop {
   flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* Compact header: one line of title, branch, worktree and actions; long values shorten with an ellipsis. */
+/* The task header reads as the lower half of the top bar: same background, edge to edge (the task view has no
+   padding), no seam between them, and an edge with a soft shadow where the work area begins. */
+.task-panel.task-info-panel {
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--canvas);
+  box-shadow: 0 6px 12px -8px rgb(0 0 0 / 0.35);
+  position: relative;
+  z-index: 2;
+}
+.task-info-panel.compact {
+  padding: 4px 12px 8px;
+}
+header:has(~ main .task-info-panel) {
+  border-bottom-color: transparent;
+}
+/* That line still closes off the view tabs, so they read as tabs over the task header. */
+header:has(~ main .task-info-panel) nav.tabs {
+  border-bottom: 1px solid var(--border);
+}
+.task-info-panel.compact .task-info-head {
+  flex-wrap: nowrap;
+  gap: 16px;
+  margin-bottom: 0;
+}
+.task-info-panel.compact .task-info-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+}
+.task-info-panel.compact h2 {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-info-compact {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+}
+.task-info-compact .kv .k {
+  width: auto;
+}
+.task-info-compact .kv {
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border-bottom: none;
+  font-size: calc(12px * var(--ui-scale));
+}
+.task-info-compact .kv .v {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-info-panel.compact .task-info-head-actions {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.task-info-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
 }
 .task-related,
 .task-actions-row {
@@ -4478,6 +4486,9 @@ dialog.modal::backdrop {
   line-height: 1.7;
   user-select: text;
   color: var(--text);
+  /* The site's periwinkle: the accent pulled toward muted text, for labels and markers. */
+  --md-label: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
+  --md-tint: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .md h1,
 .md h2,
@@ -4486,13 +4497,17 @@ dialog.modal::backdrop {
   color: var(--text-strong);
   line-height: 1.2;
   font-weight: 650;
+  letter-spacing: -0.012em;
 }
 .md h1 {
   margin: 0 0 1em;
   font-size: calc(24px * var(--ui-scale));
+  letter-spacing: -0.02em;
 }
 .md h2 {
-  margin: 1.7em 0 0.75em;
+  margin: 1.9em 0 0.8em;
+  padding-bottom: 0.45em;
+  border-bottom: 1px solid var(--border);
   font-size: calc(20px * var(--ui-scale));
 }
 .md h3 {
@@ -4516,44 +4531,83 @@ dialog.modal::backdrop {
   padding-left: 0.15em;
 }
 .md li::marker {
-  color: var(--text-faint);
+  color: var(--md-label);
+}
+.md ol > li::marker {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
 }
 .md a {
   color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 0.18em;
+  transition: text-decoration-color var(--dur-fast) ease;
+}
+.md a:hover {
+  text-decoration-color: currentColor;
 }
 .md strong {
   color: var(--text-strong);
 }
 .md hr {
   border: 0;
-  border-top: 1px solid var(--border);
-  margin: 1.4em 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong) 20%, var(--border-strong) 80%, transparent);
+  margin: 1.8em 0;
 }
 .md blockquote {
   margin: 1.1em 0;
-  padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid var(--border-strong);
+  padding: 0.6em 1em;
+  border-left: 2px solid var(--md-label);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--md-tint);
   color: var(--text-muted);
 }
+.md blockquote > :last-child {
+  margin-bottom: 0;
+}
+/* Tables: one rounded hairline frame, row rules only, a mono label row on a faint accent wash. */
 .md table {
   width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  margin: 1em 0 1.4em;
-  font-size: calc(14px * var(--ui-scale));
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 1.1em 0 1.5em;
+  font-size: 0.93em;
+  line-height: 1.55;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface-raised);
 }
 .md th,
 .md td {
-  border: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: 8px 14px;
+  text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
   word-break: break-word;
+  border-bottom: 1px solid var(--border);
+}
+.md tr:last-child > td {
+  border-bottom: 0;
 }
 .md th {
-  color: var(--text-strong);
-  background: var(--surface-subtle);
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--md-label);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), var(--md-tint));
+}
+.md tbody tr {
+  transition: background var(--dur-fast) ease;
+}
+.md tbody tr:hover {
+  background: var(--md-tint);
+}
+.md td code {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-subtle));
 }
 .md code,
 .md pre {
@@ -4563,17 +4617,19 @@ dialog.modal::backdrop {
   color: var(--text-strong);
   background: var(--surface-subtle);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  padding: 0.08em 0.38em;
+  font-size: 0.86em;
   white-space: break-spaces;
 }
 .md pre {
   margin: 1em 0 1.35em;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-subtle);
   color: var(--text);
+  font-size: 0.9em;
   overflow-x: hidden;
   overflow-y: visible;
   white-space: pre-wrap;
@@ -4647,104 +4703,23 @@ dialog.modal::backdrop {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.session-execution-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  flex: 0 0 auto;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.session-execution-bar > details {
-  flex: 1;
-  min-width: 0;
+/* The session side panel's Info tab: the playbook execution this session owns. */
+.session-info {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
   overflow-wrap: anywhere;
   font-size: calc(13px * var(--ui-scale));
   line-height: 1.5;
 }
-.session-execution-bar > details > summary {
-  padding: 3px 0;
-  cursor: pointer;
+.session-info p {
+  margin: 0 0 8px;
 }
-.session-execution-bar > details > summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.session-info ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
 }
-.session-actions-dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-}
-.session-actions-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  height: auto;
-  padding: 18px 20px;
-}
-.session-actions-heading h3 {
-  margin: 0;
-}
-.session-handoff-actions {
-  display: grid;
-  gap: 4px;
-  padding: 8px 12px;
-}
-.session-handoff-actions > span {
-  flex-basis: 100%;
-  overflow-wrap: anywhere;
-}
-.session-actions-dialog .session-execution-bar {
-  display: block;
-  border-top: 1px solid var(--border);
-  border-bottom: 0;
-  padding: 16px 20px;
-}
-.session-actions-subtitle {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-.session-actions-activity {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.session-action-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-.session-action-row > svg { flex-shrink: 0; color: var(--text-muted); }
-.session-action-row > span { flex: 1; min-width: 0; display: grid; gap: 4px; }
-.session-action-row strong { font-size: 13px; font-weight: 600; }
-.session-action-row > span > span { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
-.session-action-row:hover:not(:disabled) { background: var(--surface-subtle); }
-.session-action-row:disabled { opacity: 0.5; cursor: default; }
-.session-action-row:focus-visible, .session-action-file:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.session-action-stop > svg:first-child, .session-action-stop strong { color: var(--danger); }
-.session-action-context { display: grid; gap: 12px; margin: 0 0 20px; font-size: 12px; }
-.session-action-context > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; }
-.session-action-context dt { color: var(--text-muted); }
-.session-action-context dd { margin: 0; overflow-wrap: anywhere; }
-.session-action-file { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
-.session-action-file:disabled { color: var(--text); cursor: default; }
-.session-action-file:hover:not(:disabled) { text-decoration: underline; }
-.session-actions-dialog .session-execution { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .session-view-hatch {
   flex: 0 0 auto;
 }
@@ -4754,7 +4729,6 @@ dialog.modal::backdrop {
 .chat-view {
   --chat-col-min: 420px;
   --chat-col-max: 860px;
-  --chat-rail-w: 272px;
   position: absolute;
   inset: 0;
   display: flex;
@@ -4788,7 +4762,8 @@ dialog.modal::backdrop {
 .chat-main .chat-activity {
   position: absolute;
   z-index: 1;
-  top: calc(100% + 8px);
+  /* Past the model bar (8px + a 26px button) to the composer box. */
+  top: calc(100% + 42px);
   right: calc(50% + min(var(--chat-col-max), 100% - 48px) / 2 + 12px);
   height: 44px;
   padding: 0;
@@ -5046,20 +5021,21 @@ dialog.modal::backdrop {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 56px;
-  padding: 10px 20px;
+  min-height: 44px;
+  padding: 6px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   /* Inherits the global `header` z-index 20; drop below the app header so
      its account/repo menus paint over this bar. */
   z-index: 10;
 }
+/* One line: the name, then repo, branch and status beside it. */
 .chat-titlebar-identity {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 16px;
 }
 .chat-titlebar > .chat-icon-btn {
   flex: 0 0 auto;
@@ -5089,8 +5065,9 @@ dialog.modal::backdrop {
   opacity: 1;
 }
 .chat-titlebar-meta {
+  min-width: 0;
+  overflow: hidden;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 4px 14px;
   color: var(--text-muted);
@@ -5132,6 +5109,45 @@ dialog.modal::backdrop {
 .chat-model-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Model and thinking level, centered just above the composer box; their lists open upward. */
+.chat-model-bar {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+.chat-main > .chat-model-bar {
+  display: flex;
+  justify-content: center;
+  padding: 8px 24px 0;
+}
+.chat-thinking-btn {
+  gap: 5px;
+}
+.chat-model-bar .chat-dropup {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+.chat-dropup .account-chip-action {
+  gap: 8px;
+}
+.chat-dropup .account-chip-action > svg {
+  flex: 0 0 auto;
+}
+.chat-dropup .account-chip-action > svg:last-child:not(:first-child) {
+  margin-left: auto;
+}
+.chat-dropup-model {
+  font-family: var(--font-mono);
+}
+.chat-dropup-empty {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
 }
 
 /* Square icon button: quiet until hovered, still reads as a button. */
@@ -5219,13 +5235,22 @@ dialog.modal::backdrop {
 
 /* Left rail */
 /* A share of the view, not a fixed width: beside the terminal drawer the view can be ~650px. */
+/* The side panel width and divider the task and session views use. */
 .chat-rail {
-  flex: 0 0 clamp(200px, 30%, var(--chat-rail-w));
+  flex: 0 0 clamp(var(--artifact-pane-min), var(--artifact-width), var(--artifact-pane-max-fraction));
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--surface);
+}
+.chat-view > .artifact-resizer {
+  flex: 0 0 8px;
+}
+.chat-view > .artifact-resizer.collapsed {
+  flex-basis: 16px;
+}
+.chat-main > .task-main-tabs {
+  margin: 0;
 }
 .chat-rail-head {
   display: flex;
@@ -5361,6 +5386,11 @@ dialog.modal::backdrop {
   color: var(--text-strong);
   background: var(--surface-subtle);
 }
+/* Open as a tab but not the one showing. */
+.chat-thread-btn[data-open="true"] {
+  border-left-color: var(--border-strong);
+  color: var(--text);
+}
 .chat-thread-btn[aria-current="true"] {
   border-left-color: var(--accent);
   color: var(--text-strong);
@@ -5460,48 +5490,271 @@ dialog.modal::backdrop {
 .chat-new-foot {
   justify-content: flex-end;
 }
-/* The thinking level in a status line: reads as the text around it until it is pointed at. The
-   chevron stands in for appearance:none's arrow, as in .field-select. */
-.thinking-select {
-  position: relative;
-  display: inline-block;
+
+/* Remote (SSH) repository dialog: the shared .modal frame with a destination field and a
+   folder browser. */
+.remote-dialog {
+  width: min(560px, calc(100vw - 32px));
 }
-.thinking-select select {
-  -webkit-appearance: none;
-  appearance: none;
-  padding: 0 16px 0 4px;
+.remote-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.remote-body .dsc {
+  margin: 0;
+}
+.remote-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(13px * var(--ui-scale));
+}
+.remote-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.remote-saved,
+.remote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.remote-list:empty {
+  display: none;
+}
+.remote-saved > li + li,
+.remote-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.remote-saved-host,
+.remote-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
   border: 0;
-  border-radius: var(--radius-sm);
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
   background: transparent;
-  transition: background var(--dur-fast) ease;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.thinking-select select:hover:not(:disabled),
-.thinking-select select:focus-visible {
-  background: var(--surface-subtle);
+.remote-saved-host {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
-.thinking-select select:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 0;
+.remote-saved-host:hover,
+.remote-entry:hover:not(:disabled) {
+  background: var(--accent-subtle);
 }
-.thinking-select select:disabled {
+.remote-entry:disabled {
+  opacity: 0.6;
   cursor: default;
 }
-.thinking-select option {
+.remote-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-cwd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  color: var(--text-muted);
+}
+.remote-hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-field-label {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 500;
+}
+.remote-saved-host.on {
+  background: var(--accent-subtle);
+}
+.remote-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.remote-empty .dsc {
+  margin: 0;
+}
+.remote-host-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.remote-host-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.remote-host-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.remote-state.connected::before {
+  background: var(--success);
+}
+.remote-host-warn {
+  color: var(--warning);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps,
+.remote-progress {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 0 16px 8px;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.remote-steps li,
+.remote-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-steps li.on,
+.remote-progress li.on {
   color: var(--text-strong);
-  background: var(--surface);
+  font-weight: 600;
 }
-.thinking-select svg {
-  position: absolute;
-  top: 50%;
-  right: 3px;
-  pointer-events: none;
-  transform: translateY(-50%);
+.remote-steps li.done,
+.remote-progress li.done {
+  color: var(--text);
 }
-
-
+.remote-progress {
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+}
+/* Credentials step: what a host may use. */
+.remote-share {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.remote-share legend {
+  padding: 0 4px;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+}
+.remote-share-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--accent);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.remote-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.remote-share-list label,
+.remote-share-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.remote-share .btn {
+  align-self: flex-start;
+}
+.remote-hosts {
+  margin-top: 16px;
+}
+.sign-in-target {
+  margin: 0 0 8px;
+}
+/* A remote repo whose host is not connected. */
+.repo-opt.offline .repo-opt-name {
+  opacity: 0.6;
+}
+.repo-host-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted);
+  font-size: calc(10px * var(--ui-scale));
+  letter-spacing: 0.04em;
+}
 .chat-pane {
   height: 100%;
   min-height: 0;
@@ -5539,7 +5792,6 @@ dialog.modal::backdrop {
 .chat-journal {
   display: flex;
   flex-direction: column;
-  gap: var(--chat-journal-gap, 6px);
   margin: 0 auto;
   padding: var(--chat-journal-pad, 10px 10px 8px);
   list-style: none;
@@ -5578,91 +5830,344 @@ dialog.modal::backdrop {
   text-align: center;
   font-size: 0.85em;
 }
+/* Flight log: every row hangs off a spine in the left gutter, and its marker says what kind of row it is
+   (your prompt, a run of work, the answer, an approval), so the eye finds the speaker without bubbles. */
+.chat-journal-item {
+  --chat-gutter: 30px;
+  --chat-node-y: 9px;
+  position: relative;
+  min-width: 0;
+  padding: 0 0 var(--chat-journal-gap, 6px) var(--chat-gutter);
+}
+.chat-journal-item::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.chat-older + .chat-journal-item::before,
+.chat-journal > .chat-journal-item:first-child::before {
+  top: var(--chat-node-y);
+}
+.chat-journal-item:last-child::before {
+  bottom: auto;
+  height: calc(var(--chat-node-y) + 4px);
+}
+.chat-journal-item::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: var(--chat-node-y);
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  background: var(--canvas);
+}
+.chat-journal-item[data-node="you"]::after {
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 3px var(--canvas),
+    0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.chat-journal-item[data-node="work"]::after {
+  border: 1.5px solid var(--text-faint);
+  border-radius: 50%;
+}
+.chat-journal-item[data-node="live"]::after {
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  animation: chat-node-pulse 1.6s ease-in-out infinite;
+}
+.chat-journal-item[data-node="answer"]::after {
+  left: 12px;
+  top: calc(var(--chat-node-y) + 2px);
+  width: 5px;
+  height: 5px;
+  background: var(--text-strong);
+  border-radius: 50%;
+}
+.chat-journal-item[data-node="narration"]::after,
+.chat-journal-item[data-node="meta"]::after {
+  left: 12px;
+  top: calc(var(--chat-node-y) + 2px);
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--text-faint);
+  border-radius: 50%;
+}
+.chat-journal-item[data-node="wait"]::after {
+  background: var(--warning);
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.chat-journal-item[data-node="error"]::after {
+  background: var(--danger);
+  border-radius: 2px;
+}
+.chat-journal-item[data-node="turn"] {
+  padding-bottom: calc(var(--chat-journal-gap, 6px) * 1.5);
+}
+.chat-journal-item[data-node="turn"]::after {
+  display: none;
+}
+@keyframes chat-node-pulse {
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-subtle);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-journal-item[data-node="live"]::after {
+    animation: none;
+  }
+}
 .chat-msg {
   display: flex;
   flex-direction: column;
-  width: fit-content;
-  max-width: 92%;
-}
-.chat-msg-mine {
-  margin-inline-start: auto;
+  min-width: 0;
 }
 .chat-msg-meta {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 2px 5px;
-}
-.chat-msg-mine .chat-msg-meta {
-  flex-direction: row-reverse;
-}
-.chat-msg-time,
-.chat-rail-time {
+  align-items: baseline;
+  gap: 8px;
+  min-height: calc(var(--chat-node-y) * 2 + 1px);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
 }
-.chat-msg-kind-icon {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
+.chat-msg-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.chat-msg-who {
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
+  text-transform: lowercase;
+}
+.chat-msg-alinery .chat-msg-who {
+  color: var(--warning);
+}
+.chat-msg-body {
+  position: relative;
+  min-width: 0;
+  user-select: text;
+}
+/* Your words sit in a tinted panel; the agent's answer is full-width prose with no fill. */
+.chat-msg-you .chat-msg-body {
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.chat-msg-you .chat-text-body {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.chat-pane[data-agent-bubbles="on"] .chat-msg-agent.chat-msg-reply .chat-msg-body {
+  padding: var(--chat-bubble-pad, 8px 12px);
+  border-radius: var(--radius-md);
+  background: var(--who-agent);
+}
+.chat-msg-reply .chat-md {
+  font-size: calc(var(--chat-font-size, 14px) + 1px);
+  line-height: 1.65;
+}
+.chat-msg-narration .chat-md,
+.chat-msg-narration .chat-text-body {
   color: var(--text-muted);
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.55;
+}
+.chat-journal-item[data-node="narration"] .chat-msg,
+.chat-journal-item[data-node="meta"] .chat-msg {
+  padding-top: 1px;
+}
+.chat-journal-item[data-node="error"] .chat-msg-body {
+  color: var(--danger);
+}
+.chat-journal-item[data-node="wait"] .chat-msg-body {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--warning-subtle, var(--who-alinery));
+}
+.chat-text-body.folded {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chat-fold-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.chat-fold-toggle:hover {
+  color: var(--text-strong);
+}
+/* Work strip: one line per run of tools and thoughts. */
+.chat-work-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  /* A button sizes to its content, and a wrapping row's content is as wide as the live step's unbroken first line: pin it to
+     the column so that line ellipsizes instead of running off the page. */
+  width: 100%;
+  min-height: calc(var(--chat-node-y) * 2 + 9px);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-work-line:hover {
+  color: var(--text-strong);
+}
+.chat-work-line:focus-visible,
+.chat-step-line:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.chat-work-chev {
+  color: var(--text-faint);
+  transition: transform var(--dur-view, 140ms) var(--ease-out, ease-out);
+}
+.chat-work-line[aria-expanded="true"] .chat-work-chev {
+  transform: rotate(90deg);
+}
+.chat-work-live {
+  color: var(--accent);
+}
+.chat-work-tool {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--surface-subtle);
+}
+.chat-work-now {
+  flex: 1 1 12ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.chat-work-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.chat-work-ok {
+  color: var(--success);
+}
+.chat-work-failed {
+  color: var(--danger);
+}
+.chat-steps {
+  margin: 6px 0 2px;
+  padding: 0 0 0 12px;
+  border-left: 1px solid var(--border);
+  list-style: none;
+}
+.chat-step-line {
+  display: grid;
+  grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) auto 14px;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-step-line:hover .chat-step-text {
+  color: var(--text-strong);
+}
+.chat-step-kind {
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-muted));
+}
+.chat-step-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.chat-step-text.thought {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.chat-step-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.chat-step-mark {
+  display: inline-flex;
+  color: var(--success);
+}
+.chat-step.failed .chat-step-mark,
+.chat-step.failed .chat-step-kind {
+  color: var(--danger);
+}
+.chat-step-out {
+  max-height: 24em;
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.chat-step-out.chat-step-thought {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-style: italic;
+}
+.chat-turn-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat-turn-end .chat-turn-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.chat-turn-end .chat-turn-copy {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 .chat-rail-icon {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
   color: var(--text-muted);
-}
-.chat-rail-line .chat-rail-icon {
-  width: 16px;
-  height: 16px;
-}
-.chat-msg-who {
-  font-size: 12px;
-  line-height: 1;
-  font-weight: 500;
-}
-.chat-msg-you .chat-msg-who {
-  color: var(--text-strong);
-}
-.chat-msg-agent .chat-msg-who {
-  color: var(--accent);
-}
-.chat-msg-alinery .chat-msg-who {
-  color: var(--warning);
-}
-.chat-msg-you {
-  --who-fill: var(--who-you);
-}
-.chat-msg-agent {
-  --who-fill: var(--who-agent);
-}
-.chat-msg-alinery {
-  --who-fill: var(--who-alinery);
-}
-.chat-msg-body {
-  position: relative;
-  background: var(--who-fill);
-  padding: var(--chat-bubble-pad, 8px 12px);
-  padding-inline-end: max(36px, 12px);
-  width: 100%;
-  border-radius: var(--radius-sm);
-  user-select: text;
-}
-/* Agent text replies only — thinking/tools stay on WorkRail chrome. */
-.chat-pane[data-agent-bubbles="off"] .chat-msg-agent.chat-msg-reply {
-  width: 100%;
-  max-width: 100%;
-  margin-inline-start: 0;
-}
-.chat-pane[data-agent-bubbles="off"] .chat-msg-agent.chat-msg-reply .chat-msg-body {
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
 }
 .chat-msg-kicker {
   display: flex;
@@ -5719,7 +6224,13 @@ dialog.modal::backdrop {
   right: 4px;
   bottom: 4px;
   display: flex;
+  opacity: 0;
+  transition: opacity var(--dur-view, 140ms);
   user-select: none;
+}
+.chat-msg:hover .chat-msg-copy-row,
+.chat-msg-copy-row:focus-within {
+  opacity: 1;
 }
 .chat-msg-copy-row .copy-value-button {
   width: 22px;
@@ -5735,8 +6246,7 @@ dialog.modal::backdrop {
   background: var(--surface-subtle);
   border-color: var(--border);
 }
-.chat-work-pre,
-.chat-rail-panel {
+.chat-work-pre {
   user-select: text;
 }
 .chat-face-strong {
@@ -5859,60 +6369,6 @@ dialog.modal::backdrop {
   margin-top: 4px;
   white-space: pre-wrap;
 }
-.chat-rail-line {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 2px 0;
-  padding-inline-start: 1.5em;
-  border: 0;
-  background: transparent;
-  color: var(--warning);
-  font-size: var(--chat-rail-font-size, 12px);
-  line-height: 1.3;
-  text-align: left;
-  cursor: pointer;
-}
-.chat-rail-copy {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-rail-action {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  opacity: 0.8;
-}
-.chat-rail-fold {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--dur-view) var(--ease-out);
-}
-.chat-rail-fold.open {
-  grid-template-rows: 1fr;
-}
-.chat-rail-fold-inner {
-  overflow: hidden;
-}
-.chat-rail-panel {
-  /* Indent under the copy (1.5em rail start + 16px icon + 8px gap). */
-  margin: 4px 0 2px calc(1.5em + 24px);
-  padding: 8px 12px;
-  background: var(--rail);
-  border-radius: var(--radius-sm);
-}
-.chat-pane[data-density="dense"] .chat-rail-line {
-  gap: 6px;
-  padding-block: 0;
-}
-.chat-pane[data-density="dense"] .chat-rail-panel {
-  margin-block: 2px 0;
-  padding: 6px 10px;
-}
 .chat-turn {
   display: flex;
   align-items: center;
@@ -6005,9 +6461,6 @@ dialog.modal::backdrop {
     animation: none;
     opacity: 1;
   }
-  .chat-rail-fold {
-    transition: none;
-  }
 }
 .chat-composer {
   position: relative;
@@ -6017,6 +6470,7 @@ dialog.modal::backdrop {
   background: var(--surface);
   container-type: inline-size;
 }
+/* Session stats (or keyboard hints) left, an optional centered control, character count right. */
 .chat-composer-footer {
   display: flex;
   align-items: center;
@@ -6025,103 +6479,82 @@ dialog.modal::backdrop {
   font-size: 12px;
   color: var(--text-muted);
 }
-.chat-composer-footer.has-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-}
-.chat-composer-footer.has-actions > .chat-composer-context {
-  margin-left: 0;
-  justify-self: center;
+.chat-composer-start {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .chat-composer-actions {
   min-width: 0;
-  width: 428px;
-  max-width: 100%;
+}
+.chat-composer-footer.has-center {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.chat-composer-footer.has-center > .chat-composer-context {
   justify-self: end;
 }
-.chat-composer-actions .session-continuation {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 140px));
-  align-items: stretch;
-  gap: 4px;
-  padding: 0;
-  border: 0;
+.chat-session-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+}
+/* In the bar above the transcript the lists open from the bar's left edge, not centered over it. */
+.chat-session-controls .chat-dropup {
+  left: 0;
+  transform: none;
+}
+/* Without a composer the controls sit in the bar above the transcript, so they open downward. */
+.chat-meta:has(.chat-session-controls) {
+  overflow: visible;
+}
+.chat-meta .chat-session-controls .chat-dropup {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+.chat-composer-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
   font-size: 12px;
-}
-.chat-composer-actions .session-continuation.continue-in-composer {
-  grid-template-columns: repeat(2, minmax(0, 140px));
-  justify-content: end;
-}
-.chat-composer-actions .session-continuation > [role="status"] {
-  grid-column: 1 / -1;
-}
-.chat-composer-actions .session-continuation > span > button,
-.chat-composer-actions .continuation-modes {
-  width: 100%;
-  min-width: 0;
-  height: 20px;
-  min-height: 20px;
-}
-.chat-composer-actions .continuation-modes .btn {
-  flex: 1;
-  min-width: 0;
-  padding-inline: 0;
-}
-.chat-composer-footer .chat-composer-actions .session-continuation .btn {
-  height: 20px;
-  min-height: 20px;
-  padding: 0 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  font-size: 12px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.chat-composer-footer .chat-composer-actions .session-continuation .btn:disabled {
-  opacity: 0.5;
+.chat-composer-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.chat-composer-footer .chat-composer-actions .session-continuation .btn:not(:disabled):hover {
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.chat-composer-footer .chat-composer-actions .continuation-control .btn:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.chat-composer-footer .chat-composer-actions .continuation-control .btn:not(:disabled):hover {
-  background: color-mix(in srgb, var(--accent) 86%, var(--text-strong));
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.chat-composer-actions .continuation-modes {
+.chat-composer-ctx meter {
+  width: 40px;
+  height: 6px;
   border: 0;
-  padding: 0;
-  background: transparent;
-  gap: 4px;
+  border-radius: 3px;
+  background: var(--surface-subtle);
 }
-.chat-composer-footer .chat-composer-actions .continuation-modes .btn[aria-pressed="true"] {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: transparent;
+.chat-composer-ctx meter::-webkit-meter-bar {
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--surface-subtle);
 }
-.continuation-label {
-  display: block;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.chat-composer-ctx meter::-webkit-meter-optimum-value {
+  border-radius: 3px;
+  background: var(--accent);
 }
-@container (max-width: 700px) {
-  .chat-composer-actions {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: end;
-    max-width: 100%;
-  }
+.chat-composer-ctx meter::-webkit-meter-suboptimum-value {
+  border-radius: 3px;
+  background: var(--warning);
+}
+.chat-composer-ctx meter::-webkit-meter-even-less-good-value {
+  border-radius: 3px;
+  background: var(--danger);
 }
 .chat-composer-box {
   position: relative;
@@ -6606,23 +7039,12 @@ dialog.modal::backdrop {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction)));
+  /* The artifact pane sits left of the conversation, as in the task view. */
+  grid-template-columns: minmax(var(--artifact-pane-min), min(var(--artifact-width), var(--artifact-pane-max-fraction))) 8px minmax(0, 1fr);
   overflow: hidden;
 }
 .sessionbody.no-artifacts {
   grid-template-columns: minmax(0, 1fr);
-}
-@media (max-width: 600px) {
-  .sessionbody:not(.no-artifacts) {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(120px, 28%);
-  }
-  .sessionbody > .artifact-resizer {
-    display: none;
-  }
-  .sessionbody > .artifactpane {
-    border-top: 1px solid var(--border);
-  }
 }
 .termhost {
   flex: 1 1 auto;
@@ -6994,6 +7416,38 @@ dialog.modal::backdrop {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* A pane dragged shut leaves only its divider, widened a little to hold the reopen arrow. */
+.taskdetail-body.pane-collapsed,
+.sessionbody.pane-collapsed {
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+.pane-collapsed > .artifactpane {
+  display: none;
+}
+.artifact-resizer.collapsed {
+  border-left: 0;
+}
+.pane-reopen {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.pane-reopen:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .artifactpane {
   min-width: 0;
   min-height: 0;
@@ -7017,45 +7471,240 @@ dialog.modal::backdrop {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Panel tabs share the main pane's tab look: cells divided by lines, no button chrome. A head row holding tabs is
+   a full-width strip; the side panel's first row matches the main pane's strip (same height and background) and a
+   second-level row marks its choice with an accent underline instead. A tab group elsewhere is a framed segment. */
 .artifacttabs {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-self: stretch;
 }
 .artifacttab {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  min-width: 72px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  padding: 4px 9px;
   font: inherit;
   font-size: calc(12px * var(--ui-scale));
   cursor: pointer;
-  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
-.artifacttab:hover,
+.artifacttab:hover {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
 .artifacttab.on {
-  border-color: var(--accent);
   color: var(--text-strong);
-  background: var(--accent-subtle);
+  background: var(--surface);
+  box-shadow: inset 0 4px 0 var(--accent);
 }
 .artifacttab:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+.artifacthead:has(> .artifacttabs) {
+  padding: 0 10px 0 0;
+  background: var(--surface);
+}
+.artifactpane > .artifacthead:first-child:has(> .artifacttabs) {
+  background: var(--canvas);
+}
+.artifactpane > .artifacthead:first-child .artifacttab.on {
+  background: var(--surface);
+}
+.artifacthead:not(:first-child) .artifacttab.on,
+:not(.artifactpane) > .artifacthead .artifacttab.on {
+  background: transparent;
+  box-shadow: inset 0 -4px 0 var(--accent);
+}
+:not(.artifacthead) > .artifacttabs {
+  flex: 0 0 auto;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+:not(.artifacthead) > .artifacttabs .artifacttab {
+  height: 28px;
+}
+:not(.artifacthead) > .artifacttabs .artifacttab:last-child {
+  border-right: 0;
+}
+/* Main pane tabs: Sessions, then one per opened file. A strip of fixed-width cells across the top of the pane,
+   divided by lines; the active cell takes the content background and an accent edge. Overflow scrolls sideways. */
+.task-main-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  margin: -12px -12px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.task-main-tab {
+  position: relative;
+  flex: 0 0 180px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.task-main-tab:first-child {
+  flex-basis: 120px;
+}
+.task-main-tab:hover {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+.task-main-tab.on {
+  color: var(--text-strong);
+  background: var(--surface);
+  box-shadow: inset 0 4px 0 var(--accent);
+}
+.task-main-tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A temporary tab: the next file opened with a single click replaces it. */
+.task-main-tab.temp .task-main-tab-label {
+  font-style: italic;
+}
+.task-main-tab-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  visibility: hidden;
+}
+.task-main-tab.on .task-main-tab-close,
+.task-main-tab:hover .task-main-tab-close,
+.task-main-tab-close:focus-visible {
+  visibility: visible;
+}
+.task-main-tab-close:hover {
+  color: var(--text-strong);
+  background: var(--border);
+}
+.task-main-tab-label:focus-visible,
+.task-main-tab-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.task-artifact-view {
+  flex: 1 1 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+/* The session view's main pane: its tabs, then one view at a time. An open file replaces the conversation, which stays
+   mounted but hidden (as the task view hides its Sessions tab), so the chat and terminal keep their state. */
+.session-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+.session-main > .task-main-tabs {
+  margin: 0;
+}
+.session-main-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.session-artifact-view {
+  min-width: 0;
+  margin: 12px;
+  background: var(--surface);
+}
+.session-main-body > .termhost[hidden] {
+  display: none;
+}
+.task-sessions-tab {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.task-sessions-tab[hidden] {
+  display: none;
+}
+/* A session opened from the task: its conversation fills the main pane under the task's tab strip. */
+.task-session-view {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.task-session-view[hidden] {
+  display: none;
+}
+.task-session-view > .sessionview {
+  flex: 1 1 auto;
+  height: auto;
 }
 .playbook-side-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
 }
+/* In the side panel the step list is rows divided by full-width lines, not boxed cards. */
+.playbook-side-scroll .playbook-graph-view {
+  padding: 12px 0 0;
+}
+.playbook-side-scroll .playbook-graph-title {
+  padding-inline: 12px;
+}
+.playbook-side-scroll .playbook-node {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 12px;
+}
+.playbook-side-scroll .playbook-node:first-child {
+  border-top: 1px solid var(--border);
+}
+.playbook-side-scroll .playbook-node.solid {
+  border-color: var(--border);
+}
+/* Entries are divided by full-width lines; everything else keeps the panel's 12px inset. */
 .task-history-pane {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overflow-wrap: anywhere;
-  padding: 12px;
+  padding: 12px 0;
+}
+.task-history-pane > :not(section),
+.task-history-pane > section > :not(.task-history-entry) {
+  margin-inline: 12px;
 }
 .task-history-title {
   margin: 4px 0 8px;
@@ -7071,7 +7720,7 @@ dialog.modal::backdrop {
 }
 .task-history-entry {
   border-top: 1px solid var(--border);
-  padding: 16px 0;
+  padding: 16px 12px;
 }
 .task-history-entry-heading {
   display: flex;
@@ -7680,20 +8329,24 @@ dialog.modal::backdrop {
   flex-direction: column;
   gap: 10px;
 }
+/* Artifacts are a list divided by full-width lines, like History; the repository tree keeps the 12px inset. */
 .artifactlist {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+}
+.artifactlist > .repo-tree {
+  margin: 0 12px 12px;
+  border-top: 0;
 }
 .artifactitem {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-scale));
@@ -7707,7 +8360,38 @@ dialog.modal::backdrop {
   transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .artifactitem.attachment {
-  border-style: dashed;
+  color: var(--text-muted);
+}
+/* Copy path on a file row: a small icon that shows on hover or keyboard focus, so a list of files stays quiet. A tree row is a
+   button, so its copy button sits beside it in .artifact-copy-row, which takes over the row's divider. */
+.artifact-copy-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.artifact-copy-row > .artifactitem {
+  border-bottom: 0;
+}
+.artifactitem .copy-value-button,
+.artifact-copy-row > .copy-value-button {
+  width: 22px;
+  min-width: 0;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+}
+.artifactitem .copy-value-button {
+  margin-right: 0;
+}
+.artifactitem:hover .copy-value-button,
+.artifactitem:focus-within .copy-value-button,
+.artifact-copy-row:hover > .copy-value-button,
+.artifact-copy-row:focus-within > .copy-value-button {
+  opacity: 1;
 }
 .artifactitem-name {
   flex: 1 1 auto;
@@ -7719,9 +8403,10 @@ dialog.modal::backdrop {
 .attachment-preview {
   flex-shrink: 0;
   min-width: 0;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
   overflow: hidden;
 }
 .attachment-preview summary {
@@ -7770,10 +8455,74 @@ dialog.modal::backdrop {
   gap: 8px;
   padding: 6px 10px;
 }
+/* Files panel: the task worktree under the artifacts. */
+.repo-tree {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+}
+.repo-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-family: var(--font-ui);
+}
+/* The filter takes the row's free width; it matches the small Refresh button's height. */
+.repo-tree-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.repo-tree-search .repo-tree-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding-block: 0;
+}
+.repo-tree-filter {
+  flex: 1;
+  min-width: 0;
+}
+.repo-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 12px;
+}
+.repo-tree > .repo-tree-children {
+  padding-left: 0;
+}
+.repo-tree-dir > summary {
+  cursor: pointer;
+  padding: 2px 4px;
+  color: var(--text);
+}
+.repo-tree-file {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 2px 4px 2px 18px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-tree-file:hover,
+.repo-tree-file.selected {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
 .artifact-tree {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 .artifact-tree-row {
   width: 100%;
@@ -7781,8 +8530,8 @@ dialog.modal::backdrop {
   text-align: left;
 }
 .artifact-tree-row.selected {
-  border-color: var(--accent);
   background: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .artifact-tree-chevron {
   width: 10px;
@@ -7829,7 +8578,7 @@ dialog.modal::backdrop {
   stroke-linejoin: round;
 }
 .artifactitem:hover {
-  border-color: var(--border-strong);
+  background: var(--surface-subtle);
   color: var(--text-strong);
 }
 .artifactviewer {
@@ -7853,18 +8602,83 @@ dialog.modal::backdrop {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* A source file: the gutter and the code scroll together, never wrap, so line numbers stay aligned. */
+.codeview {
+  display: flex;
+  align-items: flex-start;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+}
+.codeview pre {
+  margin: 0;
+  padding: 14px 0;
+  font: inherit;
+  white-space: pre;
+}
+.codeview .codeview-gutter {
+  position: sticky;
+  left: 0;
+  flex: none;
+  padding: 14px 10px 14px 14px;
+  text-align: right;
+  color: var(--text-faint);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.codeview .codeview-code {
+  flex: 1 0 auto;
+  padding-left: 12px;
+  padding-right: 14px;
+  color: var(--text);
+}
+.codeview .hljs-keyword,
+.codeview .hljs-selector-tag,
+.codeview .hljs-built_in,
+.codeview .hljs-meta {
+  color: var(--accent);
+}
+.codeview .hljs-string,
+.codeview .hljs-regexp,
+.codeview .hljs-addition {
+  color: var(--success);
+}
+.codeview .hljs-number,
+.codeview .hljs-literal,
+.codeview .hljs-type,
+.codeview .hljs-attr,
+.codeview .hljs-attribute {
+  color: var(--warning);
+}
+.codeview .hljs-title,
+.codeview .hljs-section,
+.codeview .hljs-name {
+  color: var(--pr-merged);
+}
+.codeview .hljs-comment,
+.codeview .hljs-quote {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.codeview .hljs-deletion {
+  color: var(--danger);
+}
 .artifactmd {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: clamp(20px, 3.2vw, 46px);
+  /* The reading column is at most 980px wide, centered by the side padding (children keep their own margins). */
+  --artifact-gutter: clamp(20px, 3.2vw, 46px);
+  padding: var(--artifact-gutter) max(var(--artifact-gutter), calc((100% - 980px) / 2));
   font-size: calc(var(--artifact-font-size) * var(--ui-scale));
   background: var(--surface);
-}
-.artifactmd > * {
-  max-width: min(980px, 100%);
 }
 .artifactmd > h1:first-child,
 .artifactmd > h2:first-child,
@@ -8229,8 +9043,7 @@ dialog.modal::backdrop {
 }
 
 /* Tier 2 — an outcome to notice, not an action to take. */
-.statusdot-failed,
-.statusdot-errored {
+.statusdot-failed {
   color: var(--danger);
 }
 .statusdot-completed {
@@ -9632,32 +10445,32 @@ dialog.modal::backdrop {
 .harness-disclosure[open] > summary { margin-bottom: 12px; }
 .harness-customizations,
 .harness-session-service { padding-top: 16px; border-top: 1px solid var(--border); }
-.omp-settings {
+.vinculum-settings {
   margin-top: 24px;
   padding: 24px 0 0;
   border-top: 1px solid var(--border);
 }
-.omp-settings h3,
+.vinculum-settings h3,
 .harness-settings-section > h3 {
   margin: 0 0 6px;
   color: var(--text-strong);
   font-size: calc(16px * var(--ui-scale));
   font-weight: 600;
 }
-.omp-settings-heading {
+.vinculum-settings-heading {
   margin-bottom: 20px;
 }
-.omp-settings h4 {
+.vinculum-settings h4 {
   margin: 0 0 10px;
   font-size: calc(14px * var(--ui-scale));
   font-weight: 600;
 }
-.omp-settings .hint {
+.vinculum-settings .hint {
   margin: 0 0 12px;
   color: var(--text-muted);
   font-size: calc(12px * var(--ui-scale));
 }
-.omp-settings > section + section,
+.vinculum-settings > section + section,
 .harness-settings-section {
   margin-top: 20px;
   padding-top: 18px;
@@ -9666,63 +10479,67 @@ dialog.modal::backdrop {
 .harness-settings-section > h3 {
   margin-bottom: 14px;
 }
-.omp-installation-paths {
-  display: grid;
-  gap: 4px;
-  margin-bottom: 12px;
-  font-size: calc(12px * var(--ui-scale));
-  overflow-wrap: anywhere;
-}
-.omp-update-offer {
-  margin-top: 14px;
-}
-.omp-customization-actions,
-.omp-inventory-heading {
+.vinculum-customization-actions,
+.vinculum-inventory-heading {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
 }
-.omp-customization-actions {
+.vinculum-customization-actions {
   margin-bottom: 20px;
 }
-.omp-inventory-heading h5 {
+.vinculum-inventory-heading h5 {
   margin: 0;
   font-size: calc(13px * var(--ui-scale));
   font-weight: 600;
 }
-.omp-inventory-scope {
+.vinculum-inventory-scope {
   max-width: 90ch;
   margin: 8px 0 12px;
   font-size: calc(12px * var(--ui-scale));
   line-height: 1.5;
 }
-.omp-customization-list {
+.vinculum-customization-list {
   list-style: none;
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-.omp-customization-list > li {
+.vinculum-customization-list > li {
   display: flex;
   align-items: start;
   flex-wrap: wrap;
   gap: 12px;
   padding: 12px;
 }
-.omp-customization-list > li + li {
+.vinculum-customization-list > li + li {
   border-top: 1px solid var(--border);
 }
-.omp-customization-details {
+.vinculum-customization-details {
   flex: 1;
   min-width: 180px;
   overflow-wrap: anywhere;
   font-size: calc(13px * var(--ui-scale));
 }
-.omp-customization-source {
+.vinculum-customization-details .skill-included {
+  margin-left: 8px;
+}
+.skill-counter {
+  margin: 0 0 8px;
+}
+.vinculum-customization-source {
   margin-top: 4px;
   font-size: calc(12px * var(--ui-scale));
+}
+.vinculum-customization-groups {
+  display: grid;
+  gap: 16px;
+}
+.vinculum-customization-groups h5 {
+  margin: 0 0 8px;
+  font-size: calc(13px * var(--ui-scale));
 }
 .grid-view-settings-list {
   display: grid;
@@ -9790,157 +10607,395 @@ dialog.modal::backdrop {
   }
 }
 
-.session-continuation-anchor {
-  position: relative;
-  flex: 0 0 0;
-  height: 0;
-  z-index: 2;
+/* The thread canvas (ChatCanvas): the chat narrows to a right column and the panels take the rest. */
+.chat-view[data-canvas="on"] {
+  --chat-col-min: 0px;
 }
-.session-continuation-anchor > .session-continuation {
-  position: absolute;
-  right: 14px;
-  bottom: 10px;
+.chat-view[data-canvas="on"] .chat-main {
+  flex: 0 0 clamp(320px, 30%, 440px);
+  border-left: 1px solid var(--border);
 }
-.session-continuation-anchor > .session-continuation {
-  max-width: calc(100% - 28px);
+.chat-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr);
+}
+.chat-canvas[data-count="2"] {
+  grid-template-columns: minmax(0, 64fr) minmax(0, 36fr);
+}
+.chat-canvas[data-count="3"] {
+  grid-template-columns: minmax(0, 28fr) minmax(0, 42fr) minmax(0, 30fr);
+}
+.chat-canvas[data-count="4"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.chat-canvas-empty {
+  place-items: center;
+  color: var(--text-faint);
+  text-align: center;
+}
+.canvas-slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.canvas-slot[data-focus="true"] {
+  border-color: var(--accent);
+}
+.canvas-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.canvas-slot-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-slot-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+.canvas-slot[data-kind="html"] .canvas-slot-body {
+  padding: 0;
+  overflow: hidden;
+}
+.canvas-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.canvas-chart {
+  width: 100%;
+}
+.canvas-table-wrap {
+  margin: -12px -16px;
+}
+.canvas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.canvas-table th,
+.canvas-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.canvas-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.canvas-error {
+  color: var(--danger, var(--text-muted));
+}
+.canvas-slot[data-kind="file"] .canvas-slot-body,
+.canvas-slot[data-kind="files"] .canvas-slot-body {
+  display: flex;
+  flex-direction: column;
+}
+.canvas-file {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.canvas-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.canvas-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.canvas-file-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.canvas-file-preview .canvas-table-wrap {
+  margin: 0;
+}
+.canvas-file-frame {
+  flex: 1 1 auto;
+  min-height: 240px;
+}
+.canvas-image {
+  max-width: 100%;
+  height: auto;
+  align-self: flex-start;
+}
+.canvas-text {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.canvas-pdf-pages {
+  display: grid;
+  gap: 8px;
+}
+.canvas-pdf-page {
+  width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.canvas-sheet-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.canvas-sheet-tabs button {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.canvas-sheet-tabs button.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.canvas-files-back {
+  align-self: flex-start;
+}
+.canvas-files-open {
   padding: 0;
   border: 0;
-  font-size: calc(12px * var(--ui-scale));
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.chat-floating-footer {
-  position: absolute;
-  inset-inline: 12px 14px;
-  bottom: 2px;
+.canvas-deck-note {
+  margin: 0 0 8px;
+}
+.canvas-files-note {
+  padding: 8px 10px;
+}
+
+/* A row of controls that read as one: touching, shared outer corners, a single line between each. A pressed toggle
+   stays highlighted while the view it opens is showing. Last in the file so it wins over row gaps such as .crow. */
+.btn-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.btn-group > :is(.btn, .field-input) {
+  margin: 0 0 0 -1px;
+  border-radius: 0;
+}
+.btn-group > :is(.btn, .field-input):first-child {
+  margin-left: 0;
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+.btn-group > :is(.btn, .field-input):last-child {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.btn-group > :is(.btn, .field-input):is(:hover, :focus-visible, :focus) {
+  position: relative;
+  z-index: 1;
+}
+.btn-group > .btn[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--text-strong);
+}
+
+/* Who started a daemon someone else runs, after its repo name; and the host's daemons this app has not opened. */
+.sync-link-starter {
+  color: var(--text-faint);
+}
+.sync-link-other {
+  opacity: 0.75;
+}
+
+/* A path in a chat reply that names a file the view can open: a link, opened as a tab. */
+button.chat-path-link {
+  all: unset;
+  cursor: pointer;
+}
+.chat-path-link,
+.chat-path-link code {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.chat-path-link:hover code,
+a.chat-path-link:hover {
+  text-decoration-style: solid;
+}
+button.chat-path-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* The task's Git side tab: changes, then the branch's commits, each opening a diff tab. Read only. */
+.git-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.git-pane-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  pointer-events: none;
-}
-.chat-floating-footer > * {
-  pointer-events: auto;
-}
-.chat-floating-footer > .chat-activity {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
-  align-self: flex-end;
-  padding: 0 0 4px;
-  border: 0;
-  background: transparent;
-  overflow-wrap: anywhere;
-}
-.chat-pane:has(> .session-continuation-anchor) .chat-list {
-  padding-bottom: calc(var(--chat-footer-height, 76px) + 20px);
-}
-.continuation-control [role="tooltip"] > span {
-  display: block;
-}
-.session-continuation {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  padding: 8px 12px;
   color: var(--text-muted);
-}
-.session-continuation .btn.small {
-  height: var(--control-h);
-}
-.continuation-modes {
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: var(--control-h);
-  box-sizing: border-box;
-  margin: 0;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-subtle);
-}
-.continuation-modes .btn {
-  height: 100%;
-  color: var(--text-muted);
-  background: transparent;
-  border-color: transparent;
-}
-.continuation-modes .btn[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-.session-continuation > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.continuation-control {
-  position: relative;
-  display: inline-flex;
-  max-width: 100%;
-}
-.continuation-control > button:disabled {
-  pointer-events: none;
-}
-.continuation-control:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-.continuation-control [role="tooltip"] {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  width: max-content;
-  max-width: min(320px, 100%);
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-menu);
-  color: var(--text);
-}
-.continuation-control > .primary:disabled {
-  background: var(--surface-subtle);
-  color: var(--text-muted);
-  opacity: 1;
-}
-.session-continuation > button,
-.continuation-control > button {
-  flex: 0 0 auto;
-  max-width: 100%;
-  height: auto;
-  min-height: var(--control-h);
-  padding-block: 6px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.chat-composer-row > .continuation-control {
-  min-width: 0;
-  max-width: 50%;
-}
-.chat-composer-row > .continuation-control > button {
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
   font-size: calc(12px * var(--ui-scale));
 }
+.git-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.git-list > .dim {
+  padding: 8px 12px;
+}
+.git-row {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.git-row:hover {
+  background: var(--accent-subtle);
+}
+.git-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.git-row-title {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-row-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.session-input-recovery {
-  padding: 8px 14px;
+.git-diff {
+  padding: 12px;
+}
+.git-diff-loading {
+  padding: 12px;
+}
+.git-diff-header,
+.git-diff-lines {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  user-select: text;
+}
+.git-diff-header {
+  margin-bottom: 12px;
+  color: var(--text-muted);
+}
+.git-diff-file {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.git-diff-file-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+}
+.git-diff-file-head > :first-child {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
-.session-input-recovery > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding-block: 4px;
+.git-diff-lines {
+  padding: 6px 0;
 }
-.session-input-recovery > div > span {
-  flex: 1 1 200px;
-  min-width: 0;
+.git-diff-lines > span {
+  display: block;
+  padding: 0 10px;
+}
+.git-diff-lines > .diff-add {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+.git-diff-lines > .diff-del {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.git-diff-lines > .diff-hunk {
+  color: var(--accent);
+}
+.git-diff-lines > .diff-meta {
+  color: var(--text-muted);
+}
+.git-diff-file-head > .diff-add {
+  color: var(--success);
+}
+.git-diff-file-head > .diff-del {
+  color: var(--danger);
 }

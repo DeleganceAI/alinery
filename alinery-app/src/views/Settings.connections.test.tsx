@@ -37,9 +37,6 @@ const globalSettings: GlobalSettings = {
 vi.mock("../ipc", () =>
   mockIpc({
     readGlobalSettings: async () => globalSettings,
-    storageInfo: async () => {
-      throw new Error("Storage is not used by this test");
-    },
     connectionStatuses: vi.fn(async () => []),
   }),
 );
@@ -59,6 +56,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",

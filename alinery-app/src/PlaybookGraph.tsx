@@ -579,7 +579,7 @@ export function PlaybookGraph({
                 <dd>{selectedStep.harness || (defaultHarness ? `Inherits playbook default: ${defaultHarness}` : "Inherits task default")}</dd>
                 <dt>Coding step</dt>
                 <dd>{selectedStep.is_coding_step ? "Yes" : "No"}</dd>
-                <dt>Continue automatically by default</dt>
+                <dt>Automatic completion by default</dt>
                 <dd>{selectedStep.auto_advance_default ? "Yes" : "No"}</dd>
               </dl>
               <h4>Inputs</h4>
@@ -668,7 +668,11 @@ export function PlaybookGraph({
               <span className="playbook-node-count" aria-label={`${step.title}: ${countsByStep[step.key] ?? 0} active sessions`}>
                 {countsByStep[step.key] ?? 0} active
               </span>
-              <span className="playbook-node-autoadvance">{selectedAutoAdvance.includes(step.key) ? "Continue automatically" : "Wait for me"}</span>
+              {selectedAutoAdvance.includes(step.key) && (
+                <span className="playbook-node-autoadvance" title="Completion automatically authorized">
+                  Automatic
+                </span>
+              )}
             </div>
           </div>
         ))}

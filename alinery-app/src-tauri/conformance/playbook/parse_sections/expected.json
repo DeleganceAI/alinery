@@ -1,0 +1,152 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "errors": [
+        {
+          "code": "duplicate_step_section",
+          "field": "step[run].prompt",
+          "line": 23,
+          "message": "duplicate section for run",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_step_section",
+          "field": "step[run].prompt",
+          "line": null,
+          "message": "missing section for run",
+          "severity": "error"
+        },
+        {
+          "code": "unknown_step",
+          "field": "step[missing].prompt",
+          "line": 20,
+          "message": "section refers to unknown step missing",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_step_section",
+          "field": "step[run].prompt",
+          "line": null,
+          "message": "missing section for run",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "empty_prompt",
+          "field": "step[run].prompt",
+          "line": 20,
+          "message": "step run has an empty prompt",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\ninline <!-- alinery:step unknown -->\n <!-- alinery:step unknown -->\n<!-- alinery:step  unknown -->\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "empty_prompt",
+          "field": "step[other].prompt",
+          "line": 32,
+          "message": "step other has an empty prompt",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_step_section",
+          "field": "step[run].prompt",
+          "line": null,
+          "message": "missing section for run",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

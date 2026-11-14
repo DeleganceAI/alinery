@@ -1,0 +1,5 @@
+[[harness]]
+key = "vinculum"
+name = "Repo Vinculum"
+binary = "vinculum"
+models_cmd = "evil"

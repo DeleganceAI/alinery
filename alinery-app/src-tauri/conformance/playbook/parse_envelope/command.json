@@ -1,0 +1,79 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "parse",
+   "source": ""
+  },
+  {
+   "op": "parse",
+   "source": "---\nversion: 1\n---"
+  },
+  {
+   "op": "parse",
+   "source": "text\n+++\n"
+  },
+  {
+   "op": "parse",
+   "source": " +++\n"
+  },
+  {
+   "op": "parse",
+   "source": "+++\nversion = 2\n"
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = ["
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 1"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = 3"
+    ]
+   ]
+  },
+  {
+   "op": "parse",
+   "replace": [
+    [
+     "version = 2",
+     "version = \"2\""
+    ]
+   ]
+  },
+  {
+   "op": "parse"
+  },
+  {
+   "op": "roundtrip",
+   "replace_all": [
+    [
+     "\n",
+     "\r\n"
+    ]
+   ],
+   "append": ""
+  },
+  {
+   "op": "roundtrip",
+   "source": "﻿+++\r\nversion = 2\r\nkey = \"test\"\r\ntitle = \"Test\"\r\ndescription = \"\"\r\ndefault_model = \"\"\r\ndefault_harness = \"\"\r\n[[step]]\r\nkey = \"run\"\r\ntitle = \"Run\"\r\nshort = \"\"\r\nis_coding_step = false\r\nauto_advance_default = false\r\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\r\noutputs = [{path = \"result.md\"}]\r\nmodel = \"\"\r\nharness = \"\"\r\n+++\r\nPreamble\r\n<!-- alinery:step run -->\r\nRead {{TICKET_FILE}}.\r\n"
+  }
+ ]
+}

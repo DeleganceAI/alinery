@@ -1,0 +1,185 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [
+     {
+      "scope": "global",
+      "key": "personal"
+     },
+     {
+      "scope": "bundled",
+      "key": "superdevelop"
+     }
+    ],
+    "entries": [
+     {
+      "reference": {
+       "scope": "global",
+       "key": "personal"
+      },
+      "preferred": true,
+      "hidden": true,
+      "collapsed": false,
+      "badge": "G",
+      "color": "#123456",
+      "last_imported_at_ms": 123
+     },
+     {
+      "reference": {
+       "scope": "bundled",
+       "key": "one-shot"
+      },
+      "preferred": true,
+      "hidden": false,
+      "collapsed": true,
+      "badge": null,
+      "color": null,
+      "last_imported_at_ms": null
+     }
+    ]
+   }
+  },
+  {
+   "op": "read_file",
+   "path": "repo/.alinery/playbooks/picker.toml"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [
+     {
+      "scope": "repo",
+      "key": "Bad"
+     }
+    ],
+    "entries": []
+   }
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [
+     {
+      "scope": "repo",
+      "key": "a"
+     },
+     {
+      "scope": "repo",
+      "key": "a"
+     }
+    ],
+    "entries": []
+   }
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [],
+    "entries": [
+     {
+      "reference": {
+       "scope": "repo",
+       "key": "a"
+      },
+      "preferred": false,
+      "hidden": false,
+      "collapsed": false,
+      "badge": null,
+      "color": null,
+      "last_imported_at_ms": 5
+     }
+    ]
+   }
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [],
+    "entries": [
+     {
+      "reference": {
+       "scope": "repo",
+       "key": "a"
+      },
+      "preferred": false,
+      "hidden": false,
+      "collapsed": false,
+      "badge": null,
+      "color": null,
+      "last_imported_at_ms": null
+     },
+     {
+      "reference": {
+       "scope": "repo",
+       "key": "a"
+      },
+      "preferred": true,
+      "hidden": false,
+      "collapsed": false,
+      "badge": null,
+      "color": null,
+      "last_imported_at_ms": null
+     }
+    ]
+   }
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "title = \"Not definition storage\""
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "[[entries]]\nreference = { scope = \"repo\", key = \"a\" }\n"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "[[order]]\nscope = \"nowhere\"\nkey = \"a\"\n"
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "write_file",
+   "path": "repo/.alinery/playbooks/picker.toml",
+   "text": "order = ["
+  },
+  {
+   "op": "load_picker"
+  },
+  {
+   "op": "save_picker",
+   "preferences": {
+    "order": [],
+    "entries": []
+   }
+  },
+  {
+   "op": "load_picker"
+  }
+ ]
+}

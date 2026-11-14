@@ -1,48 +1,42 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canStage, chatThreadAttachmentDir, classifyAttachment, type DraftAttachment, draftToRowAttachments, isHttpUrl, revokeDraftPreviewUrls } from "../chat/attachments";
-import { formatContextUsage } from "../chat/format";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
-import { applySendPlan, commandOutputText, planChatSend, requireWritten } from "../chat/send";
-import { type McpServerRow, type ProvidersDialogTab, parseMcpListOutput } from "../chat/slash";
+import { applySendPlan, planChatSend } from "../chat/send";
+import type { McpServerRow, ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
 import {
-  appendHarnessNotice,
   appendOptimisticAbort,
   appendOptimisticUser,
+  applySessionControls,
+  applyVinculumTranscript,
   type ChatTranscriptState,
-  carryOver,
   emptyTranscript,
-  matchingSendFailure,
-  matchingSendSuccess,
   needsUiReply,
-  type PendingUi,
-  settleRefusedSend,
+  type SessionControls,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
-import { compactCommand, getStateCommand, type ImageContent, promptCommand, setAutoCompactionCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
+import {
+  abortChatThread,
+  copyChatThreadAttachments,
+  promptChatThread,
+  readChatThreadImage,
+  resumeChatThread,
+  setChatModel,
+  startChatThread,
+  writeChatThreadAttachmentBytes,
+} from "../sync/chat";
+import { useSessionObservation } from "../sync/sessionObservation";
+import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
+import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../vinculumRpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
-import {
-  abortTurnCommand,
-  applyChatValue,
-  applyModelCommand,
-  applyPlainSend,
-  attachHandshake,
-  chatTerminalIo,
-  olderPageState,
-  parseChatLine,
-  queueRefreshCommand,
-  readJournalThrough,
-  sendCommand,
-  sendNowCommand,
-} from "./chatSession";
+import { applyPlainSend, chatTerminalIo, sendCommand, sendNowCommand } from "./chatSession";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
-import { useChatUiReplies } from "./useChatUiReplies";
 
 export function threadLabel(thread: ChatThread): string {
   if (thread.name) return thread.name;
@@ -60,7 +54,7 @@ export function errorMessage(cause: unknown): string {
 const NO_TRANSCRIPT = emptyTranscript();
 
 /**
- * The RPC link to a thread's OMP. `offline` is a thread with no process to talk to
+ * The RPC link to a thread's Vinculum. `offline` is a thread with no process to talk to
  * (never started, exited, or in its terminal): its history is readable and that is not an error.
  */
 type Connection = { state: "connecting" } | { state: "ready" } | { state: "offline" } | { state: "failed"; detail: string };
@@ -69,7 +63,7 @@ type Connection = { state: "connecting" } | { state: "ready" } | { state: "offli
  * Busy comes from the turn itself (live transcript first, then the observation poll), the same
  * predicate task sessions use, and decides whether a send queues. The displayed kind is the observed
  * one; the transcript only moves it to Running in the gap before the poll sees the turn, and a
- * booting OMP (process up, agent not yet `ready`) has no turn, so a new thread reads Idle.
+ * booting Vinculum (process up, agent not yet `ready`) has no turn, so a new thread reads Idle.
  */
 export function chatActivity(
   observation: SessionObservation | null,
@@ -77,15 +71,13 @@ export function chatActivity(
 ): { status: SessionChatStatus; turnActive: boolean; kind: ObservationDisplayKind } {
   const raw = observation ? observationDisplayKind(observation) : null;
   const turnActive = isTurnActive({ pendingTurn: transcript.pendingTurn, turnOpen: transcript.turnOpen, observation });
-  const status: SessionChatStatus = raw === "waiting_for_approval" ? "waiting_approval" : turnActive ? "running" : "idle";
+  const answering = transcript.pendingUi.some((request) => needsUiReply(request.method));
+  // Approval with no card is a stuck harness, not a prompt the user can answer. Keep Stop available.
+  const status: SessionChatStatus = raw === "waiting_for_approval" && answering ? "waiting_approval" : turnActive ? "running" : "idle";
   // Nothing observed yet is Loading, never Idle.
   if (raw === null) return { status, turnActive, kind: "loading" };
   const quiet = raw === "loading" || raw === "starting" || raw === "idle";
   return { status, turnActive, kind: quiet ? (turnActive ? "busy" : "idle") : raw };
-}
-
-function interruptedWithoutJournal(thread: ChatThread, transcript: ChatTranscriptState): boolean {
-  return thread.session.ended_at != null && thread.session.harness_resume_token.length === 0 && transcript.entries.length === 0;
 }
 
 export type ChatThreadSnapshot = {
@@ -97,17 +89,14 @@ export type ChatThreadSnapshot = {
   attachments: DraftAttachment[];
   sending: boolean;
   error: string;
-  loadingOlder: boolean;
   processLive: boolean;
   inTerminal: boolean;
   terminalIo: SessionTerminalIo | undefined;
   statusKind: ObservationDisplayKind;
-  contextUsage: string | null;
   modelLabel: string;
   blocked: boolean;
   disconnected: string | null;
   sendNowEnabled: boolean;
-  prompt: PendingUi | undefined;
   providersDialog: { tab: ProvidersDialogTab; preselect: string } | null;
   toolsOpen: boolean;
   mcpDialog: { rows: McpServerRow[]; empty: boolean } | null;
@@ -118,8 +107,6 @@ type ChatThreadApi = {
   sendNow: (who: symbol) => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setDraft: (value: string) => void;
   stagePaths: (paths: string[]) => void;
   stageBlobs: (files: File[]) => void;
@@ -128,9 +115,7 @@ type ChatThreadApi = {
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
+  applyControls: (controls: Partial<SessionControls>) => void;
 };
 
 const IDLE_ACTIVITY = chatActivity(null, NO_TRANSCRIPT);
@@ -144,17 +129,14 @@ const EMPTY_SNAPSHOT: ChatThreadSnapshot = {
   attachments: [],
   sending: false,
   error: "",
-  loadingOlder: false,
   processLive: false,
   inTerminal: false,
   terminalIo: undefined,
   statusKind: "loading",
-  contextUsage: null,
   modelLabel: "Model",
   blocked: false,
   disconnected: null,
   sendNowEnabled: false,
-  prompt: undefined,
   providersDialog: null,
   toolsOpen: false,
   mcpDialog: null,
@@ -165,8 +147,6 @@ const NO_API: ChatThreadApi = {
   sendNow: () => {},
   abort: () => {},
   reconnect: () => {},
-  loadOlder: () => {},
-  setObserved: () => {},
   setDraft: () => {},
   stagePaths: () => {},
   stageBlobs: () => {},
@@ -175,9 +155,7 @@ const NO_API: ChatThreadApi = {
   setProvidersDialog: () => {},
   setToolsOpen: () => {},
   setMcpDialog: () => {},
-  approve: () => {},
-  reply: () => {},
-  cancelUi: () => {},
+  applyControls: () => {},
 };
 
 type Verdict = { text: string; attachments: DraftAttachment[]; entryId: string | null; refused: boolean };
@@ -443,18 +421,14 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
   sendNow: () => void;
   abort: () => void;
   reconnect: () => void;
-  loadOlder: () => void;
-  setObserved: (value: SessionObservation) => void;
   setProvidersDialog: (value: { tab: ProvidersDialogTab; preselect: string } | null) => void;
   setToolsOpen: (value: boolean) => void;
   setMcpDialog: (value: { rows: McpServerRow[]; empty: boolean } | null) => void;
-  approve: (id: string, allow: boolean) => void;
-  reply: (id: string, value: string) => void;
-  cancelUi: (id: string) => void;
+  applyControls: (controls: Partial<SessionControls>) => void;
 };
 
 /**
- * One live OMP attach per thread. Chat and the pinned window both call this; the first subscriber
+ * One live Vinculum attach per thread. Chat and the pinned window both call this; the first subscriber
  * starts the connection and the last one detaches it. A second attach's detach drops the first.
  */
 export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions): ChatThreadHandle {
@@ -519,14 +493,6 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
   const entry = key ? registry.entries.get(key) : undefined;
   const api = entry?.api ?? NO_API;
   const disconnected = snap.connection.state === "failed" && !snap.inTerminal ? snap.connection.detail : null;
-  // ChatEntryRow is memoized. A fresh approve on every snapshot (this hook re-renders on each RPC
-  // line) redraws every visible row. The entry is stable; its api is replaced in place.
-  const approve = useCallback(
-    (id: string, allow: boolean) => {
-      entry?.api.approve(id, allow);
-    },
-    [entry],
-  );
   return {
     ...snap,
     error,
@@ -550,14 +516,10 @@ export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions
     },
     abort: () => api.abort(),
     reconnect: () => api.reconnect(),
-    loadOlder: () => api.loadOlder(),
-    setObserved: (value) => api.setObserved(value),
     setProvidersDialog: (value) => api.setProvidersDialog(value),
     setToolsOpen: (value) => api.setToolsOpen(value),
     setMcpDialog: (value) => api.setMcpDialog(value),
-    approve,
-    reply: (id, value) => api.reply(id, value),
-    cancelUi: (id) => api.cancelUi(id),
+    applyControls: (controls) => api.applyControls(controls),
   };
 }
 
@@ -571,9 +533,9 @@ function nextAttachmentId() {
 function threadAttachmentStore(repoPath: string, sessionId: string) {
   return {
     stat: (path: string) => ipc.chatFileStat(path),
-    copy: (paths: string[]) => ipc.copyChatThreadAttachments(repoPath, sessionId, paths),
-    writeBytes: (fileName: string, bytes: number[]) => ipc.writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, bytes),
-    readImage: (name: string) => ipc.readChatThreadImage(repoPath, sessionId, name),
+    copy: (paths: string[]) => copyChatThreadAttachments(repoPath, sessionId, paths),
+    writeBytes: (fileName: string, bytes: number[]) => writeChatThreadAttachmentBytes(repoPath, sessionId, fileName, Uint8Array.from(bytes)),
+    readImage: (name: string) => readChatThreadImage(repoPath, sessionId, name),
     trailerDir: chatThreadAttachmentDir(repoPath, sessionId),
   };
 }
@@ -594,16 +556,16 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   const id = thread.session.id;
   const key = entry.key;
   const [epoch, setEpoch] = useState(0);
-  const [transcript, setTranscript] = useState<ChatTranscriptState>(entry.snapshot.transcript);
+  const [transcript, setTranscript] = useState<ChatTranscriptState>(NO_TRANSCRIPT);
   const transcriptRef = useRef(transcript);
   transcriptRef.current = transcript;
-  const [observation, setObservation] = useState<SessionObservation | null>(null);
+  const observation = useSessionObservation(repo, "", id);
+  const endedRef = useRef<(() => void) | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: "connecting" });
   const [providersDialog, setProvidersDialog] = useState<{ tab: ProvidersDialogTab; preselect: string } | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [mcpDialog, setMcpDialog] = useState<{ rows: McpServerRow[]; empty: boolean } | null>(null);
   const mcpListWait = useRef(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const [autoCompaction, setAutoCompactionState] = useState(entry.autoCompaction);
   const autoCompactionRef = useRef(autoCompaction);
   autoCompactionRef.current = entry.autoCompaction;
@@ -622,25 +584,16 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     };
   }, [entry]);
 
-  const updateTranscript = useCallback(
-    (update: (current: ChatTranscriptState) => ChatTranscriptState) => {
-      const next = update(transcriptRef.current);
-      transcriptRef.current = next;
-      entry.snapshot = { ...entry.snapshot, transcript: next };
-      setTranscript(next);
-      registry.touch(entry);
-    },
-    [entry, registry],
-  );
+  const updateTranscript = useCallback((update: (current: ChatTranscriptState) => ChatTranscriptState) => {
+    setTranscript(update);
+  }, []);
 
   // The thread object is read at the start of the run. A later list refresh must not restart the attach.
   // biome-ignore lint/correctness/useExhaustiveDependencies: epoch, repo, and id are the attach identity.
   useEffect(() => {
     const threadNow = entry.thread ?? thread;
     compactionPushed.current = `${key}:${autoCompactionRef.current}`;
-    const attachId = ipc.nextAttachId();
     const claimed = registry.pendingPrompt?.key === key ? registry.pendingPrompt : null;
-    const through = transcriptRef.current.fileStart;
     let cancelled = false;
     registry.setError((current) => (current === "cannot continue" ? "" : current));
     setConnection({ state: "connecting" });
@@ -651,176 +604,57 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       setConnection({ state: "offline" });
       for (const sub of entry.subs.values()) void Promise.resolve(sub.onReload()).catch(() => {});
     };
-    const stopClosed = ipc.onStreamClosed(
-      id,
-      attachId,
-      () => {
-        ipc.chatSessionStatus(repo, id).then(
-          (next) => {
-            if (cancelled || next.transport === "pty") return;
-            if (next.transport === "rpc" && next.lifecycle.state === "live") setEpoch((value) => value + 1);
-            else ended();
-          },
-          () => {
-            if (!cancelled) setEpoch((value) => value + 1);
-          },
-        );
-      },
-      () => {
-        if (!cancelled) setConnection({ state: "failed", detail: "The live connection closed repeatedly, so automatic reconnection stopped. Reconnect to try again." });
-      },
-    );
-    const observe = () => {
-      if (!entryIsActive(entry)) return;
-      ipc
-        .chatSessionStatus(repo, id)
-        .then((next) => {
-          if (cancelled) return;
-          setObservation(next);
-          if (threadNow.session.ended_at == null && (next.lifecycle.state === "exited" || next.lifecycle.state === "live_exited")) ended();
-        })
-        .catch(() => {});
-    };
-    observe();
-    const timer = window.setInterval(observe, 1500);
+    endedRef.current = ended;
     const dropClaim = (message: string) => {
       if (!claimed || registry.pendingPrompt !== claimed) return;
       registry.pendingPrompt = null;
       registry.setSending(null);
       registry.setError(message);
     };
-    readJournalThrough((end, want) => ipc.readChatOmp({ repoPath: repo, id, end, want }), through)
-      .then(
-        (next) => {
-          if (cancelled) return;
-          setTranscript((current) => carryOver(current, next));
-          if (interruptedWithoutJournal(threadNow, next)) registry.setError("cannot continue");
-        },
-        () => {
-          if (cancelled) return;
-          setTranscript((current) => current ?? emptyTranscript());
-          if (threadNow.session.ended_at != null && threadNow.session.harness_resume_token.length === 0) registry.setError("cannot continue");
-        },
-      )
-      .then(async () => {
-        if (cancelled) return;
-        if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
-          setConnection({ state: "offline" });
-          dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
-          return;
-        }
-        try {
-          await ipc.chatRpcAttach({
-            repoPath: repo,
-            id,
-            attachId,
-            streamToken: 1,
-            onLine: (line) => {
-              if (cancelled) return;
-              const value = parseChatLine(line);
-              updateTranscript((current) => applyChatValue(current, value));
-              for (const [commandId, awaiting] of entry.verdicts) {
-                const refused = matchingSendFailure(value, commandId);
-                if (refused !== null) {
-                  awaiting.refused = true;
-                  entry.verdicts.delete(commandId);
-                  const draft = entry.draft;
-                  const restore = draft.trim() === "" || draft === awaiting.text;
-                  if (restore) entry.draft = awaiting.text;
-                  restoreAttachments(awaiting.attachments);
-                  updateTranscript((current) => settleRefusedSend(current, awaiting.entryId, awaiting.text, restore));
-                  registry.setError(`Not sent: ${refused}`);
-                  break;
-                }
-                if (matchingSendSuccess(value, commandId)) {
-                  revokeDraftPreviewUrls(awaiting.attachments);
-                  entry.verdicts.delete(commandId);
-                  break;
-                }
-              }
-              if (mcpListWait.current) {
-                const listed = commandOutputText(value);
-                if (listed !== null) {
-                  mcpListWait.current = false;
-                  const parsed = parseMcpListOutput(listed);
-                  setMcpDialog(parsed === "empty" ? { rows: [], empty: true } : { rows: parsed, empty: false });
-                }
-              }
-              const refresh = queueRefreshCommand(value);
-              if (refresh)
-                ipc
-                  .chatRpcWrite(repo, id, refresh)
-                  .then(requireWritten)
-                  .catch((cause: unknown) => registry.setError(errorMessage(cause)));
-            },
-          });
-          if (cancelled) {
-            ipc.chatDetach(repo, id, attachId).catch(() => {});
+    const stopTranscript = watchSessionTranscript(repo, { taskSlug: "", id }, (reply) => {
+      if (!cancelled) updateTranscript(() => applyVinculumTranscript(reply));
+    });
+    if (threadNow.session.started_at == null || threadNow.session.ended_at != null || threadNow.session.archived) {
+      setConnection({ state: "offline" });
+      dropClaim("Ava is not running in this thread, so the message was not sent. It is still in the composer.");
+    } else {
+      setConnection({ state: "ready" });
+      if (claimed) {
+        void (async () => {
+          try {
+            const prepared = claimed.attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), claimed.text, claimed.attachments) : null;
+            await writeSend(
+              prepared?.message ?? claimed.text,
+              sendCommand(prepared?.message ?? claimed.text, false),
+              (current) => applyPlainSend(current, claimed.text, false, prepared ? draftToRowAttachments(claimed.attachments) : undefined),
+              claimed.attachments,
+            );
+          } catch (cause) {
+            if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
             return;
           }
-          for (const command of attachHandshake(autoCompactionRef.current)) {
-            requireWritten(await ipc.chatRpcWrite(repo, id, command));
-          }
-        } catch (cause) {
-          if (cancelled) return;
-          const detail = errorMessage(cause);
-          const offline = detail === "unknown-session" || detail === "wrong-transport";
-          setConnection(offline ? { state: "offline" } : { state: "failed", detail });
-          dropClaim(offline ? "Ava is not running in this thread, so the message was not sent. It is still in the composer." : `Not sent: ${detail}`);
-          return;
-        }
-        if (cancelled) return;
-        setConnection({ state: "ready" });
-        if (!claimed) return;
-        try {
-          const prepared = claimed.attachments.length > 0 ? await prepareAttachments(claimed.text, claimed.attachments) : null;
-          if (cancelled) return;
-          const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
-          await writeSend(
-            claimed.text,
-            sendCommand(prepared?.message ?? claimed.text, false, prepared?.images),
-            (current) => applyPlainSend(current, claimed.text, false, row),
-            prepared?.copied ?? claimed.attachments,
-          );
-        } catch (cause) {
-          if (!cancelled) dropClaim(`Not sent: ${errorMessage(cause)}`);
-          return;
-        }
-        if (registry.pendingPrompt === claimed) registry.pendingPrompt = null;
-        if (registry.sendingKey === key) registry.setSending(null);
-      });
+          if (registry.pendingPrompt === claimed) registry.pendingPrompt = null;
+          if (registry.sendingKey === key) registry.setSending(null);
+        })();
+      }
+    }
     return () => {
       cancelled = true;
-      if (claimed && registry.pendingPrompt === claimed) {
-        registry.pendingPrompt = null;
-        if (registry.sendingKey === key) registry.setSending(null);
-      }
-      window.clearInterval(timer);
-      stopClosed();
-      ipc.chatDetach(repo, id, attachId).catch(() => {});
+      endedRef.current = null;
+      stopTranscript();
     };
   }, [epoch, repo, id]);
 
-  function restoreAttachments(attachments: DraftAttachment[]) {
-    const restored = new Map(attachments.map((item) => [item.id, item]));
-    entry.attachments = entry.attachments.map((item) => restored.get(item.id) ?? item);
-    const present = new Set(entry.attachments.map((item) => item.id));
-    entry.attachments.push(...attachments.filter((item) => !present.has(item.id)));
-    registry.touch(entry);
-  }
-
-  async function prepareAttachments(text: string, attachments: DraftAttachment[]) {
-    const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
-    // Keep copied paths for a retry even when the source disappears after this write.
-    const copied = new Map(prepared.copied.map((item) => [item.id, item]));
-    entry.attachments = entry.attachments.map((item) => copied.get(item.id) ?? item);
-    registry.touch(entry);
-    return prepared;
-  }
+  // A thread whose process has exited ends the attach, once per attach.
+  const stopped = observation?.lifecycle.state === "exited" || observation?.lifecycle.state === "live_exited";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: epoch is a new attach, which may need ending again
+  useEffect(() => {
+    if (stopped && (entry.thread ?? thread).session.ended_at == null && entryIsActive(entry)) endedRef.current?.();
+  }, [stopped, epoch]);
 
   async function writeSend(
     text: string,
-    command: { id: string; type: string },
+    command: { id: string; type: string; images?: ImageContent[] },
     addRow: (current: ChatTranscriptState) => { state: ChatTranscriptState; entryId: string },
     attachments: DraftAttachment[] = [],
   ) {
@@ -828,15 +662,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const judged = command.type === "prompt" || command.type === "follow_up" || command.type === "abort_and_prompt";
     if (judged) entry.verdicts.set(command.id, verdict);
     try {
-      requireWritten(await ipc.chatRpcWrite(repo, id, command));
+      await promptChatThread(repo, id, text, command.images);
     } catch (cause) {
       entry.verdicts.delete(command.id);
-      if (!verdict.refused) {
-        restoreAttachments(attachments);
-        if (entry.draft !== text) {
-          updateTranscript((current) => appendHarnessNotice(current, "input_recovery", `${errorMessage(cause)}\nOriginal input:\n${text}`));
-        }
-      }
       throw cause;
     }
     if (verdict.refused || !alive.current) return;
@@ -845,7 +673,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       verdict.entryId = added.entryId;
       return added.state;
     });
-    if (entry.draft === text) entry.draft = "";
+    if (entry.draft === text || (entry.draft.length > 0 && text.startsWith(entry.draft))) entry.draft = "";
     if (attachments.length > 0) {
       const sent = new Set(attachments.map((item) => item.id));
       entry.attachments = entry.attachments.filter((item) => !sent.has(item.id));
@@ -857,7 +685,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     const currentThread = entry.thread;
     if (!currentThread || registry.sendingKey === key) return;
     const text = override ?? entry.draft;
-    let attachments = override === undefined ? entry.attachments.slice() : [];
+    const attachments = override === undefined ? entry.attachments.slice() : [];
     if (!text.trim() && attachments.length === 0) return;
     if (text.trim().startsWith("/") && attachments.length > 0) {
       registry.setError("Remove attachments or clear the slash command");
@@ -868,8 +696,8 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.ended_at != null || currentThread.session.archived) {
       registry.setSending(key);
       try {
-        const successor = await ipc.resumeChatThread(repo, id);
-        const next = `${repo}:${successor.id}`;
+        const successorId = await resumeChatThread(repo, id);
+        const next = `${repo}:${successorId}`;
         const refresh = sub()?.onResumeRefresh;
         const rebind = sub()?.onRebind;
         // Checked before the list refresh: that refresh drops the ended row, and flushing it
@@ -892,7 +720,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     if (currentThread.session.started_at == null) {
       registry.setSending(key);
       try {
-        const started = await ipc.startChatThread(repo, id);
+        const started = await startChatThread(repo, id, currentThread.session.model ?? "");
         if (started.start === "failed") {
           registry.setSending(null);
           registry.setError(started.errors?.[0]?.message ?? "start failed");
@@ -943,10 +771,9 @@ function ChatThreadController({ entry }: { entry: Entry }) {
       let images: ImageContent[] | undefined;
       let row: ReturnType<typeof draftToRowAttachments> | undefined;
       if (attachments.length > 0 && carriesAttachments) {
-        const prepared = await prepareAttachments(text, attachments);
+        const prepared = await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments);
         wire = prepared.message;
         images = prepared.images;
-        attachments = prepared.copied;
         row = draftToRowAttachments(attachments);
       }
       const command =
@@ -958,7 +785,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
               ? promptCommand("/mcp list")
               : sendCommand(wire, busy, images);
       if (dispatch.kind === "mcp-list") mcpListWait.current = true;
-      await writeSend(text, command, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
+      await writeSend(wire, command, (current) => applySendPlan(current, text, plan, row), carriesAttachments ? attachments : []);
       if (dispatch.kind === "get-tools") setToolsOpen(true);
     } catch (cause) {
       if (dispatch.kind === "mcp-list") mcpListWait.current = false;
@@ -979,16 +806,17 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     }
     registry.setError("");
     try {
-      const prepared = attachments.length > 0 ? await prepareAttachments(text, attachments) : null;
-      const row = prepared ? draftToRowAttachments(prepared.copied) : undefined;
+      const prepared = attachments.length > 0 ? await prepareChatAttachments(threadAttachmentStore(repo, id), text, attachments) : null;
+      const row = prepared ? draftToRowAttachments(attachments) : undefined;
+      await abortChatThread(repo, id).catch(() => undefined);
       await writeSend(
-        text,
+        prepared?.message ?? text,
         sendNowCommand(prepared?.message ?? text, prepared?.images),
         (current) => {
           const state = appendOptimisticUser(current, text, "prompt", undefined, row);
           return { state, entryId: state.entries[state.entries.length - 1]?.id ?? "" };
         },
-        prepared?.copied ?? attachments,
+        attachments,
       );
     } catch (cause) {
       registry.setError(errorMessage(cause));
@@ -996,23 +824,12 @@ function ChatThreadController({ entry }: { entry: Entry }) {
   }
 
   function abort() {
-    ipc
-      .chatRpcWrite(repo, id, abortTurnCommand())
-      .then(requireWritten)
-      .then(() => updateTranscript((current) => appendOptimisticAbort(current)))
-      .catch((cause: unknown) => registry.setError(String(cause)));
+    updateTranscript((current) => appendOptimisticAbort(current));
+    abortChatThread(repo, id).catch((cause: unknown) => registry.setError(String(cause)));
   }
 
   const activity = chatActivity(observation, transcript);
   const processLive = observation?.state?.process.state === "alive";
-  const ui = useChatUiReplies({
-    repo,
-    id,
-    live: processLive,
-    transcript,
-    setTranscript: updateTranscript,
-    onError: (message) => registry.setError(message),
-  });
   const inTerminal = processLive && observation?.transport === "pty";
   const terminalIo = useMemo(() => chatTerminalIo(repo, id), [repo, id]);
   const agentState = observation?.state?.agent?.state;
@@ -1025,34 +842,10 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     !pendingUiReply &&
     (entry.draft.trim().length > 0 || entry.attachments.length > 0);
 
-  const olderBusy = useRef(false);
-  const loadOlder = useCallback(() => {
-    const from = transcriptRef.current.fileStart;
-    if (olderBusy.current || from == null || from === 0) return;
-    olderBusy.current = true;
-    setLoadingOlder(true);
-    ipc
-      .readChatOmp({ repoPath: repo, id, end: from })
-      .then((buffer) => {
-        if (alive.current) updateTranscript((current) => olderPageState(current, buffer));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        olderBusy.current = false;
-        if (alive.current) setLoadingOlder(false);
-      });
-  }, [repo, id, updateTranscript]);
-
   useEffect(() => {
-    if (!processLive) return;
     const pushed = `${key}:${autoCompaction}`;
-    if (compactionPushed.current === pushed) return;
     compactionPushed.current = pushed;
-    ipc
-      .chatRpcWrite(repo, id, setAutoCompactionCommand(autoCompaction))
-      .then(requireWritten)
-      .catch((cause: unknown) => registry.setError(errorMessage(cause)));
-  }, [autoCompaction, processLive, repo, id, key]);
+  }, [autoCompaction, key]);
 
   const stageIncoming = (accepted: DraftAttachment[]) => {
     if (accepted.length === 0) return;
@@ -1126,8 +919,6 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     },
     abort,
     reconnect: () => setEpoch((value) => value + 1),
-    loadOlder,
-    setObserved: (value) => setObservation(value),
     setDraft: (value) => {
       entry.draft = value;
       registry.touch(entry);
@@ -1153,9 +944,7 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     setProvidersDialog,
     setToolsOpen,
     setMcpDialog,
-    approve: ui.approve,
-    reply: ui.reply,
-    cancelUi: ui.cancel,
+    applyControls: (controls) => updateTranscript((current) => applySessionControls(current, controls)),
   };
 
   const view: ChatThreadSnapshot = {
@@ -1167,17 +956,14 @@ function ChatThreadController({ entry }: { entry: Entry }) {
     attachments: entry.attachments,
     sending: registry.sendingKey === key,
     error: registry.error,
-    loadingOlder,
     processLive,
     inTerminal,
     terminalIo,
     statusKind: activity.kind,
-    contextUsage: formatContextUsage(transcript.sessionMeta.contextUsage?.tokens, transcript.sessionMeta.contextUsage?.contextWindow),
     modelLabel: transcript.sessionMeta.model || thread.session.model || "Model",
     blocked: registry.error === "cannot continue",
     disconnected: connection.state === "failed" && !inTerminal ? connection.detail : null,
     sendNowEnabled,
-    prompt: ui.prompt,
     providersDialog,
     toolsOpen,
     mcpDialog,
@@ -1200,12 +986,13 @@ function ChatThreadController({ entry }: { entry: Entry }) {
           mode="manual"
           initialTab={providersDialog.tab}
           preselect={providersDialog.preselect}
+          current={transcript.sessionMeta.model}
           onPick={(model) => {
-            const slash = model.indexOf("/");
-            ipc
-              .chatRpcWrite(repo, id, applyModelCommand(model.slice(0, slash), model.slice(slash + 1)))
-              .then(requireWritten)
-              .catch((cause: unknown) => registry.setError(String(cause)));
+            setProvidersDialog(null);
+            void setChatModel(repo, id, model).then(
+              (controls) => updateTranscript((current) => applySessionControls(current, controls)),
+              (cause: unknown) => registry.setError(errorMessage(cause)),
+            );
           }}
           onClose={() => setProvidersDialog(null)}
         />

@@ -65,7 +65,7 @@ fn validate_target(repo: &Path, slug: &str, id: &str) -> Result<SessionMeta, Str
         let path = session_meta_path(repo, slug, id);
         crate::paths::validate_retained_file(repo, &path)?;
         let meta: SessionMeta = serde_json::from_slice(&bounded_read(&path, 1024 * 1024)?).map_err(|_| "invalid session metadata")?;
-        if meta.id != id || meta.harness != crate::DEFAULT_HARNESS_KEY || !meta.generic {
+        if meta.id != id || !crate::is_vinculum_session(&meta.harness) || !meta.generic {
             return Err("invalid task slug or session id".into());
         }
         return Ok(meta);
@@ -211,14 +211,7 @@ mod tests {
                 is_coding_step: true,
                 start_requested: false,
                 lifecycle: ExecutionLifecycle::Failed,
-                continuation_mode: ContinuationMode::Manual,
-                work_revision: 0,
-                last_admission_sequence: 0,
-                last_ready_revision: None,
-                ready_revision: None,
-                continuation_requested_revision: None,
-                ready_assessment: None,
-                human_end: None,
+                permission: CompletionPermission::Locked,
                 receipt_id: None,
                 exit_code: Some(1),
                 shutdown_confirmed: true,
@@ -239,7 +232,10 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), before, "naming must not bump graph revision");
         let new_id = crate::with_task_mutation_lock(&repo.0, "recover", || {
             let mut saved = read_execution_state(&repo.0, "task")?;
-            let id = recover_execution_owner(&mut saved, "e1")?;
+            // What a resume does to the record: the old session becomes history, a new one owns it.
+            let record = saved.executions.get_mut("e1").ok_or("unknown execution")?;
+            let id = format!("s{}", uuid::Uuid::new_v4());
+            record.previous_session_ids.push(std::mem::replace(&mut record.owner_session_id, id.clone()));
             write_execution_state_unlocked(&repo.0, "task", &mut saved)?;
             Ok(id)
         })
@@ -360,7 +356,7 @@ mod tests {
                 "live",
                 SessionMeta {
                     started_at: Some(1),
-                    harness: "omp".into(),
+                    harness: "vinculum".into(),
                     ..Default::default()
                 },
             ),
@@ -540,9 +536,9 @@ mod tests {
     }
 
     #[test]
-    fn user_rename_of_root_omp_does_not_require_task_md() {
-        let (repo, id) = root_omp_fixture("alinery-chat-name");
-        let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root omp rename");
+    fn user_rename_of_root_vinculum_does_not_require_task_md() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-name");
+        let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root vinculum rename");
         assert_eq!(outcome.value.name, "Thread title");
         assert_eq!(outcome.value.source, SessionNameSource::User);
         let sidecar = root_sessions_dir(&repo).join(format!("{id}.name.json"));
@@ -552,7 +548,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
-    fn root_omp_fixture(prefix: &str) -> (std::path::PathBuf, &'static str) {
+    fn root_vinculum_fixture(prefix: &str) -> (std::path::PathBuf, &'static str) {
         let repo = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
         let id = "s01234567";
         let meta_path = session_meta_path(&repo, "", id);
@@ -574,8 +570,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_saves_when_no_name_exists() {
-        let (repo, id) = root_omp_fixture("alinery-chat-auto");
+    fn auto_rename_of_root_vinculum_saves_when_no_name_exists() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-auto");
         let outcome = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).expect("auto root rename");
         assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
         assert_eq!(read_session_name(&repo, "", id).unwrap(), Some(outcome.value));
@@ -583,8 +579,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_replaces_an_auto_name() {
-        let (repo, id) = root_omp_fixture("alinery-chat-retitle");
+    fn auto_rename_of_root_vinculum_replaces_an_auto_name() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-retitle");
         set_session_name(&repo, "", id, "First title", SessionNameSource::Auto).unwrap();
         let outcome = set_session_name(&repo, "", id, "Second title", SessionNameSource::Auto).unwrap();
         assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
@@ -594,8 +590,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_yields_to_a_user_name_and_writes_nothing() {
-        let (repo, id) = root_omp_fixture("alinery-chat-user-wins");
+    fn auto_rename_of_root_vinculum_yields_to_a_user_name_and_writes_nothing() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-user-wins");
         let user = set_session_name(&repo, "", id, "Human title", SessionNameSource::User).unwrap();
         let path = session_name_path(&repo, "", id);
         let before = std::fs::read(&path).unwrap();

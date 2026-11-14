@@ -1,0 +1,512 @@
+{
+  "files": {},
+  "steps": [
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "at most one wildcard is permitted",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "empty, dot, parent and wildcard directory components are forbidden",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "at most one wildcard is permitted",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "invalid_selector",
+          "field": "step[run].inputs[0].path",
+          "line": null,
+          "message": "expected a safe relative .md path with at most one filename wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "input_mode_path",
+          "field": "step[run].inputs[0]",
+          "line": null,
+          "message": "single requires an exact path; each/complete require one wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "input_mode_path",
+          "field": "step[run].inputs[0]",
+          "line": null,
+          "message": "single requires an exact path; each/complete require one wildcard",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "each",
+                "path": "ticket-*.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "coding_input",
+          "field": "step[run].inputs[0]",
+          "line": null,
+          "message": "coding steps may consume only exact single inputs",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "multiple_collections",
+          "field": "step[run].inputs",
+          "line": null,
+          "message": "a step may consume only one each or complete collection",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "missing_outputs",
+          "field": "step[run].outputs",
+          "line": null,
+          "message": "a step requires at least one output",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "complete",
+                "path": "research/result-*.md"
+              }
+            ],
+            "is_coding_step": false,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "result.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "code": "reserved_output_namespace",
+          "field": "step[run].outputs[0].path",
+          "line": null,
+          "message": "attachments and subtasks are reserved output namespaces",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "ok": {
+        "default_harness": "",
+        "default_model": "",
+        "description": "",
+        "key": "test",
+        "preamble": "Preamble\n",
+        "section_order": [
+          "run"
+        ],
+        "step": [
+          {
+            "auto_advance_default": false,
+            "harness": "",
+            "inputs": [
+              {
+                "mode": "single",
+                "path": "ticket.md"
+              }
+            ],
+            "is_coding_step": true,
+            "key": "run",
+            "model": "",
+            "outputs": [
+              {
+                "path": "nested/attachments/result-*.md"
+              }
+            ],
+            "prompt": "Read {{TICKET_FILE}}.\n",
+            "short": "",
+            "title": "Run"
+          }
+        ],
+        "title": "Test",
+        "version": 2
+      }
+    }
+  ]
+}

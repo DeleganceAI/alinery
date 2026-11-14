@@ -1,0 +1,1 @@
+{"id": "d1", "worktree": "/w/fix-login", "created": 1700000010, "phase": "clarify", "harness": "vinculum", "model": "openai/gpt", "execution_id": "ex-2", "started_at": 1700000011, "future_field": {"x": 1}}

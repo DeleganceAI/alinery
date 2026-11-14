@@ -1,212 +1,112 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProviderLoginStatus } from "../chat/providers";
 import { mockIpc } from "../test/mockIpc";
 import type { HostedCatalogView } from "../types";
-import { ProviderSetupDialog, resetProviderSetupCatalogue } from "./ProviderSetupDialog";
+import { ProviderSetupDialog } from "./ProviderSetupDialog";
 
 const mocks = vi.hoisted(() => ({
-  ompSetupSession: vi.fn(),
-  rpcAttachSession: vi.fn(),
-  rpcWriteSession: vi.fn(),
-  readOmpModelRoles: vi.fn(),
+  readModelRoles: vi.fn(),
+  readModelFavorites: vi.fn(),
   hostedCatalog: vi.fn(),
+  providerCatalog: vi.fn(),
+  grokKeyReady: vi.fn(),
   accountSignIn: vi.fn(),
   accountRefresh: vi.fn(),
-  detachSession: vi.fn(),
   openUrl: vi.fn(),
+  providerLoginStart: vi.fn(),
+  providerLoginPoll: vi.fn(),
+  providerLoginReply: vi.fn(),
 }));
 vi.mock("../ipc", () => mockIpc(mocks));
+// The catalog is the host daemon's ProviderService (sync/providers).
+vi.mock("../sync/providers", () => ({
+  providerCatalog: mocks.providerCatalog,
+  providerLoginStart: mocks.providerLoginStart,
+  providerLoginPoll: mocks.providerLoginPoll,
+  providerLoginReply: mocks.providerLoginReply,
+}));
+// The model roles are the host daemon's (sync/agent).
+vi.mock("../sync/agent", () => ({ readModelRoles: mocks.readModelRoles, writeModelRoles: vi.fn(async (roles: Record<string, string>) => roles) }));
 
-/** One `get_login_providers` response line, as the daemon forwards it. */
-const providersLine = (rows: { id: string; authenticated: boolean }[]) =>
-  JSON.stringify({
-    type: "response",
-    id: "p1",
-    command: "get_login_providers",
-    success: true,
-    data: { providers: rows.map((row) => ({ id: row.id, name: row.id, available: true, authenticated: row.authenticated })) },
-  });
-
-const stateLine = (model: string) => {
-  const slash = model.indexOf("/");
-  return JSON.stringify({
-    type: "response",
-    id: "p1",
-    command: "get_state",
-    success: true,
-    data: { model: { provider: model.slice(0, slash), id: model.slice(slash + 1) } },
-  });
-};
-
-const modelsLine = (rows: { provider: string; id: string }[]) =>
-  JSON.stringify({
-    type: "response",
-    id: "p1",
-    command: "get_available_models",
-    success: true,
-    data: { models: rows },
-  });
-
-const unsettledHosted = {
+const emptyHosted: HostedCatalogView = {
   provider: "alinery",
   defaultModel: "alinery/Qwen3.6-35B-A3B",
   baseUrl: "https://inference.alinery.ai/v1",
   plansUrl: "https://accounts.alinery.ai/plans",
-  models: [] as { id: string; name: string; contextWindow: number; maxTokens: number; price: number }[],
+  models: [],
   ready: false,
-  upsell: "sign-in" as const,
-  source: "empty" as const,
+  upsell: "sign-in",
+  source: "empty",
 };
 
-function renderModelsPicker(lines: string[], unsignedOpensAccounts = false) {
-  mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-  mocks.readOmpModelRoles.mockResolvedValue({});
-  mocks.hostedCatalog.mockResolvedValue(unsettledHosted);
-  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-  mocks.detachSession.mockResolvedValue(undefined);
-  mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-    await Promise.resolve();
-    for (const line of lines) onLine(line);
-  });
-  render(<ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts={unsignedOpensAccounts} onClose={vi.fn()} />);
-}
-function mountWith(lines: string[], mode: "auto" | "manual" = "auto", hostedReady = false) {
-  const onClose = vi.fn();
-  mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-  mocks.readOmpModelRoles.mockResolvedValue({});
-  mocks.hostedCatalog.mockResolvedValue({
-    provider: "alinery",
-    defaultModel: "alinery/Qwen3.6-35B-A3B",
-    baseUrl: "https://inference.alinery.ai/v1",
-    plansUrl: "https://accounts.alinery.ai/plans",
-    models: hostedReady ? [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }] : [],
-    ready: hostedReady,
-    upsell: hostedReady ? null : "sign-in",
-    source: hostedReady ? "live" : "empty",
-  });
-  mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-  mocks.detachSession.mockResolvedValue(undefined);
-  mocks.openUrl.mockResolvedValue(undefined);
-  mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-    await Promise.resolve();
-    for (const line of lines) onLine(line);
-  });
+const readyHosted: HostedCatalogView = {
+  ...emptyHosted,
+  models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
+  ready: true,
+  upsell: null,
+  source: "live",
+};
 
-  render(<ProviderSetupDialog mode={mode} onClose={onClose} />);
-  return onClose;
-}
-
-async function emit(value: unknown) {
-  const calls = mocks.rpcAttachSession.mock.calls;
-  const attach = calls[calls.length - 1]?.[0] as { onLine: (line: string) => void };
-  await act(async () => attach.onLine(JSON.stringify(value)));
-}
-
-function uiResponses(requestId: string) {
-  return mocks.rpcWriteSession.mock.calls
-    .map(([, payload]) => payload as { type?: string; id?: string; confirmed?: boolean; value?: string })
-    .filter((payload) => payload.type === "extension_ui_response" && payload.id === requestId);
-}
-
-async function startLogin() {
-  mountWith([providersLine([{ id: "openai-codex", authenticated: false }])], "manual");
-  fireEvent.click(await screen.findByRole("button", { name: /openai-codex/ }));
-  await waitFor(() => expect(mocks.rpcWriteSession).toHaveBeenCalledWith("__omp-setup__", expect.objectContaining({ type: "login", providerId: "openai-codex" })));
+function settleIpc(hosted: HostedCatalogView = emptyHosted, grok = false) {
+  mocks.readModelRoles.mockResolvedValue({});
+  mocks.readModelFavorites.mockResolvedValue([]);
+  mocks.hostedCatalog.mockResolvedValue(hosted);
+  mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
+  mocks.grokKeyReady.mockResolvedValue(grok);
 }
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.clearAllMocks();
-  resetProviderSetupCatalogue();
 });
 
 describe("ProviderSetupDialog", () => {
-  it("opens the requested sign-in link once, acknowledges it, and requires approval for another link", async () => {
-    await startLogin();
-    const request = { type: "extension_ui_request", id: "login-url", method: "open_url", url: "https://display.example", launchUrl: "https://auth.example/callback" };
-    await emit(request);
-    await emit(request);
-
-    await waitFor(() => expect(uiResponses("login-url")).toEqual([{ type: "extension_ui_response", id: "login-url", confirmed: true }]));
-    expect(mocks.openUrl).toHaveBeenCalledExactlyOnceWith("https://auth.example/callback");
-
-    await emit({ type: "extension_ui_request", id: "second-url", method: "open_url", launchUrl: "https://second.example" });
-    expect(await screen.findByRole("button", { name: "Allow" })).toBeTruthy();
-    expect(mocks.openUrl).toHaveBeenCalledTimes(1);
-    expect(uiResponses("second-url")).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    await waitFor(() => expect(uiResponses("second-url")).toEqual([{ type: "extension_ui_response", id: "second-url", confirmed: false }]));
-    expect(mocks.openUrl).toHaveBeenCalledTimes(1);
+  it("lists hosted models without opening a Vinculum session", async () => {
+    settleIpc(readyHosted);
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
   });
 
-  it("declines an unsafe sign-in URL without launching it", async () => {
-    await startLogin();
-    await emit({ type: "extension_ui_request", id: "blocked-url", method: "open_url", launchUrl: "file:///etc/passwd" });
-
-    await waitFor(() => expect(uiResponses("blocked-url")).toEqual([{ type: "extension_ui_response", id: "blocked-url", confirmed: false }]));
-    expect(mocks.openUrl).not.toHaveBeenCalled();
-    expect(screen.getByText(/only http and https/i)).toBeTruthy();
+  it("adds Grok models when a key is saved", async () => {
+    settleIpc(readyHosted, true);
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "xai/grok-4.7" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
   });
 
-  it("shows an opener failure and tells OMP the browser did not open", async () => {
-    await startLogin();
-    mocks.openUrl.mockRejectedValue(new Error("browser could not open"));
-    await emit({ type: "extension_ui_request", id: "failed-url", method: "open_url", launchUrl: "https://auth.example" });
-
-    await waitFor(() => expect(uiResponses("failed-url")).toEqual([{ type: "extension_ui_response", id: "failed-url", confirmed: false }]));
-    expect(screen.getByText(/browser could not open/)).toBeTruthy();
+  it("shows Connecting… until the hosted catalog returns", async () => {
+    let resolveHosted: (view: HostedCatalogView) => void = () => undefined;
+    mocks.readModelRoles.mockResolvedValue({});
+    mocks.readModelFavorites.mockResolvedValue([]);
+    mocks.grokKeyReady.mockResolvedValue(false);
+    mocks.providerCatalog.mockResolvedValue({ providers: [], models: [], custom: [] });
+    mocks.hostedCatalog.mockReturnValue(
+      new Promise<HostedCatalogView>((resolve) => {
+        resolveHosted = resolve;
+      }),
+    );
+    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
+    expect(screen.getByText("Connecting…")).toBeTruthy();
+    await act(async () => {
+      resolveHosted(readyHosted);
+    });
+    expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
+    expect(screen.queryByText("Connecting…")).toBeNull();
   });
 
-  it("retains a refused login code and permits an explicit retry", async () => {
-    await startLogin();
-    await emit({ type: "extension_ui_request", id: "refused-code", method: "input", title: "Paste your login code" });
-    const field = await screen.findByRole("textbox", { name: "Paste your login code" });
-    fireEvent.change(field, { target: { value: "keep-code" } });
-    mocks.rpcWriteSession.mockResolvedValueOnce({ status: "not_sent", reason: "Session unavailable" });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByText(/Not sent.*Session unavailable/)).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "Paste your login code" }) as HTMLInputElement).value).toBe("keep-code");
-    expect(uiResponses("refused-code")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Paste your login code" })).toBeNull());
-    expect(uiResponses("refused-code")).toHaveLength(2);
-  });
-
-  it("lets the user submit a login code inside the provider dialog", async () => {
-    await startLogin();
-    await emit({ type: "extension_ui_request", id: "login-code", method: "input", title: "Paste your login code" });
-
-    fireEvent.change(await screen.findByRole("textbox", { name: "Paste your login code" }), { target: { value: "test-code" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(uiResponses("login-code")).toEqual([{ type: "extension_ui_response", id: "login-code", value: "test-code" }]));
-    expect(screen.queryByRole("textbox", { name: "Paste your login code" })).toBeNull();
-  });
-
-  it("brings up the reserved setup session rather than needing a real one", async () => {
-    mountWith([providersLine([{ id: "anthropic", authenticated: false }])]);
-    await waitFor(() => expect(mocks.ompSetupSession).toHaveBeenCalled());
-    expect(mocks.rpcAttachSession).toHaveBeenCalledWith(expect.objectContaining({ id: "__omp-setup__" }));
-  });
-
-  it("shows the dialog on repo open when nothing is authenticated", async () => {
-    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: false }])]);
-    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("stays invisible and reports not-needed when the install is already set up", async () => {
-    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: true }])]);
+  it("closes an automatic offer once the catalog has loaded and no Vinculum login is required", async () => {
+    settleIpc(readyHosted);
+    const onClose = vi.fn();
+    render(<ProviderSetupDialog mode="auto" onClose={onClose} />);
     await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
-    // "not-needed" is what keeps a self-close from being remembered as a dismissal, so an install
-    // that later loses its credentials is offered setup again.
-    expect(screen.queryByText(/Advanced/)).toBeNull();
   });
 
   it("refreshes entitlement after Alinery sign-in before reloading the catalog", async () => {
+    settleIpc(emptyHosted);
     mocks.accountSignIn.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: null, paid: false, unavailable: false });
     mocks.accountRefresh.mockResolvedValue({ signedIn: true, email: "a@example.com", plan: "Founders Edition", paid: true, unavailable: false });
-    mountWith([providersLine([{ id: "anthropic", authenticated: false }])], "manual");
+    render(<ProviderSetupDialog mode="manual" onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: /Alinery/ }));
     await waitFor(() => expect(mocks.accountSignIn).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mocks.accountRefresh).toHaveBeenCalledTimes(1));
@@ -217,397 +117,62 @@ describe("ProviderSetupDialog", () => {
     expect(signInOrder).toBeLessThan(refreshOrder);
     expect(refreshOrder).toBeLessThan(catalogOrder);
   });
+});
 
-  it("stays invisible when hosted models are already ready", async () => {
-    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: false }])], "auto", true);
-    await waitFor(() => expect(onClose).toHaveBeenCalledWith("not-needed"));
-    expect(screen.queryByText(/anthropic/i)).toBeNull();
-  });
+// The daemon's sign-in (ProviderService): the dialog polls LoginPoll and shows what the browser needs typed.
+describe("provider sign-in", () => {
+  const codex = { id: "openai-codex", name: "OpenAI Codex", authenticated: false, stored: false, apiKey: false, oauth: true, apiKeyName: "", oauthName: "" };
+  const status = (patch: Partial<ProviderLoginStatus>): ProviderLoginStatus => ({ loginId: "l1", status: "pending", events: [], failure: "", ...patch });
 
-  it("opens regardless of provider state when the user asked for it", async () => {
-    const onClose = mountWith([providersLine([{ id: "anthropic", authenticated: true }])], "manual");
-    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("releases the setup session when it goes away", async () => {
-    mountWith([providersLine([{ id: "anthropic", authenticated: false }])]);
-    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
-    const { attachId } = mocks.rpcAttachSession.mock.calls[0][0];
-    cleanup();
-    expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup__", attachId);
-  });
-
-  it("releases a setup session that only arrives after it goes away", async () => {
-    let resolveSession: (id: string) => void = () => undefined;
-    mocks.ompSetupSession.mockReturnValue(new Promise<string>((resolve) => (resolveSession = resolve)));
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcAttachSession.mockResolvedValue(undefined);
-    mocks.detachSession.mockResolvedValue(undefined);
-    render(<ProviderSetupDialog mode="auto" onClose={vi.fn()} />);
-    cleanup();
-    resolveSession("__omp-setup__");
-    // The attach still has to happen: the daemon only arms its idle reaper once it has seen a
-    // client, so skipping it would strand the session instead of releasing it.
-    await waitFor(() => expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup__", expect.any(Number)));
-    expect(mocks.rpcAttachSession).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows Connecting… in manual mode before providers arrive", async () => {
-    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockImplementation(async () => undefined);
-    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    expect(screen.getByText("Connecting…")).toBeTruthy();
-
-    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
-  });
-
-  it("retries ompSetupSession when the daemon is not connected then shows providers", async () => {
-    vi.useFakeTimers();
-    mocks.ompSetupSession.mockRejectedValueOnce(new Error("daemon not connected")).mockResolvedValue("__omp-setup__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-      await Promise.resolve();
-      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
-    });
+  async function startLogin(polls: ProviderLoginStatus[]) {
+    settleIpc(readyHosted);
+    mocks.providerCatalog.mockResolvedValue({ providers: [codex], models: [], custom: [] });
+    mocks.providerLoginStart.mockResolvedValue({ host: "alinery+ssh://host/srv/project", status: status({}) });
+    for (const poll of polls) mocks.providerLoginPoll.mockResolvedValueOnce(poll);
+    mocks.providerLoginPoll.mockResolvedValue(polls[polls.length - 1]);
+    mocks.openUrl.mockResolvedValue(undefined);
     render(<ProviderSetupDialog mode="manual" onClose={vi.fn()} />);
-    expect(mocks.ompSetupSession).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
-    vi.useRealTimers();
-    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
+    fireEvent.click(await screen.findByRole("button", { name: /OpenAI Codex/ }));
+    await waitFor(() => expect(mocks.providerLoginStart).toHaveBeenCalledWith("openai-codex", "oauth"));
+  }
+
+  it("shows a device code with a copy control while the sign-in waits, and drops it when it ends", async () => {
+    const device = { type: "device_code" as const, userCode: "ABCD-EFGH", verificationUri: "https://auth.openai.com/codex/device" };
+    await startLogin([status({ events: [device] }), status({ events: [device] })]);
+    expect(await screen.findByText(/ABCD-EFGH/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(mocks.providerLoginPoll).toHaveBeenCalledWith("l1", "alinery+ssh://host/srv/project");
+
+    mocks.providerCatalog.mockResolvedValue({ providers: [{ ...codex, authenticated: true }], models: [], custom: [] });
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "done", events: [device] }));
+    await waitFor(() => expect(screen.queryByText(/ABCD-EFGH/)).toBeNull());
+    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
+    expect(await screen.findByRole("button", { name: /OpenAI Codex.*Signed in/ })).toBeTruthy();
   });
 
-  it("surfaces a failed catalogue after persistent daemon not connected, without ready-empty copy", async () => {
-    vi.useFakeTimers();
-    mocks.ompSetupSession.mockRejectedValue(new Error("daemon not connected"));
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4000);
-    });
-    vi.useRealTimers();
-    expect(screen.getByText(/daemon not connected/i)).toBeTruthy();
-
-    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
-  });
-
-  it("retries daemon not connected in auto mode without closing or painting empty lists", async () => {
-    vi.useFakeTimers();
-    const onClose = vi.fn();
-    mocks.ompSetupSession.mockRejectedValue(new Error("daemon not connected"));
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    render(<ProviderSetupDialog mode="auto" onClose={onClose} />);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.queryByText("No Chat-capable providers yet.")).toBeNull();
-    vi.useRealTimers();
-  });
-
-  it("detaches a setup session when attach fails with daemon not connected, then retries", async () => {
-    vi.useFakeTimers();
-    mocks.ompSetupSession.mockResolvedValueOnce("__omp-setup-1__").mockResolvedValueOnce("__omp-setup-2__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockRejectedValueOnce(new Error("daemon not connected")).mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-      await Promise.resolve();
-      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
-    });
-    render(<ProviderSetupDialog mode="auto" onClose={vi.fn()} />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(mocks.detachSession).toHaveBeenCalledWith("__omp-setup-1__", expect.any(Number));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
-    });
-    expect(mocks.ompSetupSession.mock.calls.length).toBeGreaterThan(1);
-    vi.useRealTimers();
-    await waitFor(() => expect(screen.getByText(/anthropic/i)).toBeTruthy());
-    expect(mocks.rpcAttachSession).toHaveBeenCalledWith(expect.objectContaining({ id: "__omp-setup-2__" }));
-  });
-
-  it("opens Accounts when unsignedOpensAccounts and providers need setup", async () => {
-    const extras = { unsignedOpensAccounts: true };
-    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-      await Promise.resolve();
-      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
-    });
-    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} {...extras} />);
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("true"));
-  });
-
-  it("stays on Models without unsignedOpensAccounts", async () => {
-    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-      await Promise.resolve();
-      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
-    });
-    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true"));
-  });
-
-  it("stays on Models and waits for the catalogue when a signed-in provider is not the setup probe", async () => {
-    renderModelsPicker(
-      [
-        stateLine("openai-codex/gpt-5.6-luna"),
-        providersLine([
-          { id: "xai-oauth", authenticated: true },
-          { id: "openai-codex", authenticated: false },
-        ]),
-      ],
-      true,
-    );
-    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
-    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("Connecting…")).toBeTruthy();
-
-    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("paints the process catalogue immediately and replaces it only when the payload differs", async () => {
-    renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-    cleanup();
-
-    renderModelsPicker(
-      [
-        stateLine("openai-codex/gpt-5.6-luna"),
-        providersLine([
-          { id: "xai-oauth", authenticated: true },
-          { id: "openai-codex", authenticated: false },
-        ]),
-      ],
-      true,
-    );
-    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-
-    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(screen.getByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-
-    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.6" }] } });
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.6" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "xai-oauth/grok-4.7" })).toBeNull();
-  });
-
-  it("does not open Accounts for a hosted-ready install, including before hosted settles", async () => {
-    // ES2020 lib: Promise.withResolvers is not in this tsconfig.
-    let resolveHosted: (view: HostedCatalogView) => void = () => undefined;
-    const hostedPromise = new Promise<HostedCatalogView>((resolve) => {
-      resolveHosted = resolve;
-    });
-    mocks.ompSetupSession.mockResolvedValue("__omp-setup__");
-    mocks.readOmpModelRoles.mockResolvedValue({});
-    mocks.hostedCatalog.mockReturnValue(hostedPromise);
-    mocks.rpcWriteSession.mockResolvedValue({ status: "written" });
-    mocks.detachSession.mockResolvedValue(undefined);
-    mocks.rpcAttachSession.mockImplementation(async ({ onLine }: { onLine: (line: string) => void }) => {
-      await Promise.resolve();
-      onLine(providersLine([{ id: "anthropic", authenticated: false }]));
-    });
-    render(<ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onClose={vi.fn()} />);
-    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
-    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
-
-    await act(async () => {
-      resolveHosted({
-        ...unsettledHosted,
-        models: [{ id: "Qwen3.6-35B-A3B", name: "Qwen3.6-35B-A3B", contextWindow: 1, maxTokens: 1, price: 1 }],
-        ready: true,
-        upsell: null,
-        source: "live",
-      });
-    });
-    await waitFor(() => expect(mocks.hostedCatalog).toHaveBeenCalled());
-    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tab", { name: "Accounts" }).getAttribute("aria-selected")).toBe("false");
-  });
-
-  it("keeps Settings on Models and connecting until the model reply", async () => {
-    renderModelsPicker([stateLine("openai-codex/gpt-5.6-luna"), providersLine([{ id: "xai-oauth", authenticated: true }])]);
-    await waitFor(() => expect(mocks.rpcAttachSession).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(screen.getByRole("tab", { name: "Models" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("Connecting…")).toBeTruthy();
-
-    await emit({ type: "response", command: "get_available_models", success: true, data: { models: [{ provider: "xai-oauth", id: "grok-4.7" }] } });
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-  });
-
-  it("keeps the cached catalogue when setup attach fails", async () => {
-    renderModelsPicker([modelsLine([{ provider: "xai-oauth", id: "grok-4.7" }])], true);
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-    cleanup();
-
-    mocks.ompSetupSession.mockRejectedValue(new Error("setup exploded"));
-    render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: "xai-oauth/grok-4.7" })).toBeTruthy();
-
-    expect(screen.getByText(/setup exploded/)).toBeTruthy();
-  });
-});
-
-describe("browser sign-in fallback", () => {
-  const browserLink = { type: "extension_ui_request", id: "7d4e2f", method: "open_url", url: "https://auth.openai.com/authorize" };
-  const manualCode = {
-    type: "extension_ui_request",
-    id: "1a2b3c",
-    method: "input",
-    title: "Paste the authorization code (or full redirect URL):",
-    timeout: 600000,
-  };
-  const loginSuccess = { type: "response", command: "login", success: true, data: { providerId: "openai-codex" } };
-  const signedIn = providersLine([{ id: "openai-codex", authenticated: true }]);
-
-  it("removes the unused manual-code prompt when browser sign-in succeeds", async () => {
-    await startLogin();
-    await emit(browserLink);
-    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith(browserLink.url));
-    await emit(manualCode);
-    expect(screen.getByRole("textbox", { name: manualCode.title })).toBeTruthy();
-
-    await emit(loginSuccess);
-    await emit(JSON.parse(signedIn));
-
-    const provider = screen.getByRole("button", { name: /openai-codex.*Signed in/ });
-    expect((provider as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole("textbox", { name: manualCode.title })).toBeNull();
-    expect(screen.queryByText(manualCode.title)).toBeNull();
-    expect(uiResponses(manualCode.id)).toEqual([]);
-  });
-
-  it("does not restore a completed login's manual-code prompt when the dialog reopens", async () => {
-    mountWith([providersLine([{ id: "openai-codex", authenticated: false }]), JSON.stringify(browserLink), JSON.stringify(manualCode)], "manual");
-    expect(await screen.findByRole("textbox", { name: manualCode.title })).toBeTruthy();
-    cleanup();
-
-    mountWith([JSON.stringify(browserLink), JSON.stringify(manualCode), JSON.stringify(loginSuccess), signedIn], "manual");
-
-    const provider = await screen.findByRole("button", { name: /openai-codex.*Signed in/ });
-    expect((provider as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole("textbox", { name: manualCode.title })).toBeNull();
-    expect(screen.queryByText(manualCode.title)).toBeNull();
-    expect(uiResponses(manualCode.id)).toEqual([]);
-    expect(mocks.openUrl).not.toHaveBeenCalled();
-  });
-});
-
-// Repro for #130: OMP's device-code sign-in delivers the user code only as `open_url.instructions`
-// ("Enter code: XXXX"); the dialog must show it, with a copy control, for as long as the sign-in
-// is pending -- including on the auto-opened first link, which today is hidden and dismissed.
-describe("device-code sign-in (#130)", () => {
-  it("keeps the device code and a copy control visible while the sign-in is pending", async () => {
-    await startLogin();
-    await emit({
-      type: "extension_ui_request",
-      id: "device-url",
-      method: "open_url",
-      url: "https://auth.openai.com/codex/device",
-      instructions: "Enter code: ABCD-EFGH",
-    });
+  it("keeps a sign-in link's instructions after the browser opens, with Copy code on a trailing code", async () => {
+    const link = { type: "auth_url" as const, url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" };
+    await startLogin([status({ events: [link] })]);
     await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device"));
     expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
-    await emit({ type: "response", id: "l1", command: "login", success: true, data: { providerId: "openai-codex" } });
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
+
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "error", failure: "Device authorization timed out", events: [link] }));
+    await waitFor(() => expect(screen.queryByText(/ABCD-EFGH/)).toBeNull());
+    expect(screen.getByText(/Device authorization timed out/)).toBeTruthy();
   });
 
-  it.each([
-    ["instructions", true],
-    ["instructions", false],
-    ["message", true],
-    ["message", false],
-  ] as const)("retains replayed %s after Allow and clears it on login success=%s", async (field, success) => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    mountWith(
-      [
-        providersLine([{ id: "openai-codex-device", authenticated: false }]),
-        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", [field]: "Enter code: ABCD-EFGH" }),
-      ],
-      "manual",
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
-    await waitFor(() => expect(mocks.openUrl).toHaveBeenCalledWith("https://auth.openai.com/codex/device"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Allow" })).toBeNull());
-    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("ABCD-EFGH"));
-    await emit({ type: "response", command: "login", success, error: success ? undefined : "Device authorization timed out" });
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
-  });
+  it("removes the unused manual-code prompt when browser sign-in succeeds", async () => {
+    const link = { type: "auth_url" as const, url: "https://auth.openai.com/authorize" };
+    const title = "Paste the authorization code (or full redirect URL):";
+    await startLogin([status({ status: "prompt", events: [link], prompt: { type: "text", message: title } })]);
+    expect(await screen.findByRole("textbox", { name: title })).toBeTruthy();
 
-  it("does not restore the code when the browser opener finishes after login", async () => {
-    await startLogin();
-    let finishOpen!: () => void;
-    mocks.openUrl.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishOpen = resolve;
-        }),
-    );
-    await emit({ type: "extension_ui_request", id: "device-url", method: "open_url", url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" });
-    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
-    await emit({ type: "response", command: "login", success: true });
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
-    await act(async () => finishOpen());
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
-  });
-
-  it("clears a replayed code when starting a new login whose write fails", async () => {
-    mountWith(
-      [
-        providersLine([{ id: "openai-codex-device", authenticated: false }]),
-        JSON.stringify({ type: "extension_ui_request", id: "stale-url", method: "open_url", url: "https://auth.openai.com/codex/device", instructions: "Enter code: ABCD-EFGH" }),
-      ],
-      "manual",
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
-    await waitFor(() => expect(uiResponses("stale-url")).toHaveLength(1));
-    expect(screen.getByText(/ABCD-EFGH/)).toBeTruthy();
-    let rejectLogin!: (error: Error) => void;
-    mocks.rpcWriteSession.mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectLogin = reject;
-        }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /openai-codex-device/ }));
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
-    await act(async () => rejectLogin(new Error("Login was not sent")));
-    expect(screen.queryByText(/ABCD-EFGH/)).toBeNull();
-    expect(screen.getByText(/Login was not sent/)).toBeTruthy();
+    mocks.providerCatalog.mockResolvedValue({ providers: [{ ...codex, authenticated: true }], models: [], custom: [] });
+    mocks.providerLoginPoll.mockResolvedValue(status({ status: "done", events: [link] }));
+    const provider = await screen.findByRole("button", { name: /OpenAI Codex.*Signed in/ });
+    expect((provider as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: title })).toBeNull();
+    expect(mocks.providerLoginReply).not.toHaveBeenCalled();
   });
 });

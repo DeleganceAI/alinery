@@ -4,7 +4,7 @@ key = "solution-exploration"
 title = "Solution Exploration"
 description = "Explore solutions sequentially, independently trace implementation difficulty, and compare the evidence without implementing code or estimating duration."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "clarify"

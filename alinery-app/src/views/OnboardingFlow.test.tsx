@@ -2,19 +2,22 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import * as ipc from "../ipc";
-import {
-  CURATED_PLAYBOOK_ARCHETYPES,
-  isOnboardingCompleted,
-  markOnboardingCompleted,
-  ONBOARDING_COMPLETED_KEY,
-  ONBOARDING_STEPS,
-  readSavedOnboardingStep,
-  writeSavedOnboardingStep,
-} from "../onboarding";
-import type { AppConfig, BoardTask, KanbanColumn, NormalizedPlaybook, NormalizedStep, RepoOverrides, ScopedSettings } from "../types";
-import { Grid, resetGridBoardSnapshots } from "./Grid";
+import { CURATED_PLAYBOOK_ARCHETYPES, ONBOARDING_STEPS, readSavedOnboardingStep, writeSavedOnboardingStep } from "../onboarding";
+import * as sessions from "../sync/sessions";
+import * as tasks from "../sync/tasks";
+import { fakeBoard } from "../test/boardHooks";
+import type { AppConfig, BoardTask, NormalizedPlaybook, NormalizedStep, PlaybookRef, RepoOverrides, ScopedPlaybook } from "../types";
+import { Grid } from "./Grid";
 import { OnboardingFlow } from "./OnboardingFlow";
 
+const settingsMocks = vi.hoisted(() => ({ readEffectiveConfig: vi.fn(), readRepoSettings: vi.fn(), writeRepoOverrides: vi.fn() }));
+vi.mock("../sync/settings", async (actual) => ({ ...(await actual<typeof import("../sync/settings")>()), ...settingsMocks }));
+const playbookMock = vi.hoisted(() => ({ readPlaybook: vi.fn<(reference: PlaybookRef) => Promise<ScopedPlaybook>>() }));
+vi.mock("../sync/playbooks", async (actual) => ({ ...(await actual<typeof import("../sync/playbooks")>()), ...playbookMock }));
+vi.mock("../sync/git", () => ({ listTaskPullRequests: async () => ({}) }));
+vi.mock("../sync/providers", () => ({ listModels: async () => ["anthropic/claude-sonnet-4-5"] }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
 vi.mock("../WindowChrome", () => ({
   ResizeHandles: () => null,
   WindowControls: () => null,
@@ -38,7 +41,7 @@ function previewDefinition(key: string, title: string): NormalizedPlaybook {
     inputs: [],
     outputs: [{ path: `${name.toLowerCase()}.md` }],
     model: "",
-    harness: "omp",
+    harness: "vinculum",
     prompt: "",
   });
   const steps =
@@ -49,12 +52,12 @@ function previewDefinition(key: string, title: string): NormalizedPlaybook {
           { ...step("Deduplicate and Dispatch Sources"), inputs: [{ path: "source-*.md", mode: "complete" as const }] },
         ]
       : [step("Clarify"), step("Investigate"), step("Decide", false), step("Plan"), step("Define Tests"), step("Build"), step("Prepare Review", false)];
-  return { version: 2, key, title, description: "", default_model: "", default_harness: "omp", step: steps, preamble: "", section_order: [] };
+  return { version: 2, key, title, description: "", default_model: "", default_harness: "vinculum", step: steps, preamble: "", section_order: [] };
 }
 
 beforeEach(() => {
   window.localStorage.clear();
-  resetGridBoardSnapshots();
+  fakeBoard.reset();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -62,7 +65,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  vi.spyOn(ipc, "readPlaybook").mockImplementation(async (reference) => {
+  playbookMock.readPlaybook.mockImplementation(async (reference) => {
     const found = CURATED_PLAYBOOK_ARCHETYPES.find((item) => item.reference.key === reference.key) ?? CURATED_PLAYBOOK_ARCHETYPES[0];
     return {
       source: { reference: found.reference, path: null },
@@ -71,7 +74,7 @@ beforeEach(() => {
       modified_at_ms: null,
     };
   });
-  vi.spyOn(ipc, "readConfigForRepo").mockResolvedValue({
+  settingsMocks.readEffectiveConfig.mockResolvedValue({
     notifications: {
       enabled: true,
       sound: true,
@@ -84,7 +87,7 @@ beforeEach(() => {
       dock_badge_completions: true,
     },
     github: { token: "" },
-    defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-5", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
+    defaults: { harness: "vinculum", model: "anthropic/claude-sonnet-4-5", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
     provenance: {
       github_token: "global",
       defaults: {
@@ -105,10 +108,7 @@ beforeEach(() => {
     },
     telemetry: { enabled: false, prompted: false, install_id: "", endpoint: "" },
   });
-  vi.spyOn(ipc, "ompSetupSession").mockResolvedValue("setup-session-1");
   vi.spyOn(ipc, "readModelFavorites").mockResolvedValue([]);
-  vi.spyOn(ipc, "listHarnessModels").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
-  vi.spyOn(ipc, "listHarnessModelsForRepo").mockResolvedValue(["anthropic/claude-sonnet-4-5"]);
   vi.spyOn(ipc, "accountStatus").mockResolvedValue({ signedIn: false, email: null, plan: null, paid: false, unavailable: false });
 });
 
@@ -120,59 +120,47 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("onboarding persistence helpers", () => {
-  it("persists onboarding completion and step state and rejects prototype keys", () => {
-    expect(isOnboardingCompleted()).toBe(false);
-    expect(readSavedOnboardingStep(false)).toBe("workspace");
-    expect(readSavedOnboardingStep(true)).toBe("models");
+describe("onboarding step persistence", () => {
+  it("persists the step and rejects prototype keys", () => {
+    expect(readSavedOnboardingStep()).toBe("models");
+    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["models", "playbooks"]);
 
-    for (const step of ["workspace", "models", "playbooks"] as const) {
-      writeSavedOnboardingStep(step);
-      expect(readSavedOnboardingStep(true)).toBe(step);
-    }
-    expect(ONBOARDING_STEPS.map((step) => step.id)).toEqual(["workspace", "models", "playbooks"]);
+    writeSavedOnboardingStep("playbooks");
+    expect(readSavedOnboardingStep()).toBe("playbooks");
+
+    // The First task step is gone: a saved "launch" resumes on the last remaining step.
     window.localStorage.setItem("alinery.onboardingStep.v1", "launch");
-    expect(readSavedOnboardingStep(true)).toBe("playbooks");
-    expect(readSavedOnboardingStep(false)).toBe("workspace");
-
+    expect(readSavedOnboardingStep()).toBe("playbooks");
+    // The repository step is gone too: a saved "workspace" falls back to the first step.
+    window.localStorage.setItem("alinery.onboardingStep.v1", "workspace");
+    expect(readSavedOnboardingStep()).toBe("models");
     window.localStorage.setItem("alinery.onboardingStep.v1", "toString");
-    expect(readSavedOnboardingStep(true)).toBe("models");
-
-    markOnboardingCompleted();
-    expect(isOnboardingCompleted()).toBe(true);
-    expect(window.localStorage.getItem(ONBOARDING_COMPLETED_KEY)).toBe("1");
-    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
+    expect(readSavedOnboardingStep()).toBe("models");
   });
 });
 
 describe("OnboardingFlow wizard", () => {
   it.each(["openai/private-deployment", ""])("preserves unrelated repository overrides when choosing model %j", async (model) => {
-    const effective = await ipc.readConfigForRepo(baseConfig.active_repo);
+    const effective = await settingsMocks.readEffectiveConfig(baseConfig.active_repo);
     const original: RepoOverrides = {
       github: { token: "repository-credential-fixture" },
       defaults: { thinking: "high", playbook: { scope: "repo", key: "custom" }, draft_autosave: false },
       backup: { destination: "/backup", enabled: false, retention: 13 },
     };
     let persisted = structuredClone(original);
-    const scoped: ScopedSettings = {
-      global: { ...effective, harnesses: { harness: [] }, model_favorites: {}, updates: { check_enabled: true } },
-      effective,
-      overrides: original,
-    };
-    vi.spyOn(ipc, "readScopedSettingsForRepo").mockResolvedValue(scoped);
-    vi.spyOn(ipc, "writeRepoOverridesForRepo").mockImplementation(async (_repo, overrides) => {
+    settingsMocks.readRepoSettings.mockResolvedValue({ overrides: original, effective, revision: 3n });
+    let sentRevision: bigint | undefined;
+    settingsMocks.writeRepoOverrides.mockImplementation(async (_repo: string, overrides: RepoOverrides, revision?: bigint) => {
       persisted = structuredClone(overrides);
-      return { ...scoped, overrides: persisted };
+      sentRevision = revision;
+      return undefined;
     });
     let pick: ((value: string) => void) | undefined;
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="models"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={(_tab, onPick) => {
           pick = onPick;
         }}
@@ -187,6 +175,7 @@ describe("OnboardingFlow wizard", () => {
     expect(persisted.github).toEqual(original.github);
     expect(persisted.backup).toEqual(original.backup);
     expect(persisted.defaults).toEqual({ ...original.defaults, model: model || null });
+    expect(sentRevision).toBe(3n);
   });
 
   it("takes a signed-out user from the Founder plan card to sign-in and then billing", async () => {
@@ -197,11 +186,8 @@ describe("OnboardingFlow wizard", () => {
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="models"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={onOpenProviderSetup}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
@@ -272,41 +258,14 @@ describe("OnboardingFlow wizard", () => {
     expect(openPlans).not.toHaveBeenCalled();
   });
 
-  it("leaves no unattached setup runtime after visiting model setup without opening accounts", async () => {
-    const unattached = new Set<string>();
-    vi.mocked(ipc.ompSetupSession).mockImplementation(async () => {
-      unattached.add("unattached-setup");
-      return "unattached-setup";
-    });
-    const view = render(
-      <OnboardingFlow
-        appConfig={baseConfig}
-        repoError=""
-        initialStep="models"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
-        onOpenProviderSetup={vi.fn()}
-        onCompleteToWorkspace={vi.fn()}
-        onOpenCreateWithPlaybook={vi.fn()}
-      />,
-    );
-    await act(async () => {});
-    view.unmount();
-    expect([...unattached]).toEqual([]);
-  });
-
   it("shows a failed preview without fabricated steps and reloads it on retry", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    vi.mocked(ipc.readPlaybook).mockRejectedValueOnce(new Error("Bundled definition could not be read"));
+    playbookMock.readPlaybook.mockRejectedValueOnce(new Error("Bundled definition could not be read"));
     render(
       <OnboardingFlow
         appConfig={baseConfig}
-        repoError=""
         initialStep="playbooks"
-        onSelectRepo={vi.fn(async () => true)}
-        onAddRepo={vi.fn(async () => true)}
-        onRemoveRepo={vi.fn()}
+        onChangeRepo={vi.fn()}
         onOpenProviderSetup={vi.fn()}
         onCompleteToWorkspace={vi.fn()}
         onOpenCreateWithPlaybook={vi.fn()}
@@ -319,38 +278,9 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
   });
 
-  it("keeps repository selection on Step 01 until the user continues", async () => {
-    const onSelectRepo = vi.fn(async () => true);
-    const onAddRepo = vi.fn(async () => true);
-
-    render(
-      <OnboardingFlow
-        appConfig={{ ...baseConfig, active_repo: "", known_repos: ["/Users/dev/project"] }}
-        repoError=""
-        onSelectRepo={onSelectRepo}
-        onAddRepo={onAddRepo}
-        onRemoveRepo={vi.fn()}
-        onOpenProviderSetup={vi.fn()}
-        onCompleteToWorkspace={vi.fn()}
-        onOpenCreateWithPlaybook={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Continue/i })).toBeNull();
-
-    fireEvent.click(screen.getByTitle("/Users/dev/project"));
-    await waitFor(() => expect(onSelectRepo).toHaveBeenCalledWith("/Users/dev/project"));
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    expect(readSavedOnboardingStep(true)).toBe("workspace");
-  });
-
   const flowProps = () => ({
     appConfig: baseConfig,
-    repoError: "",
-    onSelectRepo: vi.fn(async () => true),
-    onAddRepo: vi.fn(async () => true),
-    onRemoveRepo: vi.fn(),
+    onChangeRepo: vi.fn(),
     onOpenProviderSetup: vi.fn(),
     onCompleteToWorkspace: vi.fn(),
     onOpenCreateWithPlaybook: vi.fn(),
@@ -360,18 +290,6 @@ describe("OnboardingFlow wizard", () => {
       await vi.advanceTimersByTimeAsync(milliseconds);
     });
   };
-
-  it("returns a repository-free preview to repository selection without offering blocked completion", async () => {
-    render(<OnboardingFlow {...flowProps()} appConfig={{ ...baseConfig, active_repo: "", known_repos: [] }} initialStep="workspace" />);
-    fireEvent.click(screen.getByRole("tab", { name: /Playbooks/ }));
-    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
-    expect(window.localStorage.getItem("alinery.onboardingStep.v1")).toBeNull();
-    expect((screen.getByRole("button", { name: "Finish onboarding" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole("tab", { name: /Models/ }).classList.contains("completed")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByTestId("onboarding-step-workspace")).toBeTruthy();
-    await act(async () => {});
-  });
 
   it("pauses autoplay when selecting a graph node so its contract stays available", async () => {
     vi.useFakeTimers();
@@ -468,49 +386,46 @@ describe("OnboardingFlow wizard", () => {
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
   });
 
-  it("continues through exactly three steps and opens task creation without executing a task", async () => {
+  it("continues through exactly two steps and opens task creation without executing a task", async () => {
     const props = flowProps();
-    const createTask = vi.spyOn(ipc, "createTaskForRepo");
-    const createSession = vi.spyOn(ipc, "createSession");
-    const createSessionForRepo = vi.spyOn(ipc, "createSessionForRepo");
-    render(<OnboardingFlow {...props} initialStep="workspace" />);
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    const createTask = vi.spyOn(tasks, "createTaskForRepo");
+    const createSession = vi.spyOn(sessions, "createSession");
+    render(<OnboardingFlow {...props} />);
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(screen.queryByText("First task")).toBeNull();
-    for (const next of ["models", "playbooks"]) {
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-      expect(screen.getByTestId(`onboarding-step-${next}`)).toBeTruthy();
-      expect(readSavedOnboardingStep(true)).toBe(next);
-      await act(async () => {});
-    }
+    expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change repository" }));
+    expect(props.onChangeRepo).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByTestId("onboarding-step-playbooks")).toBeTruthy();
+    expect(readSavedOnboardingStep()).toBe("playbooks");
+    await act(async () => {});
     expect(screen.queryByRole("button", { name: "Skip Onboarding" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
     expect(props.onCompleteToWorkspace).not.toHaveBeenCalled();
     expect(props.onOpenCreateWithPlaybook).toHaveBeenCalledWith({ scope: "bundled", key: "superdevelop" });
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
-    expect(createSessionForRepo).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("onboarding-step-models")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Skip Onboarding" })).toBeTruthy();
   });
-
   it("makes provider subscriptions and API-key setup visible before the model choice", async () => {
     const props = flowProps();
     render(<OnboardingFlow {...props} initialStep="models" />);
     fireEvent.click(screen.getByRole("button", { name: /^API keys/ }));
     expect(props.onOpenProviderSetup).toHaveBeenCalledWith("accounts", undefined, "");
     expect(screen.getByText(/Connect every one you have and use them all here/)).toBeTruthy();
-    expect(ipc.ompSetupSession).not.toHaveBeenCalled();
     await act(async () => {});
   });
 
   it("autoplays every step, briefly shows human checkpoints, and loops without executing tasks", async () => {
     vi.useFakeTimers();
     const props = flowProps();
-    const createTask = vi.spyOn(ipc, "createTaskForRepo");
-    const createSession = vi.spyOn(ipc, "createSession");
-    const createSessionForRepo = vi.spyOn(ipc, "createSessionForRepo");
-    const openSession = vi.spyOn(ipc, "openSession");
+    const createTask = vi.spyOn(tasks, "createTaskForRepo");
+    const createSession = vi.spyOn(sessions, "createSession");
+    const openSession = vi.spyOn(sessions, "openSession");
     render(<OnboardingFlow {...props} initialStep="playbooks" />);
     await act(async () => {});
     expect(screen.getByText("Step 1 of 7")).toBeTruthy();
@@ -552,9 +467,7 @@ describe("OnboardingFlow wizard", () => {
     expect(props.onOpenCreateWithPlaybook).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
-    expect(createSessionForRepo).not.toHaveBeenCalled();
     expect(openSession).not.toHaveBeenCalled();
-    expect(ipc.ompSetupSession).not.toHaveBeenCalled();
   });
 
   it("restarts when changing archetypes and keeps fan-out contracts inspectable", async () => {
@@ -649,21 +562,10 @@ describe("OnboardingFlow wizard", () => {
 });
 
 describe("Empty Grid Playbook Starter Gate", () => {
-  const columns: KanbanColumn[] = [
-    { key: "planning", title: "Planning" },
-    { key: "implementation", title: "Implementation" },
-    { key: "review", title: "Review" },
-  ];
-
-  beforeEach(() => {
-    vi.spyOn(ipc, "listKanbanColumns").mockResolvedValue(columns);
-    vi.spyOn(ipc, "listTaskActivity").mockResolvedValue({});
-    vi.spyOn(ipc, "observeTaskExecutions").mockResolvedValue([]);
-    vi.spyOn(ipc, "listTaskPullRequests").mockResolvedValue({});
-  });
+  beforeEach(() => {});
 
   it("selects a playbook without creating a task and uses that selection for both shared actions", async () => {
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([]);
+    fakeBoard.set({ tasks: [] });
     const onCreate = vi.fn();
     render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} onCreate={onCreate} />);
 
@@ -693,7 +595,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
   });
 
   it("keeps library and guide actions available independently of task creation", async () => {
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([]);
+    fakeBoard.set({ tasks: [] });
     const openUrl = vi.spyOn(ipc, "openUrl").mockResolvedValue();
     const onReplayOnboarding = vi.fn();
     render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} onReplayOnboarding={onReplayOnboarding} />);
@@ -711,7 +613,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
   });
 
   it("renders GridPlaybookStarterGate when repository has 0 tasks, and filter empty message when tasks are filtered out", async () => {
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([]);
+    fakeBoard.set({ tasks: [] });
     const onCreate = vi.fn();
     const onReplayOnboarding = vi.fn();
 
@@ -730,7 +632,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
     expect(onReplayOnboarding).toHaveBeenCalled();
 
     unmount();
-    resetGridBoardSnapshots();
+    fakeBoard.reset();
 
     // Now test with 1 completed task that gets filtered out by the "active" filter
     const completedTask: BoardTask = {
@@ -762,10 +664,7 @@ describe("Empty Grid Playbook Starter Gate", () => {
       current_column_key: "done",
       current_column_title: "Done",
     };
-    vi.spyOn(ipc, "listBoardTasks").mockResolvedValue([completedTask]);
-    vi.spyOn(ipc, "listTaskActivity").mockResolvedValue({
-      "/Users/dev/project:existing-task": { status: "completed", active_session: null },
-    });
+    fakeBoard.set({ tasks: [completedTask], activity: { "/Users/dev/project:existing-task": { status: "completed", active_session: null } } });
 
     render(<Grid allRepos={false} repoPaths={["/Users/dev/project"]} onOpen={vi.fn()} registerNav={vi.fn()} />);
 

@@ -4,10 +4,9 @@ import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
 import type { ChatPrefs } from "../chat/visibility";
 import * as ipc from "../ipc";
+import { useChatThreads, useOpenChatRepos } from "../sync/chat";
 import { toast } from "../toast";
-import type { ChatThread } from "../types";
 import { usePointerDrag } from "../usePointerDrag";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
 import { ChatPane } from "./ChatPane";
 import { repoLabel } from "./ChatView";
 import { threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
@@ -193,8 +192,21 @@ export function focusQuickChatComposer(): boolean {
   return document.activeElement === field;
 }
 
-export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: boolean; visibility: ChatPrefs; onOpenInChat: () => void; onHide: () => void }) {
-  const [threads, setThreads] = useState<ChatThread[]>([]);
+export function QuickChat({
+  open,
+  visibility,
+  knownRepos = [],
+  onOpenInChat,
+  onHide,
+}: {
+  open: boolean;
+  visibility: ChatPrefs;
+  knownRepos?: string[];
+  onOpenInChat: () => void;
+  onHide: () => void;
+}) {
+  const { repos: openRepos } = useOpenChatRepos(open, knownRepos.join("\n"));
+  const threads = useChatThreads(open ? (openRepos ?? undefined) : undefined, false);
   const [tab, setTab] = useState<string | null>(readStoredTab);
   // null keeps the default corner for the current size, including when the viewport resizes.
   const [point, setPoint] = useState<Point | null>(readStoredPosition);
@@ -212,36 +224,13 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
   const resolvedKey = resolved ? threadKey(resolved) : null;
   const registry = useChatRegistry();
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    const poll = () => {
-      ipc
-        .listChatThreads(false)
-        .then((rows) => {
-          if (!cancelled) setThreads(rows);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [open]);
-
-  const commit = () =>
-    ipc.listChatThreads(false).then((rows) => {
-      flushSync(() => setThreads(rows));
-    });
-
   const chat = useChatThread(open ? resolved : null, {
     active: open,
     autoCompaction: visibility.autoCompaction,
     isFocused: (key) => resolvedKey === key,
-    onReload: commit,
-    onResumeRefresh: commit,
+    // The tabs follow the chat-scope stream; every write waits for it to catch up.
+    onReload: async () => {},
+    onResumeRefresh: async () => {},
     onRebind: (key) => {
       flushSync(() => setTab(key));
       writeStoredTab(key);
@@ -442,15 +431,7 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
                 <p>This thread is open in the terminal.</p>
               </div>
             ) : (
-              <ChatPane
-                entries={chat.transcript.entries}
-                status={chat.activity.status}
-                visibility={paneVisibility}
-                onApprove={chat.approve}
-                onLoadOlder={chat.loadOlder}
-                loadingOlder={chat.loadingOlder}
-                atStart={chat.transcript.fileStart === 0}
-              />
+              <ChatPane entries={chat.transcript.entries} status={chat.activity.status} visibility={paneVisibility} atStart={chat.transcript.fileStart === 0} />
             )}
             {chat.disconnected !== null ? (
               <div className="chat-banner" role="alert">
@@ -464,19 +445,6 @@ export function QuickChat({ open, visibility, onOpenInChat, onHide }: { open: bo
               <div className="chat-banner" role="alert">
                 <span>{chat.error}</span>
               </div>
-            ) : null}
-            {!chat.inTerminal && chat.prompt ? (
-              <ChatExtensionPrompt
-                request={chat.prompt}
-                onSubmit={(value) => {
-                  const id = chat.prompt?.id;
-                  if (id) void chat.reply(id, value);
-                }}
-                onCancel={() => {
-                  const id = chat.prompt?.id;
-                  if (id) void chat.cancelUi(id);
-                }}
-              />
             ) : null}
             {chat.inTerminal || !resolved ? null : (
               <ChatComposer

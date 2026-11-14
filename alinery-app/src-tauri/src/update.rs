@@ -476,6 +476,6 @@ fn apply_update_blocking(version: String) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    alinery_core::daemon_client::configure_detached_process(&mut command);
+    alinery_core::configure_detached_process(&mut command);
     command.spawn().map(|_| ()).map_err(|e| format!("spawn swap helper: {e}"))
 }

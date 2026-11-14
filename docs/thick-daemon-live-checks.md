@@ -1,0 +1,1106 @@
+# Thick daemon: live checks
+
+One ordered checklist for the live run, built at the P4 to P6 wrap-up from the entries every session appended. The user runs the app live once, after P6 (the setup screen). Every entry is `open` until a person changes `Status` and adds a dated `Result` line. No agent launched the app, used a signing identity or ran on x64 hardware, so no entry here has been observed to pass.
+
+**Order.** Part 0 is the shortest happy path (open the app, setup screen, repo, task, session, quit and relaunch, a remote host). Then Part 1 (app with a local repo), Part 2 (app with a remote repo over the Docker sshd or a real ssh host), Part 3 (Linux machine and native x64), Part 4 (signing identity). Within a part, entries run top to bottom; ids are unchanged from the session that wrote them (`L-<session>-<letter>`). Entries under one session are independent unless they say otherwise.
+
+**Rules for agents.** Append your entries to the part that fits; never delete or rewrite an earlier one. To close an entry, the user (or an agent that actually ran it) changes `Status` and adds a dated `Result` line. One entry per check, with exact steps and commands, the expected result and `Status: open`. Never fake a check you could not run, and never write `pass` for something you did not observe. Decisions, deviations and follow-ups go in `docs/thick-daemon-review-ledger.md`. The app is never launched by an agent (AGENTS.md). The Docker sshd runs on linux/arm64 only; never run amd64 images (QEMU has no AVX and Bun crashes).
+
+**Legend.** `<repo>` is a repository the app has open. `<app_config_dir>` is the Tauri app config directory (on macOS `~/Library/Application Support/ai.delegance.alinery`). Commands run from the repository root unless they say otherwise, with this PATH:
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v26.13.0/bin:$HOME/.cargo/bin:/var/folders/7z/66bcytjx0hg3rqq5yz_g81y00000gp/T/alinery-bun-1.4.3/bin:$PATH"
+```
+
+## Checklist
+
+**Part 0. Happy-path smoke test**
+
+- [ ] `L-SMOKE-0` prepare the machine (once)
+- [ ] `L-SMOKE-1` first launch opens the setup screen, local half
+- [ ] `L-SMOKE-2` the board and the daemon
+- [ ] `L-SMOKE-3` create a task
+- [ ] `L-SMOKE-4` start a session and use its terminal
+- [ ] `L-SMOKE-5` quit leaving sessions running, relaunch, the session is still there
+- [ ] `L-SMOKE-6` archive, restore, second repo
+- [ ] `L-SMOKE-7` a remote host over the Docker sshd (arm64 only)
+- [ ] `L-SMOKE-8` close all repos leaves the host running; clean up
+
+**Part 1. App with a local repo (64)**
+
+- [ ] `L-S6.1-a` the onboarded mark in a real app config
+- [ ] `L-S6.2-a` the setup screen on this computer (the P6 exit check, local half)
+- [ ] `L-S1.1-a` AdminService.Hello against an app-started daemon
+- [ ] `L-S1.2-a` Hello through the webview bridge
+- [ ] `L-S1.2-b` A stream is cancelled when the window closes or the page reloads
+- [ ] `L-S1.2-c` connect-web reads a streamed Response from bridgeFetch in WKWebView and WebKitGTK
+- [ ] `L-S1.2-d` A SyncService.Subscribe stream reaches the real webview
+- [ ] `L-S1.4-a` Stop daemon from Settings names its origin
+- [ ] `L-S1.4-b` Take over a daemon of an older protocol (old-op fallback)
+- [ ] `L-S3.1-b` Status dot, HotkeyBar and close dialog counts come from the stream
+- [ ] `L-S4.1-a` Repository settings through the daemon (write, disk edit, conflict)
+- [ ] `L-S4.1-b` A repository opened for the first time gets its files from the daemon
+- [ ] `L-S4.1-c` Repo settings telemetry reaches a local listener, and consent off sends nothing
+- [ ] `L-S4.2-a` Approve a gated step and watch the execution views follow the daemon
+- [ ] `L-S4.2-b` A task from the old runner shows as history and cannot be approved or started
+- [ ] `L-S4.2-c` A step's file states survive a live edit and an archive prunes them
+- [ ] `L-S4.2-e` A real coding step records its working files under a ref
+- [ ] `L-S4.3-a` Create a task with a pasted image and an attachment; the card shows at once and once
+- [ ] `L-S4.3-b` Duplicate, rename, archive and restore
+- [ ] `L-S4.3-c` The pre-archive backup failing keeps the task
+- [ ] `L-S4.3-d` A draft with large pasted images through the bridge
+- [ ] `L-S4.3-e` Opening a session on a draft or archived task is refused by the daemon
+- [ ] `L-S4.4-a` Archive a live Terminal session; the stamp comes before the exit
+- [ ] `L-S4.4-c` A file dropped in the chat composer is uploaded to the thread
+- [ ] `L-S4.4-d` The attention notification text
+- [ ] `L-S4.4-e` A hosted-model chat can be created and started
+- [ ] `L-S4.5-a` Show in folder for an artifact, a comment file and an attachment
+- [ ] `L-S4.5-b` A review handoff across two real repositories
+- [ ] `L-S4.5-c` A comment or a draft from another window shows up live
+- [ ] `L-S4.5-d` An agent's file write, a pasted attachment and an image node in the real app
+- [ ] `L-S4.5-e` The "after an artifact change" auto-backup trigger no longer fires
+- [ ] `L-S4.5-f` Step history is readable, then pruned on archive
+- [ ] `L-S4.6-b` Onboarding's playbook preview before any repository is open
+- [ ] `L-S4.6-c` Deleting a repo playbook that was imported from the community
+- [ ] `L-S4.6-d` An edit in a second window is refused as stale, and the picker follows
+- [ ] `L-S4.7-a` git on a Mac without Command Line Tools
+- [ ] `L-S4.7-d` the pull-request lookup in the app
+- [ ] `L-S4.8-a` start a sub-task manager in the app
+- [ ] `L-S4.8-b` kill a child with live sessions, discard a setup, replace a manager
+- [ ] `L-S4.8-d` `alinery_create_subtask` from a real agent against the TypeScript domain
+- [ ] `L-S4.9-a` backup, storage and purge in the app, local repo
+- [ ] `L-S4.9-b` restore through the sidecar on a local repo
+- [ ] `L-S4.9-d` the automatic triggers, and the after-an-artifact-change one
+- [ ] `L-S4.9-e` a failing pre-archive backup blocks the archive in the UI
+- [ ] `L-S4.10-a` a community import, an update and a publish in the real app
+- [ ] `L-S4.10-b` Settings > Customizations and the model roles on a local repo
+- [ ] `L-S4.10-d` the issue imports on a local repo
+- [ ] `L-S4.11-a` keep this computer awake on macOS
+- [ ] `L-S4.11-c` adoption on upgrade and a confirmed takeover in the app
+- [ ] `L-S4.12-a` sign in and out of a provider in the real app, API key and browser
+- [ ] `L-S4.12-b` the model picker lists the daemon's models
+- [ ] `L-P4X-a` Stop daemon while a purge or backup runs leaves no job child
+- [ ] `L-S5.1-a` the managed MCP runs from the daemon binary in the real app
+- [ ] `L-S5.1-c` the review handoff from the managed MCP between two local repositories
+- [ ] `L-S5.1-d` a harness-launched MCP in a session
+- [ ] `L-S5.3-a` the relaunch reattaches with sessions open
+- [ ] `L-S5.3-b` an older daemon is stopped from the banner
+- [ ] `L-S5.3-c` a new-protocol daemon on another lane
+- [ ] `L-S5.3-d` the host-guard banner
+- [ ] `L-S5.3-e` the drawer shell follows the repository
+- [ ] `L-S5.3-f` the turn controls through the RPCs
+- [ ] `L-S5.3-h` the updater and installer gate against a real daemon
+- [ ] `L-S5.3-i` an update from a released build with the old wire
+- [ ] `L-S5.4-a` what a session starts on the daemon's machine
+
+**Part 2. App with a remote repo: Docker sshd (arm64) or a real ssh host (37)**
+
+- [ ] `L-S1.3-a` Build the Linux runtimes
+- [ ] `L-S6.2-b` the setup screen against the remote-sshd container (the P6 exit check, ssh half)
+- [ ] `L-S6.2-c` each refusal reaches the screen as a fix
+- [ ] `L-S6.2-d` the screen over a running board, and the offline-host rule
+- [ ] `L-S1.3-b` Live remote tests (covers S1.3, S1.4, S3.1, S3.4 and S3.5 changes)
+- [ ] `L-S1.3-c` A remote repo answers Hello through the bridge
+- [ ] `L-S2.2-b` Linux runtime completes a writeDurable
+- [ ] `L-S3.1-a` Live session count moves without polling
+- [ ] `L-S3.4-a` Terminal feel through the bridge and an ssh forward (O8)
+- [ ] `L-S3.4-b` No byte lost or repeated across an ssh drop
+- [ ] `L-S3.4-c` O5 decision from the echo-under-load numbers
+- [ ] `L-S3.5-a` Board with a lost host and an incompatible daemon
+- [ ] `L-S4.1-d` A remote repository's settings and `EnsureReady`
+- [ ] `L-S4.2-d` The Linux runtime with protocol 27 and the engine's save on a remote host
+- [ ] `L-S4.3-f` The Linux runtime with protocol 28, and a remote repo's create, attachments and drafts
+- [ ] `L-S4.4-b` The chat rail follows other windows and a remote repo with no poll
+- [ ] `L-S4.4-f` The Linux runtime with protocol 29, and chat on a remote repo
+- [ ] `L-S4.5-g` The Linux runtime with protocol 30
+- [ ] `L-S4.6-a` A remote repo shows the host's own global playbooks
+- [ ] `L-S4.6-e` The Linux runtime with protocol 31
+- [ ] `L-S4.7-b` the daemon's PATH finds git under `systemd-run --user`
+- [ ] `L-S4.7-c` push, commit link and worktree removal on a remote repo
+- [ ] `L-S4.7-e` the Linux runtime with protocol 32
+- [ ] `L-S4.8-c` a sub-task on a remote repo
+- [ ] `L-S4.8-e` the Linux runtime with protocol 33
+- [ ] `L-S4.9-c` the same on a remote repo, and the Linux runtime with protocol 34
+- [ ] `L-S4.9-f` a host with no zip or unzip, and the 70,000-file read
+- [ ] `L-S4.10-c` a remote repo: a community import on the host, and the host's own agent directory
+- [ ] `L-S4.11-d` the Linux runtime without libalinery_core.so, and ownership on a host
+- [ ] `L-S4.11-f` the hosted token reaches a remote host's daemon between connects
+- [ ] `L-S4.12-c` a remote host signs in and lists its own models
+- [ ] `L-S5.1-b` a host's stdio MCP from the copied config, and a daemon restart under it
+- [ ] `L-S5.1-e` a harness-launched MCP on a remote host
+- [ ] `L-S5.2-a` the missing-tool refusal in the remote dialog
+- [ ] `L-S5.2-c` a real network cut under a claimed repository
+- [ ] `L-S5.2-d` the restore button on a remote repository
+- [ ] `L-S5.3-g` a terminal on a remote repository
+
+**Part 3. Linux machine and native x64 (5)**
+
+- [ ] `L-S1.1-b` Accept-time peer check sees the shell's executable on x64
+- [ ] `L-S2.3-a` Bun fs.watch recursive misses no event on x64
+- [ ] `L-S5.2-b` a native x64 Linux host
+- [ ] `L-S4.11-b` keep this computer awake on a Linux desktop with logind
+- [ ] `L-S0.1-a` proto install and the three alinery-proto tests on Linux
+
+**Part 4. Signing identity (3)**
+
+- [ ] `L-S0.5-a` bun:ffi under the hardened runtime
+- [ ] `L-S2.2-a` fsync Worker under the hardened runtime
+- [ ] `L-S4.11-e` a bundled app without the ownership resource
+
+Total: 118 entries (9 smoke + 109 earlier ids).
+
+## Part 0. Happy-path smoke test (run this first, about 20 minutes)
+
+If this passes, the rest of the list is detail. If a step fails, stop and note which step: most later entries assume the earlier steps work. These entries are new (written at the P6 wrap-up); they overlap L-S6.2-a, L-S1.2-a, L-S3.1-a, L-S5.3-a and L-S6.2-b on purpose, and each of those keeps its own deeper steps further down.
+
+### L-SMOKE-0: prepare the machine (once)
+
+- **Session:** P4 to P6 wrap-up.
+- **Steps:**
+  ```bash
+  # from the checkout of branch remote-daemon (the PATH line above applies)
+  cd alinery-app && npm ci && cd ..             # only if node_modules is missing
+  scripts/dev-fetch-bun.sh                      # compiles alinery-vinculum-daemon; needed if tauri dev prints that Bun is missing
+  scripts/dev-fetch-omp.sh                      # only if you want an OMP agent session in L-SMOKE-4
+  mv "$HOME/Library/Application Support/ai.delegance.alinery" "$HOME/Library/Application Support/ai.delegance.alinery.bak-live"   # fresh app config; restore it after the run
+  for r in smoke-a smoke-b; do rm -rf /tmp/$r; git init -q /tmp/$r && git -C /tmp/$r commit -q --allow-empty -m init; done
+  cd alinery-app && npm run tauri dev           # opens Alinery from this branch (the only time anything launches it)
+  ```
+- **Expected:** the window opens. The terminal that runs `tauri dev` shows no panic. `pgrep -fl alinery-vinculum-daemon` prints nothing yet (no repo is open).
+- **Status:** open
+
+### L-SMOKE-1: first launch opens the setup screen, local half
+
+- **Session:** S6.2, S6.1 (P6 exit check, local half). Deeper steps: L-S6.2-a, L-S6.1-a.
+- **Steps:** with the empty config from L-SMOKE-0, look at the first screen. Choose "Choose folder..." `/tmp/smoke-a`, press Open repository. Watch the progress list. In onboarding press Skip Onboarding.
+- **Expected:** the first screen is the setup screen with the "This computer" tab selected, an SSH tab, and Open repository disabled until a folder is chosen. The progress list shows "Checking the folder", then "Starting the daemon" and "Preparing the repository", then the screen goes away. Onboarding has three steps (Playbooks, Models, First task) and no repository step. After Skip, `grep local_onboarded "$HOME/Library/Application Support/ai.delegance.alinery/app.toml"` prints `local_onboarded = true`.
+- **Status:** open
+
+### L-SMOKE-2: the board and the daemon
+
+- **Session:** S1.1, S3.5, S5.3 (the daemon serves `alinery.v1` alone).
+- **Steps:** after L-SMOKE-1 the board of `/tmp/smoke-a` is shown. In a shell: `ls -a /tmp/smoke-a/.alinery/`, `pgrep -fl alinery-vinculum-daemon`, `tail -n 20 "$HOME/Library/Application Support/ai.delegance.alinery/logs/alinery.log"`.
+- **Expected:** the board renders (empty columns, no error banner, the status dot is green). `.alinery/` holds `rpc.sock`, `config.toml`, `harnesses.toml` and the two lock files (and no `alineryd.sock`). Exactly one `alinery-vinculum-daemon` process. The log has no `error` lines from the daemon start.
+- **Status:** open
+
+### L-SMOKE-3: create a task
+
+- **Session:** S4.3, S4.1, S4.7.
+- **Steps:** New task, title `smoke one`, keep the default playbook, create. Then `ls /tmp/smoke-a/.alinery/tasks/` and `git -C /tmp/smoke-a worktree list`.
+- **Expected:** the card appears once in the first column (not twice, not after a delay of seconds). `.alinery/tasks/smoke-one/task.md` exists. `git worktree list` shows `.alinery/worktrees/smoke-one` on branch `smoke-one`.
+- **Status:** open
+
+### L-SMOKE-4: start a session and use its terminal
+
+- **Session:** S4.4, S3.4, S1.2.
+- **Steps:** open the task, start a Terminal session (the `no-harness` row). Type `echo hello-$$; pwd; sleep 1; echo done` and note the number after `hello-`. Resize the window. Optionally start an OMP agent session too if L-SMOKE-0 fetched OMP. Then `ls /tmp/smoke-a/.alinery/tasks/smoke-one/sessions/`.
+- **Expected:** the terminal prints `hello-<pid>`, the worktree path and `done` with no visible lag; typing feels immediate; the resize reflows. `sessions/` holds `<id>.meta.json` and `<id>.scrollback`. The live-session count in the top bar and the status dot show 1.
+- **Status:** open
+
+### L-SMOKE-5: quit leaving sessions running, relaunch, the session is still there
+
+- **Session:** S5.3, S3.1, S1.4 (L-S5.3-a has the deeper version).
+- **Steps:** close the window and answer "leave sessions running". In a shell: `pgrep -fl alinery-vinculum-daemon`. Relaunch (`cd alinery-app && npm run tauri dev`). The board opens straight on `/tmp/smoke-a`. Open the session. In the terminal run `echo again-$$`.
+- **Expected:** the daemon process survived the quit (same pid before and after relaunch). The relaunched terminal replays the earlier output (`hello-<pid>` and `done` are still on screen) and `again-$$` prints the same pid as `hello-$$`: it is the same shell, not a new one. No setup screen and no onboarding on relaunch.
+- **Status:** open
+
+### L-SMOKE-6: archive, restore, second repo
+
+- **Session:** S4.3, S6.2.
+- **Steps:** archive the task `smoke one` and confirm; open Archived and restore it. Then Add repository (top bar), choose `/tmp/smoke-b`, Open repository.
+- **Expected:** archiving needs your confirmation (a dialog from the app, not a browser prompt) and the card leaves the board; the session list for it shows the session closed. Restoring puts it back. Adding `/tmp/smoke-b` shows the setup screen as a dialog and then goes straight to the board with no onboarding.
+- **Status:** open
+
+### L-SMOKE-7: a remote host over the Docker sshd (arm64 only)
+
+- **Session:** S6.2, S5.2, S1.3 (P6 exit check, ssh half). Deeper steps: L-S6.2-b to -d, L-S1.3-b.
+- **Steps:**
+  ```bash
+  scripts/build-remote-runtimes.sh                 # Bun only; fills alinery-app/src-tauri/resources/remote/ (run before launching the app)
+  scripts/tests/remote-sshd/run.sh start           # prints the key path (…/alinery-test-sshd/id_test); arm64 image only
+  ```
+  In the app: Add repository, SSH tab, "Add SSH connection...", SSH host `dev@127.0.0.1`, port `2222`, key = the printed `id_test` path. Test connection and trust the host key. Add SSH connection, then Connect, then the credentials form: Continue. Browse `work`, select `proj`, Open repository, confirm Initialize Git. Skip onboarding. Create a task, start a Terminal session, type `uname -a; echo remote-$$`. Then `docker exec alinery-test-sshd pgrep -fl alinery-vinculum-daemon`.
+- **Expected:** Test connection says "Reachable: <platform>. Nothing was installed." and `docker exec alinery-test-sshd ls ~dev/.local/share/alinery-remote` finds nothing until Connect. After Connect the runtime installs, the daemon starts, onboarding runs once for this host and not again for a second repo on it. `uname -a` prints the container's Linux kernel string. The `pgrep` prints one daemon. `app.toml` has `onboarded = true` under `[remote_hosts.<id>]` and `local_onboarded` is unchanged.
+- **Status:** open
+
+### L-SMOKE-8: close all repos leaves the host running; clean up
+
+- **Session:** S1.3, S5.2.
+- **Steps:** with the remote repo from L-SMOKE-7 open, close the window and choose "close all repos". Then `docker exec alinery-test-sshd pgrep -fl alinery-vinculum-daemon` and `pgrep -fl alinery-vinculum-daemon` on this Mac. Finally `scripts/tests/remote-sshd/run.sh stop`, and restore your config: `rm -rf "$HOME/Library/Application Support/ai.delegance.alinery" && mv "$HOME/Library/Application Support/ai.delegance.alinery.bak-live" "$HOME/Library/Application Support/ai.delegance.alinery"`.
+- **Expected:** the local daemons are gone (close-all stops them); the host's daemon in the container is still running (a remote repo is only disconnected). After `run.sh stop` the container is gone.
+- **Status:** open
+
+---
+
+## Part 1. App with a local repo
+
+Launch the app as in L-SMOKE-0 with a scratch or real local repo. Some entries also touch a remote repo for one step; they say so and are repeated in Part 2 only when the remote half is the point.
+
+### L-S6.1-a: the onboarded mark in a real app config
+- **Session:** S6.1 (R-S6.1-1, R-S6.1-2).
+- **Needs:** the app launched (user-run), with a scratch app config dir so your real config is not touched. Do the three cases in order, quitting the app between them.
+- **Steps:**
+  1. Old install with a repo and the old flag: start with an `app.toml` that has `known_repos = ["<a git repo>"]` and no `local_onboarded` key, and in the webview's `localStorage` the key `alinery.onboardingCompleted.v1` = `1` (a build before S6.1 sets it when you skip onboarding). Launch.
+  2. Old install with a repo and no flag: same `app.toml`, key absent. Launch.
+  3. Fresh install: no `app.toml`. Launch, pick a repo, then Skip onboarding. Quit and read `app.toml`.
+- **Expected:** (1) the board opens with no onboarding, `app.toml` gains `local_onboarded = true` after the first write, and the `localStorage` key is gone (devtools: Application, Local Storage). (2) the board opens with no onboarding, because a local repo is known. (3) onboarding opens first; after Skip, `app.toml` holds `local_onboarded = true`, and a relaunch opens the board. For a remote host: a host with a repo in `known_repos` shows `onboarded = true` under `[remote_hosts.<id>]` after the first write, and a host with none shows `false`.
+- **Status:** open
+
+### L-S6.2-a: the setup screen on this computer (the P6 exit check, local half)
+- **Session:** S6.2.
+- **Needs:** the app launched (user-run), with an empty app config dir (move `~/Library/Application Support/<app>` aside or point the app at a scratch config) and two scratch git repos `/tmp/repo-a` and `/tmp/repo-b`.
+- **Steps:** (1) launch with no `app.toml`. (2) On the screen, check "This computer" is the selected tab, SSH is the other, and "Open repository" is disabled. (3) Choose folder... `/tmp/repo-a`, Open repository. Watch the progress list. (4) Onboarding opens at Playbooks (step 01 of 03); click Skip Onboarding. (5) From the top bar choose Add repository: the setup screen opens as a dialog; choose `/tmp/repo-b`, Open repository. (6) Choose a plain non-git folder in step 3 or 5 and confirm the Initialize Git prompt appears and Cancel leaves the folder alone.
+- **Expected:** (2) as stated. (3) "Checking the folder", then "Starting the daemon" and "Preparing the repository", then the screen goes away. (4) the wizard has three steps (Playbooks, Models, First task), no repository step. (5) the board opens with no onboarding. `app.toml` holds `local_onboarded = true` after (4). The look of the tabs, the folder row and the progress list is yours to judge (new CSS in `onboarding.css`, not seen by an agent).
+- **Status:** open
+- **Earlier placeholder (superseded, kept for the record):** Written before S6.2 existed: with an empty app config dir, launch the app. It must open on the setup screen with "This computer" selected. A local repo goes through onboarding to its board; a second local repo goes straight to its board. Against the remote-sshd container (arm64), the first repo on the new host goes through onboarding and a second repo on it does not.
+
+### L-S1.1-a: AdminService.Hello against an app-started daemon
+
+- **Session:** S1.1 (4.2 row for the app-started Accept). Plan: S1.1 Status, 2.1.7.
+- **Steps:**
+  1. Launch the app on a repo so it starts the daemon.
+  2. Find a token file: `ls <app_config_dir>/rpc-secrets/` (one `<hash>.secret` per repo and lane; use the one for this repo).
+  3. ```bash
+     proto/node_modules/.bin/buf curl --protocol grpc --http2-prior-knowledge \
+       --unix-socket <repo>/.alinery/rpc.sock --schema proto \
+       -H "authorization: Bearer $(cat <app_config_dir>/rpc-secrets/<one>.secret)" \
+       -d '{}' http://daemon/alinery.v1.AdminService/Hello
+     ```
+  4. Repeat with `-H 'authorization: Bearer 00'`.
+  5. Repeat with no `authorization` header.
+  6. `ls -l <repo>/.alinery/rpc.sock` and `ls "$TMPDIR" /tmp | grep alinery-rpc-`.
+- **Expected:**
+  - Step 3: `"protocol": 25` and capabilities VIEW and ACT only (`buf` is not the shell, so it is not APPROVE or ADMIN).
+  - Step 4: `unauthenticated`, exit code 128.
+  - Step 5: AGENT capability only.
+  - Step 6: `rpc.sock` is `srw-------` (mode 0600; the daemon binds under umask `0o177`) and no `alinery-rpc-*.secret` file is left in the OS temp dir (the daemon deletes the hand-off file after reading it).
+- **Status:** open
+
+### L-S1.2-a: Hello through the webview bridge
+
+- **Session:** S1.2 (4.2 row: one Tauri invoke carries a raw `ipc::Request` body and a `Channel`). Plan: S1.2 Accept, 2.1.9.
+- **Steps:** launch the app on a repo. Open the webview devtools console and run:
+  ```js
+  await (await import("/src/daemon/transport.ts")).admin("<repo key>").hello({})
+  ```
+- **Expected:** a reply with `protocol` 25 and capabilities VIEW, ACT, APPROVE and ADMIN. If it fails, O2 is open again: stop and tell the planner (4.2).
+- **Status:** open
+
+### L-S1.2-b: A stream is cancelled when the window closes or the page reloads
+
+- **Session:** S1.2 (the `Destroyed` window hook has no automated test; 4.1 S1.2 build).
+- **Steps:** in the same webview open a long stream call (for example `SyncService.Subscribe` through `daemon_rpc`, via the board or `useDaemonStatus`). (1) Reload the page (Cmd+R). (2) Open a second window or repo view that holds a stream, then close that window. After each, inspect the daemon for open streams: tail `<app_config_dir>/logs/alinery.log` or run `lsof -U | grep rpc.sock` and count connections before and after.
+- **Expected:** no stream is left open on the daemon after either. Known caveat from the S1.2 review: a reload only cancels once the daemon next sends data (the 15 s heartbeat), so allow 20 s before judging an idle stream.
+- **Status:** open
+
+### L-S1.2-c: connect-web reads a streamed Response from bridgeFetch in WKWebView and WebKitGTK
+
+- **Session:** S1.2 (4.2 row; the spike ran under Bun only).
+- **Steps:** with the app on macOS (WKWebView), open a repo and watch a server stream deliver more than one frame over time (a `SyncService.Subscribe` stream; start a terminal session and watch the Settings live count move, which arrives as a delta frame). Repeat on a Linux desktop build (WebKitGTK) when one exists.
+- **Expected:** frames arrive as they are produced, not all at once when the stream ends. A buffered response would show no update until the stream closes.
+- **Status:** open (macOS), open (Linux)
+
+### L-S1.2-d: A SyncService.Subscribe stream reaches the real webview
+
+- **Session:** S1.2 / S2.1 (left for S3.1). Plan: S2.1 Accept, 2.1.9.
+- **Steps:** launch the app on a repo and run in the devtools console (the same pieces `src/sync/hooks.ts` uses; the scope argument is whatever `Scope` shape that file passes for the repo scope):
+  ```js
+  const { createClient } = await import("@connectrpc/connect");
+  const { SyncService } = await import("alinery-proto/alinery/v1/sync_pb");
+  const { daemonTransport } = await import("/src/daemon/transport.ts");
+  const c = createClient(SyncService, daemonTransport("<repo key>"));
+  for await (const f of c.subscribe({ scope: { /* as in src/sync/hooks.ts */ } })) { console.log(f); break; }
+  ```
+  The simpler check is to open any board view or Settings and confirm rows and the live count appear (they come from this stream).
+- **Expected:** the first frame is a snapshot with `complete: true`; later frames are deltas; a heartbeat arrives at 15 s.
+- **Status:** open
+
+### L-S1.4-a: Stop daemon from Settings names its origin
+
+- **Session:** S1.4. Plan: S1.4 Accept.
+- **Steps:** launch the app on a repo. Settings, Harness, Stop daemon, confirm. Then `grep 'shutdown requested' <app_config_dir>/logs/alinery.log | tail -3` and `ls <repo>/.alinery/rpc.sock`.
+- **Expected:** the daemon is gone, the log shows `shutdown requested: origin=STOP_DAEMON`, and the socket file is gone or refuses connections.
+- **Status:** open
+
+### L-S1.4-b: Take over a daemon of an older protocol (old-op fallback)
+
+- **Session:** S1.4. Plan: S1.4 Accept; 4.1 S1.4 build (choice 2).
+- **Steps:** start a daemon from another build whose protocol is older than 25 (for example from `main` or the base branch's last release), so it has no `rpc.sock`, or a token this app lacks. Open the same repo in this app and choose **Take over {repo}** and confirm.
+- **Expected:** the old daemon stops through the legacy JSON `shutdown` op (its log or `alinery.log` shows the takeover origin), this app's daemon then starts and owns the repo. A daemon that answers on `rpc.sock` and refuses (wrong token) is an error, never retried on the old wire.
+- **Status:** open
+
+### L-S3.1-b: Status dot, HotkeyBar and close dialog counts come from the stream
+
+- **Session:** S3.1 (carries the over-the-bridge Subscribe check from S2.1).
+- **Steps:** with two or more sessions running (one busy, one waiting for input if you can arrange it), look at the status dot, the HotkeyBar counts, then close the window.
+- **Expected:** the dot colour and the HotkeyBar counts agree with the sessions; the close dialog names the right number of live sessions (local) without a visible delay of more than 3 s.
+- **Status:** open
+
+### L-S4.1-a: Repository settings through the daemon (write, disk edit, conflict)
+
+- **Session:** S4.1. Plan: S4.1 Accept; ledger R-S4.1-6.
+- **Steps:** launch the app on a scratch git repo `<repo>`. (1) Settings, pick the repo in the scope list, change Thinking to another value. Watch the field: it shows the new value at once and keeps the "Repository override" label. `shasum -a 256 <repo>/.alinery/config.toml` before and after. (2) Edit `<repo>/.alinery/config.toml` by hand (change `thinking`) and save; do not touch the app. (3) Open a second Alinery window on the same repo (or edit the file between the field showing a value and you pressing a second change), then change the same field in both. (4) Clear the override with the field's reset control.
+- **Expected:** (1) the value stays after the daemon's row arrives and `config.toml` holds the new value in the `[defaults]` table; (2) the open Settings page shows the hand edit within a second without a reload; (3) the second writer sees the toast "these settings were changed elsewhere; showing the newer values" and the newer value, and `config.toml` holds the first writer's value; (4) the field returns to the global value labelled "Global". A Create task page opened afterwards starts with the repo's effective harness and model.
+- **Status:** open
+
+### L-S4.1-b: A repository opened for the first time gets its files from the daemon
+
+- **Session:** S4.1. Plan: S4.1 Accept (`EnsureReady`, run twice); ledger R-S4.1-1.
+- **Steps:** `git init /tmp/s41-scratch && cd /tmp/s41-scratch && git commit --allow-empty -m init`. Add it as a repository in the app. Then:
+  ```bash
+  ls -la /tmp/s41-scratch/.alinery
+  git -C /tmp/s41-scratch check-ignore -q .alinery/tasks; echo "ignored: $?"
+  find /tmp/s41-scratch/.alinery -type f -newermt '1970-01-01' -exec stat -f '%m %N' {} + | sort > /tmp/s41-before.txt
+  ```
+  Close and reopen the repo in the app (the shell calls `EnsureReady` again), then repeat the `find` into `/tmp/s41-after.txt` and `diff /tmp/s41-before.txt /tmp/s41-after.txt`. Also `grep ensure-ready-failed "<app_config_dir>/logs/alinery.log"`.
+- **Expected:** `config.toml` and `harnesses.toml` exist, `ignored: 0`, the diff shows no changed mtime other than socket and lock files the daemon rewrites, and the log has no `app.ensure-ready-failed` line. (The unit test `rpc/settings.test.ts` covers the same calls against a real gRPC server; this run adds the shell's call after attach.)
+- **Status:** open
+
+### L-S4.1-c: Repo settings telemetry reaches a local listener, and consent off sends nothing
+
+- **Session:** S4.1. Plan: S4.1 Accept (telemetry); ledger R-S4.1-3.
+- **Steps:** in `<app_config_dir>/app.toml` set `[telemetry]` `enabled = true`, `prompted = true`, a non-empty `install_id`, and `endpoint = "http://127.0.0.1:8099"`. In a terminal run `nc -l 8099` (or `python3 -m http.server 8099` and read its log). In the app change one repository setting (L-S4.1-a step 1). Then set `enabled = false`, restart nothing, and change another setting.
+- **Expected:** with consent on, one `POST` arrives within 3 s whose JSON body has `"event":"settings.change"`, `"source":"alineryd"` and `"scope":"repo"` and no repository path, slug or token; with consent off the listener receives nothing within 3 s, and the setting still saves.
+- **Status:** open
+
+### L-S4.2-a: Approve a gated step and watch the execution views follow the daemon
+
+- **Session:** S4.2. Plan: S4.2 Accept; ledger R-S4.2-1, R-S4.2-2, R-S4.2-8.
+- **Steps:** launch the app on a scratch git repo with a playbook that has a locked (human-gated) step. Create a task and start its first session. (1) Open the task detail and the session: they show the execution, with no 1.5 s or 3 s poll in the network panel. (2) When the locked step is ready, press Approve in the session. (3) With the task page also open, watch it move without a reload. (4) Press Approve a second time quickly, or from two windows.
+- **Expected:** (1) the page updates on the daemon's push; (2) the step completes and the receipt shows; (3) the task detail shows the same state; (4) the second approval is refused with a revision mismatch message and the first stands. `<repo>/.alinery/tasks/<slug>/execution.json` has an `engine` block and its `revision` rose.
+- **Status:** open
+
+### L-S4.2-b: A task from the old runner shows as history and cannot be approved or started
+
+- **Session:** S4.2. Plan: S4.2 Accept (O21); ledger R-S4.2-3.
+- **Steps:** put a task from an earlier build in a scratch repo (an `execution.json` with records, no `engine` block and no `engine.jsonl`). Open the repo in the app, then the task and its queued session. Restart the daemon (Settings, Stop daemon, reopen).
+- **Expected:** the task shows its execution records; Approve and "Start this queued session" are disabled; no session starts after the restart; `execution.json` is unchanged byte for byte.
+- **Status:** open
+
+### L-S4.2-c: A step's file states survive a live edit and an archive prunes them
+
+- **Session:** S4.2. Plan: S4.2 Accept (O27); ledger R-S4.2-5, R-S4.2-6.
+- **Steps:** run a fork and join to completion. In `<repo>/.alinery/tasks/<slug>/executions/<execId>/` note the manifest hashes and `ls objects/`. Edit an artifact an earlier step had consumed, restart the daemon, and `shasum -a 256` the object named in the manifest. Then archive the task in the app. Repeat with a sub-task finished from its manager (and one killed): its `objects/` goes the same way.
+- **Expected:** the object's hash equals its file name and the original bytes, whatever the live file now holds; after the archive, finalize or kill `objects/` is gone and the manifests remain.
+- **Status:** open
+
+### L-S4.2-e: A real coding step records its working files under a ref
+- **Session:** S4.2 (review fix). Plan: S4.2 Accept (O27, "a git-worktree step still resolves its recorded tree"); ledger R-S4.2-10.
+- **Steps:** with the app running, run a playbook with a coding step (the bundled `superdevelop` build step) in a git repository to acceptance, leaving a file uncommitted in the task worktree. Then `git -C <worktree> for-each-ref refs/alinery/executions` (the refs read `refs/alinery/executions/<slug>/<execId>`; run a second task with a coding step in the same repository and check the first task's ref is unchanged) and `git -C <worktree> ls-tree -r <ref>`. Run `git -C <worktree> gc --prune=now` and repeat the `ls-tree`.
+- **Expected:** one ref per accepted coding execution; the tree lists the uncommitted file with its content at acceptance; `git status` of the worktree is unchanged by the recording; the tree survives the gc. The daemon log has no `worktree not recorded` line.
+- **Status:** open
+
+### L-S4.3-a: Create a task with a pasted image and an attachment; the card shows at once and once
+
+- **Session:** S4.3. Plan: S4.3 Accept (vitest "created task shows its card before the delta, and exactly once after"); ledger R-S4.3-1, R-S4.3-8.
+- **Steps:** launch the app on a scratch git repo. New task: a name, a description, paste an image into the description, add one file with the file picker and drop another from Finder. Create. Watch the board (Grid and Kanban) while it creates.
+- **Expected:** the card appears the moment the create returns, before any reload, and stays a single card; the task opens with the ticket listing `attachments/<file>` for each file; `<repo>/.alinery/tasks/<slug>/artifacts/attachments/` holds the files and `shasum -a 256` of each equals the original; `<repo>/.alinery/worktrees/<slug>` is a worktree on branch `<slug>`; no file is left in `<repo>/.alinery/tmp/uploads`. Creating a second task of the same name gets `<slug>-1`.
+- **Status:** open
+
+### L-S4.3-b: Duplicate, rename, archive and restore
+
+- **Session:** S4.3. Plan: S4.3 Build; ledger R-S4.3-1, R-S4.3-5.
+- **Steps:** on a task from L-S4.3-a: Duplicate it; rename the copy; archive it (with and without "remove worktree"); restore it from the archived list; toggle Auto approval all; add and remove a related task.
+- **Expected:** the duplicate keeps the ticket, the attachments and the playbook; each change shows on the board without a reload; archive removes the card and restore brings it back; restore does not bring `executions/*/objects` back; the related-task symlinks under `<task>/related/` match the list.
+- **Status:** open
+
+### L-S4.3-c: The pre-archive backup failing keeps the task
+
+- **Session:** S4.3 (the WA until S4.9). Plan: S4.3 Accept; ledger R-S4.3-2.
+- **Steps:** in Settings, Backups: set a destination that is a plain file (`touch /tmp/not-a-dir`), enable the archive trigger. Archive a task. Then set a good destination and archive again.
+- **Expected:** with the bad destination the archive does not happen, the task stays on the board, and a message names the backup failure; with the good one a backup zip appears and the task archives. With the trigger off or no destination, archive proceeds with no backup. Say whether the wait feels long on a large repo.
+- **Status:** open
+
+### L-S4.3-d: A draft with large pasted images through the bridge
+
+- **Session:** S4.3. Plan: 2.1.5 (128 MiB receive limit); ledger R-S4.3-4.
+- **Steps:** start a task, paste three 8 MB images into the description, wait for the autosave, close the form, reopen the draft. Then paste images totalling over 100 MB.
+- **Expected:** the draft reopens with its images (read through BlobService); the over-limit paste is refused with a readable message, not a hang or a blank form.
+- **Status:** open
+
+### L-S4.3-e: Opening a session on a draft or archived task is refused by the daemon
+
+- **Session:** S4.3. Plan: S4.3 Build (open_session preflight); ledger R-S4.3-6.
+- **Steps:** with a saved draft, try to open a session on it (via a stale tab or the Sessions list). Archive a task that has a session and try to attach to that session. Open a plain Terminal session. Sign out of a hosted account and open a hosted-model session.
+- **Expected:** the draft and archived cases show the daemon's refusal text and start nothing; Terminal opens; the hosted refresh still runs before the session opens.
+- **Status:** open
+
+### L-S4.4-a: Archive a live Terminal session; the stamp comes before the exit
+
+- **Session:** S4.4. Plan: S4.4 Accept (`ArchiveSession` on a live Terminal); ledger R-S4.4-4.
+- **Steps:** launch the app on a scratch git repo with a task. Open a Terminal session in the task and start `sleep 600`. Archive the session from the sessions list. In a second window on the same repo, watch the sessions list while you do it.
+- **Expected:** the row shows archived and its process gone; `<repo>/.alinery/tasks/<slug>/sessions/<id>.meta.json` has `"archived": true`; `pgrep -f 'sleep 600'` finds nothing; the second window never shows the session running and archived at once in the wrong order (it goes straight from running to archived, then exited). Archiving a session that already exited stamps it and kills nothing.
+- **Status:** open
+
+### L-S4.4-c: A file dropped in the chat composer is uploaded to the thread
+
+- **Session:** S4.4. Plan: S4.4 Accept (`BeginUpload`, not a path); ledger R-S4.4-14.
+- **Steps:** in Chat, drop a PDF from Finder and paste a screenshot into the composer, then send. Open the thread's folder.
+- **Expected:** `<repo>/.alinery/sessions/<id>.attachments/` holds both files, byte for byte (`shasum -a 256`); the pasted image previews in the transcript; a file over 25 MB is refused with its name in the message and the rest still go. On a remote repo, the files appear under the same path on the host.
+- **Status:** open
+
+### L-S4.4-d: The attention notification text
+
+- **Session:** S4.4. Plan: S4.4 Build (the Session entity carries the attention body); ledger R-S4.4-6.
+- **Steps:** with a task named "Fix login", run a session that stops to ask a question (waiting for input), one that needs an approval, and one that finishes a turn (idle). Keep the app in the background. Repeat for a chat thread.
+- **Expected:** the OS notifications read `Fix login — waiting for your input`, `Fix login — waiting for your approval` and `Fix login — idle, needs you`; a chat thread uses its own label, or `session` when it has none.
+- **Status:** open
+
+### L-S4.4-e: A hosted-model chat can be created and started
+
+- **Session:** S4.4. Plan: S4.4 Build (hosted refresh stays in the shell); ledger R-S4.4-9.
+- **Steps:** signed in to an Alinery account with a hosted plan, pick a hosted model, create a chat thread and send a message. Do it again after the hosted credential has expired (change `expires` in the hosted `inference.json` under `<app_config_dir>`, or wait). Do it also from a thread that was created but never started.
+- **Expected:** the thread starts and answers each time; the credential file is refreshed before the spawn (its mtime moves); a model that is not hosted makes no network call.
+- **Status:** open
+
+### L-S4.5-a: Show in folder for an artifact, a comment file and an attachment
+
+- **Session:** S4.5. Plan: S4.5 Build ("shell reveal of a `BlobRef`"); ledger R-S4.5-9.
+- **Steps:** Task detail on a local repo: use *Show in folder* on an artifact, on the archived comment file of a reviewed artifact, and on an attachment. Then on a remote repo (L-S1.3-b host): the same three.
+- **Expected:** local, Finder opens with the file selected, each time. Remote, nothing is revealed: the host path is copied to the clipboard and the page says so (the plan said the button is hidden for a remote repo; it is kept and copies the path instead, R-S4.5-9).
+- **Status:** open
+
+### L-S4.5-b: A review handoff across two real repositories
+
+- **Session:** S4.5. Plan: S4.5 Build ("review handoff and send become one daemon command each"); ledger R-S4.5-5, R-S4.5-6.
+- **Steps:** open two local repos in the app. In repo A, finish a review artifact in a task and use *Send to another repository* with a task in repo B, a target phase and a prompt note. Then repeat with a target in a repo on a remote host, and with the source task archived.
+- **Expected:** B's task gets `review-handoff-001.md` and a new session in the chosen phase that starts with the handoff text; both tasks list the handoff (inbound on B, outbound on A) in their artifact rows, with no reload. Local-to-remote is refused with a message that both repos must be on the same machine, before either daemon is asked. An archived source is refused by the target's daemon before any file or session exists (the page shows the daemon's message). If A's daemon is stopped between the install and the outbound record, B keeps its session and the page lists an `outbound_handoff_record` error.
+- **Status:** open
+
+### L-S4.5-c: A comment or a draft from another window shows up live
+
+- **Session:** S4.5. Plan: S4.5 Tests ("a comment from another client appears with no poll").
+- **Steps:** open the same task in two windows of the same repo (or the app and a second app instance on a remote host). Add a line comment in one; start typing a draft comment in the other, then send the review from the first.
+- **Expected:** the comment, the draft and the pending-review marker appear in the other window within a second, with no 3 s lag and no reload. Sending the review archives the comment file, clears the comments, and the pending marker goes in both windows. Saving the same draft from both windows keeps the last writer's text (the UI sends no `expected_revision`, R-S4.5-12).
+- **Status:** open
+
+### L-S4.5-d: An agent's file write, a pasted attachment and an image node in the real app
+
+- **Session:** S4.5. Plan: S4.5 Accept 2 (the test passes; this is the view).
+- **Steps:** in a running task, `cp` a file to `.alinery/tasks/<slug>/artifacts/03-plan.md` from a shell. Open the artifact tree of a task that has a rendered image or HTML node and open it; open a PNG attachment and a text attachment (Task detail and the create page's attachment chips).
+- **Expected:** the artifact appears in the task's list within about a second and renders; node images and attachment previews load (bytes arrive through `ReadBlob`, no `read_attachment_image` command exists any more); a 20 MB file opens without freezing the window.
+- **Status:** open
+
+### L-S4.5-e: The "after an artifact change" auto-backup trigger no longer fires
+
+- **Session:** S4.5. Plan: S4.9; ledger R-S4.5-10. **A known gap, not a defect to fix in S4.5.**
+- **Steps:** in Settings, turn on automatic backups with the *after an artifact change* trigger and a destination. Add a comment, send a review, clear a pending review.
+- **Expected today:** no backup is queued by these writes (the trigger fired from the deleted `artifacts.rs`; the only callers left are `backup_queue.rs` tests). The other two triggers (before archive, after push or commit) still fire. After S4.9 the daemon's artifact writes must publish `PostArtifactChange` again; then this check should show one debounced backup per burst of changes.
+- **Status:** open (expected to fail until S4.9)
+
+### L-S4.5-f: Step history is readable, then pruned on archive
+
+- **Session:** S4.5. Plan: S4.5 Accept 3, O27. **The test passes; no view reads it yet.**
+- **Steps:** none in the UI. `readStepObject` (in `sync/artifacts.ts`) is called by no view; the daemon test `rpc/artifacts.test.ts` covers a step snapshot read after an edit and a restart, a symlink in `objects/` (PERMISSION_DENIED) and a pruned object (NOT_FOUND "pruned"). Re-run that test after any change to `BlobService`.
+- **Expected:** the history view that O27 asks for is a later session's UI; nothing to look at yet.
+- **Status:** open (nothing to run in the app)
+
+### L-S4.6-b: Onboarding's playbook preview before any repository is open
+
+- **Session:** S4.6. Plan: S4.6 Accept; ledger R-S4.6-4.
+- **Steps:** start the app with no known repository (move `known_repos` out of `app.toml`, or a fresh `<app_config_dir>`), go to the Playbooks step of onboarding, then add a local repository and return to that step.
+- **Expected:** with no repository the previews say "Open a repository to read the playbook library." (no raw `NoLibraryHost:` prefix) and Retry works once a repository is added; after that the curated playbooks preview with their steps. (A fresh install used to preview them with no repository; that no longer works, R-S4.6-4.)
+- **Status:** open
+
+### L-S4.6-c: Deleting a repo playbook that was imported from the community
+
+- **Session:** S4.6. Plan: S4.6 Build (community registry stays in the shell); ledger R-S4.6-6.
+- **Steps:** signed in, import a community playbook into a repo (Playbooks, Community, Import), confirm the local row says it is an import, then delete that repo playbook from the Local list. Open Community again.
+- **Expected:** the playbook disappears from the Local list, the Community row no longer says imported (it offers Import again, not Update), and `<repo>/.alinery/playbooks/` has no directory for it left and no record for it in `community-imports.toml`. If that file is made unreadable first (not valid TOML), the delete is refused with a message and the playbook is still there.
+- **Status:** open
+
+### L-S4.6-d: An edit in a second window is refused as stale, and the picker follows
+
+- **Session:** S4.6. Plan: S4.6 Tests ("a save with a stale revision is ABORTED"); ledger R-S4.6-7.
+- **Steps:** with two Alinery windows on one repo (or the app plus a hand edit of the file), open the same repo playbook in the editor in both. Save a change in window 1. In window 2 change the same playbook and Save. Then in window 1 mark a different playbook preferred and hide a third.
+- **Expected:** window 2's save is refused with the daemon's "changed since revision N" text and "Reopen the playbook to see the newer version", and the file keeps window 1's text; after reopening, a save goes through. Window 2's list shows the preferred and hidden marks within a second or two with no reload. Editing the file in a text editor instead of window 1 gives the same refusal.
+- **Status:** open
+
+### L-S4.7-a: git on a Mac without Command Line Tools
+
+- **Session:** S4.7. Plan: S4.7 Research (UNCONFIRMED, 4.2); ledger R-S4.7-8.
+- **Steps:** on a Mac (or a user account / VM) where `xcode-select -p` fails and no git is on PATH, launch Alinery, open a local repository and create a task with a worktree, then archive the task from the board (this removes the worktree). Repeat on a Mac that has the Command Line Tools.
+- **Expected:** with no Command Line Tools the daemon uses the alongside tree (`/Applications/Alinery.git/bin/git` with `GIT_EXEC_PATH`) and never runs the `/usr/bin/git` stub (no "install the command line developer tools" dialog); with the tools installed it uses the one on PATH. The unit test covers the order with the checks injected; this checks the real machine.
+- **Status:** open
+
+### L-S4.7-d: the pull-request lookup in the app
+
+- **Session:** S4.7. Plan: S4.7 Build (the lookup stays in the shell); ledger R-S4.7-1.
+- **Steps:** with GitHub connected (Settings, Connections), open the Grid with a task whose branch has an open pull request on GitHub and no stored link, then one with a stored link. Disconnect GitHub and reload.
+- **Expected:** the first task shows its PR badge and `task.md` gets `pr_url` (once; a second poll does not rewrite it); the second keeps its link. Disconnected, the badge shows the lookup error and nothing is written. Do the same on a remote repo: the lookup runs on this Mac and the link is written on the host.
+- **Status:** open
+
+### L-S4.8-a: start a sub-task manager in the app
+
+- **Session:** S4.8. Plan: S4.8 (needs the app); ledger R-S4.8-1, R-S4.8-2.
+- **Steps:** open Alinery from this branch on a local repository, open a task that has a worktree, press **Start sub-task**. Read the first screen of the session it opens. Then ask the agent to create a child with `alinery_create_subtask` (name, a slug of lowercase letters and dashes, a line of instructions).
+- **Expected:** the button opens a terminal session that attaches at once (it is started by the daemon, not by the page); the agent's first message shows the manager prompt with this task's name, branch, worktree status and ticket path filled in (no `{{...}}` left); after the call the task page shows the child under it, the parent's button reads "Finish the active sub-task before starting another", and the child's worktree is on a branch of the same name at the parent's head.
+- **Status:** open
+
+### L-S4.8-b: kill a child with live sessions, discard a setup, replace a manager
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-3, R-S4.8-4.
+- **Steps:** with a child that has a running session (and, once, a nested child under it), press **Kill sub-task** and confirm. Then start a new manager and, before creating any child, press **Discard setup**. Then create a child, quit its manager session (or kill it from the terminal list) and press **Replace manager session**.
+- **Expected:** every session of the child and its active descendants stops; the child (and the nested one) stays on the board as archived history marked killed, with its worktree, branch and artifacts; the parent can start a sub-task again. A discarded setup disappears with its scrollback. Replacing a manager opens a recovery prompt that names the child. With auto-backup on for archives, a backup appears after a kill or discard and a failing backup never blocks it.
+- **Status:** open
+
+### L-S4.8-d: `alinery_create_subtask` from a real agent against the TypeScript domain
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-3.
+- **Steps:** in a task with a manager session, have the agent call `alinery_create_subtask` with a playbook of its own, and then call `alinery_inspect_subtask_finish` and `alinery_finalize_subtask` (the MCP tools, which still run the Rust inspect and finalize) on the child after committing in it.
+- **Expected:** the child is created by the daemon with the parent's links; the finish tools read the same records and archive the child as merged or finished with a snapshot in the parent's `artifacts/subtasks/`.
+- **Status:** open
+
+### L-S4.9-a: backup, storage and purge in the app, local repo
+
+- **Session:** S4.9. Plan: S4.9 (needs the app); ledger R-S4.9-1.
+- **Steps:** open Alinery from this branch on a local repository with a few tasks, one archived. In Settings, Storage: read the numbers and press **Delete all archived**. In Settings, Backup: pick a destination folder, turn backups on, press **Back up now**, and watch the list and the busy state; press **Back up now** twice quickly.
+- **Expected:** the numbers match `du` of `<repo>/.alinery`; the purge removes every archived task, session and worktree and shows how many; a backup appears in the list within a few seconds as `<name>-<time>-v1.zip` in the destination, with the right size and version; the second press does not start a second job; no request repeats every second in the network panel.
+- **Status:** open
+
+### L-S4.9-b: restore through the sidecar on a local repo
+
+- **Session:** S4.9. Plan: S4.9 (Restore); ledger R-S4.9-4.
+- **Steps:** with a backup from L-S4.9-a, change a task (add a comment, rename it) and start a session. In Settings, Backup, press **Restore** on that backup and confirm the dialog, which names the running session. Then try the same with an archive of another repository (copy one from another repo's destination).
+- **Expected:** the verify step runs before anything stops (the foreign archive is refused with its reason and the session keeps running); a good restore ends the daemon and its sessions, puts the backed-up tree back, starts the daemon again and shows the older state. `<repo>/.alinery/tmp/restore-*` is gone afterwards and no `.alinery` file outside the curated list changed.
+- **Status:** open
+
+### L-S4.9-d: the automatic triggers, and the after-an-artifact-change one
+
+- **Session:** S4.9. Plan: S4.9; ledger R-S4.9-5. This is the check L-S4.5-e expected to fail until now.
+- **Steps:** turn on automatic backups with each trigger in turn: after an artifact change, after a push or commit, before archive. Add a comment, send a review, clear a pending review; then commit and push a task; then discard a sub-task setup and archive a task. Do each burst quickly.
+- **Expected:** one backup per burst, about 2 s after the last change (the list shows trigger `post_artifact_change`, `post_push_commit`, `pre_archive`); with a trigger off, no backup. L-S4.5-e should now pass, and its Status may be changed after you see it.
+- **Status:** open
+
+### L-S4.9-e: a failing pre-archive backup blocks the archive in the UI
+
+- **Session:** S4.9. Plan: S4.9 (Accept: the archive with a failing backup job); ledger R-S4.9-6.
+- **Steps:** with before-archive backups on, make the destination unusable (replace the folder with a file, or remove write permission), then archive a task from the board and from the task page.
+- **Expected:** the task stays unarchived and the page shows "the task was not archived" with the backup's reason; restore the destination and the archive goes through and a `pre_archive` backup appears.
+- **Status:** open
+
+### L-S4.10-a: a community import, an update and a publish in the real app
+
+- **Session:** S4.10. Plan: S4.10 (Build: community); ledger R-S4.10-2, R-S4.10-3, R-S4.10-4.
+- **Steps:** on a local repo, signed in, open Playbooks > Community and download a playbook; then (1) download it again (it should say it is already downloaded); (2) edit the downloaded copy in the editor, then press Update when the library has a newer version (or republish a changed copy under your own label first) and answer the overwrite question both ways; (3) download a playbook whose key matches one you already have and answer the overwrite question both ways; (4) delete a downloaded repo playbook and check the Downloaded list; (5) publish a repo playbook with a valid body, then with an invalid one; (6) sign out and press Download.
+- **Expected:** a downloaded copy appears in the library and in the Downloaded list with its version; the second download is refused as already downloaded; Update on an edited copy asks first and writes only after Overwrite; the key conflict asks first; a deleted playbook leaves the Downloaded list; the invalid playbook is refused with its diagnostics before any network call (devtools network shows none to accounts); signed out sends you to sign in and the action continues after it. `.alinery/playbooks/community-imports.toml` holds the record.
+- **Status:** open
+
+### L-S4.10-b: Settings > Customizations and the model roles on a local repo
+
+- **Session:** S4.10. Plan: S4.10 (Build: O12); ledger R-S4.10-5, R-S4.10-6.
+- **Steps:** open Settings > Providers and Customizations. Upload a `.md` skill, then a `.zip` skill, then the same one again and answer Replace both ways; delete one; press Copy instructions for an AI; open the configuration folder and Show in file manager on a skill. In a session's model dialog and in Providers & accounts, assign a model role and clear it. Sign in to a hosted account and sync its models.
+- **Expected:** installs, replace question and delete work and the inventory refreshes; the copied prompt names this installation's agent directory; the Finder opens `<app config dir>/vinculum/config/agent`; a role set in either dialog shows in the other and in `config.yml` there; the hosted default role is still written after a sync (the shell still writes it, R-S4.10-5).
+- **Status:** open
+
+### L-S4.10-d: the issue imports on a local repo
+
+- **Session:** S4.10. Plan: S4.10 (Build: Linear and GitHub); ledger R-S4.10-1.
+- **Steps:** on a local repo with a GitHub `origin`: in New task, import `#N`, `owner/repo#N` and a pull request URL; then set a GitHub token in the repo's settings and import again; connect Linear and import `ENG-NN` with and without images; create the tasks.
+- **Expected:** the title and description prefill the form; a bare `#N` uses the repo's origin; with the repo override set the request uses that token (an invalid override fails and the global token is not tried); Linear images become attachments and failed ones are listed in the ticket; the created task has `github_issue` or `linear_id` in `task.md`. The anonymized `import.fetch` telemetry event still appears once per import when consent is on.
+- **Status:** open
+
+### L-S4.11-a: keep this computer awake on macOS
+
+- **Session:** S4.11. Plan: S4.11 (Accept 3), O9; ledger R-S4.11-1.
+- **Steps:** launch the app from this branch on a local repo. Settings > General > Misc: turn on "Keep this computer awake". Open a Terminal session. In another terminal: `pmset -g assertions | grep -B1 -A3 caffeinate` and `pgrep -fl 'caffeinate -i -w'`. Close the session (or let it exit), wait 2 s, and look again. Turn the setting off while a session runs. Then with a session open and the setting on, `kill -9` the `alinery-vinculum-daemon` pid and look within a second.
+- **Expected:** with the setting on and a live session, one `caffeinate -i -w <daemon pid>` exists and `pmset` shows its `PreventUserIdleSystemSleep` assertion (and no `PreventSystemSleep` from it); with no live session, or the setting off, it is gone within about 2 s; after `kill -9` of the daemon it is gone within a second. The display can still sleep, the lid still sleeps, and an explicit sleep from the Apple menu still works. `<app config dir>/logs/alinery.log` has `power.idle-inhibit acquired` and `released` lines.
+- **Status:** open
+
+### L-S4.11-c: adoption on upgrade and a confirmed takeover in the app
+
+- **Session:** S4.11. Plan: S4.11 (Build: ownership, takeover); ledger R-S4.11-3, R-S4.11-6, R-S4.11-7.
+- **Steps:** (1) with a repo that has a playbook task mid-step (a running session), an archived task and a finished task, stop the app's daemon (Settings > Stop daemon), then open the repo again from this branch. (2) Run a second app instance or an older build's daemon on the same repo and use the conflict banner's Take over {repo}: confirm it, and read the dialog's session count first. (3) Corrupt one task's `execution.json` (copy it aside first) and open the repo.
+- **Expected:** (1) the repo opens, all tasks including the archived one show, the finished task's artifacts and receipts are unchanged, the mid-step task shows an interrupted execution that it can resume or rerun, and `execution.json` of each task has the new `owning_lane` and `owning_app_config_identity`. (2) the banner names the owner, the confirmation expires after 120 s, the old daemon exits through `Shutdown(CONFIRMED_TAKEOVER)` and the new one owns the repo; no process is killed by name. (3) the repo shows the conflict banner (not a crash loop) and the daemon log has `failed_precondition: ...` naming the file; restoring the file lets it open.
+- **Status:** open
+
+### L-S4.12-a: sign in and out of a provider in the real app, API key and browser
+- **Session:** S4.12 (R-S4.12-1, R-S4.12-2).
+- **Needs:** the app launched on this branch (the daemon is protocol 37, so stop live sessions first), a provider account for the browser sign-in (Anthropic or OpenAI), a throwaway API key for any other.
+- **Steps:** (1) Open a local repo, Settings, Accounts (or the first-run provider dialog). Pick an API-key provider (Groq), type a key, confirm. (2) Press **Sign out** on it. (3) Pick a browser provider (Anthropic) and choose the browser method: the system browser opens the sign-in URL by itself; finish it there. While it waits, switch to another repo in the repo switcher, then finish the sign-in. (4) Add a custom provider (name, `https://host/v1`, key, two model ids), save, edit it leaving the key box blank, then delete it. (5) Open a chat and check that the provider's models appear in its model picker only while signed in.
+- **Expected:** every step answers within a second; the browser opens once per sign-in; after (3) the provider shows signed in (the answer went to the daemon that started the sign-in, not the repo you switched to); a blank key box on edit keeps the key (`has key` stays); an error such as a bad base URL shows its text in the dialog. Nothing prints a key: `rg -n 'sk-|your-key' ~/Library/Application\ Support/*/logs/alinery.log` finds nothing.
+- **Status:** open
+
+### L-S4.12-b: the model picker lists the daemon's models
+- **Session:** S4.12 (R-S4.12-3).
+- **Needs:** the app launched, a local repo, at least one signed-in provider.
+- **Steps:** open New task, then the model picker (the refresh arrow in the Model field), and the same picker in Settings > Sessions and in a session's Change model. Compare with `omp models --json | jq -r '.[].selector'` if you have the packaged `omp` (`npm run omp:check` prints it).
+- **Expected:** the picker lists `provider/id` for every signed-in provider (and the hosted `alinery/...` models when signed in to an account), starts with any `models = [...]` of the harness row in `.alinery/harnesses.toml`, and has no duplicates. It no longer runs the harness's `models_cmd`. Differences from `omp models` (OMP's own list) are expected and not a failure; note them in the ledger entry R-S4.12-3 if the picker misses a model you used to see.
+- **Status:** open
+
+### L-P4X-a: Stop daemon while a purge or backup runs leaves no job child
+- **Session:** P4 review fix (R-P4X-1).
+- **Needs:** the app launched on a scratch repo with several archived tasks (a few hundred MB, so a purge or backup takes seconds).
+- **Steps:** in Settings, Storage, start "Delete all archived" (or a manual backup to a slow destination). While it shows progress, run `pgrep -fl -- '--job '` in a terminal and note the pid, then Settings, Harness, "Quit and stop all sessions" and confirm. Run `pgrep -fl -- '--job '` and `pgrep -fl alinery-vinculum` again. Repeat once with a remote repo (Restart daemon from the conflict banner, or restore a backup).
+- **Expected:** both lists are empty within 2 s of the confirmation; the purge ended between two tasks (no half-deleted task directory); the app's "stop" returns without the "has not released its socket" error; after reopening the repo the job entity is absent or CANCELLED.
+- **Status:** open
+
+### L-S5.1-a: the managed MCP runs from the daemon binary in the real app
+- **Session:** S5.1 (Accept 5; R-S5.1-3, R-S5.1-4).
+- **Needs:** the app launched from this branch (`npm run tauri dev`), `alinery-vinculum-daemon` compiled beside it (`scripts/dev-fetch-bun.sh`), a scratch repository with one task.
+- **Steps:** open the repository; Settings > MCP, turn the managed server on. In a terminal: `ls -l "$(dirname <app_config>)/mcp-endpoints*.json"` (the app config directory is in Settings > General), `pgrep -fl -- '--mcp --serve --managed'`, and `printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | nc -U <repo>/.alinery/mcp.sock`. Then `printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"alinery_list_tasks","arguments":{"repo":"<repo>"}}}\n' | nc -U <repo>/.alinery/mcp.sock`. Force-quit the app (`kill -9` of the Alinery process), relaunch it, and run the `pgrep` again. Quit the app normally and run it once more.
+- **Expected:** the endpoints file is mode 0600 and names the repository; exactly one `--mcp --serve --managed` process; `tools/list` answers 26 tools; `alinery_list_tasks` answers the task; after the force-quit and relaunch there is still exactly one listener (the old one was asked to exit, not killed by pid); after a normal quit there is none. The Settings status line says running with the client count.
+- **Status:** open
+
+### L-S5.1-c: the review handoff from the managed MCP between two local repositories
+- **Session:** S5.1 (O22 a).
+- **Needs:** the app launched, two scratch repositories open (so both daemons run), a task with a review artifact in the first and a task in the second.
+- **Steps:** over the managed socket of the first repository (`nc -U <repo-1>/.alinery/mcp.sock`), call `alinery_send_review_handoff` with `repo` and `target_repo` set, the source slug and artifact, the target slug and step key, `start` false. Then `alinery_list_artifacts` and `alinery_list_sessions` for the second repository.
+- **Expected:** the answer names the installed handoff and a created session in the second repository; the second repository's task has the artifact under its attachments or inbound handoffs, and the first has an outbound handoff record. Nothing is written in either `.alinery/` by the MCP itself.
+- **Status:** open
+
+### L-S5.1-d: a harness-launched MCP in a session
+- **Session:** S5.1 (O20 c).
+- **Needs:** the app launched, a task with an OMP session (a model signed in), the MCP enabled for the harness.
+- **Steps:** in a session, ask the agent to call `alinery_list_tasks` and `alinery_storage_info`. In a terminal, `ps eww -o command= -p $(pgrep -f -- '--mcp' | head -1) | tr ' ' '\n' | grep ALINERY_RPC` (the child's environment names the socket and a token).
+- **Expected:** both tools answer from the session; the child's environment holds `ALINERY_RPC_SOCKET` and `ALINERY_RPC_TOKEN`; calling `AdminService.Shutdown` with that token (grpcurl over the socket, if installed) is PERMISSION_DENIED and the daemon keeps running.
+- **Status:** open
+
+### L-S5.3-a: the relaunch reattaches with sessions open
+- **Session:** S5.3 (the relaunch Accept line; the daemon-level case passes in `tests::daemon::a_relaunched_app_reattaches_to_the_daemon_that_outlived_it_with_the_stored_token`, this is the same thing through the window).
+- **Needs:** the app launched from this branch, a local repository with a task.
+- **Steps:** open a Terminal session and a harness session, type something in each. Quit with the dialog's default, "leave sessions running". Run `pgrep -fl alinery-vinculum-daemon` and note the PID of the daemon whose `--repo` is `<repo>`. Open Alinery again.
+- **Expected:** both sessions come back with their scrollback and keep working, the board shows no conflict banner, and `pgrep` shows the same PID. `ls <repo>/.alinery/*.sock` lists `rpc.sock` (or `rpc-<ns>.sock` for a dev build) and no `alineryd*.sock`.
+- **Status:** open
+
+### L-S5.3-b: an older daemon is stopped from the banner
+- **Session:** S5.3 (O23 a, R-S5.3-3).
+- **Needs:** two builds: the previous one (S5.2 head, protocol 38) and this branch, on the same repository. Run both from the same lane (both dev or both prod).
+- **Steps:** open the repository with the previous build, start a Terminal session, quit leaving it running. Open the same repository with this branch.
+- **Expected:** the repository opens with a banner that names the older daemon and its live sessions; "Take over" asks for confirmation, then the old daemon stops and a protocol 39 daemon starts and attaches. The session that was running is not resumed (the takeover ends it; the task and its history stay). Cancelling the confirmation leaves the old daemon and its session running.
+- **Status:** open
+
+### L-S5.3-c: a new-protocol daemon on another lane
+- **Session:** S5.3 (R-S5.3-5).
+- **Needs:** this branch's dev build and a production build of this same branch (or two builds that speak protocol 39 on different lanes) on one repository.
+- **Steps:** open the repository with one, leave its daemon running, open it with the other.
+- **Expected:** the second build shows a conflict banner naming the first lane's daemon. Report what "Take over" does: the build cannot read the first lane's kept token unless both share the app config directory, so it may refuse with a message, and that refusal is the finding to report. Nothing is stopped without a confirmation.
+- **Status:** open
+
+### L-S5.3-d: the host-guard banner
+- **Session:** S5.3 (R-S5.3-7).
+- **Needs:** the app launched; a shell in `<repo>`.
+- **Steps:** (1) open the repository normally and look for the host-guard warning (the `HostGuardWarning` strip). (2) Stop the daemon from Settings, then start one by hand without the executable the app passes: `ALINERY_HOST_EXECUTABLE= alinery-app/src-tauri/target/debug/alinery-vinculum-daemon --repo <repo> --app-config <app_config_dir>/app.toml --rpc-secret-file <a file holding the 64-hex token the app kept for this repo>` and reopen the repository.
+- **Expected:** (1) no warning. (2) the warning shows, because `daemon/_/status` carries `hostGuardWarning`; a restart from Settings clears it.
+- **Status:** open
+
+### L-S5.3-e: the drawer shell follows the repository
+- **Session:** S5.3 (R-S5.3-6).
+- **Needs:** the app launched with two repositories.
+- **Steps:** open the bottom drawer terminal in repository A and type `echo a`. Switch to repository B (the drawer opens one for B). In a shell run `pgrep -fl 'zsh|bash' | wc -l` before and after switching back to A.
+- **Expected:** B's drawer is a fresh shell, A's drawer shell was ended by the switch (the count drops by one) and a new one starts when A's drawer is opened again. No `window.confirm` appears and nothing else in A ends.
+- **Status:** open
+
+### L-S5.3-f: the turn controls through the RPCs
+- **Session:** S5.3 (R-S5.3-2).
+- **Needs:** the app launched; a repository with a harness session open and a Chat thread.
+- **Steps:** in a harness session send a prompt, abort it while it streams, change the model, change the thinking level. Repeat the four on a Chat thread. With a hosted Alinery model selected, open a session and send a prompt.
+- **Expected:** each control takes effect and the footer shows the new model and thinking level; an abort ends the turn; the hosted prompt works (the hosted token refresh now runs when the session opens, in the page).
+- **Status:** open
+
+### L-S5.3-h: the updater and installer gate against a real daemon
+- **Session:** S5.3 (R-S5.3-13).
+- **Needs:** the app launched from a bundle with a repository open and at least one running Terminal session; for the Linux half, a Linux machine with netcat-openbsd.
+- **Steps:** with the sessions running, run the in-app update (or `bash -c '. scripts/lib/preflight.sh; preflight_gate 0'` from this checkout). Read the prompt, answer `n`, check `pgrep -fl alinery-vinculum-daemon` still shows the daemon and the session still types. Run again and answer `y`; check the daemon is gone, `ls <repo>/.alinery/*.sock` shows no `rpc.sock`, and after reopening the app the sessions show as ended (not interrupted). On Linux run the same two answers.
+- **Expected:** the prompt lists the repository with the right live-session count; `n` changes nothing; `y` stops the app first, then the daemon, and returns only once the socket no longer answers. On Linux the daemon is found (netcat exit status is 0 on connect).
+- **Status:** open
+
+### L-S5.3-i: an update from a released build with the old wire
+- **Session:** S5.3 (R-S5.3-13).
+- **Needs:** a released Alinery build whose daemon serves `alineryd.sock` (protocol 38 or older), launched with a session running.
+- **Steps:** with that daemon running, run `bash -c '. scripts/lib/preflight.sh; preflight_gate 0'` from this checkout, answer `y`.
+- **Expected:** the repository is listed with its live sessions (read from the old `list` reply), and the daemon stops over its JSON-lines socket.
+- **Status:** open
+
+### L-S5.4-a: what a session starts on the daemon's machine
+- **Session:** S5.4 (R-S5.4-3).
+- **Needs:** the app launched (a signed-in provider is enough; no remote needed) with a repository open.
+- **Steps:** start one Terminal session and one agent session (the default harness) in a task. Then run `ps -A -o pid,ppid,command | grep -E 'alinery-vinculum-daemon|/omp' | grep -v grep`.
+- **Expected:** the answer to "does the daemon spawn the packaged `omp` binary for an agent session, or run the agent in its own process?" The code says the second (`terminal.ts` spawns a shell, `mcp.ts` spawns MCP children, nothing spawns `omp`, and harness `omp` is rewritten to `vinculum` in `tasks.ts` and `main.ts`). If an `omp` child does appear, AGENTS.md's Harness Registry text is right and R-S5.4-3 closes as a false alarm; if none does, that section and the Core Model's "one PTY running OMP" need the rewrite R-S5.4-3 describes.
+- **Status:** open
+
+---
+
+## Part 2. App with a remote repo
+
+Needs the Linux runtime bundle (`scripts/build-remote-runtimes.sh`, Bun only since S5.2) and either the Docker sshd (`scripts/tests/remote-sshd/run.sh start` ... `stop`, linux/arm64 only) or a real Linux host over ssh. L-S1.3-a comes first because every other entry needs its bundle.
+
+### L-S1.3-a: Build the Linux runtimes
+
+- **Session:** S1.3 (also needed by S1.4, S2.2, S3.4 live tests). The plan decision O15 (b) will later remove the Rust and zig requirement for the host runtime (S5.2), so this entry is for today's tree.
+- **Steps:**
+  ```bash
+  brew install zig
+  rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu   # already installed on this Mac
+  cargo install cargo-zigbuild                                           # if missing
+  scripts/build-remote-runtimes.sh --check
+  ALINERY_REQUIRE_REMOTE_RUNTIMES=1 scripts/build-remote-runtimes.sh
+  ```
+- **Expected:** `alinery-app/src-tauri/resources/remote/<triple>.tar.gz` for both triples and `manifest.json` filled in; the build includes `src/platform/fsync-worker.ts` as a second entry point.
+- **Status:** open
+- **Update (2026-11-06, S5.2):** the build needs Bun only now; skip `brew install zig`, `rustup target add` and `cargo install cargo-zigbuild`. An agent ran `scripts/build-remote-runtimes.sh` (both archives, one executable each) and the eight `live_*` tests on the arm64 Debian sshd (see the S5.2 Status line in the plan). This entry stays open for the x64 archive, which was built and not run (L-S5.2-b).
+
+### L-S6.2-b: the setup screen against the remote-sshd container (the P6 exit check, ssh half)
+- **Session:** S6.2.
+- **Needs:** the app launched (user-run), Docker (arm64 image only; never amd64 here), and a Linux runtime bundle for the container's arch (`scripts/build-remote-runtimes.sh`, which needs zig; the bundle in `resources/remote/` from an earlier build also works).
+- **Steps:** `scripts/tests/remote-sshd/run.sh start` and note the key path it prints. In the app (empty config, or after L-S6.2-a): SSH tab, SSH host dropdown shows "No SSH hosts yet", choose "Add SSH connection...". Fill SSH host `dev@127.0.0.1`, SSH port `2222`, SSH key = the printed `id_test` path (and the known-hosts option is not a field, so the host key prompt will appear). Click Test connection, answer the trust prompt with Trust and test, then Add SSH connection. Back on the screen the new host is selected and "Connect to ..." shows. Click it, trust, wait for the phases, answer the credentials form with Continue. In the folder list open `work`, select `proj` (the image has `/home/dev/work/proj`, not a repo): Open repository and confirm Initialize Git. When the daemon is up, onboarding runs. Skip it. Then Add repository, SSH, the same host, another folder: it opens straight on its board. `run.sh stop` afterwards.
+- **Expected:** Test connection says "Reachable: <the host's platform>. Nothing was installed.". Adding installs nothing (`ls ~/.local/share/alinery-remote` inside the container is absent until Connect). The first repo on the host runs onboarding and `app.toml` gets `onboarded = true` under `[remote_hosts.<id>]` and `local_onboarded` is unchanged; the second repo on it does not run onboarding.
+- **Status:** open
+
+### L-S6.2-c: each refusal reaches the screen as a fix
+- **Session:** S6.2 (R-S6.2-3).
+- **Needs:** the app launched (user-run) and the remote-sshd container.
+- **Steps:** (1) `docker exec alinery-test-sshd mv /usr/bin/git /usr/bin/git.off`, then in Add SSH connection fill the container and click Test connection. (2) `docker exec alinery-test-sshd mv /usr/bin/git.off /usr/bin/git`. (3) The other kinds need hosts the container cannot be: a Mac or other non-Linux host (not_linux), an Alpine host (no_glibc), a host with glibc below 2.28 (old_glibc), a 64 KiB-page arm64 host (large_pages), and a systemd host with `KillUserProcesses=yes` and lingering off (stops_processes, expect the command `loginctl enable-linger <user>` shown copyable). Their wording is covered by vitest; this check is whether a real host produces the kind.
+- **Expected:** (1) "The host is missing git. Install it on that host with its package manager..." and Add SSH connection stays enabled. Saving that host and clicking Connect fails with the same notice and the host disappears from the list again (it was added on this screen and never connected).
+- **Status:** open
+
+### L-S6.2-d: the screen over a running board, and the offline-host rule
+- **Session:** S6.2 (R-S6.2-2).
+- **Needs:** the app launched (user-run), and a remote repo from L-S6.2-b as the only known repo.
+- **Steps:** (1) With a board open, click Add repository (top bar) and Add remote repository: both open the setup screen as a dialog, the second on the SSH tab; Cancel closes without changes. (2) With only the remote repo known and active, stop the container (`run.sh stop`) and wait for the host to give up (a refused login or a changed host key gives up; a stopped sshd only keeps retrying as `reconnecting`, and the board must stay while it does: in the `failed` window between the drop and the first retry `gave_up` is false). First stop the container and watch the board for at least 90 s: it must not be replaced. Then use a host-key change: after `run.sh start` again the new container has a new key.
+- **Expected:** (1) as stated. (2) while the host is `reconnecting` (or briefly `failed` with `gave_up` false) the board stays; once the host is given up on (`gave_up` true) the window shows the setup screen instead of the board, with the host selectable and the error shown after Connect; when the host is reachable again the board returns by itself after the next 3 s poll.
+- **Status:** open
+
+### L-S1.3-b: Live remote tests (covers S1.3, S1.4, S3.1, S3.4 and S3.5 changes)
+
+- **Session:** S1.3, S1.4 (`stop_remote_daemon` and the remote restore changed), S3.1 (the conflict live count), S3.4 (the live test starts the shell with `resume_session` and no longer reads bytes).
+- **Steps:** after L-S1.3-a:
+  ```bash
+  scripts/tests/remote-sshd/run.sh start        # prints an ALINERY_TEST_SSH_ARGS line; export it
+  export ALINERY_TEST_SSH_ARGS='<printed line>'
+  cd alinery-app/src-tauri && cargo test -p alinery-app --lib -- tests::remote::live
+  cd ../.. && scripts/tests/remote-sshd/run.sh stop
+  ```
+  Docker runs the sshd image on linux/arm64 only. Stop what you start.
+- **Expected:** all `live_*` tests pass, including the Hello checks in `live_host_installs_browses_runs_a_daemon_and_survives_a_disconnect`; the epoch survives `ssh -O exit` and a reconnect (4.2 row).
+- **Status:** open
+
+### L-S1.3-c: A remote repo answers Hello through the bridge
+
+- **Session:** S1.3. Plan: S1.3 Accept, 4.2 row.
+- **Steps:** with a remote repo open (the remote-sshd container or a real Linux host), in the devtools console:
+  ```js
+  await (await import("/src/daemon/transport.ts")).admin("<remote repo key>").hello({})
+  ```
+- **Expected:** protocol 25 and a capability set that includes VIEW, ACT, APPROVE and ADMIN (the token alone grants them over ssh, since a remote daemon is started without `ALINERY_HOST_EXECUTABLE`).
+- **Status:** open
+
+### L-S2.2-b: Linux runtime completes a writeDurable
+
+- **Session:** S2.2 (optional in its Status; the Worker entry-point change is only proven on macOS arm64).
+- **Steps:** after L-S1.3-a, start the Linux runtime's daemon inside the arm64 sshd container (or any Linux host), create a task in a scratch repo (`CreateTask` or the app), then check `task.md` exists with the right bytes and the daemon log has no worker error.
+- **Expected:** `writeDurable` completes (two `fsyncSync` calls on Linux); no `ModuleNotFound` for the Worker.
+- **Status:** open
+
+### L-S3.1-a: Live session count moves without polling
+
+- **Session:** S3.1. Plan: S3.1 Accept; 4.2 row.
+- **Steps:** launch the app with a local repo and a remote repo open. Start a Terminal session in each. Open Settings, then Chat, then Harness. Open the webview network panel (devtools, Network) and watch for 30 s.
+- **Expected:** the live-session count in Settings moves within a second of the session starting or exiting; the network panel shows no repeating `daemon_status` or `repo_live_sessions` calls (`repo_live_sessions` no longer exists; `daemon_status` is called on open, on focus and on a link flip only).
+- **Status:** open
+
+### L-S3.4-a: Terminal feel through the bridge and an ssh forward (O8)
+
+- **Session:** S3.4. Plan: O8, 4.1 `S3.4 build (v0.9)`, 4.2.
+- **Steps:**
+  1. Local baseline: `bun alinery-app/src-tauri/vinculum-daemon/src/rpc/terminal.bench.ts 2000 paths` (records p50 and p99 for the re-created old op path and for `TerminalService`; on the build machine: old 0.25 / 0.84 ms, TerminalService 0.54 / 1.90 ms).
+  2. In the app, type into a local Terminal session, then into a remote one. Compare the feel and any lag with an older build (the base branch's app) on the same repo.
+- **Expected:** no lag you can feel. The plan rule is that the split path is no more than 5 ms slower at p50. If you can feel it, O8 (b) (a WebSocket tunnel) goes back to the user. There is no timing harness through `daemon_rpc`, so this is by feel unless you add one.
+- **Status:** open
+
+### L-S3.4-b: No byte lost or repeated across an ssh drop
+
+- **Session:** S3.4. Plan: S3.4 Accept.
+- **Steps:** in the app, open a remote Terminal session. Run `seq 1 100000`. While it prints, on the Mac run `ssh -O exit <host>` (use the ControlPath from `/tmp/alinery-<uid>/`; `ssh -O exit -S /tmp/alinery-$(id -u)/<socket> <host>`). Wait for the reconnect, let `seq` finish, then select the output or save it (`seq 1 100000 | tee /tmp/seq.out` is not enough; copy the terminal text or read `sessions/<id>.scrollback`).
+- **Expected:** every number from 1 to 100000 appears exactly once, in order. Check with `grep -E '^[0-9]+$' <scrollback> | sort -n | uniq -c | awk '$1!=1'` printing nothing and `wc -l` equal to 100000.
+- **Status:** open
+
+### L-S3.4-c: O5 decision from the echo-under-load numbers
+
+- **Session:** S3.4; plan 1.7 O5 (the user decides before S4.2), 4.1 `S3.4 build (v0.9)`, 4.2 row.
+- **Steps:** read the figures and decide, then confirm the build is still acceptable in the app:
+  - idle p99 1.84 ms;
+  - one task creation with 4 attachments every 200 ms: 4.0 ms (+2);
+  - 4 parallel `writeDurable` every 20 ms: 26.2 ms (+24);
+  - reconcile pass over 1,000 tasks back to back: 7.4 ms (+5.6);
+  - `git status` loop: 1.0 ms; `tar -czf` child: 1.0 ms;
+  - everything together: 11.6 ms (+9.7).
+  Rerun with `bun alinery-app/src-tauri/vinculum-daemon/src/rpc/terminal.bench.ts 2000` and its load flags, or `docs/thick-daemon-spikes/src/echo-load.ts`, on your own disk, then type in a Terminal session while a task is created with attachments and a backup runs.
+- **Expected:** a decision. The unattended run took the plan's working assumption, O5 (a) one process until P7 (see the ledger, R-O5), because the two rows over 5 ms (reconcile and a write flood) are synthetic floods; reversing is the (b) keeper split in S7.1. The cause of the 20 to 26 ms loop gaps while `F_FULLFSYNC` is in flight on the Worker is not isolated (4.2). If typing stutters during a task creation, say so.
+- **Status:** open
+
+### L-S3.5-a: Board with a lost host and an incompatible daemon
+
+- **Session:** S3.5. Plan: S3.5 Accept; 4.2 row.
+- **Steps:** launch the app with a local repo and a remote repo open. (1) Cut the remote host's network (turn off Wi-Fi to the host, or `sudo pfctl`/unplug; do not run `ssh -O exit`, which is a different test). Watch both boards. (2) Restore the network. (3) Open a remote repo whose daemon is incompatible (start its daemon from a different protocol or app-config identity). (4) In the network panel look for board polling.
+- **Expected:** (1) the remote repo shows "daemon not connected, showing the last known tasks" while the local board keeps updating; (2) it recovers without restarting the app; (3) the incompatible repo shows only its banner (Restart daemon) and no tasks; (4) no repeating board calls.
+- **Status:** open
+
+### L-S4.1-d: A remote repository's settings and `EnsureReady`
+
+- **Session:** S4.1. Plan: S4.1 (remote hosts); ledger R-S4.1-1, R-S4.1-2, R-S4.1-7.
+- **Steps:** after L-S1.3-a and with the runtime rebuilt (`scripts/build-remote-runtimes.sh`, since `alinery-core`, `mcp/` and `vinculum-daemon/` changed), run the live remote tests as in L-S1.3-b. They now include the `remote_github_token` case (a host `config.toml` override over the Mac's global token). Then in the app, with the container host connected and a repository on it open: change a setting in Settings (repository scope); `ssh` to the host and `cat <repo>/.alinery/config.toml`; `cat ~/.local/share/alinery-remote/config/*/app.toml`.
+- **Expected:** the live tests pass; the host's `config.toml` holds the new value; the host's `app.toml` has a `[telemetry]` section with this Mac's `enabled`, `prompted`, `install_id` and `endpoint`; a freshly added remote repo has `config.toml`, `harnesses.toml` and the ignore entry before any task is created.
+- **Status:** open
+
+### L-S4.2-d: The Linux runtime with protocol 27 and the engine's save on a remote host
+
+- **Session:** S4.2. Plan: S4.2 (remote hosts); ledger R-S4.2-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` all changed) and run the live remote tests as in L-S1.3-b. Then in the app, with the container host connected and a repository on it open, run L-S4.2-a there; on the host `cat <repo>/.alinery/tasks/<slug>/execution.json | head -c 400`.
+- **Expected:** the live tests pass against protocol 27 (a host still on 26 shows the daemon-conflict banner and Restart daemon, not a failure); the approval goes through the forwarded RPC socket; the host file has the `engine` block.
+- **Status:** open
+
+### L-S4.3-f: The Linux runtime with protocol 28, and a remote repo's create, attachments and drafts
+
+- **Session:** S4.3. Plan: S4.3 (remote hosts); ledger R-S4.3-7, R-S4.3-10.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live` was edited to compile: its attachment seed is now a UTF-8 file written through `WriteFile`). Then in the app, on a remote repo: create a task with an attachment, duplicate it, archive it, and try to reveal an attachment.
+- **Expected:** the live tests pass against protocol 28 (a host still on 27 shows the daemon-conflict banner and Restart daemon); create, duplicate and archive work through the forwarded RPC socket; the attachment's reveal action is absent for the remote repo; the pre-archive backup runs on the host and obeys the host's own trigger flags.
+- **Status:** open
+
+### L-S4.4-b: The chat rail follows other windows and a remote repo with no poll
+
+- **Session:** S4.4. Plan: S4.4 vitest ("a new chat thread appears in the rail with no poll"); ledger R-S4.4-5, R-S4.4-13.
+- **Steps:** open two windows on the same repo and show Chat in both. In one, create a thread, pin it, rename it and archive it, one at a time. Then add the Docker sshd host (L-S1.3-b), open a remote repo with its daemon on protocol 29, and repeat in Chat there. Finally stop the repo's daemon from Settings and focus the window.
+- **Expected:** each change shows in the other window within a second with no refresh; the pinned thread moves to the top; the archived one leaves the rail unless "show archived" is on; a remote repo's threads show under its key. After the daemon is stopped, the repo leaves the Chat repo list when the window is focused (it can take until the next focus, R-S4.4-13).
+- **Status:** open
+
+### L-S4.4-f: The Linux runtime with protocol 29, and chat on a remote repo
+
+- **Session:** S4.4. Plan: S4.4 (remote hosts); ledger R-S4.4-8, R-S4.4-14.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live` was edited to compile: its session and chat sections are gone and the stall test asks `list_artifacts`). Then in the app, on a remote repo: create a chat thread with a worktree, attach a file, archive it removing the worktree, rename a task session and archive it.
+- **Expected:** the live tests pass against protocol 29 (a host still on 28 shows the daemon-conflict banner and Restart daemon); the thread's worktree exists on the host under `.alinery/chat-worktrees/<id>` and is gone after the archive; the session list updates without a reload.
+- **Status:** open
+
+### L-S4.5-g: The Linux runtime with protocol 30
+
+- **Session:** S4.5. Plan: S4.5 (remote hosts); ledger R-S4.5-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b. The stall test (`tests::remote::live`) now asks `subtask_state`, not `list_artifacts` (L-S4.4-f's text is stale on this). Then on a remote repo: add a comment, save and delete a draft, send a review, open an artifact and an attachment.
+- **Expected:** the live tests pass against protocol 30 (a host on 29 shows the daemon-conflict banner and Restart daemon); every artifact view works on the remote repo through the repo's daemon, with the file reads served as `ReadBlob` frames over the forward.
+- **Status:** open
+
+### L-S4.6-a: A remote repo shows the host's own global playbooks
+
+- **Session:** S4.6. Plan: S4.6 Build; ledger R-S4.6-4, R-S4.6-5.
+- **Steps:** open a local repo and a repo on a remote host (L-S1.3-b host). On the host, put a playbook at `~/.local/share/alinery-remote/config/<identity>/playbooks/hostonly/playbook.md` (a copy of any bundled one with `key = "hostonly"`). Open Playbooks on the remote repo, then on the local repo, then Settings, General, default playbook, with each repo selected.
+- **Expected:** the remote repo lists the bundled playbooks, `hostonly` as a global one and its own repo playbooks; the local repo lists this Mac's global playbooks and not `hostonly`. A repo playbook saved on the remote repo appears in the list with no reload and is a file under the host's `<repo>/.alinery/playbooks/`.
+- **Status:** open
+
+### L-S4.6-e: The Linux runtime with protocol 31
+
+- **Session:** S4.6. Plan: S4.6 (remote hosts); ledger R-S4.6-8.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`). Then use L-S4.6-a's steps against that host.
+- **Expected:** the live tests pass against protocol 31 (a host on 30 shows the daemon-conflict banner and Restart daemon); the catalog, a read, a save and a delete of a repo playbook work on the remote repo through the host daemon's `PlaybookService`.
+- **Status:** open
+
+### L-S4.7-b: the daemon's PATH finds git under `systemd-run --user`
+
+- **Session:** S4.7. Plan: S4.7 Research and Accept (the remote-sshd container has no user systemd).
+- **Steps:** on a Linux host with systemd user sessions (a VM, VERIFY.md), connect the host from the app and open a repository on it, then in the app create a task and open its Source branches in the create page. On the host run `systemctl --user show-environment | grep ^PATH` and `ssh host 'command -v git'`.
+- **Expected:** the branch list loads (the daemon found git); the daemon's PATH contains the directory `command -v git` printed. If the daemon was started under `systemd-run --user` with a bare PATH and the branch list says git could not run, git is not found there and the daemon's start line needs `--setenv=PATH`.
+- **Status:** open
+
+### L-S4.7-c: push, commit link and worktree removal on a remote repo
+
+- **Session:** S4.7. Plan: S4.7 Build; ledger R-S4.7-1, R-S4.7-4.
+- **Steps:** with a remote repo whose `origin` is a GitHub URL the host can push to (host git credentials), create a task, let it commit something in its worktree, then use "Open pull request" in the task view (push and compare URL). Afterwards archive the task and remove its worktree.
+- **Expected:** the push runs on the host (the compare URL opens in this Mac's browser with the host's `origin`); a missing credential shows git's own words in the toast; after the removal the host has no `.alinery/worktrees/<slug>`, the branch is kept, and `git for-each-ref refs/alinery/executions/<slug>` on the host prints nothing. A rejected push leaves `task.md` unchanged.
+- **Status:** open
+
+### L-S4.7-e: the Linux runtime with protocol 32
+
+- **Session:** S4.7. Plan: S4.7 (remote hosts); ledger R-S4.7-5.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`). Then use L-S4.7-c's steps against that host.
+- **Expected:** the live tests pass against protocol 32 (a host on 31 shows the daemon-conflict banner and Restart daemon); `GitService` answers through the ssh forward.
+- **Status:** open
+
+### L-S4.8-c: a sub-task on a remote repo
+
+- **Session:** S4.8. Plan: S4.8 (remote hosts); ledger R-S4.8-2.
+- **Steps:** after L-S4.8-e, connect the host from L-S1.3-b, open a repo on it, and repeat L-S4.8-a and L-S4.8-b there.
+- **Expected:** the same results with no Rust shell command in between: the manager and the child are created on the host (its worktrees, its agent), a kill stops the host's sessions, and the page needs no "restart it from the banner" prompt on a compatible daemon.
+- **Status:** open
+
+### L-S4.8-e: the Linux runtime with protocol 33
+
+- **Session:** S4.8. Plan: S4.8; ledger R-S4.8-7.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd and run the live remote tests as in L-S1.3-b (`tests::remote::live`; the stalled-host case now asks `storage_info`).
+- **Expected:** the live tests pass against protocol 33 (a host on 32 shows the daemon-conflict banner and Restart daemon); `SubtaskService` answers through the ssh forward.
+- **Status:** open
+
+### L-S4.9-c: the same on a remote repo, and the Linux runtime with protocol 34
+
+- **Session:** S4.9. Plan: S4.9 (remote hosts); ledger R-S4.9-2.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd (its image now installs `zip` and `unzip`; `scripts/tests/remote-sshd/run.sh start`) and run `cargo test -p alinery-app --lib -- tests::remote::live`. Then connect that host, open a repo on it, and repeat L-S4.9-a and L-S4.9-b with a destination path typed on the host.
+- **Expected:** the live tests pass against protocol 34 (a host on 33 shows the daemon-conflict banner and Restart daemon); the backup, storage numbers and purge are measured on the host's disk; the restore verifies on the host, stops the host's daemon, restores and starts it again. The live restore test makes its archive with the host's `zip`.
+- **Status:** open
+
+### L-S4.9-f: a host with no zip or unzip, and the 70,000-file read
+
+- **Session:** S4.9. Plan: S4.9 (D6, Accept); ledger R-S4.9-7.
+- **Steps:** (1) on a Linux host without `zip` or `unzip` (a stock `debian:12` container), run the setup probe from the remote form, then try a backup on a local repo whose machine lacks them (rename `zip` on PATH for the launch). (2) Run the cross-language read: `ALINERY_KEEP_BACKUP=/tmp/ts-70k.zip bun test src/domain/backup.test.ts` in `alinery-app/src-tauri/vinculum-daemon`, then `ALINERY_TS_ARCHIVE=/tmp/ts-70k.zip cargo test -p alinery-core --test backup_zip_interop` in `alinery-app/src-tauri`.
+- **Expected:** (1) the probe refuses the host and names `zip` and `unzip` with the install hint; a local backup without them fails with the tool's name in the message. (2) both pass; Rust reads the daemon's archive whole (over 70,000 files).
+- **Status:** open
+
+### L-S4.10-c: a remote repo: a community import on the host, and the host's own agent directory
+
+- **Session:** S4.10. Plan: S4.10 (Accept: remote-sshd); ledger R-S4.10-6, R-S4.10-9.
+- **Steps:** after L-S1.3-a, rebuild the runtimes (`scripts/build-remote-runtimes.sh`: `alinery-core`, `mcp/` and `vinculum-daemon/` changed), start the Docker sshd (linux/arm64 only; `scripts/tests/remote-sshd/run.sh start`) and connect it. With a repo on it open: (1) download a community playbook; run `ssh ... test -f <repo>/.alinery/playbooks/<key>/playbook.md` and look for the same file under the local copy of the repo key; (2) open Settings > Customizations and upload a skill; (3) in the host's shell run `ls ~/.local/share/alinery-remote/config/*/vinculum/config/agent/skills`; (4) import a GitHub issue by bare number (`#1`) into a repo whose host `origin` is a GitHub URL, then again with a repo token override set in its settings; `run.sh stop`.
+- **Expected:** the playbook file is on the host and nothing under the local repo path changes; the Customizations list is the host's, with no Open configuration folder or Show in file manager button; the skill is on the host's disk; the bare number resolves against the host's origin and the override token is the one sent (a wrong override gives a GitHub 401, a blank one is sent blank). A host still on protocol 34 shows the daemon-conflict banner and Restart daemon.
+- **Status:** open
+
+### L-S4.11-d: the Linux runtime without libalinery_core.so, and ownership on a host
+
+- **Session:** S4.11. Plan: S4.11 (Accept 2, remote); ledger R-S4.11-9. Needs zig (see "Needs the Linux runtime bundle").
+- **Steps:** `scripts/build-remote-runtimes.sh` (arm64 is enough) and check the archive: `tar tzf alinery-app/src-tauri/resources/remote/aarch64-unknown-linux-gnu.tar.gz` lists `alinery-vinculum-daemon`, `alinery-mcp` and `MANIFEST` and no `libalinery_core.so`. Then `scripts/tests/remote-sshd/run.sh start`, connect the container as a host, open a repo on it, and start a second daemon by hand on the same repo path (`~/.local/share/alinery-remote/runtime/<hash>/alinery-vinculum-daemon --repo <path> --app-config <other.toml> --socket-namespace b`). `run.sh stop`.
+- **Expected:** the host's daemon starts (no "ownership library" error); the second exits 1 with `repo_busy` and the first's sessions are untouched. `cargo test -p alinery-app --lib -- tests::remote::live` passes.
+- **Status:** open
+
+### L-S4.11-f: the hosted token reaches a remote host's daemon between connects
+- **Session:** S4.11 (R-S4.11-5).
+- **Needs:** the app launched, a Linux host over SSH (or `scripts/tests/remote-sshd/run.sh start` on arm64), signed in to an Alinery account that has hosted models.
+- **Steps:** (1) Connect the host, open Credentials and share "Alinery hosted models", save. Open a remote repo. (2) On the host: `ls -l ~/.local/share/alinery-remote/config/*/inference.json` (mode `-rw-------`) and note `expires_at`: `jq .expires_at <file>`. (3) In the app, force a refresh without reconnecting: wait for the 30-minute refresh, or open a new hosted-model session on the remote repo near the token's renewal window. (4) Re-read `expires_at` on the host.
+- **Expected:** after step 3 the host's `expires_at` is newer than in step 2 without a reconnect; the file stays mode 0600; the Mac's `alinery.log` has no `app.remote-hosted-inference-failed` line. With the share item turned off, the host's file is not rewritten.
+- **Status:** open.
+
+### L-S4.12-c: a remote host signs in and lists its own models
+- **Session:** S4.12 (Accept 3; R-S4.12-4).
+- **Needs:** the Linux runtime bundle and the Docker sshd (`scripts/build-remote-runtimes.sh`, needs zig; `scripts/tests/remote-sshd/run.sh start`, linux/arm64 only), the app launched.
+- **Steps:** rebuild the runtimes (`alinery-core` and `vinculum-daemon/` changed), start the sshd and connect it from the remote button; open a repo on it. In Settings, Accounts, sign in to Groq with a throwaway key. Open the model picker. Then `docker exec <container> sh -c 'ls -l ~/.local/share/alinery-remote/config/*/provider-credentials.json'` (mode `-rw-------`).
+- **Expected:** the credential lands in the host's `provider-credentials.json` (owner-only), not on the Mac; the picker lists `groq/...` for the host; a local repo that has no Groq key does not list it.
+- **Status:** open
+
+### L-S5.1-b: a host's stdio MCP from the copied config, and a daemon restart under it
+- **Session:** S5.1 (R-S5.1-4).
+- **Needs:** Claude Desktop (or any MCP host that runs a stdio command), the app launched with the managed MCP on and a repository open.
+- **Steps:** Settings > MCP > Copy config; paste it into the host's MCP configuration and restart the host. Ask it to call `alinery_list_tasks` for the repository, then `alinery_send_review_handoff` with any arguments. In the app, Settings > Harness > Stop daemon for the repository, reopen the repository, wait 35 s, and ask the host for `alinery_list_tasks` again.
+- **Expected:** the tasks come back; the handoff call answers `alinery_send_review_handoff copies between two repositories, so it needs the Alinery app's MCP...` (O22 a); right after the restart a call may answer an authentication error, and a call after the 30 s refresh succeeds (the tokens died with the old daemon).
+- **Status:** open
+
+### L-S5.1-e: a harness-launched MCP on a remote host
+- **Session:** S5.1 (R-S5.1-9).
+- **Needs:** the Linux runtime bundle and the Docker sshd (`scripts/build-remote-runtimes.sh`, needs zig; `scripts/tests/remote-sshd/run.sh start`, linux/arm64 only), the app launched.
+- **Steps:** rebuild the runtimes (`vinculum-daemon/` changed), connect the sshd from the remote button, open a repository on it, start an OMP session there and ask the agent to call `alinery_list_tasks`.
+- **Expected:** the tool answers on the host (the MCP child is the host's Bun binary; no Mac path appears in the answer).
+- **Status:** open
+
+### L-S5.2-a: the missing-tool refusal in the remote dialog
+- **Session:** S5.2 (D6).
+- **Needs:** the app launched; the Docker sshd (linux/arm64 only): `scripts/tests/remote-sshd/run.sh start`, then `docker exec alinery-test-sshd sh -c 'apt-get remove -y git tar'` (if `tar` cannot be removed, remove only `git`).
+- **Steps:** build the runtimes (`scripts/build-remote-runtimes.sh`), open the remote button beside Add repository, add the sshd (use the printed `ALINERY_TEST_SSH_ARGS` values: port 2222, user `dev`, the test key), trust the key. Then `docker exec alinery-test-sshd ls /home/dev/.local/share/alinery-remote/runtime` .
+- **Expected:** the dialog shows "the host is missing git; install it on that host with its package manager, then run setup again" (both tools named, comma separated, when both are gone), the new host is not left listed, and the `ls` finds no runtime directory (nothing was installed). After `apt-get install -y git tar` in the container and running setup again, the host connects. Stop the sshd with `run.sh stop`.
+- **Status:** open
+
+### L-S5.2-c: a real network cut under a claimed repository
+- **Session:** S5.2 (R-S5.2-6).
+- **Needs:** the app launched; a real remote host; the ability to cut this Mac's network for about a minute (Wi-Fi off).
+- **Steps:** connect the host and open a repository on it (the host service holds its claim). Turn Wi-Fi off for 60 seconds, turn it on, wait for the host to come back by itself (the supervisor retries at 5, 10, 30 and 60 s). On the host: `pgrep -af -- '--host-service'`.
+- **Expected:** the repository comes back without "repo-busy". If it shows "repo-busy: another Alinery window holds this repository on the host", the old service process (still on the host, waiting for sshd to notice the dead connection) holds the claim; that is the case to report, with the host's `ClientAliveInterval`. A cut that sshd notices (a TCP reset) releases the claim at once.
+- **Status:** open
+
+### L-S5.2-d: the restore button on a remote repository
+- **Session:** S5.2 (S4.9 carried over).
+- **Needs:** the app launched; a remote repository with a daemon and at least one backup on the host.
+- **Steps:** Settings > Backups on that repository: restore a backup, with a live terminal session open.
+- **Expected:** the confirmation names the live sessions, the daemon stops, the host service restores, the daemon starts again, and the tasks are those of the backup. Choosing an archive of another repository is refused before the daemon is touched (the sessions keep running).
+- **Status:** open
+
+### L-S5.3-g: a terminal on a remote repository
+- **Session:** S5.3 (R-S5.3-9; the live tests no longer assert terminal bytes).
+- **Needs:** the app launched; a remote host with a repository (the Docker sshd works).
+- **Steps:** connect, open a Terminal session in the remote repository, type, then disconnect the host and connect it again.
+- **Expected:** the typed text echoes, the terminal rejoins after the reconnect with its scrollback, and the daemon on the host kept running throughout (`docker exec alinery-test-sshd pgrep -fa alinery-vinculum-daemon`).
+- **Status:** open
+
+---
+
+## Part 3. Linux machine and native x64
+
+A Linux desktop or VM (any arch) for L-S0.1-a and L-S4.11-b; native x64 hardware (no QEMU, no Rosetta) for L-S1.1-b, L-S2.3-a and L-S5.2-b.
+
+### L-S1.1-b: Accept-time peer check sees the shell's executable on x64
+
+- **Session:** S1.1 (4.2 row). The spike's x64 run was under Rosetta, which reads `/proc/<pid>/exe` as `/run/rosetta/rosetta`.
+- **Steps:** on a native x64 Linux machine, install a runtime, start a daemon with the app's arguments and `ALINERY_HOST_EXECUTABLE=<path to a stand-in shell executable>` in its environment (`alinery-vinculum-daemon --repo <path> --app-config <dir> --rpc-secret-file <file>`), connect to `rpc.sock` once from the process at that path (copy `grpcurl`/`buf` to it, or a small Bun script) and once as `buf curl` or `curl --unix-socket`, with the right token, and ask `Hello`.
+- **Expected:** the shell's connection gets VIEW, ACT, APPROVE and ADMIN; the other process gets VIEW and ACT only. If the executable path cannot be read natively, the peer check is wrong on x64 and the plan's 2.1.10 changes.
+- **Status:** open
+
+### L-S2.3-a: Bun fs.watch recursive misses no event on x64
+
+- **Session:** S2.3 (4.2 row; Status line).
+- **Steps:** on a native x64 Linux machine or VM (not Docker on Apple silicon):
+  ```bash
+  cd docs/thick-daemon-spikes && bun install --frozen-lockfile && bun run src/watch.ts matrix --reps 2 --idle-seconds 30
+  ```
+- **Expected:** Bun's rows show 0 ops with no event and 0 burst misses. If Bun misses an event, stop and ask the planner: `@parcel/watcher` is not a fallback (S0.4, v0.8).
+- **Status:** open
+
+### L-S5.2-b: a native x64 Linux host
+- **Session:** S5.2 (R-S5.2-4).
+- **Needs:** the app launched; a real x86_64 Linux machine with glibc 2.28 or newer, reachable over ssh, with git, tar and zip. Never an emulated image (Bun crashes without AVX under QEMU).
+- **Steps:** `scripts/build-remote-runtimes.sh` (it builds both archives), connect the machine from the remote button, open a folder on it as a repository, start a terminal session, then in Settings > Backups on that repository make a backup, change a task, and restore the backup.
+- **Expected:** connect installs `~/.local/share/alinery-remote/runtime/<hash>/alinery-vinculum-daemon` (one executable and a MANIFEST), the daemon starts, `pgrep -af 'alinery-vinculum-daemon --host-service'` on the host shows one service process while the app is connected, and the restore brings the older task back and the daemon returns.
+- **Status:** open
+
+### L-S4.11-b: keep this computer awake on a Linux desktop with logind
+
+- **Session:** S4.11. Plan: S4.11 (Accept 3), O9; ledger R-S4.11-1.
+- **Steps:** on a Linux machine with systemd-logind and `/usr/bin/systemd-inhibit` (not a container), run the app or the daemon against a repo with `[global.power] keep_awake = true` in its `app.toml`, and open a Terminal session. `systemd-inhibit --list`. Then `kill -9` the daemon and run `systemd-inhibit --list` again within a second. Also run `cd alinery-app/src-tauri/vinculum-daemon && bun test src/platform/keepawake.test.ts` there.
+- **Expected:** one lock, who `Alinery`, what `idle`, mode `block`, while a session is live; no lock within a second of `kill -9` (the daemon's death closes the pipe, which ends `cat`, which ends `systemd-inhibit`; a session's shell must not keep it alive). On a machine without logind the log has one `power.idle-inhibit unavailable` line and no retry for 30 s. The test file passes (the darwin test is skipped).
+- **Status:** open
+
+### L-S0.1-a: proto install and the three alinery-proto tests on Linux
+
+- **Session:** S0.1 (4.2 row; Status "Optional").
+- **Steps:**
+  ```bash
+  scripts/install-proto.sh --with-dev
+  scripts/tests/check-proto-gen.sh
+  cd proto && bun test && cd ../alinery-app && npx vitest run src/proto.test.ts
+  cd ../alinery-app/src-tauri/vinculum-daemon && bun test src/proto.test.ts
+  ```
+- **Expected:** all pass; `check-proto-gen.sh` reports the checked-in `proto/gen` is current. (Passes under vitest and Bun on macOS today.)
+- **Status:** open
+
+---
+
+## Part 4. Signing identity
+
+Needs the Developer ID signing identity and a signed build.
+
+### L-S0.5-a: bun:ffi under the hardened runtime
+
+- **Session:** S0.5 (4.2 row; 4.4 handoff). Also gates S2.2's `fsync-worker.ts`, which calls `fcntl` through `bun:ffi`.
+- **Steps:** from `docs/thick-daemon-spikes`:
+  ```bash
+  T=$(mktemp -d)
+  bun build --compile src/hardened-probe.ts --outfile $T/hardened-probe
+  codesign --force --timestamp --options runtime --entitlements <release daemon entitlements.plist> \
+    --sign "Developer ID Application: <team>" $T/hardened-probe
+  codesign -dv --entitlements - $T/hardened-probe   # expect flags=0x10000(runtime)
+  $T/hardened-probe                                  # expect exit 0 and "ok":true
+  ```
+  The release plist for the daemon is the one the release pipeline signs the sidecar with (`scripts/omp.entitlements` is the OMP one; ask for the daemon's in `alinery-deploy`).
+- **Expected:** `flags=0x10000(runtime)`, exit 0, `"ok":true` after dlopen, two flocks, errno and `F_FULLFSYNC`. If dlopen is refused under the hardened runtime, the O6 answer changes (flock/fsync need another route) and the plan must be reopened.
+- **Status:** open
+
+### L-S2.2-a: fsync Worker under the hardened runtime
+
+- **Session:** S2.2 (same signature problem as L-S0.5-a).
+- **Steps:** run L-S0.5-a. Then build the real daemon with `scripts/dev-fetch-bun.sh`, sign `alinery-vinculum-daemon` with the same identity and entitlements, start it on a scratch repo, and create a task (a `writeDurable`). `grep -i fullfsync <repo>/.alinery/*.log` or watch that the task appears.
+- **Expected:** the Worker runs `F_FULLFSYNC` and the write completes. L-S0.5-a passing is the main evidence; this entry adds that the compiled Worker entry point (`/$bunfs/root/platform/fsync-worker.js`) is reachable once signed.
+- **Status:** open
+
+### L-S4.11-e: a bundled app without the ownership resource
+
+- **Session:** S4.11. Plan: S4.11 (Exit); ledger R-S4.11-9. Needs a signing identity (see "Needs a signing identity").
+- **Steps:** build the app bundle as the release does (`npm run tauri build`, signed), check that `Alinery.app/Contents/Resources` has no `ownership/` folder, launch it and open a repo, open a Terminal session, quit leaving sessions running, relaunch.
+- **Expected:** the daemon starts from the bundle with no `libalinery_core` anywhere, sessions survive the quit and reattach, and the bundle's `Resources` and `MacOS` hold no `libalinery_core.dylib`.
+- **Status:** open
+
+---
+
+## Pointers
+
+- **L-S7.1-a (S7.1):** what a pi-durable session loses on restart; fd passing on Linux (macOS passed in v0.8). S7.1 is not built (P7), so the entry does not exist yet; the session adds it.
+- **L-S4.5-e** is expected to pass once L-S4.9-d has been run (the after-an-artifact-change backup trigger moved to the daemon).
+- Every session after P6 appends its own entries to the part that fits and adds them to the checklist above.

@@ -1,0 +1,2 @@
+[global.defaults]
+playbook = "review"

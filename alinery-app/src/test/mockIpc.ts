@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type * as Ipc from "../ipc";
-import type { PlaybookCatalog, TaskExecutionReply } from "../types";
+import type { TaskExecutionReply } from "../types";
+import { fakeExecution } from "./executionFeed";
 
 /**
  * A stand-in for the whole ipc module, for tests that render a component.
@@ -22,45 +23,14 @@ const NOT_COMMANDS = new Set(["then", "catch", "finally", "__esModule"]);
 
 type ExecutionStub = (taskSlug: string, repoPath?: string) => Promise<TaskExecutionReply>;
 
-function executionBatch(single: ExecutionStub) {
-  return vi.fn(async (tasks: { repoPath: string; taskSlug: string }[]) =>
-    Promise.all(
-      tasks.map(async (task) => {
-        try {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, execution: await single(task.taskSlug, task.repoPath) };
-        } catch (error) {
-          return { repo_path: task.repoPath, task_slug: task.taskSlug, error: String(error) };
-        }
-      }),
-    ),
-  );
-}
-
-let attachIds = 0;
-
 export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: ExecutionStub } = {}): typeof Ipc {
   const cache = new Map<string, unknown>([
-    [
-      "listPlaybookCatalog",
-      vi.fn(
-        async (): Promise<PlaybookCatalog> => ({
-          candidates: [],
-          picker_preferences: { order: [], entries: [] },
-          diagnostics: [],
-        }),
-      ),
-    ],
-    ["listCommunityImports", vi.fn(async () => ({ imports: [] }))],
-    ["onStreamClosed", vi.fn(() => () => {})],
-    ["nextAttachId", vi.fn(() => ++attachIds)],
+    ["onRemoteHostConnected", vi.fn(() => () => {})],
     [
       "getTaskExecution",
       vi.fn(
         async (): Promise<TaskExecutionReply> => ({
           live: { status: "available" },
-          assessment: { status: "active", reasons: [] },
-          executions: {},
-          continuation: {},
           state: {
             version: 2,
             revision: 0,
@@ -71,7 +41,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
             reference: { scope: "bundled", key: "superdevelop" },
             max_live_sessions: 1,
             enabled_steps: [],
-            launch_defaults: { harness: "omp", model: "" },
+            launch_defaults: { harness: "vinculum", model: "" },
             executions: {},
             occurrences: {},
             contexts: {},
@@ -83,7 +53,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
             title: "SuperDevelop",
             description: "",
             default_model: "",
-            default_harness: "omp",
+            default_harness: "vinculum",
             step: [],
             preamble: "",
             section_order: [],
@@ -92,16 +62,9 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
       ),
     ],
   ]);
-  return new Proxy({} as typeof Ipc, {
+  const ipc = new Proxy({} as typeof Ipc, {
     get(_target, prop: string | symbol) {
       if (typeof prop !== "string" || NOT_COMMANDS.has(prop)) return undefined;
-      if (prop === "observeTaskExecutions" && !(prop in overrides)) {
-        if (!cache.has(prop)) {
-          const single = overrides.getTaskExecution ?? (cache.get("getTaskExecution") as ExecutionStub);
-          cache.set(prop, executionBatch(single));
-        }
-        return cache.get(prop);
-      }
       if (prop in overrides) return (overrides as Record<string, unknown>)[prop];
       if (!cache.has(prop)) {
         cache.set(
@@ -115,4 +78,7 @@ export function mockIpc(overrides: Partial<typeof Ipc> & { getTaskExecution?: Ex
     // every command as absent and a destructuring import would fail at module load.
     has: () => true,
   });
+  // The execution feed answers from this test's `getTaskExecution`, read when the view asks.
+  fakeExecution.source = (taskSlug, repoPath) => (ipc as unknown as { getTaskExecution: ExecutionStub }).getTaskExecution(taskSlug, repoPath);
+  return ipc;
 }

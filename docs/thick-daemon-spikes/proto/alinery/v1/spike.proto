@@ -1,0 +1,13 @@
+syntax = "proto3";
+package alinery.v1;
+
+// Throwaway service for the RPC spike (S0.2).
+service SpikeService {
+  rpc Echo(EchoRequest) returns (EchoResponse);
+  rpc Ticks(TicksRequest) returns (stream TicksResponse);
+}
+
+message EchoRequest { bytes data = 1; }
+message EchoResponse { bytes data = 1; }
+message TicksRequest { uint32 size = 1; uint32 interval_ms = 2; }
+message TicksResponse { uint64 seq = 1; bytes data = 2; }

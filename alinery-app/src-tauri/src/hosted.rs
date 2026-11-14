@@ -1,5 +1,5 @@
 //! Hosted Alinery models (Track B). Catalog/mint/revoke against accounts.alinery.ai;
-//! isolated OMP `models.yml`; never puts `inf_…` on IPC or in the OMP child env.
+//! isolated Vinculum `models.yml`; never puts `inf_…` on IPC or in the agent's env.
 //!
 //! Contract: envelope fields are frozen; `models[]` membership and `price` values are live.
 //! `GET /api/desktop/hosted-models` is unauthenticated — unsigned browse uses that, not a
@@ -293,7 +293,7 @@ fn apply_default_role_after_sync(config_dir: &Path, app_config: &Path) {
 }
 
 fn apply_default_model_role(app_config: &Path, default_model: &str) {
-    let (agent_dir, _) = alinery_core::omp_home_dirs(app_config);
+    let (agent_dir, _) = alinery_core::vinculum_home_dirs(app_config);
     let _ = ensure_default_model_role(&agent_dir, default_model);
 }
 

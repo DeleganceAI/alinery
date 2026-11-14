@@ -23,7 +23,7 @@ function statusRow(subagentId: string, agent: string, status: SubagentStatus, su
 }
 
 describe("collectLiveSubagents", () => {
-  it("keeps concurrent same-type subagents as two cards keyed by OMP id", () => {
+  it("keeps concurrent same-type subagents as two cards keyed by Vinculum id", () => {
     const cards = collectLiveSubagents([statusRow("sa-1", "Explore", "running", "one"), statusRow("sa-2", "Explore", "running", "two")]);
     expect(cards).toHaveLength(2);
     const withIds: ReadonlyArray<{ id?: string }> = cards;

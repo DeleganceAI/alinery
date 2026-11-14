@@ -4,7 +4,7 @@ key = "alinery-review"
 title = "Alinery Review"
 description = "Bind an Alinery change, run safe checks, inspect code, vision, design, website claims, and performance, then prepare a paste-ready review."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "bind"

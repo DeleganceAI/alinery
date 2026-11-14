@@ -1,0 +1,19 @@
+{
+  "task/v2/v2": {
+    "current_phase": "plan",
+    "current_step_title": "Title of plan",
+    "latest_session_title": "Title of plan",
+    "playbook_steps": [
+      {
+        "key": "clarify",
+        "title": "Title of clarify"
+      },
+      {
+        "key": "plan",
+        "title": "Title of plan"
+      }
+    ],
+    "playbook_title": "Fork Join",
+    "session_count": 4
+  }
+}

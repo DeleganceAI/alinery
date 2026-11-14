@@ -1,6 +1,6 @@
 /**
- * Product mapper for OMP 18.1.10 RPC stdout.
- * Rules from docs/research/omp-rpc-probe.md: replace sibling snapshots, do not flatten,
+ * Product mapper for Vinculum RPC stdout.
+ * Rules from docs/research/vinculum-rpc-probe.md: replace sibling snapshots, do not flatten,
  * do not append text_end, do not treat stopReason "stop" as turn-complete.
  * Journal rows live on `entries`; `messages` stays the hydrate/upsert snapshot.
  */
@@ -9,17 +9,10 @@ import { parseFileTrailers, type UserRowAttachment } from "./chat/attachments";
 import { parseSlash } from "./chat/commands";
 import { explodeAssistantParts } from "./chat/journal";
 import { ACTOR, type ChatCommand, type ChatEntry, type CommandSource, type SubagentStatus, subagent } from "./chat/types";
-import { transportLimitMessage } from "./ompRpc";
 import type { ChatMessage, ChatPart } from "./types";
+import { transportLimitMessage } from "./vinculumRpc";
 
 export type { ChatCommand } from "./chat/types";
-
-function imageAttachments(content: ChatPart[]): UserRowAttachment[] {
-  return content.flatMap<UserRowAttachment>((part) => {
-    if (part.type !== "image") return [];
-    return [{ kind: "image", name: "image", mimeType: part.mimeType, ...(part.data ? { src: `data:${part.mimeType};base64,${part.data}` } : {}) }];
-  });
-}
 
 export type PendingUi = {
   id: string;
@@ -69,7 +62,7 @@ export type ChatTranscriptState = {
   commands: ChatCommand[];
   pendingUi: PendingUi[];
   /** Requests already answered here. A reattach replays the turn's lines, and an answered request
-   *  coming back as a live card cannot be answered again (OMP has settled it). Carried across a
+   *  coming back as a live card cannot be answered again (Vinculum has settled it). Carried across a
    *  journal rebuild with `carryOver`. */
   answeredUi: string[];
   /** Distinct event types nothing handles. */
@@ -79,13 +72,13 @@ export type ChatTranscriptState = {
   entries: ChatEntry[];
   sessionMeta: SessionChatMeta;
   turn: number;
-  /** OMP said a turn is open: set by `turn_start`, cleared by `turn_end`. Never guessed. */
+  /** Vinculum said a turn is open: set by `turn_start`, cleared by `turn_end`. Never guessed. */
   turnOpen: boolean;
   /**
-   * We sent something that should start a turn and OMP has not answered yet. Send routing needs
+   * We sent something that should start a turn and Vinculum has not answered yet. Send routing needs
    * this because `turn_start` trails the write, but it is deliberately NOT `turnOpen`: keeping
    * them apart is what lets `turn_start` still emit its marker, and what lets a refusal clear
-   * the guess without inventing a `turn_end` OMP never sent.
+   * the guess without inventing a `turn_end` Vinculum never sent.
    */
   pendingTurn: boolean;
   liveAssistantKeys: Record<string, string>;
@@ -220,7 +213,7 @@ function toolResultEntry(message: ChatMessage) {
     type: "tool_result" as const,
     tool: message.toolName ?? "tool",
     text: message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
-    status: message.isError ? ("error" as const) : ("ok" as const),
+    status: message.isError ? ("error" as const) : message.streaming ? ("running" as const) : ("ok" as const),
   };
 }
 
@@ -231,7 +224,6 @@ export function mapHydratedMessage(raw: unknown, rowId?: string): ChatMessage | 
   if (!role) return null;
   const mapped: ChatMessage = { role, content: mapContent(message.content) };
   if (typeof message.stopReason === "string") mapped.stopReason = message.stopReason;
-  if (typeof message.errorMessage === "string") mapped.errorMessage = message.errorMessage;
   if (typeof message.customType === "string") mapped.customType = message.customType;
   if (rowId) mapped.rowId = rowId;
   if (typeof message.timestamp === "number") mapped.timestamp = message.timestamp;
@@ -305,8 +297,8 @@ function dropLiveAssistantRows(state: ChatTranscriptState): ChatTranscriptState 
 
 /**
  * True when the newest assistant message read off the journal is this streamed one. A reattach
- * replays the open turn's lines, and OMP may already have persisted that turn's message whole. The
- * replay holds only the open turn, so no older assistant row can be it. Identity is OMP's per-message
+ * replays the open turn's lines, and Vinculum may already have persisted that turn's message whole. The
+ * replay holds only the open turn, so no older assistant row can be it. Identity is Vinculum's per-message
  * stamp, which the journal row keeps, never the text: one reply can begin with another's words. With
  * no stamp this answers false, because a possible duplicate is better than a lost reply.
  */
@@ -404,8 +396,8 @@ function modelLabel(raw: unknown): string | undefined {
   return id ?? provider;
 }
 
-/** Mirrors OMP `getSupportedEfforts`. A lone "off" is deliberately left out. The `set_model` reply
- *  carries the model before OMP refreshes it, so the next `get_state` re-confirms the levels. */
+/** Mirrors Vinculum `getSupportedEfforts`. A lone "off" is deliberately left out. The `set_model` reply
+ *  carries the model before Vinculum refreshes it, so the next `get_state` re-confirms the levels. */
 function thinkingLevelsFor(raw: unknown): string[] | undefined {
   const model = asRecord(raw);
   if (!model) return undefined;
@@ -422,7 +414,7 @@ function applySessionMeta(state: ChatTranscriptState, data: Record<string, unkno
   if (levels) sessionMeta.thinkingLevels = levels;
   const thinking = asString(data.thinking) ?? asString(data.thinkingLevel);
   if (thinking) sessionMeta.thinking = thinking;
-  // OMP omits the field for a model without reasoning, so a model with no level has none.
+  // Vinculum omits the field for a model without reasoning, so a model with no level has none.
   else if (levels) delete sessionMeta.thinking;
   const usage = mapContextUsage(data.contextUsage);
   if (usage) sessionMeta.contextUsage = usage;
@@ -482,7 +474,7 @@ function applyLoginProviders(state: ChatTranscriptState, data: Record<string, un
 function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entrySeq: number; liveAssistantKeys: Record<string, string> } {
   let entrySeq = 0;
   const entries: ChatEntry[] = [];
-  // A message read from the journal keys its entries off the OMP row id, so paging older history
+  // A message read from the journal keys its entries off the Vinculum row id, so paging older history
   // in leaves every already-mounted row's key untouched. Positional `e1..eN` ids would renumber
   // the whole list on each prepend and remount the pane.
   const allocFor = (message: ChatMessage) => {
@@ -501,7 +493,15 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("");
       const parsed = parseFileTrailers(joined);
-      const attachments: UserRowAttachment[] = [...imageAttachments(message.content), ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name }))];
+      const attachments: UserRowAttachment[] = [
+        ...message.content.flatMap((part) => {
+          if (part.type !== "image") return [];
+          const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
+          if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+          return [chip];
+        }),
+        ...parsed.files.map((file) => ({ kind: "file" as const, name: file.name })),
+      ];
       entries.push({
         id: alloc(),
         actor: ACTOR.you,
@@ -529,8 +529,6 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
         message.stopReason === "aborted",
       );
       entries.push(...exploded);
-      // The live path appends this row on agent_end; a reopened session must show the same failure.
-      if (message.stopReason === "error" && message.errorMessage) entries.push({ id: alloc("error"), actor: ACTOR.omp, type: "error", text: message.errorMessage });
     }
   }
   return { entries, entrySeq, liveAssistantKeys: {} };
@@ -543,9 +541,83 @@ function hydrateEntries(messages: ChatMessage[]): { entries: ChatEntry[]; entryS
  * everything after it. Live entries are identified by their ids never starting with `f:`, so they
  * survive a page landing and always sort after the file content.
  */
+export type VinculumMessage = {
+  id?: string;
+  role: string;
+  /** Older replies were a single string. A part list wins when it is present. */
+  text?: string;
+  content?: unknown;
+  streaming?: boolean;
+  toolName?: string;
+  toolCallId?: string;
+  isError?: boolean;
+  runningToolIds?: string[];
+};
+
+/** Model and thinking level for the next turn, and the context it carries. Empty `thinking_levels` means no menu. */
+export type SessionControls = {
+  model: string;
+  thinking: string;
+  thinking_levels: string[];
+  context_tokens?: number;
+  /** 0 when the model's limit is unknown. */
+  context_window?: number;
+};
+
+export type VinculumTranscript = { messages: VinculumMessage[] } & Partial<SessionControls>;
+
+export const NEXT_TURN_MODEL_TITLE = "This turn keeps the model it started with. The next message uses the new one.";
+export const NEXT_TURN_THINKING_TITLE = "This turn keeps the thinking level it started with. The next message uses the new one.";
+
+function vinculumChatMessage(message: VinculumMessage, index: number): ChatMessage | null {
+  const raw = message.content !== undefined ? message : { ...message, content: [{ type: "text", text: message.text ?? "" }] };
+  const mapped = mapHydratedMessage(raw, message.id && message.id.length > 0 ? message.id : `v${index}`);
+  if (!mapped) return null;
+  if (message.streaming && mapped.role === "toolResult") mapped.streaming = true;
+  const running = new Set(message.runningToolIds ?? []);
+  if (!message.streaming && running.size === 0) return mapped;
+  mapped.content = mapped.content.map((part) => {
+    if (message.streaming && (part.type === "thinking" || part.type === "text" || part.type === "toolCall")) return { ...part, streaming: true };
+    if (part.type === "toolCall" && part.id && running.has(part.id)) return { ...part, streaming: true };
+    return part;
+  });
+  return mapped;
+}
+
+/** The reply's model and thinking level. A poll is the source of truth and replaces whatever a set just wrote. */
+export function applySessionControls(state: ChatTranscriptState, controls: Partial<SessionControls>): ChatTranscriptState {
+  const sessionMeta: SessionChatMeta = { ...state.sessionMeta };
+  if (controls.model) sessionMeta.model = controls.model;
+  if (typeof controls.thinking === "string") {
+    if (controls.thinking) sessionMeta.thinking = controls.thinking;
+    else delete sessionMeta.thinking;
+  }
+  if (Array.isArray(controls.thinking_levels)) sessionMeta.thinkingLevels = controls.thinking_levels;
+  // Both 0 is the proto default from a daemon that does not report it, not an empty context.
+  if (controls.context_tokens || controls.context_window) {
+    sessionMeta.contextUsage = { tokens: controls.context_tokens ?? 0, contextWindow: controls.context_window ?? 0 };
+  }
+  return { ...state, sessionMeta };
+}
+
+/** Replace the pane with the daemon transcript. Row ids are the entry id plus the part key, so a growing partial does not remount earlier rows. */
+export function applyVinculumTranscript(reply: VinculumMessage[] | VinculumTranscript): ChatTranscriptState {
+  const transcript = Array.isArray(reply) ? { messages: reply } : reply;
+  const messages = transcript.messages ?? [];
+  const page = {
+    start: 0,
+    messages: messages.flatMap((message, index) => {
+      const mapped = vinculumChatMessage(message, index);
+      return mapped ? [mapped] : [];
+    }),
+  };
+  const state = { ...applyFilePage(emptyTranscript(), page, "initial"), ready: true, fileStart: 0 };
+  return Array.isArray(reply) ? state : applySessionControls(state, transcript);
+}
+
 export function applyFilePage(state: ChatTranscriptState, page: { start: number; messages: ChatMessage[] }, position: "initial" | "older"): ChatTranscriptState {
   const messages = position === "older" ? [...page.messages, ...state.messages] : page.messages;
-  // Only journal rows carry an OMP row id. Messages the stream added since attach already have their
+  // Only journal rows carry a Vinculum row id. Messages the stream added since attach already have their
   // live entries below, so hydrating them again would show each one twice.
   const hydrated = hydrateEntries(position === "older" ? messages.filter((message) => message.rowId !== undefined) : messages);
   const live = state.entries.filter((entry) => !entry.id.startsWith("f:"));
@@ -591,7 +663,7 @@ export function appendOptimisticUser(
   );
 }
 
-/** The optimistic copy of a send in `messages`. A message with a `rowId` is OMP's own, so one with the same words stays. */
+/** The optimistic copy of a send in `messages`. A message with a `rowId` is Vinculum's own, so one with the same words stays. */
 function dropOptimisticMessage(messages: ChatMessage[], text: string): ChatMessage[] {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
@@ -614,7 +686,7 @@ function isSendOf(row: ChatEntry, text: string): row is SendRow {
 }
 
 /**
- * OMP refused a send the daemon had already acked. `restore` means the composer takes the text back,
+ * Vinculum refused a send the daemon had already acked. `restore` means the composer takes the text back,
  * so the row goes. Otherwise the row stays as "not sent" (a prompt, so a queue trim cannot delete it),
  * rewritten in place, or appended when the refusal beat the write's ack and there is no row yet.
  * `entryId` names the row at send time, but ids restart at every rebuild and may by now belong to an
@@ -655,7 +727,7 @@ export function appendOptimisticAbort(state: ChatTranscriptState, text = "Stoppe
 }
 
 export function appendHarnessNotice(state: ChatTranscriptState, event: string, text: string): ChatTranscriptState {
-  return appendEntry(state, { actor: ACTOR.omp, type: "harness", event, text, at: Date.now() });
+  return appendEntry(state, { actor: ACTOR.vinculum, type: "harness", event, text, at: Date.now() });
 }
 
 function finalizeLiveAssistant(state: ChatTranscriptState, stopReason?: string): ChatTranscriptState {
@@ -696,7 +768,7 @@ function openTurn(state: ChatTranscriptState): ChatTranscriptState {
   if (state.turnOpen) return { ...state, pendingTurn: false };
   const cleaned = dropLiveAssistantRows(finalizeLiveAssistant(state));
   const turn = cleaned.turn + 1;
-  return appendEntry({ ...cleaned, turn, turnOpen: true, pendingTurn: false }, { actor: ACTOR.omp, type: "turn_marker", turn, phase: "start", at: Date.now() });
+  return appendEntry({ ...cleaned, turn, turnOpen: true, pendingTurn: false }, { actor: ACTOR.vinculum, type: "turn_marker", turn, phase: "start", at: Date.now() });
 }
 
 function closeTurn(state: ChatTranscriptState, stopReason?: string): ChatTranscriptState {
@@ -710,7 +782,7 @@ function closeTurn(state: ChatTranscriptState, stopReason?: string): ChatTranscr
   // orphan or rewrite them.
   return appendEntry(
     { ...state, turnOpen: false, pendingTurn: false, liveAssistantKeys: {}, liveStart: state.entries.length },
-    { actor: ACTOR.omp, type: "turn_marker", turn: state.turn, phase: "end", stopReason, at: Date.now() },
+    { actor: ACTOR.vinculum, type: "turn_marker", turn: state.turn, phase: "end", stopReason, at: Date.now() },
   );
 }
 
@@ -732,7 +804,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
   const rawRecentOutput: unknown = progress?.recentOutput;
   const progressToolCount: unknown = progress?.toolCount;
   const progressDurationMs: unknown = progress?.durationMs;
-  // OMP stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
+  // Vinculum stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
   // element 0 is what the subagent is saying now. `description` is an async LLM-generated label,
   // so it is a fallback, not a live preview.
   const newestOutput = Array.isArray(rawRecentOutput) ? asString(rawRecentOutput[0]) : undefined;
@@ -760,7 +832,7 @@ function applySubagent(state: ChatTranscriptState, event: Record<string, unknown
           ? event.duration_ms
           : undefined;
   const at = Date.now();
-  // One row per OMP id. `events` subscription delivers a frame per tick; appending each one
+  // One row per Vinculum id. `events` subscription delivers a frame per tick; appending each one
   // made the journal (and a full re-render of it) grow without bound. Same merge as the drawer:
   // status is last-write-wins, and a frame with no summary or activity must not wipe the last one.
   const index = state.entries.findIndex((entry) => entry.type === "subagent_status" && entry.subagentId === subagentId);
@@ -851,12 +923,11 @@ function applyPendingUi(state: ChatTranscriptState, event: Record<string, unknow
       action: "Open a link in your browser?",
       detail: displayUrl(pending.launchUrl ?? pending.url ?? ""),
       detailFormat: "plain",
-      instructions: pending.instructions,
       at: Date.now(),
     });
   }
   if (method === "notify") {
-    next = appendEntry(next, { actor: ACTOR.omp, type: "harness", event: "notify", text: title ?? instructions ?? "", at: Date.now() });
+    next = appendEntry(next, { actor: ACTOR.vinculum, type: "harness", event: "notify", text: title ?? instructions ?? "", at: Date.now() });
   }
   return next;
 }
@@ -879,7 +950,7 @@ function displayUrl(raw: string): string {
  *    the old boundary, but a page the reader loaded while that read was in flight is not in it. The
  *    cut is by row id, not byte offset, so a journal that moved under us carries nothing over.
  *  - the requests already answered, which the reattach's replay would bring back as live cards.
- *  - the rows OMP refused, which exist nowhere else: the journal never held them. They get fresh ids,
+ *  - the rows Vinculum refused, which exist nowhere else: the journal never held them. They get fresh ids,
  *    as the rebuild restarts them.
  */
 export function carryOver(previous: ChatTranscriptState | undefined, rebuilt: ChatTranscriptState): ChatTranscriptState {
@@ -905,7 +976,7 @@ export function dismissPendingUi(state: ChatTranscriptState, id: string): ChatTr
   };
 }
 
-export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconcileOptimisticEcho = true): ChatTranscriptState {
+export function applyRpcLine(state: ChatTranscriptState, value: unknown): ChatTranscriptState {
   const event = asRecord(value);
   if (!event || typeof event.type !== "string") return state;
 
@@ -944,27 +1015,20 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
             : event.type === "auto_compaction_end"
               ? { ...state.sessionMeta, isCompacting: false }
               : state.sessionMeta;
-    return appendEntry({ ...state, sessionMeta: nextMeta }, { actor: ACTOR.omp, type: "harness", event: event.type, text, at: Date.now() });
+    return appendEntry({ ...state, sessionMeta: nextMeta }, { actor: ACTOR.vinculum, type: "harness", event: event.type, text, at: Date.now() });
   }
 
   if (event.type === "response") {
-    // OMP leaves browser links and the manual OAuth fallback pending after login. That input has
-    // no login ID on the wire, so match its known title without dismissing unrelated questions.
-    if (event.command === "login") {
-      state = state.pendingUi
-        .filter((p) => p.method === "open_url" || (p.method === "input" && p.title === "Paste the authorization code (or full redirect URL):"))
-        .reduce((next, p) => dismissPendingUi(next, p.id), state);
-    }
     const sendCommand = event.command === "prompt" || event.command === "follow_up";
     if (event.success === false && typeof event.error === "string") {
-      // OMP refuses history requests while it is busy. Nothing asks for history over RPC any
+      // Vinculum refuses history requests while it is busy. Nothing asks for history over RPC any
       // more (the journal is read from disk), so a history-shaped refusal is noise. A rejected
       // prompt/follow_up is not — that is a real user-facing failure.
       if ((event.code === "session_busy" || event.code === "stale_cursor") && !sendCommand) return state;
       // Only a refused send clears the turn guess. A failed get_state / set_model / login must
       // not open a window where the next submit uses `prompt` inside an active turn.
       const next = sendCommand ? { ...state, pendingTurn: false } : state;
-      return appendEntry(next, { actor: ACTOR.omp, type: "error", text: transportLimitMessage(event.error), at: Date.now() });
+      return appendEntry(next, { actor: ACTOR.vinculum, type: "error", text: transportLimitMessage(event.error), at: Date.now() });
     }
     if (event.command === "negotiate_protocol") {
       const data = asRecord(event.data);
@@ -1006,7 +1070,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
       return model ? { ...state, sessionMeta: { ...state.sessionMeta, model, thinkingLevels: thinkingLevelsFor(data) } } : state;
     }
     if (sendCommand && data?.agentInvoked === false) {
-      // OMP handled it locally — no turn is coming.
+      // Vinculum handled it locally — no turn is coming.
       return patchLastSlash({ ...state, pendingTurn: false }, true);
     }
     if (sendCommand && data?.agentInvoked === true) {
@@ -1034,8 +1098,8 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
         let lastUserIndex = -1;
         for (let i = state.entries.length - 1; i >= 0; i -= 1) {
           const entry = state.entries[i];
-          // A not-sent row is not this echo's send: OMP never took it.
-          if (reconcileOptimisticEcho && (entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed && !entry.id.startsWith("dispatch:")) {
+          // A not-sent row is not this echo's send: Vinculum never took it.
+          if ((entry?.type === "prompt" || entry?.type === "follow_up") && !entry.failed) {
             lastUserIndex = i;
             break;
           }
@@ -1053,7 +1117,12 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
                 parsedIncoming.caption === lastUserEntry.text ||
                 (incoming === "" && attachments.some((item) => item.kind === "image"))));
           if (sameOptimistic) {
-            const imageChips = imageAttachments(content);
+            const imageChips: UserRowAttachment[] = content.flatMap((part) => {
+              if (part.type !== "image") return [];
+              const chip: UserRowAttachment = { kind: "image", name: "image", mimeType: part.mimeType };
+              if (part.data) chip.src = `data:${part.mimeType};base64,${part.data}`;
+              return [chip];
+            });
             const fileChips: UserRowAttachment[] =
               parsedIncoming.files.length > 0
                 ? parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))
@@ -1073,9 +1142,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
         if (parsed) {
           return appendEntry(next, { actor: ACTOR.you, type: "slash", name: parsed.name, args: parsed.args || undefined, at: Date.now() });
         }
-        const parsedIncoming = parseFileTrailers(incoming);
-        const attachments: UserRowAttachment[] = [...imageAttachments(content), ...parsedIncoming.files.map((file) => ({ kind: "file" as const, name: file.name }))];
-        return appendEntry(next, { actor: ACTOR.you, type: "prompt", text: parsedIncoming.caption, ...(attachments.length > 0 ? { attachments } : {}), at: Date.now() });
+        return appendEntry(next, { actor: ACTOR.you, type: "prompt", text: incoming, at: Date.now() });
       }
       return state;
     }
@@ -1107,7 +1174,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
     if (stop === "error" && errorText) {
       const hostedKeyDeath = message?.errorStatus === 401 && /invalid_api_key/i.test(errorText);
       const text = hostedKeyDeath ? `${errorText} Kill this session, then Start fresh.` : errorText;
-      next = appendEntry(next, { actor: ACTOR.omp, type: "error", text, at: Date.now() });
+      next = appendEntry(next, { actor: ACTOR.vinculum, type: "error", text, at: Date.now() });
     }
     return next;
   }
@@ -1129,7 +1196,7 @@ export function applyRpcLine(state: ChatTranscriptState, value: unknown, reconci
   }
 
   if (event.type === "error") {
-    return appendEntry(state, { actor: ACTOR.omp, type: "error", text: eventText(event) || "Error", at: Date.now() });
+    return appendEntry(state, { actor: ACTOR.vinculum, type: "error", text: eventText(event) || "Error", at: Date.now() });
   }
 
   void PRESENTATION_UI;

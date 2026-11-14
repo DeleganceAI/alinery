@@ -28,7 +28,7 @@ export function routeSlash(raw: string, catalog: ChatCommand[]): SlashDispatch |
     return {
       kind: "hatch",
       name,
-      reason: "OMP logout is Terminal-only. Switch this session to Terminal to log out.",
+      reason: "/logout is Terminal-only. Switch this session to Terminal to log out.",
     };
   }
 

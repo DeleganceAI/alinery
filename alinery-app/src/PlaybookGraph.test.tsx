@@ -244,6 +244,10 @@ it("renders concurrent active counts in the execution view", () => {
   );
   expect(screen.getByLabelText("sum: 2 active sessions")).toBeTruthy();
   expect(screen.getByLabelText("product: 1 active sessions")).toBeTruthy();
+  const sumMetadata = screen.getByLabelText("sum: 2 active sessions").parentElement as HTMLElement;
+  expect(within(sumMetadata).getByText("Automatic").getAttribute("title")).toBe("Completion automatically authorized");
+  const productMetadata = screen.getByLabelText("product: 1 active sessions").parentElement as HTMLElement;
+  expect(within(productMetadata).queryByText("Automatic")).toBeNull();
 });
 
 it("relates wildcard families only within the declared directory", () => {
@@ -279,7 +283,7 @@ it("inspects authored definitions and navigates selector connections without exe
       { path: "reviews/*.md", mode: "complete" },
     ],
     model: "provider/coding-model",
-    harness: "omp",
+    harness: "vinculum",
     is_coding_step: true,
     prompt: "Read the request in full.\n\nImplement it without changing the requirements.",
   };
@@ -310,7 +314,7 @@ it("inspects authored definitions and navigates selector connections without exe
   expect(inspector.getByText("worker")).toBeTruthy();
   expect(inspector.getByText("Code")).toBeTruthy();
   expect(inspector.getByText("provider/coding-model")).toBeTruthy();
-  expect(inspector.getByText("omp")).toBeTruthy();
+  expect(inspector.getByText("vinculum")).toBeTruthy();
   expect(inspector.getByLabelText("Implement request prompt").textContent).toBe(worker.prompt);
   const inputs = within(inspector.getByRole("list", { name: "Implement request inputs" })).getAllByRole("listitem");
   expect(inputs.map((item) => item.textContent)).toEqual(["requests/request-*.mdeach", "context.mdsingle", "reviews/*.mdcomplete"]);
@@ -647,6 +651,7 @@ it("attaches canvas gestures after empty and execution views", () => {
   expect(screen.queryByRole("group", { name: "Graph display mode" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Focus connections" })).toBeNull();
   expect(screen.getByLabelText("build: 2 active sessions")).toBeTruthy();
+  expect(screen.getByTitle("Completion automatically authorized")).toBeTruthy();
   expect(fireEvent.wheel(viewport, { deltaY: -120, clientX: 100, clientY: 100 })).toBe(true);
   rerender(<PlaybookGraph variant="definition" title="Review" steps={steps} />);
   expect(fireEvent.wheel(screen.getByRole("region", { name: "Dependency graph canvas" }), { deltaY: -120, clientX: 100, clientY: 100 })).toBe(false);

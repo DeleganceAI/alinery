@@ -45,7 +45,7 @@ export function formatIso(at: number): string {
 export function formatContextUsage(tokens?: number, window?: number): string {
   if (tokens == null) return "";
   const used = formatTokenCount(tokens);
-  // OMP sends contextWindow 0 when the provider has no known limit. Still show accumulated tokens.
+  // Vinculum sends contextWindow 0 when the provider has no known limit. Still show accumulated tokens.
   if (window == null || !Number.isFinite(window) || window <= 0) return `${used}/?`;
   return `${used}/${formatTokenCount(window)} (${Math.round((tokens / window) * 100)}%)`;
 }
@@ -55,7 +55,7 @@ export function formatComposerStats(codePoints: number): string {
   return `${codePoints.toLocaleString()} chars`;
 }
 
-function formatTokenCount(n: number): string {
+export function formatTokenCount(n: number): string {
   if (n >= 1000) {
     const rounded = Math.round((n / 1000) * 10) / 10;
     return Number.isInteger(rounded) ? `${rounded}k` : `${rounded.toFixed(1)}k`;

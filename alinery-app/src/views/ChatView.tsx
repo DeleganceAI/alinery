@@ -1,43 +1,42 @@
-import {
-  Archive,
-  Brain,
-  ChevronDown,
-  ChevronRight,
-  FolderGit2,
-  GitBranch,
-  MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  SquareTerminal,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, MessageSquare, PanelLeftClose, Pencil, Pin, PinOff, Plus, Trash2, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ChatComposer } from "../ChatComposer";
-import { requireWritten } from "../chat/send";
+import { DROP_WITHOUT_FILE } from "../chat/attachments";
 import type { ChatPrefs } from "../chat/visibility";
-import { emptyTranscript } from "../chatTranscript";
-import { askConfirm, confirmDanger, confirmStopAndSwitch } from "../confirm";
+import { emptyTranscript, NEXT_TURN_MODEL_TITLE, NEXT_TURN_THINKING_TITLE } from "../chatTranscript";
+import { askConfirm, confirmDanger } from "../confirm";
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
+import { MainTabs } from "../MainTabs";
 import { NameEditor } from "../NameEditor";
-import { setThinkingLevelCommand } from "../ompRpc";
+import { PaneResizer } from "../PaneResizer";
+import { repoDisplayPath } from "../remoteRepo";
 import { SessionTerminal } from "../SessionTerminal";
 import type { ObservationDisplayKind } from "../sessionAttention";
-import { OMP_INTERRUPT_DATA, RETRY_MESSAGE } from "../sessionMessage";
 import { Checkbox, Dialog, InlineStatus, LoadingState, obsLabel, StatusMarker } from "../shared";
+import {
+  archiveChatThread,
+  createChatThread,
+  enableCanvas,
+  removeChatWorktree,
+  resumeChatThread,
+  setChatModel,
+  setChatPinned,
+  setChatThinkingLevel,
+  useCanvas,
+  useChatThreads,
+  useOpenChatRepos,
+} from "../sync/chat";
+import { useSessionObservations } from "../sync/sessionObservation";
+import { renameSession } from "../sync/sessions";
 import { toast } from "../toast";
-import type { ChatThread, SessionObservation } from "../types";
-import { ChatExtensionPrompt } from "./ChatExtensionPrompt";
+import type { AppearancePrefs, ChatThread, SessionObservation } from "../types";
+import { useArtifactPaneWidth } from "../useArtifactPaneWidth";
+import { ChatCanvas } from "./ChatCanvas";
+import { ChatModelBar, ComposerStats } from "./ChatModelBar";
 import { ChatPane } from "./ChatPane";
-import { abortTurnCommand } from "./chatSession";
 import { ChatSessionContext, ChatSessionProvider, chatActivity, errorMessage, threadKey, threadLabel, useChatRegistry, useChatThread } from "./chatThreadSession";
-import { ThinkingSelect } from "./ThinkingSelect";
 
 /** The shortest path tail that tells this repo apart from every other one shown: `alinery`, or `work/alinery` beside `oss/alinery`. */
 export function repoLabel(path: string, all: string[]): string {
@@ -70,7 +69,7 @@ function OpenReposNotice({ repos, error, className }: { repos: string[] | null; 
     return (
       <InlineStatus tone="error" detail={error}>
         {repos === null ? "Couldn't read which repositories are open in this window." : "Couldn't refresh which repositories are open in this window. Showing the last list read."}{" "}
-        Retrying every few seconds.
+        Reading again when you return to this window.
       </InlineStatus>
     );
   }
@@ -101,87 +100,56 @@ function mayBeRunning(thread: ChatThread, observation: SessionObservation | unde
 
 const RESUME_IN_CHECKOUT = "The conversation is kept. Continuing it later opens in the repository checkout, on whatever branch is checked out then, not on this worktree's branch.";
 
-function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
-  const [threads, setThreads] = useState<ChatThread[]>([]);
+function ChatViewBody({
+  active = true,
+  terminalFontSize,
+  visibility,
+  knownRepos = [],
+  canvasAllowed = false,
+  linkKey = "",
+  appearance,
+  onAppearanceChange,
+}: {
+  active?: boolean;
+  terminalFontSize: number;
+  visibility: ChatPrefs;
+  knownRepos?: string[];
+  /** Settings' Thread canvas: off hides every canvas here (the files and the agent's tools stay). */
+  canvasAllowed?: boolean;
+  /** Changes when the active repo's daemon link does: a daemon that attaches after the view opened makes its repo usable here. */
+  linkKey?: string;
+  /** The thread list's width is the side panel width the task and session views use. */
+  appearance: AppearancePrefs;
+  onAppearanceChange: (next: AppearancePrefs) => void;
+}) {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 900);
+  const [railWidth, railResizerProps, railCollapse] = useArtifactPaneWidth(appearance, onAppearanceChange, "left", window.innerWidth <= 900);
+  const collapsed = railCollapse.collapsed;
+  const setCollapsed = railCollapse.setCollapsed;
+  // The threads open as tabs, in the order they were opened; the selected thread is the active tab.
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (selectedKey) setOpenKeys((keys) => (keys.includes(selectedKey) ? keys : [...keys, selectedKey]));
+  }, [selectedKey]);
   const [creating, setCreating] = useState(false);
   // null until the first read: the thread list waits for it rather than loading twice.
-  const [openRepos, setOpenRepos] = useState<string[] | null>(null);
-  const [reposError, setReposError] = useState("");
+  const { repos: openRepos, error: reposError } = useOpenChatRepos(active, `${knownRepos.join("\n")}\n${linkKey}`);
   const dirs = openRepos ?? [];
+  const threads = useChatThreads(openRepos ?? undefined, showArchived);
   const [pickedRepo, setRepoPath] = useState("");
   const [createWorktree, setCreateWorktree] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
-  const [railObservations, setRailObservations] = useState<Record<string, SessionObservation>>({});
-  const [hatchBusy, setHatchBusy] = useState(false);
-  // Hidden behind another tab the view stays mounted; its pollers skip their ticks.
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
-  const showArchivedRef = useRef(showArchived);
-  showArchivedRef.current = showArchived;
-  const reposKey = openRepos?.join("\n");
   // An explicit pick (the select or a repo's "+") stays the target after its repo closes: the form
   // says so and will not create, rather than quietly retarget another repo. No pick follows the
   // first open repo.
   const repoPath = pickedRepo || (dirs[0] ?? "");
   const pickClosed = pickedRepo !== "" && !dirs.includes(pickedRepo);
 
-  const reload = async (archived = showArchived) => {
-    const rows = await ipc.listChatThreads(archived);
-    setThreads(rows);
-    return rows;
-  };
-
-  // Chat follows the app's open repos: a repo closed at the top level, held by another Alinery,
-  // or without a connected daemon drops out with its threads. Polled while visible; the thread
-  // list reloads only when that set changes.
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    const poll = () => {
-      ipc
-        .listChatRepos()
-        .then((next) => {
-          if (cancelled) return;
-          setReposError("");
-          setOpenRepos((prev) => (prev?.join("\n") === next.join("\n") ? prev : next));
-        })
-        .catch((cause: unknown) => {
-          if (!cancelled) setReposError(errorMessage(cause));
-        });
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [active]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reposKey is the trigger; the open-repo set changed.
-  useEffect(() => {
-    if (reposKey === undefined) return;
-    let cancelled = false;
-    ipc
-      .listChatThreads(showArchivedRef.current)
-      .then((rows) => {
-        if (!cancelled) setThreads(rows);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(String(cause));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reposKey]);
-
-  // One batched read for every live thread in the rail, not a poller per row. The selected thread
-  // also has its own 1.5s poll and live transcript, which the rail prefers for that row.
+  // Every live thread in the rail, from one chat-scope stream per repo.
   const liveRefs = useMemo(
     () =>
       threads
@@ -189,28 +157,20 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
         .map((thread) => ({ repo_path: thread.repo_path, task_slug: "", id: thread.session.id })),
     [threads],
   );
-  useEffect(() => {
-    if (liveRefs.length === 0) return;
-    let cancelled = false;
-    const poll = () => {
-      if (!activeRef.current) return;
-      ipc
-        .sessionListStatuses(liveRefs)
-        .then((next) => {
-          if (!cancelled) setRailObservations(next);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [liveRefs]);
+  const railObservations = useSessionObservations(liveRefs, active);
 
   const selected = useMemo(() => threads.find((thread) => threadKey(thread) === selectedKey) ?? null, [threads, selectedKey]);
   const selectionKey = selected ? threadKey(selected) : null;
+  const threadTabs = openKeys.flatMap((key) => {
+    const thread = threads.find((t) => threadKey(t) === key);
+    return thread ? [{ key, name: threadLabel(thread), mode: "preview" as const }] : [];
+  });
+  const closeThreadTab = (key: string) => {
+    const at = threadTabs.findIndex((tab) => tab.key === key);
+    setOpenKeys((keys) => keys.filter((k) => k !== key));
+    if (key === selectedKey) setSelectedKey(threadTabs[at - 1]?.key ?? threadTabs[at + 1]?.key ?? null);
+  };
+  const canvas = useCanvas(canvasAllowed && selected ? selected.repo_path : "", selected?.session.id ?? "");
   const registry = useChatRegistry();
   useEffect(() => {
     const take = () => {
@@ -221,20 +181,13 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     return registry.listenFocus(take);
   }, [registry]);
 
-  const commitThreads = (archived: boolean, resetArchived: boolean) =>
-    ipc.listChatThreads(archived).then((rows) => {
-      flushSync(() => {
-        if (resetArchived) setShowArchived(false);
-        setThreads(rows);
-      });
-    });
-
   const chat = useChatThread(selected, {
     active,
     autoCompaction: visibility.autoCompaction,
     isFocused: (key) => selectedKeyRef.current === key,
-    onReload: () => commitThreads(showArchivedRef.current, false),
-    onResumeRefresh: () => commitThreads(false, true),
+    // The rail follows the chat-scope stream, and every write waits for it to catch up, so there is nothing to reload.
+    onReload: async () => {},
+    onResumeRefresh: async () => flushSync(() => setShowArchived(false)),
     onRebind: (key) => {
       flushSync(() => {
         setShowArchived(false);
@@ -247,16 +200,12 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   const setError = chat.setError;
   const body = chat.draft;
   const sending = chat.sending;
-  const loadingOlder = chat.loadingOlder;
-  const loadOlder = chat.loadOlder;
-  const uiPrompt = chat.prompt;
   const sendNowEnabled = chat.sendNowEnabled;
   const statusKind = activity.kind;
-  const turnError = statusKind === "errored" && observation?.state?.agent.state === "errored" ? observation.state.agent.message : null;
   const processLive = chat.processLive;
   const inTerminal = chat.inTerminal;
+  const showCanvas = Boolean(canvasAllowed && canvas && selected && !inTerminal);
   const terminalIo = chat.terminalIo;
-  const contextUsage = chat.contextUsage;
   const modelLabel = chat.modelLabel;
   const blocked = chat.blocked;
   const disconnected = chat.disconnected;
@@ -288,82 +237,20 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
       }
       const { paths } = event.payload;
       setDropping(false);
-      stagePathsRef.current(paths);
+      if (paths.length === 0) toast.error(DROP_WITHOUT_FILE);
+      else stagePathsRef.current(paths);
     });
     return () => {
       un.then((finish) => finish());
     };
   }, [active, selectionKey]);
-  const turnWasActive = useRef(false);
   const selectedId = selected?.session.id;
   const selectedRepo = selected?.repo_path;
   // A reconnect keeps a half-typed rename. Switching threads does not. The ids are the trigger, not values the effect reads.
   // biome-ignore lint/correctness/useExhaustiveDependencies: selected thread identity.
   useEffect(() => {
-    turnWasActive.current = false;
     setRenaming(false);
   }, [selectedId, selectedRepo]);
-
-  // A thread is titled by its own model after a turn ends (the first message, then every 10th), and the
-  // reply can take a while on a slow or thinking model. So the open thread's name is re-read every 3s
-  // for up to a minute after each turn, and the list is reloaded once when it changes.
-  useEffect(() => {
-    if (activity.turnActive) {
-      turnWasActive.current = true;
-      return;
-    }
-    if (!turnWasActive.current || !selected) return;
-    turnWasActive.current = false;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
-    const before = selected.name ?? null;
-    let ticks = 0;
-    const timer = window.setInterval(() => {
-      if (!activeRef.current) return;
-      ticks += 1;
-      if (ticks > 20) {
-        window.clearInterval(timer);
-        return;
-      }
-      ipc
-        .chatThreadName(repo, id)
-        .then((name) => {
-          if ((name ?? null) === before) return;
-          window.clearInterval(timer);
-          return reload();
-        })
-        .catch(() => {});
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [activity.turnActive]);
-
-  /**
-   * The escape hatch: restart this thread's OMP on the same journal in its terminal UI, or back
-   * into chat. Click-only, never automatic — it replaces the live process.
-   */
-  async function hatch() {
-    if (!selected || !selectionKey || hatchBusy) return;
-    const repo = selected.repo_path;
-    const id = selected.session.id;
-    const target = inTerminal ? "rpc" : "pty";
-    setError("");
-    try {
-      if (activity.turnActive) {
-        if (!(await confirmStopAndSwitch(target))) return;
-        requireWritten(await (inTerminal ? ipc.chatPtyWrite(repo, id, OMP_INTERRUPT_DATA, crypto.randomUUID()) : ipc.chatRpcWrite(repo, id, abortTurnCommand())));
-      }
-      setHatchBusy(true);
-      await ipc.chatRestate(repo, id, target);
-      const next = await ipc.chatSessionStatus(repo, id);
-      chat.setObserved(next);
-      // Back in chat: re-read the journal (turns typed in the terminal) and reattach RPC.
-      if (target === "rpc") chat.reconnect();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setHatchBusy(false);
-    }
-  }
 
   const groups = repoGroups(dirs, threads);
   const repoPaths = groups.map((group) => group.path);
@@ -384,7 +271,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           running ? "Stop and archive" : "Archive",
         );
         if (!accepted) return;
-        await ipc.archiveChatThread(repo, id, false);
+        await archiveChatThread(repo, id, false);
       } else {
         const choice = await askConfirm({
           title: "Archive chat",
@@ -397,19 +284,15 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           ],
         });
         if (choice === "cancel") return;
-        await ipc.archiveChatThread(repo, id, choice === "remove");
+        await archiveChatThread(repo, id, choice === "remove");
       }
-      await reload();
     } catch (cause) {
       setError(errorMessage(cause));
     }
   }
 
   function togglePin(thread: ChatThread) {
-    ipc
-      .setChatPinned(thread.repo_path, thread.session.id, !thread.session.pinned)
-      .then(() => reload())
-      .catch((cause: unknown) => setError(String(cause)));
+    setChatPinned(thread.repo_path, thread.session.id, !thread.session.pinned).catch((cause: unknown) => setError(String(cause)));
   }
 
   async function removeWorktree() {
@@ -422,8 +305,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
         "Remove worktree",
       );
       if (!accepted) return;
-      await ipc.removeChatWorktree(selected.repo_path, selected.session.id);
-      await reload();
+      await removeChatWorktree(selected.repo_path, selected.session.id);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -432,11 +314,9 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   async function resume(thread: ChatThread) {
     setError("");
     try {
-      const successor = await ipc.resumeChatThread(thread.repo_path, thread.session.id);
+      const successorId = await resumeChatThread(thread.repo_path, thread.session.id);
       setShowArchived(false);
-      const rows = await ipc.listChatThreads(false);
-      setThreads(rows);
-      setSelectedKey(`${thread.repo_path}:${successor.id}`);
+      setSelectedKey(`${thread.repo_path}:${successorId}`);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -446,10 +326,9 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     if (!repoPath || pickClosed) return;
     setError("");
     try {
-      const reply = await ipc.createChatThread({ repoPath, createWorktree });
+      const reply = await createChatThread({ repoPath, createWorktree });
       setCreating(false);
       setCreateWorktree(false);
-      await reload(false);
       setShowArchived(false);
       setSelectedKey(`${repoPath}:${reply.session.id}`);
       if (reply.start === "failed") setError(reply.errors?.[0]?.message ?? "start failed");
@@ -458,12 +337,34 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
     }
   }
 
+  function pickModel(model: string) {
+    if (!selected) return;
+    void setChatModel(selected.repo_path, selected.session.id, model).then(
+      (controls) => chat.applyControls(controls),
+      (cause: unknown) => setError(errorMessage(cause)),
+    );
+  }
+
   function pickThinking(level: string) {
     if (!selected) return;
-    ipc
-      .chatRpcWrite(selected.repo_path, selected.session.id, setThinkingLevelCommand(level))
-      .then(requireWritten)
-      .catch((cause: unknown) => setError(String(cause)));
+    void setChatThinkingLevel(selected.repo_path, selected.session.id, level).then(
+      (controls) => chat.applyControls(controls),
+      (cause: unknown) => setError(errorMessage(cause)),
+    );
+  }
+
+  async function turnOnCanvas(thread: ChatThread) {
+    const ok = await confirmDanger(
+      "Turn on the canvas for this thread?",
+      "Ava gets up to four panels beside the chat for charts, tables, documents and small pages. Once on, the canvas cannot be turned off for this thread.",
+      "Turn on",
+    );
+    if (!ok) return;
+    try {
+      await enableCanvas(thread.repo_path, thread.session.id);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
   }
 
   function startThreadIn(path: string) {
@@ -486,7 +387,8 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
       data-testid="chat-view"
       data-rail={collapsed ? "closed" : "open"}
       data-link={selected ? connection.state : undefined}
-      style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px` }}
+      data-canvas={showCanvas ? "on" : undefined}
+      style={{ ["--chat-col-max" as string]: visibility.maxWidth === "none" ? "100%" : `${visibility.maxWidth}px`, ["--artifact-width" as string]: `${railWidth}px` }}
     >
       {collapsed ? null : (
         <aside className="chat-rail" data-testid="chat-rail" aria-label="Threads">
@@ -539,6 +441,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                               type="button"
                               className="chat-thread-btn"
                               aria-current={key === selectedKey ? "true" : undefined}
+                              data-open={openKeys.includes(key) ? "true" : undefined}
                               data-archived={archived ? "true" : undefined}
                               aria-label={archived ? threadLabel(thread) : `${threadLabel(thread)}, ${obsLabel(kind)}`}
                               onClick={() => setSelectedKey(key)}
@@ -590,12 +493,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
               className={`btn ghost small${showArchived ? " on" : ""}`}
               aria-pressed={showArchived}
               onClick={() => {
-                const next = !showArchived;
-                setShowArchived(next);
-                ipc
-                  .listChatThreads(next)
-                  .then(setThreads)
-                  .catch((cause: unknown) => setError(String(cause)));
+                setShowArchived(!showArchived);
               }}
             >
               {showArchived ? "Hide archived" : "Show archived"}
@@ -603,13 +501,11 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           </div>
         </aside>
       )}
+      <PaneResizer props={railResizerProps} collapse={railCollapse} />
+      {showCanvas && selected && canvas ? <ChatCanvas repo={selected.repo_path} threadId={selected.session.id} canvas={canvas} /> : null}
       <section className="chat-main">
+        {threadTabs.length > 0 && <MainTabs tabs={threadTabs} active={selectedKey ?? ""} onSelect={setSelectedKey} onClose={closeThreadTab} />}
         <header className="chat-titlebar">
-          {collapsed ? (
-            <button type="button" className="chat-icon-btn" aria-label="Show threads" title="Show threads" onClick={() => setCollapsed(false)}>
-              <PanelLeftOpen size={16} aria-hidden="true" />
-            </button>
-          ) : null}
           <div className="chat-titlebar-identity">
             {selected && renaming ? (
               <NameEditor
@@ -617,9 +513,8 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                 label="Thread name"
                 onCancel={() => setRenaming(false)}
                 onSave={async (name) => {
-                  await ipc.renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name });
+                  await renameSession({ repoPath: selected.repo_path, taskSlug: "", sessionId: selected.session.id, name });
                   setRenaming(false);
-                  await reload();
                 }}
               />
             ) : (
@@ -643,22 +538,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                   {selected.branch_label}
                   {selected.checkout ? <span className="chat-meta-tag">checkout</span> : <span className="chat-meta-tag">worktree</span>}
                 </span>
-                {inTerminal || !transcript.sessionMeta.thinking ? null : (
-                  <span className="chat-meta-item">
-                    <Brain size={13} aria-hidden="true" />
-                    <ThinkingSelect
-                      level={transcript.sessionMeta.thinking}
-                      levels={transcript.sessionMeta.thinkingLevels}
-                      disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread, so its thinking level cannot change"}
-                      onPick={pickThinking}
-                    />
-                  </span>
-                )}
-                {contextUsage ? (
-                  <span className="chat-meta-item" title="Context used / available">
-                    {contextUsage}
-                  </span>
-                ) : null}
                 {disconnected !== null ? <StatusMarker kind="failed" label="Disconnected" title={disconnected} /> : <StatusMarker kind={statusKind} />}
               </div>
             ) : (
@@ -668,15 +547,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
           <div className="chat-titlebar-actions">
             {selected ? (
               <>
-                {inTerminal ? null : (
-                  <>
-                    <button type="button" className="btn ghost small chat-model-btn" onClick={() => chat.setProvidersDialog({ tab: "models", preselect: "" })} title="Change model">
-                      <span className="chat-model-label">{modelLabel}</span>
-                      <ChevronDown size={14} aria-hidden="true" />
-                    </button>
-                    <span className="chat-titlebar-sep" aria-hidden="true" />
-                  </>
-                )}
                 <button
                   type="button"
                   className={`chat-icon-btn${selected.session.pinned ? " on" : ""}`}
@@ -698,17 +568,9 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                     <Trash2 size={16} aria-hidden="true" />
                   </button>
                 )}
-                {processLive || hatchBusy ? (
-                  <button
-                    type="button"
-                    className={`chat-icon-btn${inTerminal ? " on" : ""}`}
-                    aria-pressed={inTerminal}
-                    aria-label={inTerminal ? "Back to chat" : "Open in Terminal"}
-                    title={inTerminal ? "Back to chat" : "Open in OMP terminal"}
-                    disabled={hatchBusy}
-                    onClick={() => void hatch()}
-                  >
-                    {inTerminal ? <MessageSquare size={16} aria-hidden="true" /> : <SquareTerminal size={16} aria-hidden="true" />}
+                {canvasAllowed && !canvas && !inTerminal ? (
+                  <button type="button" className="chat-icon-btn" aria-label="Turn on the canvas" title="Turn on the canvas" onClick={() => void turnOnCanvas(selected)}>
+                    <LayoutGrid size={16} aria-hidden="true" />
                   </button>
                 ) : null}
                 <button type="button" className="chat-icon-btn" aria-label="Archive" title="Archive" onClick={() => void archiveThread(selected)}>
@@ -726,7 +588,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
               cwd={selected.session.worktree}
               taskSlug=""
               phase=""
-              harness="omp"
+              harness="vinculum"
               model=""
               intent="attach"
               terminalFontSize={terminalFontSize}
@@ -734,15 +596,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             />
           </div>
         ) : selected ? (
-          <ChatPane
-            entries={transcript.entries}
-            status={activity.status}
-            visibility={visibility}
-            onApprove={chat.approve}
-            onLoadOlder={loadOlder}
-            loadingOlder={loadingOlder}
-            atStart={transcript.fileStart === 0}
-          />
+          <ChatPane entries={transcript.entries} status={activity.status} visibility={visibility} atStart={transcript.fileStart === 0} />
         ) : (
           <div className="chat-blank">
             <MessageSquare size={28} aria-hidden="true" />
@@ -764,14 +618,6 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             </button>
           </div>
         ) : null}
-        {turnError !== null && disconnected === null && !inTerminal && !activity.turnActive ? (
-          <div className="chat-banner" role="alert">
-            <span>{turnError}</span>
-            <button type="button" className="btn small" disabled={sending} onClick={() => send(RETRY_MESSAGE)}>
-              Retry
-            </button>
-          </div>
-        ) : null}
         {error ? (
           <div className="chat-banner" role="alert">
             <span>{error}</span>
@@ -782,17 +628,28 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
             ) : null}
           </div>
         ) : null}
-        {!inTerminal && uiPrompt ? (
-          <ChatExtensionPrompt request={uiPrompt} onSubmit={(value) => void chat.reply(uiPrompt.id, value)} onCancel={() => void chat.cancelUi(uiPrompt.id)} />
-        ) : null}
         {/* No composer without a thread: drafts are per thread, so the box would swallow every keystroke. */}
         {inTerminal || !selected ? null : (
+          <ChatModelBar
+            model={modelLabel}
+            title={activity.turnActive ? NEXT_TURN_MODEL_TITLE : undefined}
+            thinkingTitle={activity.turnActive ? NEXT_TURN_THINKING_TITLE : undefined}
+            thinking={transcript.sessionMeta.thinking}
+            thinkingLevels={transcript.sessionMeta.thinkingLevels}
+            disabledReason={connection.state === "ready" && processLive ? null : "Ava is not running in this thread. Send a message to start it, then change this."}
+            onPickModel={pickModel}
+            onPickThinking={pickThinking}
+            onProviders={() => chat.setProvidersDialog({ tab: "models", preselect: "" })}
+          />
+        )}
+        {inTerminal || !selected ? null : (
           <ChatComposer
+            actions={<ComposerStats usage={transcript.sessionMeta.contextUsage} events={transcript.entries.length} />}
             body={body}
             status={activity.status}
             catalog={transcript.commands}
             sending={sending}
-            showHints={visibility.showComposerHints}
+            showHints={false}
             attachments={chat.attachments}
             dropping={dropping}
             onAttach={() => {
@@ -845,7 +702,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
                 <ChevronDown size={14} aria-hidden="true" />
               </span>
             </label>
-            {repoPath ? <p className="dsc chat-dialog-path">{repoPath}</p> : null}
+            {repoPath ? <p className="dsc chat-dialog-path">{repoDisplayPath(repoPath)}</p> : null}
             {pickClosed ? (
               <p className="dsc field-error" role="alert">
                 {repoLabel(pickedRepo, dirs)} is not open in this window. Open it again{dirs.length > 0 ? ", or choose another repository" : ""}.
@@ -867,7 +724,7 @@ function ChatViewBody({ active = true, terminalFontSize, visibility }: { active?
   );
 }
 
-export function ChatView(props: { active?: boolean; terminalFontSize: number; visibility: ChatPrefs }) {
+export function ChatView(props: Parameters<typeof ChatViewBody>[0]) {
   const existing = useContext(ChatSessionContext);
   if (!existing) {
     return (

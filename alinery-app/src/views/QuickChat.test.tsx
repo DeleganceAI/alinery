@@ -1,9 +1,13 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearance";
 import { type ChatPrefs, DEFAULT_CHAT_VISIBILITY } from "../chat/visibility";
+import { daemonTransport } from "../daemon/transport";
+import { fakeChat } from "../test/chatHooks";
 import { mockIpc } from "../test/mockIpc";
 import { stubScrollSize } from "../test/scroll";
-import type { ChatThread, SessionMeta } from "../types";
+import { sessionDaemon } from "../test/sessionDaemon";
+import type { ChatThread, SessionMeta, SessionObservation } from "../types";
 import { ChatView } from "./ChatView";
 import { ChatSessionProvider } from "./chatThreadSession";
 import { focusQuickChatComposer, QUICK_CHAT_HEIGHT, QUICK_CHAT_MARGIN, QUICK_CHAT_MIN_HEIGHT, QUICK_CHAT_MIN_WIDTH, QUICK_CHAT_WIDTH, QuickChat } from "./QuickChat";
@@ -18,38 +22,27 @@ vi.mock("./ProviderSetupDialog", () => ({
   ProviderSetupDialog: () => <div data-testid="providers" />,
 }));
 
+vi.mock("../daemon/transport", () => ({ daemonTransport: vi.fn() }));
+let daemon = sessionDaemon();
 const mocks = vi.hoisted(() => ({
-  listChatThreads: vi.fn(),
   listChatRepos: vi.fn(),
-  chatSessionStatus: vi.fn(),
-  chatRpcAttach: vi.fn(),
-  onStreamClosed: vi.fn(),
-  chatDetach: vi.fn(),
-  chatRpcWrite: vi.fn(),
-  readChatOmp: vi.fn(),
-  sessionListStatuses: vi.fn(),
-  chatThreadName: vi.fn(),
+  chatPrompt: vi.fn(),
   pickAttachmentFilesDialog: vi.fn(),
   chatFileStat: vi.fn(),
   copyChatThreadAttachments: vi.fn(),
   getCurrentWebview: vi.fn(() => ({ onDragDropEvent: async () => () => {} })),
 }));
 
+vi.mock("../sync/chat", async (actual) => ({
+  ...(await import("../test/chatHooks")).chatHooks(await actual()),
+  copyChatThreadAttachments: mocks.copyChatThreadAttachments,
+  promptChatThread: mocks.chatPrompt,
+}));
 vi.mock("../ipc", () =>
   mockIpc({
-    listChatThreads: mocks.listChatThreads,
     listChatRepos: mocks.listChatRepos,
-    chatSessionStatus: mocks.chatSessionStatus,
-    chatRpcAttach: mocks.chatRpcAttach,
-    onStreamClosed: mocks.onStreamClosed,
-    chatDetach: mocks.chatDetach,
-    chatRpcWrite: mocks.chatRpcWrite,
-    readChatOmp: mocks.readChatOmp,
-    sessionListStatuses: mocks.sessionListStatuses,
-    chatThreadName: mocks.chatThreadName,
     pickAttachmentFilesDialog: mocks.pickAttachmentFilesDialog,
     chatFileStat: mocks.chatFileStat,
-    copyChatThreadAttachments: mocks.copyChatThreadAttachments,
     getCurrentWebview: mocks.getCurrentWebview as never,
   }),
 );
@@ -61,7 +54,7 @@ function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
     created: 1,
     archived: false,
     phase: "",
-    harness: "omp",
+    harness: "vinculum",
     model: "grok",
     playbook: "",
     generic: true,
@@ -93,8 +86,8 @@ function observed() {
       process: { state: "alive" as const },
       agent: { state: "idle" as const },
       playbook: { state: "in_progress" },
-      adapter: "omp",
-      message_adapter: "omp_bracketed_paste",
+      adapter: "vinculum",
+      message_adapter: "vinculum_bracketed_paste",
     },
   };
 }
@@ -123,15 +116,12 @@ beforeEach(() => {
   localStorage.clear();
   setViewport(VIEW_W, VIEW_H);
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
-  mocks.listChatThreads.mockResolvedValue([]);
-  mocks.chatSessionStatus.mockResolvedValue(observed());
-  mocks.chatRpcAttach.mockResolvedValue(undefined);
-  mocks.onStreamClosed.mockReturnValue(() => {});
-  mocks.chatDetach.mockResolvedValue(undefined);
-  mocks.chatRpcWrite.mockResolvedValue({ status: "written" });
-  mocks.readChatOmp.mockRejectedValue(new Error("no journal"));
-  mocks.sessionListStatuses.mockResolvedValue({});
-  mocks.chatThreadName.mockResolvedValue(null);
+  fakeChat.reset();
+  mocks.chatPrompt.mockResolvedValue(undefined);
+  // Every chat thread under test is a live idle Vinculum chat as the daemon reports it.
+  daemon = sessionDaemon();
+  vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
+  for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);
   mocks.pickAttachmentFilesDialog.mockReset().mockResolvedValue([]);
   mocks.chatFileStat.mockReset().mockImplementation(async (path: string) => ({ name: path.split("/").pop() ?? path, bytes: 4 }));
   mocks.copyChatThreadAttachments.mockReset().mockResolvedValue({ copied: [], failures: [] });
@@ -147,7 +137,7 @@ function windowOf({ open = true, visibility = DEFAULT_CHAT_VISIBILITY }: { open?
 }
 
 function pinnedPair() {
-  mocks.listChatThreads.mockResolvedValue([
+  fakeChat.set([
     thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) }),
     thread("s-b", "/repos/two", { name: "Beta", session: meta("s-b", { pinned: true }) }),
   ]);
@@ -278,7 +268,7 @@ describe("QuickChat", () => {
   // optional so CI does not fail on it; set ALINERY_OPTIONAL_TESTS=1 to run it.
   const itOptional = process.env.ALINERY_OPTIONAL_TESTS === "1" ? it : it.skip;
   itOptional("shows one tab per pinned chat across repos, and a composer", async () => {
-    mocks.listChatThreads.mockResolvedValue([
+    fakeChat.set([
       thread("s-plain", "/repos/one", { name: "Plain" }),
       thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) }),
       thread("s-b", "/repos/two", { name: "Beta", session: meta("s-b", { pinned: true }) }),
@@ -305,12 +295,12 @@ describe("QuickChat", () => {
   });
 
   it("stages a picked file and a pasted image, and does not take window drops", async () => {
-    mocks.listChatThreads.mockResolvedValue([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
+    fakeChat.set([thread("s-a", "/repos/one", { name: "Alpha", session: meta("s-a", { pinned: true }) })]);
     mocks.pickAttachmentFilesDialog.mockResolvedValueOnce(["/tmp/notes.pdf"]);
     mocks.copyChatThreadAttachments.mockResolvedValueOnce({ copied: ["notes.pdf"], failures: [] });
     render(windowOf());
     await screen.findByRole("button", { name: "Attach files" });
-    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalled());
+    await waitFor(() => expect(daemon.transcriptCalls).toContain("s-a"));
     fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
     expect(await screen.findByRole("button", { name: "Remove notes.pdf" })).toBeTruthy();
 
@@ -336,26 +326,23 @@ describe("QuickChat", () => {
     fireEvent.change(screen.getByLabelText("Message or /command"), { target: { value: "see" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mocks.copyChatThreadAttachments).toHaveBeenCalledWith("/repos/one", "s-a", ["/tmp/notes.pdf"]));
-    await waitFor(() =>
-      expect(mocks.chatRpcWrite).toHaveBeenCalledWith("/repos/one", "s-a", expect.objectContaining({ type: "prompt", message: expect.stringContaining("Attached file:") })),
-    );
+    await waitFor(() => expect(mocks.chatPrompt).toHaveBeenCalledWith("/repos/one", "s-a", expect.stringContaining("Attached file:"), undefined));
     expect(mocks.getCurrentWebview).not.toHaveBeenCalled();
   });
 
-  it("attaches a thread once when Chat and the window both show it", async () => {
+  it("reads a thread once from Vinculum when Chat and the window both show it", async () => {
     const row = thread("s-live", "/repos/one", { name: "Alpha", session: meta("s-live", { pinned: true }) });
-    mocks.listChatThreads.mockResolvedValue([row]);
+    fakeChat.set([row]);
     render(
       <ChatSessionProvider>
-        <ChatView terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
+        <ChatView appearance={DEFAULT_APPEARANCE} onAppearanceChange={() => {}} terminalFontSize={13} visibility={DEFAULT_CHAT_VISIBILITY} />
         <QuickChat open visibility={DEFAULT_CHAT_VISIBILITY} onOpenInChat={() => {}} onHide={() => {}} />
       </ChatSessionProvider>,
     );
     const rail = await screen.findByTestId("chat-rail");
     fireEvent.click(await within(rail).findByRole("button", { name: /^Alpha/ }));
-    await waitFor(() => expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(daemon.transcriptCalls).toContain("s-live"));
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(mocks.chatRpcAttach).toHaveBeenCalledTimes(1);
-    expect(mocks.chatRpcAttach).toHaveBeenCalledWith(expect.objectContaining({ repoPath: "/repos/one", id: "s-live" }));
+    expect(daemon.transcriptCalls.filter((id) => id === "s-live")).toHaveLength(1);
   });
 });

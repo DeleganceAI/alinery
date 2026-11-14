@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatMarkdown } from "./CopyMessage";
+import { ChatMarkdown, PathLinksContext } from "./CopyMessage";
 
 afterEach(() => {
   cleanup();
@@ -51,5 +51,32 @@ describe("ChatMarkdown block copying", () => {
     fireEvent.click(screen.getByRole("button", { name: "Failed to copy code block" }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("second"));
     await screen.findByRole("button", { name: "Copied code block" });
+  });
+});
+
+describe("ChatMarkdown path links", () => {
+  const known = new Set(["src/app.ts", "notes.md"]);
+  const links = { resolve: (path: string) => (known.has(path) ? `t:${path}` : null), open: vi.fn() };
+
+  it("links inline code and relative links that resolve, and leaves the rest alone", () => {
+    render(
+      <PathLinksContext.Provider value={links}>
+        <ChatMarkdown text={"See `src/app.ts`, `os.path` and [the notes](notes.md) or [docs](https://example.com).\n\n```\nsrc/app.ts\n```"} />
+      </PathLinksContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "src/app.ts" }));
+    expect(links.open).toHaveBeenLastCalledWith("t:src/app.ts", false);
+    fireEvent.click(screen.getByRole("button", { name: "src/app.ts" }), { detail: 2 });
+    expect(links.open).toHaveBeenLastCalledWith("t:src/app.ts", true);
+    fireEvent.click(screen.getByRole("link", { name: "the notes" }));
+    expect(links.open).toHaveBeenLastCalledWith("t:notes.md", false);
+    expect(screen.queryByRole("button", { name: "os.path" })).toBeNull();
+    expect(screen.getByRole("link", { name: "docs" }).getAttribute("target")).toBe("_blank");
+    expect(links.open).toHaveBeenCalledTimes(3);
+  });
+
+  it("links nothing without a provider", () => {
+    render(<ChatMarkdown text="See `src/app.ts`." />);
+    expect(screen.queryByRole("button", { name: "src/app.ts" })).toBeNull();
   });
 });

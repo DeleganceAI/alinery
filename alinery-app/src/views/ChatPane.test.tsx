@@ -66,13 +66,28 @@ describe("ChatPane", () => {
     expect(pane([entry], { ...DEFAULT_CHAT_VISIBILITY, showTools: true, expandTools: true })).toContain("a.ts");
   });
 
+  it("pairs each result with the earliest call still waiting, whatever the result is named", () => {
+    const html = pane(
+      [
+        { id: "c1", at, actor: ACTOR.agent, type: "tool_call", tool: "bash", args: '{"command":"ls"}', status: "ok" },
+        { id: "c2", at, actor: ACTOR.agent, type: "tool_call", tool: "read", args: '{"path":"a.ts"}', target: "a.ts", status: "ok" },
+        { id: "r1", at, actor: ACTOR.agent, type: "tool_result", tool: "tool", text: "ls output", status: "ok" },
+        { id: "r2", at, actor: ACTOR.agent, type: "tool_result", tool: "tool", text: "file body", status: "ok" },
+      ],
+      { ...DEFAULT_CHAT_VISIBILITY, showTools: true, expandTools: true },
+    );
+    expect(html).toContain('aria-label="2 steps · bash · read"');
+    expect(html.indexOf("ls output")).toBeLessThan(html.indexOf("a.ts"));
+    expect(html.indexOf("file body")).toBeGreaterThan(html.indexOf("a.ts"));
+  });
+
   it("renders journal row kinds from the Chat mockup", () => {
     const html = pane(
       [
         { id: "p", at, actor: ACTOR.you, type: "prompt", text: "Map ChatPane" },
         { id: "f", at, actor: ACTOR.you, type: "follow_up", text: "Continue." },
-        { id: "h", at, actor: ACTOR.omp, type: "harness", event: "todo", text: "Composer grow + cap" },
-        { id: "t", at, actor: ACTOR.omp, type: "turn_marker", turn: 3, phase: "end", stopReason: "complete" },
+        { id: "h", at, actor: ACTOR.vinculum, type: "harness", event: "todo", text: "Composer grow + cap" },
+        { id: "t", at, actor: ACTOR.vinculum, type: "turn_marker", turn: 3, phase: "end", stopReason: "complete" },
         { id: "r", at, actor: ACTOR.agent, type: "redacted_thinking" },
         {
           id: "a",
@@ -104,7 +119,7 @@ describe("ChatPane", () => {
     expect(html).toContain("queued · after this turn");
     expect(html).toContain("todo");
     expect(html).toContain("Turn 3 end");
-    expect(html).toContain("redacted");
+    expect(html).toContain('aria-label="1 step · thinking"');
     expect(html).toContain("git push origin chat-pane");
     expect(html).toContain("Allow");
     expect(html).toContain("subagents · 1");
@@ -120,8 +135,8 @@ describe("ChatPane", () => {
 
   it("hides harness, turn markers, subagent rows, and the drawer by prefs", () => {
     const entries: ChatEntry[] = [
-      { id: "h", at, actor: ACTOR.omp, type: "harness", event: "todo", text: "hidden harness" },
-      { id: "t", at, actor: ACTOR.omp, type: "turn_marker", turn: 1, phase: "end" },
+      { id: "h", at, actor: ACTOR.vinculum, type: "harness", event: "todo", text: "hidden harness" },
+      { id: "t", at, actor: ACTOR.vinculum, type: "turn_marker", turn: 1, phase: "end" },
       {
         id: "s",
         at,
@@ -317,7 +332,7 @@ describe("DEL-722 block-local streaming", () => {
     let state = emptyTranscript();
     const view = render(<ChatPane entries={state.entries} visibility={visibility} />);
     const expanded: boolean[] = [];
-    let originalRail: Element | null = null;
+    let originalStrip: Element | null = null;
 
     try {
       for (const event of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"]) {
@@ -328,15 +343,56 @@ describe("DEL-722 block-local streaming", () => {
         expect(thinking).toBeTruthy();
         const row = view.container.querySelector(`[data-entry-id="${thinking?.id}"]`);
         expect(row).not.toBeNull();
-        const rail = row?.querySelector(".chat-rail");
-        expect(rail).toBeTruthy();
-        if (event === "thinking_start") originalRail = rail ?? null;
-        expect.soft(rail, event).toBe(originalRail);
-        expanded.push(row?.querySelector(".chat-rail-line")?.getAttribute("aria-expanded") === "true");
-        expect.soft(row?.querySelector(".chat-work-pre")?.textContent, event).toBe(thinking?.type === "thinking" ? thinking.text : undefined);
+        const strip = row?.querySelector(".chat-work");
+        expect(strip).toBeTruthy();
+        if (event === "thinking_start") originalStrip = strip ?? null;
+        expect.soft(strip, event).toBe(originalStrip);
+        expanded.push(row?.querySelector(".chat-work-line")?.getAttribute("aria-expanded") === "true");
+        expect.soft(row?.querySelector(".chat-step-out")?.textContent, event).toBe(thinking?.type === "thinking" ? thinking.text : undefined);
       }
 
       expect(expanded).toEqual([true, true, true, true, true]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("opens the work strip while thinking streams and folds it once the answer starts", () => {
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../chat/fixtures");
+    const visibility = { ...DEFAULT_CHAT_VISIBILITY, showThinking: true, expandThinking: false, autoCollapseThinking: true };
+    let state = emptyTranscript();
+    const view = render(<ChatPane entries={state.entries} visibility={visibility} />);
+    const expanded: boolean[] = [];
+    let originalStrip: Element | null = null;
+    let originalAnswer: Element | null = null;
+
+    try {
+      for (const [index, event] of ["thinking_start", "thinking_end", "text_start", "text_delta", "text_end"].entries()) {
+        const frame: unknown = JSON.parse(readFileSync(join(fixtures, `live-${event}.json`), "utf8"));
+        state = applyRpcLine(state, frame);
+        view.rerender(<ChatPane entries={state.entries} visibility={visibility} />);
+        const thinking = state.entries.find((entry) => entry.type === "thinking");
+        const row = view.container.querySelector(`[data-entry-id="${thinking?.id}"]`);
+        const strip = row?.querySelector(".chat-work");
+        expect(strip).toBeTruthy();
+        if (index === 0) originalStrip = strip ?? null;
+        expect.soft(strip, event).toBe(originalStrip);
+        expanded.push(row?.querySelector(".chat-work-line")?.getAttribute("aria-expanded") === "true");
+        // A folded strip builds no step rows at all.
+        if (index === 0) expect.soft(row?.querySelector(".chat-step-out")?.textContent, event).toBe("The user wants me to reply");
+        else expect.soft(row?.querySelector(".chat-steps"), event).toBeNull();
+
+        if (index >= 1) {
+          const answer = state.entries.find((entry) => entry.type === "text");
+          const answerRow = view.container.querySelector(`[data-entry-id="${answer?.id}"]`);
+          const message = answerRow?.querySelector(".chat-msg");
+          expect(message).toBeTruthy();
+          if (index === 1) originalAnswer = message ?? null;
+          expect.soft(message, event).toBe(originalAnswer);
+          expect.soft(answerRow?.querySelector(".chat-msg-body")?.textContent, event).toContain("323");
+        }
+      }
+      expect(expanded).toEqual([true, false, false, false, false]);
     } finally {
       view.unmount();
     }

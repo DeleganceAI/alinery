@@ -136,6 +136,9 @@ describe("normalizeChatView", () => {
       chat_show_subagent_drawer: false,
       chat_auto_collapse_thinking: false,
       chat_auto_compaction: false,
+      chat_compaction_basis: "tokens",
+      chat_compaction_percent: 40,
+      chat_compaction_tokens: 50_000,
       chat_auto_scroll: false,
       chat_rail_density: "comfortable",
       chat_font_size: 18,
@@ -163,6 +166,15 @@ describe("normalizeChatView", () => {
       chat_rail_font_size: "big",
     } as unknown as Partial<AppearancePrefs>;
     expect(normalizeChatView(junk)).toEqual(normalizeChatView({}));
+  });
+
+  it("clamps the compaction limit", () => {
+    expect(normalizeChatView({ chat_compaction_basis: "tokens", chat_compaction_percent: 0, chat_compaction_tokens: 99_000_000 })).toMatchObject({
+      chat_compaction_basis: "tokens",
+      chat_compaction_percent: 1,
+      chat_compaction_tokens: 10_000_000,
+    });
+    expect(normalizeChatView({ chat_compaction_basis: "loud" as "percent" })).toMatchObject({ chat_compaction_basis: "percent", chat_compaction_percent: 80 });
   });
 
   it("clamps out-of-range font sizes", () => {
@@ -217,6 +229,11 @@ describe("repo switcher floor (#144)", () => {
   it("grows with --ui-scale above 1x and holds its 1x value below", () => {
     // The trigger chrome is fixed px; a floor that shrank at 0.75x/0.875x would squeeze the trigger below it and collapse the status dot.
     expect(rule).toMatch(/min-width: calc\(var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
+  });
+
+  it("makes room for both add buttons when Add remote repository is shown", () => {
+    const pair = css.slice(css.indexOf(".repo-switcher:has(.repo-add ~ .repo-add) {"));
+    expect(pair.slice(0, pair.indexOf("}"))).toMatch(/min-width: calc\(2 \* var\(--control-h\) \+ 64px \* max\(1, var\(--ui-scale\)\)\);/);
   });
 });
 

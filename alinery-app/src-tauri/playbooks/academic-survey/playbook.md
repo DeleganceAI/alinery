@@ -4,7 +4,7 @@ key = "academic-survey"
 title = "Academic Survey"
 description = "Frame the question, search in parallel, give every source its own reading session, and follow relevant citations through successive evidence waves. Keep a cumulative, source-traceable survey draft."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "frame-review"

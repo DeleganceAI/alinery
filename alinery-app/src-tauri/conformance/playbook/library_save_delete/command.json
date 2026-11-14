@@ -1,0 +1,192 @@
+{
+ "fixture": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+ "fixture2": "+++\nversion = 2\nkey = \"test\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n[[step]]\nkey = \"other\"\ntitle = \"Other\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"other.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n<!-- alinery:step other -->\nDo other.\n",
+ "steps": [
+  {
+   "op": "save",
+   "target": {
+    "scope": "bundled",
+    "key": "one-shot"
+   },
+   "bundled": {
+    "key": "one-shot"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "global",
+    "key": "superdevelop"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "title": "First"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "global",
+    "key": "superdevelop"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "title": "Second"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "global",
+    "key": "superdevelop"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "title": "Second"
+   },
+   "overwrite": true
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "superdevelop"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "title": "Team"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "mismatch"
+   },
+   "bundled": {
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "Bad_Key"
+   },
+   "source": "garbage"
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "released"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "set_key": "released"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "twin"
+   },
+   "bundled": {
+    "key": "superdevelop",
+    "set_key": "twin"
+   }
+  },
+  {
+   "op": "save",
+   "target": {
+    "scope": "repo",
+    "key": "tabbed"
+   },
+   "source": "+++\nversion = 2\nkey = \"tabbed\"\ntitle = \"Test\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPre\r\namble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n"
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "repo",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "catalog"
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "global",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "global",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "repo",
+    "key": "keeps-files"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "repo",
+    "key": "empty"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "repo",
+    "key": "../outside"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "bundled",
+    "key": "missing"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "bundled",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "delete",
+   "reference": {
+    "scope": "bundled",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "bundled",
+    "key": "superdevelop"
+   }
+  },
+  {
+   "op": "resolve",
+   "reference": {
+    "scope": "bundled",
+    "key": "one-shot"
+   }
+  },
+  {
+   "op": "catalog"
+  }
+ ]
+}

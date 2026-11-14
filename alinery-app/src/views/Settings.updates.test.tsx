@@ -39,7 +39,6 @@ vi.mock("../ipc", () =>
     readGlobalSettings: async () => globalSettings,
     writeGlobalSettings: vi.fn(async (next: GlobalSettings) => next),
     getVersion: async () => "0.10.0",
-    storageInfo: () => new Promise(() => {}),
   }),
 );
 
@@ -53,6 +52,7 @@ const mcp: McpStatusHandle = {
   socket_reachable: false,
   binary_found: false,
   binary_path: "",
+  host_args: [],
   repo: "",
   socket_path: "",
   error: "",
@@ -88,7 +88,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={onCheckNow}
         onUpgrade={() => {}}
@@ -112,7 +112,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={async () => available}
         onUpgrade={onUpgrade}
@@ -135,7 +135,7 @@ describe("Settings updates wiring", () => {
         appearance={DEFAULT_APPEARANCE}
         onAppearanceChange={() => {}}
         onNotificationsChange={() => {}}
-        initialSection="general"
+        initialSection="appearance"
         update={available}
         onCheckNow={async () => available}
         onUpgrade={() => {}}

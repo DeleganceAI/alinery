@@ -1,0 +1,403 @@
+{
+  "files": {
+    "app/playbooks/personal/playbook.md": "+++\nversion = 2\nkey = \"personal\"\ntitle = \"Personal\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"\"\n[[step]]\nkey = \"run\"\ntitle = \"Run\"\nshort = \"\"\nis_coding_step = false\nauto_advance_default = false\ninputs = [{path = \"ticket.md\", mode = \"single\"}]\noutputs = [{path = \"result.md\"}]\nmodel = \"\"\nharness = \"\"\n+++\nPreamble\n<!-- alinery:step run -->\nRead {{TICKET_FILE}}.\n",
+    "repo/.alinery/playbooks/picker.toml": "order = []\nentries = []\n"
+  },
+  "steps": [
+    {
+      "ok": {
+        "entries": [],
+        "order": []
+      }
+    },
+    {
+      "ok": {}
+    },
+    {
+      "text": "[[order]]\nscope = \"global\"\nkey = \"personal\"\n\n[[order]]\nscope = \"bundled\"\nkey = \"superdevelop\"\n\n[[entries]]\npreferred = true\nhidden = true\ncollapsed = false\nbadge = \"G\"\ncolor = \"#123456\"\nlast_imported_at_ms = 123\n\n[entries.reference]\nscope = \"global\"\nkey = \"personal\"\n\n[[entries]]\npreferred = true\nhidden = false\ncollapsed = true\n\n[entries.reference]\nscope = \"bundled\"\nkey = \"one-shot\"\n"
+    },
+    {
+      "ok": {
+        "entries": [
+          {
+            "badge": "G",
+            "collapsed": false,
+            "color": "#123456",
+            "hidden": true,
+            "last_imported_at_ms": 123,
+            "preferred": true,
+            "reference": {
+              "key": "personal",
+              "scope": "global"
+            }
+          },
+          {
+            "badge": null,
+            "collapsed": true,
+            "color": null,
+            "hidden": false,
+            "last_imported_at_ms": null,
+            "preferred": true,
+            "reference": {
+              "key": "one-shot",
+              "scope": "bundled"
+            }
+          }
+        ],
+        "order": [
+          {
+            "key": "personal",
+            "scope": "global"
+          },
+          {
+            "key": "superdevelop",
+            "scope": "bundled"
+          }
+        ]
+      }
+    },
+    {
+      "candidates": [
+        {
+          "description": "Frame the question, search in parallel, give every source its own reading session, and follow relevant citations through successive evidence waves. Keep a cumulative, source-traceable survey draft.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "academic-survey",
+              "scope": "bundled"
+            }
+          },
+          "title": "Academic Survey"
+        },
+        {
+          "description": "Prove a root cause, let the human choose a correction, approve its design, implement and verify it, then prepare a PR note.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "bug-hunting",
+              "scope": "bundled"
+            }
+          },
+          "title": "Bug Hunting"
+        },
+        {
+          "description": "Define a useful playbook, draft its prompts with the human, then independently verify the process before saving it globally or in the user's repository.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "build-playbook",
+              "scope": "bundled"
+            }
+          },
+          "title": "Build a New Playbook"
+        },
+        {
+          "description": "Perform ad-hoc task work in one human-steered session with a required inspectable result.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "free-form",
+              "scope": "bundled"
+            }
+          },
+          "title": "Free-form"
+        },
+        {
+          "description": "Carry out one user-described request and preserve its result, evidence, decisions and limitations.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "generic-session",
+              "scope": "bundled"
+            }
+          },
+          "title": "Generic Session"
+        },
+        {
+          "description": "Frame purpose and outcome, harvest seven independent and three shared-wall perspectives losslessly, evaluate options and define human-steered next actions.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "natural-planning-brainstorm",
+              "scope": "bundled"
+            }
+          },
+          "title": "Natural Planning Brainstorm"
+        },
+        {
+          "description": "Implement, verify, and prepare a PR note for a clear bounded request in one session.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "one-shot",
+              "scope": "bundled"
+            }
+          },
+          "title": "One-shot"
+        },
+        {
+          "description": "Probe, Research, Identify, Map, Establish and Develop: a six-stage feature workflow with human direction and verified implementation.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "primed-feature-development",
+              "scope": "bundled"
+            }
+          },
+          "title": "PRIMED Feature Development"
+        },
+        {
+          "description": "Bind an exact review target, collect safe verification evidence, inspect findings with the human, and prepare a paste-ready response.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "review",
+              "scope": "bundled"
+            }
+          },
+          "title": "Evidence-Backed Code Review"
+        },
+        {
+          "description": "Explore solutions sequentially, independently trace implementation difficulty, and compare the evidence without implementing code or estimating duration.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "solution-exploration",
+              "scope": "bundled"
+            }
+          },
+          "title": "Solution Exploration"
+        },
+        {
+          "description": "Specify a change, then implement and review one approved slice at a time.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "spec",
+              "scope": "bundled"
+            }
+          },
+          "title": "Kiro SDD"
+        },
+        {
+          "description": "Develop a change through Clarify, Investigate, Decide, Plan, Define Tests, Build, and Prepare Review.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "superdevelop",
+              "scope": "bundled"
+            }
+          },
+          "title": "SuperDevelop"
+        },
+        {
+          "description": "Approve a reproducible protocol, search and screen through independent lanes, audit a corpus with the human, extract and synthesize traceable evidence, and audit the reporting package.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "systematic-evidence-review",
+              "scope": "bundled"
+            }
+          },
+          "title": "Systematic Evidence Review"
+        },
+        {
+          "description": "Frame a naming brief, generate diverse batches, analyze every candidate, rank complete groups, research a human-approved shortlist and record the human decision.",
+          "diagnostics": [],
+          "modified_at_ms": null,
+          "source": {
+            "path": null,
+            "reference": {
+              "key": "systematic-naming",
+              "scope": "bundled"
+            }
+          },
+          "title": "Systematic Naming"
+        },
+        {
+          "description": "",
+          "diagnostics": [],
+          "modified_at_ms": "MTIME",
+          "source": {
+            "path": "<REPO>/app/playbooks/personal/playbook.md",
+            "reference": {
+              "key": "personal",
+              "scope": "global"
+            }
+          },
+          "title": "Personal"
+        }
+      ],
+      "diagnostics": [],
+      "picker_preferences": {
+        "entries": [
+          {
+            "badge": "G",
+            "collapsed": false,
+            "color": "#123456",
+            "hidden": true,
+            "last_imported_at_ms": 123,
+            "preferred": true,
+            "reference": {
+              "key": "personal",
+              "scope": "global"
+            }
+          },
+          {
+            "badge": null,
+            "collapsed": true,
+            "color": null,
+            "hidden": false,
+            "last_imported_at_ms": null,
+            "preferred": true,
+            "reference": {
+              "key": "one-shot",
+              "scope": "bundled"
+            }
+          }
+        ],
+        "order": [
+          {
+            "key": "personal",
+            "scope": "global"
+          },
+          {
+            "key": "superdevelop",
+            "scope": "bundled"
+          }
+        ]
+      }
+    },
+    {
+      "error": {
+        "kind": "io",
+        "message": "picker order contains an invalid or duplicate scoped reference"
+      }
+    },
+    {
+      "error": {
+        "kind": "io",
+        "message": "picker order contains an invalid or duplicate scoped reference"
+      }
+    },
+    {
+      "error": {
+        "kind": "io",
+        "message": "last-imported metadata applies only to global playbooks"
+      }
+    },
+    {
+      "error": {
+        "kind": "io",
+        "message": "picker metadata contains an invalid or duplicate scoped reference"
+      }
+    },
+    {
+      "ok": {
+        "entries": [
+          {
+            "badge": "G",
+            "collapsed": false,
+            "color": "#123456",
+            "hidden": true,
+            "last_imported_at_ms": 123,
+            "preferred": true,
+            "reference": {
+              "key": "personal",
+              "scope": "global"
+            }
+          },
+          {
+            "badge": null,
+            "collapsed": true,
+            "color": null,
+            "hidden": false,
+            "last_imported_at_ms": null,
+            "preferred": true,
+            "reference": {
+              "key": "one-shot",
+              "scope": "bundled"
+            }
+          }
+        ],
+        "order": [
+          {
+            "key": "personal",
+            "scope": "global"
+          },
+          {
+            "key": "superdevelop",
+            "scope": "bundled"
+          }
+        ]
+      }
+    },
+    {},
+    {
+      "error": true
+    },
+    {},
+    {
+      "ok": {
+        "entries": [
+          {
+            "badge": null,
+            "collapsed": false,
+            "color": null,
+            "hidden": false,
+            "last_imported_at_ms": null,
+            "preferred": false,
+            "reference": {
+              "key": "a",
+              "scope": "repo"
+            }
+          }
+        ],
+        "order": []
+      }
+    },
+    {},
+    {
+      "error": true
+    },
+    {},
+    {
+      "error": true
+    },
+    {
+      "ok": {}
+    },
+    {
+      "ok": {
+        "entries": [],
+        "order": []
+      }
+    }
+  ]
+}

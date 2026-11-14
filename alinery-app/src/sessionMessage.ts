@@ -4,10 +4,8 @@ import type { AgentState, LifecycleState, MessageAdapter, ProcessState, SessionM
 
 export const LARGE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_SESSION_MESSAGE_BYTES = 4 * 1024 * 1024;
-export const OMP_BRACKETED_PASTE_END = "\u001b[201~";
-export const OMP_INTERRUPT_DATA = "\u001b";
-// Retry after OMP gave up on a turn: the model keeps its context, so a short continue is enough.
-export const RETRY_MESSAGE = "The previous response was cut off by a connection error. Continue from where you left off.";
+export const VINCULUM_BRACKETED_PASTE_END = "\u001b[201~";
+export const VINCULUM_INTERRUPT_DATA = "\u001b";
 
 export type SessionMessageDraft = {
   body: string;
@@ -101,7 +99,7 @@ export function sessionMessageDisabledReason(readiness: SessionMessageReadiness,
   if (readiness.connection === "recovering") return "The terminal is recovering its session connection.";
   if (readiness.connection === "failed") return "The terminal connection failed. Use the terminal after reconnecting.";
   if (readiness.connection === "opening") return "The terminal is opening.";
-  if (!readiness.agent || (readiness.agent.state !== "idle" && readiness.agent.state !== "errored")) {
+  if (!readiness.agent || readiness.agent.state !== "idle") {
     return readiness.agent?.state === "unknown" ? "Session readiness is unknown." : "The session is running. Wait until it is Idle.";
   }
   if (!readiness.process || readiness.process.state === "starting") return "The session process is starting.";
@@ -109,8 +107,8 @@ export function sessionMessageDisabledReason(readiness: SessionMessageReadiness,
     return "The session has exited.";
   }
   if (readiness.lifecycle.state !== "live") return "The session is not live.";
-  if (readiness.body.includes(OMP_BRACKETED_PASTE_END)) {
-    return "The draft contains the OMP bracketed-paste end marker and cannot be delivered safely.";
+  if (readiness.body.includes(VINCULUM_BRACKETED_PASTE_END)) {
+    return "The draft contains a bracketed-paste end marker and cannot be delivered safely.";
   }
   if (metrics.overLimit) return `Messages are limited to ${MAX_SESSION_MESSAGE_BYTES.toLocaleString()} UTF-8 bytes.`;
   if (readiness.body.length === 0) return "Enter a message to send.";
@@ -146,7 +144,7 @@ export function canAbortChatSession(readiness: SessionMessageReadiness): boolean
 
 /**
  * One predicate for send routing, hatch confirmation, and Chat status: live transcript state
- * leads the 1.5s observation poll, and OMP calls a turn that is asking a question
+ * leads the 1.5s observation poll, and Vinculum calls a turn that is asking a question
  * `waiting_for_input` / `waiting_for_approval`, not only `busy`.
  */
 export type TurnActivity = {

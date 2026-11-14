@@ -1,0 +1,166 @@
+{
+ "version": 1,
+ "revision": 0,
+ "creation": "ready",
+ "creation_error": null,
+ "initial_start_requested": false,
+ "owning_lane": "",
+ "owning_app_config_identity": "",
+ "definition_identity": "657938627952c86c",
+ "reference": {
+  "scope": "repo",
+  "key": "fj"
+ },
+ "max_live_sessions": 10,
+ "enabled_steps": [
+  "clarify",
+  "plan"
+ ],
+ "auto_approve_all": false,
+ "launch_defaults": {
+  "harness": "",
+  "model": ""
+ },
+ "contexts": {},
+ "executions": {
+  "e1": {
+   "id": "e1",
+   "binding_key": "be1",
+   "candidate": {
+    "step_key": "clarify",
+    "context_id": "root",
+    "inputs": {},
+    "complete_collection_id": null,
+    "each_collection_id": null,
+    "each_member_id": null,
+    "manual": false
+   },
+   "outputs": [
+    {
+     "selector": "report.md",
+     "relative_path": "1-report-1.md",
+     "discriminator": 1
+    }
+   ],
+   "parent_execution_ids": [],
+   "depth": 1,
+   "owner_session_id": "ex1",
+   "previous_session_ids": [],
+   "launch": {
+    "harness": "",
+    "model": ""
+   },
+   "is_coding_step": false,
+   "start_requested": true,
+   "lifecycle": "running",
+   "permission": {
+    "kind": "automatic"
+   },
+   "receipt_id": "e1",
+   "exit_code": null,
+   "shutdown_confirmed": false,
+   "error": null
+  },
+  "e2": {
+   "id": "e2",
+   "binding_key": "be2",
+   "candidate": {
+    "step_key": "plan",
+    "context_id": "root",
+    "inputs": {},
+    "complete_collection_id": null,
+    "each_collection_id": null,
+    "each_member_id": null,
+    "manual": false
+   },
+   "outputs": [
+    {
+     "selector": "plan.md",
+     "relative_path": "2-plan-1.md",
+     "discriminator": 1
+    }
+   ],
+   "parent_execution_ids": [],
+   "depth": 2,
+   "owner_session_id": "ex2",
+   "previous_session_ids": [],
+   "launch": {
+    "harness": "",
+    "model": ""
+   },
+   "is_coding_step": false,
+   "start_requested": true,
+   "lifecycle": "running",
+   "permission": {
+    "kind": "automatic"
+   },
+   "receipt_id": null,
+   "exit_code": null,
+   "shutdown_confirmed": false,
+   "error": null
+  },
+  "e3": {
+   "id": "e3",
+   "binding_key": "be3",
+   "candidate": {
+    "step_key": "plan",
+    "context_id": "root",
+    "inputs": {},
+    "complete_collection_id": null,
+    "each_collection_id": null,
+    "each_member_id": null,
+    "manual": false
+   },
+   "outputs": [
+    {
+     "selector": "docs/*.md",
+     "relative_path": "docs/*.md",
+     "discriminator": 2
+    }
+   ],
+   "parent_execution_ids": [],
+   "depth": 2,
+   "owner_session_id": "ex3",
+   "previous_session_ids": [],
+   "launch": {
+    "harness": "",
+    "model": ""
+   },
+   "is_coding_step": false,
+   "start_requested": true,
+   "lifecycle": "running",
+   "permission": {
+    "kind": "automatic"
+   },
+   "receipt_id": null,
+   "exit_code": null,
+   "shutdown_confirmed": false,
+   "error": null
+  }
+ },
+ "occurrences": {
+  "o1": {
+   "id": "o1",
+   "producer_execution_id": "e1",
+   "selector": "report.md",
+   "logical_path": "report.md",
+   "relative_path": "1-report-1.md",
+   "depth": 1,
+   "discriminator": 1,
+   "context_id": "root",
+   "collection_ids": []
+  },
+  "o2": {
+   "id": "o2",
+   "producer_execution_id": "e1",
+   "selector": "extra.md",
+   "logical_path": "extra.md",
+   "relative_path": "1-extra.md",
+   "depth": 1,
+   "discriminator": 1,
+   "context_id": "root",
+   "collection_ids": []
+  }
+ },
+ "collections": {}
+}

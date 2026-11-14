@@ -10,10 +10,8 @@ import path from "node:path";
 
 const root = process.argv[2];
 const commands = {
-  "task.rs": ["archive_task", "archive_task_for_repo", "restore_task_for_repo"],
-  "git_ops.rs": ["remove_worktree", "remove_worktree_for_repo", "push_and_compare_url", "push_and_compare_url_for_repo", "commit_worktree", "commit_worktree_for_repo"],
-  "session.rs": ["archive_session", "archive_session_for_repo"],
-  "settings.rs": ["delete_all_archived_storage"],
+  "backup.rs": ["restore_backup"],
+  "git_ops.rs": ["lookup_task_pull_request"],
   "daemon.rs": ["prepare_repo_takeover", "confirm_repo_takeover"],
 };
 let failures = 0;

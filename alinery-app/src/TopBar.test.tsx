@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isDevelopmentProductName, TopBar } from "./shared";
-import type { AppConfig, OmpUpdateStatus, UpdateStatus } from "./types";
+import type { AppConfig, UpdateStatus } from "./types";
 
 vi.mock("./WindowChrome", () => ({ WindowControls: () => null }));
 vi.mock("./AccountMenu", () => ({
@@ -110,6 +110,20 @@ describe("TopBar navigation", () => {
     expect(callbacks.onSwitchGrid).toHaveBeenCalledWith("triage");
   });
 
+  it("puts the remote button beside add repository, and shows it only when remotes are supported", () => {
+    const onAddRemote = vi.fn();
+    const { unmount } = render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} onAddRemote={onAddRemote} {...callbacks} />);
+    const add = screen.getByRole("button", { name: "Add repository" });
+    const remote = screen.getByRole("button", { name: "Add remote repository" });
+    expect(add.nextElementSibling).toBe(remote);
+    fireEvent.click(remote);
+    expect(onAddRemote).toHaveBeenCalledOnce();
+    expect(callbacks.onAddRepo).not.toHaveBeenCalled();
+    unmount();
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
+    expect(screen.queryByRole("button", { name: "Add remote repository" })).toBeNull();
+  });
+
   it("keeps search and creation independently actionable", () => {
     render(<TopBar active="playbooks" scope="active" appConfig={appConfig} isDev={false} {...callbacks} />);
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -126,36 +140,12 @@ describe("update actions", () => {
     available: { version: "0.11.0", url: "", sha256: "", size: 0, protocol_version: 2, published_at: "" },
     checked_at: 1,
   };
-  const ompUpdate: OmpUpdateStatus = {
-    installed: "18.1.10",
-    available: { version: "v18.2.0", asset_url: "https://example.test/omp" },
-    checked_at: 1,
-    binary_path: "/Applications/Alinery.omp/omp",
-    config_dir: "/tmp/cfg/omp/config/agent",
-  };
-
-  it("keeps the OMP and application upgrades independent", () => {
+  it("offers an application upgrade and no Vinculum update", () => {
     const onUpgrade = vi.fn();
-    const onOmpUpdateClick = vi.fn();
-    render(
-      <TopBar
-        active="list"
-        scope="active"
-        appConfig={appConfig}
-        isDev={false}
-        update={update}
-        ompUpdate={ompUpdate}
-        onUpgrade={onUpgrade}
-        onOmpUpdateClick={onOmpUpdateClick}
-        {...callbacks}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "OMP update v18.2.0" }));
-    expect(onOmpUpdateClick).toHaveBeenCalledOnce();
-    expect(onUpgrade).not.toHaveBeenCalled();
+    render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} update={update} onUpgrade={onUpgrade} {...callbacks} />);
+    expect(screen.queryByRole("button", { name: /Vinculum update/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to 0.11.0" }));
     expect(onUpgrade).toHaveBeenCalledOnce();
-    expect(onOmpUpdateClick).toHaveBeenCalledOnce();
   });
 });
 

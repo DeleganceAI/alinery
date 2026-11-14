@@ -1,9 +1,13 @@
 [package]
 name = "alinery-core"
-version = "0.26.0"
+version = "0.600.0"
 license = "Apache-2.0"
 edition = "2021"
 
+
+[lib]
+name = "alinery_core"
+crate-type = ["rlib"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

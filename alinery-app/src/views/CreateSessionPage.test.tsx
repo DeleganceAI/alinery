@@ -1,6 +1,7 @@
 import { File as NodeFile } from "node:buffer";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeBoard } from "../test/boardHooks";
 import { mockIpc } from "../test/mockIpc";
 import type { BoardTask, TaskExecutionReply } from "../types";
 import { CreateSessionPage } from "./CreateSessionPage";
@@ -33,20 +34,20 @@ const task: BoardTask = {
   current_column_key: "",
   current_column_title: "",
 };
-const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), listBoardTasks: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getTaskExecution: vi.fn(), askConfirm: vi.fn(), writeChatAttachmentBytes: vi.fn() }));
+vi.mock("../sync/board", async (actual) => (await import("../test/boardHooks")).boardHooks(await actual()));
+vi.mock("../sync/execution", async (actual) => (await import("../test/executionFeed")).executionHooks(await actual()));
+vi.mock("../sync/tasks", async (actual) => ({ ...(await actual<typeof import("../sync/tasks")>()), addTaskAttachment: mocks.writeChatAttachmentBytes }));
 vi.mock("../confirm", () => ({ askConfirm: mocks.askConfirm }));
 vi.mock("../ipc", () =>
   mockIpc({
     getTaskExecution: mocks.getTaskExecution,
-    listBoardTasks: mocks.listBoardTasks,
-    writeChatAttachmentBytes: mocks.writeChatAttachmentBytes,
-    listHarnessModelsForRepo: async () => [],
   }),
 );
 
 beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null), setItem: vi.fn() });
-  mocks.listBoardTasks.mockReset().mockResolvedValue([task]);
+  fakeBoard.set({ tasks: [task] });
   mocks.getTaskExecution.mockReset().mockResolvedValue(executionReply([executionRecord({ lifecycle: "queued" })]));
   mocks.askConfirm.mockReset().mockResolvedValue("cancel");
 });
@@ -57,7 +58,7 @@ afterEach(() => {
 });
 
 function renderPage(onCreated = vi.fn(async () => {})) {
-  render(<CreateSessionPage allRepos={false} activeRepo="/r" onCancel={() => {}} onCreated={onCreated} />);
+  render(<CreateSessionPage allRepos={false} repos={fakeBoard.repos()} activeRepo="/r" onCancel={() => {}} onCreated={onCreated} />);
   return onCreated;
 }
 
@@ -66,14 +67,14 @@ function choose(value: string) {
 }
 
 describe("retained execution session selection", () => {
-  it("offers OMP instructions by default and lets the user switch to Terminal", async () => {
+  it("offers Vinculum instructions by default and lets the user switch to Terminal", async () => {
     mocks.getTaskExecution.mockResolvedValue(executionReply([]));
     const created = renderPage();
     await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
-    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("omp");
+    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("vinculum");
     expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", undefined));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "vinculum", "", undefined));
 
     fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).disabled).toBe(true);
@@ -88,7 +89,7 @@ describe("retained execution session selection", () => {
     expect(screen.getByText("research/2-result-10.md")).toBeDefined();
     expect(screen.getByText(/Current owner owner-a/)).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "existing", session_id: "owner-a" }, "omp", "", undefined));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "existing", session_id: "owner-a" }, "vinculum", "", undefined));
   });
 
   it("offers recovery only for an unaccepted execution with proven stopped ownership", async () => {
@@ -106,7 +107,7 @@ describe("retained execution session selection", () => {
     choose("recover:stopped");
     expect(screen.getByText("Process exited before completing")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", execution_id: "stopped" }, "omp", "", undefined));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", execution_id: "stopped" }, "vinculum", "", undefined));
   });
 
   it("binds an independent execution to recorded occurrence IDs without guessing filenames", async () => {
@@ -117,7 +118,7 @@ describe("retained execution session selection", () => {
     expect(screen.queryByText("research/2-result-10.md")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() =>
-      expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", input_occurrence_ids: ["input-a"] }, "omp", "", "Also check the boundary."),
+      expect(created).toHaveBeenCalledWith(task, { kind: "primary", step_key: "worker", input_occurrence_ids: ["input-a"] }, "vinculum", "", "Also check the boundary."),
     );
   });
 
@@ -182,7 +183,7 @@ describe("retained execution session selection", () => {
     expect(screen.queryByRole("option", { name: /Recover.*execution-a/ })).toBeNull();
     expect((screen.getByLabelText("Additional instructions") as HTMLTextAreaElement).value).toBe("Keep my draft");
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", "Keep my draft");
+    expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "vinculum", "", "Keep my draft");
   });
 
   it("does not replace another task's binding with a late query response", async () => {
@@ -190,7 +191,7 @@ describe("retained execution session selection", () => {
     const promise = new Promise<TaskExecutionReply>((accept) => {
       resolve = accept;
     });
-    mocks.listBoardTasks.mockResolvedValue([task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }]);
+    fakeBoard.set({ tasks: [task, { ...task, name: "B task", slug: "b-task", worktree: "/w/b-task" }] });
     mocks.getTaskExecution.mockImplementation((slug: string) =>
       slug === "a-task" ? promise : Promise.resolve(executionReply([executionRecord({ id: "b-only", lifecycle: "queued", owner_session_id: "owner-b" })])),
     );
@@ -201,7 +202,7 @@ describe("retained execution session selection", () => {
     await screen.findByRole("option", { name: /Start queued.*b-only/ });
     expect(screen.queryByRole("option", { name: /execution-a/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(expect.objectContaining({ slug: "b-task" }), { kind: "existing", session_id: "owner-b" }, "omp", "", undefined));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(expect.objectContaining({ slug: "b-task" }), { kind: "existing", session_id: "owner-b" }, "vinculum", "", undefined));
   });
 
   it("preserves edited instructions when a context-change discard is cancelled", async () => {
@@ -219,7 +220,7 @@ describe("retained execution session selection", () => {
 describe("session clipboard attachments", () => {
   beforeEach(() => {
     mocks.getTaskExecution.mockResolvedValue(executionReply([]));
-    mocks.writeChatAttachmentBytes.mockReset().mockImplementation(async (_slug, name) => name);
+    mocks.writeChatAttachmentBytes.mockReset().mockImplementation(async (_repo, _slug, name) => name);
     vi.stubGlobal(
       "URL",
       class extends URL {
@@ -243,7 +244,7 @@ describe("session clipboard attachments", () => {
   }
 
   it("saves pasted bytes to the selected task before launching with readable attachment paths", async () => {
-    mocks.listBoardTasks.mockResolvedValue([{ ...task, repo_path: "/other repo" }]);
+    fakeBoard.set({ tasks: [{ ...task, repo_path: "/other repo" }] });
     const created = renderPage();
     await waitFor(() => expect((screen.getByRole("button", { name: "Launch" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.change(screen.getByLabelText("Additional instructions"), { target: { value: "Inspect this screenshot." } });
@@ -252,12 +253,12 @@ describe("session clipboard attachments", () => {
     expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
     await waitFor(() => expect(created).toHaveBeenCalledOnce());
-    const name = mocks.writeChatAttachmentBytes.mock.calls[0][1];
-    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledWith("a-task", name, [0, 255, 128, 1], "/other repo");
+    const name = mocks.writeChatAttachmentBytes.mock.calls[0][2];
+    expect(mocks.writeChatAttachmentBytes).toHaveBeenCalledWith("/other repo", "a-task", name, new Uint8Array([0, 255, 128, 1]));
     expect(created).toHaveBeenCalledWith(
       expect.objectContaining({ repo_path: "/other repo" }),
       { kind: "auxiliary" },
-      "omp",
+      "vinculum",
       "",
       `Inspect this screenshot.\n\nAttached file: /other repo/.alinery/tasks/a-task/artifacts/attachments/${name}`,
     );
@@ -270,7 +271,7 @@ describe("session clipboard attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: /Remove pasted-image/ }));
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:session-image");
     fireEvent.click(screen.getByRole("button", { name: "Launch" }));
-    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "omp", "", undefined));
+    await waitFor(() => expect(created).toHaveBeenCalledWith(task, { kind: "auxiliary" }, "vinculum", "", undefined));
     expect(mocks.writeChatAttachmentBytes).not.toHaveBeenCalled();
   });
 
@@ -290,7 +291,7 @@ describe("session clipboard attachments", () => {
     expect(created).toHaveBeenCalledWith(
       task,
       { kind: "auxiliary" },
-      "omp",
+      "vinculum",
       "",
       "Attached file: /r/.alinery/tasks/a-task/artifacts/attachments/first.png\nAttached file: /r/.alinery/tasks/a-task/artifacts/attachments/second.png",
     );
@@ -303,7 +304,7 @@ describe("session clipboard attachments", () => {
     fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     await waitFor(() => expect(mocks.askConfirm).toHaveBeenCalledOnce());
     expect(screen.getByRole("button", { name: /Remove pasted-image/ })).toBeDefined();
-    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("omp");
+    expect((screen.getByLabelText("Auxiliary harness") as HTMLSelectElement).value).toBe("vinculum");
     mocks.askConfirm.mockResolvedValueOnce("discard");
     fireEvent.change(screen.getByLabelText("Auxiliary harness"), { target: { value: "no-harness" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: /Remove pasted-image/ })).toBeNull());
