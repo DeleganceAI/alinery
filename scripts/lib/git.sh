@@ -88,7 +88,9 @@ build_pinned_git() {
   prefix="$out_dir/git"
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/alinery-git-build.XXXXXX")"
 
-  if ! curl -fsSL -o "$scratch/git.tar.gz" "$url"; then
+  # The mirror has dropped a release build mid-download (an HTTP/2 PROTOCOL_ERROR after a stall), so a stalled transfer is
+  # cut after 30 s and every failure is retried; the checksum below still decides what is accepted.
+  if ! curl -fsSL --http1.1 --retry 5 --retry-all-errors --speed-limit 1024 --speed-time 30 -o "$scratch/git.tar.gz" "$url"; then
     rm -rf "$scratch"
     die "failed to download $url" || return 1
   fi
