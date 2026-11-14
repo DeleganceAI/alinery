@@ -321,10 +321,14 @@ header {
   border-bottom: 1px solid var(--border);
   background: var(--canvas);
   min-width: 0;
-  /* header hosts the repo dropdown popup; keep it above page content;
-     modals (70+), toast (90) and boot (200) still paint over it. */
   position: relative;
   z-index: 20;
+}
+/* The app's top bar hosts the repo and account menus, so it sits above page content, including every page header
+   that inherits the z-index above (Settings, Playbooks); the artifact drawer (60), modals (70+), toast (90) and
+   boot (200) still paint over it. */
+header[data-tauri-drag-region] {
+  z-index: 50;
 }
 .brand {
   display: flex;

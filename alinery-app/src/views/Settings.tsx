@@ -2760,7 +2760,7 @@ export function Settings({
 
   return (
     <div className="settings-layout">
-      <header className="settings-head">
+      <div className="settings-head">
         <div className="settings-head-copy">
           <h1 className="view-title">Settings</h1>
           <div className="settings-scope-detail" title={selectedScopeDetail}>
@@ -2785,7 +2785,7 @@ export function Settings({
             <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
           </span>
         </label>
-      </header>
+      </div>
       <div className="settings-shell">
         <nav className="settings-nav" aria-label="Settings sections">
           <input
