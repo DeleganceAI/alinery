@@ -40,6 +40,9 @@ function makeRepo(name = "repo"): { dir: string; repo: string } {
   const repo = join(dir, name);
   mkdirSync(repo);
   sh(repo, "init", "-q", "-b", "main");
+  // The code under test commits with the repository's own identity; a CI runner has no global one.
+  sh(repo, "config", "user.name", "t");
+  sh(repo, "config", "user.email", "t@example.com");
   sh(repo, "commit", "-q", "--allow-empty", "-m", "init");
   return { dir, repo };
 }

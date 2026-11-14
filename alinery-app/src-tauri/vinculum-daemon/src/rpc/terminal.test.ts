@@ -171,16 +171,17 @@ test("a gap that never fills is given up after the wait, and the held writes app
   const it = c.attach({ session: { taskSlug: "t", id } }, { signal: ac.signal })[Symbol.asyncIterator]();
   const attachId = (await it.next()).value!.attachId;
   const enc = new TextEncoder();
-  await c.write({ attachId, inputSeq: 2n, data: enc.encode("echo GAP-B\n") });
-  await c.write({ attachId, inputSeq: 1n, data: enc.encode("echo GAP-A\n") });
+  // printf, so the output never matches the typed command: dash (Ubuntu's /bin/sh) does not redraw typed-ahead input after its prompt.
+  await c.write({ attachId, inputSeq: 2n, data: enc.encode("printf 'GAP-%s\\n' B\n") });
+  await c.write({ attachId, inputSeq: 1n, data: enc.encode("printf 'GAP-%s\\n' A\n") });
   await Bun.sleep(100);
   expect(file().includes("GAP-")).toBe(false);
-  await until(() => file().includes("\r\nGAP-A\r\n"));
+  await until(() => file().includes("GAP-A\r\n"));
   const text = file().toString();
-  expect(text.indexOf("echo GAP-B")).toBeLessThan(text.indexOf("echo GAP-A"));
+  expect(text.indexOf("GAP-B\r\n")).toBeLessThan(text.indexOf("GAP-A\r\n"));
   // The sequence continues after the given-up gap.
-  await c.write({ attachId, inputSeq: 3n, data: enc.encode("echo GAP-C\n") });
-  await until(() => file().includes("\r\nGAP-C\r\n"));
+  await c.write({ attachId, inputSeq: 3n, data: enc.encode("printf 'GAP-%s\\n' C\n") });
+  await until(() => file().includes("GAP-C\r\n"));
   ac.abort();
 });
 

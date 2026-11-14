@@ -35,6 +35,9 @@ async function start() {
   const repo = join(dir, "repo");
   mkdirSync(repo, { recursive: true });
   sh(repo, "init", "-q", "-b", "main");
+  // The code under test commits with the repository's own identity; a CI runner has no global one.
+  sh(repo, "config", "user.name", "t");
+  sh(repo, "config", "user.email", "t@example.com");
   sh(repo, "commit", "-q", "--allow-empty", "-m", "init");
   const origin = join(dir, "origin.git");
   mkdirSync(origin);
