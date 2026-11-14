@@ -43,8 +43,8 @@ max_glibc() {
 }
 
 # Apple silicon kills an unsigned executable, and Bun 1.4.3 cross-building x64 on an arm64 Mac leaves an invalid
-# signature, so every darwin binary is re-signed ad hoc here. Ad hoc is enough: a file unpacked from tar over ssh carries
-# no quarantine attribute, so Gatekeeper never asks for notarization. vtool and codesign exist only on macOS; elsewhere
+# signature, so every darwin binary is re-signed ad hoc here. On the host ad hoc is enough (a file unpacked from tar over ssh
+# carries no quarantine attribute), but the release build re-signs for notarization (sign_for_notarization). vtool and codesign exist only on macOS; elsewhere
 # the darwin targets are skipped, and the app then refuses Mac hosts as having no bundled runtime.
 have_darwin_tools() { command -v vtool >/dev/null 2>&1 && command -v codesign >/dev/null 2>&1; }
 darwin_checks() {
@@ -56,6 +56,25 @@ darwin_checks() {
   fi
   codesign --force --sign - "$2"
   codesign -v "$2" || { echo "ERROR: $1/alinery-vinculum-daemon is not validly signed" >&2; exit 1; }
+}
+
+# The app notarizes these archives with itself, and Apple's notary opens them: every Mach-O inside needs a Developer ID
+# signature with a secure timestamp and the hardened runtime. With APPLE_SIGNING_IDENTITY set (a release build; the
+# identity must be in a keychain) every one is re-signed so. The daemon takes the app's entitlements (bun:ffi needs the
+# JIT) and Python its own; without the variable the ad hoc signatures above stay, which is enough for a dev build.
+sign_for_notarization() {
+  [ -n "${APPLE_SIGNING_IDENTITY:-}" ] || return 0
+  local file entitlements
+  while IFS= read -r -d '' file; do
+    file -b "$file" | grep -q '^Mach-O' || continue
+    entitlements=()
+    case "$file" in
+      */alinery-vinculum-daemon) entitlements=(--entitlements "$ROOT/alinery-app/src-tauri/Entitlements.plist") ;;
+      */python/bin/python3*) entitlements=(--entitlements "$ROOT/scripts/python-runtime/entitlements.plist") ;;
+    esac
+    codesign --force --timestamp --options runtime ${entitlements[@]+"${entitlements[@]}"} --sign "$APPLE_SIGNING_IDENTITY" "$file"
+    codesign -v --strict "$file"
+  done < <(find "$1" -type f \( -name alinery-vinculum-daemon -o -name '*.so' -o -name '*.dylib' -o -path '*/bin/*' \) -print0)
 }
 
 missing=0
@@ -113,6 +132,7 @@ for entry in "${TARGETS[@]}"; do
 
   "$ROOT/scripts/python-runtime/stage.sh" "$triple" "$dir/python"
   cp -R "$PKG/skills" "$dir/skills"
+  [[ "$triple" == *-apple-darwin ]] && sign_for_notarization "$dir"
 
   # Every regular file, so the remote's check covers the Python too (symlinks are checked through their targets).
   (cd "$dir" && find . -type f ! -name MANIFEST -print0 | sort -z | xargs -0 $SHA256_CMD | sed 's|  \./|  |' > MANIFEST)
