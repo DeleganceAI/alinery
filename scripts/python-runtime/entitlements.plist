@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The bundled Python's entitlements when build-remote-runtimes.sh signs it for notarization (hardened runtime). An extra
+  package pip puts in the repository's user base is not signed by our team, so library validation would refuse its
+  extension modules. Checked with `codesign -o runtime` and this file alone: the skills' imports, a ctypes callback and a
+  pypdfium2 render all run.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
