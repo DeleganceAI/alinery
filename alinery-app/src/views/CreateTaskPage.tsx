@@ -12,12 +12,12 @@ import {
   Dialog,
   InlineStatus,
   ModelInput,
-  ompDefaultModel,
   orderPlaybookCandidates,
   playbookRefKey,
   RECOMMENDED_PLAYBOOK,
   samePlaybookRef,
   starredPlaybookKeys,
+  vinculumDefaultModel,
   withPlaybookStar,
 } from "../shared";
 import { readArtifactText } from "../sync/artifacts";
@@ -215,7 +215,7 @@ export function CreateTaskPage({
   const [autoAdvance, setAutoAdvance] = useState<string[]>(initialDraft?.auto_advance ?? []);
   const [stepModels, setStepModels] = useState<Record<string, string>>(initialDraft?.step_models ?? {});
   const [productModel, setProductModel] = useState("");
-  const harness = "omp";
+  const harness = "vinculum";
   const [model, setModel] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
   const [draftAutosave, setDraftAutosave] = useState(true);
@@ -395,8 +395,8 @@ export function CreateTaskPage({
         if (initializePicker) {
           setPlaybookQuery("");
         }
-        const resolvedDefaultModel = ompDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
-        setProductModel(ompDefaultModel(c.defaults));
+        const resolvedDefaultModel = vinculumDefaultModel(c.defaults) || (account?.signedIn ? "alinery/DeepSeek-V4.1-Flash" : "");
+        setProductModel(vinculumDefaultModel(c.defaults));
         setDefaultModel(resolvedDefaultModel);
         setCatalogError(
           catalog.diagnostics.length ? { msg: "Some playbook sources could not be loaded.", detail: catalog.diagnostics.map((diagnostic) => diagnostic.message).join("\n") } : null,
@@ -1274,7 +1274,7 @@ export function CreateTaskPage({
           <label className="create-field task-default-model">
             <span>Task Default Model</span>
             <ModelInput
-              harness="omp"
+              harness="vinculum"
               repoPath={repoPath}
               ariaLabel="Task Default Model"
               value={model}
@@ -1313,7 +1313,7 @@ export function CreateTaskPage({
                         label={step.title}
                       />
                       <ModelInput
-                        harness="omp"
+                        harness="vinculum"
                         repoPath={repoPath}
                         prefillRemembered={false}
                         placeholder="Inherits"

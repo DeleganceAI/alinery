@@ -1,6 +1,6 @@
 //! Base64 for the bytes that cross a JSON field (task attachments, the telemetry basic-auth header).
 //!
-//! The module keeps its old name; the OMP `rpc_chunk` reassembler it was written for ran in the JSON-lines daemon.
+//! The module keeps its old name; the old agent's `rpc_chunk` reassembler it was written for ran in the JSON-lines daemon.
 
 /// Standard padded base64. ASCII whitespace is accepted.
 pub fn decode_base64(input: &str) -> Result<Vec<u8>, String> {

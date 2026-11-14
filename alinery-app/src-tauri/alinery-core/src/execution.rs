@@ -279,7 +279,7 @@ pub fn new_execution_state(
         .chain(definition.step.iter().map(|step| step.harness.as_str()))
         .chain(std::iter::once(launch_defaults.harness.as_str()))
     {
-        if !harness.trim().is_empty() && harness.trim() != "omp" {
+        if !harness.trim().is_empty() && harness.trim() != "vinculum" {
             return Err(format!("unsupported graph harness '{harness}'"));
         }
     }

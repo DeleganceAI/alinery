@@ -283,7 +283,7 @@ it("inspects authored definitions and navigates selector connections without exe
       { path: "reviews/*.md", mode: "complete" },
     ],
     model: "provider/coding-model",
-    harness: "omp",
+    harness: "vinculum",
     is_coding_step: true,
     prompt: "Read the request in full.\n\nImplement it without changing the requirements.",
   };
@@ -314,7 +314,7 @@ it("inspects authored definitions and navigates selector connections without exe
   expect(inspector.getByText("worker")).toBeTruthy();
   expect(inspector.getByText("Code")).toBeTruthy();
   expect(inspector.getByText("provider/coding-model")).toBeTruthy();
-  expect(inspector.getByText("omp")).toBeTruthy();
+  expect(inspector.getByText("vinculum")).toBeTruthy();
   expect(inspector.getByLabelText("Implement request prompt").textContent).toBe(worker.prompt);
   const inputs = within(inspector.getByRole("list", { name: "Implement request inputs" })).getAllByRole("listitem");
   expect(inputs.map((item) => item.textContent)).toEqual(["requests/request-*.mdeach", "context.mdsingle", "reviews/*.mdcomplete"]);

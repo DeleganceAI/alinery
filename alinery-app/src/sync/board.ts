@@ -123,7 +123,7 @@ export function sessionDisplayFromProto(s: Session): SessionDisplayMeta {
     notification_read_at: num(s.notificationReadAt),
     exit_notification_read_at: num(s.exitNotificationReadAt),
     notification_suppression: s.notificationSuppression ? { notice: s.notificationSuppression.notice as never, occurrence: s.notificationSuppression.occurrence } : null,
-    semantic: sem ? { phase_completed_at: num(sem.phaseCompletedAt), omp_session_id: sem.ompSessionId ?? null, omp_turn_id: num(sem.ompTurnId) } : null,
+    semantic: sem ? { phase_completed_at: num(sem.phaseCompletedAt), vinculum_session_id: sem.vinculumSessionId ?? null, vinculum_turn_id: num(sem.vinculumTurnId) } : null,
   };
   return { ...meta, name: s.name ?? null, name_source: (s.nameSource || null) as SessionNameSource | null, name_error: s.nameError ?? null };
 }

@@ -21,7 +21,7 @@ const state = (permission: { kind: string }, lifecycle = "running") => ({
   reference: { scope: "bundled", key: "fork-join" },
   max_live_sessions: 4,
   enabled_steps: [],
-  launch_defaults: { harness: "omp", model: "" },
+  launch_defaults: { harness: "vinculum", model: "" },
   executions: { e1: { id: "e1", owner_session_id: "s1", previous_session_ids: [], lifecycle, permission, candidate: { step_key: "seed" } } },
   occurrences: {},
   contexts: {},

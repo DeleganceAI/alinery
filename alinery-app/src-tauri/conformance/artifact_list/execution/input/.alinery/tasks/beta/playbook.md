@@ -4,7 +4,7 @@ key = "fj"
 title = "Fork Join"
 description = ""
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "clarify"

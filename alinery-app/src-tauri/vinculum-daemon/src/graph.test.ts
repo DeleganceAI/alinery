@@ -69,7 +69,7 @@ function taskFixture(repo: string, slug: string, options: { start?: boolean; cap
     `[[step]]\nkey = "work"\ntitle = "Work"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "out.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true`;
   const prompt = options.prompt ?? "Do the step.\n";
   const sections = (options.keys ?? ["work"]).map((key) => `<!-- alinery:step ${key} -->\n${prompt}`).join("\n");
-  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "omp"\n\n${steps}\n+++\n${sections}\n`);
+  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n${steps}\n+++\n${sections}\n`);
   writeFileSync(join(dir, "task.md"), `name = "Fixture"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n\n[launch_defaults]\nmodel = ${JSON.stringify(options.model ?? "")}\n`);
   writeFileSync(
     join(dir, "execution.json"),
@@ -197,7 +197,7 @@ describe("playbook host", () => {
   test("a blank task model uses settings, and a leftover harness does not", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-model-"));
     const appConfig = join(repo, "app.toml");
-    writeFileSync(appConfig, `[global.defaults]\nharness = "omp"\nmodel = "settings/model"\n`);
+    writeFileSync(appConfig, `[global.defaults]\nharness = "vinculum"\nmodel = "settings/model"\n`);
     const hooks = recordingHooks();
     resetGraphs();
     prepareGraphs(repo, hooks, appConfig);

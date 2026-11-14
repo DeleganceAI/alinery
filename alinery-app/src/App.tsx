@@ -103,7 +103,7 @@ import { TaskList } from "./views/TaskList";
 import { ResizeHandles, useWindowFullscreen, WindowControls } from "./WindowChrome";
 
 /** Per-install: asked once, then the Settings button is the way back. */
-const OMP_SETUP_DISMISSED_KEY = "alinery.ompSetupDismissed";
+const VINCULUM_SETUP_DISMISSED_KEY = "alinery.vinculumSetupDismissed";
 /** Breathing room between the wizard closing and the usage-sharing question. */
 const TELEMETRY_PROMPT_DELAY_MS = 800;
 
@@ -206,7 +206,7 @@ export default function App() {
     if (!appConfig?.active_repo || onboardingOpen || consentPending) return;
     let dismissed = false;
     try {
-      dismissed = localStorage.getItem(OMP_SETUP_DISMISSED_KEY) === "1";
+      dismissed = localStorage.getItem(VINCULUM_SETUP_DISMISSED_KEY) === "1";
     } catch {
       /* private mode or blocked storage: offer rather than stay silent */
     }
@@ -1303,7 +1303,7 @@ export default function App() {
               // set up must not suppress the offer if those credentials later go away.
               if (reason === "dismissed") {
                 try {
-                  localStorage.setItem(OMP_SETUP_DISMISSED_KEY, "1");
+                  localStorage.setItem(VINCULUM_SETUP_DISMISSED_KEY, "1");
                 } catch {
                   /* nothing to do: the offer simply comes back next launch */
                 }

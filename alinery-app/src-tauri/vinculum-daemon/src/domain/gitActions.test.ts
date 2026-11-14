@@ -53,7 +53,7 @@ async function makeTask(repo: string, name = "Git Demo") {
       attachmentUrls: [],
       attachmentErrors: [],
       playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK },
-      launchDefaults: { harness: "omp", model: "" },
+      launchDefaults: { harness: "vinculum", model: "" },
       start: false,
     } as never,
   );

@@ -4,7 +4,7 @@ key = "one-shot"
 title = "One-shot"
 description = "Implement, verify, and prepare a PR note for a clear bounded request in one session."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "implementation"

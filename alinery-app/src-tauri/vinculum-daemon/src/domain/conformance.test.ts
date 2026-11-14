@@ -11,7 +11,7 @@ import * as comments from "./artifactComments.ts";
 import { listArtifacts } from "./artifactList.ts";
 import { listTree, nodePath, readNode, type TreeNode } from "./artifactTree.ts";
 import { ChatPublisher, chatKey, rootChats } from "./chat.ts";
-import { readHistory, readOmpWindow } from "./history.ts";
+import { readHistory, readVinculumWindow } from "./history.ts";
 import { namePathOf, setSessionName } from "./sessionOps.ts";
 
 const ROOT = resolve(import.meta.dir, "../../../conformance");
@@ -75,7 +75,7 @@ for (const name of cases("history")) {
     let previousStart: number | undefined;
     const windows = command.windows.map((w: any) =>
       attempt(() => {
-        const out = readOmpWindow(repo, command.slug, w.id ?? command.id, w.end === "previous_start" ? previousStart : (w.end ?? undefined), w.want ?? undefined);
+        const out = readVinculumWindow(repo, command.slug, w.id ?? command.id, w.end === "previous_start" ? previousStart : (w.end ?? undefined), w.want ?? undefined);
         previousStart = out.start;
         return { data: out.data.toString(), start: out.start, end: out.end, length: out.length };
       }),

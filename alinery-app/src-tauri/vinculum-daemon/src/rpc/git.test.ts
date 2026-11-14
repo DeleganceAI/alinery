@@ -70,7 +70,7 @@ const meta = () => ({ clientId: "c1", mutationId: `m${++n}` });
 const code = async (call: Promise<unknown>) => ConnectError.from(await call.then(() => null, (e) => e)).code;
 
 async function newTask(c: Ctx, name = "Demo") {
-  const res = await c.tasks.createTask({ meta: meta(), name, description: "d", playbookRef: { scope: "bundled", key: "one-shot" }, playbookSource: PLAYBOOK, launchDefaults: { harness: "omp", model: "" }, start: false });
+  const res = await c.tasks.createTask({ meta: meta(), name, description: "d", playbookRef: { scope: "bundled", key: "one-shot" }, playbookSource: PLAYBOOK, launchDefaults: { harness: "vinculum", model: "" }, start: false });
   const slug = res.created?.task?.slug ?? "";
   return { slug, worktree: res.created?.task?.worktree ?? "", branch: res.created?.task?.branch ?? "" };
 }

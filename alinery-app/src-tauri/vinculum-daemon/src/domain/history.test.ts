@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DomainError } from "../platform/lock.ts";
-import { HISTORY_WINDOW_MAX, newestOmpJsonl, readHistory, readOmpWindow, sessionArtifactReady } from "./history.ts";
+import { HISTORY_WINDOW_MAX, newestVinculumJsonl, readHistory, readVinculumWindow, sessionArtifactReady } from "./history.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -84,39 +84,39 @@ test("a history that is a symlink, or a session id that is not that session, is 
 
 test("the newest journal is chosen by name, and a link or a file with two links is no journal", () => {
   const { root } = rig();
-  const dir = join(root, "s1.omp");
+  const dir = join(root, "s1.vinculum");
   mkdirSync(dir);
   writeFileSync(join(dir, "2026-01-01_a.jsonl"), "old\n");
   writeFileSync(join(dir, "2026-02-01_b.jsonl"), "new\n");
   writeFileSync(join(dir, "2026-03-01_c.jsonl"), "shared\n");
   linkSync(join(dir, "2026-03-01_c.jsonl"), join(root, "elsewhere"));
   symlinkSync(join(dir, "2026-01-01_a.jsonl"), join(dir, "2026-04-01_d.jsonl"));
-  expect(newestOmpJsonl(dir)).toBe(join(dir, "2026-02-01_b.jsonl"));
-  expect(newestOmpJsonl(join(root, "missing"))).toBeUndefined();
+  expect(newestVinculumJsonl(dir)).toBe(join(dir, "2026-02-01_b.jsonl"));
+  expect(newestVinculumJsonl(join(root, "missing"))).toBeUndefined();
 });
 
 test("a journal window opens on a row boundary and reports where it ends", () => {
   const { repo, root, meta } = rig();
   meta("s1");
-  const dir = join(root, "s1.omp");
+  const dir = join(root, "s1.vinculum");
   mkdirSync(dir);
   const rows = ["row-one", "row-two", "row-three"].map((r) => `${r}\n`).join("");
   writeFileSync(join(dir, "2026-01-01_a.jsonl"), rows);
-  const whole = readOmpWindow(repo, "", "s1");
+  const whole = readVinculumWindow(repo, "", "s1");
   expect([whole.data.toString(), whole.start, whole.end, whole.length]).toEqual([rows, 0, rows.length, rows.length]);
   // 12 bytes back from the end lands inside "row-two": the window starts at "row-three".
-  const tail = readOmpWindow(repo, "", "s1", undefined, 12);
+  const tail = readVinculumWindow(repo, "", "s1", undefined, 12);
   expect(tail.data.toString()).toBe("row-three\n");
   expect(tail.start).toBe(rows.length - "row-three\n".length);
-  const earlier = readOmpWindow(repo, "", "s1", tail.start, 100);
+  const earlier = readVinculumWindow(repo, "", "s1", tail.start, 100);
   expect(earlier.data.toString()).toBe("row-one\nrow-two\n");
-  expect(readOmpWindow(repo, "", "s1", 0, 100).data.length).toBe(0);
+  expect(readVinculumWindow(repo, "", "s1", 0, 100).data.length).toBe(0);
 });
 
 test("a session with no journal yet has an empty window", () => {
   const { repo, meta } = rig();
   meta("s1");
-  expect(readOmpWindow(repo, "", "s1")).toEqual({ data: Buffer.alloc(0), start: 0, end: 0, length: 0 });
+  expect(readVinculumWindow(repo, "", "s1")).toEqual({ data: Buffer.alloc(0), start: 0, end: 0, length: 0 });
 });
 
 test("a phase artifact is ready when it is a non-empty file inside the task's artifacts", () => {

@@ -702,7 +702,7 @@ export function OnboardingFlow({
                       <strong>Default model</strong>
                     </div>
                     <ModelInput
-                      harness="omp"
+                      harness="vinculum"
                       repoPath={appConfig.active_repo}
                       value={defaultModel}
                       onChange={setDefaultModel}

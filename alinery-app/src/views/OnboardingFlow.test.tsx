@@ -41,7 +41,7 @@ function previewDefinition(key: string, title: string): NormalizedPlaybook {
     inputs: [],
     outputs: [{ path: `${name.toLowerCase()}.md` }],
     model: "",
-    harness: "omp",
+    harness: "vinculum",
     prompt: "",
   });
   const steps =
@@ -52,7 +52,7 @@ function previewDefinition(key: string, title: string): NormalizedPlaybook {
           { ...step("Deduplicate and Dispatch Sources"), inputs: [{ path: "source-*.md", mode: "complete" as const }] },
         ]
       : [step("Clarify"), step("Investigate"), step("Decide", false), step("Plan"), step("Define Tests"), step("Build"), step("Prepare Review", false)];
-  return { version: 2, key, title, description: "", default_model: "", default_harness: "omp", step: steps, preamble: "", section_order: [] };
+  return { version: 2, key, title, description: "", default_model: "", default_harness: "vinculum", step: steps, preamble: "", section_order: [] };
 }
 
 beforeEach(() => {
@@ -87,7 +87,7 @@ beforeEach(() => {
       dock_badge_completions: true,
     },
     github: { token: "" },
-    defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-5", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
+    defaults: { harness: "vinculum", model: "anthropic/claude-sonnet-4-5", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
     provenance: {
       github_token: "global",
       defaults: {

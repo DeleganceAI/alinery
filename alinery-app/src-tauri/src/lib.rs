@@ -11,7 +11,7 @@
 //     `.alinery/tasks/<slug>/artifacts/`. `current_phase` is DERIVED from
 //     the latest session's phase — nothing to store, "advance" = create the next session.
 // M4: harness registry. `harnesses.toml` declares each harness command and semantic
-//     adapter capability. OMP sessions report typed agent/playbook facts through
+//     adapter capability. Vinculum sessions report typed agent/playbook facts through
 //     `alinery-runner`; unsupported harnesses retain terminal/process behavior only.
 //     alineryd owns every PTY, process group, scrollback stream, and process transition.
 // M5: quality-of-life notifications consume explicit idle/input/approval transitions,
@@ -88,7 +88,6 @@ mod hosted;
 mod imports;
 mod mcp;
 mod notify;
-mod omp_update;
 mod paths;
 mod pi_durable;
 mod remote;
@@ -98,6 +97,7 @@ mod state;
 mod task;
 mod telemetry;
 mod update;
+mod vinculum_update;
 
 use account::*;
 use agent_customizations::*;
@@ -113,7 +113,6 @@ use hosted::*;
 use imports::*;
 use mcp::*;
 use notify::*;
-use omp_update::*;
 use paths::*;
 use remote::*;
 use session::*;
@@ -122,6 +121,7 @@ use state::*;
 use task::*;
 use telemetry::*;
 use update::*;
+use vinculum_update::*;
 
 fn register_runtime_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder

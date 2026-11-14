@@ -4,7 +4,7 @@ settings_version = 1
 token = "ghp-global"
 
 [global.defaults]
-harness = "omp"
+harness = "vinculum"
 model = "gpt-5"
 thinking = "medium"
 draft_autosave = false

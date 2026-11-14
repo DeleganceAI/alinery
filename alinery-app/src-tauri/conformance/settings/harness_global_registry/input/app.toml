@@ -1,7 +1,7 @@
 [global.harnesses]
 [[global.harnesses.harness]]
-key = "omp"
-name = "Global OMP"
-binary = "/opt/omp"
+key = "vinculum"
+name = "Global Vinculum"
+binary = "/opt/vinculum"
 models_cmd = "{binary} models"
-adapter = "omp"
+adapter = "vinculum"

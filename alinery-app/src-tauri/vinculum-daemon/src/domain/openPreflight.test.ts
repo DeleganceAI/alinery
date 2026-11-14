@@ -15,16 +15,16 @@ test("a session outside a task opens only as the no-harness drawer, judged by th
   const repo = repoWith("t", "engine_version = 2\n");
   expect(openPreflight(repo, "", undefined)).toBeUndefined();
   expect(openPreflight(repo, "", "no-harness")).toBeUndefined();
-  expect(openPreflight(repo, "", "omp")).toBe("root sessions are limited to no-harness drawer");
+  expect(openPreflight(repo, "", "vinculum")).toBe("root sessions are limited to no-harness drawer");
   expect(openPreflight(repo, "", "")).toBe("root sessions are limited to no-harness drawer");
 });
 
 test("a task session needs a v2 task that is neither a draft nor archived, and a product harness", () => {
-  expect(openPreflight(repoWith("t", "engine_version = 2\n"), "t", "omp")).toBeUndefined();
+  expect(openPreflight(repoWith("t", "engine_version = 2\n"), "t", "vinculum")).toBeUndefined();
   expect(openPreflight(repoWith("t", "engine_version = 2\n"), "t", undefined)).toBeUndefined();
   expect(openPreflight(repoWith("t", "engine_version = 2\n"), "t", "claude")).toBe("unknown harness 'claude'");
-  expect(openPreflight(repoWith("t", ""), "t", "omp")).toContain("pre-v2");
-  expect(openPreflight(repoWith("t", "engine_version = 2\ndraft = true\n"), "t", "omp")).toBe("draft or archived tasks cannot launch sessions");
-  expect(openPreflight(repoWith("t", "engine_version = 2\narchived = true\n"), "t", "omp")).toBe("draft or archived tasks cannot launch sessions");
-  expect(openPreflight(repoWith("t", "engine_version = 2\n"), "missing", "omp")).toBe("no such task: missing");
+  expect(openPreflight(repoWith("t", ""), "t", "vinculum")).toContain("pre-v2");
+  expect(openPreflight(repoWith("t", "engine_version = 2\ndraft = true\n"), "t", "vinculum")).toBe("draft or archived tasks cannot launch sessions");
+  expect(openPreflight(repoWith("t", "engine_version = 2\narchived = true\n"), "t", "vinculum")).toBe("draft or archived tasks cannot launch sessions");
+  expect(openPreflight(repoWith("t", "engine_version = 2\n"), "missing", "vinculum")).toBe("no such task: missing");
 });

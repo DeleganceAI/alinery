@@ -3,7 +3,7 @@
 enabled = false
 
 [defaults]
-harness = "omp"
+harness = "vinculum"
 model = "claude-x"
 thinking = "low"
 

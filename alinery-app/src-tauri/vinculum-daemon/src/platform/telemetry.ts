@@ -14,7 +14,7 @@ const INGEST_USER = "saga-ingest@example.com";
 const INGEST_PASSWORD = "XYXXx1fbYiiCgDlp";
 export const SEND_TIMEOUT_MS = 2000;
 
-const HARNESSES = ["omp", "vinculum", "no-harness"];
+const HARNESSES = ["vinculum", "no-harness"];
 const PLAYBOOKS = ["superdevelop", "one-shot", "free-form", "review", "bug-hunting"];
 const PHASES = [
   "research-questions",

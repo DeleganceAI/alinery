@@ -1,4 +1,4 @@
 [defaults]
-harness = "omp"
+harness = "vinculum"
 model = "gpt-5"
 thinking = "low"

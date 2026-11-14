@@ -57,7 +57,7 @@ describe("planChatSend", () => {
     expect(planChatSend("hello", catalog, true).optimisticKind).toBe("follow_up");
   });
 
-  it("guesses a turn on a model send so the next submit steers, without faking OMP's own state", () => {
+  it("guesses a turn on a model send so the next submit steers, without faking Vinculum's own state", () => {
     const sent = applySendPlan(emptyTranscript(), "hello", planChatSend("hello", catalog, false)).state;
     expect(sent.pendingTurn).toBe(true);
     // The guess must stay a guess: `turn_start` still has a marker to emit and a turn to count.

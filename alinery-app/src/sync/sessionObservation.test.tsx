@@ -18,16 +18,16 @@ const running = (agent: "busy" | "idle" | "waiting_for_input" = "busy", correlat
     process: { state: "alive" },
     agent: agent === "waiting_for_input" ? { state: agent, correlation_id: correlation } : { state: agent },
     playbook: { state: "in_progress" },
-    adapter: "omp",
-    message_adapter: "omp_bracketed_paste",
+    adapter: "vinculum",
+    message_adapter: "vinculum_bracketed_paste",
   },
-  checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null },
+  checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null },
   transport: "rpc",
 });
 const exited: SessionObservation = {
   lifecycle: { state: "exited", code: 3 },
   state: null,
-  checkpoint: { phase_completed_at: 20, omp_session_id: "o1", omp_turn_id: 4 },
+  checkpoint: { phase_completed_at: 20, vinculum_session_id: "o1", vinculum_turn_id: 4 },
   transport: null,
 };
 
@@ -44,9 +44,9 @@ describe("observationOf", () => {
       running("busy"),
       running("waiting_for_input", "ask-1"),
       exited,
-      { lifecycle: { state: "never_started" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
-      { lifecycle: { state: "orphaned" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
-      { lifecycle: { state: "interrupted" }, state: null, checkpoint: { phase_completed_at: null, omp_session_id: null, omp_turn_id: null }, transport: null },
+      { lifecycle: { state: "never_started" }, state: null, checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null }, transport: null },
+      { lifecycle: { state: "orphaned" }, state: null, checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null }, transport: null },
+      { lifecycle: { state: "interrupted" }, state: null, checkpoint: { phase_completed_at: null, vinculum_session_id: null, vinculum_turn_id: null }, transport: null },
       { ...running("idle"), lifecycle: { state: "live_exited" }, state: { ...idleState, process: { state: "exited", code: null } } },
       { ...running("idle"), state: { ...idleState, playbook: { state: "failed", reason: "StaleSource" } } },
     ];

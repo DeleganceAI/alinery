@@ -2,7 +2,7 @@ import { harnessDisplayName, isAllowedLaunchHarness, KillButton } from "../share
 import type { LifecycleState } from "../types";
 
 // Shown instead of a live terminal for a session the running daemon does NOT own
-// (orphaned / interrupted / exited), or a leftover non-OMP harness (including live
+// (orphaned / interrupted / exited), or a leftover non-Vinculum harness (including live
 // and never_started — those rows refuse attach rather than mounting a PTY).
 function stateLabel(state: LifecycleState, artifactReady: boolean, unsupported: boolean): { label: string; hint: string } {
   if (unsupported) {

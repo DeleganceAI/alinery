@@ -93,7 +93,7 @@ export function VinculumCustomizations() {
     <section aria-labelledby="vinculum-customizations-title">
       <h4 id="vinculum-customizations-title">Customizations</h4>
       <p className="hint">Customize this installation's Vinculum harness, or ask an outside coding AI to help.</p>
-      <div className="omp-customization-actions">
+      <div className="vinculum-customization-actions">
         {local && (
           <button
             type="button"
@@ -135,13 +135,13 @@ export function VinculumCustomizations() {
           {uploading ? "Uploading…" : "Upload skill"}
         </button>
       </div>
-      <div className="omp-inventory-heading">
+      <div className="vinculum-inventory-heading">
         <h5>Installed customizations</h5>
         <button type="button" className="btn ghost small" disabled={pending} onClick={() => void refresh()}>
           {pending ? "Refreshing…" : "Refresh"}
         </button>
       </div>
-      <p className="omp-inventory-scope dim">These files live in this installation's Vinculum agent directory, the only place Vinculum reads them from.</p>
+      <p className="vinculum-inventory-scope dim">These files live in this installation's Vinculum agent directory, the only place Vinculum reads them from.</p>
       <div aria-live="polite" aria-busy={pending}>
         {pending && !inventory && <p className="dim">Reading installed customizations…</p>}
         {error && (
@@ -191,7 +191,7 @@ function SkillsGroup({ inventory, onChange, local }: { inventory: Inventory; onC
       <h5>Skills</h5>
       {summary && <p className="dim skill-counter">{skillCounter(summary)}</p>}
       {skills.length === 0 ? null : (
-        <ul aria-label="Skills" className="omp-customization-list">
+        <ul aria-label="Skills" className="vinculum-customization-list">
           {skills.map((item) => {
             const dir = item.included ? undefined : skillDir(item.path);
             const on = item.enabled !== false;
@@ -210,10 +210,10 @@ function SkillsGroup({ inventory, onChange, local }: { inventory: Inventory; onC
                     onChange={() => act(() => agent.setSkillEnabled(item.name, !on), "Couldn't change that skill.")}
                   />
                 </label>
-                <div className="omp-customization-details">
+                <div className="vinculum-customization-details">
                   <strong>{item.name}</strong>
                   {item.included && <span className="badge skill-included">Included</span>}
-                  <div className="omp-customization-source dim">
+                  <div className="vinculum-customization-source dim">
                     {detail}
                     {item.offered === false && !item.included ? " · Not offered to the model" : ""}
                   </div>
@@ -283,12 +283,12 @@ function Group({ title, rows, empty, local = true }: { title: string; rows: Row[
       {rows.length === 0 ? (
         <p className="dim">{empty}</p>
       ) : (
-        <ul aria-label={title} className="omp-customization-list">
+        <ul aria-label={title} className="vinculum-customization-list">
           {rows.map((row) => (
             <li key={`${title}:${row.name}:${row.path ?? ""}`}>
-              <div className="omp-customization-details">
+              <div className="vinculum-customization-details">
                 <strong>{row.name}</strong>
-                <div className="omp-customization-source dim">{row.detail}</div>
+                <div className="vinculum-customization-source dim">{row.detail}</div>
               </div>
               {row.path && local && <Reveal name={row.name} path={row.path} />}
             </li>

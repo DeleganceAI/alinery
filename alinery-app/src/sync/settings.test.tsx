@@ -19,7 +19,7 @@ const full = row({
   overrides: { defaults: { model: "gpt-5", playbook: { scope: "repo", key: "mine" } }, backup: { retention: 3, enabled: false } },
   effective: {
     githubToken: "tok",
-    defaults: { harness: "omp", model: "gpt-5", thinking: "high", playbook: { scope: "repo", key: "mine" }, draftAutosave: false },
+    defaults: { harness: "vinculum", model: "gpt-5", thinking: "high", playbook: { scope: "repo", key: "mine" }, draftAutosave: false },
     defaultsSource: { harness: SettingSource.GLOBAL, model: SettingSource.REPOSITORY, playbook: SettingSource.REPOSITORY },
     githubTokenSource: SettingSource.GLOBAL,
     backup: { destination: "/b", enabled: false, retention: 3, triggerPreArchive: true },
@@ -42,7 +42,7 @@ it("reads the effective config and the overrides in the shapes the views already
   expect(s.revision).toBe(7n);
   expect(s.overrides.defaults).toMatchObject({ model: "gpt-5", harness: null, playbook: { scope: "repo", key: "mine" } });
   expect(s.overrides.backup).toMatchObject({ retention: 3, enabled: false, destination: null });
-  expect(s.effective.defaults).toEqual({ harness: "omp", model: "gpt-5", thinking: "high", playbook: { scope: "repo", key: "mine" }, draft_autosave: false });
+  expect(s.effective.defaults).toEqual({ harness: "vinculum", model: "gpt-5", thinking: "high", playbook: { scope: "repo", key: "mine" }, draft_autosave: false });
   expect(s.effective.provenance.defaults).toMatchObject({ harness: "global", model: "repository", playbook: "repository" });
   expect(s.effective.backup).toMatchObject({ destination: "/b", retention: 3, trigger_pre_archive: true });
   expect(s.effective.notifications).toMatchObject({ enabled: true, dock_badge_failures: true, sound: false });

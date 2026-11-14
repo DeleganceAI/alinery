@@ -32,7 +32,7 @@ export function CreateSessionPage({
   const [executionView, setExecutionView] = useState<TaskExecutionReply | null>(null);
   const [loadedTaskId, setLoadedTaskId] = useState("");
   const [selection, setSelection] = useState("auxiliary");
-  const [harness, setHarness] = useState("omp");
+  const [harness, setHarness] = useState("vinculum");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [pickModel, setPickModel] = useState(false);
@@ -75,7 +75,7 @@ export function CreateSessionPage({
   const step = executionView?.definition.step.find((candidate) => candidate.key === execution?.candidate.step_key);
   const auxiliary = selection === "auxiliary";
   const existing = mode === "existing";
-  const effectiveHarness = auxiliary ? harness : "omp";
+  const effectiveHarness = auxiliary ? harness : "vinculum";
   const exactTaskLoaded = loadedTaskId === taskId;
   const executionAvailable = executionView?.live?.status === "available" && !executionError && !executionView.state.history_only;
 
@@ -279,7 +279,7 @@ export function CreateSessionPage({
               }}
             >
               <option value="no-harness">Terminal</option>
-              <option value="omp">Vinculum</option>
+              <option value="vinculum">Vinculum</option>
             </select>
           </label>
         )}
@@ -341,7 +341,7 @@ export function CreateSessionPage({
         {effectiveHarness !== "no-harness" && !existing && (
           <label className="create-field">
             <span>Model override (empty = authored precedence)</span>
-            <ModelInput harness="omp" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
+            <ModelInput harness="vinculum" value={model} onChange={setModel} prefillRemembered={false} repoPath={task?.repo_path} onOpenPicker={() => setPickModel(true)} />
           </label>
         )}
         {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}

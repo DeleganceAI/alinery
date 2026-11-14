@@ -33,7 +33,7 @@ function rig() {
     process: { state: "alive" },
     agent: { state: "idle" },
     playbook: { state: "in_progress" },
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   });
   return { repo, rows, store, feed, publisher, meta, row };

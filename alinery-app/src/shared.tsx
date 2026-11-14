@@ -121,7 +121,7 @@ export function isAllowedLaunchHarness(key: string): boolean {
   return isVinculumHarness(key) || key === "no-harness";
 }
 
-export function ompDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
+export function vinculumDefaultModel(defaults: { harness?: string; model?: string } | null | undefined): string {
   const harness = defaults?.harness?.trim() ?? "";
   if (harness === "" || isAllowedLaunchHarness(harness)) {
     return defaults?.model || "";
@@ -1421,7 +1421,7 @@ const rememberedModelKey = (harness: string, repoPath?: string) => (repoPath ? `
 
 /**
  * Model selector: a select-style trigger showing the chosen `provider/id`, opening either the
- * host's picker (`onOpenPicker`, the account-aware OMP dialog) or this component's own
+ * host's picker (`onOpenPicker`, the account-aware Vinculum dialog) or this component's own
  * per-harness list. The empty value means the harness default; the clear control restores it.
  */
 export function ModelInput({

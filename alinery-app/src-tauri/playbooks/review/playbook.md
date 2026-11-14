@@ -4,7 +4,7 @@ key = "review"
 title = "Evidence-Backed Code Review"
 description = "Bind an exact review target, collect safe verification evidence, inspect findings with the human, and prepare a paste-ready response."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "review-context"

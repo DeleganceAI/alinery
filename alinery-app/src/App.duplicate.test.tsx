@@ -181,7 +181,7 @@ beforeEach(() => {
   mocks.startSession.mockReset();
   mocks.readAppConfig.mockReset().mockResolvedValue(appConfig);
   mocks.readEffectiveConfig.mockReset().mockResolvedValue({
-    defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
+    defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
   } as Config);
   mocks.setActiveRepo.mockReset().mockImplementation(async (path: string) => ({ ...appConfig, active_repo: path }));
   mocks.toast.mockReset();

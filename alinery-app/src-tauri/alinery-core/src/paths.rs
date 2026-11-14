@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const REPO_DATA_DIR: &str = ".alinery";
@@ -205,14 +204,13 @@ pub(crate) fn validate_retained_file(repo: &Path, path: &Path) -> Result<(), Str
     Ok(())
 }
 
-// Alinery-owned OMP conversation dir, sibling of `<id>.meta.json`. Not the worktree
-// checkout and not `~/.omp/agent/sessions/`.
-pub fn session_omp_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
+// Alinery-owned Vinculum conversation dir, sibling of `<id>.meta.json`. Not the worktree checkout.
+pub fn session_vinculum_dir(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
     let dir = if task_slug.is_empty() { root_sessions_dir(repo) } else { sessions_dir(repo, task_slug) };
-    dir.join(format!("{id}.omp"))
+    dir.join(format!("{id}.vinculum"))
 }
 
-// Files a taskless chat thread attached. Sibling of `<id>.omp`, not inside the worktree,
+// Files a taskless chat thread attached. Sibling of `<id>.vinculum`, not inside the worktree,
 // so removing that worktree does not delete them and they are not untracked git files.
 // The daemon appends raw session output to this single-file sidecar.
 pub fn session_scrollback_path(repo: &Path, task_slug: &str, id: &str) -> PathBuf {
@@ -366,20 +364,10 @@ pub(crate) fn installed_git_binary() -> PathBuf {
     }
 }
 
-/// Vinculum agent home under the app-config parent (not `~/.pi` and not `~/.omp`).
+/// Vinculum agent home under the app-config parent (not `~/.pi`).
 /// Returns `(agent dir, config root)`: `<app.toml parent>/vinculum/config/agent` and `.../config`.
-///
-/// On first use, if `vinculum/` is absent and `omp/` is a directory, rename `omp` to `vinculum`
-/// so an existing install keeps its skills, MCP files, and `models.yml`. If `vinculum/` already
-/// exists, `omp/` is left unread.
 pub fn vinculum_home_dirs(app_config: &Path) -> (PathBuf, PathBuf) {
-    let parent = app_config.parent().unwrap_or(app_config);
-    let vinculum = parent.join("vinculum");
-    let omp = parent.join("omp");
-    if !vinculum.exists() && omp.is_dir() {
-        let _ = fs::rename(&omp, &vinculum);
-    }
-    let config_root = vinculum.join("config");
+    let config_root = app_config.parent().unwrap_or(app_config).join("vinculum").join("config");
     (config_root.join("agent"), config_root)
 }
 
@@ -405,12 +393,12 @@ mod tests {
     }
 
     #[test]
-    fn session_omp_dir_root_vs_task() {
+    fn session_vinculum_dir_root_vs_task() {
         let repo = Path::new("/tmp/alinery_repo");
-        assert_eq!(session_omp_dir(repo, "", "s1"), root_sessions_dir(repo).join("s1.omp"));
-        assert_eq!(session_omp_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.omp"));
-        // Sibling of meta, not nested under it, not a worktree path, not ~/.omp.
-        assert_eq!(session_omp_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
+        assert_eq!(session_vinculum_dir(repo, "", "s1"), root_sessions_dir(repo).join("s1.vinculum"));
+        assert_eq!(session_vinculum_dir(repo, "my-task", "s1"), sessions_dir(repo, "my-task").join("s1.vinculum"));
+        // Sibling of meta, not nested under it, not a worktree path, not ~/.vinculum.
+        assert_eq!(session_vinculum_dir(repo, "my-task", "s1").parent(), session_meta_path(repo, "my-task", "s1").parent());
     }
 
     #[test]
@@ -556,24 +544,5 @@ mod tests {
             let home = dirs::home_dir().expect("HOME");
             assert_eq!(default_git_alongside_dir(), home.join(".local/share/alinery/git"));
         }
-    }
-
-    #[test]
-    fn vinculum_home_dirs_rename_omp_once_and_then_leave_it() {
-        let root = std::env::temp_dir().join(format!("alinery-vinculum-home-{}", uuid::Uuid::new_v4()));
-        let app_config = root.join("app.toml");
-        fs::create_dir_all(root.join("omp/config/agent")).unwrap();
-        fs::write(root.join("omp/config/agent/marker"), "kept").unwrap();
-        let (agent, config_root) = vinculum_home_dirs(&app_config);
-        assert_eq!(agent, root.join("vinculum/config/agent"));
-        assert_eq!(config_root, root.join("vinculum/config"));
-        assert_eq!(fs::read_to_string(agent.join("marker")).unwrap(), "kept");
-        assert!(!root.join("omp").exists());
-        fs::create_dir_all(root.join("omp/config/agent")).unwrap();
-        fs::write(root.join("omp/config/agent/other"), "stay").unwrap();
-        let (again, _) = vinculum_home_dirs(&app_config);
-        assert_eq!(again, agent);
-        assert_eq!(fs::read_to_string(root.join("omp/config/agent/other")).unwrap(), "stay");
-        let _ = fs::remove_dir_all(&root);
     }
 }

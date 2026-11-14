@@ -88,7 +88,7 @@ const createRequest = (name: string) => ({
   description: "d",
   playbookRef: { scope: "bundled", key: "one-shot" },
   playbookSource: PLAYBOOK,
-  launchDefaults: { harness: "omp", model: "" },
+  launchDefaults: { harness: "vinculum", model: "" },
   start: false,
 });
 

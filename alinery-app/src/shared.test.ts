@@ -9,7 +9,6 @@ import {
   formatAge,
   harnessDisplayName,
   isAllowedLaunchHarness,
-  ompDefaultModel,
   orderPlaybookCandidates,
   playbookRefKey,
   RECOMMENDED_PLAYBOOK,
@@ -23,6 +22,7 @@ import {
   starredPlaybookKeys,
   taskKey,
   useMinuteNow,
+  vinculumDefaultModel,
   withPlaybookStar,
 } from "./shared";
 import type {
@@ -80,7 +80,7 @@ describe("harnessDisplayName", () => {
 
   it("uses the Vinculum label for the session key and the registry key", () => {
     expect(harnessDisplayName("vinculum")).toBe("Vinculum");
-    expect(harnessDisplayName("omp")).toBe("Vinculum");
+    expect(harnessDisplayName("vinculum")).toBe("Vinculum");
   });
 
   it("labels leftover and empty keys Unsupported", () => {
@@ -91,8 +91,8 @@ describe("harnessDisplayName", () => {
 });
 
 describe("isAllowedLaunchHarness", () => {
-  it("accepts only omp and Terminal", () => {
-    expect(isAllowedLaunchHarness("omp")).toBe(true);
+  it("accepts only vinculum and Terminal", () => {
+    expect(isAllowedLaunchHarness("vinculum")).toBe(true);
     expect(isAllowedLaunchHarness("vinculum")).toBe(true);
     expect(isAllowedLaunchHarness("no-harness")).toBe(true);
     expect(isAllowedLaunchHarness("claude")).toBe(false);
@@ -102,13 +102,13 @@ describe("isAllowedLaunchHarness", () => {
   });
 });
 
-describe("ompDefaultModel", () => {
-  it("keeps only omp-owned selectors", () => {
-    expect(ompDefaultModel({ harness: "omp", model: "sonnet" })).toBe("sonnet");
-    expect(ompDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
-    expect(ompDefaultModel({ harness: "claude", model: "sonnet" })).toBe("");
-    expect(ompDefaultModel({ harness: "", model: "sonnet" })).toBe("sonnet");
-    expect(ompDefaultModel({ harness: "omp", model: "" })).toBe("");
+describe("vinculumDefaultModel", () => {
+  it("keeps only vinculum-owned selectors", () => {
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "claude", model: "sonnet" })).toBe("");
+    expect(vinculumDefaultModel({ harness: "", model: "sonnet" })).toBe("sonnet");
+    expect(vinculumDefaultModel({ harness: "vinculum", model: "" })).toBe("");
   });
 });
 
@@ -368,7 +368,7 @@ describe("re-render comparators", () => {
         id: "s1",
         worktree: "/w",
         phase: "design",
-        harness: "omp",
+        harness: "vinculum",
         model: "m",
         playbook: "superdevelop",
         generic: false,

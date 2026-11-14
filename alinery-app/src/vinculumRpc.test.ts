@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { abortAndPromptCommand, compactCommand, followUpCommand, getStateCommand, promptCommand, TRANSPORT_LIMIT_HINT, transportLimitMessage } from "./ompRpc";
+import { abortAndPromptCommand, compactCommand, followUpCommand, getStateCommand, promptCommand, TRANSPORT_LIMIT_HINT, transportLimitMessage } from "./vinculumRpc";
 
-describe("ompRpc", () => {
+describe("vinculumRpc", () => {
   it("sends official { type, message } commands, never JSON-RPC method/params", () => {
     expect(promptCommand("hi", "c1")).toEqual({ id: "c1", type: "prompt", message: "hi" });
     expect(getStateCommand("c6")).toEqual({ id: "c6", type: "get_state" });

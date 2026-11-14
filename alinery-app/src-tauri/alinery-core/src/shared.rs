@@ -8,13 +8,11 @@ use crate::types::ProcessState;
 use crate::write_bytes_atomic;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_HARNESS_KEY: &str = "omp";
-pub const VINCULUM_HARNESS_KEY: &str = "vinculum";
+pub const DEFAULT_HARNESS_KEY: &str = "vinculum";
 pub const NO_HARNESS_KEY: &str = "no-harness";
 
-/// Session meta for the Vinculum agent. `omp` is the registry key and the value on a file written before the rename.
 pub fn is_vinculum_session(key: &str) -> bool {
-    key == VINCULUM_HARNESS_KEY || key == DEFAULT_HARNESS_KEY
+    key == DEFAULT_HARNESS_KEY
 }
 
 fn validate_relative_artifact_path(name: &str) -> Result<(), String> {
@@ -329,8 +327,8 @@ mod tests {
                 value["semantic"],
                 json!({
                     "phase_completed_at": null,
-                    "omp_session_id": null,
-                    "omp_turn_id": null
+                    "vinculum_session_id": null,
+                    "vinculum_turn_id": null
                 })
             );
             for ephemeral in ["event_token", "process_state", "agent_state", "playbook_state", "event_history"] {

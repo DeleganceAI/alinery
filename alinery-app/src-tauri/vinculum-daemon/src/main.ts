@@ -64,7 +64,7 @@ import { formatTranscript, transcriptSource, transcriptToolSlots, type Transcrip
 import appPackage from "../../../package.json" with { type: "json" };
 
 // Vinculum is the Alinery daemon. Its agent runtime is pi-durable (@earendil-works/pi-durable).
-const PROTOCOL = 47;
+const PROTOCOL = 48;
 const context = BACKGROUND_CONTEXT;
 // 1.4.0 requires checkpointWhen. False keeps these as deltas; they are not bases.
 const Attention = defineDoc<{ wait: null | { kind: "input" | "approval"; correlationId: string; prompt?: string } }>({
@@ -394,8 +394,8 @@ function repairSessionMetas() {
         continue;
       }
       const fieldsReady = typeof meta.worktree === "string" && meta.worktree !== "" && typeof meta.created === "number";
-      if (fieldsReady && meta.harness !== "omp") continue;
-      writeMeta(taskSlug, name.slice(0, -".meta.json".length), meta.harness === "omp" ? { harness: "vinculum" } : {});
+      if (fieldsReady) continue;
+      writeMeta(taskSlug, name.slice(0, -".meta.json".length), {});
     }
   };
   const tasksRoot = join(repo, ".alinery", "tasks");
@@ -440,7 +440,7 @@ function sessionState(row: Live) {
     process: { state: row.process === "exited" ? "exited" : row.process },
     agent,
     playbook,
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   };
 }
@@ -1112,7 +1112,7 @@ await serveRpc({
   hostExecutable: process.env.ALINERY_HOST_EXECUTABLE,
   info: { protocol: PROTOCOL, buildId, repoRoot: repo, appConfigIdentity: identity, version: appPackage.version, startedBy, osUser: userInfo().username, startedAtMs },
   members,
-  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__omp-setup__").map((row) => row.id) },
+  lifecycle: { stop: stopEverything, exit: () => void exitWhenJobsEnded(), live: () => [...live.values()].filter((row) => row.process !== "exited" && row.id !== "__vinculum-setup__").map((row) => row.id) },
   store,
   jobs,
   backups: backupHost,

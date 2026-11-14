@@ -4,7 +4,7 @@ key = "spec"
 title = "Kiro SDD"
 description = "Specify a change, then implement and review one approved slice at a time."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "research"

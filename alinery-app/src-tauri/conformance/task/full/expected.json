@@ -15,7 +15,7 @@
     "github_issue": "owner/repo#2",
     "has_worktree": false,
     "launch_defaults": {
-      "harness": "omp",
+      "harness": "vinculum",
       "model": "m1"
     },
     "linear_id": "LIN-1",

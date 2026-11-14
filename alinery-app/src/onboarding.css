@@ -1100,7 +1100,7 @@
   flex: 1;
   min-width: 0;
 }
-.onboarding-omp-mark {
+.onboarding-vinculum-mark {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1115,11 +1115,11 @@
   cursor: pointer;
   vertical-align: baseline;
 }
-.onboarding-omp-mark:hover {
+.onboarding-vinculum-mark:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-.onboarding-omp-mark span {
+.onboarding-vinculum-mark span {
   font-family: Georgia, "Times New Roman", serif;
   font-size: calc(13px * var(--ui-scale));
   line-height: 1;

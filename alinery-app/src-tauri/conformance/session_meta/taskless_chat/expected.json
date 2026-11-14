@@ -23,8 +23,8 @@
     "prompt_extra": "",
     "resume_of": null,
     "semantic": {
-      "omp_session_id": null,
-      "omp_turn_id": null,
+      "vinculum_session_id": null,
+      "vinculum_turn_id": null,
       "phase_completed_at": null
     },
     "started_at": null,

@@ -17,7 +17,7 @@ export type ProviderSetupMode =
   | "auto";
 
 /**
- * Accounts and model picker. Vinculum has no OMP process, so the list is the hosted catalog
+ * Accounts and model picker. The list is the hosted catalog
  * plus Grok when a key is saved. It does not open a setup session.
  */
 export type ProviderSetupClose =
@@ -70,7 +70,7 @@ export function ProviderSetupDialog({
   useEffect(() => {
     let cancelled = false;
     void ipc
-      .readModelFavorites("omp")
+      .readModelFavorites("vinculum")
       .then((rows) => {
         if (!cancelled) setFavorites(rows);
       })
@@ -189,7 +189,7 @@ export function ProviderSetupDialog({
         // Optimistic: the store is the authority, but a star that lags a click reads as broken.
         setFavorites((prev) => (favorite ? [...prev, model] : prev.filter((row) => row !== model)));
         void ipc
-          .setModelFavorite("omp", model, favorite)
+          .setModelFavorite("vinculum", model, favorite)
           .then(setFavorites)
           .catch((error) => setModelError(String(error)));
       }}

@@ -13,8 +13,8 @@ import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
 import { type ChatImage, type CopyChatAttachmentsResult, onRemoteHostConnected } from "../ipc";
-import type { ImageContent } from "../ompRpc";
 import type { ChatThread, CreateExecutionSessionReply, SessionMeta } from "../types";
+import type { ImageContent } from "../vinculumRpc";
 import { sessionDisplayOf } from "./board";
 import { acquireScope, useEntity, useScope } from "./hooks";
 import { newMutationMeta } from "./mutation";
@@ -40,7 +40,7 @@ export function chatThreadsOf(repo: string, rows: Entity[], includeArchived: boo
   for (const e of rows) {
     if (!e.key.startsWith("session/_/")) continue;
     const session = sessionDisplayOf(e);
-    if (!session?.generic || (session.harness !== "vinculum" && session.harness !== "omp")) continue;
+    if (!session?.generic || session.harness !== "vinculum") continue;
     const rail = rails.get(session.id);
     if (rail?.superseded || (session.archived && !includeArchived)) continue;
     const { name, name_source: _source, name_error: _error, ...meta } = session;

@@ -22,11 +22,11 @@ import {
 
 test("settings model follows the task, and a leftover harness drops it", () => {
   expect(launchModelFromFiles(null, null)).toBe("");
-  expect(launchModelFromFiles("[global.defaults]\nharness = \"omp\"\nmodel = \"settings/model\"\n", null)).toBe("settings/model");
+  expect(launchModelFromFiles("[global.defaults]\nharness = \"vinculum\"\nmodel = \"settings/model\"\n", null)).toBe("settings/model");
   expect(launchModelFromFiles("[global.defaults]\nharness = \"\"\nmodel = \"settings/model\"\n", null)).toBe("settings/model");
   expect(launchModelFromFiles("[global.defaults]\nharness = \"claude\"\nmodel = \"settings/model\"\n", null)).toBe("");
-  expect(launchModelFromFiles("[global.defaults]\nharness = \"omp\"\nmodel = \"settings/model\"\n", "[defaults]\nharness = \"claude\"\nmodel = \"repo/model\"\n")).toBe("");
-  expect(launchModelFromFiles("[global.defaults]\nharness = \"omp\"\nmodel = \"settings/model\"\n", "[defaults]\nmodel = \"\"\n")).toBe("");
+  expect(launchModelFromFiles("[global.defaults]\nharness = \"vinculum\"\nmodel = \"settings/model\"\n", "[defaults]\nharness = \"claude\"\nmodel = \"repo/model\"\n")).toBe("");
+  expect(launchModelFromFiles("[global.defaults]\nharness = \"vinculum\"\nmodel = \"settings/model\"\n", "[defaults]\nmodel = \"\"\n")).toBe("");
 });
 
 test("a blank or unknown thinking default is high, and a repo override wins", () => {

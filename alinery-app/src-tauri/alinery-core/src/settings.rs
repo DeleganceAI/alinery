@@ -642,7 +642,7 @@ mod tests {
         write_global_settings(&app_config, &default_global_settings()).unwrap();
         let mut next = default_global_settings();
         next.github.token = "sk-secret-material".into();
-        next.harnesses.harness[0].binary = "/changed/omp".into();
+        next.harnesses.harness[0].binary = "/changed/vinculum".into();
         write_global_settings(&app_config, &next).unwrap();
         let text = log_text(&app_config);
         assert!(text.contains("github.token=changed"), "{text}");

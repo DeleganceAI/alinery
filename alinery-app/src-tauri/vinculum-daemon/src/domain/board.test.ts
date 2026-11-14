@@ -59,7 +59,7 @@ const live = (taskSlug: string, id: string, agent: string, process = "alive", pl
   process: { state: process },
   agent: { state: agent },
   playbook: { state: playbook },
-  adapter: "omp",
+  adapter: "vinculum",
   message_adapter: "unsupported",
 });
 

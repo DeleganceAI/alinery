@@ -4,7 +4,7 @@ key = "super-prompt-writer"
 title = "Super Prompt Writer"
 description = "Prepare a prompt and the tests it must pass with the human, then run the full test set, read a failure, change one thing and rerun until the human is satisfied."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "prepare"

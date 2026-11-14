@@ -298,7 +298,7 @@ fn json_response(status: u16, body: &str) -> Result<CommunityHttpResponse, Strin
 
 fn summary_json(id: &str, label: &str, key: &str, version: u64) -> String {
     format!(
-        r#"{{"id":"{id}","label":"{label}","playbook_key":"{key}","title":"Review","description":"Review a change.","default_harness":"omp","has_coding_step":false,"step_count":4,"version":{version},"body_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","published_at":"2026-09-22T18:04:11Z","updated_at":"2026-09-22T19:10:00Z"}}"#
+        r#"{{"id":"{id}","label":"{label}","playbook_key":"{key}","title":"Review","description":"Review a change.","default_harness":"vinculum","has_coding_step":false,"step_count":4,"version":{version},"body_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","published_at":"2026-09-22T18:04:11Z","updated_at":"2026-09-22T19:10:00Z"}}"#
     )
 }
 

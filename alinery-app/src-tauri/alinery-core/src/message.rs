@@ -23,7 +23,7 @@ pub fn validate_message_body(adapter: MessageAdapter, body: &[u8]) -> Result<(),
 
 pub fn write_message<W: Write + ?Sized>(adapter: MessageAdapter, writer: &mut W, body: &[u8]) -> io::Result<()> {
     match adapter {
-        MessageAdapter::OmpBracketedPaste => {
+        MessageAdapter::VinculumBracketedPaste => {
             writer.write_all(BRACKETED_PASTE_START)?;
             writer.write_all(body)?;
             writer.write_all(BRACKETED_PASTE_END)?;
@@ -47,18 +47,18 @@ mod tests {
             "first\nsecond\rthird".as_bytes(),
             "é猫🙂".as_bytes(),
         ] {
-            assert_eq!(validate_message_body(MessageAdapter::OmpBracketedPaste, body), Ok(()));
+            assert_eq!(validate_message_body(MessageAdapter::VinculumBracketedPaste, body), Ok(()));
         }
     }
 
     #[test]
     fn rejects_empty_invalid_unsupported_and_end_marker_bodies() {
-        assert_eq!(validate_message_body(MessageAdapter::OmpBracketedPaste, b""), Err("message-body-empty"));
-        assert_eq!(validate_message_body(MessageAdapter::OmpBracketedPaste, &[0xff]), Err("message-body-invalid-utf8"));
+        assert_eq!(validate_message_body(MessageAdapter::VinculumBracketedPaste, b""), Err("message-body-empty"));
+        assert_eq!(validate_message_body(MessageAdapter::VinculumBracketedPaste, &[0xff]), Err("message-body-invalid-utf8"));
         assert_eq!(validate_message_body(MessageAdapter::Unsupported, b"hello"), Err("message-adapter-unsupported"));
         for body in [b"\x1b[201~tail".as_slice(), b"head\x1b[201~tail".as_slice(), b"head\x1b[201~".as_slice()] {
             assert_eq!(
-                validate_message_body(MessageAdapter::OmpBracketedPaste, body),
+                validate_message_body(MessageAdapter::VinculumBracketedPaste, body),
                 Err("message-body-contains-bracketed-paste-end")
             );
         }
@@ -82,7 +82,7 @@ mod tests {
 
         let body = b"  a\n\rb  ";
         let mut writer = RecordingWriter::default();
-        write_message(MessageAdapter::OmpBracketedPaste, &mut writer, body).unwrap();
+        write_message(MessageAdapter::VinculumBracketedPaste, &mut writer, body).unwrap();
         assert_eq!(
             writer.calls,
             vec![BRACKETED_PASTE_START.to_vec(), body.to_vec(), BRACKETED_PASTE_END.to_vec(), MESSAGE_SUBMIT.to_vec()]
@@ -106,7 +106,7 @@ mod tests {
             }
         }
 
-        let error = write_message(MessageAdapter::OmpBracketedPaste, &mut FailingWriter(2), b"body").unwrap_err();
+        let error = write_message(MessageAdapter::VinculumBracketedPaste, &mut FailingWriter(2), b"body").unwrap_err();
         assert_eq!(error.to_string(), "fixture failure");
     }
 }

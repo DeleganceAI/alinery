@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const MAX_DESCRIPTION = 1024;
@@ -6,16 +6,7 @@ const MAX_DESCRIPTION = 1024;
 /** Same rule as `alinery_core::vinculum_home_dirs`. The daemon does not call FFI just to build this path. */
 export function vinculumAgentDir(appConfig: string): string {
   const parent = dirname(appConfig);
-  const vinculum = join(parent, "vinculum");
-  const omp = join(parent, "omp");
-  if (!existsSync(vinculum) && isDirectory(omp)) {
-    try {
-      renameSync(omp, vinculum);
-    } catch {
-      // Leave `omp/` where it is. Sessions read `vinculum/` only.
-    }
-  }
-  return join(vinculum, "config", "agent");
+  return join(parent, "vinculum", "config", "agent");
 }
 
 function isFile(path: string): boolean {

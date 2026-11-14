@@ -51,7 +51,7 @@ const definition: NormalizedPlaybook = {
   title: "Review",
   description: "Review work",
   default_model: "default-model",
-  default_harness: "omp",
+  default_harness: "vinculum",
   preamble: "Keep this prose.\n",
   section_order: ["inspect"],
   step: [
@@ -1235,7 +1235,7 @@ const publication = (id: string, label: string, version = 3) => ({
   playbookKey: "review",
   title: "Review",
   description: "Review a change.",
-  defaultHarness: "omp",
+  defaultHarness: "vinculum",
   hasCodingStep: false,
   stepCount: 1,
   version,

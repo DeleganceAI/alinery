@@ -76,7 +76,7 @@ export function parseSessionMeta(text: string, taskSlug: string, id: string): En
           notificationReadAt: optU64(o, "notification_read_at"),
           exitNotificationReadAt: optU64(o, "exit_notification_read_at"),
           notificationSuppression: sup ? { notice, occurrence: req(sup, "occurrence") } : undefined,
-          semantic: { phaseCompletedAt: optU64(sem, "phase_completed_at"), ompSessionId: optStr(sem, "omp_session_id"), ompTurnId: optU64(sem, "omp_turn_id") },
+          semantic: { phaseCompletedAt: optU64(sem, "phase_completed_at"), vinculumSessionId: optStr(sem, "vinculum_session_id"), vinculumTurnId: optU64(sem, "vinculum_turn_id") },
           telemetryId: str(o, "telemetry_id"),
         }),
       },

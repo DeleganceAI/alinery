@@ -41,7 +41,7 @@ const blankDefinition: NormalizedPlaybook = {
   title: "New playbook",
   description: "",
   default_model: "",
-  default_harness: "omp",
+  default_harness: "vinculum",
   step: [
     {
       key: "work",

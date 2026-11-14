@@ -38,7 +38,7 @@ export function ChatModelBar({
     if (!open) return;
     if (open === "model") {
       // Read on every open: stars change in the Providers dialog.
-      void ipc.readModelFavorites("omp").then(setFavorites, () => undefined);
+      void ipc.readModelFavorites("vinculum").then(setFavorites, () => undefined);
     }
     const onDown = (e: MouseEvent) => {
       if (!box.current?.contains(e.target as Node)) setOpen(null);

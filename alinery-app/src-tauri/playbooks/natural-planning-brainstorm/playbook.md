@@ -4,7 +4,7 @@ key = "natural-planning-brainstorm"
 title = "Natural Planning Brainstorm"
 description = "Frame purpose and outcome, harvest seven independent and three shared-wall perspectives losslessly, evaluate options and define human-steered next actions."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "frame-the-challenge"

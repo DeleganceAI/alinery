@@ -26,8 +26,8 @@ export function sessionEntity(taskSlug: string, id: string, o: SessionObservatio
     exitCode: exited,
     semantic: {
       phaseCompletedAt: o.checkpoint.phase_completed_at == null ? undefined : BigInt(o.checkpoint.phase_completed_at),
-      ompSessionId: o.checkpoint.omp_session_id ?? undefined,
-      ompTurnId: o.checkpoint.omp_turn_id == null ? undefined : BigInt(o.checkpoint.omp_turn_id),
+      vinculumSessionId: o.checkpoint.vinculum_session_id ?? undefined,
+      vinculumTurnId: o.checkpoint.vinculum_turn_id == null ? undefined : BigInt(o.checkpoint.vinculum_turn_id),
     },
     status:
       s || live

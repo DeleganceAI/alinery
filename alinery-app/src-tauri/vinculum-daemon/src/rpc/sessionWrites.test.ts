@@ -199,10 +199,10 @@ test("the scrollback and the journal read back over the wire, and an escaping pa
   writeFileSync(join(c.task, "sessions", "s1.scrollback"), "0123456789");
   const win = await c.session.readHistory({ session: ref("t", "s1"), offset: 2n, limit: 5n });
   expect([Buffer.from(win.data).toString(), win.length, win.nextOffset, win.eof]).toEqual(["23456", 10n, 7n, false]);
-  const omp = join(c.task, "sessions", "s1.omp");
-  mkdirSync(omp);
-  writeFileSync(join(omp, "2026-01-01_a.jsonl"), "a\nb\n");
-  const rows = await c.session.readOmpWindow({ session: ref("t", "s1") });
+  const vinculum = join(c.task, "sessions", "s1.vinculum");
+  mkdirSync(vinculum);
+  writeFileSync(join(vinculum, "2026-01-01_a.jsonl"), "a\nb\n");
+  const rows = await c.session.readVinculumWindow({ session: ref("t", "s1") });
   expect([Buffer.from(rows.data).toString(), rows.end]).toEqual(["a\nb\n", 4n]);
   expect(await code(c.session.readHistory({ session: ref("t", "../x"), offset: 0n, limit: 1n }))).toBe(Code.InvalidArgument);
   expect((await c.session.artifactReady({ session: ref("t", "s1") })).ready).toBe(false);

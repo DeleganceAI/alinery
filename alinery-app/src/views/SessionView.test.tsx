@@ -1,4 +1,4 @@
-// Session chat on this branch talks to Vinculum (transcript, prompt, abort) and does not attach or read an OMP journal.
+// Session chat on this branch talks to Vinculum (transcript, prompt, abort) and does not attach or read a Vinculum journal.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -197,7 +197,7 @@ describe("SessionView artifact pane", () => {
         taskSlug="task"
         repoPath="/repo"
         phase="review-checks"
-        harness="omp"
+        harness="vinculum"
         playbook="review"
         model=""
         intent="spawn"
@@ -323,7 +323,7 @@ describe("SessionView artifact pane", () => {
         taskSlug="task"
         repoPath="/repo"
         phase="review-checks"
-        harness="omp"
+        harness="vinculum"
         playbook="review"
         model=""
         intent="spawn"
@@ -366,7 +366,7 @@ function sessionView(overrides: Partial<ComponentProps<typeof SessionView>> = {}
       taskSlug="task"
       repoPath="/repo"
       phase="design"
-      harness="omp"
+      harness="vinculum"
       playbook="superdevelop"
       model=""
       intent="spawn"
@@ -401,7 +401,7 @@ describe("session work names", () => {
     fakeBoard.reset();
   });
 
-  it.each(["omp", "no-harness"])("history_and_terminal_names_refresh_without_starting_sessions (%s)", async (harness) => {
+  it.each(["vinculum", "no-harness"])("history_and_terminal_names_refresh_without_starting_sessions (%s)", async (harness) => {
     const context = { session: { id: "session", name: "Historical work", subtask_manager: true, subtask_slug: "child" }, task_name: "Current task", subtask_name: "Current child" };
     fakeBoard.set({
       anyRepoTasks: [
@@ -487,8 +487,8 @@ describe("session work names", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Session name" }));
   });
 
-  it("shows a waiting ellipsis for a busy unnamed OMP session and hides it while renaming", async () => {
-    showDisplay({ session: { id: "session", harness: "omp" }, task_name: "Task", subtask_name: null });
+  it("shows a waiting ellipsis for a busy unnamed Vinculum session and hides it while renaming", async () => {
+    showDisplay({ session: { id: "session", harness: "vinculum" }, task_name: "Task", subtask_name: null });
     sessionStatus.mockResolvedValue(liveObservation("rpc", { state: "busy" }));
     renderSession();
     await flushPromises();
@@ -603,8 +603,8 @@ function liveObservation(transport: "rpc" | "pty", agent: AgentState = { state: 
       process: { state: "alive" },
       agent,
       playbook: { state: "in_progress" },
-      adapter: "omp",
-      message_adapter: "omp_bracketed_paste",
+      adapter: "vinculum",
+      message_adapter: "vinculum_bracketed_paste",
     },
     checkpoint: {},
   };
@@ -713,7 +713,7 @@ describe("session message composer feature gate", () => {
 
   afterEach(cleanup);
 
-  it("shows Chat and the Chat composer for OMP", () => {
+  it("shows Chat and the Chat composer for Vinculum", () => {
     renderSession();
 
     expect(screen.getByTestId("chat-pane")).toBeDefined();
@@ -995,7 +995,7 @@ describe("Vinculum session chat", () => {
     fakeExecution.reset();
   });
 
-  it("streams the transcript into the chat pane and does not attach OMP", async () => {
+  it("streams the transcript into the chat pane and does not attach Vinculum", async () => {
     renderSession({ intent: "attach" });
     expect(await screen.findByText("Vinculum")).toBeDefined();
     expect(await screen.findByText("playbook prompt")).toBeDefined();
@@ -1016,7 +1016,7 @@ describe("Vinculum session chat", () => {
     await waitFor(() => expect(sessionAbort).toHaveBeenCalledWith("/repo", "session"));
   });
 
-  it("shows the transcript model and thinking level, and a set updates the label without an OMP write", async () => {
+  it("shows the transcript model and thinking level, and a set updates the label without a Vinculum write", async () => {
     const transcript = {
       messages: [{ id: "u1", role: "user", content: [{ type: "text", text: "playbook prompt" }] }],
       model: "xai/grok-4.6",
@@ -1086,7 +1086,7 @@ describe("Vinculum session chat", () => {
     expect(screen.queryByRole("button", { name: "os.path" })).toBeNull();
   });
 
-  it("shows Finish step for a locked Vinculum execution and grants it without an OMP reply", async () => {
+  it("shows Finish step for a locked Vinculum execution and grants it without a Vinculum reply", async () => {
     getTaskExecution.mockResolvedValue(executionReply([executionRecord({ owner_session_id: "session", permission: { kind: "locked" } })]));
     fakeExecution.allow.mockImplementation(async () => {
       getTaskExecution.mockResolvedValue(

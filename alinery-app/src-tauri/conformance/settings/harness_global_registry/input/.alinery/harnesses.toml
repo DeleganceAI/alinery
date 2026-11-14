@@ -1,5 +1,5 @@
 [[harness]]
-key = "omp"
-name = "Repo OMP"
-binary = "omp"
+key = "vinculum"
+name = "Repo Vinculum"
+binary = "vinculum"
 models_cmd = "evil"

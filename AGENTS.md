@@ -48,9 +48,9 @@ The app is not locked to a single hardcoded target repo. Global process log (not
 
 ## Harness Registry (`harnesses.toml`)
 
-Bundled `[omp]` row only, and it is now vestigial: it names a binary that is no longer shipped or spawned. Terminal (`no-harness`) is a compiled sentinel, not a TOML row. Adding a harness is **not** a supported config change. Leftover overlay JSON on disk is leftover bytes, not a product surface.
+Bundled `[vinculum]` row only. Its launch fields (`binary`, `args`, `models_cmd`, `resume`) are vestigial: nothing spawns them. Terminal (`no-harness`) is a compiled sentinel, not a TOML row. Adding a harness is **not** a supported config change. Leftover overlay JSON on disk is leftover bytes, not a product surface.
 
-The harness that actually runs is **Vinculum**: the daemon opens a conversation in-process on `@earendil-works/pi-durable` (`main.ts` `openSession`), with no external agent binary and no PATH lookup. Its harness key is `vinculum`; `omp` is read as a legacy spelling of the same thing (`isVinculumSession`, `ALLOWED_HARNESSES`, the telemetry enum), and an old `harness: "omp"` meta is rewritten to `vinculum` on first read. There is no OMP binary to fetch, ship or sign.
+The harness that actually runs is **Vinculum**: the daemon opens a conversation in-process on `@earendil-works/pi-durable` (`main.ts` `openSession`), with no external agent binary and no PATH lookup. Its harness key, adapter and session directory (`sessions/<id>.vinculum/`) are all `vinculum`; no older spelling is read.
 
 Terminal (`no-harness`) and Vinculum sessions differ by transport, not by spawn: a Terminal row is a real PTY (`src/terminal.ts`), a Vinculum row is `rpc` (`sessionState().transport`).
 
@@ -68,7 +68,6 @@ Terminal (`no-harness`) and Vinculum sessions differ by transport, not by spawn:
 - **Quit asks.** Closing the window raises a three-way dialog (`App.tsx` `onCloseRequested`): *leave sessions running* (default), *close all repos*, or *cancel*. Close-all never stops a remote repo: it disconnects its host (ssh ends) and the host's daemon and sessions keep running. `close_all_repos` latches `AppState.quitting` first so the poller cannot resurrect a daemon. Cmd+Q is not covered — macOS `applicationWillTerminate` keeps the leave-running behaviour.
 - **`alinery-core`** holds Tauri-free logic the app consumes (paths, board projection, settings structs, the git spawn, HTTP, telemetry, credential sharing, the repo-ownership checks, `legacy_daemon.rs`) plus the Rust originals the conformance cases run. The daemon does not load it: its domain logic is TypeScript, and where Rust is the byte reference for a TypeScript port (config writer, playbook parser, ownership) the conformance cases hold the two equal (`alinery-app/src-tauri/conformance/`). Do not add a second parser of a daemon reply to the shell.
 - **Wire protocol gate.** `alinery-core::PROTOCOL_VERSION` (`protocol.rs`) is the single source of truth, bumped **only** on op-set/wire changes — never for app releases. The wire is `proto/alinery/v1` plus `legacy_daemon.rs`, so a proto change bumps it too. `ensure_daemon` is one `Hello` and reuses a daemon only when **protocol and app-config identity both match** (a build mismatch is `BuildDrift`, never a stop); the poller and the remote supervisor use the same `Hello`. `scripts/tests/check-protocol-version-bump.sh` enforces the bump and `check-wire-parsing-boundary.sh` keeps the old wire inside `legacy_daemon.rs`. A genuinely wire-neutral refactor uses a commit-scoped `Protocol-Neutral: <why>` trailer.
-- **Missing OMP.** Nothing to miss: the agent runtime is in-process, so there is no spawn that can fail closed on a missing binary. Terminal remains available.
 - **GUI ownership locks** (`.alinery/.alinery-app.lock`). Dev and production are mutually exclusive on one folder. Product ownership is flock-only: never a pid file.
 - **Activity sidecar**: every session byte is appended to `sessions/<id>.scrollback`. Reattach replays that file from an offset (`rpc/terminal.ts`, `REPLAY_BYTES`); the daemon keeps no screen emulator.
 
@@ -126,7 +125,7 @@ Bundled playbooks live in `alinery-app/src-tauri/playbooks/` with the registry i
 | `imports.rs` | Linear and GitHub issue fetch (the page passes the repo's origin URL and token override) |
 | `account.rs` | pairing / account chip |
 | `update.rs` | CDN manifest poll, download+sha256 verify, detached swap helper |
-| `omp_update.rs` | the hosted default model role write into this machine's agent directory |
+| `vinculum_update.rs` | the hosted default model role write into this machine's agent directory |
 | `telemetry.rs` | opt-in usage events (fire-and-forget wrapper over `alinery_core::record_event`) |
 
 A new command goes in the module that owns its data; `lib.rs` only gains a name in `generate_handler!`. Most new work is not a command at all: it is a daemon RPC (`proto/alinery/v1`, `vinculum-daemon/src/rpc/` and `domain/`) called from `src/sync/*.ts`.
@@ -249,7 +248,6 @@ These run from `scripts/check.sh`. Source guards also run under `--quick`; the b
 - `check-no-window-confirm.sh` — no `window.confirm|alert|prompt` in `alinery-app/src`
 - `check-protocol-version-bump.sh` / `check-wire-parsing-boundary.sh` / `protocol_gate_test.sh` — wire protocol (a change under `proto/alinery/` bumps `PROTOCOL_VERSION`; the old JSON-lines wire stays inside `alinery-core/src/legacy_daemon.rs`)
 - `check-ipc-boundary.sh` / `check-ipc-commands.sh` — IPC seam
-- `check-omp-no-path-fallback.sh` — nothing in the daemon or the app spawns an `omp` binary
 - `git_lib_test.sh` / `dev_fetch_bun_test.sh` — the git and Bun fetch helpers
 - `no_auto_session_kill_test.sh` — the self-test of the teardown allowlist gate
 - `check-telemetry-privacy.sh` / `check-connection-status-never-decrypts.sh`

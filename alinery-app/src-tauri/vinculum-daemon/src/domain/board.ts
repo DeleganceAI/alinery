@@ -54,7 +54,7 @@ export function sessionActivity(task: Task, s: Session): { status?: Tier; active
       : undefined;
   const state = s.status;
   if (!state) return { status: durable };
-  const supported = state.adapter === "omp";
+  const supported = state.adapter === "vinculum";
   if (supported && state.playbook === "failed") {
     const acknowledged = state.process === "exited" && s.exitCode !== undefined && s.exitCode !== 0 && !unackedFailure(s);
     return { status: state.playbookReason === "StaleSource" || acknowledged ? durable : [2, "failed"] };

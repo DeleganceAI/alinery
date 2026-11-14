@@ -41,7 +41,7 @@ function deferred<T>(): Deferred<T> {
 
 function renderModelInput(overrides: Partial<React.ComponentProps<typeof ModelInput>> = {}) {
   const props: React.ComponentProps<typeof ModelInput> = {
-    harness: "omp",
+    harness: "vinculum",
     value: "",
     onChange: vi.fn(),
     onCommit: vi.fn(),
@@ -77,9 +77,9 @@ afterEach(() => {
 
 describe("ModelInput remembered model", () => {
   it("can leave an empty value blank when prefill is disabled", async () => {
-    localStorage.setItem("alinery.lastmodel./r:omp", "gpt-5");
+    localStorage.setItem("alinery.lastmodel./r:vinculum", "gpt-5");
     const { props } = renderModelInput({
-      harness: "omp",
+      harness: "vinculum",
       repoPath: "/r",
       prefillRemembered: false,
     });
@@ -175,7 +175,7 @@ describe("ModelInput favorites", () => {
     const current = deferred<string[]>();
     providerSpies.listModels.mockReturnValueOnce(obsolete.promise).mockReturnValueOnce(current.promise);
 
-    const view = renderModelInput({ harness: "omp", repoPath: "/repo-a" });
+    const view = renderModelInput({ harness: "vinculum", repoPath: "/repo-a" });
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
     expect(screen.getByRole("combobox", { name: "Model" }).getAttribute("aria-busy")).toBe("true");
 
@@ -252,7 +252,7 @@ describe("ModelInput favorites", () => {
     ipcSpies.readModelFavorites.mockResolvedValue(["sonnet"]);
     providerSpies.listModels.mockResolvedValue(["opus", "opus", "sonnet", "haiku"]);
     ipcSpies.setModelFavorite.mockReturnValue(mutation.promise);
-    localStorage.setItem("alinery.lastmodel.omp", "remembered-model");
+    localStorage.setItem("alinery.lastmodel.vinculum", "remembered-model");
     const { props } = renderModelInput({ value: "selected-model" });
 
     await openModels();
@@ -271,14 +271,14 @@ describe("ModelInput favorites", () => {
     expect(screen.getAllByRole("button", { name: /favorites$/ }).every((button) => button.closest('[role="option"]') === null)).toBe(true);
 
     fireEvent.click(addButtons[0]);
-    expect(ipcSpies.setModelFavorite).toHaveBeenCalledWith("omp", "opus", true);
+    expect(ipcSpies.setModelFavorite).toHaveBeenCalledWith("vinculum", "opus", true);
     expect(screen.getAllByRole("button", { name: "Add opus to favorites" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
     expect((removeSonnet as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getAllByRole("button", { name: "Add opus to favorites" })[0].textContent).toBe("☆");
     expect(screen.getByRole("list", { name: "Models" })).toBeDefined();
     expect(props.onChange).not.toHaveBeenCalled();
     expect(props.onCommit).not.toHaveBeenCalled();
-    expect(localStorage.getItem("alinery.lastmodel.omp")).toBe("remembered-model");
+    expect(localStorage.getItem("alinery.lastmodel.vinculum")).toBe("remembered-model");
     expect(providerSpies.listModels).toHaveBeenCalledTimes(1);
 
     await act(async () => mutation.resolve(["sonnet", "opus", "haiku"]));
@@ -310,7 +310,7 @@ describe("ModelInput favorites", () => {
     fireEvent.keyUp(favoriteButton, { key });
     fireEvent.click(favoriteButton, { detail: 0 });
 
-    await waitFor(() => expect(ipcSpies.setModelFavorite).toHaveBeenCalledWith("omp", "opus", true));
+    await waitFor(() => expect(ipcSpies.setModelFavorite).toHaveBeenCalledWith("vinculum", "opus", true));
     expect(screen.getByRole("list", { name: "Models" })).toBeDefined();
     expect(props.onChange).not.toHaveBeenCalled();
     expect(props.onCommit).not.toHaveBeenCalled();
@@ -346,7 +346,7 @@ describe("ModelInput favorites", () => {
     providerSpies.listModels.mockRejectedValue(new Error("discovery failed"));
     view.rerender(<ModelInput {...view.props} repoPath="/repo" />);
     fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
-    await waitFor(() => expect(providerSpies.listModels).toHaveBeenCalledWith("omp", "/repo"));
+    await waitFor(() => expect(providerSpies.listModels).toHaveBeenCalledWith("vinculum", "/repo"));
     expect(screen.queryByRole("list", { name: "Models" })).toBeNull();
     expect(screen.queryByText("missing")).toBeNull();
   });

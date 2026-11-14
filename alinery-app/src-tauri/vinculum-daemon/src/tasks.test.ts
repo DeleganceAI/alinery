@@ -8,7 +8,7 @@ import { completionPermission } from "./domain/executionProjection.ts";
 import { addExecution, completeSessionMeta, getTaskExecution } from "./tasks.ts";
 
 test("a session born without a meta file still has the fields SessionMeta requires", () => {
-  const born = completeSessionMeta({ id: "s" }, { started_at: 10, harness: "omp", harness_resume_token: "", model: "alinery/x" }, "s", "/wt", 10);
+  const born = completeSessionMeta({ id: "s" }, { started_at: 10, harness: "vinculum", harness_resume_token: "", model: "alinery/x" }, "s", "/wt", 10);
   expect(born).toEqual({
     id: "s",
     started_at: 10,
@@ -54,7 +54,7 @@ function taskDir(repo: string, slug: string) {
   mkdirSync(join(dir, "artifacts"), { recursive: true });
   writeFileSync(
     join(dir, "playbook.md"),
-    `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "omp"\n\n[[step]]\nkey = "clarify"\ntitle = "Clarify"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "assessment.md", required = true }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n\n[[step]]\nkey = "investigate"\ntitle = "Investigate"\nshort = ""\ninputs = [{ path = "assessment.md", mode = "single" }]\noutputs = [{ path = "notes.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n+++\n<!-- alinery:step clarify -->\nClarify.\n\n<!-- alinery:step investigate -->\nInvestigate.\n`,
+    `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n[[step]]\nkey = "clarify"\ntitle = "Clarify"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "assessment.md", required = true }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n\n[[step]]\nkey = "investigate"\ntitle = "Investigate"\nshort = ""\ninputs = [{ path = "assessment.md", mode = "single" }]\noutputs = [{ path = "notes.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = true\n+++\n<!-- alinery:step clarify -->\nClarify.\n\n<!-- alinery:step investigate -->\nInvestigate.\n`,
   );
   return dir;
 }

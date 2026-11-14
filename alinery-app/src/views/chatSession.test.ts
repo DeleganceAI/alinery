@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decodeOmpPage } from "../chat/ompFile";
+import { decodeVinculumPage } from "../chat/vinculumFile";
 import { appendOptimisticUser, applyFilePage, type ChatTranscriptState } from "../chatTranscript";
-import { journalPage } from "../test/ompJournal";
+import { journalPage } from "../test/vinculumJournal";
 import { journalState, sendCommand, sendNowCommand } from "./chatSession";
 
 /** SessionView prepends older journal pages this way. */
 function olderPage(current: ChatTranscriptState, buffer: ArrayBuffer) {
-  const page = decodeOmpPage(buffer);
+  const page = decodeVinculumPage(buffer);
   return applyFilePage(current, { start: page.start, messages: page.messages }, "older");
 }
 

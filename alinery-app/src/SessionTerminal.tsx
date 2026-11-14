@@ -38,8 +38,8 @@ let nextStreamToken = 1;
 export type SessionTerminalConnectionState = "opening" | "open" | "recovering" | "failed";
 // One xterm pane bound to one pty session. Bytes are written straight to the
 // terminal — never through React state (pty output is thousands of tiny writes/sec).
-// M3: taskSlug + phase let a FRESH spawn seed OMP with the phase prompt. On
-// reattach the backend ignores them (OMP already has it), so passing them always
+// M3: taskSlug + phase let a FRESH spawn seed Vinculum with the phase prompt. On
+// reattach the backend ignores them (Vinculum already has it), so passing them always
 // is safe.
 /**
  * What a terminal needs beside its byte stream (`TerminalService`, sync/terminal.ts). Default: the

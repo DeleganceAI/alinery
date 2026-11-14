@@ -56,7 +56,7 @@ test("an automatic name on a task session is kept for good, and a person's renam
 
 test("a chat title follows the conversation until a person names the thread", async () => {
   const { repo, meta } = rig();
-  meta("", "c1", { harness: "omp", generic: true });
+  meta("", "c1", { harness: "vinculum", generic: true });
   expect((await setSessionName(repo, "", "c1", "Fix login bug", "auto")).status).toBe("saved");
   expect((await setSessionName(repo, "", "c1", "Cookie scope", "auto")).value).toEqual({ name: "Cookie scope", source: "auto" });
   await setSessionName(repo, "", "c1", "My title", "user");

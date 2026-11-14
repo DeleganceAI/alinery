@@ -13,7 +13,7 @@ export type Json = Record<string, unknown>;
 export type NameSource = "auto" | "user";
 export type SessionName = { name: string; source: NameSource };
 
-export const isVinculumSession = (harness: unknown) => harness === "vinculum" || harness === "omp";
+export const isVinculumSession = (harness: unknown) => harness === "vinculum";
 
 const MAX_NAME_BYTES = 4096;
 const MAX_META_BYTES = 1024 * 1024;

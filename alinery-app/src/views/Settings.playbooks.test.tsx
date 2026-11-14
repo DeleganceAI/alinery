@@ -35,7 +35,7 @@ const base: GlobalSettings = {
     dock_badge_completions: true,
   },
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "shared" }, draft_autosave: true },
+  defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "shared" }, draft_autosave: true },
   backup: { destination: "", enabled: false, retention: 5, trigger_pre_archive: false, trigger_post_artifact_change: false, trigger_post_push_commit: false },
   harnesses: { harness: [] },
   telemetry: { enabled: false, prompted: true, install_id: "", endpoint: "" },

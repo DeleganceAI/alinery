@@ -86,8 +86,8 @@ describe("ChatPane", () => {
       [
         { id: "p", at, actor: ACTOR.you, type: "prompt", text: "Map ChatPane" },
         { id: "f", at, actor: ACTOR.you, type: "follow_up", text: "Continue." },
-        { id: "h", at, actor: ACTOR.omp, type: "harness", event: "todo", text: "Composer grow + cap" },
-        { id: "t", at, actor: ACTOR.omp, type: "turn_marker", turn: 3, phase: "end", stopReason: "complete" },
+        { id: "h", at, actor: ACTOR.vinculum, type: "harness", event: "todo", text: "Composer grow + cap" },
+        { id: "t", at, actor: ACTOR.vinculum, type: "turn_marker", turn: 3, phase: "end", stopReason: "complete" },
         { id: "r", at, actor: ACTOR.agent, type: "redacted_thinking" },
         {
           id: "a",
@@ -135,8 +135,8 @@ describe("ChatPane", () => {
 
   it("hides harness, turn markers, subagent rows, and the drawer by prefs", () => {
     const entries: ChatEntry[] = [
-      { id: "h", at, actor: ACTOR.omp, type: "harness", event: "todo", text: "hidden harness" },
-      { id: "t", at, actor: ACTOR.omp, type: "turn_marker", turn: 1, phase: "end" },
+      { id: "h", at, actor: ACTOR.vinculum, type: "harness", event: "todo", text: "hidden harness" },
+      { id: "t", at, actor: ACTOR.vinculum, type: "turn_marker", turn: 1, phase: "end" },
       {
         id: "s",
         at,

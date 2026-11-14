@@ -90,7 +90,7 @@ export function taskAttachmentDir(repoPath: string, slug: string): string {
   return `${repoPath}/.alinery/tasks/${slug}/artifacts/attachments`;
 }
 
-/** Taskless chat copies. Matches `chat_attachments_dir`: beside `<id>.omp`, not in the worktree. */
+/** Taskless chat copies. Matches `chat_attachments_dir`: beside `<id>.vinculum`, not in the worktree. */
 export function chatThreadAttachmentDir(repoPath: string, sessionId: string): string {
   return `${repoPath}/.alinery/sessions/${sessionId}.attachments`;
 }

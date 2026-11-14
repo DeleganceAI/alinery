@@ -6,7 +6,7 @@ import type { CreateSessionRequest, SessionStartedSchema } from "alinery-proto/a
 import type { DraftImage } from "alinery-proto/alinery/v1/tasks_pb";
 import { type SessionService, type TranscriptItemSchema, type WatchTranscriptResponseSchema } from "alinery-proto/alinery/v1/sessions_pb";
 import type { ChatPublisher, ChatSessions } from "../domain/chat.ts";
-import { readHistory, readOmpWindow, sessionArtifactReady } from "../domain/history.ts";
+import { readHistory, readVinculumWindow, sessionArtifactReady } from "../domain/history.ts";
 import { clearSessionNotifications, type Json, setSessionName, stampSessionArchived } from "../domain/sessionOps.ts";
 import { DomainError } from "../platform/lock.ts";
 import type { Sender } from "../platform/telemetry.ts";
@@ -243,10 +243,10 @@ export function sessionService(transcripts: Transcripts, control?: SessionContro
         return { data: out.data, length: BigInt(out.length), nextOffset: BigInt(out.nextOffset), eof: out.eof };
       });
     },
-    readOmpWindow: (req, ctx) => {
+    readVinculumWindow: (req, ctx) => {
       requireCapability(ctx, Capability.VIEW);
       return domain(() => {
-        const w = readOmpWindow(c().repo, refSlug(req.session), req.session?.id ?? "", req.end === undefined ? undefined : Number(req.end), req.want === undefined ? undefined : Number(req.want));
+        const w = readVinculumWindow(c().repo, refSlug(req.session), req.session?.id ?? "", req.end === undefined ? undefined : Number(req.end), req.want === undefined ? undefined : Number(req.want));
         return { data: w.data, start: BigInt(w.start), end: BigInt(w.end), length: BigInt(w.length) };
       });
     },

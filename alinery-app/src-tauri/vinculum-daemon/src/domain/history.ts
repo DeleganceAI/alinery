@@ -1,5 +1,5 @@
-// What a session wrote, read back (plan S4.4): the scrollback beside its meta, and the OMP journal an older harness
-// kept. Ports history.rs. The path checks are the point: `.alinery/` lives inside the repository, so a clone can carry
+// What a session wrote, read back (plan S4.4): the scrollback beside its meta, and the Vinculum journal. Ports history.rs.
+// The path checks are the point: `.alinery/` lives inside the repository, so a clone can carry
 // a scrollback, a chunk or a journal as a git symlink aimed anywhere this process can read.
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -10,8 +10,8 @@ import { alineryDir, artifactsDir, readTask, safeComponent, sessionsDir } from "
 
 export const HISTORY_REPLAY_BYTES = 8 * 1024 * 1024;
 export const HISTORY_WINDOW_MAX = 1024 * 1024;
-export const OMP_WINDOW_DEFAULT = 256 * 1024;
-export const OMP_WINDOW_MAX = 8 * 1024 * 1024;
+export const VINCULUM_WINDOW_DEFAULT = 256 * 1024;
+export const VINCULUM_WINDOW_MAX = 8 * 1024 * 1024;
 
 const rootDir = (repo: string) => join(alineryDir(repo), "sessions");
 const dirOf = (repo: string, slug: string) => (slug ? sessionsDir(repo, slug) : rootDir(repo));
@@ -119,13 +119,13 @@ export function readHistory(repo: string, slug: string, id: string, offset?: num
   return { data, length: 0, nextOffset: 0, eof: false };
 }
 
-// ---- the OMP journal ----------------------------------------------------------------------------------------------
+// ---- the Vinculum journal ----------------------------------------------------------------------------------------------
 
 /**
  * The newest journal of a session by filename (`<iso-timestamp>_<uuidv7>.jsonl`, both halves monotonic), never by mtime:
  * the title record is rewritten in place. A link, and a file with a second hard link, is no journal we wrote.
  */
-export function newestOmpJsonl(dir: string): string | undefined {
+export function newestVinculumJsonl(dir: string): string | undefined {
   let best: string | undefined;
   let names: string[];
   try {
@@ -142,33 +142,33 @@ export function newestOmpJsonl(dir: string): string | undefined {
   return best === undefined ? undefined : join(dir, best);
 }
 
-function ompDir(repo: string, slug: string, id: string): string {
+function vinculumDir(repo: string, slug: string, id: string): string {
   if (slug && safeComponent(slug) !== slug) throw new DomainError("invalid_argument", `invalid task_slug '${slug}'`);
   if (safeComponent(id) !== id) throw new DomainError("invalid_argument", `invalid session_id '${id}'`);
   readMetaChecked(repo, slug, id);
-  const dir = join(dirOf(repo, slug), `${id}.omp`);
+  const dir = join(dirOf(repo, slug), `${id}.vinculum`);
   let resolved: string;
   try {
     resolved = realpathSync(dir);
   } catch {
-    return dir; // OMP writes nothing until its first assistant message
+    return dir; // Vinculum writes nothing until its first assistant message
   }
   if (!resolved.startsWith(`${realpathSync(alineryDir(repo))}/`)) throw new DomainError("failed_precondition", `session dir escapes the repo: ${resolved}`);
   return resolved;
 }
 
-export type OmpWindow = { data: Buffer; start: number; end: number; length: number };
+export type VinculumWindow = { data: Buffer; start: number; end: number; length: number };
 
 /** The rows ending at `end` (the tail when unset), about `want` bytes backward; `data` opens on a row boundary. */
-export function readOmpWindow(repo: string, slug: string, id: string, endAt?: number, wantBytes?: number): OmpWindow {
-  const path = newestOmpJsonl(ompDir(repo, slug, id));
+export function readVinculumWindow(repo: string, slug: string, id: string, endAt?: number, wantBytes?: number): VinculumWindow {
+  const path = newestVinculumJsonl(vinculumDir(repo, slug, id));
   if (!path) return { data: Buffer.alloc(0), start: 0, end: 0, length: 0 };
   // One handle for the size and every read: re-opening let the checked path become a link in between.
   const fd = openSync(path, "r");
   try {
     const length = statSync(path).size;
     const end = Math.min(endAt ?? length, length);
-    let want = Math.min(Math.max(wantBytes ?? OMP_WINDOW_DEFAULT, 1), OMP_WINDOW_MAX);
+    let want = Math.min(Math.max(wantBytes ?? VINCULUM_WINDOW_DEFAULT, 1), VINCULUM_WINDOW_MAX);
     for (;;) {
       const from = Math.max(0, end - want);
       const buf = Buffer.alloc(end - from);
@@ -178,8 +178,8 @@ export function readOmpWindow(repo: string, slug: string, id: string, endAt?: nu
       // The last byte is the newline ending its own final row; scanning it would return an empty page forever.
       const index = data.subarray(0, Math.max(0, data.length - 1)).indexOf(0x0a);
       if (index >= 0) return { data: data.subarray(index + 1), start: from + index + 1, end, length };
-      if (want >= OMP_WINDOW_MAX) return { data, start: from, end, length };
-      want = Math.min(want * 2, OMP_WINDOW_MAX);
+      if (want >= VINCULUM_WINDOW_MAX) return { data, start: from, end, length };
+      want = Math.min(want * 2, VINCULUM_WINDOW_MAX);
     }
   } finally {
     closeSync(fd);

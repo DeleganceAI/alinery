@@ -117,7 +117,7 @@ describe("precedence", () => {
     expect(e.defaults?.draftAutosave).toBe(false);
   });
   test("a clear restores the global value", () => {
-    const set = create(RepoOverridesSchema, { defaults: { model: "", harness: "omp" } });
+    const set = create(RepoOverridesSchema, { defaults: { model: "", harness: "vinculum" } });
     const cleared = clearOverride(set, "defaults.model");
     expect(cleared.defaults?.model).toBeUndefined();
     expect(cleared.defaults?.harness).toBeUndefined(); // the harness stamped beside a model goes too
@@ -167,8 +167,8 @@ describe("parsing", () => {
 
 describe("overridesToml", () => {
   test("keys follow the Rust struct's field order whatever order they were set in", () => {
-    const o = create(RepoOverridesSchema, { backup: { retention: 3, destination: "/d" }, defaults: { draftAutosave: false, harness: "omp" } });
-    expect(overridesToml(o)).toBe('[github]\n\n[defaults]\nharness = "omp"\ndraft_autosave = false\n\n[backup]\ndestination = "/d"\nretention = 3\n');
+    const o = create(RepoOverridesSchema, { backup: { retention: 3, destination: "/d" }, defaults: { draftAutosave: false, harness: "vinculum" } });
+    expect(overridesToml(o)).toBe('[github]\n\n[defaults]\nharness = "vinculum"\ndraft_autosave = false\n\n[backup]\ndestination = "/d"\nretention = 3\n');
   });
   test("what is written parses back to the same overrides", () => {
     const o = create(RepoOverridesSchema, { github: { token: "t" }, defaults: { model: "", playbook: { scope: "global", key: "k" } }, backup: { enabled: false, retention: 0 } });

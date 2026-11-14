@@ -29,7 +29,7 @@ describe("the record", () => {
   }
   test("the ingest url and the allowlists", () => {
     expect(ingestUrl("http://127.0.0.1:9/")).toBe("http://127.0.0.1:9/api/default/alinery_usage/_json");
-    expect([sanitizeHarness("omp"), sanitizeHarness("claude")]).toEqual(["omp", "custom"]);
+    expect([sanitizeHarness("vinculum"), sanitizeHarness("claude")]).toEqual(["vinculum", "custom"]);
     expect([sanitizePlaybook("review"), sanitizePlaybook("mine")]).toEqual(["review", "custom"]);
     expect([sanitizePhase(""), sanitizePhase("tdd"), sanitizePhase("x")]).toEqual(["", "tdd", "custom"]);
   });

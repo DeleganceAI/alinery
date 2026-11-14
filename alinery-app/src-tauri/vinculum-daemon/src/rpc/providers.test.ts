@@ -81,7 +81,7 @@ test("an API-key sign-in: start, poll to the key prompt, reply, poll to done, th
   const { svc, meta, dir } = await start(process.execPath);
   const c = svc(SECRET);
   expect((await c.catalog({})).catalog?.providers.find((p) => p.id === "groq")?.authenticated).toBe(false);
-  expect(await c.listModels({ harness: "omp" })).toMatchObject({ models: [] });
+  expect(await c.listModels({ harness: "vinculum" })).toMatchObject({ models: [] });
 
   const started = (await c.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY })).status!;
   expect(started.loginId).not.toBe("");
@@ -101,7 +101,7 @@ test("an API-key sign-in: start, poll to the key prompt, reply, poll to done, th
   const row = (await c.catalog({})).catalog!.providers.find((p) => p.id === "groq")!;
   expect(row).toMatchObject({ authenticated: true, stored: true, apiKey: true });
   expect(readFileSync(credentialPath(join(dir, "config", "app.toml")), "utf8")).toContain("groq-secret");
-  const listed = (await c.listModels({ harness: "omp" })).models;
+  const listed = (await c.listModels({ harness: "vinculum" })).models;
   expect(listed.length).toBeGreaterThan(0);
   expect(listed.every((m) => m.includes("/"))).toBe(true);
   expect(listed.some((m) => m.startsWith("groq/"))).toBe(true);
@@ -112,7 +112,7 @@ test("an API-key sign-in: start, poll to the key prompt, reply, poll to done, th
 
   const out = (await c.logout({ meta: meta(), provider: "groq" })).catalog!;
   expect(out.providers.find((p) => p.id === "groq")?.authenticated).toBe(false);
-  expect((await c.listModels({ harness: "omp" })).models.some((m) => m.startsWith("groq/"))).toBe(false);
+  expect((await c.listModels({ harness: "vinculum" })).models.some((m) => m.startsWith("groq/"))).toBe(false);
 });
 
 test("a cancel reply ends the sign-in, and a method that is not api_key or oauth is INVALID_ARGUMENT", async () => {
@@ -168,7 +168,7 @@ test("every credential call is ADMIN: a peer that is not the shell (VIEW and ACT
   ];
   for (const call of calls) expect(await code(call())).toBe(Code.PermissionDenied);
   await other.catalog({});
-  await other.listModels({ harness: "omp" });
+  await other.listModels({ harness: "vinculum" });
   const none = svc(null);
   expect(await code(none.catalog({}))).toBe(Code.Unauthenticated);
   expect(await code(none.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY }))).toBe(Code.Unauthenticated);
@@ -176,16 +176,16 @@ test("every credential call is ADMIN: a peer that is not the shell (VIEW and ACT
 
 test("a host's own harness row models come first, then the signed-in providers' models", async () => {
   const { svc, repo } = await start(process.execPath);
-  writeFileSync(join(repo, ".alinery", "harnesses.toml"), '[[harness]]\nkey = "omp"\nname = "OMP"\nbinary = "omp"\nmodels = ["house/model-a"]\n');
-  const listed = (await svc(SECRET).listModels({ harness: "omp" })).models;
+  writeFileSync(join(repo, ".alinery", "harnesses.toml"), '[[harness]]\nkey = "vinculum"\nname = "Vinculum"\nbinary = "vinculum"\nmodels = ["house/model-a"]\n');
+  const listed = (await svc(SECRET).listModels({ harness: "vinculum" })).models;
   expect(listed[0]).toBe("house/model-a");
 });
 
 test("a daemon started over ssh (the peer is sshd, the token is the proof) lists its own host's models and signs in", async () => {
   const { svc, meta, repo } = await start(undefined);
-  writeFileSync(join(repo, ".alinery", "harnesses.toml"), '[[harness]]\nkey = "omp"\nname = "OMP"\nbinary = "omp"\nmodels = ["host/model"]\n');
+  writeFileSync(join(repo, ".alinery", "harnesses.toml"), '[[harness]]\nkey = "vinculum"\nname = "Vinculum"\nbinary = "vinculum"\nmodels = ["host/model"]\n');
   const c = svc(SECRET);
-  expect((await c.listModels({ harness: "omp" })).models).toEqual(["host/model"]);
+  expect((await c.listModels({ harness: "vinculum" })).models).toEqual(["host/model"]);
   const started = (await c.loginStart({ meta: meta(), provider: "groq", method: LoginMethod.API_KEY })).status!;
   expect(started.loginId).not.toBe("");
 });

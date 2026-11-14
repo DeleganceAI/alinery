@@ -97,7 +97,7 @@ function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
     created: 1,
     archived: false,
     phase: "",
-    harness: "omp",
+    harness: "vinculum",
     model: "grok",
     playbook: "",
     generic: true,
@@ -124,7 +124,7 @@ const setTranscripts = (t: VinculumTranscript) => {
   for (const id of THREADS) daemon.setTranscript(id, t);
 };
 
-/** A live OMP chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
+/** A live Vinculum chat as the daemon reports it; `unknown` is a process that has not printed `ready` yet. */
 function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", process: "alive" | "exited" = "alive", transport?: "pty" | "rpc") {
   return {
     transport,
@@ -134,8 +134,8 @@ function observed(agent: "unknown" | "idle" | "busy" | "waiting_for_input", proc
       process: { state: process },
       agent: { state: agent },
       playbook: { state: "in_progress" },
-      adapter: "omp",
-      message_adapter: "omp_bracketed_paste",
+      adapter: "vinculum",
+      message_adapter: "vinculum_bracketed_paste",
     },
   };
 }
@@ -305,7 +305,7 @@ describe("ChatView", () => {
     expect(screen.queryByRole("button", { name: "Pin Chat s-arch" })).toBeNull();
   });
 
-  it("shows the transcript and sends through Vinculum without an OMP attach", async () => {
+  it("shows the transcript and sends through Vinculum without a Vinculum attach", async () => {
     const row = thread("s-new", { session: meta("s-new", { started_at: 1, ended_at: null, archived: false }) });
     fakeChat.set([row]);
     for (const id of THREADS) showChat(id, observed("idle", "alive", "rpc"));

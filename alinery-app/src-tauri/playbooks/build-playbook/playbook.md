@@ -4,7 +4,7 @@ key = "build-playbook"
 title = "Build a New Playbook"
 description = "Define a useful playbook, draft its prompts with the human, then independently verify the process before saving it globally or in the user's repository."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "define"
@@ -214,7 +214,7 @@ An additional agent session can contribute to the task's context without changin
 
 ### Write the document and its prompts
 
-A v2 playbook is one Markdown document with TOML frontmatter between standalone `+++` lines. The minimal example below includes every required field. Each step must include `model` and `harness`; empty strings inherit the document defaults. OMP is the supported graph harness.
+A v2 playbook is one Markdown document with TOML frontmatter between standalone `+++` lines. The minimal example below includes every required field. Each step must include `model` and `harness`; empty strings inherit the document defaults. Vinculum is the supported graph harness.
 
 Choose a lowercase playbook key containing only letters, digits and hyphens. The key used when saving must match the key in the document. Give each step a unique key.
 
@@ -225,7 +225,7 @@ key = "brief"
 title = "Brief"
 description = "Turn supplied material into a reviewed brief."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "summarize"
@@ -455,7 +455,7 @@ key = "review-proposal-loop"
 title = "Review a Proposal in Repeated Passes"
 description = "Draft, independently analyze and assess a proposal before requesting another revision."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "draft"

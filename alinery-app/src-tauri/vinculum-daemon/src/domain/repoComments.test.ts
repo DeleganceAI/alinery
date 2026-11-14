@@ -30,7 +30,7 @@ async function fixture() {
   sh(repo, "commit", "-q", "-m", "init");
   const reply = await provisionTask(
     { repo, lane: "", identity: "fixture" },
-    { name: "Repo Comments", attachments: [], attachmentUrls: [], attachmentErrors: [], playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "omp", model: "" }, start: false } as never,
+    { name: "Repo Comments", attachments: [], attachmentUrls: [], attachmentErrors: [], playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "vinculum", model: "" }, start: false } as never,
   );
   const slug = reply.task?.slug ?? "";
   return { repo, slug, worktree: String(readTaskChecked(repo, slug).worktree) };

@@ -22,7 +22,7 @@ service SessionService {
   // Marks the sessions' completion and failed-exit notifications read, and records a suppression the person chose.
   rpc ClearNotifications(ClearNotificationsRequest) returns (ClearNotificationsResponse);  // ACT
   rpc ReadHistory(ReadHistoryRequest) returns (ReadHistoryResponse);                      // VIEW
-  rpc ReadOmpWindow(ReadOmpWindowRequest) returns (ReadOmpWindowResponse);                // VIEW
+  rpc ReadVinculumWindow(ReadVinculumWindowRequest) returns (ReadVinculumWindowResponse); // VIEW
   rpc ArtifactReady(ArtifactReadyRequest) returns (ArtifactReadyResponse);                // VIEW
   // The turn controls of a live harness session (S5.3: the JSON-lines prompt, abort, set_model and set_thinking_level ops).
   rpc PromptSession(PromptSessionRequest) returns (PromptSessionResponse);                // ACT
@@ -171,13 +171,13 @@ message ReadHistoryResponse {
   uint64 next_offset = 3;  // windowed reads only
   bool eof = 4;            // windowed reads only
 }
-// One backward page of an OMP journal; `end` unset is the tail.
-message ReadOmpWindowRequest {
+// One backward page of a Vinculum journal; `end` unset is the tail.
+message ReadVinculumWindowRequest {
   SessionRef session = 1;
   optional uint64 end = 2;
   optional uint64 want = 3;
 }
-message ReadOmpWindowResponse {
+message ReadVinculumWindowResponse {
   bytes data = 1;
   uint64 start = 2;
   uint64 end = 3;

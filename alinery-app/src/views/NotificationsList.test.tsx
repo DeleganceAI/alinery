@@ -14,7 +14,7 @@ const item = (id: string, over: Partial<SessionListItem> = {}): SessionListItem 
   created: 10,
   archived: false,
   phase: "design",
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   playbook: "superdevelop",
   generic: false,

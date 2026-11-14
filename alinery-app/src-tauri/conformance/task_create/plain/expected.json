@@ -3,10 +3,10 @@
     "artifacts/00-ticket.md": "# Fix The Bug\n\nIt crashes on start.\n",
     "execution.json": {
       "creation": "ready",
-      "definition_identity": "77824ddb9d5e8a28",
+      "definition_identity": "7dc3cb4d0abc7c75",
       "enabled_steps": [],
       "launch_defaults": {
-        "harness": "omp",
+        "harness": "vinculum",
         "model": "m1"
       },
       "max_live_sessions": 4,
@@ -27,7 +27,7 @@
       "github_issue": "",
       "has_worktree": true,
       "launch_defaults": {
-        "harness": "omp",
+        "harness": "vinculum",
         "model": "m1"
       },
       "linear_id": "",

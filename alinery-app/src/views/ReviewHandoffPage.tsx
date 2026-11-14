@@ -1,7 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { repoDisplayPath, sameMachine } from "../remoteRepo";
-import { InlineStatus, ModelInput, ompDefaultModel, repoName, taskKey } from "../shared";
+import { InlineStatus, ModelInput, repoName, taskKey, vinculumDefaultModel } from "../shared";
 import { sendReviewHandoff } from "../sync/artifacts";
 import { useRepoBoard } from "../sync/board";
 import { readTaskExecution } from "../sync/execution";
@@ -26,7 +26,7 @@ export function ReviewHandoffPage({
   const [steps, setSteps] = useState<NormalizedStep[]>([]);
   const [taskId, setTaskId] = useState("");
   const [phase, setPhase] = useState("");
-  const harness = "omp";
+  const harness = "vinculum";
   const [model, setModel] = useState("");
   const [promptExtra, setPromptExtra] = useState("");
   const [err, setErr] = useState("");
@@ -65,7 +65,7 @@ export function ReviewHandoffPage({
       .then(([execution, config]) => {
         if (!alive) return;
         setSteps(execution.definition.step);
-        setModel(ompDefaultModel(config.defaults));
+        setModel(vinculumDefaultModel(config.defaults));
       })
       .catch((error) => {
         if (alive) setErr(String(error));
@@ -140,7 +140,7 @@ export function ReviewHandoffPage({
         </label>
         <label className="create-field">
           <span>Model</span>
-          <ModelInput harness="omp" value={model} onChange={setModel} onOpenPicker={() => setPickModel(true)} />
+          <ModelInput harness="vinculum" value={model} onChange={setModel} onOpenPicker={() => setPickModel(true)} />
           {pickModel && <ProviderSetupDialog mode="manual" initialTab="models" unsignedOpensAccounts onPick={setModel} onClose={() => setPickModel(false)} />}
         </label>
         <label className="create-field">

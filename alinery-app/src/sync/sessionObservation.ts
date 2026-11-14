@@ -35,8 +35,8 @@ function stateOf(status: NonNullable<Extract<Entity["value"], { case: "session" 
       ? { state: agent, correlation_id: correlationId }
       : { state: agent === "busy" || agent === "idle" ? agent : "unknown" }) as SessionState["agent"],
     playbook: (status.playbook === "failed" ? { state: "failed", reason: status.playbookReason } : { state: status.playbook || "in_progress" }) as SessionState["playbook"],
-    adapter: status.adapter === "omp" ? "omp" : "unsupported",
-    message_adapter: status.messageAdapter === "omp_bracketed_paste" ? "omp_bracketed_paste" : "unsupported",
+    adapter: status.adapter === "vinculum" ? "vinculum" : "unsupported",
+    message_adapter: status.messageAdapter === "vinculum_bracketed_paste" ? "vinculum_bracketed_paste" : "unsupported",
   };
 }
 
@@ -50,8 +50,8 @@ export function observationOf(entity: Entity | undefined): SessionObservation {
     state: s.status ? stateOf(s.status, s.wait?.correlationId || s.status.agentCorrelationId) : null,
     checkpoint: {
       phase_completed_at: sem?.phaseCompletedAt === undefined ? null : Number(sem.phaseCompletedAt),
-      omp_session_id: sem?.ompSessionId ?? null,
-      omp_turn_id: sem?.ompTurnId === undefined ? null : Number(sem.ompTurnId),
+      vinculum_session_id: sem?.vinculumSessionId ?? null,
+      vinculum_turn_id: sem?.vinculumTurnId === undefined ? null : Number(sem.vinculumTurnId),
     },
     transport: s.status?.transport === "pty" || s.status?.transport === "rpc" ? s.status.transport : null,
     attention_label: s.attentionLabel || undefined,

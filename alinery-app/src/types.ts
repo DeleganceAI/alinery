@@ -7,7 +7,7 @@ export type ChatCompactionBasis = "percent" | "tokens";
 
 /** Centered Chat column max width. Absent → "900". */
 export type ChatMaxWidth = "600" | "900" | "1200" | "none";
-/** Preferred OMP hatch when starting a session. Absent → "chat". */
+/** Preferred Vinculum hatch when starting a session. Absent → "chat". */
 export type SessionDefaultView = "chat" | "terminal";
 export type StartupView = Exclude<Tab, "grid"> | `grid:${string}`;
 export type AppearancePrefs = {
@@ -71,7 +71,7 @@ export type AppearancePrefs = {
   chat_show_block_copy_buttons?: boolean;
   /** Per-message copy icon inside chat bubbles. Absent → true. */
   chat_show_copy_buttons?: boolean;
-  /** Preferred OMP session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
+  /** Preferred Vinculum session hatch (Chat vs Terminal) for new starts. Absent → "chat". */
   session_default_view?: SessionDefaultView;
   /** View to open on launch. Absent in older configs defaults to the task list. */
   startup_view?: StartupView;
@@ -638,9 +638,9 @@ export type SessionStatusRef = {
 };
 // --- Structured session observation types (Step 4 / Phase 3 protocol) ---
 
-// Mirrors alinery-core HarnessAdapter: "omp" | "unsupported"
-export type HarnessAdapter = "omp" | "unsupported";
-export type MessageAdapter = "omp_bracketed_paste" | "unsupported";
+// Mirrors alinery-core HarnessAdapter: "vinculum" | "unsupported"
+export type HarnessAdapter = "vinculum" | "unsupported";
+export type MessageAdapter = "vinculum_bracketed_paste" | "unsupported";
 
 // Mirrors alinery-core ProcessState
 export type ProcessState = { state: "starting" } | { state: "alive" } | { state: "exited"; code: number | null };
@@ -668,8 +668,8 @@ export type SessionState = {
 // Mirrors alinery-core SemanticCheckpoint (daemon-written, meta-persisted)
 export type SemanticCheckpoint = {
   phase_completed_at?: number | null;
-  omp_session_id?: string | null;
-  omp_turn_id?: number | null;
+  vinculum_session_id?: string | null;
+  vinculum_turn_id?: number | null;
 };
 
 // The normalized app-facing observation returned by session_status / session_list_statuses
@@ -700,12 +700,12 @@ export type ChatMessage = {
   stopReason?: string;
   customType?: string;
   /**
-   * Id of the OMP journal row this message came from. Present only for messages read off disk;
+   * Id of the Vinculum journal row this message came from. Present only for messages read off disk;
    * live streamed messages have none. Entry ids derive from it so that paging older history in
    * cannot renumber rows that are already mounted.
    */
   rowId?: string;
-  /** OMP's per-message stamp. A streamed snapshot and the journal row OMP persists for it share it. */
+  /** Vinculum's per-message stamp. A streamed snapshot and the journal row Vinculum persists for it share it. */
   timestamp?: number;
   /** toolResult rows carry these; assistant toolCall parts carry their own copies. */
   toolName?: string;
@@ -1221,7 +1221,7 @@ export type DaemonStatus = {
   mode: string; // "local", or "remote" for a daemon behind an SSH forward
   // Independent process-level count (alive PTY processes).
   alive: number;
-  // Agent-state counts (OMP-only; unsupported/unknown sessions excluded from agent counts).
+  // Agent-state counts (Vinculum-only; unsupported/unknown sessions excluded from agent counts).
   busy: number;
   waiting_for_input: number;
   waiting_for_approval: number;

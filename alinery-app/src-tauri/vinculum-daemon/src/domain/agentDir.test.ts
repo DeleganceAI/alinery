@@ -1,4 +1,4 @@
-// The agent directory (S4.10). The cases are the ones the app's Rust tests held for `vinculum_customizations.rs` and `omp_update.rs`
+// The agent directory (S4.10). The cases are the ones the app's Rust tests held for `vinculum_customizations.rs` and `vinculum_update.rs`
 // (the Rust side of the model-role helpers stays for the hosted default role until S4.11, so these two sets must keep agreeing).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -123,7 +123,7 @@ describe("the inventory", () => {
     const code = `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(executed)}, 'executed');`;
     file("extensions/loose.ts", code);
     file("extensions/indexed/index.js", code);
-    file("extensions/declared/package.json", '{"name":"declared-extension","omp":{"extensions":["custom.ts"]}}');
+    file("extensions/declared/package.json", '{"name":"declared-extension","vinculum":{"extensions":["custom.ts"]}}');
     file("extensions/declared/custom.ts", code);
     file("extensions/unrelated/package.json", '{"name":"not-an-extension"}');
     file("extensions/legacy/gemini-extension.json", '{"name":"legacy-extension"}');

@@ -4,7 +4,7 @@ key = "bug-hunting"
 title = "Bug Hunting"
 description = "Prove a root cause, let the human choose a correction, approve its design, implement and verify it, then prepare a PR note."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "rca"

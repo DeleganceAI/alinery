@@ -224,7 +224,7 @@
    "id": "e1",
    "is_coding_step": false,
    "launch": {
-    "harness": "omp",
+    "harness": "vinculum",
     "model": ""
    },
    "lifecycle": "completed",
@@ -266,7 +266,7 @@
    "id": "e2",
    "is_coding_step": false,
    "launch": {
-    "harness": "omp",
+    "harness": "vinculum",
     "model": ""
    },
    "lifecycle": "completed",
@@ -308,7 +308,7 @@
    "id": "e3",
    "is_coding_step": false,
    "launch": {
-    "harness": "omp",
+    "harness": "vinculum",
     "model": ""
    },
    "lifecycle": "completed",
@@ -353,7 +353,7 @@
    "id": "e4",
    "is_coding_step": false,
    "launch": {
-    "harness": "omp",
+    "harness": "vinculum",
     "model": ""
    },
    "lifecycle": "completed",

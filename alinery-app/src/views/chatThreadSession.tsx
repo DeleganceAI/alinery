@@ -15,7 +15,6 @@ import {
   type SessionControls,
 } from "../chatTranscript";
 import * as ipc from "../ipc";
-import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { type ObservationDisplayKind, observationDisplayKind } from "../sessionAttention";
 import { isTurnActive } from "../sessionMessage";
@@ -33,6 +32,7 @@ import { useSessionObservation } from "../sync/sessionObservation";
 import { watchSessionTranscript } from "../sync/transcript";
 import { toast } from "../toast";
 import type { ChatThread, SessionObservation } from "../types";
+import { compactCommand, getStateCommand, type ImageContent, promptCommand } from "../vinculumRpc";
 import { ChatMcpDialog } from "./ChatMcpDialog";
 import { ChatToolsDialog } from "./ChatToolsDialog";
 import { applyPlainSend, chatTerminalIo, sendCommand, sendNowCommand } from "./chatSession";
@@ -54,7 +54,7 @@ export function errorMessage(cause: unknown): string {
 const NO_TRANSCRIPT = emptyTranscript();
 
 /**
- * The RPC link to a thread's OMP. `offline` is a thread with no process to talk to
+ * The RPC link to a thread's Vinculum. `offline` is a thread with no process to talk to
  * (never started, exited, or in its terminal): its history is readable and that is not an error.
  */
 type Connection = { state: "connecting" } | { state: "ready" } | { state: "offline" } | { state: "failed"; detail: string };
@@ -63,7 +63,7 @@ type Connection = { state: "connecting" } | { state: "ready" } | { state: "offli
  * Busy comes from the turn itself (live transcript first, then the observation poll), the same
  * predicate task sessions use, and decides whether a send queues. The displayed kind is the observed
  * one; the transcript only moves it to Running in the gap before the poll sees the turn, and a
- * booting OMP (process up, agent not yet `ready`) has no turn, so a new thread reads Idle.
+ * booting Vinculum (process up, agent not yet `ready`) has no turn, so a new thread reads Idle.
  */
 export function chatActivity(
   observation: SessionObservation | null,
@@ -428,7 +428,7 @@ export type ChatThreadHandle = ChatThreadSnapshot & {
 };
 
 /**
- * One live OMP attach per thread. Chat and the pinned window both call this; the first subscriber
+ * One live Vinculum attach per thread. Chat and the pinned window both call this; the first subscriber
  * starts the connection and the last one detaches it. A second attach's detach drops the first.
  */
 export function useChatThread(thread: ChatThread | null, opts: ChatThreadOptions): ChatThreadHandle {

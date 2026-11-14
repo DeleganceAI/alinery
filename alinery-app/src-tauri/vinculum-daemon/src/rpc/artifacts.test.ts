@@ -58,7 +58,7 @@ async function start(options: { watch?: boolean } = {}) {
     taskExecution,
     createSession: async (request: Record<string, unknown>) => {
       created.push(request);
-      const session: Created = { id: "s-new", phase: String((request.target as { step_key: string }).step_key), harness: "omp" };
+      const session: Created = { id: "s-new", phase: String((request.target as { step_key: string }).step_key), harness: "vinculum" };
       return { session, start: "reserved", errors: [] };
     },
   };
@@ -88,7 +88,7 @@ const code = async (call: Promise<unknown>) => ConnectError.from(await call.then
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 async function makeTask(c: Ctx, name = "Review me"): Promise<string> {
-  const res = await c.tasks.createTask({ meta: meta(), name, description: "d", playbookRef: { scope: "bundled", key: "one-shot" }, playbookSource: PLAYBOOK, launchDefaults: { harness: "omp", model: "" }, start: false });
+  const res = await c.tasks.createTask({ meta: meta(), name, description: "d", playbookRef: { scope: "bundled", key: "one-shot" }, playbookSource: PLAYBOOK, launchDefaults: { harness: "vinculum", model: "" }, start: false });
   const slug = res.created?.task?.slug ?? "";
   c.projector.project(slug);
   return slug;
@@ -305,7 +305,7 @@ test("a review handoff installs the evidence, a session and the inbound record o
     targetRepoPath: c.repo,
     targetSlug: target,
     targetPhase: "build",
-    harness: "omp",
+    harness: "vinculum",
     model: "",
     promptExtra: "Please act.",
     start: false,
@@ -320,16 +320,16 @@ test("a review handoff installs the evidence, a session and the inbound record o
   const row = c.store.get(`artifact/${target}/review-handoff-001.md`);
   expect(row?.value).toMatchObject({ case: "artifact", value: { handoffs: [{ direction: "inbound", targetPhase: "build" }] } });
   expect(installed.errors).toEqual([]);
-  expect(c.events.at(-1)).toMatchObject({ event: "artifact.review_handoff", targetPhase: "build", harness: "omp" });
+  expect(c.events.at(-1)).toMatchObject({ event: "artifact.review_handoff", targetPhase: "build", harness: "vinculum" });
   // The source's daemon records its half.
   await c.artifacts.recordOutboundHandoff({ meta: meta(), sourceSlug: source, record: { ...installed.record!, direction: "outbound" } });
   expect(JSON.parse(readFileSync(artifactsOf(c, source, "03-findings.handoff-001.json"), "utf8"))).toMatchObject({ direction: "outbound", target_artifact: "review-handoff-001.md" });
   expect(c.store.get(`artifact/${source}/03-findings.md`)?.value).toMatchObject({ value: { handoffs: [{ direction: "outbound" }] } });
   // A second handoff takes the next names; a step the target's playbook does not have is refused; the same task is refused.
-  const second = await c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: "/other/repo", sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "omp", model: "", promptExtra: "", start: false });
+  const second = await c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: "/other/repo", sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "vinculum", model: "", promptExtra: "", start: false });
   expect(second.targetArtifact).toBe("review-handoff-002.md");
-  expect(await code(c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: "/other/repo", sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "nonsense", harness: "omp", model: "", promptExtra: "", start: false }))).toBe(Code.FailedPrecondition);
-  expect(await code(c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: c.repo, sourceSlug: target, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "omp", model: "", promptExtra: "", start: false }))).toBe(Code.InvalidArgument);
+  expect(await code(c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: "/other/repo", sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "nonsense", harness: "vinculum", model: "", promptExtra: "", start: false }))).toBe(Code.FailedPrecondition);
+  expect(await code(c.artifacts.installReviewHandoff({ meta: meta(), sourceRepoPath: c.repo, sourceSlug: target, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "vinculum", model: "", promptExtra: "", start: false }))).toBe(Code.InvalidArgument);
 });
 
 test("a review handoff from an archived source is refused before anything is written, and so is its outbound record", async () => {
@@ -338,7 +338,7 @@ test("a review handoff from an archived source is refused before anything is wri
   const source = await makeTask(c, "Source two");
   writeFileSync(artifactsOf(c, source, "03-findings.md"), "# findings\n");
   await c.tasks.archiveTask({ meta: meta(), slug: source });
-  const handoff = { meta: meta(), sourceRepoPath: c.repo, sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "omp", model: "", promptExtra: "", start: false };
+  const handoff = { meta: meta(), sourceRepoPath: c.repo, sourceSlug: source, sourceSession: "s", sourceArtifact: "03-findings.md", sourceText: "x", targetRepoPath: c.repo, targetSlug: target, targetPhase: "build", harness: "vinculum", model: "", promptExtra: "", start: false };
   expect(await code(c.artifacts.installReviewHandoff(handoff))).toBe(Code.FailedPrecondition);
   expect(existsSync(artifactsOf(c, target, "review-handoff-001.md"))).toBe(false);
   expect(c.created).toEqual([]);

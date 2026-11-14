@@ -128,7 +128,7 @@ describe("useHotkeys", () => {
       created: 1,
       archived: false,
       phase: "worker",
-      harness: "omp",
+      harness: "vinculum",
       model: "",
       playbook: "retained",
       generic: false,

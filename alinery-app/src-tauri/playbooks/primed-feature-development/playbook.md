@@ -4,7 +4,7 @@ key = "primed-feature-development"
 title = "PRIMED Feature Development"
 description = "Probe, Research, Identify, Map, Establish and Develop: a six-stage feature workflow with human direction and verified implementation."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "probe-the-question"

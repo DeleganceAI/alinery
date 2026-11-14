@@ -8,30 +8,29 @@ use std::path::PathBuf;
 fn default_registry_parses_with_expected_shape() {
     let f: HarnessFile = toml::from_str(DEFAULT_HARNESSES_TOML).expect("bundled default registry must parse");
     let keys: Vec<&str> = f.harness.iter().map(|h| h.key.as_str()).collect();
-    assert_eq!(keys, ["omp"]);
+    assert_eq!(keys, ["vinculum"]);
 
-    let omp = f.harness.iter().find(|h| h.key == "omp").unwrap();
-    assert_eq!(omp.adapter, alinery_core::HarnessAdapter::Omp);
-    assert_eq!(omp.message_adapter, alinery_core::MessageAdapter::OmpBracketedPaste);
-    assert_eq!(omp.prompt_injection, "arg");
-    assert_eq!(omp.prompt_arg, ["--", "{prompt}"]);
-    assert_eq!(omp.prompt_arg.iter().map(|arg| arg.matches("{prompt}").count()).sum::<usize>(), 1);
-    let resume = omp.resume.as_ref().expect("omp has [harness.resume]");
+    let vinculum = f.harness.iter().find(|h| h.key == "vinculum").unwrap();
+    assert_eq!(vinculum.adapter, alinery_core::HarnessAdapter::Vinculum);
+    assert_eq!(vinculum.message_adapter, alinery_core::MessageAdapter::VinculumBracketedPaste);
+    assert_eq!(vinculum.prompt_injection, "arg");
+    assert_eq!(vinculum.prompt_arg, ["--", "{prompt}"]);
+    assert_eq!(vinculum.prompt_arg.iter().map(|arg| arg.matches("{prompt}").count()).sum::<usize>(), 1);
+    let resume = vinculum.resume.as_ref().expect("vinculum has [harness.resume]");
     assert!(resume.enabled);
     assert_eq!(resume.id_source, "manual");
-    assert!(omp.models_cmd.contains("{binary}"), "models_cmd must use {{binary}}: {}", omp.models_cmd);
-    assert!(!omp.models_cmd.contains("omp models"), "models_cmd must not PATH-exec omp: {}", omp.models_cmd);
+    assert!(vinculum.models_cmd.contains("{binary}"), "models_cmd must use {{binary}}: {}", vinculum.models_cmd);
 }
 
 #[test]
-fn bundled_registry_is_omp_only() {
+fn bundled_registry_is_vinculum_only() {
     let f: HarnessFile = toml::from_str(DEFAULT_HARNESSES_TOML).expect("bundled default registry must parse");
     let keys: Vec<&str> = f.harness.iter().map(|h| h.key.as_str()).collect();
-    assert_eq!(keys, ["omp"]);
-    let omp = f.harness.iter().find(|h| h.key == "omp").unwrap();
-    assert_eq!(omp.adapter, alinery_core::HarnessAdapter::Omp);
-    assert_eq!(omp.message_adapter, alinery_core::MessageAdapter::OmpBracketedPaste);
-    let resume = omp.resume.as_ref().expect("omp has [harness.resume]");
+    assert_eq!(keys, ["vinculum"]);
+    let vinculum = f.harness.iter().find(|h| h.key == "vinculum").unwrap();
+    assert_eq!(vinculum.adapter, alinery_core::HarnessAdapter::Vinculum);
+    assert_eq!(vinculum.message_adapter, alinery_core::MessageAdapter::VinculumBracketedPaste);
+    let resume = vinculum.resume.as_ref().expect("vinculum has [harness.resume]");
     assert!(resume.enabled);
     assert_eq!(resume.id_source, "manual");
 }
@@ -52,14 +51,14 @@ binary = "legacy"
     let supported: HarnessFile = toml::from_str(
         r#"
 [[harness]]
-key = "omp"
-name = "OMP"
-binary = "omp"
-message_adapter = "omp_bracketed_paste"
+key = "vinculum"
+name = "Vinculum"
+binary = "vinculum"
+message_adapter = "vinculum_bracketed_paste"
 "#,
     )
     .unwrap();
-    assert_eq!(supported.harness[0].message_adapter, alinery_core::MessageAdapter::OmpBracketedPaste);
+    assert_eq!(supported.harness[0].message_adapter, alinery_core::MessageAdapter::VinculumBracketedPaste);
 
     assert!(toml::from_str::<HarnessFile>(
         r#"
@@ -619,9 +618,9 @@ fn write_global_settings_command_does_not_rewrite_app_config() {
 #[test]
 fn default_models_cmd_uses_binary_placeholder() {
     let f: HarnessFile = toml::from_str(DEFAULT_HARNESSES_TOML).expect("bundled default registry must parse");
-    let omp = f.harness.iter().find(|h| h.key == "omp").unwrap();
-    assert!(omp.models_cmd.contains("{binary}"));
-    assert!(!omp.models_cmd.contains("omp models"));
+    let vinculum = f.harness.iter().find(|h| h.key == "vinculum").unwrap();
+    assert!(vinculum.models_cmd.contains("{binary}"));
+    assert!(!vinculum.models_cmd.contains("vinculum models"));
 }
 
 #[test]
@@ -629,10 +628,10 @@ fn shell_quote_keeps_hostile_paths_one_literal_word() {
     // The trailing `extra` word is the tell: if quoting leaked, the path splits into extra
     // fields (space), swallows them (unbalanced quote), or runs something else (`;`, `$()`).
     for path in [
-        "/Applications/My App/omp",
-        "/tmp/it's here/omp",
-        "/tmp/omp; echo pwned",
-        "/tmp/$HOME/omp",
+        "/Applications/My App/vinculum",
+        "/tmp/it's here/vinculum",
+        "/tmp/vinculum; echo pwned",
+        "/tmp/$HOME/vinculum",
         "/tmp/$(echo pwned)/o'mp",
     ] {
         let out = std::process::Command::new("/bin/sh")

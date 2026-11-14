@@ -61,7 +61,6 @@ export const DEFAULT_TELEMETRY_ENDPOINT = "https://telemetry.alinery.ai";
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
 const DEFAULT_RETENTION = 10;
-const OMP = "omp";
 const VINCULUM = "vinculum";
 const NO_HARNESS = "no-harness";
 /** `BUNDLED_PLAYBOOKS`: a legacy `defaults.playbook = "<key>"` is bundled only for these. A test keeps the list equal to `playbooks/`. */
@@ -124,8 +123,8 @@ function harnessOf(v: unknown): Harness {
     // Sorted: Rust holds a HashMap, so two files are equal whatever order the keys came in.
     env: Object.fromEntries(Object.keys(env).sort().map((k) => [k, typeof env[k] === "string" ? (env[k] as string) : refuse()])),
     promptInjection: str(o, "prompt_injection"),
-    adapter: oneOf(o, "adapter", ["omp", "unsupported"], "unsupported"),
-    messageAdapter: oneOf(o, "message_adapter", ["omp_bracketed_paste", "unsupported"], "unsupported"),
+    adapter: oneOf(o, "adapter", ["vinculum", "unsupported"], "unsupported"),
+    messageAdapter: oneOf(o, "message_adapter", ["vinculum_bracketed_paste", "unsupported"], "unsupported"),
     models: list("models"),
     modelsCmd: str(o, "models_cmd"),
     resume: resume
@@ -265,7 +264,7 @@ export function overridesToml(o: RepoOverrides): string {
   });
 }
 
-/** shared.rs `clear_repo_override`. The `defaults.model` case clears the harness beside it (Settings stamps `omp` next to every model write). */
+/** shared.rs `clear_repo_override`. The `defaults.model` case clears the harness beside it (Settings stamps `vinculum` next to every model write). */
 export function clearOverride(o: RepoOverrides, field: string): RepoOverrides {
   const out = create(RepoOverridesSchema, { github: { ...o.github }, defaults: { ...o.defaults }, backup: { ...o.backup } });
   const camel = (key: string) => key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -323,7 +322,7 @@ export function effectiveSettings(global: Global, o: RepoOverrides): EffectiveSe
 
 // ---- harnesses -----------------------------------------------------------------------------------------
 
-const allowedLaunch = (key: string) => key === OMP || key === VINCULUM || key === NO_HARNESS;
+const allowedLaunch = (key: string) => key === VINCULUM || key === NO_HARNESS;
 const noHarnessEntry = (): Harness => ({
   key: NO_HARNESS,
   name: "Terminal",
@@ -351,9 +350,9 @@ export function effectiveHarnesses(global: Harness[], local: Harness[]): { harne
     out.push(l ? { harness: { ...l, modelsCmd: g.modelsCmd }, source: SettingSource.REPOSITORY } : { harness: g, source: SettingSource.GLOBAL });
   }
   for (const l of byKey.values()) out.push({ harness: { ...l, modelsCmd: "" }, source: SettingSource.REPOSITORY });
-  if (!out.some((e) => e.harness.key === OMP)) {
-    const omp = bundledHarnesses().find((h) => h.key === OMP);
-    if (omp) out.push({ harness: omp, source: SettingSource.GLOBAL });
+  if (!out.some((e) => e.harness.key === VINCULUM)) {
+    const vinculum = bundledHarnesses().find((h) => h.key === VINCULUM);
+    if (vinculum) out.push({ harness: vinculum, source: SettingSource.GLOBAL });
   }
   out.unshift({ harness: noHarnessEntry(), source: SettingSource.GLOBAL });
   return out;

@@ -10,7 +10,7 @@ impl Fixture {
     fn new(outputs: &str, coding: bool, automatic: bool, cap: u32) -> Self {
         let repo = PathBuf::from("/tmp").join(format!("alinery-v2-execution-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(crate::artifacts_dir(&repo, "task")).unwrap();
-        let source = format!("+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"omp\"\n[[step]]\nkey = \"work\"\ntitle = \"Work\"\nshort = \"\"\ninputs = []\noutputs = [{outputs}]\nmodel = \"\"\nharness = \"\"\nis_coding_step = {coding}\nauto_advance_default = {automatic}\n+++\n<!-- alinery:step work -->\nWrite the assigned outputs.\n");
+        let source = format!("+++\nversion = 2\nkey = \"fixture\"\ntitle = \"Fixture\"\ndescription = \"\"\ndefault_model = \"\"\ndefault_harness = \"vinculum\"\n[[step]]\nkey = \"work\"\ntitle = \"Work\"\nshort = \"\"\ninputs = []\noutputs = [{outputs}]\nmodel = \"\"\nharness = \"\"\nis_coding_step = {coding}\nauto_advance_default = {automatic}\n+++\n<!-- alinery:step work -->\nWrite the assigned outputs.\n");
         let enabled = if automatic { BTreeSet::from(["work".into()]) } else { BTreeSet::new() };
         let mut state = new_execution_state(
             PlaybookRef {
@@ -109,7 +109,7 @@ fn retained_definition_is_independent_of_library_and_fails_closed_on_corruption(
 #[test]
 fn task_rejects_unsupported_graph_harness_before_provisioning() {
     let f = Fixture::new("{path=\"result.md\"}", false, true, 1);
-    let source = f.source.replace("default_harness = \"omp\"", "default_harness = \"no-harness\"");
+    let source = f.source.replace("default_harness = \"vinculum\"", "default_harness = \"no-harness\"");
     assert!(new_execution_state(
         PlaybookRef {
             scope: PlaybookScope::Repo,

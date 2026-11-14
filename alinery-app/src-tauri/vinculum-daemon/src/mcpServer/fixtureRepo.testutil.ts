@@ -35,7 +35,7 @@ export async function buildFixture(prefix = "/tmp/mcp-fx-"): Promise<Fixture> {
   writeFileSync(appConfig, `active_repo = ${JSON.stringify(repo)}\nknown_repos = [${JSON.stringify(repo)}]\n`);
   const created = await provisionTask(
     { repo, lane: "", identity: appConfigIdentity(appConfig) },
-    { name: "First task", description: "the fixture task", playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "omp", model: "" }, maxLiveSessions: 10, start: false },
+    { name: "First task", description: "the fixture task", playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "vinculum", model: "" }, maxLiveSessions: 10, start: false },
   );
   if (created.creation !== "ready" || !created.task) throw new Error(`fixture task not ready: ${JSON.stringify(created.errors)}`);
   const slug = created.task.slug;

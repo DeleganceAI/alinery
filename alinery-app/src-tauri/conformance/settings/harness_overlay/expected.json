@@ -68,17 +68,17 @@
         "source": "global"
       },
       {
-        "adapter": "omp",
+        "adapter": "vinculum",
         "args": [
           "--fast"
         ],
-        "binary": "omp",
+        "binary": "vinculum",
         "env": {
           "A": "2",
           "Z": "1"
         },
-        "key": "omp",
-        "message_adapter": "omp_bracketed_paste",
+        "key": "vinculum",
+        "message_adapter": "vinculum_bracketed_paste",
         "model_arg": [
           "--model={model}"
         ],
@@ -87,28 +87,12 @@
           "b"
         ],
         "models_cmd": "{binary} models --json 2>/dev/null | grep -oE '\"selector\":\"[^\"]*\"' | cut -d'\"' -f4",
-        "name": "OMP (repo)",
+        "name": "Vinculum (repo)",
         "prompt_arg": [
           "--",
           "{prompt}"
         ],
         "prompt_injection": "arg",
-        "resume": null,
-        "source": "repository"
-      },
-      {
-        "adapter": "unsupported",
-        "args": [],
-        "binary": "vinculum",
-        "env": {},
-        "key": "vinculum",
-        "message_adapter": "unsupported",
-        "model_arg": [],
-        "models": [],
-        "models_cmd": "",
-        "name": "Vinculum",
-        "prompt_arg": [],
-        "prompt_injection": "",
         "resume": null,
         "source": "repository"
       }

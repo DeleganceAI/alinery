@@ -1,4 +1,4 @@
-//! Tests for omp_update.rs
+//! Tests for vinculum_update.rs
 use crate::*;
 
 #[test]

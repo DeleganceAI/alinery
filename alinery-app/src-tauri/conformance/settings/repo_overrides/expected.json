@@ -11,7 +11,7 @@
       },
       "defaults": {
         "draft_autosave": true,
-        "harness": "omp",
+        "harness": "vinculum",
         "model": "claude-x",
         "playbook": {
           "key": "team-flow",
@@ -68,18 +68,18 @@
         "source": "global"
       },
       {
-        "adapter": "omp",
+        "adapter": "vinculum",
         "args": [],
-        "binary": "omp",
+        "binary": "vinculum",
         "env": {},
-        "key": "omp",
-        "message_adapter": "omp_bracketed_paste",
+        "key": "vinculum",
+        "message_adapter": "vinculum_bracketed_paste",
         "model_arg": [
           "--model={model}"
         ],
         "models": [],
         "models_cmd": "{binary} models --json 2>/dev/null | grep -oE '\"selector\":\"[^\"]*\"' | cut -d'\"' -f4",
-        "name": "OMP CLI",
+        "name": "Vinculum",
         "prompt_arg": [
           "--",
           "{prompt}"
@@ -103,7 +103,7 @@
         "trigger_post_push_commit": true
       },
       "defaults": {
-        "harness": "omp",
+        "harness": "vinculum",
         "model": "claude-x",
         "playbook": {
           "key": "team-flow",

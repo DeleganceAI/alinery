@@ -39,7 +39,7 @@ describe("matchCommands", () => {
 });
 
 describe("groupCommands", () => {
-  it("groups by OMP source, not invented Session/Model buckets", () => {
+  it("groups by Vinculum source, not invented Session/Model buckets", () => {
     expect(groupCommands(catalog).map((g) => g.group)).toEqual(["builtin", "skill"]);
   });
 });

@@ -551,7 +551,7 @@ fn refresh_jwt_access_token(supabase_url: &str, auth_path: &Path, tokens: &mut V
     write_owner_only_bytes(auth_path, &bytes)
 }
 
-/// Refresh hosted inference before an OMP process starts. Unsigned/unpaid is `Ok` (BYOK).
+/// Refresh hosted inference before a Vinculum session starts. Unsigned/unpaid is `Ok` (BYOK).
 /// Unexpired cache that is not due for renewal skips JWT and mint HTTP.
 pub fn ensure_hosted_inference_for_spawn(app_config: &Path) -> Result<(), String> {
     ensure_hosted_inference_for_spawn_at(app_config, &accounts_url(), SUPABASE_URL)

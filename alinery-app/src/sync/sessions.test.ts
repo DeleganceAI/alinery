@@ -13,7 +13,7 @@ import {
   openSession,
   promptSession,
   readSessionHistory,
-  readSessionOmp,
+  readSessionVinculum,
   renameSession,
   SessionConflict,
   setSessionModel,
@@ -45,7 +45,7 @@ beforeEach(() => {
             "killSession",
             "clearNotifications",
             "readHistory",
-            "readOmpWindow",
+            "readVinculumWindow",
             "promptSession",
             "abortSession",
             "setSessionModel",
@@ -111,9 +111,9 @@ describe("session reads", () => {
     expect(seen[1].req.offset).toBeUndefined();
   });
 
-  it("an OMP window comes back in the framing the decoder reads: a JSON header line, then the rows", async () => {
-    impl.readOmpWindow = () => ({ start: 5n, end: 12n, length: 40n, data: new TextEncoder().encode("a\nb\n") });
-    const out = new Uint8Array(await readSessionOmp("/r", { id: "s1", taskSlug: "t", want: 100 }));
+  it("a Vinculum window comes back in the framing the decoder reads: a JSON header line, then the rows", async () => {
+    impl.readVinculumWindow = () => ({ start: 5n, end: 12n, length: 40n, data: new TextEncoder().encode("a\nb\n") });
+    const out = new Uint8Array(await readSessionVinculum("/r", { id: "s1", taskSlug: "t", want: 100 }));
     const text = new TextDecoder().decode(out);
     expect(text).toBe('{"start":5,"end":12,"length":40}\na\nb\n');
     expect(seen[0].req).toMatchObject({ want: 100n, session: { taskSlug: "t", id: "s1" } });
@@ -169,9 +169,9 @@ describe("the turn controls and the process (S5.3)", () => {
       order.push("resume");
       return {};
     };
-    await openSession("/r", { id: "s1", cwd: "/w", taskSlug: " t ", phase: "plan", model: "p/m", harness: "omp", intent: "spawn", cols: 80, rows: 24 });
+    await openSession("/r", { id: "s1", cwd: "/w", taskSlug: " t ", phase: "plan", model: "p/m", harness: "vinculum", intent: "spawn", cols: 80, rows: 24 });
     expect(order).toEqual(["prepare", "resume"]);
-    expect(ipc.prepareHostedInference).toHaveBeenCalledWith("p/m", "omp");
+    expect(ipc.prepareHostedInference).toHaveBeenCalledWith("p/m", "vinculum");
     expect(seen[0].req).toMatchObject({ session: { taskSlug: "t", id: "s1" }, intent: "spawn", cwd: "/w", phase: "plan", model: "p/m", cols: 80, rows: 24 });
   });
 

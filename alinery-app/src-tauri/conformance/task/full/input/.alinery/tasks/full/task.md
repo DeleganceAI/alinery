@@ -26,7 +26,7 @@ scope = "repo"
 key = "superdevelop"
 
 [launch_defaults]
-harness = "omp"
+harness = "vinculum"
 model = "m1"
 
 [step_models]

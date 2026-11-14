@@ -78,7 +78,7 @@ export function subtaskService(c: SessionControl, dedupe: Dedupe, store: Store, 
           const reply = ranOrFail(
             await c.runner.create({
               task_slug: req.slug,
-              target: { kind: "subtask_manager", subtask_slug: subtaskSlug, recover: req.recover, harness: "omp", model: null },
+              target: { kind: "subtask_manager", subtask_slug: subtaskSlug, recover: req.recover, harness: "vinculum", model: null },
               launch_override: null,
               prompt_extra: null,
               handoff_artifact: null,

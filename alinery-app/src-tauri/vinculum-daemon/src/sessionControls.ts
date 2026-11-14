@@ -47,7 +47,7 @@ export function launchThinkingFromFiles(globalText: string | null, repoText: str
 /** Settings `defaults.model`, kept only for an empty harness or a launch harness. A leftover key drops it. */
 export function launchModelFromChoice(harness: string, model: string): string {
   const key = harness.trim();
-  if (key === "" || key === "omp" || key === "vinculum" || key === "no-harness") return model.trim();
+  if (key === "" || key === "vinculum" || key === "no-harness") return model.trim();
   return "";
 }
 

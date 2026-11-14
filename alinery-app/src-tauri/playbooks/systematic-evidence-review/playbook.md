@@ -4,7 +4,7 @@ key = "systematic-evidence-review"
 title = "Systematic Evidence Review"
 description = "Approve a reproducible protocol, search and screen through independent lanes, audit a corpus with the human, extract and synthesize traceable evidence, and audit the reporting package."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "select-review-method"

@@ -49,7 +49,7 @@ function serve(playbooks: Partial<ServiceImpl<typeof PlaybookService>> = {}, lib
   vi.mocked(daemonTransport).mockReturnValue(daemonHarness({ sync: h.sync, playbooks }).transport as Transport);
 }
 
-const definition = { version: 2, key: "zeta", title: "Zeta", description: "", defaultModel: "", defaultHarness: "omp", step: [], preamble: "", sectionOrder: [] };
+const definition = { version: 2, key: "zeta", title: "Zeta", description: "", defaultModel: "", defaultHarness: "vinculum", step: [], preamble: "", sectionOrder: [] };
 const read = (revision: bigint) => ({ reference: ref("repo", "zeta"), path: "/p", definition, sourceText: "+++\n+++\n", modifiedAtMs: 5n, revision });
 
 it("a repository's catalog is every row, scope-ordered, with its picker and the scan's problems", async () => {

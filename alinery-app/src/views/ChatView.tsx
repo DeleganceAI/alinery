@@ -588,7 +588,7 @@ function ChatViewBody({
               cwd={selected.session.worktree}
               taskSlug=""
               phase=""
-              harness="omp"
+              harness="vinculum"
               model=""
               intent="attach"
               terminalFontSize={terminalFontSize}

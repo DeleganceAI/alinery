@@ -3,7 +3,7 @@
 //! its `domain/agentDir.ts` holds the same line parser and renderer, and S4.11 moves the hosted default there too.
 use crate::*;
 
-fn omp_agent_config_yml(agent_dir: &Path) -> PathBuf {
+fn vinculum_agent_config_yml(agent_dir: &Path) -> PathBuf {
     let yml = agent_dir.join("config.yml");
     if yml.is_file() {
         return yml;
@@ -15,7 +15,7 @@ fn omp_agent_config_yml(agent_dir: &Path) -> PathBuf {
     yml
 }
 
-/// Best-effort parse of a top-level `modelRoles:` map from OMP agent YAML.
+/// Best-effort parse of a top-level `modelRoles:` map from Vinculum agent YAML.
 pub(crate) fn parse_model_roles_yaml(text: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let mut in_block = false;
@@ -126,7 +126,7 @@ pub(crate) fn render_model_roles_yaml(existing: &str, roles: &HashMap<String, St
 }
 
 fn read_model_roles_from_agent_dir(agent_dir: &Path) -> HashMap<String, String> {
-    let config = omp_agent_config_yml(agent_dir);
+    let config = vinculum_agent_config_yml(agent_dir);
     if config.is_file() {
         if let Ok(text) = fs::read_to_string(&config) {
             let roles = parse_model_roles_yaml(&text);
@@ -140,7 +140,7 @@ fn read_model_roles_from_agent_dir(agent_dir: &Path) -> HashMap<String, String> 
 
 fn write_model_roles_to_agent_dir(agent_dir: &Path, roles: &HashMap<String, String>) -> Result<(), String> {
     fs::create_dir_all(agent_dir).map_err(|e| format!("create {}: {e}", agent_dir.display()))?;
-    let path = omp_agent_config_yml(agent_dir);
+    let path = vinculum_agent_config_yml(agent_dir);
     let existing = if path.is_file() {
         fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?
     } else {

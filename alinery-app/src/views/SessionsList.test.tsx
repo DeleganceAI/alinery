@@ -95,7 +95,7 @@ const session = (over: Partial<SessionListItem> = {}): SessionListItem =>
     created: 1,
     archived: false,
     phase: "design",
-    harness: "omp",
+    harness: "vinculum",
     model: "",
     playbook: "superdevelop",
     generic: false,
@@ -127,7 +127,7 @@ const busyObservation = {
     process: { state: "alive" },
     agent: { state: "busy" },
     playbook: { state: "in_progress" },
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   },
   checkpoint: {},
@@ -349,7 +349,7 @@ describe("SessionsList time sorting and presentation", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "failed", reason },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
       checkpoint: {},
@@ -450,7 +450,7 @@ describe("SessionsList time sorting and presentation", () => {
 });
 
 describe("session work names", () => {
-  it("shows a waiting ellipsis for a live unnamed OMP session and keeps the task name", async () => {
+  it("shows a waiting ellipsis for a live unnamed Vinculum session and keeps the task name", async () => {
     setSessions([session({ id: "waiting", task_name: "Waiting task" }), session({ id: "terminal", harness: "no-harness", task_name: "Terminal task" })]);
     showObservations({
       "/r:a-task:waiting": busyObservation,

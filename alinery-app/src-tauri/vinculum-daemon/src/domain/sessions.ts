@@ -157,7 +157,7 @@ export class SessionPublisher {
     let waitingForInput = 0;
     let waitingForApproval = 0;
     for (const row of this.liveRows()) {
-      if (row.process.state === "exited" || row.id === "__omp-setup__") continue;
+      if (row.process.state === "exited" || row.id === "__vinculum-setup__") continue;
       liveSessions += 1;
       if (row.agent.state === "busy") busy += 1;
       else if (row.agent.state === "waiting_for_input") waitingForInput += 1;

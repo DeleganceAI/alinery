@@ -86,7 +86,7 @@ const session = (id: string, phase = "design"): SessionMeta => ({
   created: 10,
   archived: false,
   phase,
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   playbook: "superdevelop",
   generic: false,
@@ -103,7 +103,7 @@ const activeSession: TaskActivitySession = {
   id: "active-design",
   worktree: task.worktree,
   phase: "design",
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   playbook: "superdevelop",
   generic: false,
@@ -472,7 +472,7 @@ function FakeTaskDetail(props: Parameters<typeof TaskDetailComponent>[0]) {
       </button>
       {sessionOpen &&
         props.renderSession(
-          { taskSlug: task.slug, id: "detail-design", cwd: task.worktree, phase: "design", harness: "omp", model: "", playbook: "superdevelop", generic: false },
+          { taskSlug: task.slug, id: "detail-design", cwd: task.worktree, phase: "design", harness: "vinculum", model: "", playbook: "superdevelop", generic: false },
           { onClose: () => setSessionOpen(false), onOpenPath: () => {} },
         )}
       <button type="button" onClick={props.onNewSession}>
@@ -484,16 +484,16 @@ function FakeTaskDetail(props: Parameters<typeof TaskDetailComponent>[0]) {
 vi.mock("./views/CreateSessionPage", () => ({
   CreateSessionPage: ({ onCreated }: { onCreated: (task: BoardTask, choice: SessionTypeChoice, harness: string, model: string, prompt?: string) => Promise<void> }) => (
     <div>
-      <button type="button" onClick={() => void onCreated(task, { kind: "primary", step_key: "implementation" }, "omp", "", "  edited\nlaunch prompt ✓  ")}>
+      <button type="button" onClick={() => void onCreated(task, { kind: "primary", step_key: "implementation" }, "vinculum", "", "  edited\nlaunch prompt ✓  ")}>
         finish create session
       </button>
-      <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "omp", "", "")}>
+      <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "vinculum", "", "")}>
         finish empty-prompt session
       </button>
       <button type="button" onClick={() => void onCreated(task, { kind: "auxiliary" }, "no-harness", "")}>
         finish terminal session
       </button>
-      <button type="button" onClick={() => void onCreated(task, { kind: "existing", session_id: "queued-design" }, "omp", "")}>
+      <button type="button" onClick={() => void onCreated(task, { kind: "existing", session_id: "queued-design" }, "vinculum", "")}>
         start queued session
       </button>
     </div>
@@ -1154,7 +1154,7 @@ describe("Playbooks navigation", () => {
         title: `${scope} review`,
         description: "",
         default_model: "",
-        default_harness: "omp",
+        default_harness: "vinculum",
         preamble: "",
         section_order: ["inspect"],
         step: [
@@ -1314,7 +1314,7 @@ describe("session navigation acknowledgment", () => {
     expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
       task_slug: "task",
       target: { kind: "primary", step_key: "implementation" },
-      launch_override: { harness: "omp", model: "" },
+      launch_override: { harness: "vinculum", model: "" },
       prompt_extra: "  edited\nlaunch prompt ✓  ",
       start: true,
     });
@@ -1328,7 +1328,11 @@ describe("session navigation acknowledgment", () => {
     fireEvent.click(await screen.findByRole("button", { name: "new task session" }));
     fireEvent.click(await screen.findByRole("button", { name: "finish empty-prompt session" }));
     await screen.findByText("session:created-implementation");
-    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", { task_slug: "task", target: { kind: "auxiliary", harness: "omp", model: "", prompt: "" }, start: true });
+    expect(sessionWrites.createSession).toHaveBeenLastCalledWith("/repo", {
+      task_slug: "task",
+      target: { kind: "auxiliary", harness: "vinculum", model: "", prompt: "" },
+      start: true,
+    });
 
     cleanup();
     await renderApp();

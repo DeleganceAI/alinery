@@ -140,10 +140,10 @@ describe("update actions", () => {
     available: { version: "0.11.0", url: "", sha256: "", size: 0, protocol_version: 2, published_at: "" },
     checked_at: 1,
   };
-  it("offers an application upgrade and no OMP update", () => {
+  it("offers an application upgrade and no Vinculum update", () => {
     const onUpgrade = vi.fn();
     render(<TopBar active="list" scope="active" appConfig={appConfig} isDev={false} update={update} onUpgrade={onUpgrade} {...callbacks} />);
-    expect(screen.queryByRole("button", { name: /OMP update/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Vinculum update/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to 0.11.0" }));
     expect(onUpgrade).toHaveBeenCalledOnce();
   });

@@ -1,7 +1,7 @@
 //! settings: extracted from lib.rs. See AGENTS.md for the module map.
 use crate::*;
 
-// Bundled OMP launch config + compiled Terminal. Not a multi-harness picker registry.
+// Bundled Vinculum launch config + compiled Terminal. Not a multi-harness picker registry.
 
 // A path or value that lands in command position inside a shell pipeline (the remote install
 // script) can hold spaces or shell syntax. Single-quote it so the shell sees exactly one word:

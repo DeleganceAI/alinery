@@ -6,7 +6,7 @@
     "artifacts/attachments/a.txt": "first",
     "execution.json": {
       "creation": "ready",
-      "definition_identity": "77824ddb9d5e8a28",
+      "definition_identity": "7dc3cb4d0abc7c75",
       "enabled_steps": [],
       "launch_defaults": {
         "harness": "",
@@ -52,7 +52,7 @@
     "artifacts/attachments/a.txt": "first",
     "execution.json": {
       "creation": "ready",
-      "definition_identity": "77824ddb9d5e8a28",
+      "definition_identity": "7dc3cb4d0abc7c75",
       "enabled_steps": [],
       "launch_defaults": {
         "harness": "",

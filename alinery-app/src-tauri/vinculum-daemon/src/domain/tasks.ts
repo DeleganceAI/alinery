@@ -86,7 +86,7 @@ function newExecutionState(p: CreateTaskParams, playbook: Playbook, lane: string
   if (playbook.key !== p.playbook.reference.key) throw new DomainError("invalid_argument", "task playbook key does not match source identity");
   const harnesses = [playbook.defaultHarness, ...playbook.steps.map((s) => s.harness), p.launchDefaults?.harness ?? ""];
   for (const harness of harnesses) {
-    if (harness.trim() !== "" && harness.trim() !== "omp") throw new DomainError("invalid_argument", `unsupported graph harness '${harness}'`);
+    if (harness.trim() !== "" && harness.trim() !== "vinculum") throw new DomainError("invalid_argument", `unsupported graph harness '${harness}'`);
   }
   for (const key of enabled) {
     if (!playbook.steps.some((s) => s.key === key)) throw new DomainError("invalid_argument", `unknown enabled step '${key}'`);

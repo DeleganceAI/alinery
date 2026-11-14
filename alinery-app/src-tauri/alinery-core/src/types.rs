@@ -7,7 +7,7 @@ pub const RUNNER_EVENT_PROTOCOL_VERSION: u16 = 3;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessAdapter {
-    Omp,
+    Vinculum,
     #[default]
     Unsupported,
 }
@@ -15,7 +15,7 @@ pub enum HarnessAdapter {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageAdapter {
-    OmpBracketedPaste,
+    VinculumBracketedPaste,
     #[default]
     Unsupported,
 }
@@ -33,9 +33,9 @@ pub struct SemanticCheckpoint {
     #[serde(default)]
     pub phase_completed_at: Option<u64>,
     #[serde(default)]
-    pub omp_session_id: Option<String>,
+    pub vinculum_session_id: Option<String>,
     #[serde(default)]
-    pub omp_turn_id: Option<u64>,
+    pub vinculum_turn_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,31 +62,31 @@ where
 pub enum RunnerEvent {
     Busy {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_optional_non_empty_string")]
         correlation_id: Option<String>,
     },
     Idle {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     WaitingForInput {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
         correlation_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     WaitingForApproval {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
         correlation_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     PhaseCompleted {
         #[serde(deserialize_with = "deserialize_non_empty_string")]
-        omp_session_id: String,
+        vinculum_session_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        omp_turn_id: Option<u64>,
+        vinculum_turn_id: Option<u64>,
     },
     SessionNameSuggested {
         name: String,

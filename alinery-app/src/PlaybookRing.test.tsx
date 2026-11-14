@@ -12,7 +12,7 @@ const step = (key: string, inputs: InputSelector[], outputs: string[], auto = tr
   inputs,
   outputs: outputs.map((path) => ({ path })),
   model: "",
-  harness: "omp",
+  harness: "vinculum",
   prompt: "",
 });
 

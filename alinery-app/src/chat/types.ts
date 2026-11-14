@@ -39,7 +39,7 @@ export type ChatEntry =
       type: "prompt" | "follow_up";
       text: string;
       attachments?: UserRowAttachment[];
-      /** OMP refused this send and the composer could not take the text back, so the row stays as "not sent". */
+      /** Vinculum refused this send and the composer could not take the text back, so the row stays as "not sent". */
       failed?: boolean;
     })
   | (Base & { type: "slash"; name: string; args?: string; local?: boolean })
@@ -65,7 +65,7 @@ export type ChatEntry =
   | (Base & { type: "tool_result"; tool: string; text: string; status: ToolStatus })
   | (Base & {
       type: "subagent_status";
-      /** OMP identity. Distinct from Base.id (transcript row / React key). */
+      /** Vinculum identity. Distinct from Base.id (transcript row / React key). */
       subagentId: string;
       agent: string;
       role?: string;
@@ -111,7 +111,7 @@ export type ChatCommand = {
 export const ACTOR = {
   you: { kind: "user", name: "You" } as const,
   agent: { kind: "assistant", name: "Agent" } as const,
-  omp: { kind: "harness", name: "Vinculum" } as const,
+  vinculum: { kind: "harness", name: "Vinculum" } as const,
   alinery: { kind: "system", name: "Alinery" } as const,
 };
 

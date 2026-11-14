@@ -40,7 +40,7 @@ async function start() {
   git(repo, "commit", "-q", "--allow-empty", "-m", "init");
   const parent = await provisionTask(
     { repo, lane: "", identity: "i" },
-    { name: "A", description: "d", playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "omp", model: "" }, maxLiveSessions: 10, start: false },
+    { name: "A", description: "d", playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK }, launchDefaults: { harness: "vinculum", model: "" }, maxLiveSessions: 10, start: false },
   );
   expect(parent.creation).toBe("ready");
   const alinery = join(repo, ".alinery");

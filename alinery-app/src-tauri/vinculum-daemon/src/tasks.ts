@@ -133,11 +133,10 @@ export function taskWorktree(repo: string, slug: string): string {
 
 // SessionMeta requires worktree and created. A patch keeps values already on the file.
 // A file that does not have them, including one this daemon is creating, gets them now.
-/** Session meta records the Vinculum agent as `vinculum`. `omp` is the old key and the registry key. */
+/** A session with no harness named runs the Vinculum agent. */
 export function recordedHarness(key: unknown): string {
   const value = typeof key === "string" ? key.trim() : "";
-  if (!value || value === "omp") return "vinculum";
-  return value;
+  return value || "vinculum";
 }
 
 export function completeSessionMeta(current: Record<string, unknown>, patch: Record<string, unknown>, id: string, worktree: string, now: number): Record<string, unknown> {
@@ -147,7 +146,6 @@ export function completeSessionMeta(current: Record<string, unknown>, patch: Rec
   if ("exit_code" in patch && patch.exit_code == null) delete next.exit_code;
   if (typeof next.worktree !== "string" || next.worktree === "") next.worktree = worktree;
   if (typeof next.created !== "number" || !Number.isFinite(next.created)) next.created = now;
-  if (next.harness === "omp") next.harness = "vinculum";
   return next;
 }
 
@@ -210,7 +208,7 @@ export async function materializeSessions(repo: string, reply: Request): Promise
   for (const step of parsed.playbook.steps) {
     const id = randomUUID();
     const executionId = randomUUID();
-    const harness = step.harness || parsed.playbook?.defaultHarness || "omp";
+    const harness = step.harness || parsed.playbook?.defaultHarness || "vinculum";
     const model = step.model || "";
     const meta = {
       id,
@@ -247,7 +245,7 @@ export async function createExecutionSession(
     const id = randomUUID();
     const executionId = randomUUID();
     const override = request.launch_override as { harness?: string; model?: string } | undefined;
-    const harness = override?.harness || "omp";
+    const harness = override?.harness || "vinculum";
     const model = override?.model || "";
     const meta = {
       id,

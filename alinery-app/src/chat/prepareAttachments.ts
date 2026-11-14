@@ -1,4 +1,4 @@
-import type { ImageContent } from "../ompRpc";
+import type { ImageContent } from "../vinculumRpc";
 import { buildPromptMessage, canStage, type DraftAttachment } from "./attachments";
 
 export type PreparedChatSend = {

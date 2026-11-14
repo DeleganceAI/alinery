@@ -43,7 +43,7 @@ const definition: NormalizedPlaybook = {
   title: "Retained",
   description: "",
   default_model: "",
-  default_harness: "omp",
+  default_harness: "vinculum",
   preamble: "",
   section_order: ["repair"],
   step: [
@@ -84,7 +84,7 @@ const handoffResult: ReviewHandoffResult = {
     created: 1,
     archived: false,
     phase: "repair",
-    harness: "omp",
+    harness: "vinculum",
     model: "",
     playbook: "",
     generic: false,
@@ -111,7 +111,7 @@ vi.mock("../ipc", async () => {
 beforeEach(() => {
   vi.resetAllMocks();
   fakeBoard.set({ tasks: [sourceTask, foreignTask, otherTask] });
-  readEffectiveConfig.mockResolvedValue({ defaults: { harness: "omp", model: "gpt-5" } } as Config);
+  readEffectiveConfig.mockResolvedValue({ defaults: { harness: "vinculum", model: "gpt-5" } } as Config);
   mocks.getTaskExecution.mockResolvedValue({ definition } as TaskExecutionReply);
 });
 afterEach(cleanup);
@@ -201,7 +201,7 @@ describe("ReviewHandoffPage", () => {
     expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe("");
   });
 
-  it("retains an omp-owned default model from the selected target repository", async () => {
+  it("retains an vinculum-owned default model from the selected target repository", async () => {
     renderPage();
     await selectTarget();
     expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe("gpt-5");

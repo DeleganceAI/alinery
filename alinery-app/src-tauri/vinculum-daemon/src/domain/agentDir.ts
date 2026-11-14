@@ -1,5 +1,5 @@
 // The host's agent directory (plan S4.10, O12 a): model roles, the customization inventory, skill install and delete, and the
-// prompt that helps a person customize it. Ported from the app's `omp_update.rs` and `vinculum_customizations.rs`. The directory is
+// prompt that helps a person customize it. Ported from the app's `vinculum_update.rs` and `vinculum_customizations.rs`. The directory is
 // `vinculumAgentDir(appConfig)`, so each host has its own and its daemon owns it. Nothing in it is executed: the inventory reads names
 // and metadata only, and no command line, env value, header or frontmatter body is copied into a result.
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
@@ -285,7 +285,7 @@ function scanExtensions(agentDir: string, inv: Customizations): void {
       const before = inv.errors.length;
       const pkg = metadataJson(packagePath, inv);
       const gemini = metadataJson(join(path, "gemini-extension.json"), inv);
-      const manifest = pkg ? (pkg.omp ?? pkg.pi) : undefined;
+      const manifest = pkg ? (pkg.vinculum ?? pkg.pi) : undefined;
       const declared = isObject(manifest) ? manifest.extensions : undefined;
       let hasDeclared = false;
       if (Array.isArray(declared)) {

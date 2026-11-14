@@ -4,7 +4,7 @@ key = "superdevelop"
 title = "SuperDevelop"
 description = "Develop a change through Clarify, Investigate, Decide, Plan, Define Tests, Build, and Prepare Review."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "research-questions"

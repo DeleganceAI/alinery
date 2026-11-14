@@ -47,7 +47,7 @@ const sources: ScopedPlaybook[] = [
     title,
     description: `${title} instructions`,
     default_model: "",
-    default_harness: "omp",
+    default_harness: "vinculum",
     preamble: "",
     section_order: ["build"],
     step: [
@@ -318,7 +318,7 @@ describe("GitHub imports", () => {
         name: "Edited title",
         description: "Imported description",
         githubIssue: "owner/repo#2",
-        harness: "omp",
+        harness: "vinculum",
       }),
     );
   });
@@ -836,7 +836,7 @@ describe("scoped playbook selection", () => {
   });
 
   it("does not replace an unavailable configured default with the first catalog item", async () => {
-    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "omp", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
+    readEffectiveConfig.mockResolvedValue({ defaults: { harness: "vinculum", model: "", playbook: { scope: "global", key: "missing" }, draft_autosave: false } } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("radio", { name: /One-shot/ });
     fireEvent.change(screen.getByPlaceholderText("New task name…"), { target: { value: "New task" } });
@@ -849,7 +849,7 @@ describe("scoped playbook selection", () => {
   });
 });
 
-describe("OMP model default", () => {
+describe("Vinculum model default", () => {
   it("does not prefill a leftover claude-owned model", async () => {
     readEffectiveConfig.mockResolvedValue({
       defaults: { harness: "claude", model: "sonnet", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: true },
@@ -869,10 +869,10 @@ describe("OMP model default", () => {
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", "alinery/DeepSeek-V4.1-Flash");
   });
 
-  it("preserves a configured OMP default for signed-in accounts", async () => {
+  it("preserves a configured Vinculum default for signed-in accounts", async () => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
     readEffectiveConfig.mockResolvedValue({
-      defaults: { harness: "omp", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+      defaults: { harness: "vinculum", model: "anthropic/claude-sonnet-4-6", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
@@ -888,7 +888,7 @@ describe("OMP model default", () => {
 
   it.each(["anthropic/claude-sonnet-4-6", ""])("preserves the saved draft model %j while signed in", async (model) => {
     vi.mocked(ipc.accountStatus).mockResolvedValue({ signedIn: true, email: null, plan: null, paid: false, unavailable: false });
-    const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "omp", model } };
+    const initialDraft: BoardTask = { ...draftTask, launch_defaults: { harness: "vinculum", model } };
     render(<CreateTaskPage initialDraft={initialDraft} activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     await screen.findByRole("region", { name: /workflow preview$/ });
     expect(screen.getByLabelText("Task Default Model")).toHaveProperty("value", model);
@@ -1103,7 +1103,7 @@ describe("per-step default model", () => {
         knownRepos={["/repo"]}
         onCancel={() => {}}
         onCreated={() => {}}
-        initialDraft={{ ...draftTask, launch_defaults: { harness: "omp", model: "task-model" }, step_models: { build: "restored-override" } }}
+        initialDraft={{ ...draftTask, launch_defaults: { harness: "vinculum", model: "task-model" }, step_models: { build: "restored-override" } }}
       />,
     );
     expect(((await screen.findByLabelText("Build model")) as HTMLInputElement).value).toBe("restored-override");
@@ -1124,24 +1124,24 @@ describe("per-step default model", () => {
     expect(stepModel.value).not.toBe("remembered-model");
   });
 
-  it("shows the configured omp model as product default only after the task model is cleared", async () => {
+  it("shows the configured vinculum model as product default only after the task model is cleared", async () => {
     readEffectiveConfig.mockResolvedValue({
-      defaults: { harness: "omp", model: "configured-omp", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+      defaults: { harness: "vinculum", model: "configured-vinculum", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const taskModel = await screen.findByLabelText("Task Default Model");
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
-    expect(taskModel).toHaveProperty("value", "configured-omp");
-    expect(stepModel.value).toBe("configured-omp");
+    expect(taskModel).toHaveProperty("value", "configured-vinculum");
+    expect(stepModel.value).toBe("configured-vinculum");
     expect(screen.queryByText("Product default")).toBeNull();
     fireEvent.change(taskModel, { target: { value: "" } });
-    expect(stepModel.value).toBe("configured-omp");
+    expect(stepModel.value).toBe("configured-vinculum");
     expect(screen.getByText("Product default")).toBeTruthy();
   });
 
   it("leaves a step box blank only when the whole chain is empty", async () => {
     readEffectiveConfig.mockResolvedValue({
-      defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+      defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
     } as Config);
     render(<CreateTaskPage activeRepo="/repo" knownRepos={["/repo"]} onCancel={() => {}} onCreated={() => {}} />);
     const stepModel = (await screen.findByLabelText("Build model")) as HTMLInputElement;
@@ -1771,7 +1771,7 @@ describe("task creation feedback", () => {
     const result: CreateTaskResult = {
       ...readyReply,
       task: { name: "Slow task", slug: "slow-task", branch: "slow-task", worktree: "/repo/.alinery/worktrees/slow-task" } as Task,
-      sessions: [{ id: "s-slow-task", harness: "omp" }] as CreateTaskResult["sessions"],
+      sessions: [{ id: "s-slow-task", harness: "vinculum" }] as CreateTaskResult["sessions"],
       attachment_errors: [],
     };
     let finishCreate!: (result: CreateTaskResult) => void;

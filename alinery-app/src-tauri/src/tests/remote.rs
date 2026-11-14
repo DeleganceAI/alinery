@@ -1398,7 +1398,7 @@ fn remote_app_toml_carries_only_what_the_host_reads() {
         ..Default::default()
     }];
     local.global.power.keep_awake = true;
-    local.global.model_favorites.insert("omp".into(), vec!["alinery/favorite".into()]);
+    local.global.model_favorites.insert("vinculum".into(), vec!["alinery/favorite".into()]);
 
     let rendered = render_remote_app_toml(&local, &["/srv/r".to_string()], true).unwrap();
     assert!(

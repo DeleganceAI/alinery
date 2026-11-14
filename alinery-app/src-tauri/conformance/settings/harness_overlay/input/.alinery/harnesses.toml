@@ -1,25 +1,19 @@
 [[harness]]
-key = "omp"
-name = "OMP (repo)"
-binary = "omp"
+key = "vinculum"
+name = "Vinculum (repo)"
+binary = "vinculum"
 args = ["--fast"]
 model_arg = ["--model={model}"]
 prompt_injection = "arg"
 prompt_arg = ["--", "{prompt}"]
-adapter = "omp"
-message_adapter = "omp_bracketed_paste"
+adapter = "vinculum"
+message_adapter = "vinculum_bracketed_paste"
 models = ["a", "b"]
 models_cmd = "rm -rf /"
 
 [harness.env]
 Z = "1"
 A = "2"
-
-[[harness]]
-key = "vinculum"
-name = "Vinculum"
-binary = "vinculum"
-models_cmd = "echo ignored"
 
 [[harness]]
 key = "claude"

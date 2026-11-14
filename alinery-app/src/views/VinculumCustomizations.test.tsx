@@ -77,7 +77,7 @@ describe("Vinculum customizations", () => {
     expect(within(mcp).getByText("alinery")).toBeTruthy();
     expect(screen.getByText(/Vinculum harness/)).toBeTruthy();
     expect(screen.queryByText(/\bPi\b|\.pi\b/)).toBeNull();
-    expect(screen.queryByText(/this OMP installation/)).toBeNull();
+    expect(screen.queryByText(/this Vinculum installation/)).toBeNull();
     expect(screen.getByText(/Vinculum agent directory/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Show Ponytail in file manager" }));
     await waitFor(() => expect(mocks.revealItemInDir).toHaveBeenCalledWith("/config/agent/skills/ponytail/SKILL.md"));
@@ -176,7 +176,7 @@ describe("Vinculum customizations", () => {
     expect(screen.queryByText("Stale error")).toBeNull();
   });
 
-  it("copies generated instructions and does not mention OMP when that fails", async () => {
+  it("copies generated instructions and keeps the error private when that fails", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     const view = render(
@@ -201,7 +201,6 @@ describe("Vinculum customizations", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Copy instructions for an AI" }));
     expect(await screen.findByText(/Couldn't copy the customization instructions/)).toBeTruthy();
-    expect(screen.queryByText(/OMP/)).toBeNull();
     expect(screen.queryByText(/private stderr/)).toBeNull();
   });
 

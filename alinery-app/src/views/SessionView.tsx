@@ -22,12 +22,12 @@ import {
 } from "../chat/attachments";
 import { CopyArtifactButton, CopyTextButton, type PathLinks, PathLinksContext } from "../chat/CopyMessage";
 import type { ModelRolesMap } from "../chat/modelRoles";
-import { decodeOmpPage } from "../chat/ompFile";
 import { prepareChatAttachments } from "../chat/prepareAttachments";
 import { useProviderAccess } from "../chat/providerAccess";
 import { shouldOfferProviderSetup } from "../chat/providers";
 import type { ProvidersDialogTab } from "../chat/slash";
 import type { SessionChatStatus } from "../chat/types";
+import { decodeVinculumPage } from "../chat/vinculumFile";
 import { chatVisibilityFromAppearance } from "../chat/visibility";
 import {
   appendOptimisticAbort,
@@ -88,7 +88,7 @@ import {
   abortSession,
   archiveSession,
   promptSession,
-  readSessionOmp,
+  readSessionVinculum,
   renameSession,
   sessionArtifactReady,
   setSessionModel,
@@ -303,7 +303,7 @@ export function SessionView({
   const [hosted, setHosted] = useState<HostedCatalogView | null>(null);
   const [hostedLoaded, setHostedLoaded] = useState(false);
   const [grokReady, setGrokReady] = useState(false);
-  const ompStartRef = useRef<string | null>(null);
+  const vinculumStartRef = useRef<string | null>(null);
   const handledUiRef = useRef(new Set<string>());
   const setupOpenedRef = useRef(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -413,7 +413,7 @@ export function SessionView({
 
   // ---- session durability & resume gate (issue #24) ----
   // An explicit navigation intent (Start fresh -> spawn, Resume -> resume) skips the gate and
-  // mounts the terminal directly; leftover non-OMP rows still classify so the refuse panel
+  // mounts the terminal directly; leftover non-Vinculum rows still classify so the refuse panel
   // can render instead of a permanent spinner. Otherwise we classify once and decide whether
   // to mount a live terminal or a read-only action panel (never a silent phase re-run).
   const leftover = !isAllowedLaunchHarness(harness);
@@ -476,7 +476,7 @@ export function SessionView({
     setModelDialog(null);
     setModelError(null);
     setModelRoles({});
-    ompStartRef.current = null;
+    vinculumStartRef.current = null;
     handledUiRef.current.clear();
     setupOpenedRef.current = false;
   }, [id, taskSlug, repoPath, intent]);
@@ -516,7 +516,7 @@ export function SessionView({
     }
   };
   // Manual resume-token entry. launch harnesses (claude/grok) already carry a minted token, so in
-  // practice this modal only surfaces for omp (id_source = "manual"). ponytail: omp auto-resume
+  // practice this modal only surfaces for vinculum (id_source = "manual"). ponytail: vinculum auto-resume
 
   useEffect(() => {
     setArtifactTab("playbook");
@@ -910,14 +910,14 @@ export function SessionView({
   // Exited RPC sessions still support replay, but their processes cannot accept commands.
   const rpcProcessLive = liveRpc && observation?.lifecycle.state === "live" && observation.state?.process.state === "alive";
   const livePty = observation?.transport === "pty";
-  const ompCoding = vinculum && !leftover && !navHistory && !showPanel;
-  const showChat = ompCoding && Boolean(termIntent) && !livePty;
+  const vinculumCoding = vinculum && !leftover && !navHistory && !showPanel;
+  const showChat = vinculumCoding && Boolean(termIntent) && !livePty;
   const showPtyTerminal = Boolean(termIntent) && !showChat;
   const showChatComposer = showChat && composerEligible;
   useEffect(() => {
     if (!showChat || termIntent !== "spawn" || observation?.transport) return;
-    if (ompStartRef.current === id) return;
-    ompStartRef.current = id;
+    if (vinculumStartRef.current === id) return;
+    vinculumStartRef.current = id;
     void startSession(repoPath, taskSlug, id).catch((error) => {
       setTerminalConnection("failed");
       toast(String(error), "error");
@@ -925,12 +925,12 @@ export function SessionView({
   }, [showChat, termIntent, observation?.transport, id, taskSlug, repoPath, cwd, resumeToken]);
 
   // The journal owns committed history. It is read straight off disk, so it works for a dead
-  // session with no daemon, it survives a busy OMP that refuses RPC history, and it still holds
-  // the turns compaction dropped from OMP's context.
-  const loadOmpPage = useCallback(
+  // session with no daemon, it survives a busy Vinculum that refuses RPC history, and it still holds
+  // the turns compaction dropped from Vinculum's context.
+  const loadVinculumPage = useCallback(
     async (position: "initial" | "older", end?: number) => {
-      const buffer = await readSessionOmp(repoPath, { id, taskSlug: taskSlug || null, end: end ?? null });
-      const page = decodeOmpPage(buffer);
+      const buffer = await readSessionVinculum(repoPath, { id, taskSlug: taskSlug || null, end: end ?? null });
+      const page = decodeVinculumPage(buffer);
       setChat((current) => applyFilePage(current, page, position));
       return page;
     },
@@ -944,13 +944,13 @@ export function SessionView({
     if (olderBusy.current || from == null || from === 0) return;
     olderBusy.current = true;
     setLoadingOlder(true);
-    void loadOmpPage("older", from)
+    void loadVinculumPage("older", from)
       .catch(() => undefined)
       .finally(() => {
         olderBusy.current = false;
         setLoadingOlder(false);
       });
-  }, [loadOmpPage]);
+  }, [loadVinculumPage]);
 
   useEffect(() => {
     if (!vinculum || !showChat) return;
@@ -1562,14 +1562,14 @@ export function SessionView({
                 </div>
               )}
               <div className="termhost" ref={termhostRef} hidden={Boolean(fileTabs.current)}>
-                {ompCoding && Boolean(termIntent) && !liveRpc && !livePty && (
+                {vinculumCoding && Boolean(termIntent) && !liveRpc && !livePty && (
                   <div className="session-view-loading" role="status" aria-live="polite">
                     <LoadingState label="Opening session…" state="connecting" />
                   </div>
                 )}
                 {navHistory && (
                   <div className="terminal-frame">
-                    {/* `liveRpc` is false the moment the session dies, which used to drop a finished OMP
+                    {/* `liveRpc` is false the moment the session dies, which used to drop a finished Vinculum
                   chat onto the PTY terminal and a `.scrollback` an RPC session never wrote. The
                   journal does not need the session to be alive. */}
                     {liveRpc || vinculum ? (

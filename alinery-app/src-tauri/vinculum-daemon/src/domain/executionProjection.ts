@@ -39,7 +39,7 @@ export function projectExecution(execution: Execution, autoApproveAll = false, p
     depth: execution.depth,
     owner_session_id: execution.sessionId ?? "",
     previous_session_ids: [],
-    launch: { harness: "omp", model: "" },
+    launch: { harness: "vinculum", model: "" },
     is_coding_step: false,
     start_requested: true,
     lifecycle: lifecycle(execution),

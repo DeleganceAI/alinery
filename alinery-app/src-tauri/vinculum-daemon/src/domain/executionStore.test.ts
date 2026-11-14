@@ -26,7 +26,7 @@ function forkJoin(repo: string, slug: string, extra: Record<string, unknown> = {
   mkdirSync(join(dir, "sessions"), { recursive: true });
   writeFileSync(join(dir, "artifacts", "ticket.md"), "the task");
   const sections = KEYS.map((k) => `<!-- alinery:step ${k} -->\nDo ${k}.\n`).join("\n");
-  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fork-join"\ntitle = "Fork join"\ndescription = ""\ndefault_model = ""\ndefault_harness = "omp"\n\n${KEYS.map(step).join("\n")}\n+++\n${sections}\n`);
+  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fork-join"\ntitle = "Fork join"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n${KEYS.map(step).join("\n")}\n+++\n${sections}\n`);
   writeFileSync(join(dir, "task.md"), `name = "Fork join"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n`);
   writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: KEYS, auto_approve_all: false, ...extra }));
   return dir;
@@ -308,7 +308,7 @@ describe("Rust and TypeScript writers on one repository", () => {
     depth: 0,
     owner_session_id: "",
     previous_session_ids: [],
-    launch: { harness: "omp", model: "" },
+    launch: { harness: "vinculum", model: "" },
     is_coding_step: false,
     start_requested: false,
     lifecycle: "queued",

@@ -11,9 +11,9 @@ import { DomainError } from "../platform/lock.ts";
 import type { Store } from "../sync/store.ts";
 import { type Json, isVinculumSession, metaPathOf, namePathOf, setSessionName, stampMeta, stampSessionArchived } from "./sessionOps.ts";
 import { alineryDir, safeComponent, worktreesDir } from "./taskFiles.ts";
-import { newestOmpJsonl } from "./history.ts";
+import { newestVinculumJsonl } from "./history.ts";
 
-export const DEFAULT_HARNESS = "omp";
+export const DEFAULT_HARNESS = "vinculum";
 const rootDir = (repo: string) => join(alineryDir(repo), "sessions");
 export const chatWorktreesDir = (repo: string) => join(alineryDir(repo), "chat-worktrees");
 export const chatAttachmentsDir = (repo: string, id: string) => join(rootDir(repo), `${id}.attachments`);
@@ -39,7 +39,7 @@ const readMeta = (repo: string, id: string): Json | undefined => {
   }
 };
 
-/** `load_root_omp`: the meta of a chat thread, or the refusal for an id that is not one. */
+/** `load_root_vinculum`: the meta of a chat thread, or the refusal for an id that is not one. */
 export function loadChat(repo: string, id: string): Json {
   if (safeComponent(id) !== id) throw new DomainError("invalid_argument", "invalid session id");
   const meta = readMeta(repo, id);
@@ -277,7 +277,7 @@ async function resumeOnce(repo: string, sessions: ChatSessions, predecessorId: s
   if (successor) return successor;
   let token = text(predecessor.harness_resume_token);
   if (!token) {
-    token = newestOmpJsonl(join(rootDir(repo), `${predecessorId}.omp`)) ?? "";
+    token = newestVinculumJsonl(join(rootDir(repo), `${predecessorId}.vinculum`)) ?? "";
     if (!token) throw new DomainError("failed_precondition", "cannot continue");
   }
   const cwd = resumeCwd(repo, predecessor);

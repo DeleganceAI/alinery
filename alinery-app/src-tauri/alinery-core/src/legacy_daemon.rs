@@ -135,7 +135,7 @@ pub fn peer_process_identity(stream: &UnixStream) -> Result<PeerProcessIdentity,
 
 /// Source-audited shutdown request/ack dialects (9/10/12/15/16/18 historical, 24 to 37 current).
 /// Gaps are deliberate: normal protocol compatibility is not shutdown authority.
-/// Protocol 18 dropped the OMP process ops. Shutdown is still
+/// Protocol 18 dropped the agent process ops. Shutdown is still
 /// `{"op":"shutdown"}` acknowledged by `{"ok":true}`; the 24 to 38 daemons' handler
 /// (`vinculum-daemon/src/main.ts`, `op === "shutdown"`) still speaks exactly that; 25 added the RPC
 /// socket, 26 the settings services, 27 the execution service, 28 the task, draft and blob services (`create_task` stays as the wire `alinery-mcp` uses until S5.1), 29 the session and chat services, 30 the artifact service, 31 the playbook service, 32 the git service, 33 the sub-task service, 34 the backup service and the backup and purge jobs 35 the agent service and the community import calls 36 `SettingsService.WriteHostedInference` 37 the provider service (the `provider_*` and `custom_provider_*` ops left the JSON-lines wire) and 38 `AdminService.MintToken` and the three sub-task calls the MCP server makes, and each left this op alone.
@@ -852,12 +852,12 @@ mod tests {
     fn list_reply_accepts_structured_axes_and_requires_a_transport() {
         let session = |transport: Option<&str>| {
             let mut session = json!({
-                "id": "omp-id",
+                "id": "vinculum-id",
                 "process": {"state": "alive"},
                 "agent": {"state": "waiting_for_approval", "correlation_id": "call-1"},
                 "playbook": {"state": "in_progress"},
-                "adapter": "omp",
-                "message_adapter": "omp_bracketed_paste"
+                "adapter": "vinculum",
+                "message_adapter": "vinculum_bracketed_paste"
             });
             if let Some(transport) = transport {
                 session["transport"] = json!(transport);
@@ -866,11 +866,11 @@ mod tests {
         };
         let sessions = parse_list_reply(&session(Some("pty"))).expect("a structured session list parses");
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].id, "omp-id");
+        assert_eq!(sessions[0].id, "vinculum-id");
         assert_eq!(sessions[0].state.process, crate::ProcessState::Alive);
         assert_eq!(sessions[0].state.agent, crate::AgentState::WaitingForApproval { correlation_id: "call-1".into() });
-        assert_eq!(sessions[0].state.adapter, crate::HarnessAdapter::Omp);
-        assert_eq!(sessions[0].state.message_adapter, crate::MessageAdapter::OmpBracketedPaste);
+        assert_eq!(sessions[0].state.adapter, crate::HarnessAdapter::Vinculum);
+        assert_eq!(sessions[0].state.message_adapter, crate::MessageAdapter::VinculumBracketedPaste);
         assert_eq!(sessions[0].transport, crate::SessionTransport::Pty);
         assert!(parse_list_reply(&session(None)).is_err(), "a missing transport must not default to pty");
     }

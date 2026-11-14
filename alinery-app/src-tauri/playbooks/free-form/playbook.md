@@ -4,7 +4,7 @@ key = "free-form"
 title = "Free-form"
 description = "Perform ad-hoc task work in one human-steered session with a required inspectable result."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "session"

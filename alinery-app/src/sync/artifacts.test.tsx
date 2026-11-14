@@ -173,7 +173,7 @@ const handoffArgs = {
   sourceArtifact: "03-review.md",
   targetSlug: "t-task",
   targetPhase: "build",
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   promptExtra: "go",
 };

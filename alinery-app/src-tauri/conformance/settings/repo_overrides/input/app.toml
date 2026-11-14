@@ -1,3 +1,3 @@
 [global.defaults]
-harness = "omp"
+harness = "vinculum"
 model = "gpt-5"

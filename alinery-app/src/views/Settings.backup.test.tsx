@@ -21,7 +21,7 @@ const globalSettings = {
     dock_badge_completions: true,
   },
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+  defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: { destination: "", enabled: false, retention: 5, trigger_pre_archive: false, trigger_post_artifact_change: false, trigger_post_push_commit: false },
   harnesses: { harness: [] },
   model_favorites: {},

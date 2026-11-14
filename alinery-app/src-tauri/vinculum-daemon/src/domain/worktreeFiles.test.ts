@@ -49,7 +49,7 @@ async function fixture() {
       attachmentUrls: [],
       attachmentErrors: [],
       playbook: { reference: { scope: "bundled", key: "one-shot" }, source: PLAYBOOK },
-      launchDefaults: { harness: "omp", model: "" },
+      launchDefaults: { harness: "vinculum", model: "" },
       start: false,
     } as never,
   );

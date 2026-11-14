@@ -17,7 +17,7 @@ import { domain, fail, metaOf } from "./errors.ts";
 export type ProviderDeps = { providers: ReturnType<typeof openProviderRuntime>; repo: string; appConfig: string };
 
 /** The harnesses a session can launch with a model list: the Vinculum agent, whichever of its two names the row carries. */
-const MODEL_HARNESSES = new Set(["omp", "vinculum"]);
+const MODEL_HARNESSES = new Set(["vinculum"]);
 
 export function catalogToWire(c: ProviderCatalog): WireCatalog {
   return create(ProviderCatalogSchema, { providers: c.providers, models: c.models, custom: c.custom });

@@ -1,5 +1,5 @@
 //! Hosted Alinery models (Track B). Catalog/mint/revoke against accounts.alinery.ai;
-//! isolated OMP `models.yml`; never puts `inf_…` on IPC or in the OMP child env.
+//! isolated Vinculum `models.yml`; never puts `inf_…` on IPC or in the agent's env.
 //!
 //! Contract: envelope fields are frozen; `models[]` membership and `price` values are live.
 //! `GET /api/desktop/hosted-models` is unauthenticated — unsigned browse uses that, not a

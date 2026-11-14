@@ -25,7 +25,7 @@ const session = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   created: 10,
   archived: false,
   phase: "design",
-  harness: "omp",
+  harness: "vinculum",
   model: "",
   playbook: "superdevelop",
   generic: false,
@@ -52,7 +52,7 @@ const observation = (over: Partial<SessionObservation> = {}): SessionObservation
     process: { state: "alive" },
     agent: { state: "idle" },
     playbook: { state: "in_progress" },
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   },
   checkpoint: {},
@@ -65,7 +65,7 @@ const live = (agent: "busy" | "waiting_for_input" | "waiting_for_approval"): Ses
       process: { state: "alive" },
       agent: agent === "busy" ? { state: agent } : { state: agent, correlation_id: "c" },
       playbook: { state: "in_progress" },
-      adapter: "omp",
+      adapter: "vinculum",
       message_adapter: "unsupported",
     },
   });
@@ -96,7 +96,7 @@ describe("session attention classification", () => {
         process: { state: "alive" },
         agent: { state: "unknown" },
         playbook: { state: "in_progress" },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
     });
@@ -152,7 +152,7 @@ describe("session attention classification", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "failed", reason: "StaleSource" },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
     });
@@ -171,7 +171,7 @@ describe("session attention classification", () => {
             process: { state: "alive" },
             agent: { state: "idle" },
             playbook: { state: "failed", reason: "boom" },
-            adapter: "omp",
+            adapter: "vinculum",
             message_adapter: "unsupported",
           },
         }),
@@ -192,7 +192,7 @@ describe("session attention classification", () => {
             process: { state: "alive" },
             agent: { state: "idle" },
             playbook: { state: "failed", reason: "StaleSource" },
-            adapter: "omp",
+            adapter: "vinculum",
             message_adapter: "unsupported",
           },
         }),
@@ -205,7 +205,7 @@ describe("session attention classification", () => {
       process: "starting" | "alive" | "exited",
       agent: NonNullable<SessionObservation["state"]>["agent"],
       playbook: NonNullable<SessionObservation["state"]>["playbook"],
-      adapter: "omp" | "unsupported" = "omp",
+      adapter: "vinculum" | "unsupported" = "vinculum",
     ) =>
       observation({
         state: {
@@ -407,7 +407,7 @@ describe("notification occurrence and clear projection", () => {
       process: { state: "alive" },
       agent: { state: "idle" },
       playbook: { state: "failed", reason: "boom" },
-      adapter: "omp",
+      adapter: "vinculum",
       message_adapter: "unsupported",
     },
   });

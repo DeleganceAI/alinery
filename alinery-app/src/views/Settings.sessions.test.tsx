@@ -20,7 +20,7 @@ const baseGlobal: GlobalSettings = {
   },
 
   github: { token: "" },
-  defaults: { harness: "omp", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
+  defaults: { harness: "vinculum", model: "", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
   backup: {
     destination: "",
     enabled: false,
@@ -152,7 +152,7 @@ afterEach(() => {
 });
 
 describe("Harness settings model default", () => {
-  it("does not offer a leftover claude model as the OMP default", async () => {
+  it("does not offer a leftover claude model as the Vinculum default", async () => {
     mocks.readGlobalSettings.mockResolvedValue({
       ...baseGlobal,
       defaults: { harness: "claude", model: "sonnet", playbook: { scope: "bundled", key: "superdevelop" }, draft_autosave: false },
@@ -161,14 +161,14 @@ describe("Harness settings model default", () => {
     await waitFor(() => expect((screen.getByLabelText("Model") as HTMLInputElement).value).toBe(""));
   });
 
-  it("stamps defaults.harness as omp when a model is picked", async () => {
+  it("stamps defaults.harness as vinculum when a model is picked", async () => {
     mocks.readGlobalSettings.mockResolvedValue({ ...baseGlobal, defaults: { ...baseGlobal.defaults, harness: "claude", model: "sonnet" } });
     renderHarnessSection();
     fireEvent.click(await screen.findByRole("combobox", { name: "Model" }));
     fireEvent.click(await screen.findByRole("button", { name: "Pick GPT-5" }));
     await waitFor(() => expect(mocks.writeGlobalSettings).toHaveBeenCalled());
     const saved = mocks.writeGlobalSettings.mock.calls[mocks.writeGlobalSettings.mock.calls.length - 1][0] as GlobalSettings;
-    expect(saved.defaults.harness).toBe("omp");
+    expect(saved.defaults.harness).toBe("vinculum");
     expect(saved.defaults.model).toBe("openai/gpt-5");
     expect((screen.getByRole("combobox", { name: "Model" }) as HTMLInputElement).value).toBe("openai/gpt-5");
   });
@@ -304,10 +304,10 @@ describe("Sessions view and Chat tabs", () => {
 });
 
 describe("Harness providers", () => {
-  it("does not offer an OMP update", async () => {
+  it("does not offer a Vinculum update", async () => {
     renderHarnessSection();
     expect(await screen.findByRole("button", { name: "Providers & accounts" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Update OMP" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update Vinculum" })).toBeNull();
     expect(screen.queryByText(/Update available:/)).toBeNull();
     expect(screen.queryByText(/Installed:/)).toBeNull();
     expect(screen.getByLabelText("Model")).toBeTruthy();

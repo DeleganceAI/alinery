@@ -36,7 +36,7 @@ const stamped = (line: unknown, timestamp: number) => {
   return { ...event, message: { ...event.message, timestamp } };
 };
 
-describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
+describe("chatTranscript (live grok-4.6 / vinculum 18.1.10)", () => {
   it("records ready protocol v1", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-ready.json"));
     expect(state.ready).toBe(true);
@@ -109,7 +109,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     expect(state.ready).toBe(false);
   });
 
-  it("does not duplicate an optimistic user row when OMP echoes the same text", () => {
+  it("does not duplicate an optimistic user row when Vinculum echoes the same text", () => {
     const seeded = appendOptimisticUser(emptyTranscript(), "hello");
     const state = applyRpcLine(seeded, {
       type: "message_start",
@@ -287,12 +287,12 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
     const getState = (data: object) => ({ type: "response", command: "get_state", success: true, data });
     const withLevel = (thinking: string) => applyRpcLine(emptyTranscript(), getState({ model: reasoning, thinkingLevel: thinking }));
 
-    it("takes the level from the thinkingLevel OMP actually sends", () => {
+    it("takes the level from the thinkingLevel Vinculum actually sends", () => {
       const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "low" });
       expect(state.sessionMeta.thinking).toBe("low");
     });
 
-    it("shows the concrete level when OMP resolved a configured auto", () => {
+    it("shows the concrete level when Vinculum resolved a configured auto", () => {
       const state = applyRpcLine(withLevel("high"), { type: "thinking_level_changed", thinkingLevel: "medium", configured: "auto" });
       expect(state.sessionMeta.thinking).toBe("medium");
     });
@@ -317,7 +317,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
       expect(mixed.sessionMeta.thinkingLevels).toEqual(["off", "low", "high"]);
     });
 
-    it("clears the level for a model without reasoning, which OMP sends no level for", () => {
+    it("clears the level for a model without reasoning, which Vinculum sends no level for", () => {
       const state = applyRpcLine(withLevel("high"), getState({ model: { provider: "xai", id: "grok", reasoning: false } }));
       expect(state.sessionMeta.thinking).toBeUndefined();
       expect(state.sessionMeta.thinkingLevels).toEqual([]);
@@ -349,7 +349,7 @@ describe("chatTranscript (live grok-4.6 / omp 18.1.10)", () => {
 });
 
 describe("extension_ui_request confirm", () => {
-  it("maps OMP confirm message onto the approval row and pending instructions", () => {
+  it("maps Vinculum confirm message onto the approval row and pending instructions", () => {
     const state = applyRpcLine(emptyTranscript(), load("live-extension_ui_confirm.json"));
     const approval = state.entries.filter((e) => e.type === "approval");
     expect(approval).toHaveLength(1);
@@ -369,7 +369,7 @@ describe("extension_ui_request confirm", () => {
     ]);
   });
 
-  it("keeps instructions-only confirm detail for non-OMP producers", () => {
+  it("keeps instructions-only confirm detail for non-Vinculum producers", () => {
     const state = applyRpcLine(emptyTranscript(), {
       type: "extension_ui_request",
       id: "ui-confirm-instructions",
@@ -432,7 +432,7 @@ describe("journal pages", () => {
     expect(state.entries[0]).toMatchObject({ status: "error" });
   });
 
-  // Entry ids must come from the OMP row, or prepending an older page renumbers every mounted row
+  // Entry ids must come from the Vinculum row, or prepending an older page renumbers every mounted row
   // and React remounts the whole journal.
   it("keeps entry ids stable when an older page is prepended", () => {
     const first = applyFilePage(emptyTranscript(), { start: 400, messages: [msg("b", "user", "second")] }, "initial");
@@ -466,7 +466,7 @@ describe("journal pages", () => {
     const state = applyFilePage(emptyTranscript(), { start: 900, messages: [] }, "initial");
     expect(state.fileStart).toBe(900);
   });
-  it("lets OMP's turn_start emit its marker even after a send already guessed a turn", () => {
+  it("lets Vinculum's turn_start emit its marker even after a send already guessed a turn", () => {
     // Regression: the guess used to set `turnOpen`, so `openTurn` short-circuited and no start
     // marker was ever appended — leaving a dangling "Turn 1 end" for every prompt.
     const guessed = { ...emptyTranscript(), pendingTurn: true };
@@ -481,7 +481,7 @@ describe("journal pages", () => {
     expect(ended.turnOpen).toBe(false);
   });
 
-  it("drops the guessed turn when OMP refuses the send", () => {
+  it("drops the guessed turn when Vinculum refuses the send", () => {
     // Regression: nothing cleared the guess, so one refusal forced every later send to steer a
     // turn that did not exist, for the life of the mount.
     const guessed = { ...emptyTranscript(), pendingTurn: true };
@@ -517,12 +517,12 @@ describe("journal pages", () => {
     expect(matchingSendFailure({ type: "response", id: "c1", command: "get_state", success: false, error: "nope" }, "c1")).toBeNull();
     expect(matchingSendFailure({ type: "response", id: "c2", command: "prompt", success: false, error: "nope" }, "c1")).toBeNull();
   });
-  it("drops the guessed turn when OMP handled the command locally", () => {
+  it("drops the guessed turn when Vinculum handled the command locally", () => {
     const guessed = { ...emptyTranscript(), pendingTurn: true };
     const handled = applyRpcLine(guessed, { type: "response", success: true, command: "prompt", data: { agentInvoked: false } });
     expect(handled.pendingTurn).toBe(false);
   });
-  it("drops the guessed turn when only prompt_result says OMP ran an extension command locally", () => {
+  it("drops the guessed turn when only prompt_result says Vinculum ran an extension command locally", () => {
     const guessed = { ...emptyTranscript(), pendingTurn: true };
     const admitted = applyRpcLine(guessed, { type: "response", success: true, command: "prompt" });
     expect(admitted.pendingTurn).toBe(true);
@@ -597,7 +597,7 @@ describe("subagent envelopes", () => {
     expect(liveIds(cards).sort()).toEqual(["sa-1", "sa-2"]);
   });
 
-  it("produces no card when the envelope has no OMP id", () => {
+  it("produces no card when the envelope has no Vinculum id", () => {
     const state = applyRpcLine(emptyTranscript(), { type: "subagent_lifecycle", payload: { agent: "Explore", status: "started" } });
     expect(collectLiveSubagents(state.entries)).toEqual([]);
   });
@@ -669,7 +669,7 @@ describe("subagent envelopes", () => {
     expect(cards[0]?.preview).toBe("Still searching");
   });
 
-  // OMP stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
+  // Vinculum stores recentOutput newest-first (executor.ts refreshRecentOutput reverses the tail), so
   // element 0 is what the subagent is saying now. `description` is an async LLM-generated label.
   it("prefers the newest output line over the intent and the description", () => {
     const withOutput = applyRpcLine(emptyTranscript(), {
@@ -1442,7 +1442,7 @@ describe("settleRefusedSend", () => {
     expect(next.pendingTurn).toBe(false);
   });
 
-  it("takes back only its own message, never one OMP wrote with the same words", () => {
+  it("takes back only its own message, never one Vinculum wrote with the same words", () => {
     const journal = applyFilePage(emptyTranscript(), { start: 0, messages: [journalMessage] }, "initial");
     const state = appendOptimisticUser(journal, "continue", "prompt");
     const next = settleRefusedSend(state, "e1", "continue", true);
@@ -1545,7 +1545,7 @@ describe("carryOver", () => {
     expect(rowIds(next)).toEqual(["m1", "m2", "m3"]);
   });
 
-  it("keeps the rows OMP refused, under fresh ids, and none of the sends it accepted", () => {
+  it("keeps the rows Vinculum refused, under fresh ids, and none of the sends it accepted", () => {
     const typed = appendOptimisticUser(appendOptimisticUser(read(500, "m2"), "refused", "prompt"), "accepted", "prompt");
     const previous = settleRefusedSend(typed, "e1", "refused", false);
     const next = carryOver(previous, read(500, "m2", "m3"));

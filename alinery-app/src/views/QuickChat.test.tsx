@@ -54,7 +54,7 @@ function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
     created: 1,
     archived: false,
     phase: "",
-    harness: "omp",
+    harness: "vinculum",
     model: "grok",
     playbook: "",
     generic: true,
@@ -86,8 +86,8 @@ function observed() {
       process: { state: "alive" as const },
       agent: { state: "idle" as const },
       playbook: { state: "in_progress" },
-      adapter: "omp",
-      message_adapter: "omp_bracketed_paste",
+      adapter: "vinculum",
+      message_adapter: "vinculum_bracketed_paste",
     },
   };
 }
@@ -118,7 +118,7 @@ beforeEach(() => {
   mocks.listChatRepos.mockResolvedValue(["/repos/one", "/repos/two"]);
   fakeChat.reset();
   mocks.chatPrompt.mockResolvedValue(undefined);
-  // Every chat thread under test is a live idle OMP chat as the daemon reports it.
+  // Every chat thread under test is a live idle Vinculum chat as the daemon reports it.
   daemon = sessionDaemon();
   vi.mocked(daemonTransport).mockImplementation((repo) => daemon.transport(repo));
   for (const id of ["s-plain", "s-a", "s-b", "s-live"]) daemon.showId(id, observed() as SessionObservation);

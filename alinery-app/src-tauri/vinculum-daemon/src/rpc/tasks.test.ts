@@ -74,7 +74,7 @@ const createRequest = (name: string, extra: Record<string, unknown> = {}) => ({
   description: "do the thing",
   playbookRef: { scope: "bundled", key: "one-shot" },
   playbookSource: PLAYBOOK,
-  launchDefaults: { harness: "omp", model: "" },
+  launchDefaults: { harness: "vinculum", model: "" },
   start: false,
   ...extra,
 });
@@ -232,7 +232,7 @@ test("a draft is written, shows its images through the entity and ReadBlob, and 
     name: "Idea",
     description: "text",
     playbook: { scope: "bundled", key: "one-shot" },
-    launch: { harness: "omp", model: "" },
+    launch: { harness: "vinculum", model: "" },
     maxLiveSessions: 10,
     writeAttachments: true,
     attachmentEntries: ["a.txt"],

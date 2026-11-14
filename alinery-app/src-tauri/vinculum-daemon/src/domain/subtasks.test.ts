@@ -45,7 +45,7 @@ async function fixture() {
     name: "A",
     description: "the parent",
     playbook: playbook(),
-    launchDefaults: { harness: "omp", model: "" },
+    launchDefaults: { harness: "vinculum", model: "" },
     maxLiveSessions: 10,
     start: false,
   });
@@ -57,7 +57,7 @@ const noOpen = async () => {};
 
 /** The manager session of `a`, started by nobody (the daemon would open it). */
 async function manager(repo: string, slug = "a") {
-  const made = await createManagerSession(repo, { slug, recover: false, harness: "omp", start: false }, noOpen);
+  const made = await createManagerSession(repo, { slug, recover: false, harness: "vinculum", start: false }, noOpen);
   return String(made.session.id);
 }
 
@@ -81,7 +81,7 @@ test("a fresh task offers a sub-task and a task without a worktree gives the rea
 test("the manager session is written with its prompt, refuses a second, and reports a failed start", async () => {
   const repo = await fixture();
   const opened: string[] = [];
-  const made = await createManagerSession(repo, { slug: "a", recover: false, harness: "omp", model: "m", start: true }, async (id, slug, model, prompt) => {
+  const made = await createManagerSession(repo, { slug: "a", recover: false, harness: "vinculum", model: "m", start: true }, async (id, slug, model, prompt) => {
     opened.push(`${slug}:${model}:${prompt.includes("Parent task")}:${id}`);
   });
   expect(made.start).toBe("started");
@@ -93,10 +93,10 @@ test("the manager session is written with its prompt, refuses a second, and repo
   expect(meta.subtask_slug).toBeUndefined();
   expect(meta.prompt).toContain(id);
   expect(meta.prompt).not.toMatch(/\{\{[A-Z_]+\}\}/);
-  await expect(createManagerSession(repo, { slug: "a", recover: false, harness: "omp", start: false }, noOpen)).rejects.toThrow("live or unstarted manager");
+  await expect(createManagerSession(repo, { slug: "a", recover: false, harness: "vinculum", start: false }, noOpen)).rejects.toThrow("live or unstarted manager");
 
   const other = await fixture();
-  const failed = await createManagerSession(other, { slug: "a", recover: false, harness: "omp", start: true }, async () => {
+  const failed = await createManagerSession(other, { slug: "a", recover: false, harness: "vinculum", start: true }, async () => {
     throw new Error("no spawn");
   });
   expect(failed.start).toBe("failed");
@@ -164,8 +164,8 @@ test("recovery binds a manager to the active child and nothing else", async () =
   meta.created = 1; // older than the recovery, whose second may be the same
   writeFileSync(path, JSON.stringify(meta));
   expect(subtaskState(repo, "a").canRecover).toBe(true);
-  await expect(createManagerSession(repo, { slug: "a", recover: true, subtaskSlug: "other", harness: "omp", start: false }, noOpen)).rejects.toThrow("missing child task");
-  const recovered = await createManagerSession(repo, { slug: "a", recover: true, subtaskSlug: "b", harness: "omp", start: false }, noOpen);
+  await expect(createManagerSession(repo, { slug: "a", recover: true, subtaskSlug: "other", harness: "vinculum", start: false }, noOpen)).rejects.toThrow("missing child task");
+  const recovered = await createManagerSession(repo, { slug: "a", recover: true, subtaskSlug: "b", harness: "vinculum", start: false }, noOpen);
   expect(recovered.session.subtask_slug).toBe("b");
   expect(String(recovered.session.prompt)).toContain("b");
   expect(subtaskState(repo, "a").managerSession?.id).toBe(recovered.session.id);
@@ -208,7 +208,7 @@ test("killing a bound child archives it and its active descendants, and the pare
   await createChild(repo, nested, "c");
   const childSession = join(sessionsDir(repo, "c"), "child-session.meta.json");
   mkdirSync(sessionsDir(repo, "c"), { recursive: true });
-  writeFileSync(childSession, JSON.stringify({ id: "child-session", worktree: readTask(repo, "c")?.worktree, created: 4, harness: "omp", generic: true }));
+  writeFileSync(childSession, JSON.stringify({ id: "child-session", worktree: readTask(repo, "c")?.worktree, created: 4, harness: "vinculum", generic: true }));
   const engineBefore = loadEngineState(repo, "a").kind;
   const executionBefore = readFileSync(join(taskDir(repo, "a"), "execution.json"), "utf8");
   const dirty = join(readTask(repo, "b")?.worktree as string, "dirty");

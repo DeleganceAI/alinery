@@ -1,5 +1,5 @@
 // The session writes and reads (plan S4.4): create, start, rename, archive, kill, notification marks, the scrollback and
-// the OMP journal. What `rename_session`, `archive_session`, `create_session_for_repo`, `kill_session_for_repo`,
+// the Vinculum journal. What `rename_session`, `archive_session`, `create_session_for_repo`, `kill_session_for_repo`,
 // `read_session_history` and their neighbours answered is answered here from the daemon's SessionService; the shapes
 // are the ones the views have always read.
 import { create } from "@bufbuild/protobuf";
@@ -9,8 +9,8 @@ import { type SessionControls as SessionControlsMessage, SessionService, type Se
 import type { SessionControls } from "../chatTranscript";
 import { daemonTransport } from "../daemon/transport";
 import * as ipc from "../ipc";
-import type { ImageContent } from "../ompRpc";
 import type { CreateExecutionSessionReply, CreateExecutionSessionRequest, SessionMeta, SessionName, SessionNameSource, SessionNotificationClearRef } from "../types";
+import type { ImageContent } from "../vinculumRpc";
 import { newMutationMeta } from "./mutation";
 
 /** The client, replaceable by a test (a fake transport stands in for the daemon). */
@@ -127,10 +127,10 @@ export async function readSessionHistory(repo: string, a: { id: string; taskSlug
   return reply.data.buffer.slice(reply.data.byteOffset, reply.data.byteOffset + reply.data.byteLength) as ArrayBuffer;
 }
 
-/** One backward page of the OMP journal in the framing `decodeOmpPage` reads: a JSON header line, then the window. */
-export async function readSessionOmp(repo: string, a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }): Promise<ArrayBuffer> {
+/** One backward page of the Vinculum journal in the framing `decodeVinculumPage` reads: a JSON header line, then the window. */
+export async function readSessionVinculum(repo: string, a: { id: string; taskSlug?: string | null; end?: number | null; want?: number | null }): Promise<ArrayBuffer> {
   const w = await call(() =>
-    sessionApi.sessions(repo).readOmpWindow({
+    sessionApi.sessions(repo).readVinculumWindow({
       session: ref(a.taskSlug ?? "", a.id),
       end: a.end == null ? undefined : BigInt(a.end),
       want: a.want == null ? undefined : BigInt(a.want),

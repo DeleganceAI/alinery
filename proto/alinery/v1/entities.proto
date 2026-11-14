@@ -113,8 +113,8 @@ message Execution {
 // from the file's path; `status` is the live state, which S2.5 fills.
 message SemanticCheckpoint {
   optional uint64 phase_completed_at = 1;
-  optional string omp_session_id = 2;
-  optional uint64 omp_turn_id = 3;
+  optional string vinculum_session_id = 2;
+  optional uint64 vinculum_turn_id = 3;
 }
 message NotificationSuppression {
   string notice = 1;  // waiting_for_input, waiting_for_approval or failure
@@ -435,8 +435,8 @@ message Harness {
   repeated string prompt_arg = 6;
   map<string, string> env = 7;
   string prompt_injection = 8;
-  string adapter = 9;          // omp or unsupported
-  string message_adapter = 10;  // omp_bracketed_paste or unsupported
+  string adapter = 9;          // vinculum or unsupported
+  string message_adapter = 10;  // vinculum_bracketed_paste or unsupported
   repeated string models = 11;
   string models_cmd = 12;
   optional HarnessResume resume = 13;

@@ -50,7 +50,7 @@ describe("state", () => {
     handlers.subtaskState = () => ({
       task: summary("parent"),
       activeSubtask: { ...summary("child"), archived: true, subtaskOutcome: "killed" },
-      managerSession: { id: "m1", worktree: "/w/parent", created: 5n, subtaskManager: true, subtaskSlug: "child", harness: "omp" },
+      managerSession: { id: "m1", worktree: "/w/parent", created: 5n, subtaskManager: true, subtaskSlug: "child", harness: "vinculum" },
       managerOwnerTaskSlug: "parent",
       canStart: false,
       canRecover: true,
@@ -71,7 +71,7 @@ describe("state", () => {
     });
     expect(r.active_subtask).toMatchObject({ slug: "child", archived: true, subtask_outcome: "killed" });
     expect(r.parent_task).toBeNull();
-    expect(r.manager_session).toMatchObject({ id: "m1", created: 5, subtask_manager: true, subtask_slug: "child", harness: "omp" });
+    expect(r.manager_session).toMatchObject({ id: "m1", created: 5, subtask_manager: true, subtask_slug: "child", harness: "vinculum" });
     expect(r.parent_manager_session).toBeNull();
     expect(r).toMatchObject({ manager_owner_task_slug: "parent", can_start: false, can_recover: true, disabled_reason: "Finish the active sub-task before starting another" });
   });

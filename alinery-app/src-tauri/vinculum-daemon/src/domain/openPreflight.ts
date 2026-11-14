@@ -3,7 +3,7 @@
 // remote repository is checked by its own host with the same code. The hosted-inference refresh stays in the shell.
 import { readTask } from "./taskFiles.ts";
 
-const ALLOWED_HARNESSES = ["omp", "vinculum", "no-harness"];
+const ALLOWED_HARNESSES = ["vinculum", "no-harness"];
 
 /**
  * `metaHarness` is the harness the session's meta file records (undefined when the meta is missing or unreadable).

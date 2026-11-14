@@ -26,7 +26,7 @@ function lockedTask(repo: string, slug: string) {
   mkdirSync(join(dir, "sessions"), { recursive: true });
   writeFileSync(join(dir, "artifacts", "ticket.md"), "the task");
   const step = `[[step]]\nkey = "work"\ntitle = "Work"\nshort = ""\ninputs = [{ path = "ticket.md", mode = "single" }]\noutputs = [{ path = "out.md" }]\nmodel = ""\nharness = ""\nis_coding_step = false\nauto_advance_default = false`;
-  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "omp"\n\n${step}\n+++\n<!-- alinery:step work -->\nDo the step.\n`);
+  writeFileSync(join(dir, "playbook.md"), `+++\nversion = 2\nkey = "fixture"\ntitle = "Fixture"\ndescription = ""\ndefault_model = ""\ndefault_harness = "vinculum"\n\n${step}\n+++\n<!-- alinery:step work -->\nDo the step.\n`);
   writeFileSync(join(dir, "task.md"), `name = "Fixture"\nworktree = ${JSON.stringify(repo)}\nhas_worktree = true\n`);
   writeFileSync(join(dir, "execution.json"), JSON.stringify({ creation: "ready", initial_start_requested: true, max_live_sessions: 10, enabled_steps: [], auto_approve_all: false }));
 }

@@ -1,7 +1,7 @@
 import type { ChatModelOption } from "../chatTranscript";
 import type { HostedCatalogView } from "../types";
 
-/** Product provider for Alinery-hosted models. Not an OMP login row. */
+/** Product provider for Alinery-hosted models. Not a Vinculum login row. */
 export const HOSTED_PROVIDER = "alinery";
 
 /** xAI chat models the daemon can launch when a Grok key is saved. Same ids as pi-ai's xAI catalog. */
@@ -79,12 +79,12 @@ export type AdvancedProviderRow = {
 /**
  * Does this session need the accounts dialog before it can do anything?
  *
- * Login is only one of the two ways OMP gets credentials: a provider configured by env var or
+ * Login is only one of the two ways Vinculum gets credentials: a provider configured by env var or
  * `config.yml` never appears in `get_login_providers` at all, it just shows up in the model list.
  * Judging setup on login rows alone therefore nags people who are perfectly well authenticated.
  *
  * The env test is deliberately the same one `partitionProviders` uses — models present *and no
- * login row* — rather than "this provider has models". OMP caches a static model catalogue per
+ * login row* — rather than "this provider has models". Vinculum caches a static model catalogue per
  * provider whether or not it holds a credential (`models.db`), so for a provider that does have a
  * login row, models say nothing about auth and only `authenticated` does.
  */
@@ -142,7 +142,7 @@ export function partitionProviders(input: { loginProviders: LoginProvider[]; mod
   return { chatLogin, advanced: advancedList };
 }
 
-/** Append xAI rows when Settings has a Grok key. Absent from the hosted catalog and from OMP's model list. */
+/** Append xAI rows when Settings has a Grok key. Absent from the hosted catalog and from Vinculum's model list. */
 export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): ChatModelOption[] {
   if (!enabled) return models;
   const seen = new Set(models.map((model) => `${model.provider}/${model.id}`));
@@ -150,7 +150,7 @@ export function mergeGrokModels(models: ChatModelOption[], enabled: boolean): Ch
   return extra.length > 0 ? [...models, ...extra] : models;
 }
 
-/** Catalog rows first; drop OMP duplicates of the same `alinery/<id>`. */
+/** Catalog rows first; drop Vinculum duplicates of the same `alinery/<id>`. */
 export function mergeHostedModels(models: ChatModelOption[], hosted: HostedCatalogView | null | undefined): ChatModelOption[] {
   if (!hosted) return models;
   const hostedRows = hosted.models.map((m) => ({ provider: HOSTED_PROVIDER, id: m.id }));

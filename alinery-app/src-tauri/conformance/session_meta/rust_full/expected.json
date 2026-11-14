@@ -28,8 +28,8 @@
     "prompt_extra": "be careful",
     "resume_of": "a0",
     "semantic": {
-      "omp_session_id": "omp-1",
-      "omp_turn_id": 3,
+      "vinculum_session_id": "vinculum-1",
+      "vinculum_turn_id": 3,
       "phase_completed_at": 1700000008
     },
     "started_at": 1700000002,

@@ -1,5 +1,5 @@
 [global.defaults]
-harness = "omp"
+harness = "vinculum"
 model = "gpt-5"
 thinking = "high"
 draft_autosave = true

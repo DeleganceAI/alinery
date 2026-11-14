@@ -109,7 +109,7 @@ test("an edit made on disk is seen before the revision is compared", async () =>
 
 test("ClearOverride clears one field; an unknown field and a refused file are refused", async () => {
   const { settings, alinery, store } = await start();
-  await settings().writeOverrides({ meta: meta("m1"), overrides: { defaults: { model: "m", harness: "omp", thinking: "high" } } });
+  await settings().writeOverrides({ meta: meta("m1"), overrides: { defaults: { model: "m", harness: "vinculum", thinking: "high" } } });
   await settings().clearOverride({ meta: meta("m2"), field: "defaults.model" });
   const row = store.get(settingsKey)!;
   const overrides = row.value.case === "settings" ? row.value.value.overrides : undefined;

@@ -356,7 +356,7 @@ mod tests {
                 "live",
                 SessionMeta {
                     started_at: Some(1),
-                    harness: "omp".into(),
+                    harness: "vinculum".into(),
                     ..Default::default()
                 },
             ),
@@ -536,9 +536,9 @@ mod tests {
     }
 
     #[test]
-    fn user_rename_of_root_omp_does_not_require_task_md() {
-        let (repo, id) = root_omp_fixture("alinery-chat-name");
-        let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root omp rename");
+    fn user_rename_of_root_vinculum_does_not_require_task_md() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-name");
+        let outcome = set_session_name(&repo, "", id, "Thread title", SessionNameSource::User).expect("root vinculum rename");
         assert_eq!(outcome.value.name, "Thread title");
         assert_eq!(outcome.value.source, SessionNameSource::User);
         let sidecar = root_sessions_dir(&repo).join(format!("{id}.name.json"));
@@ -548,7 +548,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
-    fn root_omp_fixture(prefix: &str) -> (std::path::PathBuf, &'static str) {
+    fn root_vinculum_fixture(prefix: &str) -> (std::path::PathBuf, &'static str) {
         let repo = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
         let id = "s01234567";
         let meta_path = session_meta_path(&repo, "", id);
@@ -570,8 +570,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_saves_when_no_name_exists() {
-        let (repo, id) = root_omp_fixture("alinery-chat-auto");
+    fn auto_rename_of_root_vinculum_saves_when_no_name_exists() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-auto");
         let outcome = set_session_name(&repo, "", id, "Auto title", SessionNameSource::Auto).expect("auto root rename");
         assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
         assert_eq!(read_session_name(&repo, "", id).unwrap(), Some(outcome.value));
@@ -579,8 +579,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_replaces_an_auto_name() {
-        let (repo, id) = root_omp_fixture("alinery-chat-retitle");
+    fn auto_rename_of_root_vinculum_replaces_an_auto_name() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-retitle");
         set_session_name(&repo, "", id, "First title", SessionNameSource::Auto).unwrap();
         let outcome = set_session_name(&repo, "", id, "Second title", SessionNameSource::Auto).unwrap();
         assert_eq!(outcome.status, SessionNameWriteStatus::Saved);
@@ -590,8 +590,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_rename_of_root_omp_yields_to_a_user_name_and_writes_nothing() {
-        let (repo, id) = root_omp_fixture("alinery-chat-user-wins");
+    fn auto_rename_of_root_vinculum_yields_to_a_user_name_and_writes_nothing() {
+        let (repo, id) = root_vinculum_fixture("alinery-chat-user-wins");
         let user = set_session_name(&repo, "", id, "Human title", SessionNameSource::User).unwrap();
         let path = session_name_path(&repo, "", id);
         let before = std::fs::read(&path).unwrap();

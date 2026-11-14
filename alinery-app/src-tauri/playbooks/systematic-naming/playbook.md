@@ -4,7 +4,7 @@ key = "systematic-naming"
 title = "Systematic Naming"
 description = "Frame a naming brief, generate diverse batches, analyze every candidate, rank complete groups, research a human-approved shortlist and record the human decision."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "frame-naming-brief"

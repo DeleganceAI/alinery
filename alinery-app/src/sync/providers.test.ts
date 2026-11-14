@@ -110,11 +110,11 @@ it("sends a reply, a cancel, a logout and the custom provider calls with a fresh
 it("lists models from the daemon of the repository named, else the active one, and says why a call failed", async () => {
   const asked: string[] = [];
   serve({ listModels: (r) => (asked.push(r.harness), { models: ["house/a", "groq/llama"] }) });
-  expect(await listModels("omp", "/b")).toEqual(["house/a", "groq/llama"]);
+  expect(await listModels("vinculum", "/b")).toEqual(["house/a", "groq/llama"]);
   expect(vi.mocked(daemonTransport)).toHaveBeenLastCalledWith("/b");
-  await listModels("omp");
+  await listModels("vinculum");
   expect(vi.mocked(daemonTransport)).toHaveBeenLastCalledWith("alinery+ssh://box/srv/r");
-  expect(asked).toEqual(["omp", "omp"]);
+  expect(asked).toEqual(["vinculum", "vinculum"]);
   serve({
     catalog: () => {
       throw new ConnectError("needs ADMIN", Code.PermissionDenied);

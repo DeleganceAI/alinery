@@ -1,4 +1,4 @@
-//! Taskless OMP chat threads. The rail, the thread writes, the turn controls and the attachments are the daemon's ChatService
+//! Taskless Vinculum chat threads. The rail, the thread writes, the turn controls and the attachments are the daemon's ChatService
 //! (`vinculum-daemon/src/rpc/chat.ts`); what stays here is which repos Chat may use.
 use crate::*;
 

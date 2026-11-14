@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe("ProviderSetupDialog", () => {
-  it("lists hosted models without opening an OMP session", async () => {
+  it("lists hosted models without opening a Vinculum session", async () => {
     settleIpc(readyHosted);
     render(<ProviderSetupDialog mode="manual" initialTab="models" onClose={vi.fn()} />);
     expect(await screen.findByRole("button", { name: /^alinery\/Qwen3\.6-35B-A3B/ })).toBeTruthy();
@@ -95,7 +95,7 @@ describe("ProviderSetupDialog", () => {
     expect(screen.queryByText("Connecting…")).toBeNull();
   });
 
-  it("closes an automatic offer once the catalog has loaded and no OMP login is required", async () => {
+  it("closes an automatic offer once the catalog has loaded and no Vinculum login is required", async () => {
     settleIpc(readyHosted);
     const onClose = vi.fn();
     render(<ProviderSetupDialog mode="auto" onClose={onClose} />);

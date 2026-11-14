@@ -1,19 +1,19 @@
 import type { UserRowAttachment } from "../chat/attachments";
-import { decodeOmpPage } from "../chat/ompFile";
 import { applySendPlan } from "../chat/send";
+import { decodeVinculumPage } from "../chat/vinculumFile";
 import { applyFilePage, type ChatTranscriptState, emptyTranscript } from "../chatTranscript";
-import { abortAndPromptCommand, followUpCommand, type ImageContent, promptCommand } from "../ompRpc";
 import type { SessionTerminalIo } from "../SessionTerminal";
 import { observationNow } from "../sync/sessionObservation";
+import { abortAndPromptCommand, followUpCommand, type ImageContent, promptCommand } from "../vinculumRpc";
 
 export function journalState(buffer: ArrayBuffer): ChatTranscriptState {
-  const page = decodeOmpPage(buffer);
+  const page = decodeVinculumPage(buffer);
   return applyFilePage(emptyTranscript(), { start: page.start, messages: page.messages }, "initial");
 }
 
 /**
  * Idle sends a prompt; a running turn queues a follow-up. Never route on "has this thread started":
- * OMP drains follow-ups only after an assistant/toolResult message, so a follow-up on an empty
+ * Vinculum drains follow-ups only after an assistant/toolResult message, so a follow-up on an empty
  * session is accepted and never run.
  */
 export function sendCommand(text: string, busy: boolean, images?: ImageContent[]) {

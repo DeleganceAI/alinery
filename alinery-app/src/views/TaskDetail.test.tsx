@@ -252,7 +252,7 @@ const observation = (agent: "busy" | "idle"): SessionObservation => ({
     process: { state: "alive" },
     agent: { state: agent },
     playbook: { state: "in_progress" },
-    adapter: "omp",
+    adapter: "vinculum",
     message_adapter: "unsupported",
   },
   checkpoint: {},
@@ -634,8 +634,8 @@ describe("session work names", () => {
     expect(onOpenSession.mock.lastCall?.[1]).toBe(rawManager.id);
   });
 
-  it("shows a waiting ellipsis for a live unnamed OMP session and still opens rename", async () => {
-    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
+  it("shows a waiting ellipsis for a live unnamed Vinculum session and still opens rename", async () => {
+    scenario.sessions = [session({ id: "waiting", harness: "vinculum" })];
     sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     await renderDetail();
     expect(await screen.findByRole("status", { name: "Waiting for session name" })).toBeDefined();
@@ -646,7 +646,7 @@ describe("session work names", () => {
 
   it("replaces the name animation with a dash when a live agent becomes idle", async () => {
     vi.useFakeTimers();
-    scenario.sessions = [session({ id: "waiting", harness: "omp" })];
+    scenario.sessions = [session({ id: "waiting", harness: "vinculum" })];
     sessionStatuses.mockResolvedValue({ waiting: observation("busy") });
     const rendered = renderDetail();
     await vi.waitFor(() => expect(screen.getByRole("status", { name: "Waiting for session name" })).toBeDefined());
@@ -664,7 +664,7 @@ describe("session work names", () => {
   });
 
   it("keeps a static placeholder when an unnamed session is not waiting for a name", async () => {
-    scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "omp" })];
+    scenario.sessions = [session({ id: "terminal", harness: "no-harness" }), session({ id: "stopped", harness: "vinculum" })];
     sessionStatuses.mockResolvedValue({
       terminal: observation("busy"),
       stopped: { lifecycle: { state: "exited", code: 0 }, state: null, checkpoint: {} },
@@ -927,7 +927,7 @@ describe("task session row Stop", () => {
       { id: "exited", agent: "busy", transport: "rpc", live: false },
       { id: "terminal", agent: "busy", transport: "pty", live: true },
     ] as const;
-    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "omp" }), name: id }));
+    scenario.sessions = rows.map(({ id }) => ({ ...session({ id, harness: "vinculum" }), name: id }));
     sessionStatuses.mockResolvedValue(
       Object.fromEntries(
         rows.map(({ id, agent, transport, live }): [string, SessionObservation] => {
@@ -1088,7 +1088,7 @@ describe("Task Detail sub-task manager projection", () => {
         process: { state: "exited", code: 143 },
         agent: { state: "idle" },
         playbook: { state: "failed", reason: "Process exited" },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
       checkpoint: {},
@@ -1302,8 +1302,8 @@ describe("Task Detail sub-task manager projection", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "in_progress" },
-        adapter: "omp",
-        message_adapter: "omp_bracketed_paste",
+        adapter: "vinculum",
+        message_adapter: "vinculum_bracketed_paste",
       },
       checkpoint: {},
     };
@@ -2123,7 +2123,7 @@ describe("session time columns and sorting", () => {
         process: { state: "alive" },
         agent: { state: "idle" },
         playbook: { state: "failed", reason },
-        adapter: "omp",
+        adapter: "vinculum",
         message_adapter: "unsupported",
       },
       checkpoint: {},

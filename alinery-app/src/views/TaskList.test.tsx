@@ -50,7 +50,7 @@ const summary = (overrides: Partial<TaskActivitySummary> = {}): TaskActivitySumm
     id: "older-design",
     worktree: "/w/a-task",
     phase: "design",
-    harness: "omp",
+    harness: "vinculum",
     model: "",
     playbook: "superdevelop",
     generic: false,
@@ -371,7 +371,7 @@ describe("Task List column sorting", () => {
         "/r:zulu": summary({ status: "running" }),
         "/r:alpha": summary({
           status: "failed",
-          active_session: { id: "build", worktree: "/w/alpha", phase: "build", harness: "omp", model: "", playbook: "superdevelop", generic: false, step_title: "Build" },
+          active_session: { id: "build", worktree: "/w/alpha", phase: "build", harness: "vinculum", model: "", playbook: "superdevelop", generic: false, step_title: "Build" },
         }),
       },
     });

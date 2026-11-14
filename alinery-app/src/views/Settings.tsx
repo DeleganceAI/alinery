@@ -52,7 +52,7 @@ import { createGridViewId, gridViewShortcut, MAX_GRID_VIEWS, nextGridViewName, n
 import { ORB_STATE } from "../Indicators";
 import * as ipc from "../ipc";
 import { isRemoteRepo } from "../remoteRepo";
-import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, ompDefaultModel, playbookRefKey, repoName, samePlaybookRef } from "../shared";
+import { Checkbox, EmptyState, InlineStatus, LoadingState, ModelInput, playbookRefKey, repoName, samePlaybookRef, vinculumDefaultModel } from "../shared";
 import { startupViewOptions } from "../startupView";
 import { useLiveSessionsByRepo } from "../sync/hooks";
 import { useOverlay } from "../sync/overlay";
@@ -1210,16 +1210,16 @@ export function Settings({
             {!isGlobal && sourceBadge(provenance.model, `${key}.model`)}
           </label>
           <ModelInput
-            harness="omp"
+            harness="vinculum"
             repoPath={repoPath || undefined}
-            value={ompDefaultModel(value)}
+            value={vinculumDefaultModel(value)}
             onChange={(v) => {
-              if (isGlobal) setGlobal({ ...global, [key]: { ...global[key], harness: "omp", model: v } });
-              else setRepoChoice(key, { harness: "omp", model: v });
+              if (isGlobal) setGlobal({ ...global, [key]: { ...global[key], harness: "vinculum", model: v } });
+              else setRepoChoice(key, { harness: "vinculum", model: v });
             }}
             onCommit={(v) => {
-              if (isGlobal) updateGlobalChoice(key, { harness: "omp", model: v });
-              else saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], harness: "omp", model: v } });
+              if (isGlobal) updateGlobalChoice(key, { harness: "vinculum", model: v });
+              else saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], harness: "vinculum", model: v } });
             }}
             onOpenPicker={() => setPickModelFor(key)}
           />
@@ -1229,11 +1229,11 @@ export function Settings({
               initialTab="models"
               onPick={(v) => {
                 if (isGlobal) {
-                  setGlobal({ ...global, [key]: { ...global[key], harness: "omp", model: v } });
-                  updateGlobalChoice(key, { harness: "omp", model: v });
+                  setGlobal({ ...global, [key]: { ...global[key], harness: "vinculum", model: v } });
+                  updateGlobalChoice(key, { harness: "vinculum", model: v });
                 } else {
-                  setRepoChoice(key, { harness: "omp", model: v });
-                  saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], harness: "omp", model: v } });
+                  setRepoChoice(key, { harness: "vinculum", model: v });
+                  saveRepoOverrides({ ...overrides, [key]: { ...overrides[key], harness: "vinculum", model: v } });
                 }
               }}
               onClose={() => setPickModelFor(null)}
@@ -1762,8 +1762,8 @@ export function Settings({
             </p>
           </details>
         </section>
-        <section className="omp-settings" aria-labelledby="providers-settings-title">
-          <div className="omp-settings-heading">
+        <section className="vinculum-settings" aria-labelledby="providers-settings-title">
+          <div className="vinculum-settings-heading">
             <h3 id="providers-settings-title">Providers</h3>
             <p className="hint">Sign in to model providers for this installation.</p>
           </div>
@@ -1992,7 +1992,7 @@ export function Settings({
             name: "Terminal text",
             noun: "terminal font size",
             // Terminals take this size literally; interface scale never touches it.
-            sample: <span style={{ fontFamily: "var(--font-mono)", fontSize: `${appearance.terminal_font_size}px` }}>$ omp</span>,
+            sample: <span style={{ fontFamily: "var(--font-mono)", fontSize: `${appearance.terminal_font_size}px` }}>$ vinculum</span>,
             value: appearance.terminal_font_size,
             min: TERMINAL_FONT_MIN,
             max: TERMINAL_FONT_MAX,

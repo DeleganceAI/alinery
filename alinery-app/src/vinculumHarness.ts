@@ -1,6 +1,5 @@
-/** Session meta records the Vinculum agent as `vinculum`. `omp` is the registry key and a file the daemon has not rewritten yet. */
 export function isVinculumHarness(key: string): boolean {
-  return key === "vinculum" || key === "omp";
+  return key === "vinculum";
 }
 
 type RecoverableExecution = { owner_session_id: string; lifecycle: string; receipt_id: string | null };

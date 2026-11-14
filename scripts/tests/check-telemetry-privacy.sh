@@ -58,7 +58,7 @@ fi
 #                 without carrying a name, path or any user content.
 # `correlation_id` stays banned: it predates these and named no owner, so a field
 # reappearing under that name is a smell, not this feature.
-blocklist_pat='(^|[^A-Za-z0-9_])(worktree|prompt_extra|prompt|slug|scrollback|linear_id|github_issue|pr_url|harness_resume_token|resume_token|event_token|omp_session_id|omp_turn_id|correlation_id|email|api_key|token)([^A-Za-z0-9_]|$)'
+blocklist_pat='(^|[^A-Za-z0-9_])(worktree|prompt_extra|prompt|slug|scrollback|linear_id|github_issue|pr_url|harness_resume_token|resume_token|event_token|vinculum_session_id|vinculum_turn_id|correlation_id|email|api_key|token)([^A-Za-z0-9_]|$)'
 if grep -nE "$blocklist_pat" "$TELEMETRY_RS"; then
   echo "ERROR: blocklisted identifier in telemetry.rs" >&2
   status=1

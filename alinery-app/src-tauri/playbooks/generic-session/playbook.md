@@ -4,7 +4,7 @@ key = "generic-session"
 title = "Generic Session"
 description = "Carry out one user-described request and preserve its result, evidence, decisions and limitations."
 default_model = ""
-default_harness = "omp"
+default_harness = "vinculum"
 
 [[step]]
 key = "complete-the-request"

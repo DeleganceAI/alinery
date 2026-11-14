@@ -17,14 +17,14 @@ created = 1
 }
 
 #[test]
-fn hosted_refresh_needed_only_for_omp_hosted_or_unset_models() {
-    assert!(hosted_refresh_needed("omp", "alinery/Qwen3.6-35B-A3B"));
+fn hosted_refresh_needed_only_for_vinculum_hosted_or_unset_models() {
     assert!(hosted_refresh_needed("vinculum", "alinery/Qwen3.6-35B-A3B"));
-    assert!(hosted_refresh_needed("omp", " alinery/Qwen3.6-35B-A3B "));
-    assert!(hosted_refresh_needed("omp", ""));
-    assert!(hosted_refresh_needed("omp", "   "));
-    assert!(!hosted_refresh_needed("omp", "anthropic/claude"));
-    assert!(!hosted_refresh_needed("omp", "xai/grok"));
+    assert!(hosted_refresh_needed("vinculum", "alinery/Qwen3.6-35B-A3B"));
+    assert!(hosted_refresh_needed("vinculum", " alinery/Qwen3.6-35B-A3B "));
+    assert!(hosted_refresh_needed("vinculum", ""));
+    assert!(hosted_refresh_needed("vinculum", "   "));
+    assert!(!hosted_refresh_needed("vinculum", "anthropic/claude"));
+    assert!(!hosted_refresh_needed("vinculum", "xai/grok"));
     assert!(!hosted_refresh_needed("no-harness", "alinery/Qwen3.6-35B-A3B"));
     assert!(!hosted_refresh_needed("", "alinery/Qwen3.6-35B-A3B"));
 }
@@ -54,8 +54,8 @@ fn notification_read_stamps_only_requested_session() {
         "exit_code": 0,
         "semantic": {
             "phase_completed_at": 13,
-            "omp_session_id": "omp-session",
-            "omp_turn_id": "omp-turn"
+            "vinculum_session_id": "vinculum-session",
+            "vinculum_turn_id": "vinculum-turn"
         },
         "unknown_sentinel": {"keep": true}
     });

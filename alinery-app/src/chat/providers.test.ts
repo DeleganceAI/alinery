@@ -50,7 +50,7 @@ describe("needsProviderSetup", () => {
   });
 
   it("still asks for setup when the only models belong to an unauthenticated login provider", () => {
-    // OMP caches a model catalogue per provider whether or not it holds a credential, so models
+    // Vinculum caches a model catalogue per provider whether or not it holds a credential, so models
     // on a provider that *does* have a login row prove nothing.
     expect(needsProviderSetup(providers([{ id: "anthropic", authenticated: false }]), undefined, models("anthropic"))).toBe(true);
   });
@@ -146,7 +146,7 @@ describe("partitionProviders", () => {
 });
 
 describe("mergeHostedModels", () => {
-  it("pins catalog rows first and drops OMP duplicates", () => {
+  it("pins catalog rows first and drops Vinculum duplicates", () => {
     const hosted = {
       provider: HOSTED_PROVIDER,
       defaultModel: "alinery/Qwen3.6-35B-A3B",

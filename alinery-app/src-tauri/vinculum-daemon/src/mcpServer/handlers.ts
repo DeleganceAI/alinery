@@ -212,8 +212,8 @@ async function readPlaybookSource(conn: DaemonConnection, reference: { scope: st
 
 // ---- tools -----------------------------------------------------------------------------------------------------------------
 
-const OMP_HARNESSES = new Set(["omp", "vinculum", "no-harness"]);
-const ompDefaultModel = (harness: string, model: string) => (harness.trim() === "" || OMP_HARNESSES.has(harness.trim()) ? model : "");
+const VINCULUM_HARNESSES = new Set(["vinculum", "no-harness"]);
+const vinculumDefaultModel = (harness: string, model: string) => (harness.trim() === "" || VINCULUM_HARNESSES.has(harness.trim()) ? model : "");
 
 const startedJson = (started: Parameters<typeof plain>[1]) => plain(SessionStartedSchema, started ?? create(SessionStartedSchema, {}));
 
@@ -274,7 +274,7 @@ async function createTask(conn: DaemonConnection, args: Args): Promise<Reply> {
     branchName: optional<string>(args, "branch_name", "string"),
     worktreeName: optional<string>(args, "worktree_name", "string"),
     baseRef: optional<string>(args, "base_ref", "string"),
-    launchDefaults: { harness: "omp", model: optional<string>(args, "model", "string") ?? ompDefaultModel(defaults?.harness ?? "", defaults?.model ?? "") },
+    launchDefaults: { harness: "vinculum", model: optional<string>(args, "model", "string") ?? vinculumDefaultModel(defaults?.harness ?? "", defaults?.model ?? "") },
     maxLiveSessions: maxLive,
     start: optional<boolean>(args, "start", "boolean") ?? false,
   });

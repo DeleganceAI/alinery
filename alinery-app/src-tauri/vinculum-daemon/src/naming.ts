@@ -1,4 +1,4 @@
-// The same naming rules the OMP extension used. A task session is named by its own tool
+// How sessions are named. A task session is named by its own tool
 // call. A chat is titled from a side request that is not part of the transcript.
 
 export const SESSION_NAME_INSTRUCTION =
