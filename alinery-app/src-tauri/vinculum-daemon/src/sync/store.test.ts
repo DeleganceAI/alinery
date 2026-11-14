@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { create, equals } from "@bufbuild/protobuf";
 import { type Entity, EntitySchema } from "alinery-proto/alinery/v1/entities_pb";
-import { ScopeSchema, type SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
+import { ChangeSchema, ScopeSchema, type SubscribeResponse } from "alinery-proto/alinery/v1/sync_pb";
 import { expected, FakeTimers, flush, Replica, repoScope, same, session, task, taskScope } from "./testkit.ts";
-import { matcher, Store } from "./store.ts";
+import { matcher, Store, Subscriber } from "./store.ts";
 
 // Seeded RNG so a failure replays.
 function rng(seed: number) {
@@ -249,19 +249,25 @@ test("1,000 queued frames are fine; the queue holds at most 4 MB", async () => {
   expect((await slow.next())?.frame.case).toBe("mustRefetch");
 });
 
-test("commit cost does not grow with subscribers that stopped reading", () => {
+test("commit cost does not grow with subscribers that stopped reading", async () => {
   const store = new Store();
   const stalled = Array.from({ length: 50 }, () => reader(store));
-  return (async () => {
-    for (const r of stalled) await r.next();
-    for (let i = 0; i < 1100; i++) store.commit([task(`t${i}`)]); // every one of them overflows
-    const t0 = performance.now();
-    for (let i = 0; i < 20_000; i++) store.commit([task(`u${i % 100}`, `v${i}`)]);
-    // Overflowed subscribers drop their queue and ignore offers: 20,000 commits stay far under the
-    // time 50 live queues of growing arrays would take.
-    expect(performance.now() - t0).toBeLessThan(1500);
-    for (const r of stalled) expect((await r.next())?.frame.case).toBe("mustRefetch");
-  })();
+  for (const r of stalled) await r.next();
+  for (let i = 0; i < 1100; i++) store.commit([task(`t${i}`)]); // every one of them overflows
+  for (const r of stalled) expect((await r.next())?.frame.case).toBe("mustRefetch");
+});
+
+// The mechanism behind the test above, checked by count rather than by timing commits: once its queue has
+// overflowed, a subscriber returns from every offer before looking at a single change.
+test("an overflowed subscriber ignores every later offer", () => {
+  let looked = 0;
+  const settings = { queueFrames: 2, queueBytes: 1 << 30 } as ConstructorParameters<typeof Subscriber>[1];
+  const sub = new Subscriber(() => (looked++, true), settings, () => ({}) as never);
+  const change = (key: string) => create(ChangeSchema, { op: { case: "delete", value: key } });
+  for (let i = 0; i < 3; i++) sub.offer(BigInt(i), [change(`k${i}`)]); // the third is over queueFrames
+  const atOverflow = looked;
+  for (let i = 3; i < 1003; i++) sub.offer(BigInt(i), [change(`k${i}`)]);
+  expect(looked).toBe(atOverflow);
 });
 
 test("aborting the signal removes the subscriber and leaves no timer", async () => {

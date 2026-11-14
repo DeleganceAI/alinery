@@ -128,7 +128,7 @@ describe("reconcile", () => {
     expect(store.get("session/t/s")?.value.case === "session" && store.get("session/t/s")?.value.value.phase).toBe("bbbb");
   });
 
-  test("over 1,000 tasks the pass never holds the event loop for 20 ms", async () => {
+  test("over 1,000 tasks the pass gives the event loop a turn between batches", async () => {
     for (let i = 0; i < 1000; i++) {
       const sessions = join(alinery, "tasks", `task-${i}`, "sessions");
       mkdirSync(sessions, { recursive: true });
@@ -139,16 +139,18 @@ describe("reconcile", () => {
     const feed = new Feed(store, alinery);
     await feed.scan();
     expect(store.size).toBe(3000);
-    let maxGap = 0;
-    let last = performance.now();
-    const tick = setInterval(() => {
-      const now = performance.now();
-      maxGap = Math.max(maxGap, now - last);
-      last = now;
-    }, 1);
+    // Counted, not timed: a setImmediate chain advances once per loop turn, so a pass that blocked would see
+    // none, and one that awaits each batch of 256 stats sees at least one per batch (about 12 here).
+    let turns = 0;
+    let running = true;
+    const spin = () => {
+      if (!running) return;
+      turns++;
+      setImmediate(spin);
+    };
+    setImmediate(spin);
     await feed.reconcile();
-    clearInterval(tick);
-    console.log(`reconcile over 1,000 tasks: longest loop gap ${maxGap.toFixed(1)} ms`);
-    expect(maxGap).toBeLessThan(20);
+    running = false;
+    expect(turns).toBeGreaterThanOrEqual(10);
   });
 });

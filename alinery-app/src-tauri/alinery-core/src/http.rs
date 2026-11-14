@@ -311,7 +311,6 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::time::Instant;
 
     fn serve(handler: impl Fn(&str) -> String + Send + 'static) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -485,7 +484,6 @@ mod tests {
         });
         let dest = std::env::temp_dir().join(format!("alinery-http-stall-{}", std::process::id()));
         let _ = std::fs::remove_file(&dest);
-        let started = Instant::now();
         let error = download(
             &format!("http://{address}/stall"),
             &dest,
@@ -494,11 +492,10 @@ mod tests {
             Some(1000),
         )
         .unwrap_err();
-        let elapsed = started.elapsed();
         let _ = release_tx.send(());
         server.join().unwrap();
+        // "timed out" is the proof: had the download ignored its timeout, the server's 2 s release would end it with a short body instead.
         assert!(error.to_ascii_lowercase().contains("timed out"), "{error}");
-        assert!(elapsed < Duration::from_secs(2), "download ignored its timeout: {elapsed:?}");
         assert!(!dest.exists(), "a timed-out download must not leave a file");
     }
 

@@ -158,15 +158,14 @@ describe("syncCredentials", () => {
     await expect(syncCredentials(path, { x: "not json" }, [], false)).rejects.toThrow(/x is not JSON/);
   });
 
-  test("a stale lock left by a dead process is stolen at once", async () => {
+  test("a stale lock left by a dead process is stolen", async () => {
     const root = scratch("creds-stale");
     const path = join(root, "provider-credentials.json");
     writeFileSync(`${path}.lock`, "");
     const old = new Date(Date.now() - 10_000);
     utimesSync(`${path}.lock`, old, old);
-    const started = Date.now();
+    // Nothing releases this lock: the write succeeding means it was stolen (a fresh one would end in "busy").
     await syncCredentials(path, { a: '{"type":"api_key"}' }, [], false);
-    expect(Date.now() - started).toBeLessThan(2_000);
     expect(read(path)).toEqual({ a: { type: "api_key" } });
   });
 

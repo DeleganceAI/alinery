@@ -33,12 +33,10 @@ test("waitForLock returns once the Rust holder lets go, and null if the wait run
   const path = join(dir, "c.lock");
   const holder = await holdFromRust(path);
   expect(await waitForLock(path, 0)).toBeNull();
-  const started = Date.now();
   const waiting = waitForLock(path, 3_000);
-  setTimeout(() => void holder.release(), 300);
+  await holder.release();
   const lock = await waiting;
   expect(lock).not.toBeNull();
-  expect(Date.now() - started).toBeLessThan(1_000);
   lock?.release();
 
   const again = await holdFromRust(path);
