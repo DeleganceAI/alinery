@@ -24,14 +24,22 @@ fn daemon_in(directory: &Path) -> Option<PathBuf> {
 }
 
 pub fn resolve_alineryd_path() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
+    daemon_beside(&std::env::current_exe().ok()?)
+}
+
+fn daemon_beside(executable: &Path) -> Option<PathBuf> {
     let directory = executable.parent()?;
     if let Some(found) = daemon_in(directory) {
         return Some(found);
     }
-    // `cargo test` runs from target/<profile>/deps. The built daemon sits next to that directory.
-    if directory.file_name().and_then(|name| name.to_str()) == Some("deps") {
+    // `cargo test` runs from target/<profile>/deps, or, with cargo's build-dir layout (Rust 1.100),
+    // from target/<profile>/build/<package>/<hash>/out. The built daemon sits in target/<profile>.
+    let named = |d: Option<&Path>, n: &str| d.and_then(Path::file_name).is_some_and(|f| f == n);
+    if named(Some(directory), "deps") {
         return directory.parent().and_then(daemon_in);
+    }
+    if named(Some(directory), "out") && named(directory.ancestors().nth(3), "build") {
+        return directory.ancestors().nth(4).and_then(daemon_in);
     }
     None
 }
@@ -146,6 +154,26 @@ pub fn daemon_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_test_binary_finds_the_daemon_in_its_profile_directory_under_either_cargo_layout() {
+        let root = std::env::temp_dir().join(format!("alinery-daemon-beside-{}", uuid::Uuid::new_v4().simple()));
+        let profile = root.join("target/debug");
+        let old = profile.join("deps");
+        let new = profile.join("build/alinery-app/61802af6c42406ca/out");
+        let elsewhere = root.join("x/y/z/w/out");
+        for dir in [&old, &new, &elsewhere] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(profile.join("alinery-vinculum-daemon"), b"").unwrap();
+        fs::write(root.join("alinery-vinculum-daemon"), b"").unwrap();
+        let daemon = Some(profile.join("alinery-vinculum-daemon"));
+        assert_eq!(daemon_beside(&old.join("alinery_app_lib-1")), daemon);
+        assert_eq!(daemon_beside(&new.join("alinery_app_lib-1")), daemon);
+        // An `out` that is not under build/<package>/<hash> is not a cargo test binary.
+        assert_eq!(daemon_beside(&elsewhere.join("Alinery")), None);
+        fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn daemon_command_passes_the_rpc_secret_file_after_the_lane_and_only_when_given() {
