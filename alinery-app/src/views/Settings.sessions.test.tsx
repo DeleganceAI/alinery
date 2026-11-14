@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { fakeSettings } from "../test/settingsHooks";
+import { fakeSettings, pickScope } from "../test/settingsHooks";
 import type { AppearancePrefs, GlobalSettings, RepoOverrides, ScopedSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -232,7 +232,7 @@ describe("Harness settings thinking default", () => {
 
   it("writes a repo change as a repository override and labels it", async () => {
     renderHarnessSection();
-    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    await pickScope("/r");
     const field = async () => (await thinkingSelect()).closest(".field") as HTMLElement;
     expect(within(await field()).getByText("Global")).toBeTruthy();
     const shown = fakeSettings.current("/r")?.revision;

@@ -16,6 +16,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     key: "views",
     label: "Views",
+    globalOnly: true,
     parts: [
       { id: "views.sessions", label: "Session chat", keywords: "sessions view journal thinking tool labels copy buttons reply bubbles density rail width font size collapse" },
       { id: "views.chat", label: "Chat view", keywords: "chat threads journal thinking copy buttons bubbles density rail width font size" },

@@ -1,8 +1,8 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { effectiveOf, fakeSettings } from "../test/settingsHooks";
+import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -141,7 +141,8 @@ describe("MCP settings", () => {
     renderMcp(NOT_READY);
 
     await screen.findByText(/mcpServers/);
-    expect(screen.getAllByText("No repo")).toHaveLength(1);
+    // Once in the body; the group's header readout is the other copy.
+    expect(screen.getAllByText("No repo").filter((el) => !el.closest(".settings-readout"))).toHaveLength(1);
     expect(document.querySelectorAll(".mcp-chip")).toHaveLength(0);
   });
 
@@ -162,7 +163,7 @@ describe("MCP settings", () => {
     await screen.findByText(/mcpServers/);
     expect(screen.queryByText(/always configures the active repository/)).toBe(null);
 
-    fireEvent.click(screen.getByRole("button", { name: "other-repo" }));
+    await pickScope(other);
 
     const warning = await screen.findByText(/always configures the active repository/);
     expect(warning.textContent).toContain("other-repo");

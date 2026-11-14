@@ -6,6 +6,7 @@
 //     vi.mock("../sync/settings", async (actual) => (await import("../test/settingsHooks")).settingsHooks(await actual()));
 //     fakeSettings.serve("/r", (overrides) => effectiveFor(overrides));
 import { create } from "@bufbuild/protobuf";
+import { fireEvent, screen } from "@testing-library/react";
 import { type Cursor, CursorSchema } from "alinery-proto/alinery/v1/common_pb";
 import { useSyncExternalStore } from "react";
 import type * as Settings from "../sync/settings";
@@ -117,4 +118,9 @@ export function settingsHooks(actual: typeof Settings): typeof Settings {
       return replace(repo, next);
     },
   };
+}
+
+/** Picks the Settings scope from the header's Editing select: a repo path, or "" for All repositories. */
+export async function pickScope(repo: string) {
+  fireEvent.change(await screen.findByRole("combobox", { name: "Editing" }), { target: { value: repo } });
 }

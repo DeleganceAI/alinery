@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE, normalizeAppearance } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { effectiveOf, fakeSettings } from "../test/settingsHooks";
+import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { AppearancePrefs, GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -192,7 +192,7 @@ describe("Settings General", () => {
   it("shows global values read-only in repository scope, each global-only group saying so once", async () => {
     renderGeneral();
     await keepAwake();
-    fireEvent.click(screen.getByRole("button", { name: "r" }));
+    await pickScope("/r");
     const box = await keepAwake();
     expect(box.checked).toBe(false); // repo scope mirrors the global tier it reads
     expect(box.disabled).toBe(true);
@@ -228,7 +228,11 @@ describe("Settings search", () => {
     await keepAwake();
     fireEvent.change(search(), { target: { value: "dark mode" } });
     expect(visibleGroupNames()).toEqual(["Appearance"]);
-    expect(rail().getAllByRole("button").map((button) => button.textContent)).toEqual(["Appearance"]);
+    expect(
+      rail()
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Appearance"]);
     fireEvent.keyDown(search(), { key: "Escape" });
     expect(search().value).toBe("");
     expect(visibleGroupNames()).toEqual(SECTIONS.map((section) => section.label));
@@ -239,7 +243,11 @@ describe("Settings search", () => {
     await keepAwake();
     fireEvent.change(search(), { target: { value: "telemetry" } });
     expect(visibleGroupNames()).toEqual(["System"]);
-    expect(rail().getAllByRole("button").map((button) => button.textContent)).toEqual(["System", "Power and privacy"]);
+    expect(
+      rail()
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["System", "Power and privacy"]);
     expect((screen.getByRole("heading", { level: 3, name: "Updates", hidden: true }).closest(".settings-part") as HTMLElement).hidden).toBe(true);
     expect(telemetry().closest("[hidden]")).toBeNull();
   });

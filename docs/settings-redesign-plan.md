@@ -2,7 +2,7 @@
 
 Settings becomes one scrolling list, built like the playbook library. A rail on the left holds links to each part of the list, with a search box at the top. The app also ships the alinery.ai fonts, with today's system fonts kept as the fallback everywhere.
 
-Status: phases 1 (fonts) and 2 (one list) are built. Search (3) and the restyle (4) are not.
+Status: all four phases are built: fonts, the one list, search, and the restyle (header scope picker, readouts, Needs you, label-left rows, override edge).
 
 ## What is there now
 

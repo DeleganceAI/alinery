@@ -920,7 +920,6 @@ export function Settings({
   if (!global || !effective) return <LoadingState label="Loading settings…" state={ORB_STATE} />;
 
   const isGlobal = scope.kind === "global";
-  const selectedScopeLabel = isGlobal ? "All repositories" : repoName(selectedRepo || "Repository");
   const selectedScopeDetail = isGlobal ? "Default settings used by every repository unless that repository overrides them." : selectedRepo;
   const gridViews = normalizeGridViews(global.grid_views);
   const startupOptions = startupViewOptions(global);
@@ -930,6 +929,25 @@ export function Settings({
   const matches = matchSettings(groups, query);
   const hide = (anchor: SettingsSectionKey) => matches !== null && !matches.has(anchor);
   const shownGroups = groups.filter((group) => !hide(group.key));
+  // Each group's status line: read from state the page already holds, never a fetch of its own.
+  const connected = connections?.filter((c) => c.connected).length ?? 0;
+  const readouts: Partial<Record<SettingsSectionKey, { text: string; tone?: "ok" | "warn" | "off" }>> = {
+    appearance: { text: `${appearance.mode} · ${uiScale}×` },
+    views: { text: `${gridViews.length} grid view${gridViews.length === 1 ? "" : "s"}` },
+    agents: { text: effective.defaults.model || "Harness default model" },
+    connections: connections ? { text: `${connected} of ${connections.length} linked`, tone: connected ? "ok" : "off" } : undefined,
+    notifications: global.notifications.enabled ? { text: "On", tone: "ok" } : { text: "Off", tone: "off" },
+    data: { text: isGlobal ? "Per repository" : selectedRepo },
+    mcp: { text: mcpStatusLabel(mcp), tone: mcpDotColor(mcp) === "var(--success)" ? "ok" : mcpDotColor(mcp) === "var(--danger)" ? "warn" : "off" },
+    system: displayedUpdate?.available ? { text: `${displayedUpdate.available.version} ready`, tone: "warn" } : { text: appVersion ? `v${appVersion}` : "Version unknown" },
+  };
+  // Shown in the rail only while something here needs the person, like the library's Signals.
+  const needs: { anchor: SettingsSectionKey; label: string }[] = [
+    ...(displayedUpdate?.available ? [{ anchor: "system.updates" as const, label: `Update to ${displayedUpdate.available.version}` }] : []),
+    ...(connections ?? []).filter((c) => c.reconnect).map((c) => ({ anchor: "connections" as const, label: `Reconnect ${c.name}` })),
+    ...(mcp.error ? [{ anchor: "mcp" as const, label: "MCP server error" }] : []),
+    ...(backupsErr ? [{ anchor: "data.backup" as const, label: "Backups unreadable" }] : []),
+  ];
   const jumpToFirstHit = () => {
     const group = shownGroups[0];
     if (!group) return;
@@ -1019,11 +1037,12 @@ export function Settings({
     );
   };
 
+  // An override marks its row (Settings.css draws the accent edge from `.override`); the reset sits beside the tag, not inside it.
   const sourceBadge = (source: SettingSource, field?: string) => (
-    <span className="pill" style={{ marginLeft: 8 }}>
-      {source === "repository" ? "Repository override" : "Global"}
+    <span className={`settings-source${source === "repository" ? " override" : ""}`}>
+      <span className="settings-source-tag">{source === "repository" ? "Repository override" : "Global"}</span>
       {scope.kind === "repo" && source === "repository" && field && (
-        <button className="btn ghost small" type="button" style={{ marginLeft: 8 }} onClick={() => clearRepoField(field)}>
+        <button className="settings-link" type="button" onClick={() => clearRepoField(field)}>
           Use global value
         </button>
       )}
@@ -1031,13 +1050,12 @@ export function Settings({
   );
 
   const globalOnly = (label: string) => (
-    <div className="dim" style={{ marginBottom: 12 }}>
-      {label} are global-only. Switch to{" "}
-      <button type="button" className="btn ghost small" onClick={() => setScope({ kind: "global" })}>
-        Global
-      </button>{" "}
-      to edit them.
-    </div>
+    <p className="settings-global-note">
+      {label} are global-only.{" "}
+      <button type="button" className="settings-link" onClick={() => setScope({ kind: "global" })}>
+        Edit in All repositories
+      </button>
+    </p>
   );
 
   const check = (key: keyof GlobalSettings["notifications"], label: string, hint: string) => (
@@ -1301,8 +1319,8 @@ export function Settings({
           )}
           {!isGlobal && <div className="hint">Blank can be a repository override; use the button above to inherit.</div>}
         </div>
-        <details className="harness-disclosure">
-          <summary>Session preferences</summary>
+        <div className="settings-subgroup">
+          <h4>Session preferences</h4>
           <div className="field">
             <label htmlFor={`${key}-thinking`}>
               {title} thinking level
@@ -1421,7 +1439,7 @@ export function Settings({
               )}
             </div>
           )}
-        </details>
+        </div>
       </>
     );
   };
@@ -1487,8 +1505,7 @@ export function Settings({
     <>
       <div className="settings-subsection">
         <h4>Journal</h4>
-        <p>Which journal rows appear in {where}. Global-only.</p>
-        {!isGlobal && globalOnly(`${title} settings`)}
+        <p>Which journal rows appear in {where}.</p>
         <Checkbox
           checked={view.chat_show_thinking === true}
           disabled={!isGlobal}
@@ -1672,8 +1689,7 @@ export function Settings({
       </div>
       <div className="settings-subsection">
         <h4>Density</h4>
-        <p>Density, sizing and behavior of {where}. Global-only.</p>
-        {!isGlobal && globalOnly(`${title} density settings`)}
+        <p>Density, sizing and behavior of {where}.</p>
         <Checkbox
           checked={view.chat_auto_collapse_thinking !== false}
           disabled={!isGlobal}
@@ -1804,16 +1820,10 @@ export function Settings({
         <section className="harness-settings-section" data-anchor="agents.defaults" hidden={hide("agents.defaults")} aria-labelledby="session-defaults-title">
           <h3 id="session-defaults-title">Session defaults</h3>
           <p className="hint">
-            Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. Playbooks and individual steps can override it.
+            Choose the model for new sessions{isGlobal ? " across your repositories" : ` in ${repoName(selectedRepo)}`}. A step’s model wins, then the playbook’s default, then this
+            one; an empty model uses the harness default.
           </p>
           {choiceSection("defaults", "Default")}
-          <details className="harness-disclosure">
-            <summary>How model defaults work</summary>
-            <p className="hint">
-              A step’s model takes priority, followed by the playbook’s default, then the repository default. Repositories inherit global settings unless overridden. An empty model
-              uses the harness default.
-            </p>
-          </details>
         </section>
         <section className="vinculum-settings" data-anchor="agents.providers" hidden={hide("agents.providers")} aria-labelledby="providers-settings-title">
           <div className="vinculum-settings-heading">
@@ -1824,10 +1834,10 @@ export function Settings({
             Providers &amp; accounts
           </button>
           {providersOpen && <ProviderSetupDialog mode="manual" onClose={() => setProvidersOpen(false)} />}
-          <details className="harness-disclosure harness-customizations">
-            <summary>Customizations</summary>
+          <div className="settings-subgroup harness-customizations">
+            <h4>Customizations</h4>
             <VinculumCustomizations />
-          </details>
+          </div>
         </section>
       </div>
     );
@@ -2262,28 +2272,26 @@ export function Settings({
     return (
       <>
         <div className="field">
-          <label>Current version</label>
-          <input className="field-input mono" type="text" value={appVersion} readOnly />
+          <label>Version</label>
+          <div className="settings-inline">
+            <span className="mono">{appVersion || "Unknown"}</span>
+            {displayedUpdate?.available && onUpgrade && (
+              <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
+                Upgrade to {displayedUpdate.available.version}
+              </button>
+            )}
+          </div>
         </div>
-        <div className="field" style={{ marginTop: 16 }}>
+        <div className="field">
           <label>Last check</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="settings-inline">
             <span className="dim">{checkingUpdates ? "Checking…" : lastCheck}</span>
             <button type="button" className="btn ghost small" disabled={checkingUpdates} onClick={checkForUpdatesNow}>
               Check now
             </button>
           </div>
         </div>
-        {displayedUpdate?.available && onUpgrade && (
-          <div className="field" style={{ marginTop: 16 }}>
-            <button type="button" className="btn small" disabled={updating} onClick={onUpgrade}>
-              Upgrade to {displayedUpdate.available.version}
-            </button>
-          </div>
-        )}
-        <div className="field" style={{ marginTop: 16 }}>
-          {updatesCheck("Check for updates")}
-        </div>
+        {updatesCheck("Check for updates")}
         <RuntimePanel mcp={mcp} />
       </>
     );
@@ -2418,7 +2426,6 @@ export function Settings({
     const disabledReason = isGlobal === false ? "Grid-based views are global settings." : "";
     return (
       <>
-        {isGlobal === false && globalOnly("Grid-based views")}
         <div className="grid-view-settings-intro">
           <h3>Grid-based views</h3>
           <p>Configure up to three named Grid views. Their order assigns the shortcuts ⌘1, ⌘2, and ⌘3. Tasks, Sessions, and Chat take the numbers after them.</p>
@@ -2753,29 +2760,32 @@ export function Settings({
 
   return (
     <div className="settings-layout">
-      <div className="settings-scopebar" aria-label="Settings scope">
-        <div className="settings-scope-summary">
-          <div className="settings-scope-eyebrow">Settings scope</div>
-          <div className="settings-scope-title">{selectedScopeLabel}</div>
-          <div className="settings-scope-detail">{selectedScopeDetail}</div>
+      <header className="settings-head">
+        <div className="settings-head-copy">
+          <h1 className="view-title">Settings</h1>
+          <div className="settings-scope-detail" title={selectedScopeDetail}>
+            {selectedScopeDetail}
+          </div>
         </div>
-        <div className="settings-scope-actions" role="group" aria-label="Choose settings scope">
-          <button className={`scope-chip${isGlobal ? " on" : ""}`} type="button" onClick={() => setScope({ kind: "global" })}>
-            All repositories
-          </button>
-          {repoOptions.map((repo) => (
-            <button
-              key={repo}
-              className={`scope-chip${!isGlobal && selectedRepo === repo ? " on" : ""}`}
-              type="button"
-              title={repo}
-              onClick={() => setScope({ kind: "repo", repoPath: repo })}
+        <label className="settings-scope-pick">
+          <span>Editing</span>
+          <span className="field-select">
+            <select
+              aria-label="Editing"
+              value={isGlobal ? "" : selectedRepo}
+              onChange={(event) => setScope(event.target.value ? { kind: "repo", repoPath: event.target.value } : { kind: "global" })}
             >
-              {repoName(repo)}
-            </button>
-          ))}
-        </div>
-      </div>
+              <option value="">All repositories</option>
+              {repoOptions.map((repo) => (
+                <option key={repo} value={repo}>
+                  {repoName(repo)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />
+          </span>
+        </label>
+      </header>
       <div className="settings-shell">
         <nav className="settings-nav" aria-label="Settings sections">
           <input
@@ -2801,6 +2811,18 @@ export function Settings({
               }
             }}
           />
+          {matches === null && needs.length > 0 && (
+            <div className="settings-navgroup settings-needs">
+              <div className="settings-eyebrow">Needs you</div>
+              {needs.map((need) => (
+                <button type="button" key={need.label} className="settings-navitem" onClick={() => jumpTo(need.anchor)}>
+                  <span className="settings-led warn" aria-hidden="true" />
+                  {need.label}
+                </button>
+              ))}
+              <div className="settings-eyebrow">Settings</div>
+            </div>
+          )}
           {shownGroups.map((group) => {
             // While searching every matching part is listed; otherwise only the group in view opens.
             const open = matches !== null || groupOf(activeAnchor) === group.key;
@@ -2847,6 +2869,12 @@ export function Settings({
                 <span className="settings-group-n">{String(index + 1).padStart(2, "0")}</span>
                 <h2 id={`settings-${group.key}-title`}>{group.label}</h2>
                 {group.globalOnly && !isGlobal && <span className="settings-global-tag">Global</span>}
+                {readouts[group.key] && (
+                  <span className="settings-readout" title={readouts[group.key]?.text}>
+                    {readouts[group.key]?.tone && <span className={`settings-led ${readouts[group.key]?.tone}`} aria-hidden="true" />}
+                    {readouts[group.key]?.text}
+                  </span>
+                )}
               </header>
               {group.globalOnly && !isGlobal && globalOnly(`${group.label} settings`)}
               {renderGroup(group.key)}

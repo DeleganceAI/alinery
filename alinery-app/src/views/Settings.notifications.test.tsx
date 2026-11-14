@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { effectiveOf, fakeSettings } from "../test/settingsHooks";
+import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import { Toast } from "../toast";
 import type { GlobalSettings, NotificationPrefs } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
@@ -133,7 +133,7 @@ describe("notification badge settings", () => {
 
   it("disables badge settings in repository scope", async () => {
     renderNotifications();
-    fireEvent.click(await screen.findByRole("button", { name: "repo" }));
+    await pickScope("/repo");
     for (const label of labels) expect((screen.getByRole("checkbox", { name: new RegExp(label) }) as HTMLInputElement).disabled).toBe(true);
   });
 

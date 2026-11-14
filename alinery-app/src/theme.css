@@ -2451,75 +2451,6 @@ textarea.field-input {
   height: 100%;
   min-height: 0;
 }
-.settings-scopebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-.settings-scope-eyebrow {
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  font-weight: 500;
-}
-.settings-scope-title {
-  color: var(--text-strong);
-  font-size: calc(16px * var(--ui-scale));
-  font-weight: 600;
-  margin-top: 2px;
-}
-/* A flex item defaults to min-width:auto, so the nowrap detail below propped this
-   column open at its full width and the bar overflowed instead of ellipsising. */
-.settings-scope-summary {
-  min-width: 0;
-}
-.settings-scope-detail {
-  color: var(--text-muted);
-  font-size: calc(12px * var(--ui-scale));
-  margin-top: 2px;
-  max-width: 620px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings-scope-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  /* Chips wrap, so a floor here only bought overflow at small widths and large scales. */
-  min-width: 0;
-  max-height: 72px;
-  overflow-y: auto;
-}
-.scope-chip {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: calc(12px * var(--ui-scale));
-  max-width: 220px;
-  overflow: hidden;
-  padding: 6px 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
-}
-.scope-chip:hover {
-  color: var(--text-strong);
-  border-color: var(--border-strong);
-}
-.scope-chip.on {
-  color: var(--text-strong);
-  border-color: var(--accent);
-  background: var(--accent-subtle);
-}
 .settings-shell {
   display: flex;
   flex: 1 1 auto;
@@ -2546,48 +2477,8 @@ textarea.field-input {
   font-size: calc(13px * var(--ui-scale));
   transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
 }
-.settings-navitem-wrap {
-  position: relative;
-  display: block;
-}
-.settings-navitem-wrap.disabled {
-  cursor: not-allowed;
-}
-.settings-navitem-wrap.disabled .settings-navitem {
-  color: var(--text-faint);
-  cursor: not-allowed;
-  opacity: 0.3;
-}
 .settings-navitem:hover {
   color: var(--text-strong);
-}
-.settings-navitem-wrap.disabled:hover .settings-navitem {
-  color: var(--text-faint);
-}
-.settings-nav-tooltip {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  left: calc(100% + 8px);
-  width: max-content;
-  max-width: 280px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-menu);
-  color: var(--text-strong);
-  font-size: calc(12px * var(--ui-scale));
-  line-height: 1.35;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(-50%) translateX(-4px);
-  transition: opacity var(--dur-fast) ease, transform var(--dur-fast) ease;
-}
-.settings-navitem-wrap.disabled:hover .settings-nav-tooltip,
-.settings-navitem-wrap.disabled:focus-visible .settings-nav-tooltip {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
 }
 .settings-navitem.on {
   color: var(--text-strong);
@@ -2791,9 +2682,6 @@ textarea.field-input {
     border-bottom: 1px solid var(--border);
     padding: 6px;
   }
-  .settings-navitem-wrap {
-    flex: 0 0 auto;
-  }
   .settings-navitem {
     width: auto;
     white-space: nowrap;
@@ -2805,27 +2693,8 @@ textarea.field-input {
     border-left-color: transparent;
     border-bottom-color: var(--accent);
   }
-  .settings-nav-tooltip {
-    top: calc(100% + 6px);
-    left: 0;
-    transform: translateY(-4px);
-  }
-  .settings-navitem-wrap.disabled:hover .settings-nav-tooltip,
-  .settings-navitem-wrap.disabled:focus-visible .settings-nav-tooltip {
-    transform: translateY(0);
-  }
 }
 @media (max-width: 760px) {
-  .settings-scopebar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .settings-scope-actions {
-    justify-content: flex-start;
-    max-height: 100px;
-    min-width: 0;
-    width: 100%;
-  }
 }
 .opt {
   position: relative;

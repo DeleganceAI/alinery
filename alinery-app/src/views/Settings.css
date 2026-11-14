@@ -125,3 +125,195 @@
   margin: 28px 0;
   color: var(--text-muted);
 }
+
+/* Header: title, what the scope means, and the one scope picker. The arc is the playbook bar's horizon. */
+.settings-head {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 32px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-head::after {
+  content: "";
+  position: absolute;
+  width: 900px;
+  height: 900px;
+  border-radius: 50%;
+  right: -380px;
+  top: 40px;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 -1px 24px -8px var(--accent-subtle);
+  pointer-events: none;
+}
+.settings-head > * {
+  position: relative;
+}
+.settings-head-copy {
+  min-width: 0;
+}
+.settings-head h1 {
+  margin: 0;
+}
+.settings-scope-detail {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-scope-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.settings-scope-pick > span:first-child,
+.settings-eyebrow {
+  font: 500 calc(10px * var(--ui-scale)) / 1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-scope-pick select {
+  min-width: 200px;
+}
+
+/* Readouts: each group's state at a glance, right of its title. */
+.settings-readout {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 50%;
+  font: 500 calc(11px * var(--ui-scale)) var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-led {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.settings-led.ok {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+.settings-led.warn {
+  background: var(--warning);
+  box-shadow: 0 0 6px var(--warning);
+}
+.settings-needs {
+  margin-bottom: 10px;
+}
+.settings-needs .settings-eyebrow {
+  padding: 6px 10px 4px;
+}
+.settings-needs .settings-navitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Rows: label left, control right, a hairline under each, like a panel of knobs. */
+.settings-group .field:has(> label:first-child) {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 6px;
+  margin: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-group .field:has(> label:first-child) > label:first-child {
+  grid-column: 1;
+  grid-row: 1 / span 9;
+  margin: 0;
+  padding-top: 6px;
+}
+.settings-group .field:has(> label:first-child) > :not(label:first-child) {
+  grid-column: 2;
+  min-width: 0;
+}
+.settings-group .opt {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+/* Where a value comes from. A repository override gets an accent edge so it reads apart from inherited rows. */
+.settings-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+.settings-source-tag {
+  font: 500 calc(10px * var(--ui-scale)) var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-source.override .settings-source-tag {
+  color: var(--accent);
+}
+.settings-group .field:has(.settings-source.override) {
+  box-shadow: inset 2px 0 0 var(--accent);
+  padding-left: 12px;
+}
+.settings-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.settings-link:hover {
+  text-decoration: underline;
+}
+.settings-global-note {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+.settings-subgroup {
+  margin-top: 22px;
+}
+.settings-subgroup > h4 {
+  margin: 0 0 4px;
+  font: 500 calc(10px * var(--ui-scale)) / 1.2 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .settings-head {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 18px 16px 14px;
+  }
+  .settings-group .field:has(> label:first-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-group .field:has(> label:first-child) > label:first-child {
+    grid-row: auto;
+    padding-top: 0;
+  }
+  .settings-group .field:has(> label:first-child) > :not(label:first-child) {
+    grid-column: 1;
+  }
+}

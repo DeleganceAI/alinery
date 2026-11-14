@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { effectiveOf, fakeSettings } from "../test/settingsHooks";
+import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -153,7 +153,7 @@ describe("Settings experimental features", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "r" }));
+    await pickScope("/r");
     const key = (await screen.findByLabelText("Grok API key")) as HTMLInputElement;
     expect(key.disabled).toBe(true);
     globalSettings.experiments = undefined;

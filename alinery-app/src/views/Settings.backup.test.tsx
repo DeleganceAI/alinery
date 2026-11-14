@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
-import { fakeSettings } from "../test/settingsHooks";
+import { fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings } from "../types";
 import type { McpStatusHandle } from "../useMcpStatus";
 
@@ -126,14 +126,14 @@ afterEach(cleanup);
 describe("Settings backup destination", () => {
   it("uses the Finder picker for a local repository", async () => {
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     expect(await screen.findByRole("button", { name: "Choose folder…" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Set folder" })).toBeNull();
   });
 
   it("takes a typed folder for a remote repository and has the host check it", async () => {
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "app" }));
+    await pickScope(REMOTE);
     expect(screen.queryByRole("button", { name: "Choose folder…" })).toBeNull();
     const field = (await screen.findByPlaceholderText("/absolute/folder/on/the/host")) as HTMLInputElement;
     const set = screen.getByRole("button", { name: "Set folder" }) as HTMLButtonElement;
@@ -153,7 +153,7 @@ describe("Settings backup destination", () => {
   it("saves nothing when the host refuses the folder", async () => {
     mocks.checkBackupDestination.mockRejectedValue("backup destination must be outside the repository's .alinery folder");
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "app" }));
+    await pickScope(REMOTE);
     fireEvent.change(await screen.findByPlaceholderText("/absolute/folder/on/the/host"), { target: { value: "/srv/app/.alinery" } });
     fireEvent.click(screen.getByRole("button", { name: "Set folder" }));
 
@@ -187,7 +187,7 @@ describe("Settings backup runs", () => {
   it("asks the daemon for a manual backup and reads the list again", async () => {
     mocks.backupNow.mockResolvedValue({ repo_name: "repo-a", created_at: 1_700_000_000 });
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     const run = (await screen.findByRole("button", { name: "Back up now" })) as HTMLButtonElement;
     await waitFor(() => expect(mocks.listBackups).toHaveBeenCalled());
     const before = mocks.listBackups.mock.calls.length;
@@ -199,14 +199,14 @@ describe("Settings backup runs", () => {
   it("shows a run somebody else started as busy, and leaves both buttons off", async () => {
     mocks.busy.value = true;
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     expect(((await screen.findByRole("button", { name: "Restore" })) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Backing up…", { exact: false }).closest("button") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("verifies the archive with the daemon, then has the shell restore it", async () => {
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(mocks.restoreBackup).toHaveBeenCalledWith("/repo-a", ARCHIVE.path));
     expect(mocks.verifyBackup).toHaveBeenCalledWith("/repo-a", ARCHIVE.path);
@@ -217,7 +217,7 @@ describe("Settings backup runs", () => {
   it("does not ask to stop anything for an archive the daemon refuses", async () => {
     mocks.verifyBackup.mockRejectedValue(new Error("backup belongs to /other, not /repo-a"));
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(mocks.verifyBackup).toHaveBeenCalled());
     expect(mocks.confirmDanger).not.toHaveBeenCalled();
@@ -227,7 +227,7 @@ describe("Settings backup runs", () => {
   it("restores nothing when the person declines", async () => {
     mocks.confirmDanger.mockResolvedValue(false);
     renderBackup();
-    fireEvent.click(await screen.findByRole("button", { name: "repo-a" }));
+    await pickScope("/repo-a");
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(mocks.confirmDanger).toHaveBeenCalled());
     expect(mocks.restoreBackup).not.toHaveBeenCalled();
