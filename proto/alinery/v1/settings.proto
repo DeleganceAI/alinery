@@ -11,7 +11,32 @@ service SettingsService {
   rpc WriteOverrides(WriteOverridesRequest) returns (WriteOverridesResponse);  // ACT
   rpc ClearOverride(ClearOverrideRequest) returns (ClearOverrideResponse);     // ACT
   rpc WriteHostedInference(WriteHostedInferenceRequest) returns (WriteHostedInferenceResponse);  // ADMIN
+  rpc ReadSpecs(ReadSpecsRequest) returns (ReadSpecsResponse);                                   // VIEW
+  rpc WriteSpec(WriteSpecRequest) returns (WriteSpecResponse);                                   // ACT
 }
+
+// The repository's requirement files: `specs/requirements.md`, `specs/tooling.md` and `specs/architecture.md` in the
+// repository root, and no other file in that folder. ReadSpecs answers with the working tree (what Settings edits);
+// a playbook step is given the committed text instead. WriteSpec creates or replaces one file and never commits. It is
+// not an AGENT RPC: an agent must not write the rules it is held to.
+message ReadSpecsRequest {}
+message SpecFile {
+  string name = 1;       // one of the three names
+  bool present = 2;
+  string text = 3;       // empty when absent or too_large
+  bool committed = 4;    // present and identical to HEAD's copy
+  bool too_large = 5;    // over max_chars: no text is returned, since saving a cut-down copy would lose the rest
+}
+message ReadSpecsResponse {
+  repeated SpecFile files = 1;  // always the three names, in order
+  uint32 max_chars = 2;
+}
+message WriteSpecRequest {
+  MutationMeta meta = 1;
+  string name = 2;  // not one of the three, or text over max_chars: INVALID_ARGUMENT
+  string text = 3;
+}
+message WriteSpecResponse {}
 
 message WriteOverridesRequest {
   MutationMeta meta = 1;

@@ -12,6 +12,7 @@ import { historyDir, loadEngineState, saveEngineState, stateHasStart } from "./d
 import { DomainError } from "./platform/lock.ts";
 import { readLaunchModel } from "./sessionControls.ts";
 import { recordWorktreeTree } from "./domain/gitActions.ts";
+import { requirementsBlock } from "./domain/repoSpecs.ts";
 
 export type SessionHooks = {
   open(id: string, taskSlug: string, model: string, prompt: string): Promise<void>;
@@ -302,6 +303,8 @@ function openTask(repo: string, slug: string, hooks: SessionHooks, release = fal
       SESSION_HISTORY_DIR: join(taskDir, "sessions"),
     },
     stepTokens: (step) => handoffForStep(join(taskDir, "sessions"), join(taskDir, "artifacts"), step),
+    // The repository's committed specs/, read at each launch: a step is held to what was committed, not to a half-edited file or its own worktree's copy.
+    requirements: () => requirementsBlock(repo),
   });
   // A task folded from an old log is saved once, so the log is not read again.
   if (stored.kind === "converted") engine.persist();

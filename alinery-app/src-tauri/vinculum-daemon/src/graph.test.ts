@@ -194,6 +194,37 @@ describe("playbook host", () => {
     expect(build?.prompt).toContain(join(repo, ".alinery", "tasks", "tokens", "sessions"));
   });
 
+  test("a step is given the committed specs/ of the repository, and nothing when there are none", async () => {
+    const git = (dir: string, ...args: string[]) => {
+      const env = { ...process.env };
+      delete env.GIT_DIR;
+      const r = Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "pipe", stderr: "pipe", env });
+      if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+    };
+    const run = async (name: string, commitSpecs: boolean) => {
+      const repo = mkdtempSync(join(tmpdir(), `vinculum-specs-${name}-`));
+      git(repo, "init", "-q", "-b", "main");
+      writeFileSync(join(repo, "README.md"), "x\n");
+      if (commitSpecs) {
+        mkdirSync(join(repo, "specs"));
+        writeFileSync(join(repo, "specs", "tooling.md"), "Lint with ruff, config in ruff.toml.\n");
+      }
+      git(repo, "add", ".");
+      git(repo, "commit", "-q", "-m", "init");
+      const hooks = recordingHooks();
+      resetGraphs();
+      prepareGraphs(repo, hooks);
+      taskFixture(repo, "specs", {});
+      await tickGraphs();
+      return hooks.opened[0]?.prompt ?? "";
+    };
+    const withSpecs = await run("with", true);
+    expect(withSpecs).toContain("## Repository requirements");
+    expect(withSpecs).toContain("### specs/tooling.md\n\nLint with ruff, config in ruff.toml.");
+    expect(withSpecs.indexOf("## Repository requirements")).toBeLessThan(withSpecs.indexOf("## Engine assignment"));
+    expect(await run("without", false)).not.toContain("Repository requirements");
+  });
+
   test("a blank task model uses settings, and a leftover harness does not", async () => {
     const repo = mkdtempSync(join(tmpdir(), "vinculum-model-"));
     const appConfig = join(repo, "app.toml");

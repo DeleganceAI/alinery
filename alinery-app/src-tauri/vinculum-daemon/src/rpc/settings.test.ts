@@ -190,3 +190,23 @@ test("WriteHostedInference is ADMIN: a token-less caller and a local non-shell p
   expect(existsSync(join(other.dir, "inference.json"))).toBe(false);
   expect(existsSync(join(anon.dir, "inference.json"))).toBe(false);
 });
+
+test("ReadSpecs and WriteSpec: create in place, refuse other names, no token is refused, and a retry writes once", async () => {
+  const { settings, repo } = await start();
+  const first = await settings().readSpecs({});
+  expect(first.files.map((f) => [f.name, f.present])).toEqual([["requirements.md", false], ["tooling.md", false], ["architecture.md", false]]);
+  expect(first.maxChars).toBeGreaterThan(0);
+
+  await settings().writeSpec({ meta: meta("w1"), name: "tooling.md", text: "ruff\n" });
+  expect(readFileSync(join(repo, "specs", "tooling.md"), "utf8")).toBe("ruff\n");
+  expect((await settings().readSpecs({})).files[1]).toMatchObject({ present: true, text: "ruff\n", committed: false });
+
+  expect(await code(settings().writeSpec({ meta: meta("w2"), name: "../escape.md", text: "x" }))).toBe(Code.InvalidArgument);
+  expect(existsSync(join(repo, "escape.md"))).toBe(false);
+  expect(await code(settings(null).readSpecs({}))).toBe(Code.Unauthenticated);
+  expect(await code(settings(null).writeSpec({ meta: meta("w3"), name: "tooling.md", text: "x" }))).toBe(Code.Unauthenticated);
+
+  await settings().writeSpec({ meta: meta("same"), name: "tooling.md", text: "first\n" });
+  await settings().writeSpec({ meta: meta("same"), name: "tooling.md", text: "second\n" });
+  expect(readFileSync(join(repo, "specs", "tooling.md"), "utf8")).toBe("first\n");
+});

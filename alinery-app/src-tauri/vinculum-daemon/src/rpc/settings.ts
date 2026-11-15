@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Capability } from "alinery-proto/alinery/v1/admin_pb";
 import type { RepoOverrides } from "alinery-proto/alinery/v1/entities_pb";
 import type { RepoService, SettingsService } from "alinery-proto/alinery/v1/settings_pb";
+import { readSpecs, SPEC_MAX_CHARS, writeSpec } from "../domain/repoSpecs.ts";
 import { clearOverride, emptyOverrides, ensureRepoReady, overridesOf, settingsKey, writeOverridesFile } from "../domain/settings.ts";
 import { writeOwnerOnly } from "../platform/fs.ts";
 import { withTaskMutation } from "../platform/lock.ts";
@@ -70,6 +71,20 @@ export function settingsService(d: SettingsDeps, dedupe: Dedupe, store: Store): 
       return dedupe.once(metaOf(req.meta), () =>
         domain(() => {
           writeOwnerOnly(join(pairingConfigDir(d.appConfig), "inference.json"), hostedInferenceBody(req.inferenceJson));
+          return {};
+        }),
+      );
+    },
+    // The requirement files are plain files in the repository's working tree, not `.alinery/` state: no repository lock and no store refresh.
+    readSpecs: (_req, ctx) => {
+      requireCapability(ctx, Capability.VIEW);
+      return domain(async () => ({ files: await readSpecs(d.repo), maxChars: SPEC_MAX_CHARS }));
+    },
+    writeSpec: (req, ctx) => {
+      requireCapability(ctx, Capability.ACT);
+      return dedupe.once(metaOf(req.meta), () =>
+        domain(async () => {
+          await writeSpec(d.repo, req.name, req.text);
           return {};
         }),
       );

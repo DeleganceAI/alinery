@@ -88,6 +88,7 @@ import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { RuntimePanel } from "./RuntimePanel";
 import "./Settings.css";
+import { SettingsSpecs } from "./SettingsSpecs";
 import { groupOf, matchSettings, SETTINGS_GROUPS, visibleGroups } from "./settingsIndex";
 import { VinculumCustomizations } from "./VinculumCustomizations";
 
@@ -1235,6 +1236,15 @@ export function Settings({
         Connections are shared across all repositories. GitHub uses the <span className="mono">gh</span> CLI store; only Linear OAuth tokens go in the macOS Keychain.
       </p>
     </section>
+  );
+
+  const renderSpecs = () => (
+    <>
+      <p className="hint">
+        Standing rules every playbook step is held to, read from <code>specs/</code> at the repository root as committed.
+      </p>
+      {isGlobal || !selectedRepo ? <p className="hint">Pick a repository in the scope bar to edit its requirements.</p> : <SettingsSpecs repo={selectedRepo} />}
+    </>
   );
 
   const renderPlaybooks = () => {
@@ -2745,6 +2755,7 @@ export function Settings({
           <>
             {renderHarness()}
             {part("agents.playbooks", renderPlaybooks())}
+            {part("agents.requirements", renderSpecs())}
           </>
         );
       case "connections":

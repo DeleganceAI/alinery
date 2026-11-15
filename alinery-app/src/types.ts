@@ -1090,6 +1090,7 @@ export type SettingsSectionKey =
   | "agents.defaults"
   | "agents.providers"
   | "agents.playbooks"
+  | "agents.requirements"
   | "connections"
   | "notifications"
   | "data"

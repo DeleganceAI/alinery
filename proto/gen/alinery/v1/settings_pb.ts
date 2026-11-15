@@ -16,7 +16,136 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file alinery/v1/settings.proto.
  */
 export const file_alinery_v1_settings: GenFile = /*@__PURE__*/
-  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIogBChVXcml0ZU92ZXJyaWRlc1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEiwKCW92ZXJyaWRlcxgCIAEoCzIZLmFsaW5lcnkudjEuUmVwb092ZXJyaWRlcxIZChFleHBlY3RlZF9yZXZpc2lvbhgDIAEoBCI+ChZXcml0ZU92ZXJyaWRlc1Jlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQiaAoUQ2xlYXJPdmVycmlkZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEg0KBWZpZWxkGAIgASgJEhkKEWV4cGVjdGVkX3JldmlzaW9uGAMgASgEIj0KFUNsZWFyT3ZlcnJpZGVSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkIl0KG1dyaXRlSG9zdGVkSW5mZXJlbmNlUmVxdWVzdBImCgRtZXRhGAEgASgLMhguYWxpbmVyeS52MS5NdXRhdGlvbk1ldGESFgoOaW5mZXJlbmNlX2pzb24YAiABKAkiHgocV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXNwb25zZSI8ChJFbnN1cmVSZWFkeVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhIjsKE0Vuc3VyZVJlYWR5UmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZDKrAgoPU2V0dGluZ3NTZXJ2aWNlElcKDldyaXRlT3ZlcnJpZGVzEiEuYWxpbmVyeS52MS5Xcml0ZU92ZXJyaWRlc1JlcXVlc3QaIi5hbGluZXJ5LnYxLldyaXRlT3ZlcnJpZGVzUmVzcG9uc2USVAoNQ2xlYXJPdmVycmlkZRIgLmFsaW5lcnkudjEuQ2xlYXJPdmVycmlkZVJlcXVlc3QaIS5hbGluZXJ5LnYxLkNsZWFyT3ZlcnJpZGVSZXNwb25zZRJpChRXcml0ZUhvc3RlZEluZmVyZW5jZRInLmFsaW5lcnkudjEuV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXF1ZXN0GiguYWxpbmVyeS52MS5Xcml0ZUhvc3RlZEluZmVyZW5jZVJlc3BvbnNlMl0KC1JlcG9TZXJ2aWNlEk4KC0Vuc3VyZVJlYWR5Eh4uYWxpbmVyeS52MS5FbnN1cmVSZWFkeVJlcXVlc3QaHy5hbGluZXJ5LnYxLkVuc3VyZVJlYWR5UmVzcG9uc2ViBnByb3RvMw", [file_alinery_v1_common, file_alinery_v1_entities]);
+  fileDesc("ChlhbGluZXJ5L3YxL3NldHRpbmdzLnByb3RvEgphbGluZXJ5LnYxIhIKEFJlYWRTcGVjc1JlcXVlc3QiXQoIU3BlY0ZpbGUSDAoEbmFtZRgBIAEoCRIPCgdwcmVzZW50GAIgASgIEgwKBHRleHQYAyABKAkSEQoJY29tbWl0dGVkGAQgASgIEhEKCXRvb19sYXJnZRgFIAEoCCJLChFSZWFkU3BlY3NSZXNwb25zZRIjCgVmaWxlcxgBIAMoCzIULmFsaW5lcnkudjEuU3BlY0ZpbGUSEQoJbWF4X2NoYXJzGAIgASgNIlYKEFdyaXRlU3BlY1JlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEgwKBG5hbWUYAiABKAkSDAoEdGV4dBgDIAEoCSITChFXcml0ZVNwZWNSZXNwb25zZSKIAQoVV3JpdGVPdmVycmlkZXNSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRIsCglvdmVycmlkZXMYAiABKAsyGS5hbGluZXJ5LnYxLlJlcG9PdmVycmlkZXMSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAQiPgoWV3JpdGVPdmVycmlkZXNSZXNwb25zZRIkCgdhcHBsaWVkGAEgASgLMhMuYWxpbmVyeS52MS5BcHBsaWVkImgKFENsZWFyT3ZlcnJpZGVSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YRINCgVmaWVsZBgCIAEoCRIZChFleHBlY3RlZF9yZXZpc2lvbhgDIAEoBCI9ChVDbGVhck92ZXJyaWRlUmVzcG9uc2USJAoHYXBwbGllZBgBIAEoCzITLmFsaW5lcnkudjEuQXBwbGllZCJdChtXcml0ZUhvc3RlZEluZmVyZW5jZVJlcXVlc3QSJgoEbWV0YRgBIAEoCzIYLmFsaW5lcnkudjEuTXV0YXRpb25NZXRhEhYKDmluZmVyZW5jZV9qc29uGAIgASgJIh4KHFdyaXRlSG9zdGVkSW5mZXJlbmNlUmVzcG9uc2UiPAoSRW5zdXJlUmVhZHlSZXF1ZXN0EiYKBG1ldGEYASABKAsyGC5hbGluZXJ5LnYxLk11dGF0aW9uTWV0YSI7ChNFbnN1cmVSZWFkeVJlc3BvbnNlEiQKB2FwcGxpZWQYASABKAsyEy5hbGluZXJ5LnYxLkFwcGxpZWQyvwMKD1NldHRpbmdzU2VydmljZRJXCg5Xcml0ZU92ZXJyaWRlcxIhLmFsaW5lcnkudjEuV3JpdGVPdmVycmlkZXNSZXF1ZXN0GiIuYWxpbmVyeS52MS5Xcml0ZU92ZXJyaWRlc1Jlc3BvbnNlElQKDUNsZWFyT3ZlcnJpZGUSIC5hbGluZXJ5LnYxLkNsZWFyT3ZlcnJpZGVSZXF1ZXN0GiEuYWxpbmVyeS52MS5DbGVhck92ZXJyaWRlUmVzcG9uc2USaQoUV3JpdGVIb3N0ZWRJbmZlcmVuY2USJy5hbGluZXJ5LnYxLldyaXRlSG9zdGVkSW5mZXJlbmNlUmVxdWVzdBooLmFsaW5lcnkudjEuV3JpdGVIb3N0ZWRJbmZlcmVuY2VSZXNwb25zZRJICglSZWFkU3BlY3MSHC5hbGluZXJ5LnYxLlJlYWRTcGVjc1JlcXVlc3QaHS5hbGluZXJ5LnYxLlJlYWRTcGVjc1Jlc3BvbnNlEkgKCVdyaXRlU3BlYxIcLmFsaW5lcnkudjEuV3JpdGVTcGVjUmVxdWVzdBodLmFsaW5lcnkudjEuV3JpdGVTcGVjUmVzcG9uc2UyXQoLUmVwb1NlcnZpY2USTgoLRW5zdXJlUmVhZHkSHi5hbGluZXJ5LnYxLkVuc3VyZVJlYWR5UmVxdWVzdBofLmFsaW5lcnkudjEuRW5zdXJlUmVhZHlSZXNwb25zZWIGcHJvdG8z", [file_alinery_v1_common, file_alinery_v1_entities]);
+
+/**
+ * The repository's requirement files: `specs/requirements.md`, `specs/tooling.md` and `specs/architecture.md` in the
+ * repository root, and no other file in that folder. ReadSpecs answers with the working tree (what Settings edits);
+ * a playbook step is given the committed text instead. WriteSpec creates or replaces one file and never commits. It is
+ * not an AGENT RPC: an agent must not write the rules it is held to.
+ *
+ * @generated from message alinery.v1.ReadSpecsRequest
+ */
+export type ReadSpecsRequest = Message<"alinery.v1.ReadSpecsRequest"> & {
+};
+
+/**
+ * Describes the message alinery.v1.ReadSpecsRequest.
+ * Use `create(ReadSpecsRequestSchema)` to create a new message.
+ */
+export const ReadSpecsRequestSchema: GenMessage<ReadSpecsRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 0);
+
+/**
+ * @generated from message alinery.v1.SpecFile
+ */
+export type SpecFile = Message<"alinery.v1.SpecFile"> & {
+  /**
+   * one of the three names
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: bool present = 2;
+   */
+  present: boolean;
+
+  /**
+   * empty when absent or too_large
+   *
+   * @generated from field: string text = 3;
+   */
+  text: string;
+
+  /**
+   * present and identical to HEAD's copy
+   *
+   * @generated from field: bool committed = 4;
+   */
+  committed: boolean;
+
+  /**
+   * over max_chars: no text is returned, since saving a cut-down copy would lose the rest
+   *
+   * @generated from field: bool too_large = 5;
+   */
+  tooLarge: boolean;
+};
+
+/**
+ * Describes the message alinery.v1.SpecFile.
+ * Use `create(SpecFileSchema)` to create a new message.
+ */
+export const SpecFileSchema: GenMessage<SpecFile> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 1);
+
+/**
+ * @generated from message alinery.v1.ReadSpecsResponse
+ */
+export type ReadSpecsResponse = Message<"alinery.v1.ReadSpecsResponse"> & {
+  /**
+   * always the three names, in order
+   *
+   * @generated from field: repeated alinery.v1.SpecFile files = 1;
+   */
+  files: SpecFile[];
+
+  /**
+   * @generated from field: uint32 max_chars = 2;
+   */
+  maxChars: number;
+};
+
+/**
+ * Describes the message alinery.v1.ReadSpecsResponse.
+ * Use `create(ReadSpecsResponseSchema)` to create a new message.
+ */
+export const ReadSpecsResponseSchema: GenMessage<ReadSpecsResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 2);
+
+/**
+ * @generated from message alinery.v1.WriteSpecRequest
+ */
+export type WriteSpecRequest = Message<"alinery.v1.WriteSpecRequest"> & {
+  /**
+   * @generated from field: alinery.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+
+  /**
+   * not one of the three, or text over max_chars: INVALID_ARGUMENT
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string text = 3;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message alinery.v1.WriteSpecRequest.
+ * Use `create(WriteSpecRequestSchema)` to create a new message.
+ */
+export const WriteSpecRequestSchema: GenMessage<WriteSpecRequest> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 3);
+
+/**
+ * @generated from message alinery.v1.WriteSpecResponse
+ */
+export type WriteSpecResponse = Message<"alinery.v1.WriteSpecResponse"> & {
+};
+
+/**
+ * Describes the message alinery.v1.WriteSpecResponse.
+ * Use `create(WriteSpecResponseSchema)` to create a new message.
+ */
+export const WriteSpecResponseSchema: GenMessage<WriteSpecResponse> = /*@__PURE__*/
+  messageDesc(file_alinery_v1_settings, 4);
 
 /**
  * @generated from message alinery.v1.WriteOverridesRequest
@@ -47,7 +176,7 @@ export type WriteOverridesRequest = Message<"alinery.v1.WriteOverridesRequest"> 
  * Use `create(WriteOverridesRequestSchema)` to create a new message.
  */
 export const WriteOverridesRequestSchema: GenMessage<WriteOverridesRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 0);
+  messageDesc(file_alinery_v1_settings, 5);
 
 /**
  * @generated from message alinery.v1.WriteOverridesResponse
@@ -64,7 +193,7 @@ export type WriteOverridesResponse = Message<"alinery.v1.WriteOverridesResponse"
  * Use `create(WriteOverridesResponseSchema)` to create a new message.
  */
 export const WriteOverridesResponseSchema: GenMessage<WriteOverridesResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 1);
+  messageDesc(file_alinery_v1_settings, 6);
 
 /**
  * @generated from message alinery.v1.ClearOverrideRequest
@@ -93,7 +222,7 @@ export type ClearOverrideRequest = Message<"alinery.v1.ClearOverrideRequest"> & 
  * Use `create(ClearOverrideRequestSchema)` to create a new message.
  */
 export const ClearOverrideRequestSchema: GenMessage<ClearOverrideRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 2);
+  messageDesc(file_alinery_v1_settings, 7);
 
 /**
  * @generated from message alinery.v1.ClearOverrideResponse
@@ -110,7 +239,7 @@ export type ClearOverrideResponse = Message<"alinery.v1.ClearOverrideResponse"> 
  * Use `create(ClearOverrideResponseSchema)` to create a new message.
  */
 export const ClearOverrideResponseSchema: GenMessage<ClearOverrideResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 3);
+  messageDesc(file_alinery_v1_settings, 8);
 
 /**
  * The hosted-inference credential (S4.11, R-S4.11-5). The shell mints and refreshes the token (it holds the account)
@@ -137,7 +266,7 @@ export type WriteHostedInferenceRequest = Message<"alinery.v1.WriteHostedInferen
  * Use `create(WriteHostedInferenceRequestSchema)` to create a new message.
  */
 export const WriteHostedInferenceRequestSchema: GenMessage<WriteHostedInferenceRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 4);
+  messageDesc(file_alinery_v1_settings, 9);
 
 /**
  * @generated from message alinery.v1.WriteHostedInferenceResponse
@@ -150,7 +279,7 @@ export type WriteHostedInferenceResponse = Message<"alinery.v1.WriteHostedInfere
  * Use `create(WriteHostedInferenceResponseSchema)` to create a new message.
  */
 export const WriteHostedInferenceResponseSchema: GenMessage<WriteHostedInferenceResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 5);
+  messageDesc(file_alinery_v1_settings, 10);
 
 /**
  * Idempotent: `.alinery/`, the `.gitignore` entry, `harnesses.toml` and `config.toml`, each created only when missing.
@@ -169,7 +298,7 @@ export type EnsureReadyRequest = Message<"alinery.v1.EnsureReadyRequest"> & {
  * Use `create(EnsureReadyRequestSchema)` to create a new message.
  */
 export const EnsureReadyRequestSchema: GenMessage<EnsureReadyRequest> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 6);
+  messageDesc(file_alinery_v1_settings, 11);
 
 /**
  * @generated from message alinery.v1.EnsureReadyResponse
@@ -186,7 +315,7 @@ export type EnsureReadyResponse = Message<"alinery.v1.EnsureReadyResponse"> & {
  * Use `create(EnsureReadyResponseSchema)` to create a new message.
  */
 export const EnsureReadyResponseSchema: GenMessage<EnsureReadyResponse> = /*@__PURE__*/
-  messageDesc(file_alinery_v1_settings, 7);
+  messageDesc(file_alinery_v1_settings, 12);
 
 /**
  * Repository settings (S4.1). The read is the `settings/_/repo` entity (entities.proto); global settings
@@ -224,6 +353,26 @@ export const SettingsService: GenService<{
     methodKind: "unary";
     input: typeof WriteHostedInferenceRequestSchema;
     output: typeof WriteHostedInferenceResponseSchema;
+  },
+  /**
+   * VIEW
+   *
+   * @generated from rpc alinery.v1.SettingsService.ReadSpecs
+   */
+  readSpecs: {
+    methodKind: "unary";
+    input: typeof ReadSpecsRequestSchema;
+    output: typeof ReadSpecsResponseSchema;
+  },
+  /**
+   * ACT
+   *
+   * @generated from rpc alinery.v1.SettingsService.WriteSpec
+   */
+  writeSpec: {
+    methodKind: "unary";
+    input: typeof WriteSpecRequestSchema;
+    output: typeof WriteSpecResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_alinery_v1_settings, 0);
