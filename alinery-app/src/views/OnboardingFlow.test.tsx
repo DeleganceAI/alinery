@@ -27,7 +27,6 @@ vi.mock("../WindowChrome", () => ({
 const baseConfig: AppConfig = {
   active_repo: "/Users/dev/project",
   known_repos: ["/Users/dev/project"],
-  mcp_enabled: true,
   appearance: DEFAULT_APPEARANCE,
 };
 

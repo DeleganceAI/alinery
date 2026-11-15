@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE } from "../appearance";
 import type * as IpcFixtures from "../test/mockIpc";
 import type { GlobalSettings, PickerPreferences, PlaybookCatalog, PlaybookRef } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 import { Settings } from "./Settings";
 
 const mocks = vi.hoisted(() => ({
@@ -43,19 +43,7 @@ const base: GlobalSettings = {
   model_favorites: {},
   experiments: { show_original_kanban: false },
 };
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 let saved: GlobalSettings;
 let preferences: PickerPreferences;
 let catalog: PlaybookCatalog;

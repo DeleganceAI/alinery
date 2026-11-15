@@ -83,7 +83,7 @@ import type {
   StorageInfo,
   UpdateStatus,
 } from "../types";
-import { type McpStatus, type McpStatusHandle, mcpDotColor, mcpStatusLabel } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { RemoteHostsSettings } from "./RemoteHostsSettings";
 import { RuntimePanel } from "./RuntimePanel";
@@ -244,10 +244,9 @@ function stdioHostConfigJson(binaryPath: string, args: string[]): string {
   );
 }
 
-/** True when the binary is known for Copy config (repo is a per-call tool argument now,
- *  not an install prerequisite; managed toggle is irrelevant). */
-function mcpInstallReady(mcp: Pick<McpStatus, "binary_found" | "binary_path">): boolean {
-  return mcp.binary_found && !!mcp.binary_path;
+/** True when the binary is known for Copy config (repo is a per-call tool argument, not an install prerequisite). */
+function mcpInstallReady(mcp: McpStatus): boolean {
+  return !!mcp.binary_path;
 }
 
 const allGlobalChoiceSource: ChoiceProvenance = {
@@ -293,7 +292,7 @@ export function Settings({
   onClearUpdateOffer,
 }: {
   // No `daemon` prop: the Sessions section is scope-driven and probes each repo itself.
-  mcp: McpStatusHandle;
+  mcp: McpStatus;
   activeRepo: string;
   knownRepos: string[];
   appearance: AppearancePrefs;
@@ -334,7 +333,6 @@ export function Settings({
   }, [repoError]);
   const report = (text: string, length?: ToastLength) => toast.success(text, length);
   const reportError = (e: unknown, what = "The action failed") => toast.error(`${what}: ${String(e)}`);
-  const [mcpBusy, setMcpBusy] = useState(false);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [storageErr, setStorageErr] = useState("");
   const [purgeBusy, setPurgeBusy] = useState(false);
@@ -941,14 +939,13 @@ export function Settings({
     connections: connections ? { text: `${connected} of ${connections.length} linked`, tone: connected ? "ok" : "off" } : undefined,
     notifications: global.notifications.enabled ? { text: "On", tone: "ok" } : { text: "Off", tone: "off" },
     data: { text: isGlobal ? "Per repository" : selectedRepo },
-    mcp: { text: mcpStatusLabel(mcp), tone: mcpDotColor(mcp) === "var(--success)" ? "ok" : mcpDotColor(mcp) === "var(--danger)" ? "warn" : "off" },
+    mcp: mcpInstallReady(mcp) ? { text: "Ready", tone: "ok" } : { text: "Binary missing", tone: "warn" },
     system: displayedUpdate?.available ? { text: `${displayedUpdate.available.version} ready`, tone: "warn" } : { text: appVersion ? `v${appVersion}` : "Version unknown" },
   };
   // Shown in the rail only while something here needs the person, like the library's Signals.
   const needs: { anchor: SettingsSectionKey; label: string }[] = [
     ...(displayedUpdate?.available ? [{ anchor: "system.updates" as const, label: `Update to ${displayedUpdate.available.version}` }] : []),
     ...(connections ?? []).filter((c) => c.reconnect).map((c) => ({ anchor: "connections" as const, label: `Reconnect ${c.name}` })),
-    ...(mcp.error ? [{ anchor: "mcp" as const, label: "MCP server error" }] : []),
     ...(backupsErr ? [{ anchor: "data.backup" as const, label: "Backups unreadable" }] : []),
   ];
   const jumpToFirstHit = () => {
@@ -2318,7 +2315,7 @@ export function Settings({
           </div>
         </div>
         {updatesCheck("Check for updates")}
-        <RuntimePanel mcp={mcp} />
+        <RuntimePanel />
       </>
     );
   };
@@ -2595,80 +2592,29 @@ export function Settings({
         )}
       </div>
     );
-    // One derivation per prerequisite: the icon and the label must never disagree.
-    // The offline fallback in useMcpStatus reports binary_found with no path, so
-    // testing binary_found alone would caption a not-ready chip "Binary ready".
-    const binaryReady = mcp.binary_found && !!mcp.binary_path;
-    // Chips confirm what is satisfied. The status label already names the first thing
-    // that is not — captioning a chip with the same words printed "No repo" twice in a
-    // row, and the unmet hints below say what to do about it.
-    const metChip = (label: string, detail: string) => (
-      <span className="mcp-chip ok" title={detail || undefined}>
-        <Check size={12} strokeWidth={2} aria-hidden="true" />
-        {label}
-      </span>
-    );
-    // The section configures the active repository whatever the scope bar says, so a
-    // scope pointing elsewhere means the config on screen is not for the repo named
-    // above it. Name the real target, in full, rather than let it be pasted blind.
-    const scopeMismatch = !isGlobal && !!mcp.repo && selectedRepo !== mcp.repo;
-    // A disabled toggle owes the user the reason next to it. The same sentences appear
-    // on the Advanced rows, but Advanced is closed by default and the one user who
-    // cannot start the server is the one who should not have to go looking.
-    const unmet = [!mcp.repo && "Select a repo first.", !binaryReady && "alinery-vinculum-daemon binary not found next to the app — rebuild."].filter(
-      (hint): hint is string => typeof hint === "string",
-    );
     return (
       <div className="mcp-page">
         <div className="mcp-hero">
           <div className="mcp-hero-status">
-            <span className="statusdot">
-              <span className="d" style={{ background: mcpDotColor(mcp) }} />
-              {mcpStatusLabel(mcp)}
-            </span>
             <div className="mcp-chips">
-              {mcp.repo && metChip(repoName(mcp.repo), mcp.repo)}
-              {binaryReady && metChip("Binary ready", mcp.binary_path)}
+              {installReady && (
+                <span className="mcp-chip ok" title={mcp.binary_path}>
+                  <Check size={12} strokeWidth={2} aria-hidden="true" />
+                  Binary ready
+                </span>
+              )}
             </div>
           </div>
-          <Checkbox
-            checked={mcp.enabled}
-            disabled={mcpBusy || !mcp.repo || !mcp.binary_found}
-            onChange={() => {
-              setMcpBusy(true);
-              const wasEnabled = mcp.enabled;
-              (wasEnabled ? ipc.stopMcpServer() : ipc.startMcpServer())
-                .then(() => {
-                  mcp.refresh();
-                  report(wasEnabled ? "MCP server stopped" : "MCP server started");
-                })
-                .catch((e) => reportError(e, wasEnabled ? "Couldn't stop the MCP server" : "Couldn't start the MCP server"))
-                .finally(() => setMcpBusy(false));
-            }}
-            label={
-              <>
-                App-managed server <span className="dsc">— optional for Desktop hosts</span>
-              </>
-            }
-          />
         </div>
-        {unmet.length > 0 && (
+        {!installReady && (
           <div className="mcp-unmet">
-            {unmet.map((hint) => (
-              <p key={hint}>{hint}</p>
-            ))}
+            <p>alinery-vinculum-daemon binary not found next to the app — rebuild.</p>
           </div>
         )}
-        {scopeMismatch && (
-          <InlineStatus tone="warning" detail={mcp.repo}>
-            This section always configures the active repository, not the <strong>{repoName(selectedRepo)}</strong> scope selected above. The config below is for:
-          </InlineStatus>
-        )}
-        {mcp.enabled && !mcp.running && mcp.error && (
-          <InlineStatus tone="error" detail={mcp.error}>
-            The MCP server is enabled but not running.
-          </InlineStatus>
-        )}
+        <p className="mcp-caption">
+          One MCP per computer serves every repository whose daemon is running, the app open or not. Its status, Restart, the optional token and HTTP are in Settings → Updates →
+          Runtime, for this computer and each connected ssh host.
+        </p>
         <section className="mcp-section">
           <div className="mcp-section-head">
             <div>
@@ -2698,16 +2644,10 @@ export function Settings({
           </summary>
           <div className="mcp-advanced-body">
             <p className="mcp-caption">
-              Stdio tools call the repository's daemon with a token the Alinery app hands out, so they work while the daemon runs (the window can be closed once the app has started
-              it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
+              The config runs a bridge to the machine MCP, which calls each daemon with the token that daemon registered, so tools work while the daemon runs (the window can be
+              closed once the app has started it). There is <strong>no live PTY control</strong> over MCP. Host config file paths are in the README.
             </p>
-            {checkRow(binaryReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
-            <h4 className="mcp-section-title">Managed socket</h4>
-            <p className="mcp-caption">
-              App-local <span className="mono">alinery-vinculum-daemon --mcp --serve</span> child while Alinery is open. Not the Desktop install path; dies when you quit or switch
-              repos. Useful for same-machine debugging only.
-            </p>
-            {checkRow(!!mcp.socket_path, "Socket path", mcp.socket_path, "Select a repo to see the socket path.")}
+            {checkRow(installReady, "Binary path", mcp.binary_path, "alinery-vinculum-daemon binary not found next to the app — rebuild.")}
           </div>
         </details>
       </div>

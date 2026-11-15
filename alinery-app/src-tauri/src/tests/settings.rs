@@ -78,12 +78,10 @@ fn app_config_defaults_round_trips_and_dedupes() {
     let empty: AppConfig = toml::from_str("").expect("missing app config means defaults");
     assert_eq!(empty.active_repo, "");
     assert!(empty.known_repos.is_empty());
-    assert!(empty.mcp_enabled);
 
     let cfg = sanitize_app_config(AppConfig {
         active_repo: " /repo/a ".into(),
         known_repos: vec!["/repo/a".into(), "/repo/a".into(), "  ".into(), "/repo/b".into()],
-        mcp_enabled: true,
         appearance: AppearancePrefs::default(),
         ..Default::default()
     });

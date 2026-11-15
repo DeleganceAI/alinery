@@ -2,7 +2,7 @@
 // through this module. Each reply must equal the recorded one once the values that differ by construction (ids, times, the temp
 // directory) are normalised, except the calls in EXCEPTIONS, which are the changes the plan names, each with what it checks instead.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { daemonProtocol, type RunningDaemon, startDaemon } from "./daemonFixture.testutil.ts";
 import { Endpoints } from "./endpoints.ts";
@@ -89,12 +89,12 @@ afterAll(async () => {
   if (daemon) rmSync(daemon.fixture.root, { recursive: true, force: true });
 });
 
+const registered = () => new Endpoints(undefined, () => ({ [daemon.fixture.repo]: { socket: daemon.socket, token: daemon.token } }));
+
 test("every recorded call gets its recorded reply, except the changes the plan names", async () => {
   const { root, repo } = daemon.fixture;
-  const endpointsFile = join(daemon.fixture.root, "endpoints.json");
-  writeFileSync(endpointsFile, JSON.stringify({ version: 1, repos: { [repo]: { socket: daemon.socket, token: daemon.token } } }));
-  // The shell's managed MCP, the only one `alinery_send_review_handoff` is offered to (O22 a): one token per daemon, in a file.
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
+  // The machine MCP, the only one `alinery_send_review_handoff` is offered to (O22 a): the daemons that registered with it.
+  const ctx = daemon.context({ endpoints: registered() });
   let sid = "";
   const differences: string[] = [];
   for (const [index, call] of recorded.entries()) {
@@ -122,8 +122,7 @@ test("every recorded call gets its recorded reply, except the changes the plan n
 
 test("an archived task is left out of alinery_list_tasks while it still exists (the recorded list runs after the purge)", async () => {
   const { repo } = daemon.fixture;
-  const endpointsFile = join(daemon.fixture.root, "endpoints.json");
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, endpointsFile) });
+  const ctx = daemon.context({ endpoints: registered() });
   const list = async () => JSON.parse((await callTool(ctx, "alinery_list_tasks", { repo })).content[0].text) as string[];
   const made = await callTool(ctx, "alinery_create_task", { repo, name: "Third task", description: "to archive", playbook: { scope: "bundled", key: "one-shot" } });
   expect(made.content[0].text.startsWith("{")).toBe(true);
@@ -136,7 +135,7 @@ test("an archived task is left out of alinery_list_tasks while it still exists (
 
 test("a refused call is marked isError and content is not, even content that reads like an error (#169)", async () => {
   const { repo } = daemon.fixture;
-  const ctx = daemon.context({ endpoints: new Endpoints(undefined, join(daemon.fixture.root, "endpoints.json")) });
+  const ctx = daemon.context({ endpoints: registered() });
   const missing = await callTool(ctx, "alinery_get_task", { repo, slug: "no-such-task" });
   expect(missing).toEqual({ content: [{ type: "text", text: "error: missing task 'no-such-task'" }], isError: true });
   expect((await callTool(ctx, "alinery_get_task", { repo, slug: "bad/slug" })).isError).toBe(true);

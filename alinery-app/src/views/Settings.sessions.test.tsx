@@ -4,7 +4,7 @@ import { DEFAULT_APPEARANCE, normalizeChatView } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { fakeSettings, pickScope } from "../test/settingsHooks";
 import type { AppearancePrefs, GlobalSettings, RepoOverrides, ScopedSettings } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 const baseGlobal: GlobalSettings = {
   notifications: {
@@ -94,19 +94,7 @@ vi.mock("./ProviderSetupDialog", () => ({
 
 import { Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 const ANCHOR = { harness: "agents", sessionsView: "views.sessions", chat: "views.chat" } as const;
 
@@ -148,9 +136,7 @@ beforeEach(() => {
     removeItem: vi.fn(),
     clear: vi.fn(),
   });
-  mocks.writeAppearance
-    .mockReset()
-    .mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], mcp_enabled: true, appearance }));
+  mocks.writeAppearance.mockReset().mockImplementation(async (appearance: typeof DEFAULT_APPEARANCE) => ({ active_repo: "/r", known_repos: ["/r"], appearance }));
   mocks.confirmDanger.mockReset().mockResolvedValue(true);
   mocks.askConfirm.mockReset().mockResolvedValue("update");
 });

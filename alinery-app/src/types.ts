@@ -481,7 +481,6 @@ export type AppConfig = {
   /** Whether the onboarding steps have run on this computer. */
   local_onboarded?: boolean;
   remote_hosts?: Record<string, RemoteHost>;
-  mcp_enabled: boolean;
   appearance: AppearancePrefs;
   settings_version?: number;
   global?: GlobalSettings;
@@ -1265,18 +1264,8 @@ export type DaemonStatus = {
   host_guard_warning: boolean;
 };
 
-export type McpStatus = {
-  enabled: boolean;
-  running: boolean;
-  clients: number;
-  socket_reachable: boolean;
-  binary_found: boolean;
-  binary_path: string;
-  host_args: string[];
-  repo: string;
-  socket_path: string;
-  error: string;
-};
+/** What a host's stdio config runs: the daemon binary beside the app, and the bridge arguments after it. */
+export type McpStatus = { binary_path: string; host_args: string[] };
 
 export type CreationError = { stage: string; code: string; message: string };
 export type CreateTaskResult = {

@@ -195,8 +195,8 @@ first_live_daemon_socket() {
 ALINERYD_PROCESS_PATTERN='(^|[[:space:]/])(alinery-vinculum-daemon|alineryd)([[:space:]]|$)'
 
 is_product_daemon_ps_line() {
-  # The daemon binary also runs the MCP server (`--mcp`, S5.1): a harness's or the app's MCP child carries the same
-  # `--repo` and is not a daemon, so it is neither counted nor shut down.
+  # The daemon binary also runs the MCP (`--mcp`): the machine MCP and each client's stdio bridge are not daemons, so
+  # they are neither counted nor shut down.
   printf '%s' "${1-}" | grep -qE "$ALINERYD_PROCESS_PATTERN" && ! printf '%s' "${1-}" | grep -qE '[[:space:]]--mcp([[:space:]]|$)'
 }
 
@@ -294,7 +294,7 @@ ALINERY_STOP_POLLS="${ALINERY_STOP_POLLS:-25}"
 
 # Quit the app: SIGTERM, then SIGKILL anything still up after ~5s. The bundle is about
 # to be `rm -rf`'d out from under this process — leaving it running breaks its sidecar
-# lookup (`resolve_alineryd_path` reads the bundle dir) and orphans its managed alinery-mcp.
+# lookup (`resolve_alineryd_path` reads the bundle dir).
 #
 # Returns 0 only when no Alinery process remains. Callers must treat non-zero as "do not
 # touch anything else" — see `preflight_gate`.

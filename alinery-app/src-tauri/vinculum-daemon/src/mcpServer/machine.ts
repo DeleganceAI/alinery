@@ -92,7 +92,7 @@ export async function serveMachine(options: { paths: MachinePaths; protocol: num
   let clients = 0;
   const registered = (): Record<string, Endpoint> => Object.fromEntries([...registrations.values()].map((r) => [r.repo, { socket: r.socket, token: r.token }]));
   // M2: every caller reaches every registered daemon, and the handoff is everyone's.
-  const ctx = { protocol, processRepo: undefined, appConfig: options.appConfig, endpoints: new Endpoints(undefined, undefined, true, registered) };
+  const ctx = { protocol, processRepo: undefined, appConfig: options.appConfig, endpoints: new Endpoints(undefined, registered) };
 
   let idle: ReturnType<typeof setTimeout> | undefined;
   const leave = () => {

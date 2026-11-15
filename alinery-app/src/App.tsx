@@ -483,7 +483,7 @@ export default function App() {
       .catch((e) => {
         setRepoErr(String(e));
         const appearance = applyAppearance(DEFAULT_APPEARANCE);
-        setAppConfig({ active_repo: "", known_repos: [], mcp_enabled: true, appearance });
+        setAppConfig({ active_repo: "", known_repos: [], appearance });
       });
   }, []);
 
@@ -500,7 +500,7 @@ export default function App() {
   const update = useUpdateStatus({ enabled: !isDev });
   const onAppearanceChange = (next: AppearancePrefs) => {
     const normalized = applyAppearance(next);
-    setAppConfig((cfg) => (cfg ? { ...cfg, appearance: normalized } : { active_repo: "", known_repos: [], mcp_enabled: true, appearance: normalized }));
+    setAppConfig((cfg) => (cfg ? { ...cfg, appearance: normalized } : { active_repo: "", known_repos: [], appearance: normalized }));
   };
   const onNotificationsChange = useCallback((notifications: NotificationPrefs) => {
     setAppConfig((cfg) => (cfg?.global ? { ...cfg, global: { ...cfg.global, notifications } } : cfg));
@@ -1431,7 +1431,6 @@ export default function App() {
               <HotkeyBar
                 view={view.kind}
                 daemon={daemon}
-                mcp={mcp}
                 showHints={Boolean(appConfig?.active_repo)}
                 version={appVersion}
                 onOpenRepo={(repo) => void setRepo(repo)}

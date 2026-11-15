@@ -10,7 +10,7 @@ vi.mock("./ipc", async () => {
   return mockIpc({ readAppConfig: vi.fn(), remoteHosts: vi.fn() });
 });
 
-const config = (active_repo: string) => ({ active_repo, known_repos: [active_repo], mcp_enabled: true }) as AppConfig;
+const config = (active_repo: string) => ({ active_repo, known_repos: [active_repo] }) as AppConfig;
 const host = { host_id: "box-a1b2c3", label: "Build box" } as RemoteHostView;
 
 afterEach(() => {

@@ -29,7 +29,6 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -40,14 +39,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use alinery_core::legacy_daemon::read_socket_line;
 #[cfg(test)]
 use alinery_core::legacy_daemon::{format_daemon_timeout, SocketReadError, DAEMON_CONTROL_TIMEOUT, DAEMON_OBSERVATION_TIMEOUT};
 use alinery_core::lockfile::{try_lock_exclusive, LockFile};
 pub(crate) use alinery_core::write_owner_only_bytes;
 #[cfg(test)]
 pub(crate) use alinery_core::write_task;
-use alinery_core::{alinery_app_lock_path, alinery_dir, login_shell_path, DaemonCompat, PollerAction, PROTOCOL_VERSION};
+use alinery_core::{alinery_app_lock_path, alinery_dir, DaemonCompat, PollerAction, PROTOCOL_VERSION};
 pub use alinery_core::{
     alineryd_lock_path,
     alineryd_socket_path,
@@ -210,8 +208,6 @@ pub fn run() {
             mcp_status,
             machine_mcp_peer,
             force_restart_machine_mcp,
-            start_mcp_server,
-            stop_mcp_server,
             pick_backup_destination_dialog,
             restore_backup,
             connection_statuses,
@@ -237,14 +233,8 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.kill_mcp(); // R2: ensure managed child dies with app
-                }
-            }
-            // alineryd remains detached (on purpose)
-        });
+        // alineryd remains detached (on purpose)
+        .run(|_app, _event| {});
 }
 
 #[cfg(test)]

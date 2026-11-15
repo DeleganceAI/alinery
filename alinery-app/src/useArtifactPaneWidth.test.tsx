@@ -11,7 +11,6 @@ vi.mock("./ipc", () =>
     writeAppearance: vi.fn(async (appearance: AppearancePrefs) => ({
       active_repo: "",
       known_repos: [],
-      mcp_enabled: true,
       appearance,
     })),
   }),

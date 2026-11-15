@@ -1,6 +1,6 @@
 # Machine MCP and the runtime status panel
 
-Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4 and P5 are built. P6 is not started.
+Status: v0.4, 2026-11-15. P0 is done: M1 to M10 are decided (section 3). P1 is built and committed (`7bd85be2`, extended since). P2 is built. P3 is built (local). P4, P5 and P6 are built.
 
 v0.4 adds M9 (an app update asks the MCP to exit) and M10 (HTTP is a bound port the user wires up; Settings shows its address and token per host). v0.3 recorded the decisions: full reach for every caller with an optional token (M2, M5), Restart and Force restart in the panel (M3), refuse protocol mismatches (M7), register over the socket (M8). v0.2 had reviewed the plan against the code.
 
@@ -208,6 +208,9 @@ Each phase ships on its own and leaves the old paths working. While iterating, r
 - Built: `mcpServer/http.ts`, started by the machine MCP from `machine-mcp[-ns].http.json` beside the key (read once; `McpService.SetHttp` validates, writes it owner-only and restarts the MCP). JSON answers only: POST to `/mcp`, a notification gets 202, GET gets 405 (no server stream). Every request needs the token, loopback too, read per request so a rotation needs no restart. A loopback bind requires a loopback Host (DNS rebinding); any bind requires an Origin, when sent, to name the Host. The bind is 127.0.0.1, 0.0.0.0 or one of the machine's own non-link-local addresses (listed in `McpStatus.http.addresses`). Turning HTTP on without the token and clearing the token while HTTP is on are both refused. The panel's HTTP row per host: on/off (disabled until a token exists), bind, port, the cleartext confirmation and warning off loopback, the URL with Copy, and the M10 note. Still protocol 49: unreleased, so no second bump.
 
 **P6. Harness migration and deletion (optional, after a soak).** Point the harness's `McpHub` at the machine socket (no scoped handshake, M2), then remove `--serve --managed`, `ensure_mcp_server`, `refresh_mcp_endpoints`, `ManagedMcpChild`, the endpoints file and the preflight patterns that referred to them. Update `AGENTS.md`.
+- Built, without the soak: the hub's built-in server is `--mcp --bridge`, with no token in its environment, and only a daemon started with `--machine-mcp` adds it (a test daemon would otherwise leave a machine MCP behind). Gone: `--serve`, `--managed`, the endpoints file, `ensure_mcp_server`, `refresh_mcp_endpoints`, `ManagedMcpChild`, `start_mcp_server` and `stop_mcp_server`, `mint_agent_token` in the shell, `mcp_enabled` in the app config, the core `mcp_socket_path` and `mcp_status_path`, the footer's MCP line, the Settings toggle and the panel's managed row. `mcp_status` now answers only the binary and host args for Copy config. `--mcp` without `--bridge` but with `--app-config` runs the bridge, so configs pasted before P3 keep working. A harness now reaches every registered repo (M2), not only its own, and `resources/*` answer that they need `--repo`.
+- Risk the soak was for: when an update changes the protocol, the running machine MCP is `behind` and refuses the new bridges, so harness sessions lose the `alinery` tools until Restart MCP (or its 10-minute idle exit once no daemon is registered). M9's updater exit is still unbuilt.
+- The storage panel still lists `.alinery/mcp[-ns].sock` and `.status.json` (`entities.proto` field 10); those files are no longer written.
 
 ## 8. Unverified
 

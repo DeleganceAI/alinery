@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { SyncLinks } from "./SyncLinks";
 import type { DaemonStatus } from "./types";
-import { type McpStatus, mcpFooterLabel } from "./useMcpStatus";
 
 type Hint = [string, string];
 
@@ -51,7 +50,6 @@ const HINTS: Record<string, Hint[]> = {
 export function HotkeyBar({
   view,
   daemon,
-  mcp,
   showHints = true,
   version = "",
   gridViewName,
@@ -60,7 +58,6 @@ export function HotkeyBar({
 }: {
   view: string;
   daemon: DaemonStatus;
-  mcp: McpStatus;
   showHints?: boolean;
   version?: string;
   gridViewName?: string;
@@ -74,9 +71,7 @@ export function HotkeyBar({
   // Dot severity mirrors the visible text: accent while work runs, calm green when
   // idle-but-alive, red if unreachable (§6.2a). The label always carries the state.
   const dotClass = !daemon.reachable ? "down" : daemon.busy > 0 || daemon.waiting_for_input > 0 || daemon.waiting_for_approval > 0 ? "busy" : "ok";
-  const mcpLabel = mcpFooterLabel(mcp);
   const daemonStatus = !daemon.reachable ? "Offline" : `${daemon.alive} live session${daemon.alive === 1 ? "" : "s"}`;
-  const mcpStatus = !mcp.repo ? "No repository" : mcpLabel ? mcpLabel.replace(/^MCP /, "") : "Unavailable";
   // The sync links sample the shell once a second, so they mount only while the popover is open.
   const [open, setOpen] = useState(false);
 
@@ -90,10 +85,6 @@ export function HotkeyBar({
             <span>
               <b>Daemon</b>
               {daemonStatus}
-            </span>
-            <span>
-              <b>MCP server</b>
-              {mcpStatus}
             </span>
             {open && <SyncLinks appVersion={version} onOpenRepo={onOpenRepo} />}
           </span>

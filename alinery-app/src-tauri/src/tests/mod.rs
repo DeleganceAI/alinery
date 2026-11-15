@@ -13,11 +13,11 @@ pub(crate) use super::{
     linear_account_path_in, list_tasks_for_repo, loopback_html, open_chat_repos_in, paid_from_stored_plan, parse_desktop_credits_body, parse_desktop_login_callback,
     parse_entitlement_plan, parse_github_ref, parse_hosted_catalog_body, parse_hosted_error, parse_linear_oauth_tokens, parse_linear_ref, parse_oauth_callback, percent_encode,
     pkce_challenge, plan_label, production_livemode, read_model_favorites_in, read_task, refresh_account_at, refresh_hosted_inference_for_spawn_at, register_runtime_plugins,
-    remove_mcp_lane_runtime_files, remove_repo_from_config, require_repo_owned, resolve_hosted_catalog, sanitize_app_config, sanitize_appearance, session_meta_path, sessions_dir,
-    set_active_repo_global, set_model_favorite_in, sign_out_at, store_credits_snapshot, sync_hosted_inference, task_dir, validate_known_target_repo,
-    wait_for_desktop_login_callback, wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry, write_global_settings_in, write_task,
-    AccountAuthError, AccountUser, AppConfig, AppState, AppearancePrefs, AuthAttempt, AuthRetryError, Command, DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMeta,
-    SignInAttempt, SignInGuard, Task, HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
+    remove_repo_from_config, require_repo_owned, resolve_hosted_catalog, sanitize_app_config, sanitize_appearance, session_meta_path, sessions_dir, set_active_repo_global,
+    set_model_favorite_in, sign_out_at, store_credits_snapshot, sync_hosted_inference, task_dir, validate_known_target_repo, wait_for_desktop_login_callback,
+    wait_for_desktop_login_callback_until, wait_for_linear_callback, with_access_token_retry, write_global_settings_in, write_task, AccountAuthError, AccountUser, AppConfig,
+    AppState, AppearancePrefs, AuthAttempt, AuthRetryError, Command, DesktopCreditsView, LinearTokenError, OAuthCallback, SessionMeta, SignInAttempt, SignInGuard, Task,
+    HOSTED_MODEL_UNAVAILABLE, PROTOCOL_VERSION,
 };
 pub(crate) use alinery_core::{
     alinery_app_lock_path, hosted_models_yml_unavailable, models_yml_path, parse_inference_session_body, render_models_yml, wipe_hosted_files, write_hosted_models_yml,

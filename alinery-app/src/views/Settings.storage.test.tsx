@@ -4,7 +4,7 @@ import { DEFAULT_APPEARANCE } from "../appearance";
 import { mockIpc } from "../test/mockIpc";
 import { effectiveOf, fakeSettings, pickScope } from "../test/settingsHooks";
 import type { GlobalSettings, SettingsSectionKey, StorageInfo } from "../types";
-import type { McpStatusHandle } from "../useMcpStatus";
+import type { McpStatus } from "../useMcpStatus";
 
 const SCOPE_EMPTY = "Select a repo to see these settings";
 
@@ -81,19 +81,7 @@ vi.mock("../confirm", () => ({ confirmDanger: mocks.confirmDanger }));
 
 import { Settings } from "./Settings";
 
-const mcp: McpStatusHandle = {
-  enabled: false,
-  running: false,
-  clients: 0,
-  socket_reachable: false,
-  binary_found: false,
-  binary_path: "",
-  host_args: [],
-  repo: "",
-  socket_path: "",
-  error: "",
-  refresh: () => {},
-};
+const mcp: McpStatus = { binary_path: "", host_args: [] };
 
 function renderSettings(section: SettingsSectionKey) {
   return render(

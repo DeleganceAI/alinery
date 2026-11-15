@@ -10,7 +10,6 @@ import { useLiveSessionsByRepo } from "../sync/hooks";
 import { McpState, type McpStatus, machineMcpStatus, machineMcpToken, restartMachineMcp, setMachineMcpHttp } from "../sync/mcp";
 import { toast } from "../toast";
 import type { HostRuntime, RepoRuntime, RuntimeStatus } from "../types";
-import { type McpStatusHandle, mcpStatusLabel } from "../useMcpStatus";
 
 const REPO_STATE: Record<RepoRuntime["state"], string> = {
   current: "Current",
@@ -286,7 +285,7 @@ function MachineMcpRows({ repo, label, local }: { repo: string | undefined; labe
 }
 
 /** What runs where, with a restart per daemon and an update per stale host. Loaded on open and on Refresh only: the shell answers from memory, never over ssh. */
-export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
+export function RuntimePanel() {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [failed, setFailed] = useState(false);
   const load = () =>
@@ -327,14 +326,7 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
     <section className="settings-nested" aria-labelledby="runtime-title">
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <h3 id="runtime-title">Runtime</h3>
-        <button
-          type="button"
-          className="btn ghost small"
-          onClick={() => {
-            void load();
-            mcp.refresh();
-          }}
-        >
+        <button type="button" className="btn ghost small" onClick={() => void load()}>
           Refresh
         </button>
       </div>
@@ -419,13 +411,6 @@ export function RuntimePanel({ mcp }: { mcp: McpStatusHandle }) {
                 repo={status.repos.find((repo) => repo.host === host.host_id && (repo.state === "current" || repo.state === "build_drift"))?.repo}
               />
             ))}
-            <tr>
-              <td>MCP</td>
-              <td className="dim">managed · {mcp.repo ? repoName(mcp.repo) : "no repo"}</td>
-              <td />
-              <td>{mcpStatusLabel(mcp)}</td>
-              <td />
-            </tr>
           </tbody>
         </table>
       )}

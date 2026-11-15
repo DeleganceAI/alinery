@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mockIpc } from "../test/mockIpc";
-import type { McpStatusHandle } from "../useMcpStatus";
 
 const runtime = vi.hoisted(() => ({ extra: [] as never[] }));
 vi.mock("../ipc", () =>
@@ -79,20 +78,6 @@ import * as ipc from "../ipc";
 import { McpState } from "../sync/mcp";
 import { mcpHttpUrl, RuntimePanel } from "./RuntimePanel";
 
-const mcp: McpStatusHandle = {
-  enabled: true,
-  running: true,
-  clients: 0,
-  socket_reachable: true,
-  binary_found: true,
-  binary_path: "/x",
-  host_args: [],
-  repo: "/Users/me/app",
-  socket_path: "/s",
-  error: "",
-  refresh: () => {},
-};
-
 afterEach(() => {
   runtime.extra = [];
   cleanup();
@@ -107,7 +92,7 @@ beforeEach(() => {
 const text = (node: ReactNode) => render(<>{node}</>).container.textContent;
 
 it("marks only the host whose bundled runtime differs as stale, and names each daemon's state", async () => {
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   const stale = await screen.findAllByText(/Stale: restarting a daemon/);
   expect(stale).toHaveLength(1);
   expect(screen.getByText("aaaaaaaa → bbbbbbbb")).toBeTruthy();
@@ -118,7 +103,7 @@ it("marks only the host whose bundled runtime differs as stale, and names each d
 });
 
 it("says what the office skills will find on each running daemon, and links LibreOffice when it is missing", async () => {
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   expect(await screen.findByText(/Python bundled · missing LibreOffice, pdftoppm/)).toBeTruthy();
   expect(screen.getAllByText("office tools")).toHaveLength(1);
   expect(screen.getByRole("link", { name: "Get LibreOffice" })).toBeTruthy();
@@ -126,7 +111,7 @@ it("says what the office skills will find on each running daemon, and links Libr
 
 it("restarts exactly the row's daemon after a confirmation that counts its live sessions", async () => {
   confirms.danger.mockResolvedValue(true);
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for app" }));
   await waitFor(() => expect(ipc.stopDaemon).toHaveBeenCalledWith("/Users/me/app"));
   const [title, body, accept] = confirms.danger.mock.calls[0];
@@ -138,7 +123,7 @@ it("restarts exactly the row's daemon after a confirmation that counts its live 
 
 it("asks a second time, naming them, before restarting a daemon someone else started", async () => {
   confirms.danger.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for shared" }));
   await waitFor(() => expect(confirms.danger).toHaveBeenCalledTimes(2));
   expect(text(confirms.danger.mock.calls[0][1])).toContain("Any live sessions in this repository are stopped");
@@ -148,7 +133,7 @@ it("asks a second time, naming them, before restarting a daemon someone else sta
 
 it("does nothing on cancel, and offers no restart for a daemon that is not running", async () => {
   confirms.danger.mockResolvedValue(false);
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   fireEvent.click(await screen.findByRole("button", { name: "Restart the daemon for svc" }));
   await waitFor(() => expect(confirms.danger).toHaveBeenCalled());
   expect(ipc.stopDaemon).not.toHaveBeenCalled();
@@ -157,7 +142,7 @@ it("does nothing on cancel, and offers no restart for a daemon that is not runni
 
 it("updates only a stale connected host, by reconnecting it after a yes", async () => {
   confirms.ask.mockResolvedValue("confirm");
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   const buttons = await screen.findAllByRole("button", { name: "Update host…" });
   expect(buttons).toHaveLength(1);
   fireEvent.click(buttons[0]);
@@ -167,7 +152,7 @@ it("updates only a stale connected host, by reconnecting it after a yes", async 
 
 it("shows the machine MCP through a local daemon, and restarts it after a yes that counts its clients", async () => {
   confirms.ask.mockResolvedValue("confirm");
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   expect(await screen.findByText("3 clients · 1 daemon · 1 incompatible")).toBeTruthy();
   expect(machine.status).toHaveBeenCalledWith("/Users/me/app");
   fireEvent.click(screen.getByRole("button", { name: "Restart MCP" }));
@@ -178,7 +163,7 @@ it("shows the machine MCP through a local daemon, and restarts it after a yes th
 it("offers Force restart only when it does not answer, bound to the incarnation the user confirmed", async () => {
   machine.status.mockResolvedValue(mcpStatus(McpState.STUCK));
   confirms.danger.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   const force = await screen.findByRole("button", { name: "Force restart…" });
   fireEvent.click(force);
   await waitFor(() => expect(confirms.danger).toHaveBeenCalledTimes(1));
@@ -193,7 +178,7 @@ it("requires a token only after a yes, and shows no Force restart for an MCP tha
   confirms.ask.mockResolvedValue("confirm");
   let held = "";
   machine.token.mockImplementation(async (_repo: string, action: string) => (held = action === "rotate" ? "feedface00112233" : action === "clear" ? "" : held));
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   fireEvent.click(await screen.findByRole("button", { name: "Require token…" }));
   await waitFor(() => expect(machine.token).toHaveBeenCalledWith("/Users/me/app", "rotate"));
   expect(await screen.findByText("feedface…")).toBeTruthy();
@@ -204,7 +189,7 @@ it("asks each connected host's MCP through a daemon on that host, and offers For
   const remote = { repo: "alinery+ssh://h2/srv/api", state: "current" as const, issues: [], host: "h2", version: "0.600.0", started_by: "", os_user: "", mine: true };
   runtime.extra = [remote as never];
   machine.status.mockImplementation(async (repo: string) => mcpStatus(repo === remote.repo ? McpState.STUCK : McpState.OK));
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   await waitFor(() => expect(machine.status).toHaveBeenCalledWith(remote.repo));
   expect(await screen.findByText("Not answering")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Force restart…" })).toBeNull();
@@ -215,7 +200,7 @@ const httpOf = (extra = {}) => ({ enabled: false, bind: "127.0.0.1", port: 39470
 
 it("keeps HTTP off until a token is set, then serves on all interfaces only after the cleartext warning, and shows the URL", async () => {
   machine.status.mockResolvedValue(mcpStatus(McpState.OK, { http: httpOf() }));
-  const { unmount } = render(<RuntimePanel mcp={mcp} />);
+  const { unmount } = render(<RuntimePanel />);
   expect(await screen.findByText(/Require a token first/)).toBeTruthy();
   expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
   unmount();
@@ -223,7 +208,7 @@ it("keeps HTTP off until a token is set, then serves on all interfaces only afte
   machine.token.mockResolvedValue("feedface00112233");
   machine.http.mockResolvedValue(mcpStatus(McpState.OK));
   confirms.ask.mockResolvedValueOnce("cancel").mockResolvedValueOnce("confirm");
-  render(<RuntimePanel mcp={mcp} />);
+  render(<RuntimePanel />);
   await waitFor(() => expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.change(screen.getByRole("combobox", { name: "Bind address" }), { target: { value: "0.0.0.0" } });

@@ -107,9 +107,6 @@ pub(crate) async fn restore_backup(app: AppHandle, repo_path: Option<String>, ba
         let lifecycle = state.repo_lifecycle(&repo);
         let _guard = lifecycle.lock().unwrap_or_else(|error| error.into_inner());
         require_restore_authority(&state, &repo, &load_app_config(&worker_app).known_repos)?;
-        if active_repo().ok().as_deref() == Some(repo.as_path()) {
-            state.kill_mcp_for_repo(&repo);
-        }
         // DELIBERATE TEARDOWN ORIGIN: confirmed restore holds lifecycle ordering
         // through extraction, so no queued attach can publish against half-restored data.
         if daemon_answers(&repo) {

@@ -341,9 +341,11 @@ const agentEnv = agentShellEnv({
   path: process.env.PATH,
   libreOffice: libreOfficeDir(),
 });
-// The AGENT tokens this daemon mints (O20 c): one for the built-in MCP it runs for its harnesses, and the ones the shell asks for.
+// The AGENT tokens this daemon mints (O20 c): the one it registers with the machine MCP, and the ones the shell asks for.
 const agentTokens = new TokenRegistry();
-const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, rpc: { socket: rpcSocket, token: agentTokens.mint("harness-mcp") } });
+// The harnesses' built-in MCP is the stdio bridge to the machine MCP, like any other client (docs/machine-mcp-plan.md P6).
+// Only with --machine-mcp, like the registration: the bridge starts a machine MCP, and a test daemon must not leave one behind.
+const mcpHub = new McpHub(registry, { repo, appConfig, agentDir, namespace, builtin: args.includes("--machine-mcp") });
 // The machine MCP (docs/machine-mcp-plan.md): McpService reads and restarts it from any daemon; only a daemon started with
 // --machine-mcp registers on its own, so test daemons never start one.
 const machine = machinePaths(appConfigDirOf(appConfig), namespace);

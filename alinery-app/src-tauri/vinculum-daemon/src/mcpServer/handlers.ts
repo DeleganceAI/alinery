@@ -38,7 +38,7 @@ export type Context = {
 const REMOTE_MSG = "This repo appears to be remote (ssh). MCP currently supports read-only discovery of remote repos only. Full operations require the Alinery desktop app or future remote daemon support.";
 const NOT_LOCAL_CHECKOUT_MSG =
   "This repo is registered but is not a local Git checkout at this path (no .git found). MCP currently supports read-only discovery of such repos only. Full operations require the Alinery desktop app or future remote daemon support.";
-const NEEDS_APP_MCP = "alinery_send_review_handoff copies between two repositories, so it needs the Alinery app's MCP, which holds a token for every daemon the app has open; this MCP holds one for its own daemon only";
+const NEEDS_APP_MCP = "alinery_send_review_handoff copies between two repositories, so it needs the machine MCP (`--mcp --bridge`), which reaches every registered daemon; this MCP holds a token for one daemon only";
 
 export const text = (value: string): Reply => ({ content: [{ type: "text", text: value }] });
 // Every refusal is marked isError so a client can tell a failed call from content that happens to read "error:" (#169).
@@ -166,7 +166,7 @@ const connections = new Map<string, DaemonConnection>();
 
 function connection(ctx: Context, repo: string): DaemonConnection {
   const endpoint: Endpoint | undefined = ctx.endpoints.forRepo(repo);
-  if (!endpoint) throw new ToolError(`this MCP holds no token for the daemon of ${repo}; ${ctx.endpoints.spansRepos ? "open the repository in the Alinery app" : "it can reach the daemon that launched it only"}`);
+  if (!endpoint) throw new ToolError(`this MCP holds no token for the daemon of ${repo}; ${ctx.endpoints.spansRepos ? "its daemon has not registered with the machine MCP; open the repository in the Alinery app" : "it can reach one daemon only"}`);
   // Keyed without the token: a re-minted token reaches the same connection through `tokenSource`.
   const key = `${endpoint.socket}\0${ctx.protocol}`;
   let held = connections.get(key);
@@ -400,7 +400,7 @@ export async function callTool(ctx: Context, name: string, argsRaw: unknown): Pr
       component(args, "slug");
       return text("");
     }
-    if (name === "alinery_send_review_handoff" && !ctx.endpoints.offersHandoff) return failure(NEEDS_APP_MCP);
+    if (name === "alinery_send_review_handoff" && !ctx.endpoints.spansRepos) return failure(NEEDS_APP_MCP);
     const conn = connection(ctx, repo);
     return await dispatch(ctx, name, args, repo, conn);
   } catch (e) {

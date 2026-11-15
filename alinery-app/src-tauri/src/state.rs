@@ -4,11 +4,6 @@ use crate::*;
 // PTY ownership and semantic event reduction live in alineryd/alinery-core.
 // The app consumes structured session observations through the daemon protocol.
 
-pub(crate) struct ManagedMcpChild {
-    pub(crate) repo: PathBuf,
-    pub(crate) child: std::process::Child,
-}
-
 /// What the app knows about one repo's daemon. Exactly the two outcomes of
 /// `ensure_daemon`, so "conflicted but still attached" is unrepresentable. The shell holds no
 /// connection to it: the bridge opens one per call, at the socket and token `daemon_rpc::resolve` names.
@@ -41,9 +36,6 @@ pub(crate) struct AppState {
     pub(crate) daemon_origins: Mutex<HashMap<PathBuf, DaemonOrigin>>,
     /// Every daemon on each ssh host (by host id), read from the host's records at connect and attach, for the footer.
     pub(crate) box_daemons: Mutex<HashMap<String, Vec<crate::host_wire::HostDaemon>>>,
-    // R2: managed MCP child (one per active repo). Killed on app exit / repo switch.
-    pub(crate) mcp_child: Mutex<Option<ManagedMcpChild>>,
-    pub(crate) mcp_spawn_error: Mutex<Option<String>>,
     // B6/#132: one exclusive flock for every repository this window has open. Active
     // repository selection is only a UI scope over this map; switching repositories must
     // not release an inactive repository that remains in `known_repos`.
@@ -237,32 +229,5 @@ impl AppState {
     // the app list must never kill its live sessions (teardown stays explicit).
     pub(crate) fn clear_daemon(&self, repo: &Path) {
         self.daemons.lock().unwrap_or_else(|e| e.into_inner()).remove(repo);
-    }
-    pub(crate) fn set_mcp_error(&self, msg: Option<String>) {
-        *self.mcp_spawn_error.lock().unwrap_or_else(|e| e.into_inner()) = msg;
-    }
-    pub(crate) fn mcp_error(&self) -> String {
-        self.mcp_spawn_error.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
-    }
-    pub(crate) fn stop_mcp_child(managed: &mut ManagedMcpChild) {
-        let _ = managed.child.kill();
-        let _ = managed.child.wait();
-    }
-
-    pub(crate) fn kill_mcp_for_repo(&self, repo: &Path) {
-        let mut guard = self.mcp_child.lock().unwrap_or_else(|error| error.into_inner());
-        if guard.as_ref().is_some_and(|managed| managed.repo == repo) {
-            if let Some(mut managed) = guard.take() {
-                Self::stop_mcp_child(&mut managed);
-            }
-        }
-    }
-    // R2: MCP child management
-    pub(crate) fn kill_mcp(&self) {
-        if let Ok(mut guard) = self.mcp_child.lock() {
-            if let Some(mut managed) = guard.take() {
-                Self::stop_mcp_child(&mut managed);
-            }
-        }
     }
 }

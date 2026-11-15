@@ -229,8 +229,6 @@ pub(crate) struct AppConfig {
     /// Keyed by host id. Core's `AppConfig` has no such key and ignores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) remote_hosts: BTreeMap<String, RemoteHost>,
-    #[serde(default = "default_true")]
-    pub(crate) mcp_enabled: bool,
     #[serde(default)]
     pub(crate) appearance: AppearancePrefs,
     #[serde(default)]
@@ -250,7 +248,6 @@ impl Default for AppConfig {
             known_repos: vec![],
             local_onboarded: false,
             remote_hosts: BTreeMap::new(),
-            mcp_enabled: true,
             appearance: AppearancePrefs::default(),
             settings_version: 1,
             global: default_global_settings_app(),
@@ -413,7 +410,7 @@ pub(crate) fn load_app_config<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfi
 
 pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), String> {
     // An unrelated appearance/repository edit must not erase a corrupt file.
-    let prior = read_existing_app_config(path)?;
+    read_existing_app_config(path)?;
     if let Some(parent) = path.parent() {
         // 0700: this is the same app config dir that later holds `auth.json`, and it is created
         // here first on a fresh install, so `create_dir_all` at the umask is what would decide
@@ -422,11 +419,6 @@ pub(crate) fn write_app_config_at(path: &Path, cfg: &AppConfig) -> Result<(), St
     }
     let s = toml::to_string(cfg).map_err(|e| e.to_string())?;
     write_owner_only_bytes(path, s.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
-    if let Some(prior) = prior {
-        if prior.mcp_enabled != cfg.mcp_enabled {
-            alinery_core::append_info(path, &format!("settings.app mcp_enabled={}", cfg.mcp_enabled));
-        }
-    }
     Ok(())
 }
 
@@ -567,7 +559,6 @@ pub(crate) async fn read_app_config(app: AppHandle) -> Result<AppConfig, String>
                 if let Ok(app_config) = app_config_path(&app) {
                     attach_repo_daemon(&state, repo, &app_config);
                 }
-                ensure_mcp_server(&app, repo, false);
             }
         }
         emit(&app, alinery_core::TelemetryEvent::AppOpen { cold_start: true });
@@ -621,7 +612,6 @@ pub(crate) fn set_active_repo_sync<R: tauri::Runtime>(app: AppHandle<R>, state: 
     reservation.commit(&state);
     set_active_repo_global(Some(repo.clone()))?;
     attach_repo_daemon_locked(&state, &repo, &app_config, &guard);
-    ensure_mcp_server(&app, &repo, false);
     emit(
         &app,
         alinery_core::TelemetryEvent::RepoActivate {
@@ -691,9 +681,6 @@ pub(crate) async fn remove_repo(app: AppHandle, path: String) -> Result<AppConfi
         let (cfg, was_active) = remove_repo_from_config(load_app_config(&app), &path)?;
         write_app_config(&app, &cfg)?;
         if was_active {
-            if let Some(state) = state.as_ref() {
-                state.kill_mcp_for_repo(&target);
-            }
             set_active_repo_global(None)?;
         }
         if let Some(state) = state.as_ref() {
